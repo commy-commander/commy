@@ -105,6 +105,33 @@ the server that issued it. People can also paste the link into Add a Server.
 - The stored invite contains what any Commy invite contains: the server id
   and name, and the network addresses of the member who created it.
 
+## iroh relay
+
+The stack runs its own [iroh](https://iroh.computer) relay at
+`https://relay.<DOMAIN>:8443`. Apps use it first and keep n0's public relays as
+a fallback. Relays help peers find each other and carry traffic only when a
+direct connection is impossible, always end to end encrypted.
+
+- **DNS:** an A record for `relay.<DOMAIN>`, DNS only (not proxied) in
+  Cloudflare. Open `8443/tcp` (relay over HTTPS, certificate via port 80) and
+  `3478/udp` (STUN).
+- **Bandwidth budget:** `relay-meter` adds up relayed bytes each month (UTC).
+  At `RELAY_WARN_PERCENT` of `RELAY_MONTHLY_LIMIT_GB` it posts to
+  `ALERT_WEBHOOK_URL`; at `RELAY_PAUSE_PERCENT` it stops the relay until the
+  1st, and apps move to the fallback relays on their own. Set the limit below
+  your VPS plan's allowance to leave room for the website.
+- **Usage so far:** `docker compose exec relay-meter cat /data/usage.json`.
+- **Pause or resume by hand:** `docker compose exec relay-meter touch /flags/relay-paused`
+  stops the relay until you delete that file; the meter only clears pauses it set.
+- **Several environments on one server:** run one shared relay with
+  `docker-compose.relay.yml` (see the comment at its top); the per
+  environment stacks leave the relay out.
+- **Apps:** `COMMY_RELAY_URLS=https://relay.example.org:8443` points a build at
+  another relay, `none` uses only n0's.
+
+The relay must run the same iroh version as the app (`IROH_NET_VERSION` in
+`relay/Dockerfile`), so the two are upgraded together.
+
 ## What the operator can see
 
 Commy messages, voice, video, screen shares and files are peer to peer and
@@ -115,6 +142,8 @@ never reach this stack. The auth database holds:
 - sessions: token and expiry only (IP address and user agent are not stored)
 - linked devices: iroh node id, device name, first and last link time
 - invite links: the invite ticket, server name, creator account if signed in, expiry
+- the relay: IP addresses and node ids of connected apps while they are
+  connected, and monthly byte totals; relayed traffic is encrypted end to end
 - short-lived rows for verification, device sign-in codes, and a keyed hash
   of the requesting network (deleted after 15 minutes, never the raw IP)
 

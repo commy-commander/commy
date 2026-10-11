@@ -1,0 +1,12 @@
+# Plain HTTP behind Caddy, which terminates TLS for relay.<DOMAIN>.
+enable_relay = true
+http_bind_addr = "[::]:3340"
+enable_stun = true
+stun_bind_addr = "[::]:3478"
+enable_metrics = true
+metrics_bind_addr = "[::]:9090"
+
+[limits]
+# New connections per second, to blunt connection floods
+accept_conn_limit = 20.0
+accept_conn_burst = 100

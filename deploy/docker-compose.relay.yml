@@ -1,0 +1,17 @@
+# Runs only the iroh relay, once, beside the shared deploy/edge proxy when dev,
+# staging and prod share a server. Uses the same deploy/.env:
+#   docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml \
+#     up -d --build relay relay-proxy relay-meter
+# deploy/edge serves relay.<DOMAIN> on port 8443 and forwards to commy-relay-proxy.
+
+services:
+  relay-proxy:
+    networks:
+      edge:
+      public:
+        aliases: ["commy-relay-proxy"]
+
+networks:
+  public:
+    external: true
+    name: commy-public

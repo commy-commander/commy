@@ -17,6 +17,7 @@ pub mod dm;
 pub mod media;
 pub mod node;
 pub mod protocol;
+pub mod relays;
 pub mod ticket;
 
 pub use dm::{DmAck, DmEnvelope, DM_ALPN};
