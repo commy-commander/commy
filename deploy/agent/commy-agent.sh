@@ -9,6 +9,7 @@ INTERVAL="${AGENT_INTERVAL:-60}"
 HEALTH_TIMEOUT="${AGENT_HEALTH_TIMEOUT:-180}"
 STATE_DIR="${AGENT_STATE_DIR:-/tmp/commy-agent}"
 POLL="${AGENT_HEALTH_POLL:-3}"
+PULL_TRIES="${AGENT_PULL_TRIES:-3}"
 
 log() {
 	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
@@ -90,14 +91,26 @@ update_service() {
 	return 1
 }
 
+# Pulls one service, retrying: concurrent pulls of shared layers (several agents on
+# one host) can fail transiently with "unable to lease content" on containerd.
+pull_service() {
+	tries=0
+	while [ "$tries" -lt "$PULL_TRIES" ]; do
+		docker compose pull --quiet "$1" && return 0
+		tries=$((tries + 1))
+		sleep "$((tries * 5))"
+	done
+	return 1
+}
+
 run_once() {
-	# shellcheck disable=SC2086
-	if ! docker compose pull --quiet $SERVICES; then
-		log "pull failed, retrying next cycle"
-		return 1
-	fi
 	status=0
 	for svc in $SERVICES; do
+		if ! pull_service "$svc"; then
+			log "$svc: pull failed, retrying next cycle"
+			status=1
+		fi
+		# Still reconcile: an image pulled earlier (or by hand) may be waiting
 		update_service "$svc" || status=1
 	done
 	return $status
@@ -108,7 +121,8 @@ main() {
 	while true; do
 		run_once
 		docker image prune -f >/dev/null 2>&1
-		sleep "$INTERVAL"
+		# Jitter keeps agents on the same host from pulling in lockstep
+		sleep "$((INTERVAL + $(awk 'BEGIN { srand(); print int(rand() * 20) }')))"
 	done
 }
 
