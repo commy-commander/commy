@@ -42,6 +42,7 @@ pub enum MediaHello {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MediaPacket {
     /// 10 ms of 48 kHz mono PCM, already noise-processed by the sender.
+    /// Older peers only; current ones send `Opus`.
     Voice { seq: u32, pcm: Vec<i16> },
     /// One MJPEG screen frame.
     Video {
@@ -50,6 +51,9 @@ pub enum MediaPacket {
         height: u32,
         jpeg: Vec<u8>,
     },
+    /// 10 ms of 48 kHz mono voice, Opus encoded. Appended last so the
+    /// earlier variants keep their wire tags.
+    Opus { seq: u32, data: Vec<u8> },
 }
 
 /// Writes one length-prefixed postcard frame.
@@ -118,6 +122,15 @@ mod tests {
         // Clean EOF after the sender hangs up.
         let end: Option<MediaPacket> = read_frame(&mut server).await.unwrap();
         assert!(end.is_none());
+    }
+
+    #[tokio::test]
+    async fn opus_voice_roundtrip() {
+        let (mut a, mut b) = tokio::io::duplex(4096);
+        let packet = MediaPacket::Opus { seq: 42, data: vec![0x78, 1, 2, 3] };
+        write_frame(&mut a, &packet).await.unwrap();
+        let got: MediaPacket = read_frame(&mut b).await.unwrap().unwrap();
+        assert_eq!(got, packet);
     }
 
     #[tokio::test]

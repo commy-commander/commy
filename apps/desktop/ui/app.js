@@ -389,7 +389,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_about": mock.user.about = args.about; return mock.user;
     case "set_server_afk_timeout": mock.servers[args.serverId].afk_timeout_minutes = args.minutes; return null;
     case "voice_stats":
-      return { codec: "PCM 16-bit, 48 kHz mono", bitrate_kbps: 768, links: [
+      return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, links: [
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", relay: "https://use1-1.relay.iroh.network./", addr: "192.168.1.24:51820", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "iroh-fan", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", relay: "https://euw1-1.relay.iroh.network./", addr: null, tx_bytes: 0, rx_bytes: 0 },
       ] };

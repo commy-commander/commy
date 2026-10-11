@@ -2718,8 +2718,11 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
             }
         })
         .collect();
-    // Voice travels as raw 16-bit PCM, 48 kHz mono, in 10 ms frames.
-    Ok(VoiceStatsView { links, codec: "PCM 16-bit, 48 kHz mono".into(), bitrate_kbps: 768 })
+    Ok(VoiceStatsView {
+        links,
+        codec: "Opus, 48 kHz mono, 10 ms frames".into(),
+        bitrate_kbps: (commy_audio::codec::VOICE_BITRATE / 1000) as u32,
+    })
 }
 
 // ---------- Moderation and personal voice controls ----------

@@ -7,5 +7,5 @@ license.workspace = true
 
 [dependencies]
 nnnoiseless = { version = "0.5", default-features = false }
-opus-head-sys = "0.3"
+rusty-opus = "1"
 thiserror = { workspace = true }
