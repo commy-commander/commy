@@ -133,19 +133,14 @@ sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
   to the server IP. `commy-firewall.timer` refreshes the ranges daily, and a
   Docker drop-in re-applies them whenever Docker restarts. Port 80 stays open
   because Caddy only redirects there and Let's Encrypt needs it.
-- **CrowdSec** reads SSH logs and the edge Caddy's JSON access logs
-  (`/var/log/commy-caddy`, with real visitor IPs from `CF-Connecting-IP`), and its
-  firewall bouncer bans offenders in `INPUT` and `DOCKER-USER`.
+- **Access logs.** The edge Caddy writes JSON access logs with real visitor IPs
+  (from `CF-Connecting-IP`) to `/var/log/commy-caddy`, so any log or intrusion
+  detection tool you already run can read them. Commy does not install one.
 
 To let your own IP reach port 443 directly (for example to test without
 Cloudflare), put `COMMY_FW_ALLOW="203.0.113.7/32"` in `/etc/default/commy-firewall`
 and run `sudo commy-firewall apply`. `sudo commy-firewall remove` undoes the
 Cloudflare-only rule.
-
-Visitors reach the site through Cloudflare, so a firewall ban on their address
-has no effect for HTTPS. To enforce CrowdSec decisions at Cloudflare too, install
-the [Cloudflare Worker bouncer](https://docs.crowdsec.net/u/bouncers/cloudflare-workers/)
-with an API token that can edit Workers and the zone's firewall.
 
 ## One environment only
 

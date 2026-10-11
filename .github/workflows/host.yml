@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   host:
-    name: Firewall and CrowdSec
+    name: Firewall
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -74,18 +74,9 @@ jobs:
           . /tmp/probe.sh
           expect 443 000
           expect 80 200
-          sudo systemctl is-active crowdsec crowdsec-firewall-bouncer
           sudo systemctl is-enabled commy-firewall.timer
-          sudo cscli collections list -o raw | grep -q crowdsecurity/caddy
-          sudo grep -q DOCKER-USER /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
           sudo ufw status | grep -q 'commy-cf'
           # Docker restarts rebuild its chains; the drop-in re-applies ours
           sudo systemctl restart docker
           docker start https >/dev/null; sleep 2
           expect 443 000
-          # CrowdSec parses Caddy JSON access logs from the edge log folder
-          sudo mkdir -p /var/log/commy-caddy
-          echo '{"level":"info","ts":1700000000.1,"logger":"http.log.access","msg":"handled request","request":{"remote_ip":"172.70.1.1","client_ip":"203.0.113.9","proto":"HTTP/2.0","method":"GET","host":"commy.chat","uri":"/.env","headers":{"User-Agent":["curl"]}},"status":404,"size":0,"duration":0.001}' \
-            | sudo tee -a /var/log/commy-caddy/access.log >/dev/null
-          sudo cscli explain --file /var/log/commy-caddy/access.log --type caddy | tee /tmp/explain.txt
-          grep -q 'crowdsecurity/caddy-logs' /tmp/explain.txt

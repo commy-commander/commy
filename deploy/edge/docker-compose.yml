@@ -26,7 +26,7 @@ services:
       - ./certs:/etc/caddy/certs:ro
       - caddy_data:/data
       - caddy_config:/config
-      # Access logs for CrowdSec (deploy/host/harden-vps.sh)
+      # JSON access logs for your own log tooling
       - /var/log/commy-caddy:/var/log/caddy
     networks: [public]
     logging:

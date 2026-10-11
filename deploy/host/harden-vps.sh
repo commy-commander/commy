@@ -1,11 +1,9 @@
 #!/bin/sh
 # Hardens a server set up by setup-vps.sh: ufw with SSH rate limiting, HTTPS only from
-# Cloudflare (refreshed daily), the relay ports open to everyone, and CrowdSec reading
-# the SSH and edge Caddy logs with its firewall bouncer.
+# Cloudflare (refreshed daily) and the relay ports open to everyone.
 #   sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
 # Settings (environment variables):
 #   PUBLIC_PORTS   ports open to everyone besides 80, default "3478/udp 7842/udp 8443/tcp" (iroh relay)
-#   SKIP_CROWDSEC  set to 1 to only configure the firewall
 
 set -eu
 
@@ -68,35 +66,8 @@ systemctl daemon-reload
 systemctl enable --now commy-firewall.service commy-firewall.timer >/dev/null 2>&1
 /usr/local/sbin/commy-firewall apply
 
-if [ "${SKIP_CROWDSEC:-0}" != "1" ]; then
-	echo "== CrowdSec"
-	if ! command -v cscli >/dev/null; then
-		curl -fsSL https://install.crowdsec.net | sh >/dev/null
-		apt-get install -y -qq crowdsec >/dev/null
-	fi
-	dpkg -s crowdsec-firewall-bouncer-iptables >/dev/null 2>&1 ||
-		apt-get install -y -qq crowdsec-firewall-bouncer-iptables >/dev/null
 
-	cscli collections install crowdsecurity/linux crowdsecurity/sshd crowdsecurity/caddy \
-		crowdsecurity/base-http-scenarios crowdsecurity/http-cve >/dev/null 2>&1 || true
-
-	mkdir -p "$CADDY_LOGS" /etc/crowdsec/acquis.d
-	cat >/etc/crowdsec/acquis.d/commy-caddy.yaml <<EOF
-filenames:
-  - $CADDY_LOGS/*.log
-labels:
-  type: caddy
-EOF
-
-	# Ban in DOCKER-USER too, so relay ports published by Docker are covered
-	bouncer=/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
-	if [ -f "$bouncer" ] && ! grep -q DOCKER-USER "$bouncer"; then
-		sed -i 's/^\(\s*\)- INPUT$/\1- INPUT\n\1- DOCKER-USER/' "$bouncer"
-	fi
-	systemctl restart crowdsec crowdsec-firewall-bouncer
-fi
-
-# Pick up the edge Caddy's access log mount and current Caddyfile
+# Pick up the current edge Caddyfile and its access log mount
 edge="$here/../edge"
 if [ -f "$edge/.env" ] && docker compose --project-directory "$edge" ps -q caddy 2>/dev/null | grep -q .; then
 	echo "== Edge proxy"
@@ -108,7 +79,3 @@ echo "== Status"
 ufw status verbose | sed -n '1,4p'
 echo "Open to everyone: ${ssh_ports:-22}/tcp (rate limited), 80/tcp, $PUBLIC_PORTS"
 echo "443 only from Cloudflare; refreshed daily by commy-firewall.timer"
-if command -v cscli >/dev/null; then
-	cscli bouncers list -o raw 2>/dev/null | tail -n +2 | cut -d, -f1 | sed 's/^/CrowdSec bouncer: /'
-	cscli collections list -o raw 2>/dev/null | grep -c installed | sed 's/^/CrowdSec collections installed: /'
-fi
