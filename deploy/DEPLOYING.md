@@ -56,9 +56,11 @@ by `docker compose up -d` in that folder. Google OAuth needs each domain's
 
 ### What the pieces are
 
-- `edge/` is the only thing listening on ports 80 and 443. It routes each domain
+- `edge/` is the only thing listening on ports 80, 443 and 8443. It routes each domain
   to that environment's containers by network alias (`commy-staging-web`,
   `commy-staging-auth`) and adds `X-Robots-Tag: noindex` on staging and dev.
+  Port 8443 serves the shared iroh relay at `relay.<domain>` (a DNS-only record),
+  which `setup-vps.sh` starts once as the `commy-relay` project.
 - `docker-compose.env.yml` turns off the per-stack Caddy and joins `web` and
   `auth` to the shared `commy-public` network under those aliases. Each
   environment's Postgres stays on its own private network.
@@ -89,6 +91,22 @@ With the domain's DNS on Cloudflare:
   addresses. Testing the desktop app against staging also needs a second
   application on `staging.commy.chat/api/auth` with a Bypass policy, since the app
   cannot complete the Access login.
+- **Certificates for hosts behind Access.** Access redirects every plain HTTP
+  request, so Let's Encrypt cannot validate staging and dev. Give Caddy a
+  Cloudflare origin certificate for them instead: SSL/TLS > Origin Server >
+  Create Certificate for `commy.chat` and `*.commy.chat`, then on the server:
+
+  ```bash
+  cd /srv/commy-prod/deploy/edge && mkdir -p certs
+  nano certs/origin.pem    # paste the certificate
+  nano certs/origin.key    # paste the private key
+  chmod 600 certs/origin.key
+  echo 'tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key' > certs/origin-tls.caddy
+  docker compose up -d --force-recreate caddy
+  ```
+
+  Only Cloudflare trusts this certificate, which is fine because only Cloudflare
+  connects to the server. Production keeps its Let's Encrypt certificate.
 - **Lock the origin to Cloudflare** so nobody can skip Access by connecting to the
   server IP directly: allow ports 80 and 443 only from
   [Cloudflare's IP ranges](https://www.cloudflare.com/ips/) in the hosting
@@ -96,6 +114,33 @@ With the domain's DNS on Cloudflare:
 
 The edge Caddy trusts `CF-Connecting-IP` from Cloudflare's ranges, so logs and
 the auth server's rate limits see the visitor's real address.
+
+## Hardening the server
+
+After `setup-vps.sh`, run once:
+
+```bash
+sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
+```
+
+- **ufw** denies incoming connections except SSH (rate limited), port 80 and
+  the iroh relay ports (`PUBLIC_PORTS`, default `3478/udp 7842/udp 8443/tcp`),
+  which stay open to everyone because clients reach the relay directly.
+- **HTTPS only from Cloudflare.** Port 443 is accepted only from
+  [Cloudflare's ranges](https://www.cloudflare.com/ips/), both in ufw and in
+  Docker's `DOCKER-USER` chain, since ports published by Docker skip ufw. This
+  is what stops anyone from bypassing Cloudflare Access on staging by connecting
+  to the server IP. `commy-firewall.timer` refreshes the ranges daily, and a
+  Docker drop-in re-applies them whenever Docker restarts. Port 80 stays open
+  because Caddy only redirects there and Let's Encrypt needs it.
+- **Access logs.** The edge Caddy writes JSON access logs with real visitor IPs
+  (from `CF-Connecting-IP`) to `/var/log/commy-caddy`, so any log or intrusion
+  detection tool you already run can read them. Commy does not install one.
+
+To let your own IP reach port 443 directly (for example to test without
+Cloudflare), put `COMMY_FW_ALLOW="203.0.113.7/32"` in `/etc/default/commy-firewall`
+and run `sudo commy-firewall apply`. `sudo commy-firewall remove` undoes the
+Cloudflare-only rule.
 
 ## One environment only
 
