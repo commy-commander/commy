@@ -72,6 +72,14 @@ for env in $ENVS; do
 	echo "commy-$env: database and deploy agent running"
 done
 
+# One iroh relay serves every environment, run from the first checkout
+relay_dir="$ROOT/commy-$first/deploy"
+if [ -f "$relay_dir/docker-compose.relay.yml" ]; then
+	(cd "$relay_dir" && docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml \
+		up -d --build relay relay-proxy relay-meter)
+	echo "relay: running for relay.$DOMAIN"
+fi
+
 cat <<EOF
 
 Done. Each environment's agent pulls its image tag every minute:

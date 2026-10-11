@@ -1,0 +1,91 @@
+# Tests the VPS hardening scripts in deploy/host on a real Ubuntu machine.
+
+name: Host hardening
+
+on:
+  push:
+    branches: [main]
+    paths: ["deploy/host/**", ".github/workflows/host.yml"]
+  pull_request:
+    paths: ["deploy/host/**", ".github/workflows/host.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: Firewall and CrowdSec
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: shellcheck -s sh deploy/host/commy-firewall.sh deploy/host/harden-vps.sh
+
+      - name: Unit tests
+        run: sh deploy/host/commy-firewall.test.sh
+
+      # A network namespace stands in for the internet: it reaches the host over a
+      # veth pair, so its traffic to published ports goes through DOCKER-USER.
+      - name: Simulated outside client
+        run: |
+          sudo ip netns add outside
+          sudo ip link add veth-host type veth peer name veth-out
+          sudo ip link set veth-out netns outside
+          sudo ip addr add 10.99.0.1/24 dev veth-host
+          sudo ip link set veth-host up
+          sudo ip netns exec outside ip addr add 10.99.0.2/24 dev veth-out
+          sudo ip netns exec outside ip link set veth-out up
+          sudo ip netns exec outside ip link set lo up
+          docker run -d --name https -p 443:8443 -p 80:8080 busybox:1.36 \
+            sh -c 'echo ok > /i.html; httpd -p 8443 -h / & httpd -f -p 8080 -h /'
+          sleep 2
+          cat > /tmp/probe.sh <<'EOF'
+          probe() { sudo ip netns exec outside curl -s -m 5 -o /dev/null -w '%{http_code}' "http://10.99.0.1:$1/i.html" || true; }
+          expect() {
+            got="$(probe "$1")"
+            if [ "$got" = "$2" ]; then echo "ok   - port $1 from outside: $2"; else echo "FAIL - port $1 from outside: expected $2 got $got"; exit 1; fi
+          }
+          EOF
+          . /tmp/probe.sh
+          expect 443 200
+          expect 80 200
+
+      - name: Firewall blocks non-Cloudflare HTTPS
+        run: |
+          . /tmp/probe.sh
+          sudo COMMY_FW_IFACE=veth-host sh deploy/host/commy-firewall.sh apply
+          expect 443 000
+          expect 80 200
+          sudo COMMY_FW_IFACE=veth-host COMMY_FW_ALLOW=10.99.0.0/24 sh deploy/host/commy-firewall.sh apply
+          expect 443 200
+          sudo COMMY_FW_IFACE=veth-host sh deploy/host/commy-firewall.sh apply
+          expect 443 000
+
+      - name: Full hardening run
+        run: |
+          echo "COMMY_FW_IFACE=veth-host" | sudo tee /etc/default/commy-firewall
+          sudo sh deploy/host/harden-vps.sh
+          sudo sh deploy/host/harden-vps.sh >/dev/null
+          echo "re-run is idempotent"
+
+      - name: Hardened host behaves
+        run: |
+          . /tmp/probe.sh
+          expect 443 000
+          expect 80 200
+          sudo systemctl is-active crowdsec crowdsec-firewall-bouncer
+          sudo systemctl is-enabled commy-firewall.timer
+          sudo cscli collections list -o raw | grep -q crowdsecurity/caddy
+          sudo grep -q DOCKER-USER /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+          sudo ufw status | grep -q 'commy-cf'
+          # Docker restarts rebuild its chains; the drop-in re-applies ours
+          sudo systemctl restart docker
+          docker start https >/dev/null; sleep 2
+          expect 443 000
+          # CrowdSec parses Caddy JSON access logs from the edge log folder
+          sudo mkdir -p /var/log/commy-caddy
+          echo '{"level":"info","ts":1700000000.1,"logger":"http.log.access","msg":"handled request","request":{"remote_ip":"172.70.1.1","client_ip":"203.0.113.9","proto":"HTTP/2.0","method":"GET","host":"commy.chat","uri":"/.env","headers":{"User-Agent":["curl"]}},"status":404,"size":0,"duration":0.001}' \
+            | sudo tee -a /var/log/commy-caddy/access.log >/dev/null
+          sudo cscli explain --file /var/log/commy-caddy/access.log --type caddy | tee /tmp/explain.txt
+          grep -q 'crowdsecurity/caddy-logs' /tmp/explain.txt

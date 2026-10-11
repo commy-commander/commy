@@ -11,16 +11,23 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"
+      # iroh relay (relay.<domain>, DNS only), see ../docker-compose.relay.yml
+      - "8443:8443"
     environment:
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
       PROD_DOMAIN: ${PROD_DOMAIN:?set PROD_DOMAIN in .env}
       STAGING_DOMAIN: ${STAGING_DOMAIN:-staging.${PROD_DOMAIN}}
       DEV_DOMAIN: ${DEV_DOMAIN:-dev.${PROD_DOMAIN}}
       DOCS_DOMAIN: ${DOCS_DOMAIN:-docs.${PROD_DOMAIN}}
+      RELAY_DOMAIN: ${RELAY_DOMAIN:-relay.${PROD_DOMAIN}}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Optional Cloudflare origin certificate for hosts behind Cloudflare Access
+      - ./certs:/etc/caddy/certs:ro
       - caddy_data:/data
       - caddy_config:/config
+      # Access logs for CrowdSec (deploy/host/harden-vps.sh)
+      - /var/log/commy-caddy:/var/log/caddy
     networks: [public]
     logging:
       driver: json-file
