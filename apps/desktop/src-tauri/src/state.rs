@@ -121,6 +121,9 @@ pub struct App {
     /// The last game seen in the foreground: (process id, title). Kept
     /// after alt-tabbing so Share Screen can offer it first.
     pub last_game: Mutex<Option<(u32, String)>>,
+    /// Commy account sign-in, and a device-code sign-in in progress.
+    pub account: Mutex<crate::account::AccountState>,
+    pub sign_in: Mutex<Option<crate::account::PendingSignIn>>,
     pub igdb_creds: Mutex<crate::igdb::IgdbCredentials>,
     pub igdb: tokio::sync::Mutex<crate::igdb::IgdbClient>,
     pub http: reqwest::Client,
@@ -156,6 +159,8 @@ impl Default for App {
             forced_deaf: std::sync::atomic::AtomicBool::new(false),
             share_seen: Mutex::new(HashMap::new()),
             last_game: Mutex::new(None),
+            account: Mutex::new(crate::account::AccountState::default()),
+            sign_in: Mutex::new(None),
             igdb_creds: Mutex::new(crate::igdb::IgdbCredentials::default()),
             igdb: tokio::sync::Mutex::new(crate::igdb::IgdbClient::default()),
             http: reqwest::Client::builder()

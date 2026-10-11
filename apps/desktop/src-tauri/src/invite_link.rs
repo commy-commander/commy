@@ -43,12 +43,10 @@ impl InviteLink {
     }
 }
 
-/// The account server this install uses: `COMMY_AUTH_URL` or commy.chat.
+/// The account server this install uses: `COMMY_AUTH_URL`, the Settings
+/// choice, or commy.chat.
 pub fn account_server() -> String {
-    std::env::var("COMMY_AUTH_URL")
-        .ok()
-        .and_then(|s| normalize_origin(&s))
-        .unwrap_or_else(|| DEFAULT_ACCOUNT_SERVER.to_string())
+    crate::account::effective_server()
 }
 
 fn is_loopback(host: &str) -> bool {
