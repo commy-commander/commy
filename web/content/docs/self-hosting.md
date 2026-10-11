@@ -33,4 +33,4 @@ Launch the app with `COMMY_AUTH_URL=https://your-domain` to use your server for 
 
 ## Running your own iroh relay
 
-For independence from public relays you can run `iroh-relay` next to the stack. It needs its own hostname and UDP port 3478, and must match the iroh version of the app.
+The stack includes an iroh relay at `https://relay.your-domain:8443`, with a monthly bandwidth budget that pauses it before your VPS allowance runs out. Apps fall back to n0's public relays when it is paused. It needs a DNS only record for `relay.your-domain`, and ports 8443/tcp and 3478/udp open. Point a build at it with `COMMY_RELAY_URLS=https://relay.your-domain:8443`.

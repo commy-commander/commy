@@ -268,7 +268,8 @@ impl CommyNode {
         rand::random()
     }
 
-    /// Spawns an iroh node with default n0 discovery and relays.
+    /// Spawns an iroh node with n0 discovery, Commy's relay first and n0's
+    /// relays as fallback (see `relays`).
     /// Pass the persisted secret key so the node keeps the same
     /// identity across restarts; a fresh key invalidates every invite
     /// and DM address that peers have stored.
@@ -284,6 +285,10 @@ impl CommyNode {
         let (media_tx, media_rx) = mpsc::unbounded_channel();
         let (dm_tx, dm_rx) = mpsc::unbounded_channel();
         let mut builder = iroh::node::Node::memory();
+        match crate::relays::relay_map(&crate::relays::own_relays()) {
+            Ok(map) => builder = builder.relay_mode(iroh::net::relay::RelayMode::Custom(map)),
+            Err(e) => tracing::warn!("using default relays: {e:#}"),
+        }
         if let Some(bytes) = secret {
             builder = builder.secret_key(iroh::net::key::SecretKey::from_bytes(&bytes));
         }

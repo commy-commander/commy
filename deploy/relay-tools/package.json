@@ -1,0 +1,11 @@
+{
+  "name": "commy-relay-tools",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "start": "node meter.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}
