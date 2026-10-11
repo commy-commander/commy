@@ -100,9 +100,9 @@ function mockSeed() {
   const c0 = server.channels[0].id;
   mock.messages[c0] = [
     { id: "x1", channel: c0, author_id: "m1", author_name: "ferris",
-      content: "Welcome to Commy, peer-to-peer community chat.", created_at: new Date(Date.now() - 3600e3).toISOString(), edited: false, attachments: [] },
+      content: "Welcome to Commy, a private P2P chat app.", created_at: new Date(Date.now() - 3600e3).toISOString(), edited: false, attachments: [] },
     { id: "x2", channel: c0, author_id: "m2", author_name: "iroh-fan",
-      content: "No servers, no paywall. Everything over iroh.", created_at: new Date(Date.now() - 1800e3).toISOString(), edited: false, attachments: [] },
+      content: "No central servers, no paywall. Everything over iroh.", created_at: new Date(Date.now() - 1800e3).toISOString(), edited: false, attachments: [] },
   ];
 }
 
@@ -393,6 +393,11 @@ async function mockInvoke(cmd, args = {}) {
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", relay: "https://use1-1.relay.iroh.network./", addr: "192.168.1.24:51820", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "iroh-fan", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", relay: "https://euw1-1.relay.iroh.network./", addr: null, tx_bytes: 0, rx_bytes: 0 },
       ] };
+    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, server_from_env: false, device_linked: true, pending_code: null });
+    case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
+    case "account_cancel_sign_in": return null;
+    case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
+    case "set_account_server": return mock.account;
     case "set_user_voice": {
       mock.voice.user_volumes = mock.voice.user_volumes || {};
       mock.voice.muted_users = mock.voice.muted_users || [];
@@ -2137,7 +2142,7 @@ function setCreateChannelKind(kind) {
   syncCreateChannelName();
 }
 
-// Text channels read lowercase with dashes.
+// Text channel names are lowercase with dashes.
 function syncCreateChannelName() {
   const input = $("create-channel-name");
   if (createChannelKind === "text") {
@@ -6653,6 +6658,48 @@ async function openOwnPreview() {
 // ---------- Event wiring ----------
 
 function wireEvents() {
+  $("signin-go").onclick = beginSignIn;
+  $("signin-reopen").onclick = () => {
+    if (signInUrl) invoke("open_url", { url: signInUrl }).catch(e => toast(String(e)));
+  };
+  $("signin-cancel").onclick = async () => {
+    await invoke("account_cancel_sign_in");
+    showSignIn();
+  };
+  $("signin-server-select").addEventListener("change", async e => {
+    const value = e.target.value;
+    if (value === "custom") {
+      $("signin-server-edit").classList.remove("hidden");
+      $("signin-server-input").value = "";
+      $("signin-server-input").focus();
+      return;
+    }
+    try {
+      account = await invoke("set_account_server", { server: value === "default" ? null : value });
+      showSignIn();
+    } catch (err) {
+      showSignInError(String(err));
+    }
+  });
+  $("signin-server-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") $("signin-server-save").click();
+  });
+  $("signin-server-save").onclick = async () => {
+    try {
+      account = await invoke("set_account_server", { server: $("signin-server-input").value || null });
+      showSignIn();
+    } catch (e) {
+      showSignInError(String(e));
+    }
+  };
+  $("acct-sign-out").onclick = async () => {
+    if (!confirm("Sign out of your Commy account on this device?")) return;
+    try {
+      account = await invoke("account_sign_out");
+    } catch (e) {
+      toast(String(e));
+    }
+  };
   $("username-save").onclick = async () => {
     const username = $("username-input").value.trim();
     if (!username) return;
@@ -7646,7 +7693,7 @@ function wireEvents() {
 
   $("modal-backdrop").addEventListener("mousedown", e => {
     // Keep the username modal mandatory; others close on backdrop click.
-    if (e.target === e.currentTarget && state.user) hideModals();
+    if (e.target === e.currentTarget && state.user && account.signed_in) hideModals();
   });
 
   // Live updates pushed from the Rust side.
@@ -7661,6 +7708,8 @@ function wireEvents() {
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
     window.__TAURI__.event.listen("report-received", event => onReportReceived(event.payload));
+    window.__TAURI__.event.listen("account-changed", onAccountChanged);
+    window.__TAURI__.event.listen("sign-in-failed", event => showSignInError(String(event.payload)));
     window.__TAURI__.event.listen("friends-changed", async event => {
       await loadFriends();
       const p = event.payload || {};
@@ -7826,6 +7875,7 @@ function openUserSettings(tab) {
   $("account-about").value = state.user.about || "";
   loadOverlaySettings().then(renderOverlaySettings);
   loadIntegrations().then(renderIntegrations);
+  loadAccount().then(renderAccountSettings);
   $("notify-level").value = notifyPrefs().level;
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
   $("output-vol").value = Math.round((state.voice.output_volume ?? 1) * 100);
@@ -8115,15 +8165,103 @@ async function boot() {
   await loadFriends();
   await loadOverlaySettings();
   await loadIntegrations();
+  await loadAccount();
+  if (!account.signed_in) {
+    showSignIn();
+    return;
+  }
+  await continueBoot();
+}
+
+// Runs once signed in: pick a username if needed, then load servers.
+async function continueBoot() {
   state.user = await invoke("get_user");
   if (!state.user) {
     showModal("modal-username");
+    const suggestion = ((account.user && account.user.name) || "").toLowerCase().replace(/[^a-z0-9_.]/g, "").slice(0, 32);
+    if (suggestion && !$("username-input").value) $("username-input").value = suggestion;
     $("username-input").focus();
     return;
   }
+  hideModals();
   renderUserPanel();
   await refreshServers();
   if (state.servers.length) await selectServer(state.servers[0].id);
+}
+
+// ---------- Commy account ----------
+
+let account = { signed_in: false, server_host: "" };
+
+async function loadAccount() {
+  try {
+    account = await invoke("account_status");
+  } catch {
+    /* keep the last state */
+  }
+}
+
+let signInUrl = null;
+
+function showSignIn() {
+  $("signin-start").classList.remove("hidden");
+  $("signin-wait").classList.add("hidden");
+  $("signin-error").classList.add("hidden");
+  const select = $("signin-server-select");
+  const custom = !account.is_default_server;
+  if (custom && ![...select.options].some(o => o.value === account.server)) {
+    select.insertBefore(new Option(account.server_host, account.server), select.options[1]);
+  }
+  select.value = custom ? account.server : "default";
+  select.disabled = Boolean(account.server_from_env);
+  select.title = account.server_from_env ? "Set by COMMY_AUTH_URL" : "";
+  $("signin-server-edit").classList.add("hidden");
+  showModal("modal-signin");
+}
+
+async function beginSignIn() {
+  $("signin-error").classList.add("hidden");
+  $("signin-go").disabled = true;
+  try {
+    const start = await invoke("account_begin_sign_in");
+    signInUrl = start.verification_url;
+    $("signin-code").textContent = start.user_code;
+    $("signin-start").classList.add("hidden");
+    $("signin-wait").classList.remove("hidden");
+  } catch (e) {
+    showSignInError(String(e));
+  } finally {
+    $("signin-go").disabled = false;
+  }
+}
+
+function showSignInError(message) {
+  $("signin-error").textContent = message;
+  $("signin-error").classList.remove("hidden");
+  $("signin-start").classList.remove("hidden");
+  $("signin-wait").classList.add("hidden");
+}
+
+async function onAccountChanged() {
+  const was = account.signed_in;
+  await loadAccount();
+  if (account.signed_in && !was) {
+    toast(`Signed in as ${(account.user && account.user.name) || "you"}`);
+    await continueBoot();
+  } else if (!account.signed_in && was) {
+    showSignIn();
+  }
+  if (!$("user-settings").classList.contains("hidden")) renderAccountSettings();
+}
+
+function renderAccountSettings() {
+  const u = account.user || {};
+  $("acct-name").textContent = u.name || "Signed out";
+  $("acct-email").textContent = u.email || "";
+  $("acct-server-line").textContent = `Account server: ${account.server_host}${account.server_from_env ? " (set by COMMY_AUTH_URL)" : ""}`;
+  $("acct-device-line").textContent = account.device_linked
+    ? "This device is linked to your account."
+    : "This device is not linked yet; it links automatically on sign-in.";
 }
 
 boot().catch(e => toast(String(e)));

@@ -224,9 +224,40 @@
 
   <!-- Modals -->
   <div class="modal-backdrop hidden" id="modal-backdrop">
-    <div class="modal" id="modal-username">
+    <div class="modal modal-signin hidden" id="modal-signin">
+      <img class="signin-logo" src="logo.png" alt="" />
+      <h2>Sign in to Commy</h2>
+      <p>A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
+      <div class="signin-start" id="signin-start">
+        <button class="btn-primary signin-go" id="signin-go">Sign in with your browser</button>
+        <div class="signin-note">No account yet? You can create one on the same page.</div>
+      </div>
+      <div class="signin-wait hidden" id="signin-wait">
+        <div class="signin-label">Check that your browser shows this code, then approve it</div>
+        <div class="signin-code" id="signin-code"></div>
+        <div class="signin-status"><span class="signin-spinner"></span>Waiting for approval</div>
+        <div class="signin-links">
+          <button class="btn-link" id="signin-reopen">Open the page again</button>
+          <button class="btn-link" id="signin-cancel">Cancel</button>
+        </div>
+      </div>
+      <div class="signin-error hidden" id="signin-error"></div>
+      <label class="signin-server">Account server
+        <select id="signin-server-select" class="compact-select">
+          <option value="default">commy.chat (free Commy service)</option>
+          <option value="custom">A self-hosted server...</option>
+        </select>
+      </label>
+      <div class="signin-server-edit hidden" id="signin-server-edit">
+        <input id="signin-server-input" type="text" autocomplete="off" spellcheck="false" placeholder="chat.example.com" />
+        <button class="btn-secondary btn-small" id="signin-server-save">Use</button>
+      </div>
+      <div class="signin-server-note" id="signin-server-note">Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the sign-in page.</div>
+    </div>
+
+    <div class="modal hidden" id="modal-username">
       <h2>Welcome to Commy</h2>
-      <p>Pick a username to get started. Your identity lives on this device; no account required for P2P chat.</p>
+      <p>Pick the username people will see. You can set a display name and avatar later.</p>
       <input id="username-input" type="text" maxlength="32" placeholder="Username" />
       <button class="btn-primary" id="username-save">Continue</button>
     </div>
@@ -472,6 +503,7 @@
       <div class="settings-nav-inner">
         <div class="settings-nav-group">User Settings</div>
         <button class="settings-tab" data-tab="account">My Account</button>
+        <button class="settings-tab" data-tab="commy-account">Commy Account</button>
         <div class="settings-nav-group">App Settings</div>
         <button class="settings-tab" data-tab="voice">Voice &amp; Audio</button>
         <button class="settings-tab" data-tab="appearance">Appearance</button>
@@ -521,6 +553,22 @@
               </div>
             </div>
           </div>
+        </section>
+
+        <section class="settings-page" data-page="commy-account">
+          <h1>Commy Account</h1>
+          <div class="settings-card account-card">
+            <div class="account-line">
+              <div>
+                <div class="setting-title" id="acct-name"></div>
+                <div class="setting-sub" id="acct-email"></div>
+              </div>
+              <button class="btn-secondary btn-small" id="acct-sign-out">Sign Out</button>
+            </div>
+            <div class="setting-sub" id="acct-server-line"></div>
+            <div class="setting-sub" id="acct-device-line"></div>
+          </div>
+          <div class="setting-sub">Signing out keeps your chats on this device, but you need to sign in again to join or create servers. To use a different account server, sign out and choose it on the sign-in screen.</div>
         </section>
 
         <section class="settings-page" data-page="voice">

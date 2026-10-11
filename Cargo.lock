@@ -881,6 +881,7 @@ dependencies = [
  "commy-media",
  "commy-net",
  "data-encoding",
+ "ed25519-dalek",
  "image 0.25.10",
  "mime_guess",
  "open",

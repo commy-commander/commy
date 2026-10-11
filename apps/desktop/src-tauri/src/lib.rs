@@ -2,6 +2,7 @@
 //! to the core model, relays remote gossip events to the webview, and
 //! orchestrates voice, screen share, file transfer, and persistence.
 
+mod account;
 mod activity;
 mod afk;
 mod expressions;
@@ -94,6 +95,7 @@ async fn create_server(
         return Err("server name must be 1 to 100 characters".into());
     }
     let profile = current_profile(&app)?;
+    account::require_account(&app)?;
 
     let server = commy_core::Server::new(name.clone(), profile.id);
     let server_id = server.id;
@@ -131,6 +133,7 @@ async fn join_server(
     handle: tauri::AppHandle,
     ticket: String,
 ) -> CmdResult<ServerSummary> {
+    account::require_account(&app)?;
     let ticket = ServerTicket::decode(&ticket).map_err(err_to_string)?;
     let profile = current_profile(&app)?;
 
@@ -4414,6 +4417,7 @@ pub fn run() {
                 if let Some(dms) = persist::load_dms(&dir) {
                     *app.dms.lock().unwrap() = dms;
                 }
+                *app.account.lock().unwrap() = account::load(&dir);
                 if let Some(creds) = persist::load_integrations(&dir) {
                     *app.igdb_creds.lock().unwrap() = creds;
                 }
@@ -4557,6 +4561,7 @@ pub fn run() {
                         tauri::async_runtime::spawn(run_afk_watchdog(handle.clone()));
                         tauri::async_runtime::spawn(run_status_expiry(handle.clone()));
                         tauri::async_runtime::spawn(run_event_reminders(handle.clone()));
+                        tauri::async_runtime::spawn(account::verify_saved_session(handle.clone()));
                         tauri::async_runtime::spawn(run_share_heartbeat(handle.clone()));
                         tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
                         tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
@@ -4570,6 +4575,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            account::account_status,
+            account::set_account_server,
+            account::account_begin_sign_in,
+            account::account_cancel_sign_in,
+            account::account_sign_out,
             voice_stats,
             set_server_afk_timeout,
             list_friends,
