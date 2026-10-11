@@ -1,0 +1,21 @@
+{
+  "name": "commy-auth",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "Self-hostable Better Auth server for Commy accounts and device linking",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "better-auth": "1.7.7",
+    "nodemailer": "10.1.0",
+    "pg": "8.23.1",
+    "zod": "4.6.5"
+  }
+}

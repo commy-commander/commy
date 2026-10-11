@@ -1,0 +1,245 @@
+//! On-disk persistence. Everything lives under the app data dir:
+//!
+//! ```text
+//! <data>/profile.json          our identity
+//! <data>/voice.json            voice settings
+//! <data>/servers/<id>.json     one Snapshot per joined server
+//! ```
+//!
+//! Writes go to a temp file first and are renamed into place so a
+//! crash mid-write never corrupts state.
+
+use crate::state::VoiceSettings;
+use anyhow::{Context, Result};
+use commy_core::{DmStore, ServerId, ServerState, Snapshot, UserProfile};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_vec_pretty(value)?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &json)?;
+    // Windows rename fails if the target exists.
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    fs::rename(&tmp, path).context("atomic rename failed")?;
+    Ok(())
+}
+
+fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
+    let bytes = fs::read(path).ok()?;
+    match serde_json::from_slice(&bytes) {
+        Ok(value) => Some(value),
+        Err(e) => {
+            tracing::warn!("ignoring corrupt state file {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+pub fn save_profile(dir: &Path, profile: &UserProfile) -> Result<()> {
+    write_json(&dir.join("profile.json"), profile)
+}
+
+pub fn load_profile(dir: &Path) -> Option<UserProfile> {
+    read_json(&dir.join("profile.json"))
+}
+
+pub fn save_voice(dir: &Path, voice: &VoiceSettings) -> Result<()> {
+    write_json(&dir.join("voice.json"), voice)
+}
+
+pub fn load_voice(dir: &Path) -> Option<VoiceSettings> {
+    read_json(&dir.join("voice.json"))
+}
+
+pub fn save_dms(dir: &Path, dms: &DmStore) -> Result<()> {
+    write_json(&dir.join("dms.json"), dms)
+}
+
+pub fn load_dms(dir: &Path) -> Option<DmStore> {
+    read_json(&dir.join("dms.json"))
+}
+
+pub fn save_integrations(dir: &Path, creds: &crate::igdb::IgdbCredentials) -> Result<()> {
+    write_json(&dir.join("integrations.json"), creds)
+}
+
+pub fn load_integrations(dir: &Path) -> Option<crate::igdb::IgdbCredentials> {
+    read_json(&dir.join("integrations.json"))
+}
+
+pub fn save_safety(dir: &Path, safety: &crate::safety::SafetySettings) -> Result<()> {
+    write_json(&dir.join("safety.json"), safety)
+}
+
+pub fn load_safety(dir: &Path) -> Option<crate::safety::SafetySettings> {
+    read_json(&dir.join("safety.json"))
+}
+
+/// Loads the node secret key, creating one on first launch. The key
+/// is the device's P2P identity; losing it breaks stored invites and
+/// DM addresses that peers hold.
+pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
+    let path = dir.join("node.key");
+    if let Ok(hex) = fs::read_to_string(&path) {
+        if let Ok(bytes) = data_encoding::HEXLOWER.decode(hex.trim().as_bytes()) {
+            if let Ok(key) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                return Some(key);
+            }
+        }
+        tracing::warn!("node.key is corrupt; generating a new identity");
+    }
+    let key = commy_net::CommyNode::generate_secret();
+    fs::create_dir_all(dir).ok()?;
+    fs::write(&path, data_encoding::HEXLOWER.encode(&key)).ok()?;
+    Some(key)
+}
+
+/// Invite tickets, kept so joined servers can be rejoined after a
+/// restart (the ticket holds the topic and bootstrap addresses).
+pub fn save_invites(dir: &Path, invites: &HashMap<ServerId, String>) -> Result<()> {
+    write_json(&dir.join("invites.json"), invites)
+}
+
+pub fn load_invites(dir: &Path) -> HashMap<ServerId, String> {
+    read_json(&dir.join("invites.json")).unwrap_or_default()
+}
+
+fn server_path(dir: &Path, id: ServerId) -> PathBuf {
+    dir.join("servers").join(format!("{id}.json"))
+}
+
+pub fn save_server(dir: &Path, state: &ServerState) -> Result<()> {
+    write_json(&server_path(dir, state.server.id), &state.snapshot())
+}
+
+pub fn delete_server(dir: &Path, id: ServerId) -> Result<()> {
+    let path = server_path(dir, id);
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+pub fn load_servers(dir: &Path) -> Vec<ServerState> {
+    let servers_dir = dir.join("servers");
+    let Ok(entries) = fs::read_dir(&servers_dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
+        .filter_map(|e| read_json::<Snapshot>(&e.path()))
+        .map(ServerState::from_snapshot)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use commy_core::{Message, Server, ServerEvent, UserId};
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join("commy-persist-tests")
+            .join(format!("{tag}-{}", uuid_like()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn uuid_like() -> String {
+        format!("{:x}", std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos())
+    }
+
+    #[test]
+    fn profile_roundtrip() {
+        let dir = temp_dir("profile");
+        assert!(load_profile(&dir).is_none());
+        let profile = UserProfile::new("commy");
+        save_profile(&dir, &profile).unwrap();
+        assert_eq!(load_profile(&dir).unwrap(), profile);
+        // Overwrite works (tmp+rename path with existing target).
+        let mut updated = profile.clone();
+        updated.custom_status = Some("building".to_string());
+        save_profile(&dir, &updated).unwrap();
+        assert_eq!(load_profile(&dir).unwrap(), updated);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn server_roundtrip_with_messages() {
+        let dir = temp_dir("server");
+        let owner = UserId::new();
+        let server = Server::new("persisted", owner);
+        let channel = server.channels[0].id;
+        let mut state = ServerState::new(server);
+        for i in 0..3 {
+            state
+                .apply(ServerEvent::MessageCreate {
+                    message: Message::new(channel, owner, format!("m{i}")),
+                })
+                .unwrap();
+        }
+        save_server(&dir, &state).unwrap();
+
+        let loaded = load_servers(&dir);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].server.id, state.server.id);
+        assert_eq!(loaded[0].messages(channel).len(), 3);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn corrupt_files_are_skipped() {
+        let dir = temp_dir("corrupt");
+        fs::create_dir_all(dir.join("servers")).unwrap();
+        fs::write(dir.join("servers").join("bad.json"), b"{not json").unwrap();
+        assert!(load_servers(&dir).is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn node_key_is_stable_across_loads() {
+        let dir = temp_dir("nodekey");
+        let first = load_or_create_node_key(&dir).unwrap();
+        let second = load_or_create_node_key(&dir).unwrap();
+        assert_eq!(first, second);
+        // Corrupt key falls back to a fresh identity.
+        fs::write(dir.join("node.key"), "not hex").unwrap();
+        let third = load_or_create_node_key(&dir).unwrap();
+        assert_ne!(first, third);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dm_store_roundtrip() {
+        let dir = temp_dir("dms");
+        assert!(load_dms(&dir).is_none());
+        let mut dms = DmStore::new();
+        let (me, them) = (UserId::new(), UserId::new());
+        dms.insert(them, commy_core::DmMessage::new(me, them, "hello"));
+        save_dms(&dir, &dms).unwrap();
+        let loaded = load_dms(&dir).unwrap();
+        assert_eq!(loaded.conversation(them).len(), 1);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn delete_server_removes_file() {
+        let dir = temp_dir("delete");
+        let state = ServerState::new(Server::new("gone", UserId::new()));
+        save_server(&dir, &state).unwrap();
+        assert_eq!(load_servers(&dir).len(), 1);
+        delete_server(&dir, state.server.id).unwrap();
+        assert!(load_servers(&dir).is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+}

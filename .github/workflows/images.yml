@@ -1,0 +1,126 @@
+# Builds the web and auth server images and publishes them to GHCR.
+#   push to main   -> :dev and :sha-<commit>   (dev environment updates itself)
+#   tag v1.2.3     -> :1.2.3 and :staging       (staging updates itself)
+#   pull request   -> build only
+# Production is updated by the "Promote images" workflow. See deploy/DEPLOYING.md.
+
+name: Server images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: ["web/**", "auth/**", "deploy/**", ".github/workflows/images.yml"]
+  pull_request:
+    paths: ["web/**", "auth/**", "deploy/**", ".github/workflows/images.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent-tests:
+    name: Deploy agent tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -s sh deploy/agent/commy-agent.sh deploy/setup-vps.sh
+      - name: Unit tests
+        run: sh deploy/agent/commy-agent.test.sh
+      - name: Integration tests (real Docker, local registry)
+        run: sh deploy/agent/integration.test.sh
+
+  stack-e2e:
+    name: VPS setup end to end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build images into a local registry
+        run: |
+          docker run -d --name registry -p 5000:5000 registry:2
+          for svc in web auth; do
+            docker build -q -t "localhost:5000/commy-$svc:candidate" "$svc"
+            for env in prod staging dev; do
+              docker tag "localhost:5000/commy-$svc:candidate" "localhost:5000/commy-$svc:$env"
+              docker push -q "localhost:5000/commy-$svc:$env"
+            done
+          done
+
+      - name: Run setup-vps.sh
+        run: |
+          for env in prod staging dev; do sudo cp -r "$GITHUB_WORKSPACE" "/srv/commy-$env"; done
+          sudo COMMY_IMAGES=localhost:5000 sh deploy/setup-vps.sh commy.localhost ci@example.org
+
+      - name: Every environment answers through the edge proxy
+        run: |
+          check() {
+            host="$1"; path="$2"
+            for _ in $(seq 1 60); do
+              code="$(curl -sk -o /dev/null -w '%{http_code}' --resolve "$host:443:127.0.0.1" "https://$host$path" || true)"
+              [ "$code" = 200 ] && { echo "ok   - https://$host$path"; return 0; }
+              sleep 5
+            done
+            echo "FAIL - https://$host$path last returned $code"; return 1
+          }
+          status=0
+          for host in commy.localhost staging.commy.localhost dev.commy.localhost; do
+            check "$host" / || status=1
+            check "$host" /.well-known/commy-auth.json || status=1
+          done
+          robots="$(curl -sk -D - -o /dev/null --resolve staging.commy.localhost:443:127.0.0.1 https://staging.commy.localhost/ | grep -i x-robots-tag || true)"
+          [ -n "$robots" ] && echo "ok   - staging is noindex" || { echo "FAIL - staging is missing X-Robots-Tag"; status=1; }
+          exit $status
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          for env in prod staging dev; do
+            (cd "/srv/commy-$env/deploy" && sudo docker compose ps -a && sudo docker compose logs --tail 40)
+          done
+          (cd /srv/commy-prod/deploy/edge && sudo docker compose logs --tail 40)
+
+  image:
+    name: ${{ matrix.service }} image
+    needs: [agent-tests, stack-e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [web, auth]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/commy-${{ matrix.service }}
+          tags: |
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=sha-,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=raw,value=staging,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-test') }}
+          flavor: latest=false
+          labels: |
+            org.opencontainers.image.licenses=AGPL-3.0-only
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.service }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}

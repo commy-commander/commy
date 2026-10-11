@@ -1,0 +1,1228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Commy</title>
+  <link rel="icon" href="logo.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- Server rail -->
+    <nav class="rail" id="rail">
+      <button class="rail-btn rail-home" id="home-btn" title="Direct Messages">
+        <img src="logo.png" alt="Commy" width="48" height="48" draggable="false" />
+      </button>
+      <div class="rail-divider"></div>
+      <div id="server-list" class="server-list"></div>
+      <button class="rail-btn rail-add" id="add-server-btn" title="Add a Server">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
+      </button>
+    </nav>
+
+    <!-- Channel sidebar -->
+    <aside class="sidebar">
+      <header class="sidebar-header" id="server-name-header">
+        <div class="sidebar-banner" id="sidebar-banner"></div>
+        <span id="server-name">Commy</span>
+        <input id="dm-search" class="dm-search hidden" type="text" autocomplete="off" placeholder="Find or start a conversation" />
+        <span class="header-btns">
+          <button class="icon-btn" id="invite-btn" title="Invite People">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M15 8a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4zM5 9V6H3v3H0v2h3v3h2v-3h3V9z"/></svg>
+          </button>
+          <button class="icon-btn" id="server-settings-btn" title="Server Settings">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19.4 13a7.9 7.9 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.9 7.9 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.9 7.9 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.9 7.9 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.9 7.9 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.9 7.9 0 0 0 1.7-1l2.4 1 2-3.4zM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5z"/></svg>
+          </button>
+        </span>
+      </header>
+      <div class="channel-scroll" id="channel-list"></div>
+
+      <!-- Voice connection and screen share panel -->
+      <section class="voice-panel hidden" id="voice-panel">
+        <div class="vp-live hidden" id="vp-live">
+          <div class="vp-live-head">
+            <span class="live-badge">LIVE</span>
+            <span class="vp-live-title" id="vp-live-title">Sharing your screen</span>
+          </div>
+          <button class="vp-preview" id="vp-preview" title="Open a larger preview">
+            <img id="vp-preview-img" alt="" />
+            <span class="vp-preview-empty" id="vp-preview-empty">Starting capture</span>
+            <span class="vp-viewers" id="vp-viewers"></span>
+          </button>
+          <div class="vp-live-source" id="vp-live-source"></div>
+          <div class="vp-live-actions">
+            <button class="vp-pill" id="vp-change-source" title="Pick a different monitor or window">Switch</button>
+            <button class="vp-pill danger" id="vp-stop-share">End Stream</button>
+          </div>
+        </div>
+        <div class="vp-watch hidden" id="vp-watch">
+          <span class="vp-watch-label" id="vp-watch-label"></span>
+          <button class="vp-pill" id="vp-stop-watch">Stop Watching</button>
+        </div>
+        <div class="vp-streams" id="vp-streams"></div>
+        <div class="vp-conn">
+          <div class="vp-conn-meta" id="vp-conn-meta" title="Go to voice channel">
+            <div class="vp-status"><span class="vp-signal" id="vp-signal"></span>Voice Connected</div>
+            <div class="vp-where" id="vp-where"></div>
+          </div>
+          <button class="icon-btn" id="vp-nc" title="Noise Cancellation"></button>
+          <button class="icon-btn vp-hangup" id="vp-disconnect" title="Disconnect"></button>
+        </div>
+        <button class="vp-game-share hidden" id="vp-game-share"></button>
+        <div class="vp-actions">
+          <button class="vp-action" id="vp-camera" title="Turn On Camera"><span class="vp-action-icon" id="vp-camera-icon"></span><span class="vp-action-label" id="vp-camera-label">Camera</span></button>
+          <button class="vp-action" id="vp-share" title="Share Your Screen"><span class="vp-action-icon" id="vp-share-icon"></span><span class="vp-action-label" id="vp-share-label">Share Screen</span></button>
+          <button class="vp-action" id="vp-soundboard" title="Soundboard"></button>
+        </div>
+      </section>
+
+      <!-- User panel -->
+      <footer class="user-panel">
+        <button class="user-chip" id="user-chip" title="Set status">
+          <span class="avatar" id="me-avatar">?</span>
+          <span class="user-meta">
+            <span class="user-name" id="me-name">Not set</span>
+            <span class="user-sub" id="me-status">offline</span>
+          </span>
+        </button>
+        <div class="user-actions">
+          <div class="split-btn">
+          <button class="icon-btn" id="mute-btn" title="Mute">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z"/></svg>
+          </button>
+          <button class="caret-btn" id="mute-caret" title="Input Options"></button>
+          </div>
+          <div class="split-btn">
+          <button class="icon-btn" id="deafen-btn" title="Deafen">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h3a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z"/></svg>
+          </button>
+          <button class="caret-btn" id="deafen-caret" title="Output Options"></button>
+          </div>
+          <button class="icon-btn" id="settings-btn" title="Settings">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19.4 13a7.9 7.9 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.9 7.9 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.9 7.9 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.9 7.9 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.9 7.9 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.9 7.9 0 0 0 1.7-1l2.4 1 2-3.4zM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5z"/></svg>
+          </button>
+        </div>
+      </footer>
+    </aside>
+
+    <!-- Main chat -->
+    <main class="main">
+      <header class="chat-header">
+        <span class="hash" id="chat-hash">#</span>
+        <span id="channel-name">welcome</span>
+        <span class="presence-dot inline hidden" id="chat-presence"></span>
+        <span class="topic" id="channel-topic"></span>
+        <div class="header-actions">
+          <button class="icon-btn hidden" id="dm-profile-btn" title="Hide User Profile">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"/></svg>
+          </button>
+          <button class="icon-btn hidden" id="share-btn" title="Share Your Screen">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 3H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h5v2H7v2h10v-2h-2v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 13H4V5h16zm-9-2 5-3.5L11 7z"/></svg>
+          </button>
+        </div>
+      </header>
+      <div class="stage hidden" id="video-pane">
+        <div class="stage-view" id="stage-view">
+          <img id="video-frame" alt="Shared screen" />
+          <div class="stage-wait" id="stage-wait">
+            <div class="spinner"></div>
+            <span>Connecting to stream</span>
+          </div>
+          <div class="stage-top">
+            <span class="live-badge">LIVE</span>
+            <span class="stage-label" id="video-label">Screen</span>
+            <span class="stage-stats" id="stage-stats"></span>
+          </div>
+          <div class="stage-controls">
+            <button class="stage-btn" id="stage-focus" title="Focus Mode"></button>
+            <button class="stage-btn" id="stage-fullscreen" title="Fullscreen"></button>
+            <button class="stage-btn danger" id="video-close" title="Stop Watching"></button>
+          </div>
+        </div>
+      </div>
+      <div class="cam-grid hidden" id="cam-grid"></div>
+      <div class="messages" id="messages"></div>
+      <div class="emoji-picker hidden" id="emoji-picker">
+        <input id="emoji-search" type="text" placeholder="Search emojis" autocomplete="off" />
+        <div class="emoji-grid" id="emoji-grid"></div>
+      </div>
+      <div class="reply-bar hidden" id="reply-bar">
+        <span>Replying to <strong id="reply-bar-name"></strong></span>
+        <button class="icon-btn" id="reply-bar-cancel" title="Cancel Reply"></button>
+      </div>
+      <div class="gif-picker hidden" id="gif-picker">
+        <input id="gif-search" type="text" autocomplete="off" placeholder="Search GIFs" />
+        <div class="gif-grid" id="gif-grid"></div>
+        <div class="gif-attrib" id="gif-attrib"></div>
+      </div>
+      <div class="dm-request-bar rules-gate hidden" id="rules-gate">
+        <div class="dm-request-text">
+          <strong>Accept the rules to start chatting</strong>
+          <span>This server asks new members to read its rules before posting.</span>
+        </div>
+        <div class="dm-request-actions">
+          <button class="btn-primary btn-small" id="rules-gate-open">Read Rules</button>
+        </div>
+      </div>
+      <div class="dm-request-bar hidden" id="dm-request-bar">
+        <div class="dm-request-text">
+          <strong id="dm-request-title">Message request</strong>
+          <span id="dm-request-sub">They are not in your conversations yet. Accept to reply, or decline to delete this request.</span>
+        </div>
+        <div class="dm-request-actions">
+          <button class="btn-link danger" id="dm-request-block">Block</button>
+          <button class="btn-secondary btn-small" id="dm-request-decline">Decline</button>
+          <button class="btn-primary btn-small" id="dm-request-accept">Accept</button>
+        </div>
+      </div>
+      <div class="composer">
+        <button class="icon-btn composer-attach" id="attach-btn" title="Attach File">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4z"/></svg>
+        </button>
+        <input id="message-input" type="text" autocomplete="off" placeholder="Message #welcome" />
+        <button class="icon-btn gif-btn hidden" id="gif-btn" title="GIFs">GIF</button>
+        <button class="icon-btn" id="emoji-btn" title="Emoji">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zM8.5 11A1.5 1.5 0 1 0 7 9.5 1.5 1.5 0 0 0 8.5 11zm7 0A1.5 1.5 0 1 0 14 9.5 1.5 1.5 0 0 0 15.5 11zm-8 3a5 5 0 0 0 9 0z"/></svg>
+        </button>
+      </div>
+    </main>
+
+    <!-- Member list -->
+    <aside class="members" id="member-list"></aside>
+
+    <!-- Thread: a message and its replies -->
+    <aside class="thread-panel hidden" id="thread-panel">
+      <header class="thread-head">
+        <span class="thread-head-icon" id="thread-head-icon"></span>
+        <span class="thread-title" id="thread-title">Thread</span>
+        <button class="icon-btn" id="thread-close" title="Close Thread"></button>
+      </header>
+      <div class="thread-messages" id="thread-messages"></div>
+      <div class="composer thread-composer">
+        <input id="thread-input" type="text" autocomplete="off" placeholder="Reply in thread" />
+      </div>
+    </aside>
+
+    <!-- DM partner profile -->
+    <aside class="dm-profile hidden" id="dm-profile">
+      <div class="dm-profile-banner" id="dm-profile-banner"></div>
+      <div class="dm-profile-head">
+        <div class="avatar avatar-lg" id="dm-profile-avatar">?<span class="presence-dot" id="dm-profile-presence"></span></div>
+      </div>
+      <div class="dm-profile-card">
+        <div class="dm-profile-name" id="dm-profile-name"></div>
+        <div class="dm-profile-status" id="dm-profile-status"></div>
+        <div class="dm-profile-divider"></div>
+        <div class="dm-profile-label" id="dm-profile-mutual-label">Mutual Servers</div>
+        <div class="dm-profile-servers" id="dm-profile-servers"></div>
+        <div class="dm-profile-divider"></div>
+        <button class="dm-profile-action danger" id="dm-profile-block">Block</button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Modals -->
+  <div class="modal-backdrop hidden" id="modal-backdrop">
+    <div class="modal" id="modal-username">
+      <h2>Welcome to Commy</h2>
+      <p>Pick a username to get started. Your identity lives on this device; no account required for P2P chat.</p>
+      <input id="username-input" type="text" maxlength="32" placeholder="Username" />
+      <button class="btn-primary" id="username-save">Continue</button>
+    </div>
+
+    <div class="modal hidden" id="modal-add-server">
+      <h2>Add a Server</h2>
+      <p>Create your own server, or join a friend's with an invite.</p>
+      <input id="create-name-input" type="text" maxlength="100" placeholder="New server name" />
+      <button class="btn-primary" id="create-server-save">Create Server</button>
+      <div class="modal-divider">OR</div>
+      <input id="join-ticket-input" type="text" placeholder="Paste an invite link or commy... invite" />
+      <button class="btn-secondary" id="join-server-save">Join Server</button>
+    </div>
+
+    <div class="modal hidden" id="modal-invite">
+      <h2>Invite People</h2>
+      <p>Anyone with this invite can join while you are online.</p>
+      <textarea id="invite-text" readonly rows="4"></textarea>
+      <button class="btn-primary" id="invite-copy">Copy Invite</button>
+      <button class="btn-secondary" id="invite-link-copy">Copy Invite Link</button>
+    </div>
+
+    <div class="modal hidden" id="modal-invite-link">
+      <h2>Join <span id="invite-link-name"></span>?</h2>
+      <p id="invite-link-host"></p>
+      <div class="invite-link-warning hidden" id="invite-link-warning" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="invite-link-cancel">Cancel</button>
+        <button class="btn-primary" id="invite-link-join">Join Server</button>
+      </div>
+    </div>
+
+
+    <div class="modal hidden" id="modal-leave-server">
+      <h2 id="leave-server-title">Leave Server</h2>
+      <p id="leave-server-body">Are you sure you want to leave? You will not be able to rejoin unless you are invited again, and your copy of its history is removed from this device.</p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="leave-server-cancel">Cancel</button>
+        <button class="btn-danger" id="leave-server-go">Leave Server</button>
+      </div>
+    </div>
+
+    <div class="modal modal-wide hidden" id="modal-rules">
+      <h2 id="rules-title">Server Rules</h2>
+      <div class="rules-body" id="rules-body"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="rules-close">Close</button>
+        <button class="btn-primary hidden" id="rules-accept">I Have Read and Agree</button>
+      </div>
+    </div>
+
+    <div class="modal modal-wide hidden" id="modal-event">
+      <h2 id="event-editor-title">Create Event</h2>
+      <label class="field-label">Event Topic
+        <input id="event-title" type="text" maxlength="100" autocomplete="off" placeholder="What's happening?" />
+      </label>
+      <div class="field-row">
+        <label class="field-label">Starts
+          <input id="event-start" type="datetime-local" />
+        </label>
+        <label class="field-label">Ends (optional)
+          <input id="event-end" type="datetime-local" />
+        </label>
+      </div>
+      <label class="field-label">Voice Channel (optional)
+        <select id="event-channel" class="compact-select"></select>
+      </label>
+      <label class="field-label">Description
+        <textarea id="event-description" rows="4" maxlength="1500" placeholder="Tell people what to expect"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="event-cancel">Cancel</button>
+        <button class="btn-primary" id="event-save">Save Event</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-choose-roles">
+      <h2>Choose Roles</h2>
+      <p>Pick the roles that fit you. They show next to your name in this server, and you can change them any time from Roles at the top of the channel list.</p>
+      <div class="role-pick-list" id="role-pick-list"></div>
+      <div class="modal-actions">
+        <button class="btn-primary" id="choose-roles-done">Continue</button>
+      </div>
+    </div>
+
+    <div class="modal modal-profile hidden" id="modal-profile">
+      <div class="fp-banner" id="fp-banner"></div>
+      <div class="fp-head">
+        <div class="avatar avatar-xl" id="fp-avatar"></div>
+        <div class="fp-buttons" id="fp-buttons"></div>
+      </div>
+      <div class="fp-body">
+        <div class="fp-name-row"><span class="fp-name" id="fp-name"></span></div>
+        <div class="fp-username" id="fp-username"></div>
+        <div class="fp-status" id="fp-status"></div>
+        <div class="fp-section hidden" id="fp-about-wrap">
+          <div class="mc-label">About Me</div>
+          <div class="fp-about" id="fp-about"></div>
+        </div>
+        <div class="fp-section">
+          <div class="mc-label" id="fp-mutual-label">Mutual Servers</div>
+          <div class="fp-list" id="fp-servers"></div>
+        </div>
+        <div class="fp-section hidden" id="fp-friend-wrap">
+          <div class="mc-label">Friendship</div>
+          <div class="fp-friend" id="fp-friend"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-block">
+      <h2 id="block-title">Block</h2>
+      <p id="block-body">They will not be able to send you direct messages, and their messages in servers will be collapsed for you. They will not be told.</p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="block-cancel">Cancel</button>
+        <button class="btn-danger" id="block-go">Block</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-report">
+      <h2 id="report-title">Report</h2>
+      <p>Your report goes privately to the server owner. They will see who sent it.</p>
+      <label class="field-label hidden" id="report-server-row">Send to the owner of
+        <select id="report-server" class="compact-select"></select>
+      </label>
+      <div class="msg delete-preview hidden" id="report-preview"></div>
+      <div class="report-reasons" id="report-reasons">
+        <label><input type="radio" name="report-reason" value="spam" /> <span>Spam or scams</span></label>
+        <label><input type="radio" name="report-reason" value="harassment" /> <span>Harassment or hate</span></label>
+        <label><input type="radio" name="report-reason" value="inappropriate" /> <span>Inappropriate content</span></label>
+        <label><input type="radio" name="report-reason" value="impersonation" /> <span>Impersonation</span></label>
+        <label><input type="radio" name="report-reason" value="other" /> <span>Something else</span></label>
+      </div>
+      <textarea id="report-note" maxlength="500" rows="3" placeholder="Anything the owner should know (optional)"></textarea>
+      <label class="report-also-block"><input type="checkbox" id="report-block" /> <span>Also block this person</span></label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="report-cancel">Cancel</button>
+        <button class="btn-danger" id="report-go">Send Report</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-rename-folder">
+      <h2>Rename Folder</h2>
+      <input id="rename-folder-input" type="text" maxlength="32" placeholder="Folder name" />
+      <div class="modal-actions">
+        <button class="btn-secondary" id="rename-folder-cancel">Cancel</button>
+        <button class="btn-primary" id="rename-folder-save">Save</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-delete-message">
+      <h2>Delete Message</h2>
+      <p>Are you sure you want to delete this message? It is removed for everyone.</p>
+      <div class="msg delete-preview" id="delete-message-preview"></div>
+      <div class="setting-sub hidden" id="delete-message-mod">You are deleting someone else's message as a moderator.</div>
+      <div class="setting-sub">Tip: hold Shift when clicking delete to skip this.</div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="delete-message-cancel">Cancel</button>
+        <button class="btn-danger" id="delete-message-go">Delete</button>
+      </div>
+    </div>
+
+    <div class="modal modal-danger hidden" id="modal-delete-channel">
+      <h2>Delete Channel</h2>
+      <div class="danger-callout">
+        <strong id="delete-channel-title">Delete #channel?</strong>
+        <span>Every message in it is removed for all members. This cannot be undone.</span>
+      </div>
+      <label class="field-label"><span class="confirm-prompt">Type <span class="confirm-name" id="delete-channel-name"></span> to confirm</span>
+        <input id="delete-channel-confirm" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="delete-channel-cancel">Cancel</button>
+        <button class="btn-danger" id="delete-channel-go" disabled>Delete Channel</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-create-channel">
+      <h2>Create Channel</h2>
+      <div class="field-label">Channel Type</div>
+      <div class="kind-picker" id="create-channel-kinds">
+        <button class="kind-option" data-kind="text">
+          <span class="kind-icon">#</span>
+          <span class="kind-text"><strong>Text</strong><span>Send messages, images, GIFs, emoji and files</span></span>
+          <span class="kind-radio"></span>
+        </button>
+        <button class="kind-option" data-kind="voice">
+          <span class="kind-icon" id="create-voice-icon"></span>
+          <span class="kind-text"><strong>Voice</strong><span>Hang out together with voice and screen share</span></span>
+          <span class="kind-radio"></span>
+        </button>
+        <button class="kind-option" data-kind="category">
+          <span class="kind-icon" id="create-category-icon"></span>
+          <span class="kind-text"><strong>Category</strong><span>A collapsible section that groups channels</span></span>
+          <span class="kind-radio"></span>
+        </button>
+      </div>
+      <label class="field-label">Channel Name
+        <span class="prefixed-input">
+          <span class="input-prefix" id="create-channel-prefix">#</span>
+          <input id="create-channel-name" type="text" maxlength="50" placeholder="new-channel" autocomplete="off" />
+        </span>
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="create-channel-cancel">Cancel</button>
+        <button class="btn-primary" id="create-channel-save" disabled>Create Channel</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-new-dm">
+      <h2>New Message</h2>
+      <p>Pick someone you share a server with.</p>
+      <input id="new-dm-search" type="text" autocomplete="off" placeholder="Type a name" />
+      <div class="people-list" id="new-dm-list"></div>
+    </div>
+
+    <div class="modal modal-wide hidden" id="modal-share">
+      <h2>Share Your Screen</h2>
+      <div class="share-tabs" id="share-tabs">
+        <button class="share-tab active" data-kind="monitor">Screens</button>
+        <button class="share-tab" data-kind="window">Applications</button>
+      </div>
+      <div id="share-source-list" class="share-grid"></div>
+      <div class="share-quality">
+        <div class="share-quality-label">Stream Quality</div>
+        <div class="segmented" id="share-quality">
+          <button data-q="smooth"><strong>Smooth</strong><span>720p, up to 60 fps (about 50 live)</span></button>
+          <button data-q="balanced"><strong>Balanced</strong><span>900p at 30 fps</span></button>
+          <button data-q="sharp"><strong>Sharp</strong><span>1080p at 15 fps, crisp text</span></button>
+        </div>
+        <div class="setting-sub" id="share-quality-hint"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="share-cancel">Cancel</button>
+        <button class="btn-primary" id="share-go" disabled>Go Live</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- User settings (full screen) -->
+  <div class="settings-layer hidden" id="user-settings" role="dialog" aria-label="User Settings">
+    <nav class="settings-nav">
+      <div class="settings-nav-inner">
+        <div class="settings-nav-group">User Settings</div>
+        <button class="settings-tab" data-tab="account">My Account</button>
+        <div class="settings-nav-group">App Settings</div>
+        <button class="settings-tab" data-tab="voice">Voice &amp; Audio</button>
+        <button class="settings-tab" data-tab="appearance">Appearance</button>
+        <button class="settings-tab" data-tab="privacy">Privacy &amp; Safety</button>
+        <button class="settings-tab" data-tab="overlay">Game Overlay</button>
+        <button class="settings-tab" data-tab="integrations">Integrations</button>
+        <button class="settings-tab" data-tab="notifications">Notifications</button>
+        <button class="settings-tab" data-tab="gifs">GIFs</button>
+        <div class="settings-nav-sep"></div>
+        <div class="settings-version">Commy, free and peer to peer</div>
+      </div>
+    </nav>
+    <div class="settings-content">
+      <div class="settings-content-inner">
+        <section class="settings-page" data-page="account">
+          <h1>My Account</h1>
+          <div class="profile-card">
+            <div class="profile-banner"></div>
+            <div class="profile-body">
+              <div class="avatar avatar-xl" id="account-avatar">?</div>
+              <div class="profile-names">
+                <div class="profile-display" id="account-preview-name">Not set</div>
+                <div class="profile-username" id="account-username"></div>
+              </div>
+              <button class="btn-secondary btn-small profile-avatar-btn" id="account-avatar-btn">Change Avatar</button>
+            </div>
+            <div class="profile-fields">
+              <label class="field-label">Display Name
+                <input id="account-display-name" type="text" maxlength="64" placeholder="How others see you" />
+              </label>
+              <label class="field-label">Custom Status
+                <input id="account-status" type="text" maxlength="64" placeholder="What are you up to?" />
+              </label>
+              <label class="field-label">Presence
+                <select id="account-presence">
+                  <option value="online">Online</option>
+                  <option value="idle">Idle</option>
+                  <option value="do_not_disturb">Do Not Disturb</option>
+                  <option value="invisible">Invisible</option>
+                </select>
+              </label>
+              <label class="field-label">About Me
+                <textarea id="account-about" rows="3" maxlength="190" placeholder="A line or two about you, shown on your profile"></textarea>
+              </label>
+              <div class="form-actions">
+                <button class="btn-primary" id="account-save">Save Changes</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="voice">
+          <h1>Voice &amp; Audio</h1>
+          <div class="settings-card device-grid">
+            <label class="field-label">Input Device
+              <select id="input-device"><option value="">Default</option></select>
+            </label>
+            <label class="field-label">Output Device
+              <select id="output-device"><option value="">Default</option></select>
+            </label>
+          </div>
+          <div class="settings-card setting-row">
+            <label class="field-label grow">Camera
+              <select id="camera-device"><option value="">Default</option></select>
+            </label>
+            <div class="cam-preview" id="cam-preview-box">
+              <video id="cam-preview" muted playsinline></video>
+              <button class="btn-secondary btn-small" id="cam-preview-btn">Test Camera</button>
+            </div>
+          </div>
+          <div class="settings-card">
+            <div class="slider-row">
+              <div class="setting-title">Input Volume <span id="input-gain-label">100%</span></div>
+              <input type="range" id="input-gain" min="0" max="200" value="100" />
+            </div>
+            <div class="slider-row">
+              <div class="setting-title">Output Volume <span id="output-vol-label">100%</span></div>
+              <input type="range" id="output-vol" min="0" max="200" value="100" />
+            </div>
+          </div>
+          <h2 class="settings-subhead">Mic Test</h2>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Hear yourself</div>
+              <div class="setting-sub">Plays your mic back through the full voice pipeline, including noise cancellation.</div>
+            </div>
+            <button class="btn-primary btn-small" id="mic-test-btn">Start Test</button>
+          </div>
+          <h2 class="settings-subhead">Voice Processing</h2>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Noise Cancellation</div>
+              <div class="setting-sub">Removes keyboards, fans and other background noise using RNNoise.</div>
+            </div>
+            <input type="checkbox" id="nc-toggle" class="switch" />
+          </label>
+          <h2 class="settings-subhead">Idle</h2>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Go AFK after</div>
+              <div class="setting-sub">After this long with no typing, clicking or talking, everyone sees you as Idle and you move to the server's AFK channel. Any activity brings you back online.</div>
+            </div>
+            <select id="afk-timeout" class="compact-select">
+              <option value="0">Never</option>
+              <option value="1">1 minute</option>
+              <option value="5">5 minutes</option>
+              <option value="10">10 minutes</option>
+              <option value="15">15 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="60">1 hour</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="gifs">
+          <h1>GIFs</h1>
+          <div class="settings-card">
+            <label class="field-label">Provider
+              <select id="gif-provider">
+                <option value="klipy">KLIPY (recommended)</option>
+                <option value="giphy">GIPHY</option>
+              </select>
+            </label>
+            <label class="field-label">API Key
+              <input id="gif-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your API key" />
+            </label>
+            <div class="setting-sub" id="gif-key-help"></div>
+            <div class="form-actions">
+              <button class="btn-secondary btn-small" id="gif-key-test">Test Key</button>
+              <button class="btn-primary btn-small" id="gif-key-save">Save</button>
+            </div>
+          </div>
+          <div class="setting-sub">The key is stored only on this device and is never sent to other members. Type <strong>/gif</strong> in the message box or click the GIF button to search.</div>
+        </section>
+
+        <section class="settings-page" data-page="notifications">
+          <h1>Notifications</h1>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Desktop notifications</div>
+              <div class="setting-sub">Windows notifications for new messages while Commy is in the background. Direct messages always count. Right-click a server to change it for that server. Do Not Disturb silences everything.</div>
+            </div>
+            <select id="notify-level" class="compact-select">
+              <option value="all">All messages</option>
+              <option value="mentions">Mentions and DMs</option>
+              <option value="none">Nothing</option>
+            </select>
+          </div>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Close to tray</div>
+              <div class="setting-sub">Closing the window keeps Commy running in the system tray so calls and messages keep working. Quit from the tray icon.</div>
+            </div>
+            <input type="checkbox" id="close-to-tray-toggle" class="switch" />
+          </label>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Test it</div>
+              <div class="setting-sub">Sends a sample notification.</div>
+            </div>
+            <button class="btn-secondary btn-small" id="notify-test">Send Test</button>
+          </div>
+          <h2 class="settings-subhead">Sounds</h2>
+          <div class="settings-card sound-card">
+            <label class="setting-row sound-mute">
+              <div>
+                <div class="setting-title">Play sounds</div>
+                <div class="setting-sub">Turn off to mute every Commy sound. Do Not Disturb also silences them.</div>
+              </div>
+              <input type="checkbox" id="sounds-toggle" class="switch" />
+            </label>
+            <div class="slider-row">
+              <div class="setting-title">Sound Volume <span id="sound-volume-label">80%</span></div>
+              <input type="range" id="sound-volume" min="0" max="100" value="80" />
+            </div>
+            <div class="sound-rows" id="sound-rows"></div>
+          </div>
+          <h2 class="settings-subhead">Soundboard</h2>
+          <div class="settings-card">
+            <label class="setting-row">
+              <div>
+                <div class="setting-title">Hear soundboard clips</div>
+                <div class="setting-sub">Turn off to mute clips other people play in voice.</div>
+              </div>
+              <input type="checkbox" id="soundboard-toggle" class="switch" />
+            </label>
+            <div class="slider-row">
+              <div class="setting-title">Soundboard Volume <span id="soundboard-volume-label">60%</span></div>
+              <input type="range" id="soundboard-volume" min="0" max="100" value="60" />
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="integrations">
+          <h1>Integrations</h1>
+          <div class="settings-card integration-card">
+            <div class="integration-head">
+              <div class="integration-logo">IGDB</div>
+              <div>
+                <div class="setting-title">IGDB game database <span class="integration-state" id="igdb-state"></span></div>
+                <div class="setting-sub">Optional. Adds game search with cover art when tagging servers, and shows the proper title and cover for the game you are playing. Everything works without it.</div>
+              </div>
+            </div>
+            <ol class="integration-steps">
+              <li>Sign in at <a data-href="https://dev.twitch.tv/console/apps">dev.twitch.tv/console/apps</a> (IGDB uses Twitch developer accounts; two-factor sign-in must be on).</li>
+              <li>Choose <strong>Register Your Application</strong>. Any name works, OAuth Redirect URL <code>http://localhost</code>, Category <strong>Application Integration</strong>, Client Type <strong>Confidential</strong>.</li>
+              <li>Open the app, copy the <strong>Client ID</strong>, press <strong>New Secret</strong> and copy the secret.</li>
+            </ol>
+            <label class="field-label">Client ID
+              <input id="igdb-client-id" type="text" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="field-label">Client Secret
+              <input id="igdb-client-secret" type="password" autocomplete="off" spellcheck="false" />
+            </label>
+            <div class="setting-sub">Saved only on this device, in its settings folder.</div>
+            <div class="form-actions integration-actions">
+              <span class="integration-result" id="igdb-result"></span>
+              <button class="btn-link danger hidden" id="igdb-remove">Disconnect</button>
+              <button class="btn-primary btn-small" id="igdb-save">Save and Test</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="overlay">
+          <h1>Game Overlay</h1>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Enable in-game overlay</div>
+              <div class="setting-sub">A small see-through panel in a corner of your screen showing who is in your voice channel, lit up as they talk. It never takes focus or clicks from your game.</div>
+            </div>
+            <input type="checkbox" id="overlay-enabled" class="switch" />
+          </label>
+          <div class="settings-card overlay-options" id="overlay-options">
+            <div class="setting-row">
+              <div class="setting-title">Position</div>
+              <select id="overlay-corner" class="compact-select">
+                <option value="top-left">Top left</option>
+                <option value="top-right">Top right</option>
+                <option value="bottom-left">Bottom left</option>
+                <option value="bottom-right">Bottom right</option>
+              </select>
+            </div>
+            <div class="slider-row">
+              <div class="setting-title">Opacity <span id="overlay-opacity-label">90%</span></div>
+              <input type="range" id="overlay-opacity" min="20" max="100" value="90" />
+            </div>
+            <label class="setting-row">
+              <div>
+                <div class="setting-title">Show chat</div>
+                <div class="setting-sub">Recent messages from the channel you have open, fading after 30 seconds.</div>
+              </div>
+              <input type="checkbox" id="overlay-chat" class="switch" />
+            </label>
+            <div class="setting-row">
+              <div>
+                <div class="setting-title">Show or hide overlay</div>
+                <div class="setting-sub">Works while a game has focus. Click the box and press a new combination to change it.</div>
+              </div>
+              <input id="overlay-toggle-key" class="hotkey-input" type="text" readonly />
+            </div>
+            <div class="setting-row">
+              <div class="setting-title">Show or hide chat</div>
+              <input id="overlay-chat-key" class="hotkey-input" type="text" readonly />
+            </div>
+          </div>
+          <div class="setting-sub hotkey-warning hidden" id="overlay-hotkey-warning"></div>
+          <div class="setting-sub overlay-note">Games in exclusive fullscreen draw over every other window, so the overlay will not show there. Switch the game to borderless windowed (often called "Fullscreen Windowed") to see it.</div>
+        </section>
+
+        <section class="settings-page" data-page="privacy">
+          <h1>Privacy &amp; Safety</h1>
+          <h2 class="settings-subhead">Direct Messages</h2>
+          <div class="settings-card">
+            <div class="setting-row">
+              <div>
+                <div class="setting-title">Who can send you direct messages</div>
+                <div class="setting-sub">People you already talk to can always reach you. First messages from anyone else wait in Message Requests.</div>
+              </div>
+              <select id="dm-policy" class="compact-select">
+                <option value="everyone">Everyone</option>
+                <option value="server_members">People in my servers</option>
+                <option value="accepted">Only people I talk to</option>
+              </select>
+            </div>
+            <label class="setting-row">
+              <div>
+                <div class="setting-title">Filter likely spam</div>
+                <div class="setting-sub">Message requests with lots of links or the same text over and over go to a Spam folder without a notification. Strangers sending more than 5 messages a minute are dropped.</div>
+              </div>
+              <input type="checkbox" id="spam-filter-toggle" class="switch" />
+            </label>
+          </div>
+          <h2 class="settings-subhead">Blocked Users</h2>
+          <div class="settings-card">
+            <div class="setting-sub">Blocked people cannot send you direct messages, and their messages in servers are collapsed for you. They are not told.</div>
+            <div id="blocked-list" class="blocked-list"></div>
+          </div>
+          <h2 class="settings-subhead">Activity</h2>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Share what I'm playing or using</div>
+              <div class="setting-sub">Shows the game or app in front on your screen as "Playing ..." or "Using ..." under your name, for everyone in your servers. Turn it off and it clears right away.</div>
+            </div>
+            <input type="checkbox" id="share-activity-toggle" class="switch" />
+          </label>
+        </section>
+
+        <section class="settings-page" data-page="appearance">
+          <h1>Appearance</h1>
+          <div class="appearance-preview">
+            <div class="msg first">
+              <div class="avatar">C</div>
+              <div class="msg-body">
+                <div class="msg-head"><span class="msg-author">Commy</span><span class="msg-time">Today at 12:00</span></div>
+                <div class="msg-content">This is how chat text will look. Drag the slider to resize it.</div>
+              </div>
+            </div>
+          </div>
+          <div class="settings-card">
+            <div class="slider-row">
+              <div class="setting-title">Chat Font Size <span id="chat-size-label">16px</span></div>
+              <input type="range" id="chat-size" min="12" max="20" step="1" value="16" />
+            </div>
+          </div>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Compact Mode</div>
+              <div class="setting-sub">Tighter spacing between messages.</div>
+            </div>
+            <input type="checkbox" id="compact-toggle" class="switch" />
+          </label>
+        </section>
+      </div>
+      <div class="settings-close-wrap">
+        <button class="settings-close" id="settings-close" title="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z"/></svg>
+        </button>
+        <span class="settings-close-key">ESC</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Channel settings (full screen) -->
+  <div class="settings-layer hidden" id="channel-settings" role="dialog" aria-label="Channel Settings">
+    <nav class="settings-nav">
+      <div class="settings-nav-inner">
+        <div class="settings-nav-group" id="channel-settings-title">Channel</div>
+        <button class="settings-tab" data-tab="overview">Overview</button>
+        <div class="settings-nav-sep"></div>
+        <button class="settings-tab danger" id="channel-delete-nav">Delete Channel</button>
+      </div>
+    </nav>
+    <div class="settings-content">
+      <div class="settings-content-inner">
+        <section class="settings-page" data-page="overview">
+          <h1>Overview</h1>
+          <div class="settings-card">
+            <label class="field-label">Channel Name
+              <span class="prefixed-input">
+                <span class="input-prefix" id="channel-edit-prefix">#</span>
+                <input id="channel-edit-name" type="text" maxlength="50" autocomplete="off" />
+              </span>
+            </label>
+          </div>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Message Retention</div>
+              <div class="setting-sub">Messages older than this are deleted on every member's device. Changing it applies to existing messages too.</div>
+            </div>
+            <select id="channel-edit-retention" class="compact-select">
+              <option value="0">Keep forever</option>
+              <option value="1">1 day</option>
+              <option value="7">7 days</option>
+              <option value="30">30 days</option>
+              <option value="90">90 days</option>
+              <option value="365">1 year</option>
+            </select>
+          </div>
+          <div class="settings-card setting-row hidden" id="channel-limit-row">
+            <div>
+              <div class="setting-title">User Limit <span id="channel-limit-label">No limit</span></div>
+              <div class="setting-sub">How many people can be in this voice channel at once. Members with Manage Channels can always join.</div>
+            </div>
+            <input type="range" id="channel-limit" min="0" max="99" value="0" />
+          </div>
+          <div class="save-bar hidden" id="channel-save-bar">
+            <span>You have unsaved changes</span>
+            <button class="btn-link" id="channel-edit-reset">Reset</button>
+            <button class="btn-primary btn-small" id="channel-edit-save">Save Changes</button>
+          </div>
+
+          <h2 class="settings-subhead danger-head">Danger Zone</h2>
+          <div class="danger-zone">
+            <div>
+              <div class="setting-title">Delete this channel</div>
+              <div class="setting-sub">Removes the channel and all of its messages for everyone. This cannot be undone.</div>
+            </div>
+            <button class="btn-danger btn-small" id="channel-delete-btn">Delete Channel</button>
+          </div>
+        </section>
+      </div>
+      <div class="settings-close-wrap">
+        <button class="settings-close" id="channel-settings-close" title="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z"/></svg>
+        </button>
+        <span class="settings-close-key">ESC</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Server settings (full screen) -->
+  <div class="settings-layer hidden" id="server-settings" role="dialog" aria-label="Server Settings">
+    <nav class="settings-nav">
+      <div class="settings-nav-inner">
+        <div class="settings-nav-group" id="server-settings-title">Server</div>
+        <button class="settings-tab" data-tab="overview" id="tab-overview">Overview</button>
+        <button class="settings-tab" data-tab="channels" id="tab-channels">Channels</button>
+        <button class="settings-tab" data-tab="roles" id="tab-roles">Roles</button>
+        <button class="settings-tab" data-tab="rules" id="tab-rules">Rules</button>
+        <button class="settings-tab" data-tab="emoji" id="tab-emoji">Emoji</button>
+        <button class="settings-tab" data-tab="soundboard" id="tab-soundboard">Soundboard</button>
+        <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
+        <button class="settings-tab" data-tab="reports" id="tab-reports">Reports</button>
+        <div class="settings-nav-sep"></div>
+        <button class="settings-tab danger" id="leave-server-btn">Leave Server</button>
+      </div>
+    </nav>
+    <div class="settings-content">
+      <div class="settings-content-inner">
+        <section class="settings-page" data-page="overview">
+          <h1>Server Overview</h1>
+          <div class="settings-card overview-card">
+            <div class="overview-avatar">
+              <button class="server-icon server-icon-xl" id="overview-icon" title="Change server avatar">?</button>
+              <span class="overview-avatar-hint" id="overview-icon-hint">Change</span>
+              <button class="btn-link hidden" id="overview-icon-remove">Remove</button>
+            </div>
+            <div class="overview-fields">
+              <label class="field-label">Server Name
+                <div class="inline-row">
+                  <input id="rename-input" type="text" maxlength="100" />
+                  <button class="btn-primary btn-small" id="rename-save">Save</button>
+                </div>
+              </label>
+              <div class="setting-sub" id="overview-readonly">Only members with Manage Server can change these settings.</div>
+            </div>
+          </div>
+          <h2 class="settings-subhead">Games</h2>
+          <div class="settings-card">
+            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name and will power server discovery later.</div>
+            <div class="tag-editor" id="game-tag-editor">
+              <div class="tag-chips" id="game-tag-chips"></div>
+              <input id="game-tag-input" type="text" maxlength="32" autocomplete="off" placeholder="Add a game and press Enter" />
+              <div class="game-search hidden" id="game-search"></div>
+            </div>
+          </div>
+          <h2 class="settings-subhead">Banner</h2>
+          <div class="settings-card banner-card">
+            <div class="banner-preview" id="banner-preview"><span>No banner yet</span></div>
+            <div class="banner-actions">
+              <div class="setting-sub">Shown at the top of the channel list. Wide images work best (960 x 320).</div>
+              <button class="btn-secondary btn-small" id="banner-upload">Upload Banner</button>
+              <button class="btn-link hidden" id="banner-remove">Remove</button>
+            </div>
+          </div>
+          <input type="file" id="server-image-file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
+          <h2 class="settings-subhead">Inactivity</h2>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">AFK Channel</div>
+              <div class="setting-sub">Members in voice who go idle are moved here automatically. Each person picks how long that takes under Settings, then Voice &amp; Audio.</div>
+            </div>
+            <select id="afk-channel-select" class="compact-select"></select>
+          </div>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Move to AFK after</div>
+              <div class="setting-sub">Anyone idle in this server's voice channels this long is moved to the AFK channel, or disconnected if there is none, whatever their own setting. The shorter of the two wins, so nobody holds a slot forever.</div>
+            </div>
+            <select id="server-afk-timeout" class="compact-select">
+              <option value="0">Off (members decide)</option>
+              <option value="1">1 minute</option>
+              <option value="5">5 minutes</option>
+              <option value="15">15 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="60">1 hour</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="channels">
+          <h1>Channels</h1>
+          <div class="settings-card">
+            <div class="setting-title">Create Channel</div>
+            <div class="inline-row">
+              <input id="new-channel-input" type="text" maxlength="50" placeholder="new-channel" />
+              <select id="new-channel-kind">
+                <option value="text">Text</option>
+                <option value="voice">Voice</option>
+              </select>
+              <button class="btn-primary btn-small" id="new-channel-save">Create</button>
+            </div>
+          </div>
+          <div id="manage-channel-list" class="manage-list"></div>
+        </section>
+
+        <section class="settings-page" data-page="roles">
+          <h1>Roles</h1>
+          <div class="settings-card">
+            <div class="setting-title">Create Role</div>
+            <div class="inline-row">
+              <input id="new-role-color" type="color" value="#ff4d4d" title="Role color" />
+              <input id="new-role-input" type="text" maxlength="50" placeholder="Role name" />
+            </div>
+            <div class="perm-grid" id="new-role-perms"></div>
+            <div class="form-actions">
+              <button class="btn-primary btn-small" id="new-role-save">Create Role</button>
+            </div>
+          </div>
+          <div id="manage-role-list" class="manage-list"></div>
+        </section>
+
+        <section class="settings-page" data-page="emoji">
+          <h1>Emoji</h1>
+          <div class="setting-sub expr-intro">Add up to 50 custom emojis anyone in this server can use. Type <code>:name:</code> in chat or pick them from the emoji menu. PNG, GIF, JPEG or WebP, resized to 128 px. Animated GIFs must be under 256 KB.</div>
+          <label class="settings-card setting-row" id="emoji-share-row">
+            <div>
+              <div class="setting-title">Allow use in other servers and DMs</div>
+              <div class="setting-sub">Members can send this server's emojis anywhere in Commy. They show up under "Other Servers" in the emoji menu.</div>
+            </div>
+            <input type="checkbox" id="emoji-share-toggle" class="switch" />
+          </label>
+          <div class="expr-toolbar">
+            <button class="btn-primary btn-small" id="emoji-upload">Upload Emoji</button>
+            <span class="expr-count" id="emoji-count"></span>
+          </div>
+          <div id="emoji-list" class="expr-list"></div>
+        </section>
+
+        <section class="settings-page" data-page="soundboard">
+          <h1>Soundboard</h1>
+          <div class="setting-sub expr-intro">Short clips anyone in a voice channel can play for everyone there. MP3, OGG or WAV, up to 15 seconds and 1 MB, 24 sounds per server. Long WAV files are large, so MP3 or OGG works best.</div>
+          <label class="settings-card setting-row" id="sound-open-row">
+            <div>
+              <div class="setting-title">Let everyone upload sounds</div>
+              <div class="setting-sub">Off: only roles with Manage Expressions can add sounds.</div>
+            </div>
+            <input type="checkbox" id="sound-open-toggle" class="switch" />
+          </label>
+          <div class="expr-toolbar">
+            <button class="btn-primary btn-small" id="sound-upload">Upload Sound</button>
+            <span class="expr-count" id="sound-count"></span>
+          </div>
+          <div id="sound-list" class="expr-list sound-list"></div>
+          <h2 class="settings-subhead">Default Sounds</h2>
+          <div class="setting-sub expr-intro">Built into Commy and available in every server.</div>
+          <div id="sound-default-list" class="expr-list sound-list"></div>
+        </section>
+
+        <section class="settings-page" data-page="rules">
+          <h1>Server Rules</h1>
+          <div class="setting-sub expr-intro">New members read and accept these before they can post. Markdown works: # headings, **bold**, *italics*, lists with - or 1., and links.</div>
+          <div class="rules-editor">
+            <textarea id="rules-input" rows="12" placeholder="1. Be kind to each other&#10;2. No spam or self promotion&#10;3. Keep it on topic"></textarea>
+            <div class="rules-preview" id="rules-preview"></div>
+          </div>
+          <div class="expr-toolbar">
+            <button class="btn-primary btn-small" id="rules-save">Save Rules</button>
+            <button class="btn-link danger hidden" id="rules-remove">Remove Rules</button>
+            <span class="expr-count" id="rules-count"></span>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="reports">
+          <h1>Reports</h1>
+          <div class="setting-sub expr-intro">Members can report people or messages to you as the owner. Reports arrive on this device only and are never shared with anyone else.</div>
+          <div id="report-list" class="report-list"></div>
+        </section>
+
+        <section class="settings-page" data-page="members">
+          <h1>Members</h1>
+          <div id="manage-member-list" class="manage-list"></div>
+        </section>
+      </div>
+      <div class="settings-close-wrap">
+        <button class="settings-close" id="server-settings-close" title="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z"/></svg>
+        </button>
+        <span class="settings-close-key">ESC</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="lightbox" class="lightbox hidden">
+    <img id="lightbox-img" alt="">
+    <a id="lightbox-source" class="lightbox-source hidden" href="#"></a>
+  </div>
+
+  <!-- Own profile popover, opened from the user panel -->
+  <div class="profile-pop hidden" id="profile-pop" role="dialog" aria-label="Your profile">
+    <div class="pp-banner" id="pp-banner"></div>
+    <div class="pp-head">
+      <div class="avatar avatar-lg" id="pp-avatar"></div>
+      <button class="pp-avatar-edit" id="pp-avatar-edit" title="Change Avatar"></button>
+    </div>
+    <div class="pp-body">
+      <div class="pp-name" id="pp-name"></div>
+      <div class="pp-username" id="pp-username"></div>
+      <div class="pp-status-row">
+        <button class="pp-emoji-btn" id="pp-emoji" title="Status Emoji"></button>
+        <input id="pp-status" type="text" maxlength="64" autocomplete="off" placeholder="Set a custom status" />
+        <button class="pp-clear hidden" id="pp-clear" title="Clear Status"></button>
+      </div>
+      <button class="pp-expiry" id="pp-status-expiry" title="Choose when your status clears">Clear after: Never</button>
+      <div class="pp-divider"></div>
+      <div class="pp-presence" id="pp-presence">
+        <button data-presence="online"><span class="presence-dot inline online"></span><span>Online</span></button>
+        <button data-presence="idle"><span class="presence-dot inline idle"></span><span>Idle</span></button>
+        <button data-presence="do_not_disturb"><span class="presence-dot inline do_not_disturb"></span><span>Do Not Disturb<small>You will not get notifications</small></span></button>
+        <button data-presence="invisible"><span class="presence-dot inline invisible"></span><span>Invisible<small>You appear offline but can still chat</small></span></button>
+      </div>
+      <div class="pp-durations hidden" id="pp-durations">
+        <div class="pp-durations-title" id="pp-durations-title">Clear after</div>
+        <button data-mins="30">For 30 minutes</button>
+        <button data-mins="60">For 1 hour</button>
+        <button data-mins="240">For 4 hours</button>
+        <button data-mins="tomorrow">Until tomorrow</button>
+        <div class="pp-custom-time">
+          <input type="datetime-local" id="pp-custom-time" />
+          <button class="btn-primary btn-small" id="pp-custom-set">Set</button>
+        </div>
+        <button data-mins="never">Don't clear</button>
+      </div>
+      <div class="pp-divider"></div>
+      <button class="pp-link" id="pp-edit-profile">Edit Profile</button>
+    </div>
+  </div>
+
+  <!-- Avatar source menu and shared emoji picker -->
+  <div class="events-layer hidden" id="events-layer" role="dialog" aria-label="Events">
+    <div class="events-panel">
+      <header class="events-head">
+        <h2 id="events-title">Events</h2>
+        <div class="events-tabs">
+          <button class="events-tab active" data-view="upcoming">Upcoming</button>
+          <button class="events-tab" data-view="calendar">Calendar</button>
+        </div>
+        <button class="btn-primary btn-small hidden" id="event-create">Create Event</button>
+        <button class="icon-btn" id="events-close" title="Close"></button>
+      </header>
+      <div class="events-body" id="events-body"></div>
+    </div>
+  </div>
+
+  <!-- Profile card for a member, opened from the member list -->
+  <div class="member-card hidden" id="member-card" role="dialog" aria-label="Member profile">
+    <div class="mc-banner" id="mc-banner"></div>
+    <div class="mc-head"><div class="avatar avatar-lg" id="mc-avatar"></div></div>
+    <div class="mc-body">
+      <div class="mc-name-row"><span class="mc-name" id="mc-name"></span></div>
+      <div class="mc-status" id="mc-status"></div>
+      <div class="mc-actions" id="mc-actions"></div>
+      <div class="mc-about hidden" id="mc-about"></div>
+      <div class="mc-label hidden" id="mc-roles-label">Roles</div>
+      <div class="mc-roles" id="mc-roles"></div>
+      <div class="composer mc-composer" id="mc-composer">
+        <input id="mc-input" type="text" autocomplete="off" maxlength="2000" />
+        <button class="icon-btn" id="mc-gif" title="Send a GIF">GIF</button>
+        <button class="icon-btn" id="mc-emoji" title="Emoji"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="pop-menu ctx-menu hidden" id="invite-menu" role="menu"></div>
+
+  <!-- Voice connection details -->
+  <div class="conn-pop hidden" id="conn-pop">
+    <div class="conn-head">
+      <span class="conn-title">Voice Connection</span>
+      <span class="conn-rates" id="conn-rates"></span>
+    </div>
+    <div class="conn-links" id="conn-links"></div>
+    <div class="conn-foot" id="conn-foot"></div>
+  </div>
+
+  <!-- Quick input or output device and volume, from the profile bar -->
+  <div class="audio-pop hidden" id="audio-pop">
+    <div class="ap-title" id="ap-title">Input Device</div>
+    <select id="ap-device" class="compact-select"></select>
+    <div class="ap-title" id="ap-volume-title">Input Volume <span id="ap-volume-label">100%</span></div>
+    <input type="range" id="ap-volume" min="0" max="200" value="100" />
+    <button class="pp-link" id="ap-settings">Voice Settings</button>
+  </div>
+
+  <!-- Right-click menu for a member -->
+  <div class="pop-menu ctx-menu hidden" id="member-menu" role="menu">
+    <div class="ctx-title" id="member-menu-title"></div>
+    <button id="mm-message">Message</button>
+    <div class="ctx-sep"></div>
+    <button id="mm-block">Block</button>
+    <button class="danger" id="mm-report">Report User</button>
+  </div>
+
+  <!-- Right-click menu for a server in the rail -->
+  <div class="pop-menu ctx-menu hidden" id="server-menu" role="menu">
+    <div class="ctx-title" id="server-menu-title"></div>
+    <button id="sm-read">Mark As Read</button>
+    <div class="ctx-sep"></div>
+    <div class="ctx-label">Notifications</div>
+    <button class="ctx-radio" data-level="default">Use my default</button>
+    <button class="ctx-radio" data-level="all">All messages</button>
+    <button class="ctx-radio" data-level="mentions">Only @mentions</button>
+    <button class="ctx-radio" data-level="online">Only while I am online</button>
+    <button class="ctx-radio" data-level="none">Nothing</button>
+    <button class="ctx-check" id="sm-mute">Mute Server</button>
+    <div class="ctx-sep"></div>
+    <button id="sm-invite">Invite People</button>
+    <button id="sm-events">Events</button>
+    <button id="sm-rules" class="hidden">Server Rules</button>
+    <button id="sm-roles" class="hidden">Choose Roles</button>
+    <button id="sm-settings">Server Settings</button>
+    <button id="sm-ungroup" class="hidden">Remove From Folder</button>
+    <div class="ctx-sep"></div>
+    <button id="sm-leave" class="danger">Leave Server</button>
+  </div>
+  <div class="pop-menu ctx-menu hidden" id="folder-menu" role="menu">
+    <button id="fm-rename">Rename Folder</button>
+    <button id="fm-ungroup">Ungroup Folder</button>
+  </div>
+
+  <div class="pop-menu hidden" id="avatar-menu">
+    <button id="avatar-upload">Upload Image</button>
+    <button id="avatar-emoji">Use an Emoji</button>
+    <button id="avatar-remove" class="danger">Remove Avatar</button>
+  </div>
+  <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
+  <div class="emoji-pop hidden" id="emoji-pop">
+    <input id="emoji-pop-search" type="text" placeholder="Search emojis" autocomplete="off" />
+    <div class="emoji-grid" id="emoji-pop-grid"></div>
+  </div>
+
+  <div class="soundboard-pop hidden" id="soundboard-pop">
+    <div class="sb-head"><span>Soundboard</span><span class="sb-server" id="sb-server"></span></div>
+    <div class="sb-muted hidden" id="sb-muted">You muted soundboard clips in Settings, so you will not hear them.</div>
+    <div class="sb-grid" id="sb-grid"></div>
+  </div>
+
+  <div class="mention-pop hidden" id="mention-pop" role="listbox"></div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="emoji.js"></script>
+  <script src="app.js"></script>
+  <script src="invite-link.js"></script>
+</body>
+</html>

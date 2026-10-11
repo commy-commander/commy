@@ -1,0 +1,24 @@
+# Deploy agent: keeps web and auth on the newest image published for their tag.
+# Enable with COMPOSE_FILE=docker-compose.yml:docker-compose.agent.yml in .env and
+# WEB_IMAGE / AUTH_IMAGE pointing at GHCR tags. See DEPLOYING.md.
+
+services:
+  agent:
+    image: docker:27-cli
+    restart: unless-stopped
+    command: ["sh", "/repo/deploy/agent/commy-agent.sh"]
+    working_dir: /repo/deploy
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-commy}
+      AGENT_SERVICES: auth web
+      AGENT_INTERVAL: ${AGENT_INTERVAL:-60}
+      AGENT_HEALTH_TIMEOUT: ${AGENT_HEALTH_TIMEOUT:-180}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ..:/repo:ro
+    network_mode: bridge
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

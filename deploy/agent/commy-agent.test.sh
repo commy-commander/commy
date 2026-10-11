@@ -1,0 +1,169 @@
+#!/bin/sh
+# Tests for commy-agent.sh against a fake docker CLI. Run: sh deploy/agent/commy-agent.test.sh
+
+here="$(cd "$(dirname "$0")" && pwd)"
+AGENT_LIB=1
+. "$here/commy-agent.sh"
+
+FAKE="$(mktemp -d)"
+STATE_DIR="$FAKE/state"
+SERVICES="web"
+HEALTH_TIMEOUT=6
+POLL=1
+REF="ghcr.io/commy/commy-web:dev"
+failures=0
+
+# Fake engine. $FAKE/containers holds "id image" lines for the service, $FAKE/tag is
+# the image the local tag points at, $FAKE/health is what new containers report.
+reset() {
+	rm -rf "${FAKE:?}"/*
+	echo "c1 sha256:old" >"$FAKE/containers"
+	echo "sha256:old" >"$FAKE/tag"
+	echo "healthy" >"$FAKE/health"
+	echo 1 >"$FAKE/next"
+	: >"$FAKE/calls"
+	: >"$FAKE/new"
+}
+
+new_container() {
+	n=$(($(cat "$FAKE/next") + 1))
+	echo "$n" >"$FAKE/next"
+	echo "c$n $(cat "$FAKE/tag")" >>"$FAKE/containers"
+	echo "c$n" >>"$FAKE/new"
+}
+
+docker() {
+	echo "$*" >>"$FAKE/calls"
+	case "$1 $2" in
+	"compose ps") cut -d' ' -f1 "$FAKE/containers" ;;
+	"compose pull")
+		[ -f "$FAKE/pull_fails" ] && return 1
+		[ -f "$FAKE/remote" ] && cp "$FAKE/remote" "$FAKE/tag"
+		return 0
+		;;
+	"compose up")
+		case "$*" in
+		*--scale*)
+			all="$*"
+			want="${all##*--scale web=}"
+			want="${want%% *}"
+			while [ "$(wc -l <"$FAKE/containers" | tr -d ' ')" -lt "$want" ]; do new_container; done
+			;;
+		*) new_container ;;
+		esac
+		;;
+	"inspect -f")
+		id="$4"
+		case "$3" in
+		*Config.Image*) echo "$REF" ;;
+		*State.Health*)
+			if grep -qx "$id" "$FAKE/new"; then cat "$FAKE/health"; else echo healthy; fi
+			;;
+		*) grep "^$id " "$FAKE/containers" | cut -d' ' -f2 ;;
+		esac
+		;;
+	"image inspect") cat "$FAKE/tag" ;;
+	"stop "*) ;;
+	"rm -f")
+		grep -v "^$3 " "$FAKE/containers" >"$FAKE/c.tmp"
+		mv "$FAKE/c.tmp" "$FAKE/containers"
+		;;
+	esac
+}
+
+log() { :; }
+sleep() { :; }
+
+check() {
+	if [ "$2" = "$3" ]; then
+		echo "ok   - $1"
+	else
+		echo "FAIL - $1: expected [$3] got [$2]"
+		failures=$((failures + 1))
+	fi
+}
+
+called() {
+	grep -c -- "$1" "$FAKE/calls" | tr -d ' '
+}
+
+images() {
+	cut -d' ' -f2 "$FAKE/containers" | tr '\n' ' ' | sed 's/ $//'
+}
+
+# No new image: nothing is started or stopped
+reset
+run_once
+check "unchanged image does not start containers" "$(called 'compose up')" "0"
+check "unchanged image keeps the old container" "$(images)" "sha256:old"
+
+# New healthy image: started beside the old one, then the old one is removed
+reset
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "new image is started beside the old one" "$(called 'compose up -d --no-deps --no-build --no-recreate --scale web=2 web')" "1"
+check "old container is removed after the swap" "$(called 'rm -f c1')" "1"
+check "only the new image is left running" "$(images)" "sha256:new"
+
+# New image never gets healthy: old container keeps serving
+reset
+echo "sha256:bad" >"$FAKE/remote"
+echo "starting" >"$FAKE/health"
+run_once
+check "slow image reports failure" "$?" "1"
+check "slow image leaves the old container running" "$(images)" "sha256:old"
+
+# New unhealthy image: removed, recorded and skipped next cycle
+reset
+echo "sha256:bad" >"$FAKE/remote"
+echo "unhealthy" >"$FAKE/health"
+run_once
+check "unhealthy image reports failure" "$?" "1"
+check "unhealthy container is removed" "$(called 'rm -f c2')" "1"
+check "old container never stops" "$(called 'stop -t 30 c1')" "0"
+check "old image keeps serving" "$(images)" "sha256:old"
+check "bad image is recorded" "$(cat "$STATE_DIR/bad")" "sha256:bad"
+: >"$FAKE/calls"
+run_once
+check "known bad image is skipped" "$(called 'compose up')" "0"
+
+# A newer good image after a bad one: deployed
+echo "sha256:fixed" >"$FAKE/remote"
+echo "healthy" >"$FAKE/health"
+run_once
+check "fixed image after a bad one deploys" "$(images)" "sha256:fixed"
+
+# Two replicas: both are replaced
+reset
+echo "c9 sha256:old" >>"$FAKE/containers"
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "scale doubles the replica count" "$(called 'scale web=4')" "1"
+check "every replica moves to the new image" "$(images)" "sha256:new sha256:new"
+
+# Service not running: started directly
+reset
+: >"$FAKE/containers"
+run_once
+check "stopped service is started" "$(called 'compose up -d --no-deps --no-build web')" "1"
+
+# Registry unreachable: nothing touched
+reset
+touch "$FAKE/pull_fails"
+run_once
+check "failed pull reports failure" "$?" "1"
+check "failed pull does not start containers" "$(called 'compose up')" "0"
+
+# Several services are each checked
+reset
+SERVICES="auth web"
+run_once
+check "every watched service is inspected" "$(called 'compose ps -q')" "2"
+SERVICES="web"
+
+rm -rf "$FAKE"
+if [ "$failures" -ne 0 ]; then
+	echo "$failures test(s) failed"
+	exit 1
+fi
+echo "all agent tests passed"

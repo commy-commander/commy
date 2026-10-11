@@ -1,0 +1,60 @@
+{
+	email {$ACME_EMAIL}
+	servers {
+		# Cloudflare's edge ranges (https://www.cloudflare.com/ips/), so logs and the
+		# auth server's rate limits see the visitor's address instead of Cloudflare's
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
+# Same routing as ../Caddyfile, pointed at one environment's containers.
+# args[0] is the environment's COMPOSE_PROJECT_NAME. The upstream names are network
+# aliases that resolve to every replica, and lb_try_duration retries while the deploy
+# agent swaps containers, so updates do not drop requests.
+(commy) {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+		-Server
+	}
+
+	@auth path /api/auth/* /.well-known/commy-auth.json
+	handle @auth {
+		reverse_proxy {args[0]}-auth:3001 {
+			lb_try_duration 15s
+		}
+	}
+
+	handle {
+		reverse_proxy {args[0]}-web:3000 {
+			lb_try_duration 15s
+		}
+	}
+}
+
+(preview) {
+	header X-Robots-Tag "noindex, nofollow"
+}
+
+{$PROD_DOMAIN} {
+	import commy commy-prod
+}
+
+{$STAGING_DOMAIN} {
+	import preview
+	import commy commy-staging
+}
+
+{$DEV_DOMAIN} {
+	import preview
+	import commy commy-dev
+}
+
+{$DOCS_DOMAIN} {
+	redir https://{$PROD_DOMAIN}/docs{uri} permanent
+}

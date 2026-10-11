@@ -1,0 +1,100 @@
+# Commy self-hosted stack: website + docs, Better Auth server, Postgres, Caddy.
+# Usage: cp .env.example .env, fill it in, then docker compose up -d --build
+
+name: commy
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      DOCS_DOMAIN: ${DOCS_DOMAIN:-docs.${DOMAIN}}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    networks: [edge]
+    logging: *logging
+
+  web:
+    build: ../web
+    image: ${WEB_IMAGE:-commy-web:local}
+    restart: unless-stopped
+    environment:
+      AUTH_INTERNAL_URL: http://auth:3001
+      PUBLIC_URL: ${PUBLIC_URL:-https://${DOMAIN}}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    depends_on:
+      auth:
+        condition: service_healthy
+    networks: [edge]
+    logging: *logging
+
+  auth:
+    build: ../auth
+    image: ${AUTH_IMAGE:-commy-auth:local}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://commy:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/commy_auth
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: ${PUBLIC_URL:-https://${DOMAIN}}
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-}
+      COMMY_INSTANCE_NAME: ${COMMY_INSTANCE_NAME:-Commy}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      SMTP_URL: ${SMTP_URL:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      INVITES_REQUIRE_ACCOUNT: ${INVITES_REQUIRE_ACCOUNT:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [edge, db]
+    logging: *logging
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: commy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: commy_auth
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U commy -d commy_auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [db]
+    logging: *logging
+
+networks:
+  edge:
+  # Postgres is only reachable from the auth service
+  db:
+    internal: true
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

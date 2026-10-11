@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/commy-core",
+    "crates/commy-net",
+    "crates/commy-audio",
+    "crates/commy-media",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+repository = "https://github.com/commy-commander/commy"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+postcard = { version = "1", features = ["alloc"] }
+data-encoding = "2"
+tracing = "0.1"
+
+# P2P stack
+iroh = "0.28"
+iroh-gossip = "0.28"
+iroh-blobs = "0.28"
+
+# Internal crates
+commy-core = { path = "crates/commy-core" }
+commy-net = { path = "crates/commy-net" }
+commy-audio = { path = "crates/commy-audio" }
+commy-media = { path = "crates/commy-media" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# Screen capture, image encoding and audio DSP are far too slow unoptimized;
+# keep dev builds of dependencies and the media crates optimized.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.commy-media]
+opt-level = 3
+
+[profile.dev.package.commy-audio]
+opt-level = 3

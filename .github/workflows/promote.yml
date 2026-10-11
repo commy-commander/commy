@@ -1,0 +1,55 @@
+# Copies an existing web and auth image to the staging or prod tag without rebuilding.
+# The deploy agent in that environment picks the change up within a minute.
+# The "production" environment requires approval before this runs for prod.
+
+name: Promote images
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to update
+        type: choice
+        options: [prod, staging]
+        default: prod
+      source:
+        description: Image tag to promote (blank means staging for prod, dev for staging). Use a version like 0.2.0 to roll back.
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Promote to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment == 'prod' && 'production' || 'staging' }}
+    concurrency: promote-${{ inputs.environment }}
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Retag images
+        env:
+          TARGET: ${{ inputs.environment }}
+          SOURCE: ${{ inputs.source }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          if [ -z "$SOURCE" ]; then
+            if [ "$TARGET" = prod ]; then SOURCE=staging; else SOURCE=dev; fi
+          fi
+          for svc in web auth; do
+            repo="ghcr.io/${OWNER}/commy-${svc}"
+            digest="$(docker buildx imagetools inspect "$repo:$SOURCE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            echo "$svc: $repo:$SOURCE ($digest) -> $repo:$TARGET"
+            docker buildx imagetools create --tag "$repo:$TARGET" "$repo@$digest"
+            echo "- \`commy-$svc\`: \`$SOURCE\` → \`$TARGET\` (\`$digest\`)" >> "$GITHUB_STEP_SUMMARY"
+          done

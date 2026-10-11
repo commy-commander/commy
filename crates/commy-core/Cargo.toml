@@ -1,0 +1,16 @@
+[package]
+name = "commy-core"
+description = "Core domain types and state for Commy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+postcard = { workspace = true }

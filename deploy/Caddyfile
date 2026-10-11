@@ -1,0 +1,29 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+		-Server
+	}
+
+	# Auth API and the discovery document the desktop app reads
+	@auth path /api/auth/* /.well-known/commy-auth.json
+	handle @auth {
+		reverse_proxy auth:3001
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+{$DOCS_DOMAIN} {
+	redir https://{$DOMAIN}/docs{uri} permanent
+}

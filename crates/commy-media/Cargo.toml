@@ -1,0 +1,17 @@
+[package]
+name = "commy-media"
+description = "Device I/O and media pipelines for Commy: mic capture, playback mixing, screen capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+commy-audio = { workspace = true }
+commy-core = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+cpal = "0.15"
+xcap = "0.4"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }

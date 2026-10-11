@@ -1,0 +1,11 @@
+[package]
+name = "commy-audio"
+description = "Voice pipeline for Commy: noise cancellation, mute state, frame processing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nnnoiseless = { version = "0.5", default-features = false }
+opus-head-sys = "0.3"
+thiserror = { workspace = true }

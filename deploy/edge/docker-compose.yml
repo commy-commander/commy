@@ -1,0 +1,37 @@
+# Shared HTTPS entry point for running dev, staging and prod on one server.
+# Start this first, then each environment stack. See ../DEPLOYING.md.
+
+name: commy-edge
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      PROD_DOMAIN: ${PROD_DOMAIN:?set PROD_DOMAIN in .env}
+      STAGING_DOMAIN: ${STAGING_DOMAIN:-staging.${PROD_DOMAIN}}
+      DEV_DOMAIN: ${DEV_DOMAIN:-dev.${PROD_DOMAIN}}
+      DOCS_DOMAIN: ${DOCS_DOMAIN:-docs.${PROD_DOMAIN}}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [public]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  public:
+    name: commy-public
+
+volumes:
+  caddy_data:
+  caddy_config:
