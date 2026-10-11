@@ -1,0 +1,212 @@
+# Builds the desktop app for Windows, macOS and Linux and publishes a GitHub Release.
+# Push a tag like v0.2.0 to release. Tags containing "-test" create a draft release.
+# Pull requests that touch this file and manual runs build everything without publishing.
+
+name: Desktop release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TAURI_CLI_VERSION: "2"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            rust_targets: x86_64-pc-windows-msvc
+            bundles: nsis
+          - name: macOS universal
+            os: macos-latest
+            target: universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            bundles: app,dmg
+          - name: Linux x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            rust_targets: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
+            libasound2-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxrandr-dev \
+            libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
+            libxdo-dev libssl-dev clang cmake
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            full="${GITHUB_REF_NAME#v}"
+          else
+            full="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
+          fi
+          # Installers (NSIS, deb) only accept numeric versions, so drop any pre-release suffix
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "app=${full%%-*}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate icons and release config
+        working-directory: apps/desktop/src-tauri
+        run: |
+          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" icon icons/icon.png --output icons
+          cat > tauri.release.conf.json <<EOF
+          {
+            "version": "${{ steps.version.outputs.app }}",
+            "bundle": {
+              "active": true,
+              "publisher": "Commy",
+              "copyright": "AGPL-3.0-only",
+              "category": "SocialNetworking",
+              "shortDescription": "Peer to peer voice, video and chat",
+              "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+              "windows": { "nsis": { "installMode": "currentUser" } },
+              "macOS": { "minimumSystemVersion": "11.0" }
+            },
+            "plugins": { "deep-link": { "desktop": { "schemes": ["commy"] } } }
+          }
+          EOF
+          # Invite links open the app through commy:// (src/invite_link.rs). The deep-link
+          # entry above registers it in the Windows installer and .deb; macOS reads Info.plist.
+          cat > Info.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleURLTypes</key>
+            <array>
+              <dict>
+                <key>CFBundleURLName</key>
+                <string>chat.commy.desktop</string>
+                <key>CFBundleURLSchemes</key>
+                <array><string>commy</string></array>
+              </dict>
+            </array>
+            <key>NSMicrophoneUsageDescription</key>
+            <string>Commy uses the microphone for voice chat.</string>
+            <key>NSCameraUsageDescription</key>
+            <string>Commy uses the camera for video calls.</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Build and bundle
+        working-directory: apps/desktop/src-tauri
+        run: |
+          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" build \
+            --ci --target "${{ matrix.target }}" --bundles "${{ matrix.bundles }}" \
+            --config tauri.release.conf.json
+
+      - name: Collect artifacts
+        env:
+          VERSION: ${{ steps.version.outputs.full }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          out="$PWD/dist"
+          mkdir -p "$out"
+          bundle="target/$TARGET/release/bundle"
+          case "$RUNNER_OS" in
+            Windows)
+              nsi="target/$TARGET/release/nsis/x64/installer.nsi"
+              grep -qiE 'Classes[\\]+commy' "$nsi" || { echo "installer does not register commy://"; grep -n 'URL Protocol' "$nsi"; exit 1; }
+              cp "$bundle"/nsis/*-setup.exe "$out/Commy_${VERSION}_x64-setup.exe"
+              7z a -tzip "$out/Commy_${VERSION}_x64-portable.zip" "./target/$TARGET/release/commy-desktop.exe"
+              ;;
+            macOS)
+              scheme="$(/usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes:0:CFBundleURLSchemes:0" "$bundle/macos/Commy.app/Contents/Info.plist")"
+              [ "$scheme" = commy ] || { echo "Info.plist does not declare commy://"; exit 1; }
+              cp "$bundle"/dmg/*.dmg "$out/Commy_${VERSION}_universal.dmg"
+              tar -czf "$out/Commy_${VERSION}_universal.app.tar.gz" -C "$bundle/macos" Commy.app
+              ;;
+            Linux)
+              cp "$bundle"/deb/*.deb "$out/Commy_${VERSION}_amd64.deb"
+              cp "$bundle"/appimage/*.AppImage "$out/Commy_${VERSION}_amd64.AppImage"
+              ;;
+          esac
+          ls -la "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: commy-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum * | tee SHA256SUMS.txt
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          flags=(--generate-notes --title "Commy ${TAG}")
+          [[ "$TAG" == *-test* ]] && flags+=(--draft)
+          [[ "$TAG" == *-* ]] && flags+=(--prerelease)
+          cat > notes.md <<'EOF'
+          ## Downloads
+
+          | Platform | File |
+          |----------|------|
+          | Windows 10/11 | `*_x64-setup.exe` (installer) or `*_x64-portable.zip` |
+          | macOS 11+ (Apple Silicon and Intel) | `*_universal.dmg` |
+          | Linux x64 | `*_amd64.AppImage` or `*_amd64.deb` |
+
+          These builds are not code signed yet. On Windows choose **More info > Run anyway**
+          in SmartScreen. On macOS right click Commy.app and choose **Open** the first time,
+          or run `xattr -dr com.apple.quarantine /Applications/Commy.app`.
+          Verify downloads against `SHA256SUMS.txt`.
+          EOF
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --notes-file notes.md "${flags[@]}"
