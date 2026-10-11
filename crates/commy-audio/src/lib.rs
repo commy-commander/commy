@@ -16,6 +16,8 @@ use thiserror::Error;
 pub const FRAME_SIZE: usize = DenoiseState::FRAME_SIZE;
 pub const SAMPLE_RATE: u32 = 48_000;
 
+pub mod codec;
+
 #[derive(Debug, Error, PartialEq)]
 pub enum AudioError {
     #[error("expected a frame of {FRAME_SIZE} samples, got {0}")]
@@ -41,6 +43,8 @@ pub struct VoiceProcessor {
     /// Frames below this VAD probability are not transmitted while
     /// noise cancellation is active.
     vad_threshold: f32,
+    /// Fades the denoiser's leftover noise to silence between words.
+    gate: VoiceGate,
 }
 
 impl Default for VoiceProcessor {
@@ -57,6 +61,7 @@ impl VoiceProcessor {
             muted: false,
             input_gain: 1.0,
             vad_threshold: 0.0,
+            gate: VoiceGate::default(),
         }
     }
 
@@ -64,6 +69,7 @@ impl VoiceProcessor {
         if enabled && !self.noise_cancellation {
             // Fresh state so stale spectral estimates do not bleed in.
             self.denoiser = DenoiseState::new();
+            self.gate = VoiceGate::default();
         }
         self.noise_cancellation = enabled;
     }
@@ -122,10 +128,11 @@ impl VoiceProcessor {
 
         let mut denoised = [0.0f32; FRAME_SIZE];
         let vad = self.denoiser.process_frame(&mut denoised, &scaled);
-        let samples = denoised
+        let mut samples: Vec<f32> = denoised
             .iter()
             .map(|s| (s / 32767.0).clamp(-1.0, 1.0))
             .collect();
+        self.gate.apply(&mut samples, vad);
         Ok(ProcessedFrame {
             samples,
             voice_probability: vad,
@@ -134,9 +141,87 @@ impl VoiceProcessor {
     }
 }
 
+/// Gate on RNNoise's voice probability. Between words the denoiser still
+/// leaves a faint, fluttering residue that a speech codec turns into hiss
+/// and crackle, so it fades to true silence there. A short hold keeps
+/// word endings, and gain changes ramp across the frame so there are no
+/// clicks.
+#[derive(Debug, Clone)]
+pub struct VoiceGate {
+    gain: f32,
+    hold: u32,
+}
+
+impl Default for VoiceGate {
+    fn default() -> Self {
+        // Open at first, so speech at the very start is not lost.
+        Self { gain: 1.0, hold: Self::HOLD_FRAMES }
+    }
+}
+
+impl VoiceGate {
+    /// Voice probability that opens the gate.
+    const OPEN_AT: f32 = 0.7;
+    /// Frames (10 ms) the gate stays open after the last voiced frame.
+    const HOLD_FRAMES: u32 = 30;
+    /// Largest gain drop per frame while closing: a 40 ms fade.
+    const RELEASE_PER_FRAME: f32 = 0.25;
+
+    pub fn apply(&mut self, samples: &mut [f32], voice_probability: f32) {
+        if voice_probability >= Self::OPEN_AT {
+            self.hold = Self::HOLD_FRAMES;
+        } else {
+            self.hold = self.hold.saturating_sub(1);
+        }
+        let target = if self.hold > 0 { 1.0 } else { 0.0 };
+        // Open within one frame, close gently.
+        let end = if target > self.gain { target } else { (self.gain - Self::RELEASE_PER_FRAME).max(target) };
+        let start = self.gain;
+        let n = samples.len().max(1) as f32;
+        for (i, s) in samples.iter_mut().enumerate() {
+            *s *= start + (end - start) * (i as f32 + 1.0) / n;
+        }
+        self.gain = end;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.gain > 0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gate_holds_then_fades_to_silence() {
+        let mut gate = VoiceGate::default();
+        let frame = || vec![0.1f32; FRAME_SIZE];
+        // Voiced frames pass untouched.
+        let mut f = frame();
+        gate.apply(&mut f, 0.9);
+        assert!(f.iter().all(|s| (*s - 0.1).abs() < 1e-6));
+        // Through the hold, still open.
+        for _ in 0..VoiceGate::HOLD_FRAMES - 1 {
+            let mut f = frame();
+            gate.apply(&mut f, 0.0);
+            assert!((f[FRAME_SIZE - 1] - 0.1).abs() < 1e-6);
+        }
+        // Then a short fade, never a jump: neighbouring samples stay close.
+        let mut faded = Vec::new();
+        for _ in 0..6 {
+            let mut f = frame();
+            gate.apply(&mut f, 0.0);
+            faded.extend(f);
+        }
+        assert!(faded.windows(2).all(|w| (w[0] - w[1]).abs() < 0.001), "no clicks");
+        assert_eq!(*faded.last().unwrap(), 0.0);
+        assert!(!gate.is_open());
+        // Speech reopens it straight away.
+        let mut f = frame();
+        gate.apply(&mut f, 0.8);
+        assert!((f[FRAME_SIZE - 1] - 0.1).abs() < 1e-6);
+    }
 
     fn sine_frame(freq: f32, amplitude: f32) -> Vec<f32> {
         (0..FRAME_SIZE)

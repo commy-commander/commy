@@ -32,7 +32,7 @@ pub struct VoiceSession {
     pub mixer: Arc<Mutex<Mixer>>,
     pub deafened: Arc<AtomicBool>,
     /// Sequenced microphone frames, fanned out to every peer task.
-    pub mic_broadcast: broadcast::Sender<(u32, Vec<i16>)>,
+    pub mic_broadcast: broadcast::Sender<(u32, Arc<Vec<u8>>)>,
     /// Unix seconds of the last transmitted mic frame, for AFK moves.
     pub last_activity: Arc<std::sync::atomic::AtomicI64>,
     peers: HashMap<UserId, JoinHandle<()>>,
@@ -131,6 +131,8 @@ impl VoiceSession {
             tokio::spawn(async move {
                 let mut mic_rx = mic_rx;
                 let mut seq: u32 = 0;
+                // Encoded once here, then fanned out to every peer.
+                let mut encoder = commy_audio::codec::VoiceEncoder::new();
                 let mut detector = commy_media::SpeakingDetector::default();
                 let mut tick = tokio::time::interval(SPEAKING_TICK);
                 let mut heard_since_tick = false;
@@ -147,7 +149,9 @@ impl VoiceSession {
                             if let Some(speaking) = detector.push(&pcm) {
                                 on_speaking(me, speaking);
                             }
-                            let _ = mic_broadcast.send((seq, pcm));
+                            if let Some(packet) = encoder.encode(&pcm) {
+                                let _ = mic_broadcast.send((seq, Arc::new(packet)));
+                            }
                             seq = seq.wrapping_add(1);
                         }
                         _ = tick.tick() => {
@@ -233,6 +237,8 @@ impl VoiceSession {
                 outgoing,
                 ..
             } = media;
+            let mut decoder = commy_audio::codec::VoiceDecoder::new();
+            let mut last_seq: Option<u32> = None;
             let mut detector = commy_media::SpeakingDetector::default();
             let mut tick = tokio::time::interval(SPEAKING_TICK);
             let mut heard_since_tick = false;
@@ -246,6 +252,31 @@ impl VoiceSession {
                         }
                     }
                     packet = incoming.recv() => match packet {
+                        Some(MediaPacket::Opus { seq, data }) => {
+                            heard_since_tick = true;
+                            meter.lock().unwrap().arrived(seq, std::time::Instant::now());
+                            // Conceal a short gap so the decoder state stays smooth;
+                            // the jitter buffer handles longer silences.
+                            if let Some(last) = last_seq {
+                                let gap = seq.wrapping_sub(last);
+                                if (2..=3).contains(&gap) {
+                                    for missing in 1..gap {
+                                        let pcm = decoder.decode(&[]);
+                                        if !deafened.load(Ordering::Relaxed) {
+                                            mixer.lock().unwrap().push(key, last.wrapping_add(missing), pcm);
+                                        }
+                                    }
+                                }
+                            }
+                            last_seq = Some(seq);
+                            let pcm = decoder.decode(&data);
+                            if let Some(speaking) = detector.push(&pcm) {
+                                on_speaking(user, speaking);
+                            }
+                            if !deafened.load(Ordering::Relaxed) {
+                                mixer.lock().unwrap().push(key, seq, pcm);
+                            }
+                        }
                         Some(MediaPacket::Voice { seq, pcm }) => {
                             heard_since_tick = true;
                             meter.lock().unwrap().arrived(seq, std::time::Instant::now());
@@ -260,8 +291,8 @@ impl VoiceSession {
                         None => break,
                     },
                     frame = mic_rx.recv() => match frame {
-                        Ok((seq, pcm)) => {
-                            if outgoing.send(MediaPacket::Voice { seq, pcm }).is_err() {
+                        Ok((seq, data)) => {
+                            if outgoing.send(MediaPacket::Opus { seq, data: data.as_ref().clone() }).is_err() {
                                 break;
                             }
                         }
@@ -543,8 +574,15 @@ impl MicTest {
         let mixer = Arc::new(Mutex::new(Mixer::new()));
         let speaker = commy_media::start_playback(mixer.clone(), output)?;
         let task = tokio::spawn(async move {
+            // Through the same codec as calls, so the test sounds like you do to others.
+            let mut encoder = commy_audio::codec::VoiceEncoder::new();
+            let mut decoder = commy_audio::codec::VoiceDecoder::new();
             let mut seq: u32 = 0;
             while let Some(pcm) = rx.recv().await {
+                let pcm = match encoder.encode(&pcm) {
+                    Some(packet) => decoder.decode(&packet),
+                    None => pcm,
+                };
                 mixer.lock().unwrap().push(0, seq, pcm);
                 seq = seq.wrapping_add(1);
             }
