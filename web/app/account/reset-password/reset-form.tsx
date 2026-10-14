@@ -42,13 +42,37 @@ export default function ResetPasswordForm({ token }: { token: string }) {
   return (
     <div className="account-card">
       <form className="signin-form" action={submit}>
-        <input type="password" name="password" placeholder="New password" autoComplete="new-password" minLength={8} required />
-        <input type="password" name="confirm" placeholder="Repeat new password" autoComplete="new-password" minLength={8} required />
+        <label>
+          <span>New password</span>
+          <input
+            type="password"
+            name="password"
+            placeholder="New password"
+            autoComplete="new-password"
+            minLength={8}
+            required
+          />
+        </label>
+        <label>
+          <span>Repeat new password</span>
+          <input
+            type="password"
+            name="confirm"
+            placeholder="Repeat new password"
+            autoComplete="new-password"
+            minLength={8}
+            required
+          />
+        </label>
         <button type="submit" className="btn" disabled={busy}>
           Save new password
         </button>
       </form>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
