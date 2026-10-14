@@ -102,7 +102,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <div>
               <h4>Trust</h4>
-              <Link href="/docs/privacy">Privacy</Link>
+              <Link href="/privacy">Privacy</Link>
               <ConsentSettingsLink />
               <Link href="/docs/self-hosting">Host your own</Link>
               <a href={`${REPO_URL}/blob/main/LICENSE`} target="_blank" rel="noreferrer">

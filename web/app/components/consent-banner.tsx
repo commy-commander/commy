@@ -35,7 +35,7 @@ export default function ConsentBanner() {
           We do not use analytics, ads or tracking. The only optional extra is Cloudflare&apos;s security check on
           the sign-in and sign-up forms, which may store data on your device. It stays off unless you accept.
           {current && <> Right now it is <strong>{current === "accepted" ? "allowed" : "off"}</strong>.</>}{" "}
-          <Link href="/docs/privacy#cookies">Details</Link>
+          <Link href="/privacy#cookies">Details</Link>
         </p>
       </div>
       <div className="consent-actions">

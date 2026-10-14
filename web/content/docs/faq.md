@@ -18,7 +18,7 @@ The server is unreachable until a member comes back, like a LAN party where ever
 
 ## Can other people see my IP address?
 
-The peers you connect to directly can, as in any game lobby or direct call. See [Privacy](/docs/privacy).
+The peers you connect to directly can, as in any game lobby or direct call. See the [Privacy Policy](/privacy).
 
 ## Is my data encrypted?
 

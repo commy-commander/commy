@@ -11,7 +11,7 @@ Everything you need to use Commy, understand how it moves your data, and host th
 - [Invite links](/docs/invites): share a server with a link that opens Commy.
 - [Voice and noise cancellation](/docs/voice): voice channels, noise cancellation and screen sharing.
 - [P2P architecture](/docs/p2p-architecture): how iroh connects peers directly and what relays do.
-- [Privacy](/docs/privacy): exactly what an account server can and cannot see.
+- [Privacy Policy](/privacy): how Commy handles your personal information.
 - [Host your own](/docs/self-hosting): run the website, accounts and invite links on your own VPS.
 - [FAQ](/docs/faq): common questions about privacy, pricing and platforms.
 

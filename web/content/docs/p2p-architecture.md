@@ -28,4 +28,4 @@ A Commy server is replicated state held by its members. Channels, history, emoji
 
 ## What an account server does
 
-The only hosted pieces are the website, optional accounts that link your devices, and invite links. None of them see your messages, calls or files. See [Privacy](/docs/privacy) for the full list.
+The only hosted pieces are the website, optional accounts that link your devices, and invite links. None of them see your messages, calls or files. See the [Privacy Policy](/privacy).
