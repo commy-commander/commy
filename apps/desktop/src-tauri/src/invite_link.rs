@@ -16,7 +16,12 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::App;
 
-pub const DEFAULT_ACCOUNT_SERVER: &str = "https://commy.chat";
+/// commy.chat, unless the build sets COMMY_DEFAULT_ACCOUNT_SERVER (test builds
+/// from pre-release tags use https://staging.commy.chat).
+pub const DEFAULT_ACCOUNT_SERVER: &str = match option_env!("COMMY_DEFAULT_ACCOUNT_SERVER") {
+    Some(server) => server,
+    None => "https://commy.chat",
+};
 pub const SCHEME: &str = "commy";
 const CODE_ALPHABET: &str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_LENGTH: usize = 8;

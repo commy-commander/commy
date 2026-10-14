@@ -228,6 +228,8 @@ pub struct AccountView {
     server: String,
     server_host: String,
     is_default_server: bool,
+    /// Host of the server this build uses when none is chosen.
+    default_server_host: String,
     /// Set by COMMY_AUTH_URL, so the setting cannot change it.
     server_from_env: bool,
     device_linked: bool,
@@ -242,6 +244,7 @@ fn view(app: &App) -> AccountView {
         user: if is_signed_in(&state) { state.user.clone() } else { None },
         server_host: host_of(&server),
         is_default_server: server == DEFAULT_ACCOUNT_SERVER,
+        default_server_host: host_of(DEFAULT_ACCOUNT_SERVER),
         server_from_env: std::env::var("COMMY_AUTH_URL").ok().and_then(|s| normalize_origin(&s)).is_some(),
         server,
         device_linked: state.device_linked,
