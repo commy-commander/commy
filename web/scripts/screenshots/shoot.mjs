@@ -83,9 +83,13 @@ function seed(assets) {
       m("g6", "m3", "quill", "bringing a friend on Friday, sending them the invite https://commy.chat/i/K7QX2M9P", 12),
       m("g7", "me", "commander", "nice, see you all in the Lounge \u{1F3AE}", 4, { reactions: [{ emoji: "\u{1F44B}", count: 4, users: ["m1", "m2", "m4", "m6"] }] }),
     ];
-    // A real GIF from KLIPY when GIF_URL is set.
-    if (assets.gif) mock.messages[general].push(m("g8", "m2", "nova", assets.gif, 2,
-      { reactions: [{ emoji: "\u{1F602}", count: 3, users: ["m1", "m6", "me"] }] }));
+    // With GIF_URL set, nova replies to the island with a real KLIPY GIF so everything still fits.
+    if (assets.gif) {
+      const list = mock.messages[general];
+      const reply = list.find(x => x.id === "g4");
+      reply.content = assets.gif;
+      list.pop();
+    }
     mock.dms = {
       m1: { name: "ferris", messages: [{ id: "d1", from: "m1", from_name: "ferris", content: "want to test the new soundboard before Friday?", created_at: ago(20), outgoing: false }] },
     };
@@ -143,6 +147,15 @@ const scenes = {
   async chat(page) {
     await joinLounge(page, ["m2"]);
     await openChannel(page, "general");
+    // Let linked GIFs load before pinning the view to the newest message.
+    await page.evaluate(async () => {
+      const imgs = [...document.querySelectorAll(".image-embed img")];
+      imgs.forEach(img => (img.loading = "eager"));
+      await Promise.all(imgs.map(img => img.decode().catch(() => {})));
+      for (let el = imgs[0]; el; el = el.parentElement) {
+        if (el.scrollHeight > el.clientHeight + 1 && getComputedStyle(el).overflowY !== "visible") { el.scrollTop = el.scrollHeight; break; }
+      }
+    });
     await shot(page, "chat");
   },
   async voice(page) {
