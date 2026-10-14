@@ -1,5 +1,6 @@
 # Builds the desktop app for Windows, macOS and Linux and publishes a GitHub Release.
-# Push a tag like v0.2.0 to release. Tags containing "-test" create a draft release.
+# Run "Cut release" (or push a tag like v0.2.0) to release. Tags containing "-test" create a draft release,
+# other tags with a suffix (v0.2.0-rc.1) a pre-release.
 # Pull requests that touch this file and manual runs build everything without publishing.
 
 name: Desktop release
