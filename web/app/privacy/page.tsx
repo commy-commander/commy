@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <main className="legal">
+    <main className="page legal">
       <div className="legal-body" dangerouslySetInnerHTML={{ __html: getPrivacyPolicy() }} />
     </main>
   );

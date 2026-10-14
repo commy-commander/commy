@@ -13,4 +13,4 @@ docker run --rm --add-host=host.docker.internal:host-gateway -v "$PWD:/work" -w 
 
 Pass scene names (`chat voice stream call roles invite signin`) to capture only some. Output lands in
 `out/`; copy the JPEGs to `public/screenshots/`. For `og.mjs`, copy `public/logo.png`, `out/chat.jpg`
-and the Inter 500/800 fonts from `app/fonts/` into `out/` first.
+and the Inter 500/800 fonts from `../../../apps/desktop/ui/fonts/` into `out/` first.
