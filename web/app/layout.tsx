@@ -5,6 +5,7 @@ import ConsentBanner, { ConsentSettingsLink } from "./components/consent-banner"
 import Mascot from "./components/mascot";
 import NavLinks from "./components/nav-links";
 import Reveal from "./components/reveal";
+import Sky from "./components/sky";
 import "./globals.css";
 import "./site.css";
 
@@ -17,18 +18,20 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", images: ["/og.png"] },
 };
 
-export const viewport: Viewport = { themeColor: "#f3f2ee" };
+export const viewport: Viewport = { themeColor: "#0b0d17" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const year = new Date().getFullYear();
   return (
     <html lang="en">
       <head>
-        <link rel="preload" href="/fonts/bricolage-latin.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+        <link rel="preload" href="/fonts/unbounded-latin.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+        <link rel="preload" href="/fonts/figtree-latin.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
       </head>
       <body>
         {/* Motion only switches on once a script has run, so nothing is ever hidden without JavaScript. */}
         <script dangerouslySetInnerHTML={{ __html: "document.documentElement.classList.add('js')" }} />
+        <Sky />
         <a href="#main" className="skip-link">
           Skip to content
         </a>
