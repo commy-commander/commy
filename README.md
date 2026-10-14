@@ -3,7 +3,7 @@
 Commy is free, open source, peer-to-peer voice and text chat for communities, written in Rust.
 Voice, text, file sharing, soundboards, emojis, and screen sharing with no
 paywall. Servers live on their members' machines over [iroh](https://iroh.computer);
-the only hosted pieces are the docs website and optional account auth.
+the only hosted pieces are the website and optional account auth.
 
 ## Architecture
 
@@ -19,8 +19,10 @@ crates/commy-audio      Voice DSP: RNNoise noise cancellation toggle,
                         mute gate, VAD, 48 kHz / 10 ms frames
 crates/commy-media      Device I/O: mic capture, playback mixing with
                         jitter buffers, screen capture (MJPEG)
-web                     Auth + docs website: Next.js, Prisma, Auth.js
-                        (Google + email), Postgres via docker compose
+auth                    Account server: Better Auth, Postgres
+deploy                  Self-hosting stack and deploy pipeline
+                        (the commy.chat website lives in its own
+                        repository, commy-web)
 ```
 
 How P2P works:
@@ -78,13 +80,7 @@ cargo tauri dev
 # Preview the UI alone in a browser (mock backend)
 # open apps/desktop/ui/index.html
 
-# Auth/docs website
-cd web
-cp .env.example .env
-docker compose up -d postgres
-npm install
-npx prisma migrate dev
-npm run dev
+# Account server and hosting stack: see deploy/HOSTING.md
 ```
 
 Before bundling installers, generate platform icons once:
@@ -131,7 +127,7 @@ Working today:
   (COMMY_AFK_SECS overrides the timeout)
 - Mic test loopback and multi-instance support (COMMY_DATA_DIR) for
   single-machine voice testing
-- Desktop UI shell, plus the website scaffold
+- Desktop UI shell
 
 Voice transport notes: media connections use a dedicated `commy/media/1`
 ALPN. Voice is raw PCM for now (about 96 kB/s per peer); the packet

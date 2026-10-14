@@ -1,8 +1,9 @@
-# Builds the web and auth server images and publishes them to GHCR.
+# Builds the auth server image and publishes it to GHCR.
 #   push to main   -> :dev and :sha-<commit>   (dev environment updates itself)
 #   tag v1.2.3     -> :1.2.3 and :staging       (staging updates itself)
 #   pull request   -> build only
 # Production is updated by the "Promote images" workflow. See deploy/DEPLOYING.md.
+# The website image is built the same way from its own repository, commy-web.
 
 name: Server images
 
@@ -10,9 +11,9 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths: ["web/**", "auth/**", "deploy/**", ".github/workflows/images.yml"]
+    paths: ["auth/**", "deploy/**", ".github/workflows/images.yml"]
   pull_request:
-    paths: ["web/**", "auth/**", "deploy/**", ".github/workflows/images.yml"]
+    paths: ["auth/**", "deploy/**", ".github/workflows/images.yml"]
   workflow_dispatch:
 
 permissions:
@@ -54,8 +55,12 @@ jobs:
       - name: Build images into a local registry
         run: |
           docker run -d --name registry -p 5000:5000 registry:2
+          # The auth image is built from this checkout; the website comes from its
+          # own repository, so its published image stands in for it here.
+          docker build -q -t "localhost:5000/commy-auth:candidate" auth
+          docker pull -q ghcr.io/commy-commander/commy-web:dev
+          docker tag ghcr.io/commy-commander/commy-web:dev localhost:5000/commy-web:candidate
           for svc in web auth; do
-            docker build -q -t "localhost:5000/commy-$svc:candidate" "$svc"
             for env in prod staging dev; do
               docker tag "localhost:5000/commy-$svc:candidate" "localhost:5000/commy-$svc:$env"
               docker push -q "localhost:5000/commy-$svc:$env"
@@ -105,7 +110,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [web, auth]
+        service: [auth]
     steps:
       - uses: actions/checkout@v4
 

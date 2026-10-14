@@ -7,7 +7,7 @@ SSH keys or server secrets stored in the repository.
 
 | Environment | Image tag  | Updated by                                         | URL (example)                |
 |-------------|------------|----------------------------------------------------|------------------------------|
-| dev         | `:dev`     | every merge to `main` that touches `web/`, `auth/` or `deploy/` | `https://dev.commy.chat`     |
+| dev         | `:dev`     | every merge to `main` (website: in commy-web; auth: here, touching `auth/` or `deploy/`) | `https://dev.commy.chat`     |
 | staging     | `:staging` | pushing a release tag like `v0.2.0`                | `https://staging.commy.chat` |
 | prod        | `:prod`    | running **Promote images** and approving it        | `https://commy.chat`         |
 
@@ -161,12 +161,14 @@ AUTH_IMAGE=ghcr.io/commy-commander/commy-auth:prod
 ## Shipping a change
 
 - **Dev**: merge a pull request. The dev site updates a minute or two after the
-  **Server images** workflow finishes.
+  **Server images** workflow finishes (for the website: the **Website image**
+  workflow in the commy-web repository).
 - **Staging**: push a release tag (`git tag v0.2.0 && git push origin v0.2.0`).
   The same tag also builds the desktop release.
 - **Prod**: Actions > **Promote images** > Run workflow > `prod`. A required
   reviewer approves it under the run's **Review deployments** button, then prod
-  picks up the exact images staging is running.
+  picks up the exact images staging is running. The website has the same
+  **Promote image** workflow in the commy-web repository; run both.
 
 Changes to the compose files themselves (a new environment variable, a new
 service) are not picked up by the agent: run

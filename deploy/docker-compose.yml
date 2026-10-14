@@ -1,6 +1,8 @@
 # Commy self-hosted stack: website + docs, Better Auth server, Postgres,
 # an iroh relay with a monthly bandwidth meter, and Caddy.
 # Usage: cp .env.example .env, fill it in, then docker compose up -d --build
+# The website image is published from its own repository (commy-web); set
+# WEB_IMAGE to the tag to run, the default below is the production image.
 
 name: commy
 
@@ -37,8 +39,7 @@ services:
     logging: *logging
 
   web:
-    build: ../web
-    image: ${WEB_IMAGE:-commy-web:local}
+    image: ${WEB_IMAGE:-ghcr.io/commy-commander/commy-web:prod}
     restart: unless-stopped
     environment:
       AUTH_INTERNAL_URL: http://auth:3001
