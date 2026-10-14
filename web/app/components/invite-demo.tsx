@@ -36,7 +36,7 @@ export default function InviteDemo() {
 
   return (
     <div className="invite-demo">
-      <div className="invite-in field-night">
+      <div className="invite-in">
         <label htmlFor={id}>Name your server</label>
         <input
           id={id}

@@ -2,8 +2,12 @@ import { chromium } from "playwright";
 import { avatarSvg, gameSvg, islandSvg, serverIconSvg, svgDataUrl } from "./art.mjs";
 
 const URL = process.env.UI_URL || "http://host.docker.internal:5174/";
-const GIF_URL = process.env.GIF_URL || "";
-const OUT = "/work/out";
+// A cute cartoon cat saying hi, from KLIPY, the GIF search built into Commy.
+const DEFAULT_GIF = "https://static.klipy.com/ii/c3a19a0b747a76e98651f2b9a3cca5ff/ea/4c/Zpt8i5To.gif";
+const GIF_URL = process.env.GIF_URL ?? DEFAULT_GIF;
+const OUT = process.env.OUT || "/work/out";
+// IGDB cover image ids for the games members are playing, when known (see README).
+const COVERS = process.env.COVERS ? JSON.parse(process.env.COVERS) : {};
 const only = process.argv.slice(2);
 
 const PEOPLE = [
@@ -17,6 +21,7 @@ const assets = {
   game: svgDataUrl(gameSvg()),
   icon: svgDataUrl(serverIconSvg()),
   gif: GIF_URL,
+  covers: COVERS,
 };
 
 // Runs in the page: replaces the preview's sample data with a demo community.
@@ -51,6 +56,10 @@ function seed(assets) {
         { id: "m8", name: "pixel", presence: "offline", custom_status: null, avatar: "blob:av-m8" },
       ],
     };
+    for (const member of server.members) {
+      const game = member.activity?.replace(/^Playing /, "");
+      if (game && assets.covers[game]) member.activity_cover = assets.covers[game];
+    }
     server.roles = [
       { id: "r0", name: "Admin", color: "ff5c8a", position: 4, permissions: ["administrator"], self_assignable: false, tag: null },
       { id: "r1", name: "Moderator", color: "ff7a59", position: 3, permissions: ["manage_messages", "kick_members", "mute_members"], self_assignable: false, tag: "MOD" },
@@ -112,6 +121,7 @@ async function boot(page) {
     state.user.avatar = "blob:av-me";
     state.user.custom_status = null;
     renderUserPanel();
+    await selectServer(state.currentServer.id);
     document.querySelectorAll(".toast, #toast, .toasts").forEach(t => (t.style.display = "none"));
   });
   await page.addStyleTag({ content: ".toast, #toast, .toasts, #toasts { display: none !important; }" });
@@ -227,7 +237,9 @@ const scenes = {
   },
 };
 
-const browser = await chromium.launch({ args: [`--unsafely-treat-insecure-origin-as-secure=${new globalThis.URL(URL).origin}`] });
+const browser = await chromium.launch({
+  args: [`--unsafely-treat-insecure-origin-as-secure=${new globalThis.URL(URL).origin}`, ...(process.env.NO_SANDBOX ? ["--no-sandbox"] : [])],
+});
 for (const [name, run] of Object.entries(scenes)) {
   if (only.length && !only.includes(name)) continue;
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, deviceScaleFactor: 1.5 });
