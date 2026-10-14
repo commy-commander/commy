@@ -4,7 +4,8 @@
 #   pull request   -> build only
 # The image builds alongside the tests and is pushed by digest only; the tags above
 # are added in the last job once every test passes, so nothing untested is tagged.
-# A newer push to main cancels an older run still in flight.
+# Merges in a row build side by side; Publish runs one at a time and moves :dev
+# only for the newest commit on main, so an older run never wins.
 # Production is updated by the "Promote images" workflow. See deploy/DEPLOYING.md.
 # The website image is built the same way from its own repository, commy-web.
 
@@ -22,10 +23,10 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels its older run; main and tags never wait here
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Release tags always finish; on main and pull requests only the newest commit matters
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   auth-tests:
@@ -154,6 +155,9 @@ jobs:
     needs: [auth-tests, agent-tests, stack-e2e, image]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ matrix.service }}-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -183,9 +187,19 @@ jobs:
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
           IMAGE: ghcr.io/${{ github.repository_owner }}/commy-${{ matrix.service }}@${{ needs.image.outputs[format('{0}-digest', matrix.service)] }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # A newer commit on main publishes :dev itself; this one keeps only its sha- tag
+          newest=true
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            head="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+            [ "$head" = "$GITHUB_SHA" ] || { newest=false; echo "main is now at $head, leaving :dev to that run"; }
+          fi
           args=""
-          for tag in $TAGS; do args="$args --tag $tag"; done
+          for tag in $TAGS; do
+            case "$tag" in *:dev) [ "$newest" = true ] || continue ;; esac
+            args="$args --tag $tag"
+          done
           [ -n "$args" ] || { echo "No tags for $GITHUB_REF"; exit 0; }
           # shellcheck disable=SC2086
           docker buildx imagetools create $args "$IMAGE"
