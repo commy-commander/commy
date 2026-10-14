@@ -75,6 +75,9 @@ services:
       TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       INVITES_REQUIRE_ACCOUNT: ${INVITES_REQUIRE_ACCOUNT:-false}
+      KLIPY_API_KEY: ${KLIPY_API_KEY:-}
+      IGDB_CLIENT_ID: ${IGDB_CLIENT_ID:-}
+      IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy

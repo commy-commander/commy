@@ -643,8 +643,8 @@
                 <option value="giphy">GIPHY</option>
               </select>
             </label>
-            <label class="field-label">API Key
-              <input id="gif-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your API key" />
+            <label class="field-label">Your own API key (optional)
+              <input id="gif-key" type="password" autocomplete="off" spellcheck="false" placeholder="Leave blank to use the built-in search" />
             </label>
             <div class="setting-sub" id="gif-key-help"></div>
             <div class="form-actions">
@@ -652,7 +652,7 @@
               <button class="btn-primary btn-small" id="gif-key-save">Save</button>
             </div>
           </div>
-          <div class="setting-sub">The key is stored only on this device and is never sent to other members. Type <strong>/gif</strong> in the message box or click the GIF button to search.</div>
+          <div class="setting-sub">Without a key, searches go through your Commy account server, which never shares its key with the app. A key of your own is stored only on this device and is never sent to other members. Type <strong>/gif</strong> in the message box or click the GIF button to search.</div>
         </section>
 
         <section class="settings-page" data-page="notifications">
@@ -720,7 +720,7 @@
               <div class="integration-logo">IGDB</div>
               <div>
                 <div class="setting-title">IGDB game database <span class="integration-state" id="igdb-state"></span></div>
-                <div class="setting-sub">Optional. Adds game search with cover art when tagging servers, and shows the proper title and cover for the game you are playing. Everything works without it.</div>
+                <div class="setting-sub">Game search with cover art when tagging servers, and the proper title and cover for the game you are playing. Built in through your Commy account; add credentials here only if your account server does not offer game search.</div>
               </div>
             </div>
             <ol class="integration-steps">

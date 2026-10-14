@@ -83,6 +83,16 @@ and Twitch application (both accept several).
   Cloudflare Turnstile widget for your domain to put a bot check on sign-up,
   sign-in, magic links and password reset. Recommended for any public instance.
 
+- **GIF and game search**: signed in apps search GIFs and games through your
+  server, so your users never need keys of their own. Set `KLIPY_API_KEY` to a
+  key from https://partner.klipy.com/api-keys for GIFs (test keys are rate
+  limited; ask KLIPY for a production key before opening to the public). Game
+  search uses IGDB, which signs in with a Twitch application: the Twitch sign-in
+  app above works as is, or set `IGDB_CLIENT_ID` and `IGDB_CLIENT_SECRET` for a
+  separate one. The keys stay on the server; apps only see results. Search terms
+  are forwarded to KLIPY or IGDB and never logged or stored. Leave them
+  blank and users can still add their own keys in the app's settings.
+
 Set `ALLOW_SIGNUP=false` to close registration on a private instance.
 Run `docker compose up -d` after any `.env` change.
 

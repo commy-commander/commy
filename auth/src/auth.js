@@ -4,6 +4,7 @@ import pg from "pg";
 import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
 import { commyInvites } from "./invites.js";
+import { commyMedia } from "./media.js";
 import { createMailer } from "./mailer.js";
 
 export function socialProviders(config) {
@@ -15,7 +16,7 @@ export function socialProviders(config) {
   return providers;
 }
 
-export function buildAuthOptions(config, { pool, send }) {
+export function buildAuthOptions(config, { pool, send, fetch }) {
   const plugins = [
     // Desktop clients hold a session token and send it as a Bearer header
     bearer(),
@@ -28,6 +29,7 @@ export function buildAuthOptions(config, { pool, send }) {
     commyDevices({ secret: config.secret, serverUrl: config.baseURL }),
     commyDeviceRequests({ secret: config.secret }),
     commyInvites({ serverUrl: config.baseURL, requireAccount: config.invitesRequireAccount }),
+    commyMedia({ secret: config.secret, klipyKey: config.klipyKey, igdb: config.igdb, fetch }),
   ];
 
   if (config.turnstile) {
@@ -137,6 +139,8 @@ export function buildAuthOptions(config, { pool, send }) {
         "/commy/devices/challenge": { window: 60, max: 20 },
         "/commy/invites/create": { window: 3600, max: 30 },
         "/commy/invites/resolve": { window: 60, max: 60 },
+        "/commy/gifs/search": { window: 60, max: 60 },
+        "/commy/games/search": { window: 60, max: 60 },
       },
     },
     telemetry: { enabled: false },
