@@ -186,6 +186,12 @@ run_once
 check "other services still update" "$(images)" "sha256:new"
 SERVICES="web"
 
+# Jitter stays within a third of the interval, capped at 20 seconds
+INTERVAL=10
+check "short interval keeps jitter small" "$(jitter | awk '{ print ($1 <= 3) }')" "1"
+INTERVAL=600
+check "jitter is capped at 20s" "$(jitter | awk '{ print ($1 <= 20) }')" "1"
+
 rm -rf "$FAKE"
 if [ "$failures" -ne 0 ]; then
 	echo "$failures test(s) failed"

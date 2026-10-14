@@ -52,6 +52,8 @@ BETTER_AUTH_SECRET=$(openssl rand -base64 32)
 WEB_IMAGE=$IMAGES/commy-web:$env
 AUTH_IMAGE=$IMAGES/commy-auth:$env
 EOF
+		# Dev follows every merge, so its agent checks for new images more often
+		if [ "$env" = dev ]; then echo "AGENT_INTERVAL=10" >>"$envfile"; fi
 		chmod 600 "$envfile"
 		echo "commy-$env: wrote $envfile (add Google, Twitch and SMTP settings there later)"
 	fi
@@ -82,7 +84,7 @@ fi
 
 cat <<EOF
 
-Done. Each environment's agent pulls its image tag every minute:
+Done. Each environment's agent pulls its image tag every minute (dev every 10s):
   dev     <- every merge to main
   staging <- every release tag (v*)
   prod    <- the "Promote images" workflow in GitHub Actions

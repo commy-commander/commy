@@ -1,5 +1,5 @@
 # Copies an existing auth image to the staging or prod tag without rebuilding.
-# The deploy agent in that environment picks the change up within a minute.
+# The deploy agent in that environment picks the change up within about a minute.
 # The "production" environment requires approval before this runs for prod.
 # The website image is promoted by the same workflow in its own repository, commy-web.
 

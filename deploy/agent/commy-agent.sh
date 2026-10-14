@@ -116,13 +116,20 @@ run_once() {
 	return $status
 }
 
+# Up to a third of the interval (at most 20s) of random delay, so agents on the same
+# host do not pull in lockstep and a short dev interval stays short
+jitter() {
+	max=$((INTERVAL / 3))
+	[ "$max" -gt 20 ] && max=20
+	awk -v max="$max" 'BEGIN { srand(); print int(rand() * (max + 1)) }'
+}
+
 main() {
 	log "watching [$SERVICES] in project ${COMPOSE_PROJECT_NAME:-commy} every ${INTERVAL}s"
 	while true; do
 		run_once
 		docker image prune -f >/dev/null 2>&1
-		# Jitter keeps agents on the same host from pulling in lockstep
-		sleep "$((INTERVAL + $(awk 'BEGIN { srand(); print int(rand() * 20) }')))"
+		sleep "$((INTERVAL + $(jitter)))"
 	done
 }
 
