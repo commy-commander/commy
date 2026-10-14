@@ -78,6 +78,15 @@ pub fn apicalypse_string(query: &str) -> String {
     query.chars().filter(|c| !c.is_control()).collect::<String>().replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Hits from elsewhere (the account server) with unsafe cover ids and
+/// empty names dropped, like the ones parsed here.
+pub fn safe_hits(hits: Vec<GameHit>) -> Vec<GameHit> {
+    hits.into_iter()
+        .filter(|h| !h.name.trim().is_empty())
+        .map(|h| GameHit { cover: h.cover.filter(|id| valid_image_id(id)), ..h })
+        .collect()
+}
+
 /// The hit that is clearly the same game as `name`, if any. Exact name
 /// matches only (ignoring punctuation and case), so an app called "Code"
 /// never turns into a game.
@@ -254,6 +263,19 @@ mod tests {
         assert_eq!(to_hit(game), Some(GameHit { id: 7, name: "Celeste".into(), cover: Some("co3byy".into()), year: Some(2018) }));
         let unnamed = ApiGame { id: 8, name: None, cover: None, first_release_date: None };
         assert_eq!(to_hit(unnamed), None);
+    }
+
+    #[test]
+    fn hits_from_the_server_are_checked() {
+        let hits = vec![
+            GameHit { id: 1, name: "Ok".into(), cover: Some("co1".into()), year: None },
+            GameHit { id: 2, name: "Bad cover".into(), cover: Some("https://evil".into()), year: None },
+            GameHit { id: 3, name: " ".into(), cover: None, year: None },
+        ];
+        let safe = safe_hits(hits);
+        assert_eq!(safe.len(), 2);
+        assert_eq!(safe[0].cover.as_deref(), Some("co1"));
+        assert_eq!(safe[1].cover, None);
     }
 
     #[test]

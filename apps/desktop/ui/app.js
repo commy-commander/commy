@@ -339,6 +339,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_igdb_credentials":
       mock.integrations = { igdb_client_id: args.clientId, igdb_configured: Boolean(args.clientId) };
       return args.clientId ? [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }] : [];
+    case "gif_search": return null;
     case "search_games":
       return [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }, { id: 71, name: "Portal", cover: "co1x7d", year: 2007 }]
         .filter(g => g.name.toLowerCase().includes(args.query.toLowerCase()));
@@ -3137,7 +3138,8 @@ function closeGameSearch() {
 
 function queueGameSearch(query) {
   clearTimeout(gameSearchTimer);
-  if (!integrations.igdb_configured || query.trim().length < 2) {
+  // Own credentials or the account server's; with neither it finds nothing.
+  if (query.trim().length < 2) {
     closeGameSearch();
     return;
   }
@@ -6098,8 +6100,8 @@ async function sendMessage() {
 
 const GIF_KEY = "commy.gif";
 const GIF_HELP = {
-  klipy: 'Free key: sign in at <a data-href="https://partner.klipy.com/api-keys">partner.klipy.com</a>, open API Keys, choose Add Platform, then Create API Key and copy it. Test keys are rate limited; use Request Production in the key menu for more.',
-  giphy: 'Free key: sign in at <a data-href="https://developers.giphy.com/dashboard/">developers.giphy.com</a>, choose Create an App, pick API, and copy the key.',
+  klipy: 'Optional: GIF search works through your Commy account without a key. To use your own, sign in at <a data-href="https://partner.klipy.com/api-keys">partner.klipy.com</a>, open API Keys, choose Add Platform, then Create API Key and copy it. Test keys are rate limited; use Request Production in the key menu for more.',
+  giphy: 'Optional: GIF search works through your Commy account without a key. To use your own, sign in at <a data-href="https://developers.giphy.com/dashboard/">developers.giphy.com</a>, choose Create an App, pick API, and copy the key.',
 };
 const GIF_PROVIDERS = new Set(["klipy", "giphy"]);
 
@@ -6129,9 +6131,19 @@ function klipyRatio(file, sizes) {
   return 0;
 }
 
-// Returns [{ preview, url, title }] from the configured provider.
+// Returns [{ preview, url, title }] from the configured provider. Without a
+// key of their own, people search through their account server's key.
 async function searchGifs(query, settings = gifSettings()) {
-  if (!settings.key) throw new Error("no-key");
+  if (!settings.key) {
+    let hits;
+    try {
+      hits = await invoke("gif_search", { query });
+    } catch (e) {
+      throw new Error(String(e));
+    }
+    if (!hits) throw new Error("no-key");
+    return hits;
+  }
   const q = encodeURIComponent(query.trim());
   if (settings.provider === "klipy") {
     // KLIPY puts the key in the path rather than the query string.
@@ -6176,7 +6188,7 @@ async function renderGifResults(query) {
   const token = ++gifSearchToken;
   grid.replaceChildren(el("div", "gif-note", "Searching..."));
   const settings = gifSettings();
-  $("gif-attrib").textContent = settings.provider === "klipy" ? "Powered by KLIPY" : "Powered by GIPHY";
+  $("gif-attrib").textContent = settings.key && settings.provider === "giphy" ? "Powered by GIPHY" : "Powered by KLIPY";
   try {
     const gifs = await searchGifs(query, settings);
     if (token !== gifSearchToken) return;
@@ -6207,7 +6219,7 @@ async function renderGifResults(query) {
     if (token !== gifSearchToken) return;
     const note = el("div", "gif-note");
     if (e.message === "no-key") {
-      note.textContent = "Add a GIF API key to search. ";
+      note.textContent = "Your account server does not offer GIF search. Add your own GIF API key to search. ";
       const link = el("button", "btn-link", "Open GIF settings");
       link.onclick = () => {
         closeGifPicker();
@@ -6215,7 +6227,9 @@ async function renderGifResults(query) {
       };
       note.appendChild(link);
     } else {
-      note.textContent = `Could not load GIFs: ${e.message}. Check your API key in Settings, then GIFs.`;
+      note.textContent = settings.key
+        ? `Could not load GIFs: ${e.message}. Check your API key in Settings, then GIFs.`
+        : `Could not load GIFs: ${e.message}.`;
     }
     grid.replaceChildren(note);
   }
@@ -7303,6 +7317,7 @@ function wireEvents() {
     toast(settings.key ? "GIF key saved" : "GIF key removed");
   };
   $("gif-key-test").onclick = async () => {
+    if (!$("gif-key").value.trim()) return toast("Paste a key first");
     try {
       const gifs = await searchGifs("hello", { provider: $("gif-provider").value, key: $("gif-key").value.trim() });
       toast(gifs.length ? "The key works" : "The key works, but no results came back");

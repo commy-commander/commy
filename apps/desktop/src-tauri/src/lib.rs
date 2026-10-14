@@ -3489,14 +3489,32 @@ async fn enrich_activity(app: &tauri::State<'_, App>, activity: Option<String>) 
     let Some(text) = activity else { return (None, None) };
     let Some(name) = text.strip_prefix("Playing ") else { return (Some(text), None) };
     let creds = app.igdb_creds.lock().unwrap().clone();
-    if !creds.configured() {
-        return (Some(text), None);
-    }
-    let hit = app.igdb.lock().await.resolve(&app.http, &creds, name).await;
+    let hit = if creds.configured() {
+        app.igdb.lock().await.resolve(&app.http, &creds, name).await
+    } else {
+        resolve_game_via_account(app, name).await
+    };
     match hit {
         Some(game) => (Some(format!("Playing {}", game.name)), game.cover),
         None => (Some(text), None),
     }
+}
+
+/// Same as `IgdbClient::resolve`, but through the account server's IGDB
+/// access. Misses and "not offered" are cached so the 2 second activity
+/// poll does not repeat the request; network errors are not.
+async fn resolve_game_via_account(app: &tauri::State<'_, App>, name: &str) -> Option<igdb::GameHit> {
+    let key = igdb::normalize(name);
+    if let Some(hit) = app.igdb.lock().await.resolved.get(&key) {
+        return hit.clone();
+    }
+    let hit = match account::server_search::<igdb::GameHit>(app, "games", name).await {
+        Ok(Some(hits)) => igdb::best_match(name, &igdb::safe_hits(hits)).cloned(),
+        Ok(None) => None,
+        Err(_) => return None,
+    };
+    app.igdb.lock().await.resolved.insert(key, hit.clone());
+    hit
 }
 
 #[derive(serde::Serialize)]
@@ -3552,9 +3570,39 @@ async fn set_igdb_credentials(
 async fn search_games(app: tauri::State<'_, App>, query: String) -> CmdResult<Vec<igdb::GameHit>> {
     let creds = app.igdb_creds.lock().unwrap().clone();
     if !creds.configured() {
-        return Ok(Vec::new());
+        if query.trim().chars().count() < 2 {
+            return Ok(Vec::new());
+        }
+        // No credentials of our own: the account server searches for us.
+        let hits = account::server_search::<igdb::GameHit>(&app, "games", query.trim()).await?;
+        return Ok(igdb::safe_hits(hits.unwrap_or_default()));
     }
     app.igdb.lock().await.search(&app.http, &creds, &query).await
+}
+
+/// One GIF from the account server's search.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct GifHit {
+    preview: String,
+    url: String,
+    #[serde(default)]
+    ratio: f64,
+    #[serde(default)]
+    title: String,
+}
+
+/// GIF search through the account server, which holds the KLIPY key.
+/// `None` means the server does not offer it, so the app asks for a key.
+#[tauri::command]
+async fn gif_search(app: tauri::State<'_, App>, query: String) -> CmdResult<Option<Vec<GifHit>>> {
+    let query: String = query.trim().chars().take(100).collect();
+    let hits = account::server_search::<GifHit>(&app, "gifs", &query).await?;
+    Ok(hits.map(|hits| {
+        hits.into_iter()
+            .filter(|g| g.preview.starts_with("https://") && g.url.starts_with("https://"))
+            .map(|g| GifHit { title: safety::truncate(&g.title, 200), ..g })
+            .collect()
+    }))
 }
 
 #[tauri::command]
@@ -4596,6 +4644,7 @@ pub fn run() {
             get_integrations,
             set_igdb_credentials,
             search_games,
+            gif_search,
             get_overlay_settings,
             overlay_hotkey_problems,
             set_overlay_settings,

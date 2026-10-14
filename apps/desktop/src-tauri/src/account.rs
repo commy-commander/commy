@@ -176,6 +176,49 @@ async fn discover(http: &reqwest::Client, server: &str) -> Result<Discovery, Str
     Ok(doc)
 }
 
+// ---------- Searches run by the account server ----------
+
+#[derive(Deserialize)]
+struct SearchResponse<T> {
+    results: Vec<T>,
+}
+
+/// Runs a GIF or game search on the account server, which holds the
+/// service keys so the app never carries them. `Ok(None)` when nobody is
+/// signed in or the server has that search turned off.
+pub async fn server_search<T: serde::de::DeserializeOwned>(app: &App, kind: &str, query: &str) -> Result<Option<Vec<T>>, String> {
+    let (server, token) = {
+        let state = app.account.lock().unwrap();
+        if !is_signed_in(&state) {
+            return Ok(None);
+        }
+        match (state.signed_in_server.clone(), state.token.clone()) {
+            (Some(server), Some(token)) => (server, token),
+            _ => return Ok(None),
+        }
+    };
+    let host = host_of(&server);
+    let res = app
+        .http
+        .get(format!("{server}/api/auth/commy/{kind}/search"))
+        .query(&[("q", query)])
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|_| format!("Could not reach {host}"))?;
+    match res.status().as_u16() {
+        200 => {}
+        // Older account servers and servers without the key
+        404 => return Ok(None),
+        401 => return Err(format!("Sign in to {host} again to search")),
+        429 => return Err("Too many searches, try again in a minute".into()),
+        _ => return Err(format!("{host} could not search right now")),
+    }
+    let body: SearchResponse<T> = res.json().await.map_err(|_| format!("{host} sent an unexpected reply"))?;
+    Ok(Some(body.results))
+}
+
 // ---------- Commands ----------
 
 #[derive(Serialize)]
@@ -416,6 +459,8 @@ async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -
         name: crate::safety::truncate(&session.user.name, 64),
         email: crate::safety::truncate(&session.user.email, 120),
     };
+    // Game lookups cached under the previous account may now resolve differently
+    app.igdb.lock().await.resolved.clear();
     let device_linked = link_device(app, server, doc, token).await.map_err(|e| {
         tracing::warn!("device link failed: {e}");
         e

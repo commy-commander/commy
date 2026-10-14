@@ -90,6 +90,9 @@ export function loadConfig(env = process.env) {
 
   const google = oauthClient(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
   const twitch = oauthClient(env.TWITCH_CLIENT_ID, env.TWITCH_CLIENT_SECRET);
+  // IGDB signs in with a Twitch application; the sign-in app works for both
+  const igdb = oauthClient(env.IGDB_CLIENT_ID, env.IGDB_CLIENT_SECRET) ?? twitch;
+  const klipyKey = (env.KLIPY_API_KEY ?? "").trim() || null;
 
   const turnstile =
     env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
@@ -111,6 +114,8 @@ export function loadConfig(env = process.env) {
     twitch,
     smtp,
     turnstile,
+    igdb,
+    klipyKey,
   };
 }
 
@@ -146,6 +151,13 @@ export function discoveryDocument(config) {
       removeDevice: `${api}/commy/devices/remove`,
       createInvite: `${api}/commy/invites/create`,
       resolveInvite: `${api}/commy/invites/resolve`,
+      gifSearch: `${api}/commy/gifs/search`,
+      gameSearch: `${api}/commy/games/search`,
+    },
+    // Searches the server runs for signed in apps with its own keys
+    features: {
+      gifs: Boolean(config.klipyKey),
+      games: Boolean(config.igdb),
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,
