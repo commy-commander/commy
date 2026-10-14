@@ -33,6 +33,13 @@ Create Robust Unit Tests for all new modules written, QA testing is high priorit
 Never name other chat products or their paid tiers in code, comments, docs or UI copy; describe Commy on its own terms.
 Never put personal names or emails in the repo; the public identity is Commy Commander.
 
+## UI and Website Design
+
+Design skills live in `.claude/skills/` (impeccable, design-taste-frontend, redesign-existing-projects, design-md-examples, img2threejs; sources in `.claude/skills/THIRD_PARTY.md`). Use them for work on `apps/desktop/ui/` and `web/`. Commy rules override them:
+- No third-party requests from shipped pages before cookie consent: self-host fonts, images and scripts (no hotlinked stock photos, CDNs or font services).
+- Never copy another product's look, palette or copy; never name other chat products.
+- The desktop app is Operate mode (dense, scannable, outline icons, min width 940px); the website landing is Persuade, docs are Read.
+
 ## Files to Avoid
 
 - node_modules/
