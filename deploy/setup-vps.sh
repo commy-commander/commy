@@ -53,7 +53,7 @@ WEB_IMAGE=$IMAGES/commy-web:$env
 AUTH_IMAGE=$IMAGES/commy-auth:$env
 EOF
 		chmod 600 "$envfile"
-		echo "commy-$env: wrote $envfile (add Google and SMTP settings there later)"
+		echo "commy-$env: wrote $envfile (add Google, Twitch and SMTP settings there later)"
 	fi
 done
 

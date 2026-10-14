@@ -21,7 +21,9 @@ export type LinkedDevice = {
 
 export type Providers = {
   google: boolean;
+  twitch: boolean;
   magicLink: boolean;
+  passwordReset: boolean;
   emailPassword: boolean;
   turnstileSiteKey: string | null;
 };
@@ -66,7 +68,9 @@ export async function getProviders(): Promise<Providers> {
   );
   return {
     google: data?.providers.google ?? false,
+    twitch: data?.providers.twitch ?? false,
     magicLink: data?.providers.magicLink ?? false,
+    passwordReset: data?.providers.passwordReset ?? false,
     emailPassword: data?.providers.emailPassword ?? true,
     turnstileSiteKey: data?.turnstileSiteKey ?? null,
   };

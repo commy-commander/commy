@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { socialProviders } from "../src/auth.js";
 import { discoveryDocument, loadConfig } from "../src/config.js";
 import { normalizeDeviceName, normalizeNodeId, toPublicDevice } from "../src/devices.js";
 import { createMailer, escapeHtml, renderEmail } from "../src/mailer.js";
@@ -41,7 +42,8 @@ test("loadConfig enables providers only when fully configured", () => {
     ALLOW_SIGNUP: "false",
   });
   assert.deepEqual(c.google, { clientId: "id", clientSecret: "sec" });
-  assert.equal(c.smtp.url, "smtp://mail:25");
+  assert.equal(c.smtp.transport, "smtp://mail:25");
+  assert.equal(c.twitch, null);
   assert.deepEqual(c.trustedOrigins, ["https://chat.example.org", "https://a.test"]);
   assert.deepEqual(c.desktopClientIds, ["one", "two"]);
   assert.equal(c.allowSignup, false);
@@ -53,7 +55,14 @@ test("discovery document points at the public URL", () => {
   assert.equal(d.deviceAuthorization.clientId, "commy-desktop");
   assert.equal(d.deviceAuthorization.verificationUri, "https://chat.example.org/device");
   assert.equal(d.deviceAuthorization.tokenEndpoint, "https://chat.example.org/api/auth/device/token");
-  assert.deepEqual(d.providers, { google: false, magicLink: true, emailPassword: true });
+  assert.deepEqual(d.providers, {
+    google: false,
+    twitch: false,
+    magicLink: true,
+    emailVerification: true,
+    passwordReset: true,
+    emailPassword: true,
+  });
   assert.equal(d.turnstileSiteKey, null);
   assert.equal(d.endpoints.linkChallenge, "https://chat.example.org/api/auth/commy/devices/challenge");
 });
@@ -112,4 +121,66 @@ test("mail without SMTP logs neither the recipient nor the link", async () => {
   }
   assert.equal(lines.length, 1);
   assert.equal(/victim|SECRET|https:/.test(lines[0]), false);
+});
+
+test("separate SMTP values build a STARTTLS transport on 587", () => {
+  const c = loadConfig({
+    ...base,
+    SMTP_HOST: "smtp.mail.example",
+    SMTP_USER: "no-reply@chat.example.org",
+    SMTP_PASSWORD: "tok:en/with@chars",
+  });
+  assert.deepEqual(c.smtp.transport, {
+    host: "smtp.mail.example",
+    port: 587,
+    secure: false,
+    requireTLS: true,
+    auth: { user: "no-reply@chat.example.org", pass: "tok:en/with@chars" },
+  });
+  assert.equal(c.smtp.from, "Commy <no-reply@chat.example.org>");
+});
+
+test("SMTP port 465 uses implicit TLS and EMAIL_FROM wins", () => {
+  const c = loadConfig({ ...base, SMTP_HOST: "m", SMTP_PORT: "465", EMAIL_FROM: "Chat <hi@x.test>" });
+  assert.equal(c.smtp.transport.secure, true);
+  assert.equal(c.smtp.transport.requireTLS, false);
+  assert.equal("auth" in c.smtp.transport, false);
+  assert.equal(c.smtp.from, "Chat <hi@x.test>");
+});
+
+test("SMTP_URL takes its sender from the URL user", () => {
+  const c = loadConfig({ ...base, SMTP_URL: "smtp://bot%40x.test:pw@m:587" });
+  assert.equal(c.smtp.transport, "smtp://bot%40x.test:pw@m:587");
+  assert.equal(c.smtp.from, "Commy <bot@x.test>");
+});
+
+test("SMTP misconfiguration is reported", () => {
+  assert.throws(() => loadConfig({ ...base, SMTP_HOST: "m", SMTP_USER: "u" }), /SMTP_PASSWORD/);
+  assert.throws(() => loadConfig({ ...base, SMTP_HOST: "m", SMTP_PORT: "0" }), /SMTP_PORT/);
+  assert.throws(() => loadConfig({ ...base, SMTP_URL: "not a url" }), /SMTP_URL/);
+});
+
+test("twitch is enabled only with both values and appears in discovery", () => {
+  assert.equal(loadConfig({ ...base, TWITCH_CLIENT_ID: "id" }).twitch, null);
+  const c = loadConfig({ ...base, TWITCH_CLIENT_ID: "tid", TWITCH_CLIENT_SECRET: "tsec" });
+  assert.deepEqual(c.twitch, { clientId: "tid", clientSecret: "tsec" });
+  const d = discoveryDocument(c);
+  assert.equal(d.providers.twitch, true);
+  assert.equal(d.providers.google, false);
+  assert.equal(JSON.stringify(d).includes("tsec"), false);
+});
+
+test("socialProviders lists configured providers and honours ALLOW_SIGNUP", () => {
+  assert.deepEqual(socialProviders(loadConfig(base)), {});
+  const c = loadConfig({
+    ...base,
+    GOOGLE_CLIENT_ID: "g",
+    GOOGLE_CLIENT_SECRET: "gs",
+    TWITCH_CLIENT_ID: "t",
+    TWITCH_CLIENT_SECRET: "ts",
+    ALLOW_SIGNUP: "false",
+  });
+  const p = socialProviders(c);
+  assert.deepEqual(Object.keys(p), ["google", "twitch"]);
+  assert.deepEqual(p.twitch, { clientId: "t", clientSecret: "ts", disableSignUp: true });
 });
