@@ -90,8 +90,11 @@ With the domain's DNS on Cloudflare:
   Applications > Add > Self-hosted, with `staging.commy.chat` and
   `dev.commy.chat` as the application domains and an Allow policy for your email
   addresses. Testing the desktop app against staging also needs a second
-  application on `staging.commy.chat/api/auth` with a Bypass policy, since the app
-  cannot complete the Access login.
+  application with a Bypass policy (include: Everyone) covering
+  `staging.commy.chat/api/auth` and `staging.commy.chat/.well-known/commy-auth.json`,
+  since the app cannot complete the Access login and discovers the account server
+  through that document first. The approval page the app opens in the browser stays
+  behind Access, which is fine because a browser can complete the login.
 - **Certificates for hosts behind Access.** Access redirects every plain HTTP
   request, so Let's Encrypt cannot validate staging and dev. Give Caddy a
   Cloudflare origin certificate for them instead: SSL/TLS > Origin Server >
