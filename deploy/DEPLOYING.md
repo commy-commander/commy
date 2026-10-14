@@ -16,11 +16,13 @@ which is what makes rollback possible.
 
 ## How an update reaches the server
 
-1. `.github/workflows/images.yml` runs the agent tests, brings the whole
-   three-environment stack up from `setup-vps.sh` on a CI machine, and only then
-   builds and pushes the images.
+1. `.github/workflows/images.yml` runs the agent tests and brings the whole
+   three-environment stack up from `setup-vps.sh` on a CI machine while it builds
+   the image. The image is pushed untagged and only gets its `dev`, `sha-` or
+   release tags once every test has passed.
 2. The agent (`agent/commy-agent.sh`, enabled by `docker-compose.agent.yml`)
-   runs `docker compose pull` every minute.
+   runs `docker compose pull` every minute (every 10 seconds on dev, set by
+   `AGENT_INTERVAL` in that environment's `.env`).
 3. When `auth` or `web` has a new image, the agent starts a second container on
    the new image next to the running one. Caddy sends traffic to both while they
    overlap and retries for up to 15 seconds if a connection fails, so visitors
@@ -160,7 +162,7 @@ AUTH_IMAGE=ghcr.io/commy-commander/commy-auth:prod
 
 ## Shipping a change
 
-- **Dev**: merge a pull request. The dev site updates a minute or two after the
+- **Dev**: merge a pull request. The dev site updates within about 30 seconds after the
   **Server images** workflow finishes (for the website: the **Website image**
   workflow in the commy-web repository).
 - **Staging**: push a release tag (`git tag v0.2.0 && git push origin v0.2.0`).
