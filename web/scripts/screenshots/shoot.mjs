@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import { avatarSvg, gameSvg, islandSvg, serverIconSvg, svgDataUrl } from "./art.mjs";
 
 const URL = process.env.UI_URL || "http://host.docker.internal:5174/";
+const GIF_URL = process.env.GIF_URL || "";
 const OUT = "/work/out";
 const only = process.argv.slice(2);
 
@@ -15,6 +16,7 @@ const assets = {
   island: svgDataUrl(islandSvg()),
   game: svgDataUrl(gameSvg()),
   icon: svgDataUrl(serverIconSvg()),
+  gif: GIF_URL,
 };
 
 // Runs in the page: replaces the preview's sample data with a demo community.
@@ -40,11 +42,11 @@ function seed(assets) {
       id: id(), name: "Pixel Pioneers", owner: "me", icon: "icon@mock", channels,
       members: [
         { id: "m1", name: "ferris", presence: "online", custom_status: "building a castle", avatar: "blob:av-m1", color: "ff7a59", tag: "MOD", tag_color: "ff7a59" },
-        { id: "m2", name: "nova", presence: "online", custom_status: null, activity: "Playing Hoverlane Rally", avatar: "blob:av-m2", color: "8a7dff" },
+        { id: "m2", name: "nova", presence: "online", custom_status: null, activity: "Playing Minecraft", avatar: "blob:av-m2", color: "8a7dff" },
         { id: "m3", name: "quill", presence: "idle", custom_status: "brb coffee", avatar: "blob:av-m3" },
-        { id: "m4", name: "juniper", presence: "online", custom_status: null, avatar: "blob:av-m4", color: "2fd3a7" },
-        { id: "m5", name: "orbit", presence: "dnd", custom_status: "in a match", avatar: "blob:av-m5", color: "8a7dff" },
-        { id: "m6", name: "sprocket", presence: "online", custom_status: null, activity: "Playing Hoverlane Rally", avatar: "blob:av-m6", color: "ffcf4d", tag: "RACE", tag_color: "ffcf4d" },
+        { id: "m4", name: "juniper", presence: "online", custom_status: null, activity: "Playing Stardew Valley", avatar: "blob:av-m4", color: "2fd3a7" },
+        { id: "m5", name: "orbit", presence: "dnd", custom_status: "in a match", activity: "Playing Rocket League", avatar: "blob:av-m5", color: "8a7dff" },
+        { id: "m6", name: "sprocket", presence: "online", custom_status: null, activity: "Playing Trackmania", avatar: "blob:av-m6", color: "ffcf4d", tag: "RACE", tag_color: "ffcf4d" },
         { id: "m7", name: "mira", presence: "online", custom_status: null, avatar: "blob:av-m7" },
         { id: "m8", name: "pixel", presence: "offline", custom_status: null, avatar: "blob:av-m8" },
       ],
@@ -55,7 +57,7 @@ function seed(assets) {
       { id: "r2", name: "Racer", color: "ffcf4d", position: 2, permissions: [], self_assignable: true, tag: "RACE" },
       { id: "r3", name: "Builder", color: "2fd3a7", position: 1, permissions: [], self_assignable: true, tag: null },
     ];
-    server.game_tags = ["Hoverlane Rally", "Isle Builders"];
+    server.game_tags = ["Trackmania", "Minecraft", "Rocket League"];
     server.rules = "# Welcome to Pixel Pioneers\n1. Be kind\n2. No spam\n3. Keep voice friendly";
     server.needs_rules = false;
     server.sounds = [];
@@ -81,6 +83,9 @@ function seed(assets) {
       m("g6", "m3", "quill", "bringing a friend on Friday, sending them the invite https://commy.chat/i/K7QX2M9P", 12),
       m("g7", "me", "commander", "nice, see you all in the Lounge \u{1F3AE}", 4, { reactions: [{ emoji: "\u{1F44B}", count: 4, users: ["m1", "m2", "m4", "m6"] }] }),
     ];
+    // A real GIF from KLIPY when GIF_URL is set.
+    if (assets.gif) mock.messages[general].push(m("g8", "m2", "nova", assets.gif, 2,
+      { reactions: [{ emoji: "\u{1F602}", count: 3, users: ["m1", "m6", "me"] }] }));
     mock.dms = {
       m1: { name: "ferris", messages: [{ id: "d1", from: "m1", from_name: "ferris", content: "want to test the new soundboard before Friday?", created_at: ago(20), outgoing: false }] },
     };
@@ -209,7 +214,7 @@ const scenes = {
   },
 };
 
-const browser = await chromium.launch({ args: ["--unsafely-treat-insecure-origin-as-secure=http://host.docker.internal:5174"] });
+const browser = await chromium.launch({ args: [`--unsafely-treat-insecure-origin-as-secure=${new globalThis.URL(URL).origin}`] });
 for (const [name, run] of Object.entries(scenes)) {
   if (only.length && !only.includes(name)) continue;
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, deviceScaleFactor: 1.5 });
