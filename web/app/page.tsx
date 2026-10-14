@@ -8,7 +8,7 @@ import Mascot from "./components/mascot";
 import Stage, { type Shot } from "./components/stage";
 
 const SHOTS: Shot[] = [
-  { id: "chat", src: "/screenshots/chat.jpg", alt: "A Commy server, Pixel Pioneers, with a busy #general channel: an image, a shared file, reactions, a reply and an invite card" },
+  { id: "chat", src: "/screenshots/chat.jpg", alt: "A Commy server, Pixel Pioneers, with a busy #general channel: a shared image, a GIF, reactions, a reply, a file card and an invite card" },
   { id: "call", src: "/screenshots/call.jpg", alt: "Commy's voice connection panel showing ping, packet loss, jitter and a direct route for each person in the call" },
   { id: "voice", src: "/screenshots/voice.jpg", alt: "Commy's Voice and Audio settings with the Noise Cancellation switch on and a mic test" },
   { id: "stream", src: "/screenshots/stream.jpg", alt: "Watching a member's live racing game stream inside a Commy voice channel, 1280 by 720 at 50 frames a second" },
@@ -61,7 +61,7 @@ const INCLUDED: { title: string; shot: string; pos: string; zoom: number; lines:
   {
     title: "Share anything",
     shot: "/screenshots/chat.jpg",
-    pos: "30% 28%",
+    pos: "32% 52%",
     zoom: 2.2,
     lines: ["Images and GIFs inline", "Files up to 512 MB", "Custom emoji and reactions", "Soundboards into voice", "Friends and direct messages"],
   },
