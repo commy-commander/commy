@@ -1,0 +1,56 @@
+# Tags main as a release and starts the builds for that tag.
+# Run it from the Actions tab (or the API) with a version such as 0.2.0 or 0.2.0-rc.1.
+# Tags pushed by this workflow do not trigger other workflows on their own, so it
+# dispatches "Desktop release" and "Server images" on the new tag itself.
+# Versions with a suffix (-rc.1, -beta.2) are published as GitHub pre-releases.
+# The website repository (commy-web) has its own "Cut release" for its staging image.
+
+name: Cut release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the leading v, for example 0.2.0 or 0.2.0-rc.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: cut-release
+
+jobs:
+  tag:
+    name: Tag v${{ inputs.version }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Create and push the tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "Not a version: $VERSION"; exit 1; }
+          tag="v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists"; exit 1
+          fi
+          git config user.name "Commy Commander"
+          git config user.email "commy.cmd@commy.chat"
+          git tag -a "$tag" -m "Commy $tag"
+          git push origin "refs/tags/$tag"
+
+      - name: Start the release builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          gh workflow run images.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "Started Desktop release and Server images for $TAG" >> "$GITHUB_STEP_SUMMARY"
