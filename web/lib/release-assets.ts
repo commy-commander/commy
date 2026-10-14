@@ -7,6 +7,7 @@ export type GithubAsset = { name: string; browser_download_url: string; size: nu
 
 export type Download = {
   platform: Platform;
+  file: string;
   label: string;
   kind: string;
   url: string;
@@ -30,7 +31,7 @@ export function downloadsFrom(assets: GithubAsset[]): Download[] {
   for (const p of PATTERNS) {
     const asset = assets.find((a) => a.name.startsWith("Commy_") && a.name.endsWith(p.suffix));
     if (asset) {
-      out.push({ platform: p.platform, label: p.label, kind: p.kind, url: asset.browser_download_url, size: asset.size, primary: p.primary });
+      out.push({ platform: p.platform, file: asset.name, label: p.label, kind: p.kind, url: asset.browser_download_url, size: asset.size, primary: p.primary });
     }
   }
   return out;
@@ -60,4 +61,14 @@ export function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
   const mb = bytes / (1024 * 1024);
   return mb >= 1 ? `${mb.toFixed(mb >= 100 ? 0 : 1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
+}
+
+// Parses `sha256sum` output ("<hex>  <file>" or "<hex> *<file>") into file -> hash.
+export function parseChecksums(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^([0-9a-f]{64})\s+\*?(.+)$/i.exec(line.trim());
+    if (m) out[m[2].trim()] = m[1].toLowerCase();
+  }
+  return out;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checksumsUrl, detectPlatform, downloadsFrom, formatSize, orderDownloads } from "../lib/release-assets.ts";
+import { checksumsUrl, detectPlatform, downloadsFrom, formatSize, orderDownloads, parseChecksums } from "../lib/release-assets.ts";
 
 const asset = (name, size = 1000) => ({ name, size, browser_download_url: `https://dl.test/${name}` });
 const ASSETS = [
@@ -49,4 +49,20 @@ test("formats sizes", () => {
   assert.equal(formatSize(300_000_000), "286 MB");
   assert.equal(formatSize(2048), "2 KB");
   assert.equal(formatSize(0), "");
+});
+
+test("keeps the asset file name for checksum lookup", () => {
+  assert.equal(downloadsFrom(ASSETS)[0].file, "Commy_0.2.0_x64-setup.exe");
+});
+
+test("parses sha256sum output", () => {
+  const a = "a".repeat(64);
+  const b = "B".repeat(64);
+  const text = `${a}  Commy_0.2.0_x64-setup.exe\r\n${b} *Commy_0.2.0_universal.dmg\nnot a checksum line\n\n`;
+  assert.deepEqual(parseChecksums(text), {
+    "Commy_0.2.0_x64-setup.exe": a,
+    "Commy_0.2.0_universal.dmg": "b".repeat(64),
+  });
+  assert.deepEqual(parseChecksums(""), {});
+  assert.deepEqual(parseChecksums(`${"a".repeat(63)}  short.exe`), {});
 });

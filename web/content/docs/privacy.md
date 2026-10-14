@@ -26,7 +26,24 @@ Messages, DMs, voice, video, screen shares, files, which servers you are in, you
 - **The people you connect to** see your IP address, as in any direct call or game lobby.
 - **iroh relays** see IP addresses and node ids when they help peers connect, but only ever carry encrypted traffic.
 - **Google** sees your sign in if you use Google, and **your email provider** delivers verification and sign in emails.
-- **Cloudflare Turnstile** runs a bot check on the sign up and sign in pages.
+- **Cloudflare Turnstile** runs a bot check on the sign up and sign in pages, only with your consent (see [Cookies](#cookies)).
+
+## Cookies
+
+commy.chat has no analytics, ads or tracking of any kind. Fonts and images are served from the site itself.
+
+Until you choose in the cookie banner, the site writes nothing to your device and loads nothing optional.
+
+**Strictly necessary, set only when you act:**
+
+- `commy_consent`: remembers whether you accepted or rejected, for 180 days. Set when you click a button in the banner.
+- Account cookies: the session cookie, plus short-lived cookies that protect a sign in while it is in progress. The account server sets them only when you sign in, and removes the session when you sign out.
+
+**Optional, only after you accept:**
+
+- **Cloudflare Turnstile**, the bot check on the sign in and sign up forms. It loads a script from Cloudflare that may store data on your device. If you reject, the forms ask before loading it, just for that form.
+
+Change your choice any time with **Cookie settings** at the bottom of every page.
 
 ## Your own server
 
