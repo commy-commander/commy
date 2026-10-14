@@ -24,3 +24,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# screenshot tooling output
+/scripts/screenshots/out
+/scripts/screenshots/node_modules
+/scripts/screenshots/package*.json
