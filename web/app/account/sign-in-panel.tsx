@@ -13,13 +13,7 @@ const SOCIAL_LABELS: Record<Social, string> = {
   twitch: "Continue with Twitch",
 };
 
-export default function SignInPanel({
-  providers,
-  callbackURL,
-}: {
-  providers: Providers;
-  callbackURL: string;
-}) {
+export default function SignInPanel({ providers, callbackURL }: { providers: Providers; callbackURL: string }) {
   const [mode, setMode] = useState<Mode>("signin");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -59,12 +53,16 @@ export default function SignInPanel({
       const password = String(form.get("password") ?? "");
       setUnverified("");
       if (mode === "signup") {
-        const res = await authPost<{ token: string | null }>("/sign-up/email", {
-          name: String(form.get("name") ?? "") || email.split("@")[0],
-          email,
-          password,
-          callbackURL,
-        }, captcha());
+        const res = await authPost<{ token: string | null }>(
+          "/sign-up/email",
+          {
+            name: String(form.get("name") ?? "") || email.split("@")[0],
+            email,
+            password,
+            callbackURL,
+          },
+          captcha(),
+        );
         if (!res.token) {
           setMode("signin");
           setUnverified(email);
@@ -96,7 +94,10 @@ export default function SignInPanel({
     run(async () => {
       await authPost(
         "/request-password-reset",
-        { email: String(form.get("email") ?? ""), redirectTo: `${window.location.origin}/account/reset-password` },
+        {
+          email: String(form.get("email") ?? ""),
+          redirectTo: `${window.location.origin}/account/reset-password`,
+        },
         captcha(),
       );
       setNotice("If an account uses that address, a reset link is on its way. It expires in 1 hour.");
@@ -113,7 +114,10 @@ export default function SignInPanel({
       <div className="account-card">
         <h2>Reset your password</h2>
         <form className="signin-form" action={forgot}>
-          <input type="email" name="email" placeholder="you@example.com" autoComplete="email" required />
+          <label>
+            <span>Email</span>
+            <input type="email" name="email" placeholder="you@example.com" autoComplete="email" required />
+          </label>
           <button type="submit" className="btn" disabled={busy}>
             Email me a reset link
           </button>
@@ -124,8 +128,16 @@ export default function SignInPanel({
           </button>
         </p>
         <Turnstile ref={bot} siteKey={providers.turnstileSiteKey} />
-        {error && <p className="form-error" role="alert">{error}</p>}
-        {notice && <p className="form-notice" role="status">{notice}</p>}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        {notice && (
+          <p className="form-notice" role="status">
+            {notice}
+          </p>
+        )}
       </div>
     );
   }
@@ -152,16 +164,27 @@ export default function SignInPanel({
       )}
 
       <form className="signin-form" action={submitPassword}>
-        {mode === "signup" && <input name="name" placeholder="Display name" autoComplete="nickname" maxLength={64} />}
-        <input type="email" name="email" placeholder="you@example.com" autoComplete="email" required />
-        <input
-          type="password"
-          name="password"
-          placeholder="Password"
-          autoComplete={mode === "signup" ? "new-password" : "current-password"}
-          minLength={8}
-          required
-        />
+        {mode === "signup" && (
+          <label>
+            <span>Display name</span>
+            <input name="name" placeholder="Display name" autoComplete="nickname" maxLength={64} />
+          </label>
+        )}
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" placeholder="you@example.com" autoComplete="email" required />
+        </label>
+        <label>
+          <span>Password</span>
+          <input
+            type="password"
+            name="password"
+            placeholder="Password"
+            autoComplete={mode === "signup" ? "new-password" : "current-password"}
+            minLength={8}
+            required
+          />
+        </label>
         <button type="submit" className="btn" disabled={busy}>
           {mode === "signup" ? "Create account" : "Sign in"}
         </button>
@@ -185,7 +208,10 @@ export default function SignInPanel({
         <>
           <div className="divider">or</div>
           <form className="signin-form" action={magicLink}>
-            <input type="email" name="email" placeholder="you@example.com" autoComplete="email" required />
+            <label>
+              <span>Email</span>
+              <input type="email" name="email" placeholder="you@example.com" autoComplete="email" required />
+            </label>
             <button type="submit" className="btn" disabled={busy}>
               Email me a magic link
             </button>
@@ -195,8 +221,16 @@ export default function SignInPanel({
 
       <Turnstile ref={bot} siteKey={providers.turnstileSiteKey} />
 
-      {error && <p className="form-error" role="alert">{error}</p>}
-      {notice && <p className="form-notice" role="status">{notice}</p>}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p className="form-notice" role="status">
+          {notice}
+        </p>
+      )}
       {unverified && (
         <p className="muted small">
           No email?{" "}

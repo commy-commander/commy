@@ -2,105 +2,90 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { getLatestRelease } from "@/lib/releases";
 import { detectPlatform, PLATFORM_NAMES } from "@/lib/release-assets";
-import Icon, { type IconName } from "./components/icons";
-import Shot from "./components/shot";
+import { REPO_URL } from "@/lib/site";
+import InviteDemo from "./components/invite-demo";
+import Mascot from "./components/mascot";
+import Stage, { type Shot } from "./components/stage";
 
-type Feature = {
-  id: string;
-  icon: IconName;
-  eyebrow: string;
-  title: string;
-  body: string;
-  points: string[];
-  shot: string;
-  alt: string;
-  tone: string;
-};
+const SHOTS: Shot[] = [
+  { id: "chat", src: "/screenshots/chat.jpg", alt: "A Commy server, Pixel Pioneers, with a busy #general channel: an image, a shared file, reactions, a reply and an invite card" },
+  { id: "call", src: "/screenshots/call.jpg", alt: "Commy's voice connection panel showing ping, packet loss, jitter and a direct route for each person in the call" },
+  { id: "voice", src: "/screenshots/voice.jpg", alt: "Commy's Voice and Audio settings with the Noise Cancellation switch on and a mic test" },
+  { id: "stream", src: "/screenshots/stream.jpg", alt: "Watching a member's live racing game stream inside a Commy voice channel, 1280 by 720 at 50 frames a second" },
+  { id: "roles", src: "/screenshots/roles.jpg", alt: "Commy's server settings on the Roles page: Admin, Moderator, Racer and Builder roles with their colours and permissions" },
+  { id: "signin", src: "/screenshots/signin.jpg", alt: "Commy's sign-in dialog showing a one-time code to approve in the browser and the account server choice" },
+];
 
-const FEATURES: Feature[] = [
+type Chapter = { shot: string; title: string; body: string; lines: string[] };
+
+const CHAPTERS: Chapter[] = [
   {
-    id: "chat",
-    icon: "chat",
-    eyebrow: "Text chat",
-    title: "Conversations that feel alive",
-    body: "Channels for every topic, with the little things that make a chat feel like a place: replies, threads, reactions, mentions, image previews and GIFs.",
-    points: ["Replies and threads keep busy channels readable", "Custom emoji and reactions for every server", "Drop images and files straight into the chat"],
-    shot: "/screenshots/chat.jpg",
-    alt: "A Commy channel with replies, emoji reactions, an image, a shared file and an invite card",
-    tone: "coral",
+    shot: "chat",
+    title: "Channels that feel lived in",
+    body: "Text channels for every topic, with replies and threads to keep busy nights readable, reactions and custom emoji, and images, GIFs and files dropped straight into the chat.",
+    lines: ["Replies, threads and mentions", "Custom emoji for every server", "Files up to 512 MB, sent member to member"],
   },
   {
-    id: "voice",
-    icon: "mic",
-    eyebrow: "Voice",
-    title: "Hop in. Everyone sounds great.",
-    body: "Click a voice channel and you are talking. Audio goes straight between members over an encrypted connection, encoded with Opus so it stays clear on any network.",
-    points: ["Direct peer-to-peer routes, with a relay only as a fallback", "Live ping, packet loss and route for every person", "Per-person volume, plus mute and deafen in one click"],
-    shot: "/screenshots/call.jpg",
-    alt: "Commy connected to a voice channel, showing the voice connection panel with ping and a direct route per person",
-    tone: "violet",
+    shot: "call",
+    title: "Click in. Start talking.",
+    body: "Join a voice channel and you are in. Audio goes straight between members over an encrypted connection and is encoded with Opus, so it stays clear on any network.",
+    lines: ["Direct routes between people, a relay only as fallback", "Live ping, packet loss and route for every person", "Per-person volume, mute and deafen in one click"],
   },
   {
-    id: "noise",
-    icon: "wave",
-    eyebrow: "Noise cancellation",
-    title: "One switch. Background noise gone.",
-    body: "Keyboards, fans and the dishwasher stay out of the call. Noise cancellation is a single toggle, free for everyone, with a mic test so you can hear the difference yourself.",
-    points: ["Toggle it from settings or the voice panel", "Mic test plays you back through the full pipeline", "Input and output devices, volumes and idle timeout"],
-    shot: "/screenshots/voice.jpg",
-    alt: "Commy Voice and Audio settings with the Noise Cancellation toggle switched on",
-    tone: "teal",
+    shot: "voice",
+    title: "One switch and the room goes quiet",
+    body: "Keyboards, fans and the dishwasher stay out of the call. Noise cancellation is a single toggle for everyone, with a mic test that plays you back through the whole pipeline.",
+    lines: ["On or off from settings or the voice panel", "Hear yourself before anyone else does", "Input, output and camera devices in one place"],
   },
   {
-    id: "stream",
-    icon: "screen",
-    eyebrow: "Screen and game streaming",
+    shot: "stream",
     title: "Go live with your game in two clicks",
-    body: "Share a whole screen or a single window with everyone in the voice channel. Pick Smooth for games, Sharp for code and documents, and watch together in focus or fullscreen.",
-    points: ["Smooth, Balanced and Sharp quality presets", "Live resolution and frame rate for viewers", "Webcams and a game overlay come along too"],
+    body: "Share a screen or a single window with everyone in the channel. Pick Smooth for games or Sharp for code and documents, and watch together in focus or fullscreen.",
+    lines: ["Smooth, Balanced and Sharp presets", "Resolution and frame rate shown live", "Webcams and a game overlay come along"],
+  },
+  {
+    shot: "roles",
+    title: "Run the server your way",
+    body: "Roles with colours, tags and fine permissions. Channels and categories you drag into place, rules members accept on entry, events with RSVPs, and moderation tools for when things get loud.",
+    lines: ["Roles members can pick for themselves", "Mute, kick, ban and member reports", "Rules gate, AFK channel, soundboard"],
+  },
+  {
+    shot: "signin",
+    title: "No one listening in",
+    body: "Messages, voice, video, streams and files travel directly between devices. A free account only proves you are a real person, which keeps spam bots out, and you can run your own account server if you would rather not trust ours.",
+    lines: ["No company server in your chats or calls", "No ads, no analytics, no selling data", "Host the whole stack yourself"],
+  },
+];
+
+const INCLUDED: { title: string; shot: string; pos: string; zoom: number; lines: string[] }[] = [
+  {
+    title: "Share anything",
+    shot: "/screenshots/chat.jpg",
+    pos: "30% 28%",
+    zoom: 2.2,
+    lines: ["Images and GIFs inline", "Files up to 512 MB", "Custom emoji and reactions", "Soundboards into voice", "Friends and direct messages"],
+  },
+  {
+    title: "Voice that tells you the truth",
+    shot: "/screenshots/call.jpg",
+    pos: "12% 66%",
+    zoom: 2.6,
+    lines: ["Ping, loss and jitter per person", "Direct or relayed, shown live", "Per-person volume", "Webcams in any voice channel", "Opus at 48 kHz"],
+  },
+  {
+    title: "Stream the way you want",
     shot: "/screenshots/stream.jpg",
-    alt: "Watching a member's live racing game stream inside a Commy voice channel",
-    tone: "pink",
+    pos: "48% 30%",
+    zoom: 1.6,
+    lines: ["Whole screen or one window", "Smooth, Balanced or Sharp", "Focus and fullscreen viewing", "Game overlay while you play", "Resolution and fps for viewers"],
   },
   {
-    id: "manage",
-    icon: "crown",
-    eyebrow: "Server management",
-    title: "Run your server your way",
-    body: "Roles with colors, tags and fine-grained permissions. Channels and categories you can drag into place, server rules, events, soundboards and moderation tools for when things get loud.",
-    points: ["Roles members can pick for themselves", "Mute, kick, ban and member reports", "Events with RSVPs, rules gate, AFK channel"],
+    title: "Mod tools that stay out of the way",
     shot: "/screenshots/roles.jpg",
-    alt: "Commy server settings showing roles with colors, tags and permissions",
-    tone: "amber",
+    pos: "46% 44%",
+    zoom: 2.4,
+    lines: ["Roles, colours, tags, permissions", "Pickable roles for members", "Server rules and an AFK channel", "Events with RSVPs", "Mute, kick, ban, reports"],
   },
-  {
-    id: "invite",
-    icon: "link",
-    eyebrow: "Invite links",
-    title: "Send a link. Your friends are in.",
-    body: "Every server gets short commy.chat invite links. Friends click, Commy opens, and they join you directly. Links expire on their own and you can revoke them any time.",
-    points: ["Short links that open the app", "A warning before joining from an unknown host", "Works with self-hosted account servers"],
-    shot: "/screenshots/invite.jpg",
-    alt: "Commy asking to confirm joining the Pixel Pioneers server from an invite link",
-    tone: "blue",
-  },
-];
-
-const EXTRAS: { icon: IconName; title: string; body: string }[] = [
-  { icon: "file", title: "File sharing", body: "Up to 512 MB, sent member to member and kept inside your server." },
-  { icon: "music", title: "Soundboards", body: "Upload clips and play them into voice." },
-  { icon: "smile", title: "Custom emoji", body: "Your server's own emoji, in chat and reactions." },
-  { icon: "calendar", title: "Events", body: "Plan game nights and see who is coming." },
-  { icon: "users", title: "Friends and DMs", body: "Direct messages with message requests and blocking." },
-  { icon: "screen", title: "Webcams", body: "Turn your camera on in any voice channel." },
-  { icon: "spark", title: "Game overlay", body: "See who is talking without leaving your game." },
-  { icon: "code", title: "Open source", body: "Rust, AGPL-3.0, built in the open." },
-];
-
-const STEPS = [
-  { title: "Install Commy", body: "Download the app for Windows, macOS or Linux and sign in with a free account." },
-  { title: "Create a server", body: "Add channels, roles, rules, emoji and a soundboard. It lives on your members' computers." },
-  { title: "Share an invite link", body: "Friends click the link, Commy opens, and they join you directly." },
 ];
 
 export default async function HomePage() {
@@ -108,186 +93,188 @@ export default async function HomePage() {
   const release = await getLatestRelease();
   const direct = release?.downloads.find((d) => d.platform === platform && d.primary);
 
-  const download = direct ? (
-    <a href={direct.url} className="btn btn-primary btn-large btn-glow">
-      <Icon name="download" size={20} /> Download for {PLATFORM_NAMES[direct.platform]}
-    </a>
-  ) : (
-    <Link href="/download" className="btn btn-primary btn-large btn-glow">
-      <Icon name="download" size={20} /> Download Commy
-    </Link>
-  );
+  const download = (large: boolean) =>
+    direct ? (
+      <a href={direct.url} className={`btn btn-primary ${large ? "btn-large" : ""}`}>
+        Download for {PLATFORM_NAMES[direct.platform]}
+      </a>
+    ) : (
+      <Link href="/download" className={`btn btn-primary ${large ? "btn-large" : ""}`}>
+        Download Commy
+      </Link>
+    );
 
   return (
     <main className="home">
-      <section className="hero-x">
-        <div className="hero-bg" aria-hidden="true">
-          <span className="blob blob-a" />
-          <span className="blob blob-b" />
-          <span className="blob blob-c" />
-          <span className="grid-floor" />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="floaters" src="/art/floaters.svg" alt="" />
+      <section className="stage" id="stage" aria-label="Commy, the app">
+        <div className="stage-left field-night">
+          <Stage shots={SHOTS} root="stage" />
         </div>
-        <div className="hero-copy">
-          <p className="pill">
-            <Icon name="heart" size={16} /> Free and open source, for everyone
-          </p>
-          <h1>
-            Where your community <span className="grad">hangs out</span>
-          </h1>
-          <p className="lede">
-            Commy is chat, voice and game streaming for your friends and communities. It runs directly between your
-            members, so there is nothing to rent and no paywall to hit.
-          </p>
-          <div className="hero-actions">
-            {download}
-            <a href="#features" className="btn btn-large btn-ghost">
-              See what it can do
-            </a>
+        <div className="stage-right">
+          <div className="hero">
+            <h1 data-rise style={{ "--i": 0 } as React.CSSProperties}>
+              Your people.
+              <br />
+              No middleman.
+            </h1>
+            <p className="lead" data-rise style={{ "--i": 1 } as React.CSSProperties}>
+              Commy is free, open source voice and text chat for your community. It runs between your members&apos;
+              computers, so there is nothing to rent, no paywall, and no company in the middle.
+            </p>
+            <div className="hero-actions" data-rise style={{ "--i": 2 } as React.CSSProperties}>
+              {download(true)}
+            </div>
           </div>
-          <p className="hero-note">
-            {release ? `${release.name} for Windows, macOS and Linux.` : "For Windows, macOS and Linux."}{" "}
-            <Link href="/download">All downloads</Link>
+
+          <p className="wordmark-giant" aria-hidden="true">
+            commy
           </p>
-        </div>
-        <div className="hero-stage">
-          <Shot src="/screenshots/chat.jpg" alt="The Commy app: a community server with channels, a voice channel in use and a busy chat" priority />
-          <div className="chip chip-a">
-            <Icon name="mic" size={18} />
-            <span>
-              Voice connected <em>19 ms, direct</em>
-            </span>
-          </div>
-          <div className="chip chip-b">
-            <span className="live">LIVE</span>
-            <span>
-              sprocket is streaming <em>Hoverlane Rally</em>
-            </span>
-          </div>
-          <div className="chip chip-c">
-            <Icon name="wave" size={18} />
-            <span>Noise cancellation on</span>
+
+          <div className="chapters">
+            {CHAPTERS.map((c, i) => (
+              <article key={c.shot} className="chapter" data-shot={c.shot} id={c.shot}>
+                <h2 data-reveal style={{ "--i": 0 } as React.CSSProperties}>
+                  {c.title}
+                </h2>
+                <p data-reveal style={{ "--i": 1 } as React.CSSProperties}>
+                  {c.body}
+                </p>
+                <ul data-reveal style={{ "--i": 2 } as React.CSSProperties}>
+                  {c.lines.map((l) => (
+                    <li key={l}>{l}</li>
+                  ))}
+                </ul>
+                <figure className="chapter-shot field-night" data-reveal style={{ "--i": 3 } as React.CSSProperties}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={SHOTS[i].src} alt={SHOTS[i].alt} width={2160} height={1440} loading="lazy" decoding="async" />
+                </figure>
+              </article>
+            ))}
           </div>
         </div>
       </section>
 
-      <div className="marquee" aria-hidden="true">
-        <div className="marquee-track">
-          {[0, 1].map((n) => (
-            <span key={n}>
-              Text channels · Threads · Reactions · Custom emoji · GIFs · Voice channels · Noise cancellation · Screen
-              sharing · Game streaming · Webcams · Roles · Permissions · Events · Soundboards · Invite links · File
-              sharing · Friends and DMs · Game overlay ·{" "}
-            </span>
+      <section className="invite" aria-labelledby="invite-title">
+        <InviteDemo />
+        <div className="invite-field field-night">
+          <h2 id="invite-title" data-reveal style={{ "--i": 0 } as React.CSSProperties}>
+            Send a link.
+          </h2>
+          <p data-reveal style={{ "--i": 1 } as React.CSSProperties}>
+            Every server gets short commy.chat links. Try one: name a server and read the link the app would hand you.
+          </p>
+        </div>
+        <div className="invite-field invite-field-light">
+          <h2 aria-hidden="true" data-reveal style={{ "--i": 2 } as React.CSSProperties}>
+            They&apos;re in.
+          </h2>
+          <p data-reveal style={{ "--i": 3 } as React.CSSProperties}>
+            Your friend clicks, Commy opens, and this is all they see before they are in the channel with you.
+          </p>
+        </div>
+      </section>
+
+      <section className="included field-accent" aria-labelledby="included-title">
+        <h2 id="included-title">
+          All of it.
+          <br />
+          Free.
+        </h2>
+        <div className="included-blocks">
+          {INCLUDED.map((b, i) => (
+            <div className={`included-block ${i % 2 ? "flip" : ""}`} key={b.title}>
+              <h3 data-reveal style={{ "--i": 0 } as React.CSSProperties}>
+                {b.title}
+              </h3>
+              <div className="included-row">
+                <div className="crop" data-reveal style={{ "--i": 1, "--pos": b.pos, "--zoom": b.zoom } as React.CSSProperties}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={b.shot} alt="" width={2160} height={1440} loading="lazy" decoding="async" />
+                </div>
+                <ul data-reveal style={{ "--i": 2 } as React.CSSProperties}>
+                  {b.lines.map((l) => (
+                    <li key={l}>{l}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
           ))}
         </div>
-      </div>
-
-      <section id="features" className="features-x">
-        {FEATURES.map((f, i) => (
-          <article key={f.id} id={f.id} className={`feature-row tone-${f.tone} ${i % 2 ? "flip" : ""}`}>
-            <div className="feature-copy" data-reveal>
-              <p className="eyebrow">
-                <span className="eyebrow-icon">
-                  <Icon name={f.icon} size={18} />
-                </span>
-                {f.eyebrow}
-              </p>
-              <h2>{f.title}</h2>
-              <p className="feature-body">{f.body}</p>
-              <ul className="checks">
-                {f.points.map((p) => (
-                  <li key={p}>
-                    <Icon name="check" size={18} />
-                    {p}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="feature-shot" data-reveal>
-              <Shot src={f.shot} alt={f.alt} />
-            </div>
-          </article>
-        ))}
       </section>
 
-      <section className="private">
-        <div className="private-copy" data-reveal>
-          <p className="eyebrow">
-            <span className="eyebrow-icon">
-              <Icon name="shield" size={18} />
-            </span>
-            Private by design
-          </p>
-          <h2>Your conversations never touch our servers</h2>
-          <p className="feature-body">
-            Messages, voice, video, streams and files travel directly between devices over encrypted connections. A free
-            Commy account only proves you are a real person, which keeps spam bots out of your server.
-          </p>
-          <div className="private-points">
-            <div>
-              <strong>Peer to peer</strong>
-              <span>No company server in the middle of your chats or calls.</span>
-            </div>
-            <div>
-              <strong>No tracking</strong>
-              <span>No ads, no analytics, no selling your data.</span>
-            </div>
-            <div>
-              <strong>Host it yourself</strong>
-              <span>
-                Run your own account server with the <Link href="/docs/self-hosting">open source stack</Link>.
-              </span>
-            </div>
-          </div>
-        </div>
-        <div className="feature-shot" data-reveal>
-          <Shot src="/screenshots/signin.jpg" alt="Signing in to Commy with a one-time code shown in the app and approved in the browser" />
-        </div>
-      </section>
-
-      <section className="extras">
-        <h2 data-reveal>And everything else, included</h2>
-        <p className="extras-sub" data-reveal>
-          No premium tier. Every feature is free for every member of every server.
+      <section className="howto" aria-labelledby="howto-title">
+        <h2 id="howto-title" data-reveal>
+          Up and running in a minute
+        </h2>
+        <p data-reveal style={{ "--i": 1 } as React.CSSProperties}>
+          <strong>To begin,</strong> download Commy for Windows, macOS or Linux and sign in with a free account. The
+          account is only there to prove you are a person; it never sees a message or a call.
         </p>
-        <div className="extras-grid">
-          {EXTRAS.map((x) => (
-            <div className="extra" key={x.title} data-reveal>
-              <span className="extra-icon">
-                <Icon name={x.icon} />
-              </span>
-              <h3>{x.title}</h3>
-              <p>{x.body}</p>
-            </div>
-          ))}
+        <div className="evidence field-night" data-reveal style={{ "--i": 2 } as React.CSSProperties}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/screenshots/signin.jpg" alt="The sign-in code dialog in the app" width={2160} height={1440} loading="lazy" decoding="async" style={{ "--pos": "50% 46%", "--zoom": 1.9 } as React.CSSProperties} />
         </div>
+        <p data-reveal style={{ "--i": 1 } as React.CSSProperties}>
+          <strong>Within a minute,</strong> create a server. Add channels, roles, rules, emoji and a soundboard. It
+          lives on your members&apos; computers, not on ours, and it is yours for as long as you want it.
+        </p>
+        <div className="evidence field-night" data-reveal style={{ "--i": 2 } as React.CSSProperties}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/screenshots/chat.jpg" alt="The channel list of a new server" width={2160} height={1440} loading="lazy" decoding="async" style={{ "--pos": "4% 22%", "--zoom": 2.4 } as React.CSSProperties} />
+        </div>
+        <p data-reveal style={{ "--i": 1 } as React.CSSProperties}>
+          <strong>After that,</strong> share an invite link. Friends click it, Commy opens, and they join you directly.
+          The link expires on its own and you can revoke it whenever you like.
+        </p>
+        <div className="evidence field-night" data-reveal style={{ "--i": 2 } as React.CSSProperties}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/screenshots/invite.jpg" alt="The join prompt a friend sees after clicking an invite link" width={2160} height={1440} loading="lazy" decoding="async" style={{ "--pos": "50% 50%", "--zoom": 2.4 } as React.CSSProperties} />
+        </div>
+        <p data-reveal style={{ "--i": 1 } as React.CSSProperties}>
+          <strong>From then on,</strong> it is just your people. No premium tier, no boosts to buy, and the{" "}
+          <Link href="/docs/getting-started">guide</Link> for anything you want to set up next.
+        </p>
       </section>
 
-      <section className="steps">
-        <h2 data-reveal>Up and running in a minute</h2>
-        <ol>
-          {STEPS.map((s) => (
-            <li key={s.title} data-reveal>
-              <h3>{s.title}</h3>
-              <p>{s.body}</p>
-            </li>
-          ))}
-        </ol>
+      <section className="letter" aria-label="A note from the maker">
+        <Mascot className="letter-mark" />
+        <p data-reveal style={{ "--i": 0 } as React.CSSProperties}>
+          I built Commy because the places my friends and I hang out online kept getting worse: more paywalls, more ads,
+          more of our conversations sitting on someone else&apos;s servers.
+        </p>
+        <p data-reveal style={{ "--i": 1 } as React.CSSProperties}>
+          So Commy connects people directly. Your messages, calls, streams and files go from your computer to your
+          friends&apos; computers, encrypted, with a relay only when a direct route cannot be found. There is no
+          company in the middle because there is nothing in the middle.
+        </p>
+        <p data-reveal style={{ "--i": 2 } as React.CSSProperties}>
+          That is also why it is free. Nobody is renting a server to run your community, so there is nothing to charge
+          for. Every feature is there for every member of every server, and the whole thing is{" "}
+          <a href={REPO_URL} target="_blank" rel="noreferrer">
+            open source
+          </a>{" "}
+          under the AGPL, so it stays that way.
+        </p>
+        <p className="letter-sign" data-reveal style={{ "--i": 3 } as React.CSSProperties}>
+          Commy Commander
+          <span>maker of Commy</span>
+        </p>
       </section>
 
-      <section className="cta" data-reveal>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="cta-logo" src="/logo.png" alt="" width={88} height={88} />
-        <h2>Bring your people to Commy</h2>
-        <p>Free forever, open source, and ready for Windows, macOS and Linux.</p>
-        <div className="hero-actions">
-          {download}
-          <Link href="/docs/getting-started" className="btn btn-large btn-ghost">
-            Read the guide
-          </Link>
+      <section className="close field-night" aria-labelledby="close-title">
+        <div className="close-copy">
+          <h2 id="close-title">Bring your people.</h2>
+          <p>Free forever, open source, and ready for Windows, macOS and Linux.</p>
+          <div className="hero-actions">
+            {download(true)}
+            <Link href="/docs/getting-started" className="btn btn-ghost btn-large">
+              Read the guide
+            </Link>
+          </div>
         </div>
+        <p className="wordmark-close" aria-hidden="true">
+          commy
+        </p>
       </section>
     </main>
   );
