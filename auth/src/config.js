@@ -14,6 +14,49 @@ function stripSlash(url) {
   return url.replace(/\/+$/, "");
 }
 
+function oauthClient(clientId, clientSecret) {
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+// Mail settings come either as one SMTP_URL or as separate SMTP_HOST,
+// SMTP_PORT, SMTP_USER and SMTP_PASSWORD values. The separate form avoids
+// URL-encoding passwords and app tokens.
+function smtpConfig(env, errors) {
+  const host = (env.SMTP_HOST ?? "").trim();
+  if (!env.SMTP_URL && !host) return null;
+
+  let transport;
+  let user = "";
+  if (env.SMTP_URL) {
+    transport = env.SMTP_URL;
+    try {
+      user = decodeURIComponent(new URL(env.SMTP_URL).username);
+    } catch {
+      errors.push("SMTP_URL must look like smtp://user:password@host:587 or smtps://...:465");
+    }
+  } else {
+    const port = Number(env.SMTP_PORT || 587);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      errors.push("SMTP_PORT must be a valid TCP port");
+    }
+    user = (env.SMTP_USER ?? "").trim();
+    const pass = env.SMTP_PASSWORD ?? "";
+    if (user && !pass) errors.push("SMTP_PASSWORD is required when SMTP_USER is set");
+    // 465 is TLS from the first byte; anything else must upgrade with STARTTLS
+    const secure = env.SMTP_SECURE ? env.SMTP_SECURE === "true" : port === 465;
+    transport = {
+      host,
+      port,
+      secure,
+      requireTLS: !secure && env.SMTP_REQUIRE_TLS !== "false",
+      ...(user ? { auth: { user, pass } } : {}),
+    };
+  }
+
+  const fallbackFrom = user.includes("@") ? `Commy <${user}>` : "Commy <no-reply@localhost>";
+  return { transport, from: env.EMAIL_FROM || fallbackFrom };
+}
+
 export function loadConfig(env = process.env) {
   const errors = [];
 
@@ -39,23 +82,19 @@ export function loadConfig(env = process.env) {
     errors.push("PORT must be a valid TCP port");
   }
 
+  const smtp = smtpConfig(env, errors);
+
   if (errors.length > 0) {
     throw new Error(`Invalid auth server configuration:\n- ${errors.join("\n- ")}`);
   }
 
-  const google =
-    env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
-      ? { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET }
-      : null;
+  const google = oauthClient(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
+  const twitch = oauthClient(env.TWITCH_CLIENT_ID, env.TWITCH_CLIENT_SECRET);
 
   const turnstile =
     env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
       ? { siteKey: env.TURNSTILE_SITE_KEY, secretKey: env.TURNSTILE_SECRET_KEY }
       : null;
-
-  const smtp = env.SMTP_URL
-    ? { url: env.SMTP_URL, from: env.EMAIL_FROM || "Commy <no-reply@localhost>" }
-    : null;
 
   return {
     port,
@@ -69,6 +108,7 @@ export function loadConfig(env = process.env) {
     allowSignup: env.ALLOW_SIGNUP !== "false",
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
     google,
+    twitch,
     smtp,
     turnstile,
   };
@@ -84,7 +124,10 @@ export function discoveryDocument(config) {
     api,
     providers: {
       google: Boolean(config.google),
+      twitch: Boolean(config.twitch),
       magicLink: Boolean(config.smtp),
+      emailVerification: Boolean(config.smtp),
+      passwordReset: Boolean(config.smtp),
       emailPassword: true,
     },
     turnstileSiteKey: config.turnstile?.siteKey ?? null,

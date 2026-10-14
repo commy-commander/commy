@@ -9,8 +9,20 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default async function AccountPage() {
+// Better Auth sends people back here with ?error= when a link or a provider fails
+const ERRORS: Record<string, string> = {
+  token_expired: "That link has expired. Sign in to get a new one.",
+  invalid_token: "That link is not valid any more. Sign in to get a new one.",
+  account_not_linked: "That sign-in could not be linked to an existing account. Sign in with your email first.",
+  signup_disabled: "This server is not accepting new accounts.",
+  email_not_found: "The provider did not share an email address, which a Commy account needs.",
+  access_denied: "Sign-in was cancelled.",
+};
+
+export default async function AccountPage({ searchParams }: { searchParams: { error?: string } }) {
   const user = await getSessionUser();
+  const errorCode = (searchParams.error ?? "").toLowerCase();
+  const errorMessage = errorCode ? ERRORS[errorCode] ?? "Sign-in did not complete, please try again." : "";
 
   if (!user) {
     const providers = await getProviders();
@@ -21,6 +33,11 @@ export default async function AccountPage() {
           Your account links your identity across devices. It never sees your
           messages, calls, or files.
         </p>
+        {errorMessage && (
+          <p className="form-error" role="alert">
+            {errorMessage}
+          </p>
+        )}
         <SignInPanel providers={providers} callbackURL="/account" />
       </main>
     );

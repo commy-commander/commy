@@ -49,7 +49,7 @@ an environment appears on its own after its first build or promotion. Running th
 script again keeps existing checkouts and `.env` files. Pass a third argument
 such as `"prod"` to set up fewer environments.
 
-Afterwards, optional settings (Google sign-in, SMTP, Turnstile) go in each
+Afterwards, optional settings (Google and Twitch sign-in, SMTP, Turnstile) go in each
 `/srv/commy-<env>/deploy/.env` as described in [HOSTING.md](HOSTING.md), followed
 by `docker compose up -d` in that folder. Google OAuth needs each domain's
 `/api/auth/callback/google` added as a redirect URI.

@@ -54,15 +54,31 @@ values into its environment editor.
 
 Email and password works with no extra setup. The rest are optional:
 
-- **Google**: create an OAuth client (type Web application) at
-  https://console.cloud.google.com/apis/credentials with redirect URI
-  `https://<DOMAIN>/api/auth/callback/google`, then set `GOOGLE_CLIENT_ID` and
-  `GOOGLE_CLIENT_SECRET`.
-- **Email** (magic links, verification, password reset): set `SMTP_URL`, for
-  example `smtps://user:pass@smtp.example.org:465`, and `EMAIL_FROM`. With
-  SMTP set, new email accounts must verify their address before signing in.
-  Without it, accounts are unverified and password reset is unavailable (the
+- **Google**: in https://console.cloud.google.com, configure the OAuth consent
+  screen (External, scopes `openid`, `email`, `profile`), then create an
+  OAuth client of type Web application with authorised JavaScript origin
+  `https://<DOMAIN>` and redirect URI `https://<DOMAIN>/api/auth/callback/google`.
+  Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+- **Twitch**: register an application at https://dev.twitch.tv/console/apps
+  (category Website Integration, client type Confidential) with OAuth Redirect
+  URL `https://<DOMAIN>/api/auth/callback/twitch`, then set `TWITCH_CLIENT_ID`
+  and `TWITCH_CLIENT_SECRET`. Commy asks Twitch for the account email; a
+  Twitch sign-in joins an existing Commy account only when Twitch reports that
+  email as verified.
+- **Email** (verification, password reset, magic links): set `SMTP_HOST`,
+  `SMTP_PORT` (587 for STARTTLS, 465 for TLS), `SMTP_USER`, `SMTP_PASSWORD`
+  and `EMAIL_FROM`, or a single `SMTP_URL`. Many providers want an
+  app-specific SMTP token as the password, and `EMAIL_FROM` must be an address
+  that user may send from. With SMTP set, new email accounts must verify their
+  address before signing in; a sign-in attempt with an unverified address sends
+  a fresh link, and the sign-in page offers a resend. Verification links last
+  24 hours, reset links 1 hour, and a reset signs out every other session.
+  Without SMTP, accounts work unverified and password reset is unavailable (the
   emails are dropped, never logged).
+
+Every redirect URI follows the site's public URL, so a staging copy on
+`staging.<DOMAIN>` needs its own redirect URIs added to the same Google client
+and Twitch application (both accept several).
 - **Bot check**: set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` from a
   Cloudflare Turnstile widget for your domain to put a bot check on sign-up,
   sign-in, magic links and password reset. Recommended for any public instance.

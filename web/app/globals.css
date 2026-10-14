@@ -477,6 +477,30 @@ pre code {
   max-width: 360px;
 }
 
+.social-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn-google {
+  background: #fff;
+  color: #1f1f1f;
+  border: 1px solid #dadce0;
+}
+
+.btn-google:hover {
+  background: #f2f2f2;
+}
+
+.btn-twitch {
+  background: #9146ff;
+}
+
+.btn-twitch:hover {
+  background: #772ce8;
+}
+
 .btn:disabled {
   opacity: 0.6;
   cursor: default;

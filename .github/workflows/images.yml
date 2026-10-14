@@ -19,6 +19,21 @@ permissions:
   contents: read
 
 jobs:
+  auth-tests:
+    name: Auth server tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: auth/package-lock.json
+      - run: npm ci
+        working-directory: auth
+      - run: npm test
+        working-directory: auth
+
   agent-tests:
     name: Deploy agent tests
     runs-on: ubuntu-latest
@@ -82,7 +97,7 @@ jobs:
 
   image:
     name: ${{ matrix.service }} image
-    needs: [agent-tests, stack-e2e]
+    needs: [auth-tests, agent-tests, stack-e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: read
