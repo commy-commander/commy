@@ -1,6 +1,6 @@
 # Builds the desktop app for Windows, macOS and Linux and publishes a GitHub Release.
 # Run "Cut release" (or push a tag like v0.2.0) to release. Tags containing "-test" create a draft release,
-# other tags with a suffix (v0.2.0-rc.1) a pre-release whose app signs in to staging.commy.chat by default.
+# other tags with a suffix (v0.2.0-rc.1) a pre-release test build that uses only the staging servers.
 # Pull requests that touch this file and manual runs build everything without publishing.
 
 name: Desktop release
@@ -85,9 +85,10 @@ jobs:
           # Installers (NSIS, deb) only accept numeric versions, so drop any pre-release suffix
           echo "full=$full" >> "$GITHUB_OUTPUT"
           echo "app=${full%%-*}" >> "$GITHUB_OUTPUT"
-          # Pre-release tags (v0.2.0-rc.1) are test builds: they sign in to staging by default
+          # Pre-release tags (v0.2.0-rc.1) are test builds: they use only the staging
+          # account server and staging relay, and say "test build" in the title
           if [[ "$GITHUB_REF_TYPE" == "tag" && "$full" == *-* ]]; then
-            echo "account_server=https://staging.commy.chat" >> "$GITHUB_OUTPUT"
+            echo "test_build=1" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate icons and release config
@@ -137,10 +138,17 @@ jobs:
       - name: Build and bundle
         working-directory: apps/desktop/src-tauri
         env:
-          COMMY_DEFAULT_ACCOUNT_SERVER: ${{ steps.version.outputs.account_server }}
+          TEST_BUILD: ${{ steps.version.outputs.test_build }}
         run: |
-          [ -n "$COMMY_DEFAULT_ACCOUNT_SERVER" ] || unset COMMY_DEFAULT_ACCOUNT_SERVER
-          echo "Default account server: ${COMMY_DEFAULT_ACCOUNT_SERVER:-https://commy.chat}"
+          if [ -n "$TEST_BUILD" ]; then
+            export COMMY_TEST_BUILD=1
+            export COMMY_DEFAULT_ACCOUNT_SERVER=https://staging.commy.chat
+            export COMMY_DEFAULT_RELAY=https://relay-staging.commy.chat:8443
+            export COMMY_DEFAULT_RELAY_STUN_PORT=3479
+          fi
+          echo "Test build: ${COMMY_TEST_BUILD:-no}"
+          echo "Account server: ${COMMY_DEFAULT_ACCOUNT_SERVER:-https://commy.chat}"
+          echo "Relay: ${COMMY_DEFAULT_RELAY:-https://relay.commy.chat:8443}"
           npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" build \
             --ci --target "${{ matrix.target }}" --bundles "${{ matrix.bundles }}" \
             --config tauri.release.conf.json

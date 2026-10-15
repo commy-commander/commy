@@ -3,12 +3,12 @@
 # Cloudflare (refreshed daily) and the relay ports open to everyone.
 #   sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
 # Settings (environment variables):
-#   PUBLIC_PORTS   ports open to everyone besides 80, default "3478/udp 7842/udp 8443/tcp" (iroh relay)
+#   PUBLIC_PORTS   ports open to everyone besides 80, default "3478/udp 3479/udp 7842/udp 8443/tcp" (iroh relays; 3479/udp is the staging relay's STUN)
 
 set -eu
 
 here="$(cd "$(dirname "$0")" && pwd)"
-PUBLIC_PORTS="${PUBLIC_PORTS:-3478/udp 7842/udp 8443/tcp}"
+PUBLIC_PORTS="${PUBLIC_PORTS:-3478/udp 3479/udp 7842/udp 8443/tcp}"
 CADDY_LOGS="${CADDY_LOGS:-/var/log/commy-caddy}"
 
 [ "$(id -u)" -eq 0 ] || { echo "run with sudo"; exit 1; }

@@ -62,8 +62,12 @@ by `docker compose up -d` in that folder. Google OAuth needs each domain's
 - `edge/` is the only thing listening on ports 80, 443 and 8443. It routes each domain
   to that environment's containers by network alias (`commy-staging-web`,
   `commy-staging-auth`) and adds `X-Robots-Tag: noindex` on staging and dev.
-  Port 8443 serves the shared iroh relay at `relay.<domain>` (a DNS-only record),
-  which `setup-vps.sh` starts once as the `commy-relay` project.
+  Port 8443 serves the iroh relays: `relay.<domain>` for release builds (the
+  `commy-relay` project, from the prod checkout, STUN on 3478/udp) and
+  `relay-staging.<domain>` for test builds (the `commy-relay-staging` project,
+  from the staging checkout, STUN on 3479/udp). Both are DNS-only records, and
+  `setup-vps.sh` starts both. Test builds never use the production relay or
+  account server, and release builds never use staging.
 - `docker-compose.env.yml` turns off the per-stack Caddy and joins `web` and
   `auth` to the shared `commy-public` network under those aliases. Each
   environment's Postgres stays on its own private network.
@@ -130,7 +134,7 @@ sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
 ```
 
 - **ufw** denies incoming connections except SSH (rate limited), port 80 and
-  the iroh relay ports (`PUBLIC_PORTS`, default `3478/udp 7842/udp 8443/tcp`),
+  the iroh relay ports (`PUBLIC_PORTS`, default `3478/udp 3479/udp 7842/udp 8443/tcp`),
   which stay open to everyone because clients reach the relay directly.
 - **HTTPS only from Cloudflare.** Port 443 is accepted only from
   [Cloudflare's ranges](https://www.cloudflare.com/ips/), both in ufw and in

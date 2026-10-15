@@ -4423,6 +4423,12 @@ pub fn run() {
         })
         .setup(|tauri_app| {
             let handle = tauri_app.handle().clone();
+            // Test builds (pre-release tags) use only the staging servers; say so
+            if option_env!("COMMY_TEST_BUILD").is_some() {
+                if let Some(window) = tauri_app.get_webview_window("main") {
+                    let _ = window.set_title("Commy (test build)");
+                }
+            }
             {
                 // After persisted settings load below; the overlay window
                 // is created only once the main window exists.

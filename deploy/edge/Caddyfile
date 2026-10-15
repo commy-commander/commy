@@ -77,13 +77,22 @@
 	redir https://{$PROD_DOMAIN}/docs{uri} permanent
 }
 
-# Shared iroh relay, one for every environment (../docker-compose.relay.yml).
-# relay.<domain> is DNS only, so this name gets a Let's Encrypt certificate over port 80.
-{$RELAY_DOMAIN}:8443 {
+# iroh relays (../docker-compose.relay.yml): relay.<domain> for release builds and
+# relay-staging.<domain> for test builds, so test builds never touch production.
+# Both are DNS only, so these names get Let's Encrypt certificates over port 80.
+(relay) {
 	# iroh 0.28 sends Upgrade without Connection: Upgrade, which proxies need
 	@upgrade header Upgrade *
 	request_header @upgrade Connection Upgrade
-	reverse_proxy commy-relay-proxy:3341
+	reverse_proxy {args[0]}:3341
+}
+
+{$RELAY_DOMAIN}:8443 {
+	import relay commy-relay-proxy
+}
+
+{$STAGING_RELAY_DOMAIN}:8443 {
+	import relay commy-relay-staging-proxy
 }
 
 # iroh 0.28 clients send the relay hostname with a trailing dot, which no
@@ -91,9 +100,11 @@
 https://:8443 {
 	@relay header_regexp Host ^{$RELAY_DOMAIN}\.(:[0-9]+)?$
 	handle @relay {
-		@upgrade header Upgrade *
-		request_header @upgrade Connection Upgrade
-		reverse_proxy commy-relay-proxy:3341
+		import relay commy-relay-proxy
+	}
+	@staging_relay header_regexp Host ^{$STAGING_RELAY_DOMAIN}\.(:[0-9]+)?$
+	handle @staging_relay {
+		import relay commy-relay-staging-proxy
 	}
 	handle {
 		abort

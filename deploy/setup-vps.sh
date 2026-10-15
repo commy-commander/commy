@@ -81,6 +81,13 @@ if [ -f "$relay_dir/docker-compose.relay.yml" ]; then
 		up -d --build relay relay-proxy relay-meter)
 	echo "relay: running for relay.$DOMAIN"
 fi
+# Test builds use their own relay, run from the staging checkout
+if echo " $ENVS " | grep -q " staging " && [ -f "$ROOT/commy-staging/deploy/docker-compose.relay.yml" ]; then
+	(cd "$ROOT/commy-staging/deploy" && RELAY_PROXY_ALIAS=commy-relay-staging-proxy STUN_PORT=3479 RELAY_MONTHLY_LIMIT_GB=500 \
+		docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml \
+		up -d --build relay relay-proxy relay-meter)
+	echo "relay: running for relay-staging.$DOMAIN (test builds)"
+fi
 
 cat <<EOF
 
