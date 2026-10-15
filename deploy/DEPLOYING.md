@@ -165,7 +165,7 @@ AUTH_IMAGE=ghcr.io/commy-commander/commy-auth:prod
 - **Dev**: merge a pull request. The dev site updates within about 30 seconds after the
   **Server images** workflow finishes (for the website: the **Website image**
   workflow in the commy-web repository).
-- **Staging**: run the "Cut release" workflow in both repositories with the same version (or push a release tag such as `v0.2.0` to each). Suffixed versions like `0.2.0-rc.1` are published as pre-releases.
+- **Staging**: run the "Cut release" workflow in both repositories with the same version (or push a release tag such as `v0.2.0` to each). Suffixed versions like `0.2.0-rc.1` are published as pre-releases, and their desktop builds sign in to staging.commy.chat by default.
   The same tag also builds the desktop release.
 - **Prod**: Actions > **Promote images** > Run workflow > `prod`. A required
   reviewer approves it under the run's **Review deployments** button, then prod

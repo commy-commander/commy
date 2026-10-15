@@ -1,6 +1,6 @@
 # Builds the desktop app for Windows, macOS and Linux and publishes a GitHub Release.
 # Run "Cut release" (or push a tag like v0.2.0) to release. Tags containing "-test" create a draft release,
-# other tags with a suffix (v0.2.0-rc.1) a pre-release.
+# other tags with a suffix (v0.2.0-rc.1) a pre-release whose app signs in to staging.commy.chat by default.
 # Pull requests that touch this file and manual runs build everything without publishing.
 
 name: Desktop release
@@ -85,6 +85,10 @@ jobs:
           # Installers (NSIS, deb) only accept numeric versions, so drop any pre-release suffix
           echo "full=$full" >> "$GITHUB_OUTPUT"
           echo "app=${full%%-*}" >> "$GITHUB_OUTPUT"
+          # Pre-release tags (v0.2.0-rc.1) are test builds: they sign in to staging by default
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$full" == *-* ]]; then
+            echo "account_server=https://staging.commy.chat" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Generate icons and release config
         working-directory: apps/desktop/src-tauri
@@ -132,7 +136,11 @@ jobs:
 
       - name: Build and bundle
         working-directory: apps/desktop/src-tauri
+        env:
+          COMMY_DEFAULT_ACCOUNT_SERVER: ${{ steps.version.outputs.account_server }}
         run: |
+          [ -n "$COMMY_DEFAULT_ACCOUNT_SERVER" ] || unset COMMY_DEFAULT_ACCOUNT_SERVER
+          echo "Default account server: ${COMMY_DEFAULT_ACCOUNT_SERVER:-https://commy.chat}"
           npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" build \
             --ci --target "${{ matrix.target }}" --bundles "${{ matrix.bundles }}" \
             --config tauri.release.conf.json

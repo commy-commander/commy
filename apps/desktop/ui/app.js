@@ -394,7 +394,7 @@ async function mockInvoke(cmd, args = {}) {
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", relay: "https://use1-1.relay.iroh.network./", addr: "192.168.1.24:51820", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "iroh-fan", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", relay: "https://euw1-1.relay.iroh.network./", addr: null, tx_bytes: 0, rx_bytes: 0 },
       ] };
-    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, server_from_env: false, device_linked: true, pending_code: null });
+    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null });
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
@@ -8224,6 +8224,8 @@ function showSignIn() {
   $("signin-error").classList.add("hidden");
   const select = $("signin-server-select");
   const custom = !account.is_default_server;
+  const defaultHost = account.default_server_host || "commy.chat";
+  select.options[0].text = defaultHost === "commy.chat" ? "commy.chat (free Commy service)" : `${defaultHost} (test server)`;
   if (custom && ![...select.options].some(o => o.value === account.server)) {
     select.insertBefore(new Option(account.server_host, account.server), select.options[1]);
   }
