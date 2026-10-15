@@ -83,18 +83,57 @@ and Twitch application (both accept several).
   Cloudflare Turnstile widget for your domain to put a bot check on sign-up,
   sign-in, magic links and password reset. Recommended for any public instance.
 
-- **GIF and game search**: signed in apps search GIFs and games through your
-  server, so your users never need keys of their own. Set `KLIPY_API_KEY` to a
-  key from https://partner.klipy.com/api-keys for GIFs (test keys are rate
-  limited; ask KLIPY for a production key before opening to the public). Game
-  search uses IGDB, which signs in with a Twitch application: the Twitch sign-in
-  app above works as is, or set `IGDB_CLIENT_ID` and `IGDB_CLIENT_SECRET` for a
-  separate one. The keys stay on the server; apps only see results. Search terms
-  are forwarded to KLIPY or IGDB and never logged or stored. Leave them
-  blank and users can still add their own keys in the app's settings.
+See [GIF search and Twitch](#gif-search-and-twitch) below for GIFs, game
+search and the Twitch app they share.
 
 Set `ALLOW_SIGNUP=false` to close registration on a private instance.
 Run `docker compose up -d` after any `.env` change.
+
+## GIF search and Twitch
+
+Signed in apps search GIFs (KLIPY) and games (IGDB, which uses a Twitch
+application) through your account server. The keys stay in your `.env`: apps
+only ever get results, so your users need no keys of their own and nothing
+worth extracting ships in the app. The discovery document lists what is set up
+under `features`, and the app hides a search your server does not offer
+(GIF button, game suggestions) unless the user adds a key of their own.
+
+1. **Twitch app** (sign-in and game search). Sign in at
+   https://dev.twitch.tv/console/apps (Twitch asks you to turn on two-factor
+   sign-in first) and choose Register Your Application:
+   - Name: anything unique, such as your instance name
+   - OAuth Redirect URLs: `https://<DOMAIN>/api/auth/callback/twitch`
+     (add one per hostname, for example a staging copy, with Add)
+   - Category: Website Integration
+   - Client Type: Confidential
+
+   Open Manage, copy the Client ID, press New Secret and copy the secret.
+2. **KLIPY key** (GIFs). Sign in at https://partner.klipy.com/api-keys, choose
+   Add Platform, then Create API Key, and copy it. Test keys are rate limited;
+   use Request Production in the key menu before opening to the public.
+3. Fill in `deploy/.env`:
+
+   ```sh
+   TWITCH_CLIENT_ID=<client id>
+   TWITCH_CLIENT_SECRET=<client secret>
+   KLIPY_API_KEY=<klipy key>
+   ```
+
+   Leave `IGDB_CLIENT_ID` and `IGDB_CLIENT_SECRET` blank: game search reuses
+   the Twitch app. Set them only to use a separate Twitch app for IGDB, for
+   example to offer game search without Twitch sign-in.
+4. Run `docker compose up -d`, then check the start of the auth log with
+   `docker compose logs auth | head`. It prints one line such as
+   `[auth] google=off twitch=on email=on turnstile=on gifs=on games=on (twitch app) signup=on`
+   and a warning naming any half-filled pair, such as a client id without its
+   secret. `https://<DOMAIN>/.well-known/commy-auth.json` should show
+   `"features":{"gifs":true,"games":true}`.
+
+Apps already signed in pick up a change the next time they start. Leaving a
+value blank turns that part off cleanly: the search answers 404 ("not set up on
+this account server") and the app hides it. Search terms are forwarded to
+KLIPY or IGDB and never logged or stored; failed upstream calls are logged
+with the key masked.
 
 ## Pointing the desktop app at your server
 

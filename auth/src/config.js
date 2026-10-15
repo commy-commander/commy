@@ -14,8 +14,17 @@ function stripSlash(url) {
   return url.replace(/\/+$/, "");
 }
 
-function oauthClient(clientId, clientSecret) {
-  return clientId && clientSecret ? { clientId, clientSecret } : null;
+// A client id and secret pair, trimmed because pasted values often carry
+// stray spaces. Half a pair turns the feature off and says why at startup.
+function oauthClient(env, prefix, warnings, uses) {
+  const clientId = (env[`${prefix}_CLIENT_ID`] ?? "").trim();
+  const clientSecret = (env[`${prefix}_CLIENT_SECRET`] ?? "").trim();
+  if (clientId && clientSecret) return { clientId, clientSecret };
+  if (clientId || clientSecret) {
+    const missing = clientId ? `${prefix}_CLIENT_SECRET` : `${prefix}_CLIENT_ID`;
+    warnings.push(`${missing} is empty, so ${uses} stays off until both ${prefix}_CLIENT_ID and ${prefix}_CLIENT_SECRET are set`);
+  }
+  return null;
 }
 
 // Mail settings come either as one SMTP_URL or as separate SMTP_HOST,
@@ -88,10 +97,12 @@ export function loadConfig(env = process.env) {
     throw new Error(`Invalid auth server configuration:\n- ${errors.join("\n- ")}`);
   }
 
-  const google = oauthClient(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
-  const twitch = oauthClient(env.TWITCH_CLIENT_ID, env.TWITCH_CLIENT_SECRET);
+  // Optional settings that are half filled in; logged, never fatal
+  const warnings = [];
+  const google = oauthClient(env, "GOOGLE", warnings, "Google sign-in");
+  const twitch = oauthClient(env, "TWITCH", warnings, "Twitch sign-in");
   // IGDB signs in with a Twitch application; the sign-in app works for both
-  const igdb = oauthClient(env.IGDB_CLIENT_ID, env.IGDB_CLIENT_SECRET) ?? twitch;
+  const igdb = oauthClient(env, "IGDB", warnings, "the separate IGDB app") ?? twitch;
   const klipyKey = (env.KLIPY_API_KEY ?? "").trim() || null;
 
   const turnstile =
@@ -116,7 +127,23 @@ export function loadConfig(env = process.env) {
     turnstile,
     igdb,
     klipyKey,
+    warnings,
   };
+}
+
+// One line for the startup log saying which optional parts are on, so an
+// operator can check their .env without reading the discovery document.
+export function featureSummary(config) {
+  const on = (value) => (value ? "on" : "off");
+  return [
+    `google=${on(config.google)}`,
+    `twitch=${on(config.twitch)}`,
+    `email=${on(config.smtp)}`,
+    `turnstile=${on(config.turnstile)}`,
+    `gifs=${on(config.klipyKey)}`,
+    `games=${on(config.igdb)}${config.igdb && config.igdb === config.twitch ? " (twitch app)" : ""}`,
+    `signup=${on(config.allowSignup)}`,
+  ].join(" ");
 }
 
 // Public discovery document the desktop app reads from a custom server URL.

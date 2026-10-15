@@ -2,7 +2,7 @@ import http from "node:http";
 import { getMigrations } from "better-auth/db/migration";
 import { toNodeHandler } from "better-auth/node";
 import { createAuth } from "./auth.js";
-import { discoveryDocument, loadConfig } from "./config.js";
+import { discoveryDocument, featureSummary, loadConfig } from "./config.js";
 
 const config = loadConfig();
 const { auth, options, pool } = createAuth(config);
@@ -59,7 +59,8 @@ const server = http.createServer(async (req, res) => {
 await migrate();
 server.listen(config.port, "0.0.0.0", () => {
   console.log(`[auth] listening on :${config.port}, public URL ${config.baseURL}`);
-  console.log(`[auth] google=${Boolean(config.google)} smtp=${Boolean(config.smtp)} signup=${config.allowSignup}`);
+  console.log(`[auth] ${featureSummary(config)}`);
+  for (const warning of config.warnings) console.warn(`[auth] ${warning}`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
