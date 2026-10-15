@@ -5,7 +5,33 @@
 use anyhow::{Context, Result};
 use iroh::net::relay::{RelayMap, RelayNode, RelayUrl};
 
-pub const DEFAULT_COMMY_RELAY: &str = "https://relay.commy.chat:8443";
+/// Fixed at build time so test builds never touch production: release
+/// builds use relay.commy.chat, test builds set COMMY_DEFAULT_RELAY (and
+/// COMMY_DEFAULT_RELAY_STUN_PORT when its STUN port is not 3478).
+pub const DEFAULT_COMMY_RELAY: &str = match option_env!("COMMY_DEFAULT_RELAY") {
+    Some(url) => url,
+    None => "https://relay.commy.chat:8443",
+};
+
+/// STUN port of the default relay; 0 means iroh's default (3478).
+pub const DEFAULT_COMMY_RELAY_STUN_PORT: u16 = match option_env!("COMMY_DEFAULT_RELAY_STUN_PORT") {
+    Some(port) => parse_port(port),
+    None => 0,
+};
+
+const fn parse_port(s: &str) -> u16 {
+    let bytes = s.as_bytes();
+    assert!(!bytes.is_empty() && bytes.len() <= 5, "COMMY_DEFAULT_RELAY_STUN_PORT must be a port number");
+    let mut value: u32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        assert!(bytes[i].is_ascii_digit(), "COMMY_DEFAULT_RELAY_STUN_PORT must be a port number");
+        value = value * 10 + (bytes[i] - b'0') as u32;
+        i += 1;
+    }
+    assert!(value <= 65535, "COMMY_DEFAULT_RELAY_STUN_PORT must be a port number");
+    value as u16
+}
 
 /// Our relay URLs: `COMMY_RELAY_URLS` (comma separated, `none` to use only
 /// n0's), else the default Commy relay.
@@ -30,7 +56,10 @@ pub fn relay_map(own: &[String]) -> Result<RelayMap> {
     let mut nodes: Vec<RelayNode> = Vec::new();
     for url in own {
         let url: RelayUrl = url.parse().with_context(|| format!("invalid relay url {url}"))?;
-        nodes.push(RelayNode { url, stun_only: false, stun_port: 0 });
+        // RelayUrl normalizes the host (trailing dot), so compare parsed URLs
+        let is_default = DEFAULT_COMMY_RELAY.parse::<RelayUrl>().is_ok_and(|d| d == url);
+        let stun_port = if is_default { DEFAULT_COMMY_RELAY_STUN_PORT } else { 0 };
+        nodes.push(RelayNode { url, stun_only: false, stun_port });
     }
     for node in iroh::net::defaults::prod::default_relay_map().nodes() {
         if !nodes.iter().any(|n| n.url == node.url) {
@@ -48,6 +77,23 @@ mod tests {
     fn defaults_to_the_commy_relay() {
         assert_eq!(own_relays_from(None), vec![DEFAULT_COMMY_RELAY.to_string()]);
         assert_eq!(own_relays_from(Some("  ")), vec![DEFAULT_COMMY_RELAY.to_string()]);
+    }
+
+    #[test]
+    fn parses_stun_ports() {
+        assert_eq!(parse_port("3479"), 3479);
+        assert_eq!(parse_port("65535"), 65535);
+    }
+
+    #[test]
+    fn default_relay_gets_its_stun_port() {
+        let map = relay_map(&[DEFAULT_COMMY_RELAY.to_string(), "https://other.example".to_string()]).unwrap();
+        let port = |url: &str| {
+            let url: RelayUrl = url.parse().unwrap();
+            map.nodes().find(|n| n.url == url).map(|n| n.stun_port)
+        };
+        assert_eq!(port(DEFAULT_COMMY_RELAY), Some(DEFAULT_COMMY_RELAY_STUN_PORT));
+        assert_eq!(port("https://other.example"), Some(0));
     }
 
     #[test]
