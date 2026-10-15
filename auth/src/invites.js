@@ -1,5 +1,10 @@
-// Shareable invite links: https://<server>/i/<code> maps a short code to a
-// Commy server ticket, so the link always resolves on the server that made it.
+// Shareable invite links: https://<server>/i/<code>#<key> maps a short code to
+// a Commy server ticket, so the link always resolves on the server that made it.
+// The app seals the ticket with <key> before sending it, and the key only
+// travels in the link's #fragment, which never reaches a server. So this server
+// stores only the code, the sealed ticket and an expiry: it cannot read which
+// Commy server an invite opens, its name, or the device that shared it.
+// Rows from before sealing hold a plain ticket and resolve until they expire.
 import { randomInt } from "node:crypto";
 import * as z from "zod";
 import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
@@ -8,8 +13,8 @@ const MODEL = "invite";
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const CODE_LENGTH = 8;
-export const MAX_TICKET_LENGTH = 4096;
-const TICKET = /^commy[a-z2-7]{40,}$/;
+export const MAX_TICKET_LENGTH = 8192;
+const SEALED = /^sealed1\.[A-Za-z0-9_-]{40,}$/;
 const CODE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LENGTH}}$`);
 
 export function generateCode() {
@@ -23,17 +28,15 @@ export function normalizeCode(value) {
   return CODE.test(code) ? code : null;
 }
 
+// Only sealed tickets are accepted; a plain one would tell this server which
+// Commy server the invite opens.
 export function validTicket(value) {
   const ticket = String(value ?? "").trim();
-  return ticket.length <= MAX_TICKET_LENGTH && TICKET.test(ticket) ? ticket : null;
+  return ticket.length <= MAX_TICKET_LENGTH && SEALED.test(ticket) ? ticket : null;
 }
 
-export function normalizeServerName(value) {
-  const name = String(value ?? "")
-    .replace(/[\u0000-\u001f\u007f​-‏‪-‮⁦-⁩]/g, "")
-    .trim()
-    .slice(0, 100);
-  return name || "a Commy server";
+export function isPlainTicket(value) {
+  return /^commy[a-z2-7]{40,}$/.test(String(value ?? "").trim());
 }
 
 // Anonymous links are short lived; signed in users may keep them longer.
@@ -64,7 +67,6 @@ export const commyInvites = ({ serverUrl, requireAccount = false }) => ({
         method: "POST",
         body: z.object({
           ticket: z.string(),
-          serverName: z.string().optional(),
           expiresInDays: z.number().optional(),
         }),
       },
@@ -72,6 +74,9 @@ export const commyInvites = ({ serverUrl, requireAccount = false }) => ({
         const session = await getSessionFromCtx(ctx).catch(() => null);
         if (requireAccount && !session) {
           throw new APIError("UNAUTHORIZED", { message: "Sign in to create invite links on this server" });
+        }
+        if (isPlainTicket(ctx.body.ticket)) {
+          throw new APIError("BAD_REQUEST", { message: "Update Commy to share invite links" });
         }
         const ticket = validTicket(ctx.body.ticket);
         if (!ticket) throw new APIError("BAD_REQUEST", { message: "That is not a Commy invite" });
@@ -82,17 +87,18 @@ export const commyInvites = ({ serverUrl, requireAccount = false }) => ({
 
         const createdBy = session?.user.id ?? null;
         const expiresAt = new Date(now.getTime() + clampDays(ctx.body.expiresInDays, Boolean(session)) * DAY_MS);
-        const serverName = normalizeServerName(ctx.body.serverName);
+        // Sealed invites carry no name; the column predates sealing
+        const serverName = "";
 
-        // The same invite shared twice keeps one code
+        // A retried request keeps one code
         const existing = await adapter.findOne({ model: MODEL, where: [{ field: "ticket", value: ticket }] });
         if (existing && (existing.createdBy ?? null) === createdBy) {
           const updated = await adapter.update({
             model: MODEL,
             where: [{ field: "id", value: existing.id }],
-            update: { serverName, expiresAt },
+            update: { expiresAt },
           });
-          return ctx.json(publicInvite(updated ?? { ...existing, serverName, expiresAt }, serverUrl));
+          return ctx.json(publicInvite(updated ?? { ...existing, expiresAt }, serverUrl));
         }
 
         for (let attempt = 0; attempt < 5; attempt++) {
@@ -146,11 +152,14 @@ export const commyInvites = ({ serverUrl, requireAccount = false }) => ({
   },
 });
 
+// The url has no #key: only the app that sealed the ticket can add it.
+// serverName is only set for plain rows from before sealing.
 export function publicInvite(row, serverUrl) {
   return {
     code: row.code,
     url: `${serverUrl}/i/${row.code}`,
-    serverName: row.serverName,
+    serverName: row.serverName || null,
+    sealed: SEALED.test(row.ticket ?? ""),
     expiresAt: row.expiresAt,
   };
 }

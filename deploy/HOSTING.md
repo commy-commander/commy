@@ -163,17 +163,28 @@ server cannot be replayed on another.
 ## Invite links
 
 The app turns a server invite into a short link on its account server,
-`https://<DOMAIN>/i/<CODE>`. The page there shows the server name and opens
-the app with `commy://i/<DOMAIN>/<CODE>`, so the code is always resolved on
-the server that issued it. People can also paste the link into Add a Server.
+`https://<DOMAIN>/i/<CODE>#<KEY>`. The page there shows the server name and
+opens the app with `commy://i/<DOMAIN>/<CODE>#<KEY>`, so the code is always
+resolved on the server that issued it. People can also paste the link into Add
+a Server.
+
+The app seals the invite with `<KEY>` (AES-256-GCM) before sending it, and the
+key only travels in the link's `#` fragment, which browsers and the app never
+send to a server. The account server stores the code, the sealed invite and
+its expiry, so it cannot tell which Commy server an invite opens, what it is
+called, or who shared it. The invite page opens the sealed invite in the
+visitor's browser to show the server name. Links made by older app versions
+have no key; they keep working until they expire, and the server no longer
+accepts new ones.
 
 - Anonymous links expire after 7 days, links from signed in apps after up to
   30. Creating links is limited to 30 per hour per IP; set
   `INVITES_REQUIRE_ACCOUNT=true` to only allow signed in apps.
 - The app warns before joining from a link whose server is not the account
   server it is set to, since anyone can run a Commy server.
-- The stored invite contains what any Commy invite contains: the server id
-  and name, and the network addresses of the member who created it.
+- Inside the seal is what any Commy invite contains: the server id and name,
+  and the network addresses of the member who created it. Only people with the
+  link can read it.
 
 ## iroh relay
 
@@ -211,14 +222,18 @@ never reach this stack. The auth database holds:
 - Google sign-ins: provider account id, with OAuth tokens encrypted at rest
 - sessions: token and expiry only (IP address and user agent are not stored)
 - linked devices: iroh node id, device name, first and last link time
-- invite links: the invite ticket, server name, creator account if signed in, expiry
+- invite links: the code, the sealed invite (unreadable without the link),
+  creator account if the app was signed in, expiry
 - the relay: IP addresses and node ids of connected apps while they are
   connected, and monthly byte totals; relayed traffic is encrypted end to end
 - short-lived rows for verification, device sign-in codes, and a keyed hash
   of the requesting network (deleted after 15 minutes, never the raw IP)
 
-IP addresses are used in memory for rate limiting only. Caddy writes no access
-logs, and the auth server logs no emails, links or tokens.
+IP addresses are used in memory for rate limiting only. The single server
+Caddyfile writes no access logs. The shared edge proxy (`edge/`) writes JSON
+access logs to `/var/log/commy-caddy`, except for invite pages and invite
+lookups, which are never logged. The auth server logs no emails, links or
+tokens.
 
 ## Abuse controls
 

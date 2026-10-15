@@ -21,6 +21,11 @@
 		format json
 	}
 
+	# Invite codes next to visitors' addresses could hint at who joins which
+	# server, so invite pages and invite lookups are never written to the log
+	@invites path /i/* /api/auth/commy/invites/*
+	log_skip @invites
+
 	encode zstd gzip
 
 	header {
