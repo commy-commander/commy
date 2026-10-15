@@ -94,7 +94,12 @@ Run `docker compose up -d` after any `.env` change.
 Signed in apps search GIFs (KLIPY) and games (IGDB, which uses a Twitch
 application) through your account server. The keys stay in your `.env`: apps
 only ever get results, so your users need no keys of their own and nothing
-worth extracting ships in the app. The discovery document lists what is set up
+worth extracting ships in the app. The GIF files and game covers load through
+the server as well (`/api/auth/commy/media`), so apps talk only to their
+account server and KLIPY and IGDB never see your users' addresses. That route
+needs a signed in app and fetches only from `static.klipy.com` and
+`images.igdb.com`, so it is not an open proxy; it holds up to 64 MB of recent
+images in memory. Budget for the image traffic: a chat GIF is usually 1 to 3 MB. The discovery document lists what is set up
 under `features`, and the app hides a search your server does not offer
 (GIF button, game suggestions) unless the user adds a key of their own.
 

@@ -2,6 +2,10 @@
 // held by this server. Apps never see the keys, so a release build carries
 // nothing worth extracting, and the operator can rotate a key without a new
 // app release. Either half is off when its key is not configured.
+//
+// The GIF files and game covers themselves also load through here, so a
+// signed in app only ever talks to its own account server and the image
+// CDNs never see a viewer's address.
 import { createHmac } from "node:crypto";
 import * as z from "zod";
 import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
@@ -14,6 +18,35 @@ const CACHE_CAP = 500;
 // IGDB allows 4 requests per second per client
 const IGDB_GAP_MS = 260;
 const MAX_QUERY = 100;
+// md GIFs are a few MB; anything far bigger is not a chat GIF
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
+const IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const IMAGE_TIMEOUT_MS = 15_000;
+
+// The only images this server fetches for apps, so it is never an open proxy.
+// The app keeps the same list (MEDIA_HOSTS in apps/desktop/ui/app.js).
+const MEDIA_HOSTS = {
+  "static.klipy.com": /^\/[A-Za-z0-9._~\-\/]{1,400}$/,
+  "images.igdb.com": /^\/igdb\/image\/upload\/t_[a-z0-9_]{1,40}\/[A-Za-z0-9]{1,32}\.(jpg|png|webp)$/,
+};
+
+// The URL to fetch for `value`, or null unless it is an https image on one of
+// the hosts above with nothing unusual in it.
+export function mediaUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value ?? ""));
+  } catch {
+    return null;
+  }
+  const path = MEDIA_HOSTS[url.hostname];
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash) return null;
+  if (!path || !path.test(url.pathname) || url.pathname.includes("..")) return null;
+  // KLIPY may sign or version its URLs with a short query; IGDB never does
+  if (url.search && (url.hostname !== "static.klipy.com" || url.search.length > 200)) return null;
+  return url;
+}
 
 export function cleanQuery(value) {
   return String(value ?? "")
@@ -94,6 +127,46 @@ function createCache() {
   };
 }
 
+// Images held in memory up to a total size, oldest dropped first.
+function createImageCache() {
+  const entries = new Map();
+  let bytes = 0;
+  const drop = (key) => {
+    bytes -= entries.get(key).body.byteLength;
+    entries.delete(key);
+  };
+  return {
+    get(key) {
+      const hit = entries.get(key);
+      if (!hit) return undefined;
+      if (hit.expires < Date.now()) {
+        drop(key);
+        return undefined;
+      }
+      return hit;
+    },
+    set(key, type, body) {
+      if (body.byteLength > IMAGE_CACHE_BYTES / 4) return;
+      if (entries.has(key)) drop(key);
+      while (bytes + body.byteLength > IMAGE_CACHE_BYTES) drop(entries.keys().next().value);
+      entries.set(key, { type, body, expires: Date.now() + IMAGE_CACHE_TTL_MS });
+      bytes += body.byteLength;
+    },
+  };
+}
+
+function imageResponse(type, body) {
+  return new Response(body, {
+    headers: {
+      "content-type": type,
+      "content-length": String(body.byteLength),
+      "cache-control": "private, max-age=86400",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'",
+    },
+  });
+}
+
 function unavailable(what) {
   return new APIError("NOT_FOUND", { message: `${what} is not set up on this account server` });
 }
@@ -107,6 +180,7 @@ async function requireSession(ctx) {
 export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetch = (...args) => globalThis.fetch(...args) }) => {
   const gifCache = createCache();
   const gameCache = createCache();
+  const imageCache = createImageCache();
   let igdbToken = null;
   let igdbQueue = Promise.resolve();
 
@@ -148,9 +222,42 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
     return igdbResults(await res.json());
   }
 
+  async function fetchImage(url) {
+    // No redirects: a redirect could lead off the allowed hosts
+    const res = await doFetch(url, { redirect: "error", signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) });
+    if (!res.ok) throw new Error(`answered ${res.status}`);
+    const type = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    if (!/^image\/(gif|jpeg|png|webp)$/.test(type)) throw new Error(`sent ${type || "no type"}`);
+    if (Number(res.headers.get("content-length") ?? 0) > MAX_IMAGE_BYTES) throw new Error("image too large");
+    const body = new Uint8Array(await res.arrayBuffer());
+    if (body.byteLength > MAX_IMAGE_BYTES) throw new Error("image too large");
+    return { type, body };
+  }
+
   return {
     id: "commy-media",
     endpoints: {
+      commyMediaImage: createAuthEndpoint(
+        "/commy/media",
+        { method: "GET", query: z.object({ u: z.string() }) },
+        async (ctx) => {
+          await requireSession(ctx);
+          const url = mediaUrl(ctx.query.u);
+          if (!url) throw new APIError("BAD_REQUEST", { message: "Only GIFs and game covers load through this server" });
+          const cached = imageCache.get(url.href);
+          if (cached) return imageResponse(cached.type, cached.body);
+          let image;
+          try {
+            image = await fetchImage(url);
+          } catch (err) {
+            console.warn(`[auth] image from ${url.hostname} failed: ${err.message}`);
+            throw new APIError("BAD_GATEWAY", { message: "The image could not be loaded right now" });
+          }
+          imageCache.set(url.href, image.type, image.body);
+          return imageResponse(image.type, image.body);
+        },
+      ),
+
       searchCommyGifs: createAuthEndpoint(
         "/commy/gifs/search",
         { method: "GET", query: z.object({ q: z.string().optional() }) },

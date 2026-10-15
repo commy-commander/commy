@@ -5,7 +5,7 @@ import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { buildAuthOptions } from "../src/auth.js";
 import { discoveryDocument, featureSummary, loadConfig } from "../src/config.js";
-import { apicalypseString, cleanQuery, customerId, igdbResults, klipyResults } from "../src/media.js";
+import { apicalypseString, cleanQuery, customerId, igdbResults, klipyResults, mediaUrl } from "../src/media.js";
 
 const ORIGIN = "http://localhost:3001";
 const ENV = { BETTER_AUTH_SECRET: "test-secret-".repeat(4), DATABASE_URL: "postgres://unused", BETTER_AUTH_URL: ORIGIN };
@@ -37,9 +37,16 @@ function fakeFetch(log) {
     if (u.startsWith("https://api.igdb.com/")) {
       return Response.json([{ id: 72, name: "Portal 2", cover: { image_id: "co1rs4" }, first_release_date: 1303171200 }]);
     }
+    if (u.startsWith("https://static.klipy.com/") && u.endsWith(".gif")) {
+      return new Response(GIF_BYTES, { headers: { "content-type": "image/gif" } });
+    }
+    if (u.startsWith("https://static.klipy.com/")) return new Response("<html>", { headers: { "content-type": "text/html" } });
+    if (u.startsWith("https://images.igdb.com/")) return new Response(GIF_BYTES, { headers: { "content-type": "image/jpeg" } });
     return new Response("not found", { status: 404 });
   };
 }
+
+const GIF_BYTES = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
 
 function makeAuth(extraEnv = {}) {
   const log = [];
@@ -55,6 +62,10 @@ function makeAuth(extraEnv = {}) {
     if (cookie) headers.cookie = cookie;
     if (body) headers["content-type"] = "application/json";
     const res = await auth.handler(new Request(url, { method, headers, body: body ? JSON.stringify(body) : undefined }));
+    const type = res.headers.get("content-type") ?? "";
+    if (type.startsWith("image/")) {
+      return { status: res.status, type, bytes: new Uint8Array(await res.arrayBuffer()), headers: res.headers };
+    }
     const text = await res.text();
     return { status: res.status, json: text ? JSON.parse(text) : null, setCookie: res.headers.get("set-cookie") };
   };
@@ -104,9 +115,9 @@ test("customer ids are stable and do not reveal the account id", () => {
 
 test("discovery advertises only the searches with keys", () => {
   const none = discoveryDocument(loadConfig(ENV));
-  assert.deepEqual(none.features, { gifs: false, games: false });
+  assert.deepEqual(none.features, { gifs: false, games: false, media: true });
   const both = discoveryDocument(loadConfig({ ...ENV, KLIPY_API_KEY: KLIPY_KEY, TWITCH_CLIENT_ID: "id", TWITCH_CLIENT_SECRET: "s" }));
-  assert.deepEqual(both.features, { gifs: true, games: true });
+  assert.deepEqual(both.features, { gifs: true, games: true, media: true });
   assert.equal(both.endpoints.gifSearch, `${ORIGIN}/api/auth/commy/gifs/search`);
   assert.equal(both.endpoints.gameSearch, `${ORIGIN}/api/auth/commy/games/search`);
   assert.ok(!JSON.stringify(both).includes(KLIPY_KEY), "the key never appears in discovery");
@@ -179,4 +190,52 @@ test("game search reuses the Twitch app token", async () => {
 
   const short = await call("GET", "/commy/games/search", { cookie, query: { q: "p" } });
   assert.deepEqual(short.json.results, []);
+});
+
+test("only GIF and cover image URLs are accepted for loading", () => {
+  assert.ok(mediaUrl("https://static.klipy.com/ii/4e7b/fd/3b/5wGhb3j5.gif"));
+  assert.ok(mediaUrl("https://images.igdb.com/igdb/image/upload/t_thumb/co1rs4.jpg"));
+  for (const bad of [
+    "http://static.klipy.com/a.gif",
+    "https://api.klipy.com/api/v1/key/gifs/search",
+    "https://static.klipy.com.evil.example/a.gif",
+    "https://user:pw@static.klipy.com/a.gif",
+    "https://static.klipy.com:8443/a.gif",
+    "https://static.klipy.com/a%2F..%2Fb.gif",
+    "https://images.igdb.com/igdb/image/upload/t_thumb/co1rs4.jpg?x=1",
+    "https://images.igdb.com/other/path.jpg",
+    "https://169.254.169.254/latest/meta-data",
+    "file:///etc/passwd",
+    "not a url",
+  ]) {
+    assert.equal(mediaUrl(bad), null, bad);
+  }
+});
+
+test("images load through the server for signed in apps only", async () => {
+  const { call, signUp, log } = makeAuth();
+  const gif = "https://static.klipy.com/ii/4e7b/fd/3b/5wGhb3j5.gif";
+  assert.equal((await call("GET", "/commy/media", { query: { u: gif } })).status, 401);
+  assert.equal(log.length, 0, "no upstream call without a session");
+
+  const cookie = await signUp("media@example.test");
+  const r = await call("GET", "/commy/media", { cookie, query: { u: gif } });
+  assert.equal(r.status, 200);
+  assert.equal(r.type, "image/gif");
+  assert.deepEqual(r.bytes, GIF_BYTES);
+  assert.equal(r.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(log[0].init.redirect, "error", "redirects never leave the allowed hosts");
+
+  // Repeats come from the cache
+  await call("GET", "/commy/media", { cookie, query: { u: gif } });
+  assert.equal(log.length, 1);
+
+  const cover = await call("GET", "/commy/media", { cookie, query: { u: "https://images.igdb.com/igdb/image/upload/t_thumb/co1rs4.jpg" } });
+  assert.equal(cover.type, "image/jpeg");
+
+  // Other hosts are refused before any request, and non-images are not passed on
+  assert.equal((await call("GET", "/commy/media", { cookie, query: { u: "https://example.org/a.gif" } })).status, 400);
+  const before = log.length;
+  assert.equal((await call("GET", "/commy/media", { cookie, query: { u: "https://static.klipy.com/page.html" } })).status, 502);
+  assert.equal(log.length, before + 1);
 });

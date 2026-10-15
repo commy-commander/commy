@@ -4398,6 +4398,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(App::default())
+        // GIFs and game covers, loaded through the account server
+        .register_asynchronous_uri_scheme_protocol("commy-media", |ctx, request, responder| {
+            let handle = ctx.app_handle().clone();
+            let uri = request.uri().to_string();
+            tauri::async_runtime::spawn(async move {
+                let app = handle.state::<App>();
+                responder.respond(account::media_image(&app, &uri).await);
+            });
+        })
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
