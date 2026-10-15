@@ -35,6 +35,34 @@ pub struct AccountState {
     pub user: Option<AccountUser>,
     #[serde(default)]
     pub device_linked: bool,
+    /// Searches the signed in server runs with its own keys, from its
+    /// discovery document. None for servers that predate the list.
+    #[serde(default)]
+    pub features: Option<ServerFeatures>,
+}
+
+/// Which keyed searches an account server has set up (`features` in
+/// /.well-known/commy-auth.json). The keys stay on the server.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServerFeatures {
+    #[serde(default)]
+    pub gifs: bool,
+    #[serde(default)]
+    pub games: bool,
+}
+
+impl AccountState {
+    /// Whether the signed in server offers a search. Servers that do not
+    /// list their features are asked anyway and answer 404 when it is off.
+    pub fn server_offers(&self, kind: &str) -> bool {
+        is_signed_in(self)
+            && match (self.features, kind) {
+                (None, _) => true,
+                (Some(f), "gifs") => f.gifs,
+                (Some(f), "games") => f.games,
+                _ => false,
+            }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -117,6 +145,8 @@ struct Discovery {
     #[serde(rename = "deviceAuthorization")]
     device: DeviceEndpoints,
     endpoints: Endpoints,
+    #[serde(default)]
+    features: Option<ServerFeatures>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,7 +219,7 @@ struct SearchResponse<T> {
 pub async fn server_search<T: serde::de::DeserializeOwned>(app: &App, kind: &str, query: &str) -> Result<Option<Vec<T>>, String> {
     let (server, token) = {
         let state = app.account.lock().unwrap();
-        if !is_signed_in(&state) {
+        if !state.server_offers(kind) {
             return Ok(None);
         }
         match (state.signed_in_server.clone(), state.token.clone()) {
@@ -234,6 +264,9 @@ pub struct AccountView {
     server_from_env: bool,
     device_linked: bool,
     pending_code: Option<String>,
+    /// The signed in server searches GIFs or games for this app.
+    server_gifs: bool,
+    server_games: bool,
 }
 
 fn view(app: &App) -> AccountView {
@@ -249,6 +282,8 @@ fn view(app: &App) -> AccountView {
         server,
         device_linked: state.device_linked,
         pending_code: app.sign_in.lock().unwrap().as_ref().map(|p| p.user_code.clone()),
+        server_gifs: state.server_offers("gifs"),
+        server_games: state.server_offers("games"),
     }
 }
 
@@ -474,6 +509,7 @@ async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -
         state.token = Some(token.to_string());
         state.user = Some(user);
         state.device_linked = device_linked.is_ok();
+        state.features = doc.features;
         if let Some(dir) = app.data_dir() {
             save(dir, &state);
         }
@@ -535,6 +571,7 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
         state.user = None;
         state.signed_in_server = None;
         state.device_linked = false;
+        state.features = None;
         if let Some(dir) = app.data_dir() {
             save(dir, &state);
         }
@@ -558,18 +595,35 @@ pub async fn verify_saved_session(handle: AppHandle) {
     let Ok(res) = app.http.get(&doc.endpoints.session).bearer_auth(&token).send().await else { return };
     // A null session (revoked or expired) signs us out; network trouble does not.
     let valid = res.status().is_success() && res.json::<Option<SessionResponse>>().await.ok().flatten().is_some();
-    if !valid {
-        {
+    if valid {
+        // The operator may have added or removed a search key since sign-in
+        let changed = {
             let mut state = app.account.lock().unwrap();
-            state.token = None;
-            state.user = None;
-            state.signed_in_server = None;
-            if let Some(dir) = app.data_dir() {
-                save(dir, &state);
+            let changed = state.features != doc.features;
+            if changed {
+                state.features = doc.features;
+                if let Some(dir) = app.data_dir() {
+                    save(dir, &state);
+                }
             }
+            changed
+        };
+        if changed {
+            let _ = handle.emit("account-changed", ());
         }
-        let _ = handle.emit("account-changed", ());
+        return;
     }
+    {
+        let mut state = app.account.lock().unwrap();
+        state.token = None;
+        state.user = None;
+        state.signed_in_server = None;
+        state.features = None;
+        if let Some(dir) = app.data_dir() {
+            save(dir, &state);
+        }
+    }
+    let _ = handle.emit("account-changed", ());
 }
 
 #[cfg(test)]
@@ -613,6 +667,7 @@ mod tests {
                 link_challenge: format!("{api}/commy/devices/challenge"),
                 register_device: format!("{api}/commy/devices/register"),
             },
+            features: None,
         }
     }
 
@@ -639,5 +694,37 @@ mod tests {
         state.signed_in_server = Some(effective_server());
         state.token = None;
         assert!(!is_signed_in(&state));
+    }
+
+    #[test]
+    fn searches_follow_the_server_feature_list() {
+        let mut state = AccountState {
+            token: Some("t".into()),
+            user: Some(AccountUser { id: "u".into(), name: "n".into(), email: "e".into() }),
+            signed_in_server: Some(effective_server()),
+            ..Default::default()
+        };
+        // Servers that do not list features are asked anyway
+        assert!(state.server_offers("gifs") && state.server_offers("games"));
+        state.features = Some(ServerFeatures { gifs: true, games: false });
+        assert!(state.server_offers("gifs"));
+        assert!(!state.server_offers("games"));
+        state.token = None;
+        assert!(!state.server_offers("gifs"));
+    }
+
+    #[test]
+    fn discovery_features_are_optional() {
+        let base = serde_json::json!({
+            "issuer": "https://chat.example.org",
+            "deviceAuthorization": { "clientId": "c", "deviceCodeEndpoint": "x", "tokenEndpoint": "x" },
+            "endpoints": { "session": "x", "signOut": "x", "linkChallenge": "x", "registerDevice": "x" },
+        });
+        let old: Discovery = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(old.features, None);
+        let mut with = base;
+        with["features"] = serde_json::json!({ "gifs": true, "games": false });
+        let new: Discovery = serde_json::from_value(with).unwrap();
+        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false }));
     }
 }

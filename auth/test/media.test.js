@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { buildAuthOptions } from "../src/auth.js";
-import { discoveryDocument, loadConfig } from "../src/config.js";
+import { discoveryDocument, featureSummary, loadConfig } from "../src/config.js";
 import { apicalypseString, cleanQuery, customerId, igdbResults, klipyResults } from "../src/media.js";
 
 const ORIGIN = "http://localhost:3001";
@@ -115,6 +115,24 @@ test("discovery advertises only the searches with keys", () => {
 test("separate IGDB credentials win over the Twitch sign-in app", () => {
   const config = loadConfig({ ...ENV, TWITCH_CLIENT_ID: "tw", TWITCH_CLIENT_SECRET: "tws", IGDB_CLIENT_ID: "ig", IGDB_CLIENT_SECRET: "igs" });
   assert.deepEqual(config.igdb, { clientId: "ig", clientSecret: "igs" });
+});
+
+test("half a client pair is off with a warning, and pasted spaces are trimmed", () => {
+  const config = loadConfig({ ...ENV, TWITCH_CLIENT_ID: " tw ", TWITCH_CLIENT_SECRET: "", IGDB_CLIENT_ID: " ig\n", IGDB_CLIENT_SECRET: " igs " });
+  assert.equal(config.twitch, null);
+  assert.deepEqual(config.igdb, { clientId: "ig", clientSecret: "igs" });
+  assert.equal(config.warnings.length, 1);
+  assert.match(config.warnings[0], /TWITCH_CLIENT_SECRET is empty/);
+  assert.deepEqual(loadConfig(ENV).warnings, []);
+});
+
+test("the startup summary names each optional part without its keys", () => {
+  const line = featureSummary(loadConfig({ ...ENV, KLIPY_API_KEY: KLIPY_KEY, TWITCH_CLIENT_ID: "tw-id", TWITCH_CLIENT_SECRET: "tw-secret" }));
+  assert.match(line, /twitch=on/);
+  assert.match(line, /gifs=on/);
+  assert.match(line, /games=on \(twitch app\)/);
+  assert.match(line, /google=off/);
+  for (const secret of [KLIPY_KEY, "tw-id", "tw-secret"]) assert.ok(!line.includes(secret));
 });
 
 test("searches without keys say they are not set up", async () => {
