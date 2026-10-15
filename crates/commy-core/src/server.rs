@@ -102,6 +102,9 @@ pub struct SoundboardSound {
     /// "blob@provider" of the audio clip.
     pub blob: String,
     pub volume: f32,
+    /// Emoji on the clip's button: a Unicode emoji or a custom emoji token.
+    #[serde(default)]
+    pub emoji: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -723,6 +726,8 @@ pub const MAX_EVENTS: usize = 50;
 pub const MAX_EVENT_TITLE_CHARS: usize = 100;
 pub const MAX_EVENT_DESCRIPTION_BYTES: usize = 1500;
 pub const MAX_ROLE_TAG_CHARS: usize = 12;
+/// Longest Unicode emoji a sound can carry, with room for joined sequences.
+pub const MAX_SOUND_EMOJI_CHARS: usize = 12;
 pub const MAX_USER_LIMIT: u32 = 99;
 
 /// Trims, drops empties and duplicates (case-insensitive), caps count
@@ -756,6 +761,17 @@ pub fn valid_event(event: &ScheduledEvent) -> bool {
         && event.id.len() <= 64
         && !event.id.is_empty()
         && event.end.map_or(true, |end| end > event.start)
+}
+
+/// A soundboard clip's emoji: a custom emoji token, or a short run of
+/// characters with no letters, digits, spaces or control characters.
+pub fn valid_sound_emoji(emoji: &str) -> bool {
+    if parse_emoji_token(emoji).is_some() {
+        return true;
+    }
+    let n = emoji.chars().count();
+    (1..=MAX_SOUND_EMOJI_CHARS).contains(&n)
+        && !emoji.chars().any(|c| c.is_ascii_alphanumeric() || c.is_control() || c.is_whitespace())
 }
 
 pub fn valid_role_tag(tag: &str) -> bool {
