@@ -35,6 +35,8 @@ How P2P works:
   replicated `ServerState`.
 - Invites are self-contained `commy...` tickets carrying the topic id and
   bootstrap addresses. Newcomers request a state snapshot from any member.
+  Short invite links store the ticket sealed with a key that only the link
+  carries, so the account server cannot read it.
 - Files, avatars, emojis, and soundboard clips move over iroh-blobs,
   addressed by blake3 hash; chat messages carry only the hash.
 

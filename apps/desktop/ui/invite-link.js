@@ -1,8 +1,10 @@
-// Invite links: https://<server>/i/<CODE> and the commy://i/<host>/<CODE>
-// deep link. The code is resolved on the server named in the link, and a
-// server other than this install's account server gets a warning first.
+// Invite links: https://<server>/i/<CODE>#<KEY> and the
+// commy://i/<host>/<CODE>#<KEY> deep link. The code is resolved on the server
+// named in the link, and a server other than this install's account server gets
+// a warning first. KEY opens the sealed invite and never leaves this device;
+// links from older versions have no key.
 
-const INVITE_LINK_RE = /\b(?:https?:\/\/[a-z0-9.\-:[\]]+\/i\/|commy:\/\/i\/[^\s/]+\/)[a-hj-np-z2-9]{8}\b\/?/i;
+const INVITE_LINK_RE = /\b(?:https?:\/\/[a-z0-9.\-:[\]]+\/i\/|commy:\/\/i\/[^\s/]+\/)[a-hj-np-z2-9]{8}(?:#[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])|\b\/?)/i;
 
 function findInviteLink(text) {
   const m = INVITE_LINK_RE.exec(text || "");
