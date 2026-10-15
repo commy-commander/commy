@@ -37,7 +37,8 @@ jobs:
             rust_targets: x86_64-pc-windows-msvc
             bundles: nsis
           - name: macOS universal
-            os: macos-latest
+            # Pinned: macos-latest twice sat 15 minutes without a runner and was cancelled
+            os: macos-15
             target: universal-apple-darwin
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
             bundles: app,dmg
