@@ -180,11 +180,14 @@ export function discoveryDocument(config) {
       resolveInvite: `${api}/commy/invites/resolve`,
       gifSearch: `${api}/commy/gifs/search`,
       gameSearch: `${api}/commy/games/search`,
+      media: `${api}/commy/media`,
     },
     // Searches the server runs for signed in apps with its own keys
     features: {
       gifs: Boolean(config.klipyKey),
       games: Boolean(config.igdb),
+      // GIF files and game covers load through /commy/media
+      media: true,
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,

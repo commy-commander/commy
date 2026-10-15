@@ -394,7 +394,7 @@ async function mockInvoke(cmd, args = {}) {
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", relay: "https://use1-1.relay.iroh.network./", addr: "192.168.1.24:51820", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "iroh-fan", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", relay: "https://euw1-1.relay.iroh.network./", addr: null, tx_bytes: 0, rx_bytes: 0 },
       ] };
-    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true });
+    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_media: false });
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
@@ -3080,6 +3080,24 @@ function appendInlineMarkdown(node, text) {
   if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
 }
 
+// ---------- Images through the account server ----------
+
+// GIF files and game covers load through the signed in account server, so
+// the image hosts never see the user's address. The server keeps the same
+// list of hosts (MEDIA_HOSTS in auth/src/media.js).
+const MEDIA_HOSTS = new Set(["static.klipy.com", "images.igdb.com"]);
+
+function viaAccountServer(url) {
+  if (!account.server_media || !window.__TAURI__) return url;
+  try {
+    if (!MEDIA_HOSTS.has(new URL(url).hostname)) return url;
+  } catch {
+    return url;
+  }
+  // commy-media://localhost/ on macOS and Linux, http://commy-media.localhost/ on Windows
+  return `${window.__TAURI__.core.convertFileSrc("", "commy-media")}?u=${encodeURIComponent(url)}`;
+}
+
 // ---------- IGDB ----------
 
 let integrations = { igdb_client_id: "", igdb_configured: false };
@@ -3093,7 +3111,7 @@ async function loadIntegrations() {
 }
 
 function igdbCover(imageId, size = "t_cover_small") {
-  return /^[A-Za-z0-9]{1,32}$/.test(imageId || "") ? `https://images.igdb.com/igdb/image/upload/${size}/${imageId}.jpg` : null;
+  return /^[A-Za-z0-9]{1,32}$/.test(imageId || "") ? viaAccountServer(`https://images.igdb.com/igdb/image/upload/${size}/${imageId}.jpg`) : null;
 }
 
 function renderIntegrations() {
@@ -5456,7 +5474,7 @@ function renderImageEmbed(url) {
   };
   const img = el("img", "chat-image");
   keepScrolledOnLoad(img);
-  img.src = url;
+  img.src = viaAccountServer(url);
   img.loading = "lazy";
   img.onclick = () => openLightbox(img.src, url, null);
   img.onerror = () => wrap.remove();
@@ -6213,7 +6231,7 @@ async function renderGifResults(query) {
       btn.title = gif.title;
       btn.style.aspectRatio = `1 / ${ratio}`;
       const img = el("img");
-      img.src = gif.preview;
+      img.src = viaAccountServer(gif.preview);
       img.alt = gif.title;
       img.loading = "lazy";
       img.decoding = "async";
