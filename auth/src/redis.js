@@ -8,9 +8,17 @@
 import { createClient } from "redis";
 
 // Opens one client for commands and one for subscriptions (a subscribed
-// connection cannot run commands). Both reconnect on their own.
-export async function connectRedis(url, { log = console } = {}) {
-  const client = createClient({ url, socket: { reconnectStrategy: (tries) => Math.min(500 * 2 ** tries, 10_000) } });
+// connection cannot run commands). Both reconnect on their own. The handle is
+// returned at once and `ready` resolves on the first connection, so the server
+// can start serving sign-ins while Redis is still coming up; a command sent
+// while disconnected fails instead of waiting.
+export function connectRedis(url, { log = console } = {}) {
+  const options = {
+    url,
+    disableOfflineQueue: true,
+    socket: { reconnectStrategy: (tries) => Math.min(500 * 2 ** tries, 10_000) },
+  };
+  const client = createClient(options);
   const subscriber = client.duplicate();
   let warned = 0;
   for (const c of [client, subscriber]) {
@@ -21,10 +29,12 @@ export async function connectRedis(url, { log = console } = {}) {
       log.warn(`[auth] redis: ${err.message}`);
     });
   }
-  await Promise.all([client.connect(), subscriber.connect()]);
+  const ready = Promise.all([client.connect(), subscriber.connect()]).then(() => {});
+  ready.catch(() => {});
   return {
     client,
     subscriber,
+    ready,
     async ping() {
       return (await client.ping()) === "PONG";
     },

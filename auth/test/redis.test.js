@@ -45,11 +45,10 @@ async function startRedis() {
   const ready = (async () => {
     for (let i = 0; i < 100; i++) {
       await delay(50);
-      try {
-        const probe = await connectRedis(`redis://127.0.0.1:${port}`, { log: { warn() {} } });
-        await probe.close();
-        return `redis://127.0.0.1:${port}`;
-      } catch {}
+      const probe = connectRedis(`redis://127.0.0.1:${port}`, { log: { warn() {} } });
+      const up = await Promise.race([probe.ready.then(() => true), delay(200).then(() => false)]);
+      await probe.close().catch(() => {});
+      if (up) return `redis://127.0.0.1:${port}`;
     }
     return null;
   })();
@@ -59,7 +58,8 @@ async function startRedis() {
 before(async () => {
   const url = await startRedis();
   if (!url) return;
-  redis = await connectRedis(url, { log: { warn() {} } });
+  redis = connectRedis(url, { log: { warn() {} } });
+  await redis.ready;
 });
 
 after(async () => {

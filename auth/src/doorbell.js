@@ -175,10 +175,13 @@ export function redisStore(redis, { maxRows }) {
     },
     // Wakes takes on every auth instance that shares this Redis
     publish: (token, hello) => client.publish(RING_CHANNEL, `${hello ? "h" : "r"}${token}`),
+    // Waits for the connection: the server may start before Redis is up
     subscribe: (onRing) =>
-      redis.subscriber.subscribe(RING_CHANNEL, (message) => {
-        if (TOKEN.test(message.slice(1))) onRing(message.slice(1), message[0] === "h");
-      }),
+      redis.ready.then(() =>
+        redis.subscriber.subscribe(RING_CHANNEL, (message) => {
+          if (TOKEN.test(message.slice(1))) onRing(message.slice(1), message[0] === "h");
+        }),
+      ),
   };
 }
 

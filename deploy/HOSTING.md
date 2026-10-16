@@ -266,10 +266,10 @@ most undelivered rings, which the apps send again when both sides are online.
 and remove the `redis` service and the auth service's `depends_on: redis`
 entry from `docker-compose.yml`. Rings then go to the `doorbellRing` table and
 rate limits are counted in each auth process's memory, as before. The startup
-log says which: `redis=on` or `redis=off`. If Redis is configured but
-unreachable, sign-in keeps working; doorbell calls fail until it is back,
-rate limits are off meanwhile (the edge proxy keeps its own), and `/healthz`
-reports `"redis":false`.
+log says which: `redis=on` or `redis=off`. The auth server does not wait for
+Redis to start. If Redis is configured but unreachable, sign-in keeps working;
+doorbell calls fail until it is back, rate limits are off meanwhile (the edge
+proxy keeps its own), and `/healthz` reports `"redis":false`.
 
 ## iroh relay
 

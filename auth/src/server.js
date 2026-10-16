@@ -7,7 +7,9 @@ import { dropDeviceNames } from "./devices.js";
 import { connectRedis } from "./redis.js";
 
 const config = loadConfig();
-const redis = config.redisUrl ? await connectRedis(config.redisUrl) : null;
+// Not awaited: sign-in does not depend on Redis, so the server starts without it
+const redis = config.redisUrl ? connectRedis(config.redisUrl) : null;
+redis?.ready.then(() => console.log("[auth] redis connected"));
 const { auth, options, pool } = createAuth(config, { redis });
 
 async function migrate(attempts = 30) {
