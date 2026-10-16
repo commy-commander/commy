@@ -369,8 +369,9 @@ const ENCODERS: usize = 2;
 const JPEG_QUALITY: u8 = 60;
 
 /// Produces raw frames on demand: a monitor or window capturer, or a
-/// synthetic source in tests.
-pub type FrameSource = Box<dyn FnMut() -> anyhow::Result<image::RgbaImage> + Send>;
+/// synthetic source in tests. Opened and used on the capture thread
+/// alone, since platform capture handles are not sendable.
+pub type FrameSource = Box<dyn FnMut() -> anyhow::Result<image::RgbaImage>>;
 /// Opens a [`FrameSource`]; called again whenever grabbing fails.
 pub type FrameOpener = Box<dyn FnMut() -> anyhow::Result<FrameSource> + Send>;
 
