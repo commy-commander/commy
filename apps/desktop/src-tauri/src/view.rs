@@ -141,6 +141,8 @@ pub struct ServerView {
     pub sounds: Vec<SoundView>,
     pub emojis_shareable: bool,
     pub soundboard_open: bool,
+    /// Invite links to a public server may never expire.
+    pub public: bool,
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
     pub can_use_soundboard: bool,
@@ -364,6 +366,7 @@ impl ServerView {
                 .collect(),
             emojis_shareable: state.server.emojis_shareable,
             soundboard_open: state.server.soundboard_open,
+            public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS)
                 || (state.server.soundboard_open && viewer.is_some_and(|v| state.server.members.iter().any(|m| m.user == v))),

@@ -8,6 +8,8 @@ import {
   CODE_ALPHABET,
   CODE_LENGTH,
   clampDays,
+  expiryFor,
+  NEVER,
   generateCode,
   normalizeCode,
   isPlainTicket,
@@ -103,6 +105,49 @@ test("anonymous create, dedupe, resolve and expiry", async () => {
   db.invite[0].expiresAt = new Date(Date.now() - 1000);
   assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: created.json.code } })).status, 404);
   assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: "nope" } })).status, 404);
+});
+
+test("expiry choices map to fixed lengths", () => {
+  const now = new Date("2026-10-16T12:00:00Z");
+  assert.equal(expiryFor("1h", now).toISOString(), "2026-10-16T13:00:00.000Z");
+  assert.equal(expiryFor("1d", now).toISOString(), "2026-10-17T12:00:00.000Z");
+  assert.equal(expiryFor("30d", now).toISOString(), "2026-11-15T12:00:00.000Z");
+  assert.equal(expiryFor("never", now), NEVER);
+  assert.equal(expiryFor("90d", now), null);
+  assert.equal(expiryFor("__proto__", now), null);
+});
+
+test("creators pick the expiry, never included, and the row holds nothing else new", async () => {
+  const { db, call } = makeAuth({ INVITES_MAX_PERMANENT: "2" });
+  const hour = await call("POST", "/commy/invites/create", { body: { ticket: TICKET, expiresIn: "1h" } });
+  assert.equal(hour.status, 200, JSON.stringify(hour.json));
+  const mins = (new Date(hour.json.expiresAt) - Date.now()) / 60000;
+  assert.ok(mins > 59 && mins <= 60);
+  assert.equal(hour.json.permanent, false);
+
+  const month = await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "a", expiresIn: "30d" } });
+  assert.ok((new Date(month.json.expiresAt) - Date.now()) / 86400000 > 29.9, "anonymous apps may pick 30 days");
+
+  const forever = await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "b", expiresIn: "never" } });
+  assert.equal(forever.status, 200, JSON.stringify(forever.json));
+  assert.equal(forever.json.expiresAt, null);
+  assert.equal(forever.json.permanent, true);
+  const row = db.invite.find((r) => r.code === forever.json.code);
+  assert.deepEqual(Object.keys(row).sort(), ["code", "createdAt", "createdBy", "expiresAt", "id", "serverName", "ticket"]);
+  assert.equal(row.serverName, "");
+  assert.equal(row.createdBy, null);
+  assert.equal(row.ticket, TICKET + "b", "only the sealed invite, nothing readable");
+
+  // Cleanup of expired rows leaves it, and it keeps resolving
+  await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "c", expiresIn: "1d" } });
+  const resolved = await call("GET", "/commy/invites/resolve", { query: { code: forever.json.code } });
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.json.expiresAt, null);
+
+  assert.equal((await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "d", expiresIn: "never" } })).status, 200);
+  const full = await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "e", expiresIn: "never" } });
+  assert.equal(full.status, 403, "permanent links are capped");
+  assert.equal((await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "f", expiresIn: "2y" } })).status, 400);
 });
 
 test("invalid and plain tickets are refused", async () => {

@@ -6,6 +6,10 @@
 //! send a fragment to a server, so the account server cannot tell which Commy
 //! server an invite opens or who is in it. Links without a key are from
 //! older versions and still open until they expire.
+//!
+//! The creator picks how long a link lasts ([`Expiry`]). The expiry is sealed
+//! inside the invite too, so the app refuses an expired link even if the
+//! account server kept or extended its row.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -14,6 +18,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, SecondsFormat, Utc};
 use commy_net::sealed::{self, Purpose, SealKey};
 use commy_net::ServerTicket;
 use reqwest::Url;
@@ -35,12 +40,59 @@ const MAX_LINK_LEN: usize = 2048;
 const PORT_FILE: &str = "link.port";
 const HANDOFF_PREFIX: &str = "commy-link-v1 ";
 
-/// Anonymous links last 7 days; reuse one for a little less than that.
-const REUSE_LINK_FOR: Duration = Duration::from_secs(6 * 24 * 60 * 60);
+/// How long a new invite link lasts. `Never` is only offered for a server
+/// marked public.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expiry {
+    Hour,
+    Day,
+    Week,
+    Month,
+    Never,
+}
+
+impl Expiry {
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "1h" => Expiry::Hour,
+            "1d" => Expiry::Day,
+            "7d" => Expiry::Week,
+            "30d" => Expiry::Month,
+            "never" => Expiry::Never,
+            _ => return None,
+        })
+    }
+
+    /// The account server's name for it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Expiry::Hour => "1h",
+            Expiry::Day => "1d",
+            Expiry::Week => "7d",
+            Expiry::Month => "30d",
+            Expiry::Never => "never",
+        }
+    }
+
+    pub fn length(self) -> Option<chrono::Duration> {
+        match self {
+            Expiry::Hour => Some(chrono::Duration::hours(1)),
+            Expiry::Day => Some(chrono::Duration::days(1)),
+            Expiry::Week => Some(chrono::Duration::days(7)),
+            Expiry::Month => Some(chrono::Duration::days(30)),
+            Expiry::Never => None,
+        }
+    }
+}
+
+/// A link made this run is shared again while at least this much of its
+/// life is left, so it never runs out right after being copied.
+const REUSE_MIN_LEFT: f64 = 0.85;
 
 static PENDING: Mutex<Option<String>> = Mutex::new(None);
-/// Links this run created, by ticket, so sharing twice gives the same link.
-static CREATED: Mutex<Option<HashMap<String, (String, Instant)>>> = Mutex::new(None);
+/// Links this run created, by ticket and expiry, so sharing twice gives the
+/// same link.
+static CREATED: Mutex<Option<HashMap<String, (CreatedInvite, Instant)>>> = Mutex::new(None);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteLink {
@@ -170,7 +222,8 @@ pub struct ResolvedInvite {
     pub host: String,
     pub server_name: String,
     pub ticket: String,
-    pub expires_at: String,
+    /// RFC 3339; None when the link never expires.
+    pub expires_at: Option<String>,
     /// False when the link points somewhere other than this install's account server
     pub trusted: bool,
     pub account_server_host: String,
@@ -180,13 +233,45 @@ pub struct ResolvedInvite {
 #[serde(rename_all = "camelCase")]
 struct ResolveResponse {
     ticket: String,
-    expires_at: String,
+    /// Null when the row never expires.
+    expires_at: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateResponse {
     url: String,
+    expires_at: Option<String>,
+}
+
+/// A new invite link and when it stops working (RFC 3339, None for never).
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatedInvite {
+    pub url: String,
+    pub expires_at: Option<String>,
+}
+
+fn parse_time(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value.trim()).ok().map(|t| t.with_timezone(&Utc))
+}
+
+/// When an invite stops working: the earlier of what the account server says
+/// and what is sealed inside. A sealed expiry that has passed is refused, so a
+/// row the server kept or extended cannot bring the link back.
+fn effective_expiry(
+    server: Option<DateTime<Utc>>,
+    sealed: Option<SealedExpiry>,
+    now: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, String> {
+    let sealed = match sealed {
+        Some(SealedExpiry::At(t)) if t <= now => return Err("This invite has expired. Ask for a new link.".into()),
+        Some(SealedExpiry::At(t)) => Some(t),
+        Some(SealedExpiry::Never) | None => None,
+    };
+    Ok(match (server, sealed) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    })
 }
 
 #[derive(Deserialize)]
@@ -231,39 +316,58 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
     }
     let body: ResolveResponse = res.json().await.map_err(|_| "The invite server sent an invalid reply".to_string())?;
     // The server name comes from the ticket itself, not from the web server
-    let raw = open_ticket(&body.ticket, parsed.key.as_deref())?;
+    let (raw, sealed_expiry) = open_ticket(&body.ticket, parsed.key.as_deref())?;
     let ticket = ServerTicket::decode(&raw).map_err(|_| "The invite server sent an invalid invite".to_string())?;
+    let server_expiry = body.expires_at.as_deref().and_then(parse_time);
+    let expires_at = effective_expiry(server_expiry, sealed_expiry, Utc::now())?;
     let account = account_server();
     Ok(ResolvedInvite {
         link: parsed.url(),
         host: parsed.host().to_string(),
         server_name: clip(&ticket.server_name, 100),
         ticket: ticket.encode(),
-        expires_at: clip(&body.expires_at, 40),
+        expires_at: expires_at.map(|t| t.to_rfc3339_opts(SecondsFormat::Secs, true)),
         trusted: parsed.origin == account,
         account_server_host: host_of(&account),
     })
 }
 
-/// What an invite link seals: the ticket, and the server name for the
-/// website's invite page.
+/// What an invite link seals: the ticket, the server name for the
+/// website's invite page, and when it expires (unix seconds), or that it
+/// never does. Invites sealed before expiries were chosen carry neither.
 #[derive(Serialize, Deserialize)]
 struct SealedInvite {
     #[serde(rename = "t")]
     ticket: String,
     #[serde(rename = "n")]
     name: String,
+    #[serde(rename = "e", default, skip_serializing_if = "Option::is_none")]
+    expires: Option<i64>,
+    #[serde(rename = "p", default, skip_serializing_if = "std::ops::Not::not")]
+    permanent: bool,
 }
 
-fn seal_ticket(key: &SealKey, raw: &str, name: &str) -> String {
-    let payload = serde_json::to_vec(&SealedInvite { ticket: raw.to_string(), name: name.to_string() })
-        .expect("invite serialization cannot fail");
+/// The expiry sealed inside an invite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SealedExpiry {
+    At(DateTime<Utc>),
+    Never,
+}
+
+fn seal_ticket(key: &SealKey, raw: &str, name: &str, expiry: SealedExpiry) -> String {
+    let (expires, permanent) = match expiry {
+        SealedExpiry::At(t) => (Some(t.timestamp()), false),
+        SealedExpiry::Never => (None, true),
+    };
+    let invite = SealedInvite { ticket: raw.to_string(), name: name.to_string(), expires, permanent };
+    let payload = serde_json::to_vec(&invite).expect("invite serialization cannot fail");
     key.seal(Purpose::Invite, &payload)
 }
 
-/// The ticket a resolved invite holds. A link with a key only accepts a
-/// sealed ticket that key opens; a link without one is from an older version.
-fn open_ticket(stored: &str, key: Option<&str>) -> Result<String, String> {
+/// The ticket a resolved invite holds, and the expiry sealed with it (None
+/// for invites from before expiries were sealed, and for older keyless
+/// links). A link with a key only accepts a sealed ticket that key opens.
+fn open_ticket(stored: &str, key: Option<&str>) -> Result<(String, Option<SealedExpiry>), String> {
     let stored = stored.trim();
     match key {
         Some(key) => {
@@ -273,22 +377,41 @@ fn open_ticket(stored: &str, key: Option<&str>) -> Result<String, String> {
                 .map_err(|_| "This invite link is damaged or was changed".to_string())?;
             let invite: SealedInvite =
                 serde_json::from_slice(&bytes).map_err(|_| "The invite server sent an invalid invite".to_string())?;
-            Ok(invite.ticket)
+            let expiry = match (invite.permanent, invite.expires) {
+                (true, _) => Some(SealedExpiry::Never),
+                (false, Some(secs)) => Some(SealedExpiry::At(
+                    DateTime::from_timestamp(secs, 0).ok_or("The invite server sent an invalid invite")?,
+                )),
+                (false, None) => None,
+            };
+            Ok((invite.ticket, expiry))
         }
         None if sealed::is_sealed(stored) => Err("This invite link is missing its key. Ask for a new link.".into()),
-        None => Ok(stored.to_string()),
+        None => Ok((stored.to_string(), None)),
     }
 }
 
 #[tauri::command]
-pub async fn create_invite_link(app: tauri::State<'_, App>, server_id: String) -> Result<String, String> {
-    create(&app, &server_id).await
+pub async fn create_invite_link(
+    app: tauri::State<'_, App>,
+    server_id: String,
+    expires: Option<String>,
+) -> Result<CreatedInvite, String> {
+    let expiry = match expires.as_deref() {
+        None => Expiry::Week,
+        Some(value) => Expiry::parse(value).ok_or("unknown invite expiry")?,
+    };
+    create(&app, &server_id, expiry).await
 }
 
 /// Stores a server's ticket, sealed, on our account server and returns
-/// the link that opens it.
-pub(crate) async fn create(app: &App, server_id: &str) -> Result<String, String> {
+/// the link that opens it. A link that never expires is only made for a
+/// server marked public.
+pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result<CreatedInvite, String> {
     let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
+    if expiry == Expiry::Never && !app.servers.lock().unwrap().get(&id).is_some_and(|s| s.server.public) {
+        return Err("Only links to a public server can last forever".into());
+    }
     let raw = app
         .invites
         .lock()
@@ -298,18 +421,31 @@ pub(crate) async fn create(app: &App, server_id: &str) -> Result<String, String>
         .ok_or("no invite available; you may be offline")?;
     let ticket = ServerTicket::decode(&raw).map_err(|e| e.to_string())?;
     let origin = account_server();
-    let cache_key = format!("{origin} {raw}");
-    if let Some((url, at)) = CREATED.lock().unwrap().as_ref().and_then(|m| m.get(&cache_key)) {
-        if at.elapsed() < REUSE_LINK_FOR {
-            return Ok(url.clone());
+    let cache_key = format!("{origin} {} {raw}", expiry.as_str());
+    if let Some((created, at)) = CREATED.lock().unwrap().as_ref().and_then(|m| m.get(&cache_key)) {
+        let fresh = match expiry.length() {
+            Some(length) => at.elapsed().as_secs_f64() < length.num_seconds() as f64 * (1.0 - REUSE_MIN_LEFT),
+            // Unless an older account server gave it an expiry after all
+            None => created.expires_at.is_none(),
+        };
+        if fresh {
+            return Ok(created.clone());
         }
     }
+    let now = Utc::now();
+    let sealed_expiry = match expiry.length() {
+        Some(length) => SealedExpiry::At(now + length),
+        None => SealedExpiry::Never,
+    };
     // The account server only ever gets the sealed ticket; the key stays in the link
     let key = SealKey::generate();
     let res = app
         .http
         .post(format!("{origin}/api/auth/commy/invites/create"))
-        .json(&serde_json::json!({ "ticket": seal_ticket(&key, &raw, &ticket.server_name) }))
+        .json(&serde_json::json!({
+            "ticket": seal_ticket(&key, &raw, &ticket.server_name, sealed_expiry),
+            "expiresIn": expiry.as_str(),
+        }))
         .send()
         .await
         .map_err(|_| format!("Could not reach {}", host_of(&origin)))?;
@@ -321,8 +457,23 @@ pub(crate) async fn create(app: &App, server_id: &str) -> Result<String, String>
     match parse(&body.url) {
         Some(link) if link.origin == origin && link.key.is_none() => {
             let url = InviteLink { key: Some(key.to_text()), ..link }.url();
-            CREATED.lock().unwrap().get_or_insert_with(HashMap::new).insert(cache_key, (url.clone(), Instant::now()));
-            Ok(url)
+            // An account server too old to know the choice keeps its own
+            // default; the link then lasts the shorter of the two.
+            let server_expiry = body.expires_at.as_deref().and_then(parse_time);
+            let sealed = match sealed_expiry {
+                SealedExpiry::At(t) => Some(t),
+                SealedExpiry::Never => None,
+            };
+            let expires_at = match (server_expiry, sealed) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            let created = CreatedInvite {
+                url,
+                expires_at: expires_at.map(|t| t.to_rfc3339_opts(SecondsFormat::Secs, true)),
+            };
+            CREATED.lock().unwrap().get_or_insert_with(HashMap::new).insert(cache_key, (created.clone(), Instant::now()));
+            Ok(created)
         }
         _ => Err("The invite server sent an unexpected link".into()),
     }
@@ -556,15 +707,57 @@ mod tests {
     fn sealed_tickets_need_their_key() {
         let text = test_key();
         let key = SealKey::from_text(&text).unwrap();
-        let sealed = seal_ticket(&key, "commyticket", "Pixel Pioneers");
+        let sealed = seal_ticket(&key, "commyticket", "Pixel Pioneers", SealedExpiry::Never);
         assert!(!sealed.contains("commyticket") && !sealed.contains("Pixel"));
-        assert_eq!(open_ticket(&sealed, Some(&text)).unwrap(), "commyticket");
+        assert_eq!(open_ticket(&sealed, Some(&text)).unwrap(), ("commyticket".into(), Some(SealedExpiry::Never)));
         assert!(open_ticket(&sealed, None).is_err());
         assert!(open_ticket(&sealed, Some(&SealKey::generate().to_text())).is_err());
         // A keyed link never accepts a plain ticket in place of a sealed one
         assert!(open_ticket("commyticket", Some(&text)).is_err());
         // Older links without a key still open plain tickets
-        assert_eq!(open_ticket(" commyticket ", None).unwrap(), "commyticket");
+        assert_eq!(open_ticket(" commyticket ", None).unwrap(), ("commyticket".into(), None));
+    }
+
+    #[test]
+    fn the_sealed_expiry_wins() {
+        let text = test_key();
+        let key = SealKey::from_text(&text).unwrap();
+        let at = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+        let sealed = seal_ticket(&key, "commyticket", "Pixel Pioneers", SealedExpiry::At(at));
+        let (_, expiry) = open_ticket(&sealed, Some(&text)).unwrap();
+        assert_eq!(expiry, Some(SealedExpiry::At(at)));
+
+        let before = at - chrono::Duration::days(1);
+        let later = at + chrono::Duration::days(300);
+        // A row the server extended, or claims never expires, still ends on time
+        assert_eq!(effective_expiry(Some(later), expiry, before), Ok(Some(at)));
+        assert_eq!(effective_expiry(None, expiry, before), Ok(Some(at)));
+        // Once the sealed time has passed the link is refused, whatever the server says
+        assert!(effective_expiry(Some(later), expiry, at).is_err());
+        assert!(effective_expiry(None, expiry, later).is_err());
+        // An earlier server expiry is shown as is
+        assert_eq!(effective_expiry(Some(before), expiry, before - chrono::Duration::hours(1)), Ok(Some(before)));
+        // Links that never expire, and invites from before sealed expiries
+        assert_eq!(effective_expiry(None, Some(SealedExpiry::Never), later), Ok(None));
+        assert_eq!(effective_expiry(Some(at), None, before), Ok(Some(at)));
+    }
+
+    #[test]
+    fn invites_sealed_before_expiries_still_open() {
+        let text = test_key();
+        let key = SealKey::from_text(&text).unwrap();
+        let old = key.seal(Purpose::Invite, br#"{"t":"commyticket","n":"Pixel Pioneers"}"#);
+        assert_eq!(open_ticket(&old, Some(&text)).unwrap(), ("commyticket".into(), None));
+    }
+
+    #[test]
+    fn expiry_choices_round_trip() {
+        for value in ["1h", "1d", "7d", "30d", "never"] {
+            assert_eq!(Expiry::parse(value).unwrap().as_str(), value);
+        }
+        assert_eq!(Expiry::parse("90d"), None);
+        assert_eq!(Expiry::Never.length(), None);
+        assert_eq!(Expiry::Month.length(), Some(chrono::Duration::days(30)));
     }
 
     #[test]
