@@ -2585,6 +2585,10 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .sidebar-header.has-banner > *:not(.sidebar-banner) { position: relative; z-index: 1; }
 .sidebar-header.has-banner #server-name { color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .7); }
 .sidebar-header.has-banner .icon-btn { color: #fff; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .7)); }
+/* No picture: same height, plain panel surface, normal text. */
+.sidebar-header.has-banner.plain .sidebar-banner { display: none; }
+.sidebar-header.has-banner.plain #server-name { color: inherit; text-shadow: none; }
+.sidebar-header.has-banner.plain .icon-btn { color: inherit; filter: none; }
 
 .overview-avatar { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
 .overview-avatar .server-icon-xl { cursor: pointer; border: none; font-family: inherit; }
