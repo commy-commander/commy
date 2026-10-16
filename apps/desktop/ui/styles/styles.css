@@ -1843,7 +1843,7 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 /* Logo home button: the artwork carries its own shape and color. */
 .rail-home, .rail-home:hover, .rail-home.active { background: none; padding: 0; overflow: hidden; }
 .rail-home { width: auto; gap: 8px; padding: 0 8px 0 0; }
-.rail-home img { width: 36px; height: 36px; display: block; border-radius: 12px; }
+.rail-home img { width: 38px; height: 38px; display: block; border-radius: 12px; }
 .rail-home, .rail-home:hover { background: none; }
 .rail-home:hover .rail-brand, .rail-home.active .rail-brand { color: var(--accent); }
 .rail-home.active { box-shadow: none; border-radius: var(--radius-lg); }

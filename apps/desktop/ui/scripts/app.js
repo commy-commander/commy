@@ -63,8 +63,8 @@ function mockSeed() {
       ch("General", "voice"),
     ],
     members: [
-      { id: "m1", name: "ferris", presence: "online", custom_status: "unsafe { }" },
-      { id: "m2", name: "iroh-fan", presence: "idle", custom_status: null },
+      { id: "m1", name: "ferris", presence: "online", custom_status: "heads down" },
+      { id: "m2", name: "nova", presence: "idle", custom_status: null },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
     ],
   };
@@ -80,14 +80,14 @@ function mockSeed() {
   server.members[0].color = "f0b232";
   mock.servers[server.id] = server;
   mock.dms.m2 = {
-    name: "iroh-fan",
+    name: "nova",
     kind: "request",
     messages: [
-      { id: "d3", from: "m2", from_name: "iroh-fan", content: "hey, saw you in Rust Hangout. want to pair on the voice code?",
+      { id: "d3", from: "m2", from_name: "nova", content: "hey, saw you in Rust Hangout. want to pair on the voice code?",
         created_at: new Date(Date.now() - 300e3).toISOString(), outgoing: false },
     ],
   };
-  mock.reports = [{ id: "r1", server: server.id, channel: null, message: null, reporter: "m1", reporter_name: "ferris", reported: "m2", reported_name: "iroh-fan", reason: "spam", note: "Keeps posting invite links in every channel.", excerpt: "join my server https://example.com/invite", created_at: new Date().toISOString() }];
+  mock.reports = [{ id: "r1", server: server.id, channel: null, message: null, reporter: "m1", reporter_name: "ferris", reported: "m2", reported_name: "nova", reason: "spam", note: "Keeps posting invite links in every channel.", excerpt: "join my server https://example.com/invite", created_at: new Date().toISOString() }];
   mock.dms.m1 = {
     name: "ferris",
     messages: [
@@ -101,8 +101,8 @@ function mockSeed() {
   mock.messages[c0] = [
     { id: "x1", channel: c0, author_id: "m1", author_name: "ferris",
       content: "Welcome to Commy, a private P2P chat app.", created_at: new Date(Date.now() - 3600e3).toISOString(), edited: false, attachments: [] },
-    { id: "x2", channel: c0, author_id: "m2", author_name: "iroh-fan",
-      content: "No central servers, no paywall. Everything over iroh.", created_at: new Date(Date.now() - 1800e3).toISOString(), edited: false, attachments: [] },
+    { id: "x2", channel: c0, author_id: "m2", author_name: "nova",
+      content: "No central servers, no paywall. Everything peer to peer.", created_at: new Date(Date.now() - 1800e3).toISOString(), edited: false, attachments: [] },
     { id: "x3", channel: c0, author_id: "me", author_name: mock.user ? mock.user.username : "you",
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
   ];
@@ -384,9 +384,9 @@ async function mockInvoke(cmd, args = {}) {
       Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, tag: args.tag });
       return null;
     }
-    case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }], incoming: [{ id: "m2", name: "iroh-fan" }], outgoing: [] };
+    case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] };
     case "friend_action": {
-      const f = mock.friends || (mock.friends = { friends: [{ id: "m1", name: "ferris" }], incoming: [{ id: "m2", name: "iroh-fan" }], outgoing: [] });
+      const f = mock.friends || (mock.friends = { friends: [{ id: "m1", name: "ferris" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] });
       const name = (Object.values(mock.servers)[0].members.find(m => m.id === args.userId) || { name: "Someone" }).name;
       f.incoming = f.incoming.filter(x => x.id !== args.userId);
       if (args.action === "accept") f.friends.push({ id: args.userId, name });
@@ -398,8 +398,8 @@ async function mockInvoke(cmd, args = {}) {
     case "set_server_afk_timeout": mock.servers[args.serverId].afk_timeout_minutes = args.minutes; return null;
     case "voice_stats":
       return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, links: [
-        { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", relay: "https://use1-1.relay.iroh.network./", addr: "192.168.1.24:51820", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
-        { user: "m2", name: "iroh-fan", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", relay: "https://euw1-1.relay.iroh.network./", addr: null, tx_bytes: 0, rx_bytes: 0 },
+        { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", relay: "https://relay.commy.chat/", addr: "192.168.1.24:51820", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
+        { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", relay: "https://relay.commy.chat/", addr: null, tx_bytes: 0, rx_bytes: 0 },
       ] };
     case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_media: false });
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
