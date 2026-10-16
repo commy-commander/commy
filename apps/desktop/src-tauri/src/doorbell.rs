@@ -500,9 +500,9 @@ fn queue_ring<A: AppAccess + Clone>(access: &A, url: String, token: String, id: 
 }
 
 /// Rings one device for a message, e.g. when a wake did not reach it.
-pub fn ring_device(handle: &tauri::AppHandle, server: ServerId, node: &str, message: MessageId) {
+pub fn ring_device<A: AppAccess + Clone>(access: &A, server: ServerId, node: &str, message: MessageId) {
     let target = {
-        let app = handle.state::<App>();
+        let app = access.app();
         let servers = app.servers.lock().unwrap();
         let Some(state) = servers.get(&server) else { return };
         let doorbell = app.doorbell.lock().unwrap();
@@ -514,7 +514,7 @@ pub fn ring_device(handle: &tauri::AppHandle, server: ServerId, node: &str, mess
         (peer.url.clone(), bell::token(&peer.key, day), bell::blinded_id(&peer.key, message))
     };
     let (url, token, id) = target;
-    queue_ring(handle, url, token, Some(id));
+    queue_ring(access, url, token, Some(id));
 }
 
 /// One ring: `ids` (none for a hello) to `token` at a ring endpoint.
@@ -748,7 +748,7 @@ async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
         state.profiles.values().filter(|p| Some(p.id) != me).filter_map(|p| p.node.clone()).collect()
     };
     // A ring while resting: back into the mesh first.
-    if crate::wake::unrest(&app).await > 0 {
+    if crate::wake::unrest(app).await > 0 {
         tracing::info!("a doorbell ring woke us from resting");
     }
     let neighbors = {
