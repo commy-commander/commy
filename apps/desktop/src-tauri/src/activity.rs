@@ -4,6 +4,7 @@
 /// Processes that are part of the desktop itself, never an activity.
 const IGNORED_EXES: &[&str] = &[
     "commy-desktop.exe",
+    "commy.exe",
     "explorer.exe",
     "searchhost.exe",
     "searchapp.exe",
@@ -35,12 +36,20 @@ const GAME_PATH_MARKERS: &[&str] = &[
 /// Longest activity text sent to peers.
 const MAX_LEN: usize = 64;
 
+/// Whether `exe_path` is this very program, whatever it was named: the
+/// app is never its own activity ("Using Commy").
+pub fn is_own_exe(exe_path: &str) -> bool {
+    let Ok(own) = std::env::current_exe() else { return false };
+    let normalize = |p: &str| p.to_ascii_lowercase().replace('/', "\\");
+    normalize(exe_path) == normalize(&own.to_string_lossy())
+}
+
 /// Turns a foreground process into activity text. `description` is the
 /// exe's FileDescription (its friendly name) when available.
 pub fn describe(exe_path: &str, description: Option<&str>) -> Option<String> {
     let lower = exe_path.to_ascii_lowercase().replace('/', "\\");
     let exe = lower.rsplit('\\').next().unwrap_or(&lower);
-    if exe.is_empty() || IGNORED_EXES.contains(&exe) {
+    if exe.is_empty() || IGNORED_EXES.contains(&exe) || is_own_exe(exe_path) {
         return None;
     }
     let friendly = description
@@ -212,6 +221,12 @@ mod tests {
     fn desktop_shell_and_commy_are_ignored() {
         assert_eq!(describe("C:\\Windows\\explorer.exe", Some("Windows Explorer")), None);
         assert_eq!(describe("C:\\dev\\commy\\target\\debug\\commy-desktop.exe", None), None);
+        assert_eq!(describe("C:\\Users\\x\\CommyBench\\B\\Commy.exe", Some("Commy")), None);
+        // Whatever the binary is called, this process is never an activity.
+        let own = std::env::current_exe().unwrap().to_string_lossy().to_string();
+        assert!(is_own_exe(&own));
+        assert!(is_own_exe(&own.to_ascii_uppercase()));
+        assert_eq!(describe(&own, Some("Some Name")), None);
         assert_eq!(describe("C:\\Windows\\SystemApps\\SearchHost.exe", None), None);
     }
 

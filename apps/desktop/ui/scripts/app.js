@@ -921,12 +921,7 @@ function voiceLine(member, server) {
   return line;
 }
 
-// The line under a name: what they are playing, else emoji plus status.
-function statusLine(person) {
-  if (!person) return "";
-  if (person.activity) return person.activity;
-  return [person.status_emoji, person.custom_status].filter(Boolean).join(" ");
-}
+// statusLine, backLine, subLine and presenceLabel live in presence.js, shared with its tests.
 
 function makeAvatar(userId, name, className = "avatar") {
   return paintAvatar(el("div", className), userId, name);
@@ -2582,9 +2577,10 @@ function renderMembers() {
       if (inVoice) meta.appendChild(inVoice);
       const game = activityWithTime(member);
       if (game) row.title = game;
-      const sub = inVoice ? "" : statusLine(member) || backLine(member);
+      const sub = inVoice ? "" : subLine(member);
       if (sub) {
-        const line = el("div", "user-sub" + (member.activity ? " activity" : ""), sub);
+        // The activity colour only when the line is the activity alone.
+        const line = el("div", "user-sub" + (member.activity && !backLine(member) ? " activity" : ""), sub);
         const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
         if (cover) {
           const img = el("img", "activity-cover");
@@ -4386,7 +4382,7 @@ async function openFullProfile(member) {
   $("fp-name").parentElement.querySelector(".role-tag")?.remove();
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = person.username ? `@${person.username}` : "";
-  $("fp-status").textContent = statusLine(person) || presenceLabel(person);
+  $("fp-status").textContent = subLine(person) || presenceLabel(person);
   $("fp-about-wrap").classList.toggle("hidden", !person.about);
   $("fp-about").textContent = person.about || "";
   const servers = (state.people.get(person.id) || {}).servers || [];
@@ -4492,7 +4488,7 @@ function openMemberCard(member, anchor) {
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
   const status = $("mc-status");
   status.replaceChildren();
-  const line = statusLine(member);
+  const line = subLine(member);
   const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
   if (cover) {
     const img = el("img", "activity-cover");
@@ -5161,10 +5157,12 @@ async function setStatusExpiry(changes) {
   const statusUntil = "status" in changes ? changes.status : current.status_until ?? null;
   try {
     state.voice = await invoke("set_status_expiry", { presenceUntil, statusUntil });
+    if (state.user) state.user.presence_until = state.voice.presence_until ?? null;
   } catch (e) {
     toast(String(e));
   }
   renderProfilePopover();
+  renderUserPanel();
 }
 
 function openDurations(mode, anchor) {
@@ -5210,14 +5208,16 @@ async function applyDuration(until) {
 function renderStatusExpiry() {
   const v = state.voice || {};
   const user = state.user || {};
+  // Each presence keeps one small line. While a timed one runs, that line
+  // becomes "Until 4:40 PM" instead of stacking on the description.
   for (const btn of $("pp-presence").querySelectorAll("button")) {
-    btn.querySelector(".pp-until")?.remove();
+    const small = btn.querySelector("small");
+    if (!small) continue;
+    if (!small.dataset.text) small.dataset.text = small.textContent;
     const active = btn.dataset.presence === (user.presence || "online");
-    if (active && v.presence_until && btn.dataset.presence !== "online") {
-      btn.querySelector("span:last-child").appendChild(el("small", "pp-until", `Until ${formatUntil(v.presence_until)}`));
-    } else if (active && btn.dataset.presence === "do_not_disturb") {
-      btn.querySelector("span:last-child").appendChild(el("small", "pp-until", "Until you turn it off"));
-    }
+    const until = active && btn.dataset.presence !== "online" ? v.presence_until : null;
+    small.textContent = until ? `Until ${formatUntil(until)}` : small.dataset.text;
+    small.classList.toggle("pp-until", Boolean(until));
   }
   const hasStatus = Boolean(user.custom_status || user.status_emoji);
   const expiry = $("pp-status-expiry");
@@ -6169,8 +6169,12 @@ function renderUserPanel() {
   const bits = [];
   if (state.voice.muted) bits.push("muted");
   if (state.voice.deafened) bits.push("deafened");
-  const label = presence === "invisible" ? "Appearing offline" : presenceLabel(state.user);
-  $("me-status").textContent = bits.length ? `${label}, ${bits.join(", ")}` : (statusLine(state.user) || label);
+  // One short line: when you are back (the dot already says Do Not Disturb),
+  // else the presence word; mute and deafen follow it.
+  const back = backLine(state.user);
+  const label = presence === "invisible" ? "Appearing offline" : (back || PRESENCE_LABELS[presence] || "Online");
+  $("me-status").textContent = bits.length ? `${label}, ${bits.join(", ")}` : label;
+  $("me-status").classList.toggle("back", Boolean(back));
   $("mute-btn").classList.toggle("danger", state.voice.muted);
   $("deafen-btn").classList.toggle("danger", state.voice.deafened);
   setIcon($("mute-btn"), state.voice.muted ? "micOff" : "mic");
@@ -6253,26 +6257,6 @@ function personPresence(userId) {
   const person = state.people.get(userId);
   if (!person || person.presence === "invisible") return "offline";
   return person.presence;
-}
-
-const PRESENCE_LABELS = { online: "Online", idle: "Idle", do_not_disturb: "Do Not Disturb", offline: "Offline" };
-
-// "back at 3:40 PM" (or "back Thu at 9:00 AM") while a timed Do Not
-// Disturb still runs; empty once it has passed or when there is no time.
-function backLine(person) {
-  const until = Number(person && person.presence_until);
-  if (!person || person.presence !== "do_not_disturb" || !until || until * 1000 <= Date.now()) return "";
-  const d = new Date(until * 1000);
-  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const sameDay = d.toDateString() === new Date().toDateString();
-  return sameDay ? `Back at ${time}` : `Back ${d.toLocaleDateString([], { weekday: "short" })} at ${time}`;
-}
-
-// The presence as a line of text: "Do Not Disturb · back at 3:40 PM".
-function presenceLabel(person) {
-  const base = PRESENCE_LABELS[(person && person.presence) || "offline"] || "Offline";
-  const back = backLine(person);
-  return back ? `${base} · ${back[0].toLowerCase()}${back.slice(1)}` : base;
 }
 
 function avatarWithPresence(name, userId, className = "avatar") {
@@ -6485,20 +6469,27 @@ async function selectDm(userId, name) {
   state.currentDm = { user: userId, name };
   clearDmUnread(userId);
   if (state.view !== "dm") setViewMode("dm");
-  const presence = personPresence(userId);
   $("chat-hash").textContent = "@";
   $("channel-name").textContent = name;
-  $("chat-presence").className = `presence-dot inline ${presence}`;
-  const person = state.people.get(userId);
-  $("chat-presence").title = presenceLabel({ ...(person || {}), presence });
-  $("channel-topic").textContent = (person && (statusLine(person) || backLine(person))) || "";
+  renderDmHeader(userId, name);
   $("message-input").placeholder = `Message @${name}`;
   $("dm-profile-btn").classList.remove("hidden");
-  renderDmProfile(userId, name);
   const threads = await renderDmThreads();
   renderDmRequestBar(threads.find(t => t.user === userId) || null);
   const messages = await invoke("get_dm_messages", { userId });
   renderMessages(messages.map(dmToRenderable));
+}
+
+// The conversation header and the profile panel of the open conversation:
+// presence dot, "Back at 4:40 PM", what they are doing. Redrawn whenever a
+// profile update arrives, so a return time shows without reopening the chat.
+function renderDmHeader(userId, name) {
+  const presence = personPresence(userId);
+  const person = state.people.get(userId);
+  $("chat-presence").className = `presence-dot inline ${presence}`;
+  $("chat-presence").title = presenceLabel({ ...(person || {}), presence });
+  $("channel-topic").textContent = (person && subLine(person)) || "";
+  renderDmProfile(userId, name);
 }
 
 function renderDmProfile(userId, name) {
@@ -6511,7 +6502,7 @@ function renderDmProfile(userId, name) {
   $("dm-profile-presence").className = `presence-dot ${presence}`;
   $("dm-profile-banner").style.background = bannerColor(userId);
   $("dm-profile-name").textContent = name;
-  $("dm-profile-status").textContent = (person && statusLine(person)) || presenceLabel({ ...(person || {}), presence });
+  $("dm-profile-status").textContent = (person && subLine(person)) || presenceLabel({ ...(person || {}), presence });
   const servers = person ? person.servers : [];
   $("dm-profile-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
   const list = $("dm-profile-servers");
@@ -8383,7 +8374,11 @@ function wireEvents() {
         await refreshCurrentServer();
       }
       // Keep mutual servers and presence current while Direct Messages is open.
-      if (state.view === "dm") await refreshPeople();
+      if (state.view === "dm") {
+        await refreshPeople();
+        await renderDmThreads();
+        if (state.currentDm) renderDmHeader(state.currentDm.user, state.currentDm.name);
+      }
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));

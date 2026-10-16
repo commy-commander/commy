@@ -1960,8 +1960,10 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 #me-avatar .presence-dot { z-index: 2; border-color: #232428; }
 
 /* Logo home button: the artwork carries its own shape and color. */
-.rail-home, .rail-home:hover, .rail-home.active { background: none; padding: 0; overflow: hidden; }
-.rail-home { width: auto; gap: 8px; padding: 0 8px 0 0; }
+/* Hover and active keep the same footprint: a hover must never move
+   the server tiles beside the mark. */
+.rail-home, .rail-home:hover, .rail-home.active { background: none; padding: 0 8px 0 0; overflow: hidden; }
+.rail-home { width: auto; gap: 8px; }
 .rail-home img { width: 38px; height: 38px; display: block; border-radius: 12px; }
 .rail-home, .rail-home:hover { background: none; }
 .rail-home.active { box-shadow: none; border-radius: var(--radius-lg); }
@@ -2825,9 +2827,10 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 /* ---------- Profile bar: one profile button plus three equal icon buttons ---------- */
 .user-panel { gap: 4px; }
 .user-chip {
-  flex: 1;
+  /* A fixed footprint: the pill never grows or shrinks with the status under the name. */
+  flex: 0 0 196px;
+  width: 196px;
   min-width: 0;
-  max-width: 220px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2844,6 +2847,8 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .user-chip:hover { background: var(--bg-hover); }
 .user-chip .user-meta, .user-chip .user-meta:hover { background: none; padding: 0; cursor: inherit; min-height: 0; }
 .user-chip .user-name, .user-chip .user-sub { display: block; }
+.user-chip .user-sub { min-height: 14px; line-height: 14px; }
+.user-chip .user-sub.back { color: var(--accent-hover); font-weight: 500; }
 .user-chip #me-avatar { cursor: inherit; }
 /* Whole-pixel boxes so the three icons share one rhythm. */
 .user-actions { flex: 0 0 auto; }
@@ -3186,7 +3191,8 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
   cursor: pointer;
 }
 .pp-expiry:hover { color: var(--text-normal); text-decoration: underline; }
-.pp-until { color: var(--accent-hover) !important; }
+.pp-presence small.pp-until { color: var(--accent-hover); }
+.pp-presence button:hover small.pp-until { color: #fff; }
 .pp-durations-note { padding: 6px 12px 2px; font-size: 12px; color: var(--text-muted); }
 .pp-durations {
   position: fixed;
