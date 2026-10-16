@@ -716,11 +716,19 @@ function loadAvatarImage(blob, provider) {
 
 // Fills an avatar element with an image, emoji or initials, keeping
 // any badges (presence dot) already inside it.
+// Stable per-person tint so a room full of initials still reads as people.
+function personTint(userId) {
+  let hash = 0;
+  for (const ch of String(userId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
+  return `hsl(${Math.abs(hash) % 360} 38% 44%)`;
+}
+
 function paintAvatar(node, userId, name) {
   for (const child of [...node.childNodes]) {
     if (child.nodeType === Node.TEXT_NODE || child.classList?.contains("avatar-face")) child.remove();
   }
   node.classList.remove("emoji-avatar", "image-avatar");
+  node.style.setProperty("--tint", personTint(userId));
   const raw = avatarFor(userId)?.avatar || "";
   let face;
   if (raw.startsWith("emoji:")) {
@@ -5973,7 +5981,7 @@ function bannerColor(userId) {
   let hash = 0;
   for (const ch of String(userId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
   const hue = Math.abs(hash) % 360;
-  return `linear-gradient(135deg, hsl(${hue} 65% 52%), hsl(${(hue + 40) % 360} 60% 42%))`;
+  return `linear-gradient(135deg, hsl(${hue} 42% 40%), hsl(${(hue + 40) % 360} 45% 26%))`;
 }
 
 // The start-of-history block at the top of every DM.
