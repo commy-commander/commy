@@ -384,7 +384,7 @@ impl ScreenShareSession {
         source: Option<(commy_media::screen::SourceKind, u32)>,
     ) -> Self {
         let opener: FrameOpener = Box::new(move || {
-            let capturer = commy_media::screen::Capturer::open(source)?;
+            let mut capturer = commy_media::screen::Capturer::open(source)?;
             Ok(Box::new(move || capturer.grab()) as FrameSource)
         });
         Self::start_with(server, channel, fps, max_width, opener)

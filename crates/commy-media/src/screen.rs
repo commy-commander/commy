@@ -63,16 +63,47 @@ fn halve(src: &RgbaImage) -> RgbaImage {
     RgbaImage::from_raw(w, h, out).expect("buffer sized for the image")
 }
 
-/// Grabs raw frames from one monitor or window, keeping the xcap handle
+/// Grabs raw frames from one monitor or window, keeping the handle
 /// between frames instead of re-enumerating every time.
+///
+/// On Windows a share runs on Windows Graphics Capture, which composes
+/// the source's own surface: other windows over a game, the task
+/// switcher and notifications stay out of the stream, and hardware
+/// rendered games come through. The GDI capturers remain the fallback
+/// there (older Windows, or a window the system refuses) and the only
+/// path on the other platforms.
 pub enum Capturer {
     Monitor(xcap::Monitor),
     Window(xcap::Window),
+    #[cfg(windows)]
+    Graphics(crate::wgc::Capture),
 }
 
 impl Capturer {
     /// The chosen source, or the primary monitor when None.
     pub fn open(source: Option<(SourceKind, u32)>) -> Result<Self> {
+        #[cfg(windows)]
+        {
+            let graphics = match source {
+                Some((SourceKind::Window, id)) => crate::wgc::Capture::window(id),
+                Some((SourceKind::Monitor, id)) => crate::wgc::Capture::monitor(id),
+                None => xcap::Monitor::all()
+                    .context("cannot enumerate monitors")
+                    .and_then(|monitors| {
+                        monitors
+                            .iter()
+                            .find(|m| m.is_primary().unwrap_or(false))
+                            .or_else(|| monitors.first())
+                            .and_then(|m| m.id().ok())
+                            .context("no monitor found")
+                    })
+                    .and_then(crate::wgc::Capture::monitor),
+            };
+            match graphics {
+                Ok(capture) => return Ok(Self::Graphics(capture)),
+                Err(e) => tracing::warn!("graphics capture unavailable, using GDI: {e:#}"),
+            }
+        }
         match source {
             Some((SourceKind::Window, id)) => {
                 let window = xcap::Window::all()
@@ -99,10 +130,12 @@ impl Capturer {
         }
     }
 
-    pub fn grab(&self) -> Result<RgbaImage> {
+    pub fn grab(&mut self) -> Result<RgbaImage> {
         match self {
             Self::Monitor(m) => m.capture_image().context("monitor capture failed"),
             Self::Window(w) => w.capture_image().context("window capture failed"),
+            #[cfg(windows)]
+            Self::Graphics(c) => c.grab(),
         }
     }
 }
@@ -248,7 +281,7 @@ mod tests {
     #[test]
     #[ignore]
     fn capture_speed() {
-        let capturer = Capturer::open(None).unwrap();
+        let mut capturer = Capturer::open(None).unwrap();
         for width in [1280u32, 1600, 1920] {
             let (mut cap, mut enc) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
             for _ in 0..20 {
