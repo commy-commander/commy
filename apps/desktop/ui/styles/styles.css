@@ -989,9 +989,14 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   inset: 0;
   z-index: 150;
   display: flex;
-  background: var(--bg-mid);
+  padding: 10px;
+  gap: 10px;
+  background: var(--bg-darkest);
   animation: settings-in .16s ease-out;
 }
+.settings-nav { border-radius: var(--radius-lg); }
+.settings-content { background: var(--bg-mid); border-radius: var(--radius-lg); }
+@media (prefers-reduced-motion: reduce) { .settings-layer { animation: none; } }
 @keyframes settings-in {
   from { opacity: 0; transform: scale(1.03); }
   to { opacity: 1; transform: none; }
@@ -1867,7 +1872,8 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   z-index: 120;
   width: 300px;
   background: var(--bg-darkest);
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, .55);
   overflow: hidden;
   animation: pop-in .12s ease-out;
@@ -1965,7 +1971,8 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   z-index: 130;
   min-width: 180px;
   background: var(--bg-darkest);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
   display: flex;
@@ -3412,7 +3419,8 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
   z-index: 125;
   width: 300px;
   background: var(--bg-darkest);
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, .55);
   overflow: hidden;
 }
@@ -3557,7 +3565,8 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
   z-index: 130;
   width: 240px;
   background: var(--bg-darkest);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
   padding: 12px;
   display: flex;
