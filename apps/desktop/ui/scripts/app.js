@@ -105,6 +105,8 @@ function mockSeed() {
       content: "No central servers, no paywall. Everything peer to peer.", created_at: new Date(Date.now() - 1800e3).toISOString(), edited: false, attachments: [] },
     { id: "x3", channel: c0, author_id: "me", author_name: mock.user ? mock.user.username : "you",
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
+    { id: "x4", channel: c0, author_id: "m2", author_name: "nova",
+      content: "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43), created_at: new Date(Date.now() - 60e3).toISOString(), edited: false, attachments: [] },
   ];
   // Doorbell: messages other members sent us that are still on their way.
   server.awaited = 2;
@@ -169,6 +171,12 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "join_server": throw "joining requires the desktop app";
     case "get_invite": return "commy" + "x".repeat(80) + " (mock invite, browser preview)";
+    case "create_invite_link": return "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43);
+    case "resolve_invite_link": {
+      const host = /commy:\/\/i\/([^/]+)\//.exec(args.link)?.[1] || new URL(args.link).host;
+      return { server_name: "Pixel Pioneers", host, trusted: host === "commy.chat", account_server_host: "commy.chat",
+        expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock" };
+    }
     case "get_messages": return mock.messages[args.channelId] || [];
     case "send_message": {
       const msg = {
@@ -2387,6 +2395,7 @@ function dayDivider(date) {
 // A lone GIF or image link renders as just the picture.
 function isBareImageLink(content) {
   const text = (content || "").trim();
+  if (findInviteLink(text)) return false;
   return /^https?:\/\/\S+$/i.test(text) && extractImageUrls(text).length === 1;
 }
 
@@ -5553,6 +5562,11 @@ function wireMentions(input) {
 
 function buildMessageContent(text) {
   const div = el("div", "msg-content");
+  // A message that is only an invite link shows the Join card, not the raw link.
+  if (looksLikeInviteLink(text)) {
+    div.appendChild(inviteCard(text));
+    return div;
+  }
   const urlRe = /https?:\/\/[^\s<>"']+/g;
   let last = 0;
   let match;
@@ -5586,6 +5600,7 @@ function extractImageUrls(text) {
   // A message that is nothing but one link is worth trying as an
   // image even without a file extension; onerror removes the miss.
   const lone = text.trim();
+  if (findInviteLink(lone)) return [];
   return /^https?:\/\/\S+$/i.test(lone) ? [lone] : [];
 }
 
