@@ -1521,11 +1521,10 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   flex: 0 0 auto;
   height: 56%;
   min-height: 220px;
-  padding: 12px 16px 8px;
-  background: var(--bg-darkest);
+  padding: 12px 12px 4px;
   display: flex;
 }
-.main.stage-focus .stage { flex: 1; height: auto; padding-bottom: 16px; }
+.main.stage-focus .stage { flex: 1; height: auto; padding-bottom: 12px; }
 .main.stage-focus .messages,
 .main.stage-focus .composer,
 .main.stage-focus .emoji-picker { display: none; }
@@ -1535,13 +1534,15 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   flex: 1;
   min-width: 0;
   border-radius: var(--radius);
-  background: #000;
+  background: var(--bg-darkest);
+  border: 1px solid var(--line);
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
+  container-type: inline-size;
 }
-.stage-view:fullscreen { border-radius: 0; }
+.stage-view:fullscreen { border-radius: 0; border: none; background: #000; }
 .stage-view img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .stage-view img:not([src]) { display: none; }
 
@@ -1567,6 +1568,8 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* The HUD sits on the footage as frosted chips rather than gradient bands,
+   so names, stats and controls stay readable on bright, moving frames. */
 .stage-top, .stage-controls {
   position: absolute;
   left: 0;
@@ -1574,36 +1577,66 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 14px;
-  opacity: 0;
-  transition: opacity .15s;
+  padding: 10px;
   pointer-events: none;
 }
-.stage-top { top: 0; background: linear-gradient(rgba(0,0,0,.65), transparent); }
-.stage-controls { bottom: 0; justify-content: center; background: linear-gradient(transparent, rgba(0,0,0,.65)); }
-.stage-view:hover .stage-top, .stage-view:hover .stage-controls,
-.stage-view:has(.stage-wait:not(.hidden)) .stage-top { opacity: 1; pointer-events: auto; }
-.stage-top .live-badge { margin-left: 0; cursor: default; }
+.stage-top { top: 0; justify-content: space-between; }
+.stage-controls {
+  bottom: 0;
+  justify-content: flex-end;
+  opacity: 0;
+  transition: opacity var(--t-hover) ease;
+}
+.stage-view:hover .stage-controls,
+.stage-view:focus-within .stage-controls,
+.stage-view:has(.stage-wait:not(.hidden)) .stage-controls { opacity: 1; pointer-events: auto; }
+.stage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 12px 0 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(11, 13, 23, .72);
+  border: 1px solid rgba(242, 239, 230, .14);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.stage-who { flex: 0 1 auto; }
+.stage-top .live-badge { margin: 0; cursor: default; background: var(--accent); color: #fff; }
 .stage.self .stage-top .live-badge { background: var(--bg-active); }
-.stage-label { font-size: 14px; font-weight: 600; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-.stage-stats { margin-left: auto; font-size: 12px; font-weight: 500; color: rgba(255,255,255,.75); font-variant-numeric: tabular-nums; }
+.stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; color: #fff; }
+.stage-viewers { color: rgba(255,255,255,.75); font-weight: 500; }
+.stage-viewers::before { content: "\00b7"; margin-right: 8px; }
+.stage-stats { flex: 0 0 auto; padding: 0 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.stage-stats:empty { display: none; }
+@container (max-width: 420px) { .stage-stats { display: none; } }
 
 .stage-btn {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  border: none;
-  background: rgba(30, 31, 34, .85);
+  border: 1px solid rgba(242, 239, 230, .14);
+  background: rgba(11, 13, 23, .72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background .12s, transform .12s;
+  transition: background var(--t-hover) ease, transform var(--t-press) ease;
 }
-.stage-btn:hover { background: var(--bg-active); transform: scale(1.06); }
-.stage-btn.danger { background: var(--red); }
-.stage-btn.danger:hover { background: #d83c3e; }
+.stage-btn:hover { background: rgba(45, 53, 84, .9); transform: scale(1.06); }
+.stage-btn.danger { background: var(--accent); border-color: transparent; }
+.stage-btn.danger:hover { background: var(--accent-hover); }
+@media (prefers-reduced-motion: reduce) { .stage-btn:hover { transform: none; } }
 
 /* ---------- Share picker ---------- */
 .modal.modal-wide { width: 640px; max-width: calc(100vw - 32px); }
