@@ -155,6 +155,9 @@ pub struct App {
     pub dm_wake: tokio::sync::Notify,
     /// Catch-up sessions, and events held for an unknown author key.
     pub catchup: Mutex<crate::catchup::Catchup>,
+    /// Where members listen for missed-message wake-ups, and ids we were
+    /// told about and do not hold yet.
+    pub doorbell: Mutex<crate::doorbell::Doorbell>,
     /// Servers joined from a ticket that still wait for their first
     /// snapshot. Only these take one (see `catchup::apply_snapshot`); an
     /// entry goes once a snapshot is taken or the server is left.
@@ -213,6 +216,7 @@ impl Default for App {
             dm_backoff: Mutex::new(crate::outbox::DmBackoff::default()),
             dm_wake: tokio::sync::Notify::new(),
             catchup: Mutex::new(crate::catchup::Catchup::default()),
+            doorbell: Mutex::new(crate::doorbell::Doorbell::default()),
             awaiting_snapshot: Mutex::new(HashSet::new()),
             key_hold: Mutex::new(None),
             signing: tokio::sync::RwLock::new(()),

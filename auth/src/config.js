@@ -121,6 +121,7 @@ export function loadConfig(env = process.env) {
     desktopClientIds: list(env.DEVICE_CLIENT_IDS).length > 0 ? list(env.DEVICE_CLIENT_IDS) : ["commy-desktop"],
     allowSignup: env.ALLOW_SIGNUP !== "false",
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
+    doorbell: env.DOORBELL !== "false",
     google,
     twitch,
     smtp,
@@ -142,6 +143,7 @@ export function featureSummary(config) {
     `turnstile=${on(config.turnstile)}`,
     `gifs=${on(config.klipyKey)}`,
     `games=${on(config.igdb)}${config.igdb && config.igdb === config.twitch ? " (twitch app)" : ""}`,
+    `doorbell=${on(config.doorbell)}`,
     `signup=${on(config.allowSignup)}`,
   ].join(" ");
 }
@@ -183,6 +185,8 @@ export function discoveryDocument(config) {
       media: `${api}/commy/media`,
       vault: `${api}/commy/vault`,
       vaultPut: `${api}/commy/vault/put`,
+      doorbellRing: `${api}/commy/doorbell/ring`,
+      doorbellTake: `${api}/commy/doorbell/take`,
     },
     // Searches the server runs for signed in apps with its own keys
     features: {
@@ -192,6 +196,8 @@ export function discoveryDocument(config) {
       media: true,
       // Sealed per-account items such as the server list, see vault.js
       vault: true,
+      // Content-free wake-ups for offline messages (doorbellRing, doorbellTake)
+      doorbell: Boolean(config.doorbell),
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,

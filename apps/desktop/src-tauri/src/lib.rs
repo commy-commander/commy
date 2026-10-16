@@ -7,6 +7,7 @@ mod activity;
 mod afk;
 mod entry_list;
 mod catchup;
+mod doorbell;
 mod expressions;
 mod media_engine;
 mod igdb;
@@ -308,6 +309,8 @@ async fn commit_message(
     // Nobody connected: it waits as pending for the next catch-up.
     let delivered = outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
+    // Members who look offline get a content-free wake-up.
+    doorbell::ring(handle, sid, message.id, !delivered);
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(view.with_pending(!delivered))
 }
@@ -4326,6 +4329,10 @@ async fn run_net_loop(
                     on_remote_soundboard(&app, &handle, server, *channel, *user, name);
                     continue;
                 }
+                if matches!(event, ServerEvent::DoorbellSet { .. }) {
+                    doorbell::on_announce(&app, server, &event);
+                    continue;
+                }
                 if let ServerEvent::ScreenShare { user, active: true, .. } = &event {
                     app.share_seen.lock().unwrap().insert((server, *user), std::time::Instant::now());
                 }
@@ -4381,6 +4388,7 @@ async fn run_net_loop(
                             react_to_voice_change(&app, server, user, channel).await;
                         }
                         if let Some(message) = new_message {
+                            doorbell::arrived(&app, &handle, server, message.id);
                             notify_new_message(&app, &handle, server, &message);
                         }
                         let _ = handle.emit("server-event", &server.to_string());
@@ -4431,6 +4439,7 @@ async fn run_net_loop(
                 outbox::flush_queued(&app, server).await;
                 outbox::wake_dms_for_node(&app, peer);
                 catchup::on_neighbor_up(&handle, server, peer);
+                doorbell::announce(&handle, server);
             }
             NetEvent::CaughtUp { server, peer, report } => {
                 catchup::on_caught_up(&handle, server, peer, &report);
@@ -4734,6 +4743,9 @@ pub fn run() {
                 if pruned {
                     app.persist_outbox();
                 }
+                let mut bell = doorbell::Doorbell::load(&dir);
+                bell.retain_servers(|id| app.servers.lock().unwrap().contains_key(id));
+                *app.doorbell.lock().unwrap() = bell;
             }
             // Our identity key signs messages; peers learn it from our profile.
             let signed_in = account::is_signed_in(&app.account.lock().unwrap());
@@ -4896,6 +4908,7 @@ pub fn run() {
                         tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
                         tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
                         tauri::async_runtime::spawn(outbox::run_dm_outbox(handle.clone()));
+                        tauri::async_runtime::spawn(doorbell::run(handle.clone()));
                         run_net_loop(handle.clone(), events).await;
                     }
                     Err(e) => tracing::error!("P2P stack failed to start: {e}"),
@@ -4904,6 +4917,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            doorbell::get_awaited,
             account::account_status,
             account::set_account_server,
             account::account_begin_sign_in,

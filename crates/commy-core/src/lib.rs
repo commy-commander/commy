@@ -6,6 +6,7 @@
 
 pub mod catchup;
 pub mod dm;
+pub mod doorbell;
 pub mod event;
 pub mod identity;
 pub mod ids;
