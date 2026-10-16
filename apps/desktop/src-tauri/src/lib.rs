@@ -5,6 +5,7 @@
 mod account;
 mod activity;
 mod afk;
+mod entry_list;
 mod expressions;
 mod media_engine;
 mod igdb;
@@ -69,7 +70,7 @@ fn get_user(app: tauri::State<App>) -> Option<UserProfile> {
     app.profile.lock().unwrap().clone()
 }
 
-fn current_profile(app: &tauri::State<App>) -> CmdResult<UserProfile> {
+fn current_profile(app: &App) -> CmdResult<UserProfile> {
     let mut profile = app
         .profile
         .lock()
@@ -123,6 +124,8 @@ async fn create_server(
     if let Some(dir) = app.data_dir() {
         let _ = persist::save_invites(dir, &app.invites.lock().unwrap().clone());
     }
+    entry_list::record_join(&app, server_id);
+    entry_list::schedule(&handle);
     let _ = handle.emit("servers-changed", ());
     Ok(view)
 }
@@ -135,7 +138,17 @@ async fn join_server(
 ) -> CmdResult<ServerSummary> {
     account::require_account(&app)?;
     let ticket = ServerTicket::decode(&ticket).map_err(err_to_string)?;
-    let profile = current_profile(&app)?;
+    let id = ticket.server_id;
+    let summary = join_ticket(&app, &handle, ticket).await?;
+    entry_list::record_join(&app, id);
+    entry_list::schedule(&handle);
+    Ok(summary)
+}
+
+/// Joins a server from its ticket: from an invite, or from your server list
+/// on another of your devices.
+pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: ServerTicket) -> CmdResult<ServerSummary> {
+    let profile = current_profile(app)?;
 
     let raw_ticket = ticket.encode();
     let reached_peer = {
@@ -164,7 +177,7 @@ async fn join_server(
 
     // Announce ourselves to the topic.
     broadcast(
-        &app,
+        app,
         ticket.server_id,
         WirePayload::Event(ServerEvent::MemberJoin {
             server: ticket.server_id,
@@ -2047,6 +2060,8 @@ async fn leave_server(
     if let Some(dir) = app.data_dir() {
         let _ = persist::delete_server(dir, sid);
     }
+    entry_list::record_leave(&app, sid);
+    entry_list::schedule(&handle);
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
@@ -2091,6 +2106,8 @@ async fn update_profile(
     app.persist_profile();
     announce_profile(&app, &handle, &profile).await;
     let _ = handle.emit("profile-changed", &profile);
+    entry_list::record_profile_edit(&app);
+    entry_list::schedule(&handle);
     Ok(profile)
 }
 
@@ -3367,6 +3384,8 @@ async fn set_avatar(
     app.persist_profile();
     announce_profile(&app, &handle, &profile).await;
     let _ = handle.emit("profile-changed", &profile);
+    entry_list::record_profile_edit(&app);
+    entry_list::schedule(&handle);
     Ok(profile)
 }
 
@@ -3963,7 +3982,7 @@ fn set_deafened(app: tauri::State<App>, deafened: bool) -> VoiceSettings {
 // ---------- Event plumbing ----------
 
 /// Broadcasts a payload if the network is up; logs and continues if not.
-async fn broadcast(app: &tauri::State<'_, App>, server: ServerId, payload: WirePayload) {
+async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
     let net = app.net.lock().await;
     if let Some(node) = net.as_ref() {
         if let Err(e) = node.broadcast(server, payload).await {
@@ -4517,6 +4536,9 @@ pub fn run() {
                     Ok((mut node, events, media, dms)) => {
                         let app = handle.state::<App>();
                         let hex = node.node_id_hex();
+                        if let Some(asks) = node.take_entry_key_requests() {
+                            tauri::async_runtime::spawn(entry_list::run_entry_key_requests(handle.clone(), asks));
+                        }
 
                         // Reconnect persisted servers: re-host the ones we
                         // own, rejoin the rest via their stored invites.
@@ -4627,7 +4649,13 @@ pub fn run() {
                         tauri::async_runtime::spawn(run_afk_watchdog(handle.clone()));
                         tauri::async_runtime::spawn(run_status_expiry(handle.clone()));
                         tauri::async_runtime::spawn(run_event_reminders(handle.clone()));
-                        tauri::async_runtime::spawn(account::verify_saved_session(handle.clone()));
+                        {
+                            let handle = handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                account::verify_saved_session(handle.clone()).await;
+                                entry_list::schedule(&handle);
+                            });
+                        }
                         tauri::async_runtime::spawn(run_share_heartbeat(handle.clone()));
                         tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
                         tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
@@ -4704,6 +4732,11 @@ pub fn run() {
             invite_link::create_invite_link,
             invite_link::account_server_info,
             invite_link::take_pending_invite_link,
+            entry_list::entry_list_status,
+            entry_list::entry_list_sync,
+            entry_list::entry_list_recovery_code,
+            entry_list::entry_list_use_recovery_code,
+            entry_list::answer_entry_key_request,
             get_messages,
             send_message,
             attach_file,

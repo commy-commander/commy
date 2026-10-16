@@ -21,12 +21,15 @@ pub const KEY_TEXT_LEN: usize = 43;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Purpose {
     Invite,
+    /// An account's server list and identity, see the app's `entry_list`.
+    EntryList,
 }
 
 impl Purpose {
     fn aad(self) -> &'static [u8] {
         match self {
             Purpose::Invite => b"commy-invite-v1",
+            Purpose::EntryList => b"commy-entry-list-v1",
         }
     }
 }
@@ -132,6 +135,16 @@ mod tests {
         assert!(is_sealed(&sealed));
         assert!(!sealed.contains("hello"));
         assert_eq!(key.open(Purpose::Invite, &sealed).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn purposes_do_not_mix() {
+        let key = SealKey::generate();
+        let sealed = key.seal(Purpose::Invite, b"hello");
+        assert_eq!(
+            key.open(Purpose::EntryList, &sealed),
+            Err(SealError::WrongKey)
+        );
     }
 
     #[test]

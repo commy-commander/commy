@@ -15,6 +15,7 @@
 //!   hole punching fails.
 
 pub mod dm;
+pub mod entry_key;
 pub mod media;
 pub mod node;
 pub mod protocol;
@@ -23,6 +24,7 @@ pub mod sealed;
 pub mod ticket;
 
 pub use dm::{DmAck, DmEnvelope, DM_ALPN};
+pub use entry_key::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ENTRY_KEY_ALPN};
 pub use media::{MediaHello, MediaPacket, MEDIA_ALPN};
 pub use node::{CommyNode, MediaChannel, NetEvent};
 pub use protocol::{Envelope, WirePayload, PROTOCOL_VERSION};

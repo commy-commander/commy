@@ -181,6 +181,8 @@ export function discoveryDocument(config) {
       gifSearch: `${api}/commy/gifs/search`,
       gameSearch: `${api}/commy/games/search`,
       media: `${api}/commy/media`,
+      vault: `${api}/commy/vault`,
+      vaultPut: `${api}/commy/vault/put`,
     },
     // Searches the server runs for signed in apps with its own keys
     features: {
@@ -188,6 +190,8 @@ export function discoveryDocument(config) {
       games: Boolean(config.igdb),
       // GIF files and game covers load through /commy/media
       media: true,
+      // Sealed per-account items such as the server list, see vault.js
+      vault: true,
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,

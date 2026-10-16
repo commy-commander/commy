@@ -260,6 +260,8 @@ pub struct CommyNode {
     node: iroh::node::MemNode,
     topics: HashMap<ServerId, TopicHandle>,
     events_tx: mpsc::UnboundedSender<NetEvent>,
+    /// Entry key requests from the account's other devices, until taken.
+    entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
 }
 
 impl CommyNode {
@@ -284,6 +286,7 @@ impl CommyNode {
     )> {
         let (media_tx, media_rx) = mpsc::unbounded_channel();
         let (dm_tx, dm_rx) = mpsc::unbounded_channel();
+        let (entry_key_tx, entry_key_rx) = mpsc::unbounded_channel();
         let mut builder = iroh::node::Node::memory();
         match crate::relays::relay_map(&crate::relays::own_relays()) {
             Ok(map) => builder = builder.relay_mode(iroh::net::relay::RelayMode::Custom(map)),
@@ -297,6 +300,10 @@ impl CommyNode {
         let node = protocols
             .accept(MEDIA_ALPN.to_vec(), Arc::new(MediaAcceptor { tx: media_tx, endpoint }))
             .accept(DM_ALPN.to_vec(), Arc::new(DmAcceptor { tx: dm_tx }))
+            .accept(
+                crate::entry_key::ENTRY_KEY_ALPN.to_vec(),
+                Arc::new(crate::entry_key::EntryKeyAcceptor { tx: entry_key_tx }),
+            )
             .spawn()
             .await
             .context("failed to start iroh node")?;
@@ -306,11 +313,23 @@ impl CommyNode {
                 node,
                 topics: HashMap::new(),
                 events_tx,
+                entry_key_requests: Some(entry_key_rx),
             },
             events_rx,
             media_rx,
             dm_rx,
         ))
+    }
+
+    /// Entry key requests from other devices; the first call takes them.
+    pub fn take_entry_key_requests(&mut self) -> Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>> {
+        self.entry_key_requests.take()
+    }
+
+    /// The iroh endpoint, for requests that must not hold the node while
+    /// they wait (see `entry_key::request`).
+    pub fn endpoint(&self) -> iroh::net::Endpoint {
+        self.node.endpoint().clone()
     }
 
     /// Delivers one DM to a peer, waiting for its ack. Fails when the
@@ -671,7 +690,7 @@ impl CommyNode {
     }
 }
 
-fn parse_node_hex(hex: &str) -> Result<NodeId> {
+pub(crate) fn parse_node_hex(hex: &str) -> Result<NodeId> {
     let bytes = data_encoding::HEXLOWER
         .decode(hex.trim().as_bytes())
         .context("node id is not valid hex")?;
