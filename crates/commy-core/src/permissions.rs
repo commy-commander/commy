@@ -32,6 +32,12 @@ impl Permissions {
     /// Add and remove custom emojis and soundboard sounds.
     pub const MANAGE_EXPRESSIONS: Permissions = Permissions(1 << 19);
     pub const MANAGE_EVENTS: Permissions = Permissions(1 << 20);
+    /// Pin and unpin messages in text channels. Manage Messages counts
+    /// too, see [`Permissions::can_pin`].
+    pub const PIN_MESSAGES: Permissions = Permissions(1 << 21);
+    /// Post in announcement channels. Manage Channels counts too, see
+    /// [`Permissions::can_announce`].
+    pub const POST_ANNOUNCEMENTS: Permissions = Permissions(1 << 22);
 
     /// Sensible defaults for the implicit everyone role.
     pub fn default_member() -> Permissions {
@@ -65,6 +71,16 @@ impl Permissions {
     /// Administrator implies every permission.
     pub fn allows(self, other: Permissions) -> bool {
         self.contains(Self::ADMINISTRATOR) || self.contains(other)
+    }
+
+    /// Whether these permissions let someone pin messages.
+    pub fn can_pin(self) -> bool {
+        self.allows(Self::PIN_MESSAGES) || self.allows(Self::MANAGE_MESSAGES)
+    }
+
+    /// Whether these permissions let someone post in announcement channels.
+    pub fn can_announce(self) -> bool {
+        self.allows(Self::POST_ANNOUNCEMENTS) || self.allows(Self::MANAGE_CHANNELS)
     }
 }
 
@@ -125,5 +141,18 @@ mod tests {
         assert!(!p.allows(Permissions::KICK_MEMBERS));
         assert!(!p.allows(Permissions::MANAGE_SERVER));
         assert!(!p.allows(Permissions::CREATE_INVITES));
+        assert!(!p.can_pin());
+        assert!(!p.can_announce());
+    }
+
+    #[test]
+    fn moderation_permissions_cover_pins_and_announcements() {
+        assert!(Permissions::PIN_MESSAGES.can_pin());
+        assert!(Permissions::MANAGE_MESSAGES.can_pin());
+        assert!(!Permissions::MANAGE_CHANNELS.can_pin());
+        assert!(Permissions::POST_ANNOUNCEMENTS.can_announce());
+        assert!(Permissions::MANAGE_CHANNELS.can_announce());
+        assert!(!Permissions::MANAGE_MESSAGES.can_announce());
+        assert!(Permissions::ADMINISTRATOR.can_pin() && Permissions::ADMINISTRATOR.can_announce());
     }
 }

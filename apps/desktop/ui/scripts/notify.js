@@ -11,13 +11,24 @@ const DEFAULT_NOTIFY_LEVEL = "all";
 const RECENT_SECS = 15 * 60;
 
 // Pure decision so the rules are easy to reason about: returns true
-// when a message should raise a desktop notification.
-function shouldNotify({ level, presence, focusedOnIt, isDm, mentioned }) {
+// when a message should raise a desktop notification. A post in an
+// announcement channel counts as a mention: it is meant for everyone.
+function shouldNotify({ level, presence, focusedOnIt, isDm, mentioned, announcement }) {
   if (presence === "do_not_disturb" || level === "none" || focusedOnIt) return false;
   if (isDm || level === "all") return true;
   // "online": everything, but only while your status is Online.
   if (level === "online") return presence === "online" || !presence;
-  return level === "mentions" && mentioned;
+  return level === "mentions" && Boolean(mentioned || announcement);
+}
+
+// Title and body of a notification for one live message. Announcements
+// say so in the title, so they stand out from chat.
+function messageNotice({ author_name, channel_name, server_name, content, has_attachments, announcement }, plain) {
+  const body = plain(content || "") || (has_attachments ? "Sent an attachment" : "");
+  if (announcement) {
+    return { title: `Announcement in #${channel_name} (${server_name})`, body: `${author_name || "Someone"}: ${body}` };
+  }
+  return { title: `${author_name || "Someone"} (#${channel_name}, ${server_name})`, body };
 }
 
 // Whole names only, so "@Sam" does not ping "Samantha" and vice versa.
@@ -54,5 +65,5 @@ function caughtUpNotice({ count, author_name, channel_name, server_name, content
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, shouldNotify, mentionsName, levelForServer, isRecent, caughtUpNotice };
+  module.exports = { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, shouldNotify, messageNotice, mentionsName, levelForServer, isRecent, caughtUpNotice };
 }

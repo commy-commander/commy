@@ -502,6 +502,7 @@ pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChann
                 "count": fresh.count,
                 "mentioned": fresh.mentioned,
                 "channel_name": state.and_then(|s| s.server.channel(*channel)).map(|c| c.name.clone()).unwrap_or_default(),
+                "announcement": state.and_then(|s| s.server.channel(*channel)).is_some_and(|c| c.kind == commy_core::ChannelKind::Announcement),
                 "author": latest.author.to_string(),
                 "author_name": state
                     .and_then(|s| s.profiles.get(&latest.author))

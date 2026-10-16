@@ -309,6 +309,7 @@ async fn commit_message(
         let mut servers = app.servers.lock().unwrap();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         require_rules_accepted(state, message.author)?;
+        require_can_post(&app, state, message.author, message.channel)?;
         state.apply(event.clone()).map_err(err_to_string)?;
         MessageView::build(&message, state)
     };
@@ -1919,6 +1920,22 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             if channel.color.is_some() {
                 events.push(ServerEvent::ChannelColor { server: sid, channel: channel.id, color: channel.color.clone() });
             }
+            // Create is ignored by peers that already have the channel.
+            if channel.kind == ChannelKind::Announcement {
+                events.push(ServerEvent::ChannelKindSet { server: sid, channel: channel.id, kind: channel.kind });
+            }
+        }
+    }
+    if perms.can_pin() {
+        for pin in &state.server.pins {
+            events.push(ServerEvent::MessagePin {
+                server: sid,
+                channel: pin.channel,
+                message: pin.message,
+                by: pin.by,
+                at: pin.at,
+                pinned: true,
+            });
         }
     }
     if perms.allows(Permissions::MUTE_MEMBERS) {
@@ -2121,7 +2138,8 @@ async fn create_channel(
     let kind = match kind.as_str() {
         "text" => ChannelKind::Text,
         "voice" => ChannelKind::Voice,
-        _ => return Err("channel kind must be text or voice".into()),
+        "announcement" => ChannelKind::Announcement,
+        _ => return Err("channel kind must be text, voice or announcement".into()),
     };
     let me = current_profile(&app)?;
     let channel = {
@@ -2838,6 +2856,15 @@ async fn accept_rules(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
 }
 
 /// Members who have not accepted the rules cannot post yet.
+/// Announcement channels take posts from announcers only.
+fn require_can_post(app: &App, state: &ServerState, user: UserId, channel: ChannelId) -> CmdResult<()> {
+    let announcement = state.server.channel(channel).is_some_and(|c| c.kind == ChannelKind::Announcement);
+    if announcement && !our_permissions(app, state, user).can_announce() {
+        return Err("only members allowed to post announcements can write in this channel".into());
+    }
+    Ok(())
+}
+
 fn require_rules_accepted(state: &ServerState, user: UserId) -> CmdResult<()> {
     let exempt = user == state.server.owner || state.server.permissions_for(user).allows(Permissions::MANAGE_SERVER);
     if state.server.rules.is_some() && !exempt && !state.server.rules_accepted.contains(&user) {
@@ -3123,6 +3150,82 @@ async fn set_channel_color(
         return Err("channel colour must be six hex digits".into());
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelColor { server: sid, channel: cid, color }).await
+}
+
+/// Makes a text channel an announcement channel ("announcement") or a
+/// plain text channel again ("text").
+#[tauri::command]
+async fn set_channel_kind(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    kind: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let kind = match kind.as_str() {
+        "text" => ChannelKind::Text,
+        "announcement" => ChannelKind::Announcement,
+        _ => return Err("channel kind must be text or announcement".into()),
+    };
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
+        let channel = state.server.channel(cid).ok_or("unknown channel")?;
+        if !matches!(channel.kind, ChannelKind::Text | ChannelKind::Announcement) {
+            return Err("only text channels can become announcement channels".into());
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelKindSet { server: sid, channel: cid, kind }).await
+}
+
+/// Pins or unpins a message for everyone in the server.
+#[tauri::command]
+async fn pin_message(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    message_id: String,
+    pinned: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let mid: MessageId = message_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        if !our_permissions(&app, state, me.id).can_pin() {
+            return Err("you do not have permission to pin messages".into());
+        }
+        message_author(state, cid, mid)?;
+        if pinned && state.server.pins_in(cid).len() >= commy_core::server::MAX_PINS_PER_CHANNEL {
+            return Err(format!(
+                "a channel can hold {} pinned messages; unpin one first",
+                commy_core::server::MAX_PINS_PER_CHANNEL
+            ));
+        }
+    }
+    let event = ServerEvent::MessagePin { server: sid, channel: cid, message: mid, by: me.id, at: chrono::Utc::now(), pinned };
+    apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+/// Pinned messages of one channel, or of every channel when `channel_id`
+/// is None, newest first.
+#[tauri::command]
+fn get_pins(app: tauri::State<App>, server_id: String, channel_id: Option<String>) -> CmdResult<Vec<view::PinView>> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid = match channel_id {
+        Some(raw) => Some(raw.parse::<ChannelId>().map_err(err_to_string)?),
+        None => None,
+    };
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    Ok(view::pin_views(state, cid))
 }
 
 // ---------- Voice connection details ----------
@@ -4704,6 +4807,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "server_name": state.server.name,
             "channel": message.channel.to_string(),
             "channel_name": state.server.channel(message.channel).map(|c| c.name.clone()).unwrap_or_default(),
+            "announcement": state.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement),
             "author": message.author.to_string(),
             "author_name": state.profiles.get(&message.author).map(|p| p.visible_name().to_string()).unwrap_or_else(|| "Someone".into()),
             "content": message.content,
@@ -5200,6 +5304,9 @@ pub fn run() {
             update_channel,
             set_channel_banner,
             set_channel_color,
+            set_channel_kind,
+            pin_message,
+            get_pins,
             edit_message,
             delete_message,
             list_audio_devices,
