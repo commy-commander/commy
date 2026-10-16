@@ -14,7 +14,9 @@ mod invite_link;
 mod outbox;
 mod overlay;
 mod persist;
+mod roles;
 mod safety;
+mod settle;
 mod state;
 mod toast;
 mod tray;
@@ -112,45 +114,9 @@ fn key_settled(app: &App) -> CmdResult<()> {
     }
 }
 
-/// Re-reads the identity key file, which another module may have
-/// replaced, announces the key to every server we are in, and sends the
-/// DMs that waited for it.
-pub async fn reload_identity(handle: &tauri::AppHandle) -> std::io::Result<()> {
-    let app = handle.state::<App>();
-    if let Some(profile) = app.reload_identity()? {
-        announce_profile(&app, handle, &profile).await;
-        let _ = handle.emit("profile-changed", &profile);
-    }
-    outbox::wake_all_dms(&app);
-    Ok(())
-}
-
 /// Longest a key made in this run on a signed-in device is kept to
 /// ourselves while the server list sync may replace it.
 const KEY_SETTLE_MAX: std::time::Duration = std::time::Duration::from_secs(120);
-
-/// Our key is final (see `App::hold_key`): if it was held back, it goes
-/// out now, see [`use_settled_key`].
-pub async fn settle_key(handle: &tauri::AppHandle) {
-    if !handle.state::<App>().settle_key() {
-        return;
-    }
-    use_settled_key(handle).await;
-}
-
-/// The key file holds our final key, perhaps just replaced: loads and
-/// announces it, signs again with it what we wrote while it was held back
-/// (see [`outbox::resign_held`]), then sends what waited and catches up
-/// every server with its neighbors, since sessions were refused meanwhile.
-pub async fn use_settled_key(handle: &tauri::AppHandle) {
-    if let Err(e) = reload_identity(handle).await {
-        tracing::warn!("could not load our identity key: {e}");
-        return;
-    }
-    let app = handle.state::<App>();
-    outbox::resign_held(&app);
-    catchup::catch_up_with_neighbors(handle).await;
-}
 
 // ---------- Servers ----------
 
@@ -366,6 +332,8 @@ async fn send_message(
         }
         message.reply_to = Some(target);
     }
+    // Our key stays in place until the message is applied and sent or pending.
+    let _signing = app.signing.read().await;
     // Signed first: the signature counts toward the size limit.
     sign_message(&app, sid, &mut message)?;
     // Peers drop the connection on oversized frames, so refuse up front.
@@ -415,6 +383,16 @@ fn message_author(state: &ServerState, cid: ChannelId, mid: MessageId) -> CmdRes
         .ok_or_else(|| "that message no longer exists".to_string())
 }
 
+/// When an edit of `original` made at `now` is dated: after its last
+/// edit, which another device or a clock ahead of ours may have dated
+/// later, since peers drop an edit not newer than the one they hold.
+fn edit_time(original: &Message, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    match original.edited_at {
+        Some(last) if now.timestamp_millis() <= last.timestamp_millis() => last + chrono::Duration::milliseconds(1),
+        _ => now,
+    }
+}
+
 /// Edits one of our own messages.
 #[tauri::command]
 async fn edit_message(
@@ -433,6 +411,7 @@ async fn edit_message(
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
+    let _signing = app.signing.read().await;
     let identity = signing_key(&app)?;
     let edit = {
         let servers = app.servers.lock().unwrap();
@@ -442,7 +421,7 @@ async fn edit_message(
         }
         let original = state.messages(cid).iter().find(|m| m.id == mid).ok_or("that message no longer exists")?;
         // Signed over the whole edited message, with our edit time.
-        original.edit_event(sid, content, chrono::Utc::now(), &identity)
+        original.edit_event(sid, content, edit_time(original, chrono::Utc::now()), &identity)
     };
     if commy_net::protocol::gossip_size(&WirePayload::Event(edit.clone())) > commy_net::protocol::MAX_GOSSIP_BYTES {
         return Err("that edit is too long to send".into());
@@ -465,6 +444,7 @@ async fn delete_message(
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
+    let _signing = app.signing.read().await;
     let identity = signing_key(&app)?;
     {
         let servers = app.servers.lock().unwrap();
@@ -515,6 +495,7 @@ async fn send_attachment(
         mime_type,
         provider,
     });
+    let _signing = app.signing.read().await;
     sign_message(app, sid, &mut message)?;
     commit_message(app, handle, sid, message).await
 }
@@ -1306,6 +1287,7 @@ fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
 // ---------- Friends ----------
 
 async fn send_friend_signal(app: &tauri::State<'_, App>, to: UserId, signal: safety::FriendSignal) -> CmdResult<()> {
+    let _signing = app.signing.read().await;
     let me = current_profile(app)?;
     key_settled(app)?;
     let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
@@ -1501,6 +1483,8 @@ async fn report_user(
     if !safety::REPORT_REASONS.contains(&reason.as_str()) {
         return Err("pick a reason for the report".into());
     }
+    // Our key and the profile naming it stay in place until it is sent.
+    let _signing = app.signing.read().await;
     let me = current_profile(&app)?;
     if reported == me.id {
         return Err("you cannot report yourself".into());
@@ -1673,6 +1657,9 @@ async fn send_dm(
         return Err("message must be 1 to 4000 characters".into());
     }
     let partner: UserId = user_id.parse().map_err(err_to_string)?;
+    // Our key and the profile naming it stay in place until the message
+    // is sent or kept for later.
+    let _signing = app.signing.read().await;
     let me = current_profile(&app)?;
     if partner == me.id {
         return Err("you cannot message yourself".into());
@@ -1769,11 +1756,18 @@ async fn rename_server(
     Ok(())
 }
 
-/// Channel and AFK events a reconnecting peer may have missed. Only
-/// members allowed to make those changes re-announce them.
+/// Channel, role and AFK events a reconnecting peer may have missed.
+/// Only members allowed to make those changes re-announce them.
 fn structure_announcements(app: &tauri::State<'_, App>, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
+    let deleted_roles = app.deleted_roles.lock().unwrap().of(sid);
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
+    structure_events(state, me, &deleted_roles)
+}
+
+/// [`structure_announcements`] for one server's state.
+fn structure_events(state: &ServerState, me: UserId, deleted_roles: &[RoleId]) -> Vec<ServerEvent> {
+    let sid = state.server.id;
     let mut events = Vec::new();
     if state.server.permissions_for(me).allows(Permissions::MANAGE_CHANNELS) {
         for channel in &state.server.channels {
@@ -1871,11 +1865,7 @@ fn structure_announcements(app: &tauri::State<'_, App>, sid: ServerId, me: UserI
             events.push(ServerEvent::MemberBan { server: sid, user: *user });
         }
     }
-    if perms.allows(Permissions::MANAGE_ROLES) {
-        for role in state.server.roles.iter().filter(|r| r.self_assignable || r.tag.is_some() || r.banner.is_some()) {
-            events.push(ServerEvent::RoleUpdate { server: sid, role: role.clone() });
-        }
-    }
+    events.extend(roles::announcements(state, me, deleted_roles));
     let custom = state.server.emojis_shareable || state.server.soundboard_open;
     if custom && state.server.permissions_for(me).allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ExpressionSettings {
@@ -2168,6 +2158,9 @@ async fn leave_server(
 /// Drops queued sends and catch-up state for a server we are no longer in.
 fn forget_server_outbox(app: &App, sid: ServerId) {
     app.catchup.lock().unwrap().forget_server(sid);
+    if app.deleted_roles.lock().unwrap().forget_server(sid) {
+        app.persist_deleted_roles();
+    }
     app.set_awaiting_snapshot(sid, false);
     if app.outbox.lock().unwrap().forget_server(sid) {
         app.persist_outbox();
@@ -2278,6 +2271,86 @@ async fn run_status_expiry(handle: tauri::AppHandle) {
         app.persist_profile();
         announce_profile(&app, &handle, &profile).await;
         let _ = handle.emit("profile-changed", &profile);
+    }
+}
+
+#[cfg(test)]
+mod structure_tests {
+    use super::*;
+
+    #[test]
+    fn a_peer_that_missed_a_role_assignment_learns_it_from_the_announcements() {
+        let owner = UserProfile::new("owner");
+        let member = UserProfile::new("member");
+        let mut state = ServerState::new(commy_core::Server::new("s", owner.id));
+        let sid = state.server.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: member.clone() }).unwrap();
+        // The member is offline while it becomes a moderator.
+        let mut offline = state.clone();
+        let mods = Role {
+            id: RoleId::new(),
+            name: "mods".into(),
+            color: None,
+            permissions: Permissions::MANAGE_MESSAGES,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+        };
+        state.apply(ServerEvent::RoleCreate { server: sid, role: mods.clone() }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: member.id, role: mods.id }).unwrap();
+
+        for event in structure_events(&state, owner.id, &[]) {
+            let _ = offline.apply(event);
+        }
+        assert_eq!(offline.server.member(member.id).unwrap().roles, vec![mods.id]);
+        assert!(offline.server.permissions_for(member.id).allows(Permissions::MANAGE_MESSAGES));
+        // Someone without Manage Roles announces none of it.
+        let roles_of = |events: Vec<ServerEvent>| {
+            events.into_iter().filter(|e| matches!(e, ServerEvent::RoleCreate { .. } | ServerEvent::RoleAssign { .. })).count()
+        };
+        assert_eq!(roles_of(structure_events(&state, member.id, &[])), 0);
+    }
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+
+    #[test]
+    fn an_edit_is_dated_after_the_last_one() {
+        let identity = Identity::generate();
+        let mut me = UserProfile::new("me");
+        me.identity = Some(identity.public());
+        let server = commy_core::Server::new("s", me.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = ServerState::new(server);
+        state.profiles.insert(me.id, me.clone());
+        let mut message = Message::new(channel, me.id, "first");
+        message.sign(sid, &identity);
+        state.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
+        let now = chrono::Utc::now();
+        assert_eq!(edit_time(&message, now), now, "never edited");
+
+        // Edited on another device whose clock runs ahead of ours.
+        let ahead = now + chrono::Duration::seconds(30);
+        state.apply(message.edit_event(sid, "from the other device", ahead, &identity)).unwrap();
+        let stored = state.message(message.id).unwrap().clone();
+        let at = edit_time(&stored, now);
+        assert!(at > ahead);
+        assert_eq!(state.apply(stored.edit_event(sid, "from here", at, &identity)), Ok(true));
+        assert_eq!(state.message(message.id).unwrap().content, "from here");
+
+        // In the same millisecond as the last edit.
+        let last = state.message(message.id).unwrap().clone();
+        let same = last.edited_at.unwrap();
+        assert_eq!(state.apply(last.edit_event(sid, "again", edit_time(&last, same), &identity)), Ok(true));
+        assert_eq!(state.message(message.id).unwrap().content, "again");
+
+        // Later than the last edit, it keeps its own time.
+        let later = same + chrono::Duration::seconds(1);
+        assert_eq!(edit_time(&last, later), later);
     }
 }
 
@@ -3906,13 +3979,17 @@ async fn delete_role(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
+    let remember = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
+        roles::remembers_delete(state, rid)
+    };
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleDelete { server: sid, role: rid }).await?;
+    if remember {
+        app.note_deleted_role(sid, rid);
     }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleDelete { server: sid, role: rid })
-        .await
+    Ok(())
 }
 
 #[tauri::command]
@@ -4122,26 +4199,36 @@ async fn run_net_loop(
                     ServerEvent::VoiceState { user, channel, .. } => Some((*user, *channel)),
                     _ => None,
                 };
-                let new_message = match &event {
-                    ServerEvent::MessageCreate { message } => Some(message.clone()),
+                // A role deleted here stays deleted (see `roles`).
+                if app.deleted_roles.lock().unwrap().revives(server, &event) {
+                    continue;
+                }
+                let deleted_role = match &event {
+                    ServerEvent::RoleDelete { role, .. } => Some(*role),
                     _ => None,
                 };
                 // Message events whose author key is not known yet wait for it.
                 let holdable = catchup::holdable(&event).then(|| event.clone());
                 let key_source = matches!(event, ServerEvent::MemberJoin { .. } | ServerEvent::ProfileUpdate { .. });
                 let presence = outbox::online_user(&event);
-                let (applied, was_online) = {
+                let (applied, was_online, new_message, remember) = {
                     let mut servers = app.servers.lock().unwrap();
                     match servers.get_mut(&server) {
                         Some(state) => {
                             let was_online = presence.map(|(user, _)| {
                                 state.profiles.get(&user).is_some_and(|p| p.presence.is_visible_online())
                             });
-                            (state.apply(event), was_online)
+                            let remember = deleted_role.filter(|role| roles::remembers_delete(state, *role));
+                            // Only a message now shown here is news.
+                            let (applied, new_message) = catchup::apply_live(state, event);
+                            (applied, was_online, new_message, remember)
                         }
                         None => continue,
                     }
                 };
+                if let (Ok(_), Some(role)) = (&applied, remember) {
+                    app.note_deleted_role(server, role);
+                }
                 if applied.is_ok() {
                     if key_source {
                         catchup::release_held(&handle, server);
@@ -4494,6 +4581,7 @@ pub fn run() {
                 if let Some(dms) = persist::load_dms(&dir) {
                     *app.dms.lock().unwrap() = dms;
                 }
+                *app.deleted_roles.lock().unwrap() = roles::DeletedRoles::load(&dir);
                 *app.account.lock().unwrap() = account::load(&dir);
                 if let Some(creds) = persist::load_integrations(&dir) {
                     *app.igdb_creds.lock().unwrap() = creds;
@@ -4545,7 +4633,7 @@ pub fn run() {
                 let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(KEY_SETTLE_MAX).await;
-                    settle_key(&handle).await;
+                    settle::settle_key(&handle).await;
                 });
             }
 

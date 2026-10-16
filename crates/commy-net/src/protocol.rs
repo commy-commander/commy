@@ -203,6 +203,37 @@ mod tests {
         assert_eq!(envelope.encode(), Err(ProtocolError::FrameTooLarge));
     }
 
+    /// Size of `payload` in the smallest envelope: a one byte nonce.
+    fn smallest(payload: WirePayload) -> usize {
+        let envelope = Envelope { version: PROTOCOL_VERSION, sender: [0; 32], payload, nonce: 0 };
+        postcard::to_stdvec(&envelope).unwrap().len()
+    }
+
+    #[test]
+    fn the_store_takes_every_message_and_profile_gossip_carries() {
+        let (mut state, channel, owner) = fixture();
+        let base = post(&state, channel, owner, &"x".repeat(200));
+        let sized = |size: usize| {
+            let fill = 200 + size - base.authored_size();
+            let mut m = Message { content: "x".repeat(fill), ..base.clone() };
+            m.sign(state.server.id, &crate::test_support::identity_for(owner));
+            assert_eq!(m.authored_size(), size);
+            m
+        };
+        let create = |message: Message| WirePayload::Event(ServerEvent::MessageCreate { message });
+        let largest = sized(commy_core::MAX_MESSAGE_BYTES);
+        let over = sized(commy_core::MAX_MESSAGE_BYTES + 1);
+        assert_eq!(smallest(create(largest.clone())), MAX_GOSSIP_BYTES);
+        assert_eq!(smallest(create(over.clone())), MAX_GOSSIP_BYTES + 1);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: over }), Err(commy_core::StoreError::TooLarge));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: largest }), Ok(true));
+
+        let profile = state.profiles[&owner].clone();
+        let around = smallest(WirePayload::Event(ServerEvent::ProfileUpdate { profile: profile.clone() }))
+            - postcard::to_stdvec(&profile).unwrap().len();
+        assert_eq!(MAX_GOSSIP_BYTES - around, crate::catchup::MAX_RELAYED_PROFILE_BYTES);
+    }
+
     #[test]
     fn sync_response_caps_messages() {
         let (mut state, channel, owner) = fixture();

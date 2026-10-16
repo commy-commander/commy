@@ -33,6 +33,7 @@ pub struct Reaction {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
+    /// Bound to the author, see [`MessageId::for_author`].
     pub id: MessageId,
     pub channel: ChannelId,
     pub author: UserId,
@@ -47,6 +48,18 @@ pub struct Message {
     #[serde(default)]
     pub sig: Option<Signature>,
 }
+
+/// Largest [`Message::authored_size`]: what one gossip `MessageCreate`
+/// carries, the 3800 byte gossip frame less the 36 bytes of its smallest
+/// envelope (commy-net tests that the two agree). The store refuses
+/// larger messages from any path, catch-up included.
+pub const MAX_MESSAGE_BYTES: usize = 3764;
+
+/// Most distinct reactions taken with a relayed new message, and most
+/// users across all of them. Reactions are not signed, so anyone passing
+/// a message on could pad them; real use stays far below both.
+pub const MAX_RELAYED_REACTIONS: usize = 64;
+pub const MAX_RELAYED_REACTORS: usize = 2000;
 
 const MESSAGE_DOMAIN: &str = "commy-message/v1";
 const DELETE_DOMAIN: &str = "commy-delete/v1";
@@ -74,7 +87,7 @@ fn encode<T: Serialize>(value: &T) -> Vec<u8> {
 impl Message {
     pub fn new(channel: ChannelId, author: UserId, content: impl Into<String>) -> Self {
         Self {
-            id: MessageId::new(),
+            id: MessageId::for_author(author),
             channel,
             author,
             content: content.into(),
@@ -110,6 +123,27 @@ impl Message {
                 .collect(),
             reply_to: self.reply_to,
         })
+    }
+
+    /// Encoded size with reactions left out, so of what the author made.
+    pub fn authored_size(&self) -> usize {
+        encode(&self.without_reactions()).len()
+    }
+
+    /// A copy of this message with no reactions.
+    pub(crate) fn without_reactions(&self) -> Message {
+        Message {
+            id: self.id,
+            channel: self.channel,
+            author: self.author,
+            content: self.content.clone(),
+            created_at: self.created_at,
+            edited_at: self.edited_at,
+            attachments: self.attachments.clone(),
+            reactions: Vec::new(),
+            reply_to: self.reply_to,
+            sig: self.sig,
+        }
     }
 
     pub fn sign(&mut self, server: ServerId, identity: &Identity) {
@@ -228,6 +262,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn new_messages_get_an_id_bound_to_their_author() {
+        let author = UserId::new();
+        let msg = Message::new(ChannelId::new(), author, "hi");
+        assert!(msg.id.is_bound_to(author));
+        assert!(!msg.id.is_bound_to(UserId::new()));
+    }
+
+    #[test]
     fn toggle_reaction_adds_then_removes() {
         let mut msg = Message::new(ChannelId::new(), UserId::new(), "hi");
         let user = UserId::new();
@@ -294,7 +336,7 @@ mod tests {
         let ms = chrono::Duration::milliseconds(1);
         type Tamper = fn(&mut Message, chrono::Duration);
         let tampers: [(&str, Tamper); 14] = [
-            ("id", |m, _| m.id = MessageId::new()),
+            ("id", |m, _| m.id = MessageId::for_author(m.author)),
             ("channel", |m, _| m.channel = ChannelId::new()),
             ("author", |m, _| m.author = UserId::new()),
             ("content", |m, _| m.content.push('!')),

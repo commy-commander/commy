@@ -161,6 +161,13 @@ pub struct App {
     /// While set, our key was made in this run and may still give way to
     /// the account's key, so it is not announced before that time.
     pub key_hold: Mutex<Option<Instant>>,
+    /// Shared by each send that signs with our key, from signing until
+    /// what it signed is applied, sent or queued; swapping the key takes
+    /// it alone (see `settle::KeySwap`), so what is signed again with the
+    /// new key includes every such send.
+    pub signing: tokio::sync::RwLock<()>,
+    /// Roles deleted per server, so a late create cannot bring one back.
+    pub deleted_roles: Mutex<crate::roles::DeletedRoles>,
 }
 
 impl Default for App {
@@ -209,6 +216,8 @@ impl Default for App {
             catchup: Mutex::new(crate::catchup::Catchup::default()),
             awaiting_snapshot: Mutex::new(HashSet::new()),
             key_hold: Mutex::new(None),
+            signing: tokio::sync::RwLock::new(()),
+            deleted_roles: Mutex::new(crate::roles::DeletedRoles::default()),
         }
     }
 }
@@ -231,6 +240,12 @@ impl App {
     /// True once our key may be announced and pinned by others.
     pub fn key_settled(&self) -> bool {
         self.key_hold.lock().unwrap().is_none_or(|until| Instant::now() >= until)
+    }
+
+    /// True while a hold waits for [`App::settle_key`], even one whose
+    /// time ran out.
+    pub fn settle_pending(&self) -> bool {
+        self.key_hold.lock().unwrap().is_some()
     }
 
     /// Our key is final. True when it was held back until now.
@@ -300,6 +315,21 @@ impl App {
         };
         if changed {
             self.persist_awaiting();
+        }
+    }
+
+    /// Remembers a deleted role (see `roles`) and saves it if new.
+    pub fn note_deleted_role(&self, server: ServerId, role: commy_core::RoleId) {
+        if self.deleted_roles.lock().unwrap().note(server, role) {
+            self.persist_deleted_roles();
+        }
+    }
+
+    pub fn persist_deleted_roles(&self) {
+        let Some(dir) = self.data_dir() else { return };
+        let deleted = self.deleted_roles.lock().unwrap();
+        if let Err(e) = deleted.save(dir) {
+            tracing::warn!("failed to persist deleted roles: {e}");
         }
     }
 

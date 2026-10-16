@@ -460,12 +460,12 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
     let Some(dir) = app.data_dir().cloned() else { return Ok(()) };
     let Some(s) = session(&app) else {
         set_status(handle, "off", "", 0, false);
-        crate::settle_key(handle).await;
+        crate::settle::settle_key(handle).await;
         return Ok(());
     };
     if app.account.lock().unwrap().features.is_some_and(|f| !f.vault) {
         set_status(handle, "unsupported", "Your account server cannot keep a server list yet.", 0, false);
-        crate::settle_key(handle).await;
+        crate::settle::settle_key(handle).await;
         return Ok(());
     }
     if app.profile.lock().unwrap().is_none() {
@@ -479,7 +479,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
             Ok(Fetched::Item(item)) => item,
             Ok(Fetched::Unsupported) => {
                 set_status(handle, "unsupported", "Your account server cannot keep a server list yet.", 0, false);
-                crate::settle_key(handle).await;
+                crate::settle::settle_key(handle).await;
                 return Ok(());
             }
             Err(e) => {
@@ -519,9 +519,10 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
             },
         };
 
-        match take_identity_step(&app, &dir, identity_step(&local, &shared), &shared) {
+        let (after, retry) = identity_part(&app, &dir, &local, &shared, &KEY_WAIT).await;
+        match after {
             AfterStep::Merge => {}
-            AfterStep::Announce => crate::use_settled_key(handle).await,
+            AfterStep::Announce => crate::settle::use_settled_key(handle).await,
             AfterStep::Wait => {
                 set_status(
                     handle,
@@ -530,7 +531,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
                     shared.servers.len(),
                     true,
                 );
-                if KEY_WAIT.start() {
+                if retry {
                     schedule_later(handle, KEY_WAIT_RETRY);
                 }
                 return Ok(());
@@ -544,7 +545,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
                     shared.servers.len(),
                     true,
                 );
-                crate::settle_key(handle).await;
+                crate::settle::settle_key(handle).await;
                 return Ok(());
             }
         }
@@ -562,14 +563,14 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
 
         if merged == shared && item.data.is_some() {
             set_status(handle, "synced", "", merged.servers.len(), true);
-            crate::settle_key(handle).await;
+            crate::settle::settle_key(handle).await;
             return Ok(());
         }
         match put(&app, &s, merged.seal(&key), item.version).await? {
             Put::Done => {
                 // Our key is the account's now, or already was.
                 set_status(handle, "synced", "", merged.servers.len(), true);
-                crate::settle_key(handle).await;
+                crate::settle::settle_key(handle).await;
                 return Ok(());
             }
             Put::Conflict => {
@@ -616,12 +617,23 @@ fn schedule_later(handle: &AppHandle, delay: std::time::Duration) {
     });
 }
 
+/// The identity part of a sync: takes the step these lists call for
+/// (see [`take_identity_step`]). When that waits for the account's key,
+/// true as well if a retry is to be scheduled, which only the first wait
+/// gets until that retry runs (see [`KeyWait`]).
+async fn identity_part(app: &App, dir: &Path, local: &EntryList, shared: &EntryList, wait: &KeyWait) -> (AfterStep, bool) {
+    let after = take_identity_step(app, dir, identity_step(local, shared), shared).await;
+    let retry = after == AfterStep::Wait && wait.start();
+    (after, retry)
+}
+
 /// What sync does after [`take_identity_step`].
 #[derive(Debug, PartialEq)]
 enum AfterStep {
     /// Merge and share the lists.
     Merge,
-    /// Our key was replaced and has settled: announce it, then merge.
+    /// Our key was replaced, what we signed is signed with it and it has
+    /// settled: announce it, then merge.
     Announce,
     /// Wait for the account's key and look again later, joining nothing.
     Wait,
@@ -630,30 +642,37 @@ enum AfterStep {
 }
 
 /// The part of an identity step done on this device: writes the account's
-/// key, takes on its profile when adopting it, settles our key with it and
-/// loads it, so this device signs as the account from now on.
-fn take_identity_step(app: &App, dir: &Path, step: IdentityStep, shared: &EntryList) -> AfterStep {
-    match step {
+/// key, takes on its profile when adopting it, then loads the key, signs
+/// again with it what we signed while ours was held and settles it (see
+/// [`crate::settle::settle_loaded_key`]), so this device signs as the
+/// account from now on. Sends signing with our key wait meanwhile.
+async fn take_identity_step(app: &App, dir: &Path, step: IdentityStep, shared: &EntryList) -> AfterStep {
+    let swap = match step {
         IdentityStep::Keep => return AfterStep::Merge,
         IdentityStep::WaitForKey => return AfterStep::Wait,
         IdentityStep::OwnIdentity => return AfterStep::StayOut,
         IdentityStep::UseShared(encoded) => {
+            let swap = app.signing.write().await;
             // Still the same person, so merging under our own key does no harm.
             if !write_identity(dir, &encoded) {
                 return AfterStep::Merge;
             }
+            swap
         }
         IdentityStep::Adopt => {
+            let swap = app.signing.write().await;
             // Joining the account's servers as ourselves would leave this
             // device unable to adopt it later, so it waits instead.
             if !adopt_identity(app, dir, shared) {
                 return AfterStep::Wait;
             }
+            swap
         }
-    }
-    app.settle_key();
-    if let Err(e) = app.reload_identity() {
+    };
+    if let Err(e) = crate::settle::settle_loaded_key(app, &swap) {
+        // Not settled: ours stays held back until a later sync loads it.
         tracing::warn!("could not load the account's identity: {e}");
+        return AfterStep::Wait;
     }
     AfterStep::Announce
 }
@@ -1045,8 +1064,8 @@ mod tests {
         commy_core::identity::load_or_create(dir).unwrap().public()
     }
 
-    #[test]
-    fn the_same_person_switches_to_the_account_key_and_settles() {
+    #[tokio::test]
+    async fn the_same_person_switches_to_the_account_key_and_settles() {
         let account = UserProfile::new("account");
         let key = Identity::generate();
         let (app, dir, ours) = new_device("shared", &account);
@@ -1054,7 +1073,7 @@ mod tests {
         let step = identity_step(&list_of(&account, Some(&ours)), &shared);
         assert_eq!(step, IdentityStep::UseShared(shared_identity(&key)));
 
-        assert_eq!(take_identity_step(&app, &dir, step, &shared), AfterStep::Announce);
+        assert_eq!(take_identity_step(&app, &dir, step, &shared).await, AfterStep::Announce);
         assert_eq!(file_key(&dir), key.public());
         assert_eq!(app.identity().unwrap().public(), key.public(), "signs with it now");
         assert_eq!(app.profile.lock().unwrap().as_ref().unwrap().identity, Some(key.public()));
@@ -1064,14 +1083,14 @@ mod tests {
         // A value that is not a key changes nothing and settles nothing.
         let (app, dir, ours) = new_device("damaged", &account);
         let step = IdentityStep::UseShared("bm90IGEga2V5".into());
-        assert_eq!(take_identity_step(&app, &dir, step, &shared), AfterStep::Merge);
+        assert_eq!(take_identity_step(&app, &dir, step, &shared).await, AfterStep::Merge);
         assert_eq!(file_key(&dir), ours.public());
         assert!(!app.key_settled() && app.key_marked_unsettled());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn a_new_device_becomes_the_account_with_its_key() {
+    #[tokio::test]
+    async fn a_new_device_becomes_the_account_with_its_key() {
         let account = UserProfile::new("account");
         let key = Identity::generate();
         let device = UserProfile::new("device");
@@ -1080,7 +1099,7 @@ mod tests {
         let step = identity_step(&list_of(&device, Some(&ours)), &shared);
         assert_eq!(step, IdentityStep::Adopt);
 
-        assert_eq!(take_identity_step(&app, &dir, step, &shared), AfterStep::Announce);
+        assert_eq!(take_identity_step(&app, &dir, step, &shared).await, AfterStep::Announce);
         let profile = app.profile.lock().unwrap().clone().unwrap();
         assert_eq!((profile.id, profile.identity), (account.id, Some(key.public())));
         assert_eq!(profile.node, Some("ab".repeat(32)), "with this device's node");
@@ -1089,24 +1108,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn a_new_device_without_the_account_key_waits_as_itself() {
+    #[tokio::test]
+    async fn a_new_device_without_the_account_key_waits_as_itself() {
         let account = UserProfile::new("account");
         let device = UserProfile::new("device");
         let (app, dir, ours) = new_device("wait", &device);
         let shared = list_of(&account, None);
         let step = identity_step(&list_of(&device, Some(&ours)), &shared);
         assert_eq!(step, IdentityStep::WaitForKey);
-        assert_eq!(take_identity_step(&app, &dir, step, &shared), AfterStep::Wait);
+        assert_eq!(take_identity_step(&app, &dir, step, &shared).await, AfterStep::Wait);
         // Asked to adopt a list that lost its key meanwhile: it waits too.
-        assert_eq!(take_identity_step(&app, &dir, IdentityStep::Adopt, &shared), AfterStep::Wait);
+        assert_eq!(take_identity_step(&app, &dir, IdentityStep::Adopt, &shared).await, AfterStep::Wait);
         assert_eq!(app.profile.lock().unwrap().as_ref().unwrap().id, device.id);
         assert_eq!(file_key(&dir), ours.public());
         assert!(!app.key_settled() && app.key_marked_unsettled(), "still held back");
 
         // The other steps write nothing either.
-        assert_eq!(take_identity_step(&app, &dir, IdentityStep::Keep, &shared), AfterStep::Merge);
-        assert_eq!(take_identity_step(&app, &dir, IdentityStep::OwnIdentity, &shared), AfterStep::StayOut);
+        assert_eq!(take_identity_step(&app, &dir, IdentityStep::Keep, &shared).await, AfterStep::Merge);
+        assert_eq!(take_identity_step(&app, &dir, IdentityStep::OwnIdentity, &shared).await, AfterStep::StayOut);
         assert_eq!(file_key(&dir), ours.public());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1119,6 +1138,54 @@ mod tests {
         assert!(!wait.start());
         wait.done();
         assert!(wait.start(), "once it ran, the next wait schedules another");
+    }
+
+    #[tokio::test]
+    async fn syncs_waiting_for_the_account_key_schedule_one_retry() {
+        let account = UserProfile::new("account");
+        let device = UserProfile::new("device");
+        let (app, dir, ours) = new_device("retry", &device);
+        let local = list_of(&device, Some(&ours));
+        let shared = list_of(&account, None);
+        let wait = KeyWait(std::sync::atomic::AtomicBool::new(false));
+
+        // Syncs that do not wait leave the guard alone.
+        assert_eq!(identity_part(&app, &dir, &local, &local, &wait).await, (AfterStep::Merge, false));
+        assert_eq!(identity_part(&app, &dir, &local, &shared, &wait).await, (AfterStep::Wait, true));
+        // Another sync while that retry is on its way starts none.
+        assert_eq!(identity_part(&app, &dir, &local, &shared, &wait).await, (AfterStep::Wait, false));
+        assert_eq!(identity_part(&app, &dir, &local, &shared, &wait).await, (AfterStep::Wait, false));
+        // The retry ran: the next wait schedules the next one.
+        wait.done();
+        assert_eq!(identity_part(&app, &dir, &local, &shared, &wait).await, (AfterStep::Wait, true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn switching_to_the_account_key_signs_our_work_again_before_settling() {
+        let account = UserProfile::new("account");
+        let key = Identity::generate();
+        let (app, dir, ours) = new_device("resign", &account);
+        let server = commy_core::Server::new("s", account.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = commy_core::ServerState::new(server);
+        state.profiles.insert(account.id, app.profile.lock().unwrap().clone().unwrap());
+        let mut message = commy_core::Message::new(channel, account.id, "written while held");
+        message.sign(sid, &ours);
+        let create = commy_core::ServerEvent::MessageCreate { message: message.clone() };
+        state.apply(create.clone()).unwrap();
+        app.servers.lock().unwrap().insert(sid, state);
+        app.outbox.lock().unwrap().note_local(sid, &create, false);
+
+        let shared = list_of(&account, Some(&key));
+        let step = identity_step(&list_of(&account, Some(&ours)), &shared);
+        assert_eq!(take_identity_step(&app, &dir, step, &shared).await, AfterStep::Announce);
+        // Settled, and the message waiting for it carries the new key.
+        assert!(app.key_settled());
+        let state = app.servers.lock().unwrap()[&sid].clone();
+        assert!(state.message(message.id).unwrap().verify(sid, &key.public()));
+        assert_eq!(state.identity_of(account.id), Some(key.public()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

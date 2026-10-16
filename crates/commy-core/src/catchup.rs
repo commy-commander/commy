@@ -717,20 +717,25 @@ mod tests {
     }
 
     #[test]
-    fn a_strangers_proof_does_not_hide_the_authors_from_catch_up() {
+    fn another_deleters_proof_does_not_hide_the_authors_from_catch_up() {
         let (mut n, channel, _) = fixture();
+        let sid = n.server.id;
         let author = join(&mut n, "author");
-        let stranger = join(&mut n, "stranger");
+        let moderator = join_moderator(&mut n, "moderator");
         let mut q = n.clone();
         let now = Utc::now();
         let x = post(&n, channel, author, "mine");
         q.apply(ServerEvent::MessageCreate { message: x.clone() }).unwrap();
-        // The author deletes on q; n only got a stranger's proof, the same day.
+        // The author deletes on q; n only got a moderator's proof, the same day.
         q.apply(proof(&q, &x, author, now).into_event()).unwrap();
-        n.apply(proof(&n, &x, stranger, now).into_event()).unwrap();
+        n.apply(proof(&n, &x, moderator, now).into_event()).unwrap();
         reconcile(&mut n, &mut q, now);
         assert!(n.tombstones_for(x.id).iter().any(|p| p.by == author));
-        // A stale replica's late copy now stays out on n.
+        assert!(q.tombstones_for(x.id).iter().any(|p| p.by == moderator));
+        // Even once the moderator's own no longer counts, a stale replica's
+        // late copy stays out on n.
+        let role = n.server.member(moderator).unwrap().roles[0];
+        n.apply(ServerEvent::RoleUnassign { server: sid, user: moderator, role }).unwrap();
         n.apply(ServerEvent::MessageCreate { message: x.clone() }).unwrap();
         assert!(!n.has_message(x.id));
     }

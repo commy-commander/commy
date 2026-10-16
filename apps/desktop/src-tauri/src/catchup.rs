@@ -38,6 +38,8 @@ pub const SAVE_DELAY: Duration = Duration::from_secs(2);
 /// Events held per server for an unknown author key, and for how long.
 pub const HOLD_CAP: usize = 1000;
 pub const HOLD_FOR: Duration = Duration::from_secs(15 * 60);
+/// Most bytes of events held per server, counted as sent.
+pub const HOLD_BYTES: usize = 4 * 1024 * 1024;
 
 type SessionKey = (ServerId, [u8; 32]);
 
@@ -48,8 +50,9 @@ pub struct Catchup {
     running: HashSet<SessionKey>,
     /// When the last session with a peer completed, either side.
     completed: HashMap<SessionKey, Instant>,
-    /// Remote message events whose signer has no known key yet.
-    held: HashMap<ServerId, VecDeque<(Instant, ServerEvent)>>,
+    /// Remote message events whose signer has no known key yet, with
+    /// their size (see [`held_size`]).
+    held: HashMap<ServerId, VecDeque<(Instant, ServerEvent, usize)>>,
     /// New messages from others per channel, not yet told to the webview.
     fresh: HashMap<ServerId, HashMap<ChannelId, u32>>,
     /// Servers changed since the webview was last told.
@@ -93,22 +96,25 @@ impl Catchup {
     }
 
     /// Holds an event until its signer's key arrives; the oldest go past
-    /// the cap. One already held for the same message and kind is kept
-    /// instead, or replaced by a newer edit.
+    /// the caps (see [`trim_held`]). One already held for the same message
+    /// and kind is kept instead, or replaced by a newer edit.
     pub fn hold(&mut self, server: ServerId, event: ServerEvent, now: Instant) {
         let queue = self.held.entry(server).or_default();
         if let Some(key) = hold_key(&event) {
-            if let Some(slot) = queue.iter_mut().find(|(_, held)| hold_key(held) == Some(key)) {
-                if newer_edit(&event, &slot.1) {
-                    slot.1 = event;
+            if let Some(slot) = queue.iter_mut().find(|(_, held, _)| hold_key(held) == Some(key)) {
+                if let Some(size) = held_size(&event).filter(|_| newer_edit(&event, &slot.1)) {
+                    *slot = (slot.0, event, size);
+                    trim_held(queue);
                 }
                 return;
             }
         }
-        queue.push_back((now, event));
-        while queue.len() > HOLD_CAP {
-            queue.pop_front();
-        }
+        let Some(size) = held_size(&event) else {
+            tracing::debug!("not holding an event too large to send");
+            return;
+        };
+        queue.push_back((now, event, size));
+        trim_held(queue);
     }
 
     #[cfg(test)]
@@ -120,7 +126,7 @@ impl Catchup {
     pub fn take_held(&mut self, server: ServerId, now: Instant) -> Vec<(Instant, ServerEvent)> {
         self.held
             .remove(&server)
-            .map(|queue| queue.into_iter().filter(|(at, _)| !expired(*at, now)).collect())
+            .map(|queue| queue.into_iter().filter(|(at, _, _)| !expired(*at, now)).map(|(at, e, _)| (at, e)).collect())
             .unwrap_or_default()
     }
 
@@ -131,21 +137,19 @@ impl Catchup {
             return;
         }
         let queue = self.held.entry(server).or_default();
-        for item in events.into_iter().rev() {
-            let again = hold_key(&item.1).is_some_and(|key| queue.iter().any(|(_, e)| hold_key(e) == Some(key)));
-            if !again {
-                queue.push_front(item);
+        for (at, event) in events.into_iter().rev() {
+            let again = hold_key(&event).is_some_and(|key| queue.iter().any(|(_, e, _)| hold_key(e) == Some(key)));
+            if let Some(size) = held_size(&event).filter(|_| !again) {
+                queue.push_front((at, event, size));
             }
         }
-        while queue.len() > HOLD_CAP {
-            queue.pop_front();
-        }
+        trim_held(queue);
     }
 
     /// Drops held events past [`HOLD_FOR`] in every server.
     pub fn expire_held(&mut self, now: Instant) {
         for queue in self.held.values_mut() {
-            queue.retain(|(at, _)| !expired(*at, now));
+            queue.retain(|(at, _, _)| !expired(*at, now));
         }
         self.held.retain(|_, queue| !queue.is_empty());
     }
@@ -203,6 +207,23 @@ impl Catchup {
 
 fn expired(at: Instant, now: Instant) -> bool {
     now.saturating_duration_since(at) >= HOLD_FOR
+}
+
+/// What a held event weighs against [`HOLD_BYTES`]: its size as sent.
+/// None when it could not be sent as one gossip event, as no valid
+/// message event can, so it is not worth holding.
+fn held_size(event: &ServerEvent) -> Option<usize> {
+    let size = commy_net::protocol::gossip_size(&WirePayload::Event(event.clone()));
+    (size <= commy_net::protocol::MAX_FRAME_BYTES).then_some(size)
+}
+
+/// Drops the oldest held events past [`HOLD_CAP`] or [`HOLD_BYTES`].
+fn trim_held(queue: &mut VecDeque<(Instant, ServerEvent, usize)>) {
+    let mut bytes: usize = queue.iter().map(|(_, _, size)| size).sum();
+    while queue.len() > HOLD_CAP || bytes > HOLD_BYTES {
+        let Some((_, _, size)) = queue.pop_front() else { break };
+        bytes -= size;
+    }
 }
 
 /// What makes two held events the same: their kind and message, and for
@@ -331,6 +352,20 @@ pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<(Instant
         }
     }
     out
+}
+
+/// Applies a live event from a peer. Returns the store's answer and, for
+/// a create, the message when it is new here: absent before, present
+/// after. A late copy kept out by a stored delete may return Ok(true)
+/// because its proof changed, but it is no new message.
+pub fn apply_live(state: &mut ServerState, event: ServerEvent) -> (Result<bool, StoreError>, Option<Message>) {
+    let created = match &event {
+        ServerEvent::MessageCreate { message } if !state.has_message(message.id) => Some(message.clone()),
+        _ => None,
+    };
+    let applied = state.apply(event);
+    let created = created.filter(|m| matches!(applied, Ok(true)) && state.has_message(m.id));
+    (applied, created)
 }
 
 /// Payload of `messages-caught-up`: new messages per channel, so the
@@ -679,15 +714,19 @@ pub fn release_held<A: AppAccess>(access: &A, server: ServerId) {
 
 // ---------- The first snapshot ----------
 
-/// The snapshot we answer a newcomer's request with. Our own key stays
-/// out of it while it may still be replaced.
+/// The snapshot we answer a newcomer's request with. While our key may
+/// still be replaced, it stays out of it, and so does what we signed with
+/// it: our messages arrive by catch-up once it settled.
 pub fn snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let settled = app.key_settled();
     let mut payload = commy_net::protocol::build_sync_response(app.servers.lock().unwrap().get(&server)?, 50);
-    if let WirePayload::SyncResponse { profiles, .. } = &mut payload {
-        for profile in profiles.iter_mut().filter(|p| !settled && Some(p.id) == me) {
-            profile.identity = None;
+    if let WirePayload::SyncResponse { profiles, recent_messages, .. } = &mut payload {
+        if !settled {
+            for profile in profiles.iter_mut().filter(|p| Some(p.id) == me) {
+                profile.identity = None;
+            }
+            recent_messages.retain(|m| Some(m.author) != me);
         }
     }
     Some(payload)
@@ -708,6 +747,7 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         return false;
     }
     let me = app.profile.lock().unwrap().clone();
+    let deleted_roles = app.deleted_roles.lock().unwrap().of(server);
     let mut held = Vec::new();
     {
         let mut servers = app.servers.lock().unwrap();
@@ -740,11 +780,19 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         for profile in profiles {
             state.profiles.insert(profile.id, profile);
         }
-        // Keep our own profile visible, with the key we sign with.
+        // Deletes that arrived first stand, whatever the snapshot holds.
+        for role in deleted_roles {
+            let _ = state.apply(ServerEvent::RoleDelete { server, role });
+        }
+        // Keep our own profile visible, with the key we sign with, and
+        // join as startup does: the snapshot may predate our join.
         if let Some(me) = me {
             let key = me.identity;
-            let entry = state.profiles.entry(me.id).or_insert(me);
+            let entry = state.profiles.entry(me.id).or_insert_with(|| me.clone());
             entry.identity = key.or(entry.identity);
+            if let Err(e) = state.apply(ServerEvent::MemberJoin { server, profile: me }) {
+                tracing::warn!("could not join {server} from its snapshot: {e}");
+            }
         }
         for message in recent_messages {
             let event = ServerEvent::MessageCreate { message };
@@ -807,29 +855,8 @@ pub fn mark_joined_placeholders(app: &App, invites: &HashMap<ServerId, String>, 
     }
 }
 
-/// Catches up every server with each of its current neighbors now, after
-/// sending what waited for them. Used once our key settled, since both
-/// were held back until then.
-pub async fn catch_up_with_neighbors(handle: &tauri::AppHandle) {
-    let app = handle.state::<App>();
-    let servers: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
-    let neighbors: Vec<(ServerId, Vec<[u8; 32]>)> = {
-        let net = app.net.lock().await;
-        let Some(node) = net.as_ref() else { return };
-        servers.into_iter().map(|sid| (sid, node.neighbors(sid))).collect()
-    };
-    for (server, peers) in &neighbors {
-        if !peers.is_empty() {
-            crate::outbox::flush_queued(&app, *server).await;
-        }
-    }
-    for (server, peer) in every_neighbor(neighbors) {
-        spawn_session(handle.clone(), server, peer, None, true);
-    }
-}
-
 /// One session for each server and each of its neighbors.
-fn every_neighbor(neighbors: Vec<(ServerId, Vec<[u8; 32]>)>) -> Vec<SessionKey> {
+pub fn every_neighbor(neighbors: Vec<(ServerId, Vec<[u8; 32]>)>) -> Vec<SessionKey> {
     neighbors
         .into_iter()
         .flat_map(|(server, peers)| peers.into_iter().map(move |peer| (server, peer)))
@@ -972,6 +999,49 @@ mod tests {
     }
 
     #[test]
+    fn held_events_are_capped_by_size() {
+        let owner = Member::new("owner");
+        let stranger = Member::new("stranger");
+        let (state, channel) = server(&owner);
+        let sid = state.server.id;
+        // Large as relayed messages get: full content, many reactions.
+        let post = |i: usize, reactors: usize| {
+            let mut message = stranger.post(&state, channel, &format!("{i:04} {}", "x".repeat(3000)));
+            message.reactions.push(commy_core::Reaction { emoji: ":up".into(), users: (0..reactors).map(|_| UserId::new()).collect() });
+            ServerEvent::MessageCreate { message }
+        };
+        let events: Vec<ServerEvent> = (0..800).map(|i| post(i, 300)).collect();
+        let size = |e: &ServerEvent| held_size(e).unwrap();
+        // The newest that fit together.
+        let mut total = 0;
+        let fits = events.iter().rev().take_while(|e| {
+            total += size(e);
+            total <= HOLD_BYTES
+        });
+        let fits = fits.count();
+        assert!(fits < events.len() && events.len() < HOLD_CAP);
+        let mut catchup = Catchup::default();
+        let t0 = Instant::now();
+        for event in &events {
+            catchup.hold(sid, event.clone(), t0);
+        }
+        // One too large to send is not held, and pushes nothing out.
+        catchup.hold(sid, post(800, 5000), t0);
+        let held: Vec<ServerEvent> = catchup.take_held(sid, t0).into_iter().map(|(_, e)| e).collect();
+        assert!(held.iter().map(size).sum::<usize>() <= HOLD_BYTES);
+        assert_eq!(held.len(), fits);
+        assert_eq!(held, events[events.len() - fits..], "the oldest were dropped");
+
+        // Put back in front of newer ones, the oldest go again.
+        catchup.hold(sid, events[0].clone(), t0);
+        catchup.restore_held(sid, held.iter().map(|e| (t0, e.clone())).collect());
+        let again: Vec<ServerEvent> = catchup.take_held(sid, t0).into_iter().map(|(_, e)| e).collect();
+        assert!(again.iter().map(size).sum::<usize>() <= HOLD_BYTES);
+        assert!(!again.contains(&held[0]));
+        assert_eq!(again.last(), Some(&events[0]));
+    }
+
+    #[test]
     fn changes_are_reported_once() {
         let mut catchup = Catchup::default();
         let sid = ServerId::new();
@@ -1069,6 +1139,38 @@ mod tests {
         assert_eq!(report.held, vec![theirs.id]);
         assert_eq!(held, vec![ServerEvent::MessageCreate { message: theirs }]);
         assert!(!state.has_message(deleted.id));
+    }
+
+    #[test]
+    fn a_create_kept_out_by_an_earlier_delete_is_no_new_message() {
+        let owner = Member::new("owner");
+        let friend = Member::new("friend");
+        let (mut state, channel) = server(&owner);
+        join(&mut state, &friend);
+        let sid = state.server.id;
+        let message = friend.post(&state, channel, "soon gone");
+        let delete = TombstoneProof::sign(sid, channel, message.id, friend.id(), Utc::now(), &friend.identity);
+
+        // The delete overtook the create.
+        assert_eq!(apply_live(&mut state, delete.into_event()), (Ok(true), None));
+        let create = ServerEvent::MessageCreate { message: message.clone() };
+        assert_eq!(apply_live(&mut state, create.clone()), (Ok(true), None), "only its proof changed");
+        assert!(!state.has_message(message.id));
+        assert_eq!(apply_live(&mut state, create), (Ok(false), None));
+
+        // A new message is news once; a newer copy of it is not.
+        let fresh = friend.post(&state, channel, "hello");
+        let create = ServerEvent::MessageCreate { message: fresh.clone() };
+        assert_eq!(apply_live(&mut state, create.clone()), (Ok(true), Some(fresh.clone())));
+        assert_eq!(apply_live(&mut state, create), (Ok(false), None));
+        let mut edited = fresh.clone();
+        edited.content = "hello again".into();
+        edited.edited_at = Some(Utc::now() + chrono::Duration::seconds(1));
+        edited.sign(sid, &friend.identity);
+        assert_eq!(apply_live(&mut state, ServerEvent::MessageCreate { message: edited }), (Ok(true), None));
+        // Other events bring no message.
+        let rename = ServerEvent::ServerRename { server: sid, name: "renamed".into() };
+        assert_eq!(apply_live(&mut state, rename), (Ok(true), None));
     }
 
     #[test]
@@ -1473,6 +1575,67 @@ mod tests {
         assert!(!app.servers.lock().unwrap().contains_key(&gone.server.id));
     }
 
+    #[tokio::test]
+    async fn a_snapshot_from_before_our_join_still_makes_us_a_member() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, channel) = server(&owner);
+        let sid = real.server.id;
+        // Answered before our join reached the owner: we are not in it.
+        let snapshot = snapshot_of(&real);
+        let mut provisional = commy_core::Server::new("s", me.id());
+        provisional.id = sid;
+        let mut placeholder = ServerState::new(provisional);
+        placeholder.profiles.insert(me.id(), me.profile.clone());
+        let app = app_with(&me, placeholder);
+        app.set_awaiting_snapshot(sid, true);
+        let handle = TestHandle::new(app.clone());
+        assert!(apply_snapshot(&handle, sid, snapshot));
+        assert!(!app.awaits_snapshot(sid));
+        assert!(app.servers.lock().unwrap()[&sid].server.is_member(me.id()));
+        let store = AppStore(handle);
+        let (user, identity) = store.local_identity(sid).expect("a member, so catch-up may run");
+        assert_eq!((user, identity.public()), (me.id(), me.identity.public()));
+
+        // Our join arrives there, then a session brings what came since.
+        join(&mut real, &me);
+        let later = owner.post(&real, channel, "since the snapshot");
+        real.apply(ServerEvent::MessageCreate { message: later.clone() }).unwrap();
+        let theirs = AppStore(TestHandle::new(app_with(&owner, real)));
+        let (ours_io, theirs_io) = tokio::io::duplex(1 << 20);
+        let (our_node, their_node) = ([1u8; 32], [2u8; 32]);
+        let (initiated, responded) = tokio::join!(
+            commy_net::catchup::run_initiator(ours_io, &store, &identity, sid, user, our_node, their_node),
+            commy_net::catchup::run_responder(theirs_io, &theirs, their_node, our_node),
+        );
+        assert_eq!(initiated.unwrap().received, vec![later.id]);
+        assert_eq!(responded.unwrap().0, sid);
+        assert!(app.servers.lock().unwrap()[&sid].has_message(later.id));
+    }
+
+    #[test]
+    fn a_role_deleted_before_the_snapshot_stays_deleted() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let role = commy_core::server::Role { id: commy_core::RoleId::new(), position: 1, ..real.server.roles[0].clone() };
+        real.apply(ServerEvent::RoleCreate { server: sid, role: role.clone() }).unwrap();
+        real.apply(ServerEvent::RoleAssign { server: sid, user: me.id(), role: role.id }).unwrap();
+        let mut provisional = commy_core::Server::new("s", me.id());
+        provisional.id = sid;
+        let app = app_with(&me, ServerState::new(provisional));
+        app.set_awaiting_snapshot(sid, true);
+
+        // Its delete overtook the snapshot of a member that missed it.
+        app.note_deleted_role(sid, role.id);
+        assert!(apply_snapshot(&TestHandle::new(app.clone()), sid, snapshot_of(&real)));
+        let state = app.servers.lock().unwrap()[&sid].clone();
+        assert!(!state.server.roles.iter().any(|r| r.id == role.id));
+        assert!(state.server.member(me.id()).unwrap().roles.is_empty());
+    }
+
     #[test]
     fn our_snapshot_leaves_out_a_key_held_back() {
         let owner = Member::new("owner");
@@ -1489,6 +1652,29 @@ mod tests {
         app.hold_key(Instant::now() + Duration::from_secs(120));
         assert_eq!(our_key(snapshot_for(&app, sid).unwrap()), None);
         assert!(snapshot_for(&app, ServerId::new()).is_none());
+    }
+
+    #[test]
+    fn our_snapshot_leaves_out_what_a_held_key_signed() {
+        let owner = Member::new("owner");
+        let friend = Member::new("friend");
+        let (mut state, channel) = server(&owner);
+        join(&mut state, &friend);
+        let ours = owner.post(&state, channel, "signed with a key held back");
+        let theirs = friend.post(&state, channel, "theirs");
+        for message in [&ours, &theirs] {
+            state.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
+        }
+        let sid = state.server.id;
+        let app = app_with(&owner, state);
+        let sent = |app: &App| match snapshot_for(app, sid).unwrap() {
+            WirePayload::SyncResponse { recent_messages, .. } => recent_messages.into_iter().map(|m| m.id).collect::<HashSet<_>>(),
+            _ => panic!("not a snapshot"),
+        };
+        app.hold_key(Instant::now() + Duration::from_secs(120));
+        assert_eq!(sent(&app), HashSet::from([theirs.id]));
+        assert!(app.settle_key());
+        assert_eq!(sent(&app), HashSet::from([ours.id, theirs.id]));
     }
 
     #[test]
