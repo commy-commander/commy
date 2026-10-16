@@ -7034,10 +7034,25 @@ async function startShareWith(source, quality) {
 
 let ownPreviewTimer = null;
 let ownFpsSample = null;
+// When the backend last pushed one of our own frames; the stats tick
+// only falls back to polling an image while no frames are flowing.
+let ownFrameAt = 0;
+
+// Our own frames arrive on the same event as a stream we watch, at the
+// stream's rate, so the preview and the self stage move like the real thing.
+function showOwnFrame(frame) {
+  if (!state.sharing) return;
+  ownFrameAt = performance.now();
+  const src = `data:image/jpeg;base64,${frame.jpeg}`;
+  $("vp-preview-img").src = src;
+  $("vp-preview-empty").classList.add("hidden");
+  if (state.stageMode === "self") showStageFrame(src, frame.width, frame.height);
+}
 
 function startOwnPreview() {
   if (ownPreviewTimer) return;
   ownFpsSample = null;
+  ownFrameAt = 0;
   $("vp-preview-img").removeAttribute("src");
   $("vp-preview-empty").classList.remove("hidden");
   const tick = async () => {
@@ -7048,11 +7063,8 @@ function startOwnPreview() {
     }
     try {
       const own = await invoke("own_share_frame");
-      if (own.jpeg) {
-        const src = `data:image/jpeg;base64,${own.jpeg}`;
-        $("vp-preview-img").src = src;
-        $("vp-preview-empty").classList.add("hidden");
-        if (state.stageMode === "self") showStageFrame(src, own.width, own.height);
+      if (own.jpeg && performance.now() - ownFrameAt > 2000) {
+        showOwnFrame(own);
       }
       $("vp-viewers").textContent = own.viewers === 1 ? "1 watching" : `${own.viewers} watching`;
       $("vp-viewers").classList.toggle("hidden", !own.viewers);
@@ -8423,6 +8435,8 @@ function wireEvents() {
       const frame = event.payload;
       if (state.watchingUser && frame.user === state.watchingUser) {
         showStageFrame(`data:image/jpeg;base64,${frame.jpeg}`, frame.width, frame.height);
+      } else if (state.sharing && state.user && frame.user === state.user.id) {
+        showOwnFrame(frame);
       }
     });
   }

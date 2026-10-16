@@ -721,6 +721,7 @@ async fn set_voice_channel(
             *app.camera.lock().unwrap() = None;
             app.camera_watches.lock().unwrap().clear();
             // Ending voice also ends our share.
+            app.own_preview.lock().unwrap().take();
             let share = app.screen_share.lock().unwrap().take();
             if let Some(share) = share {
                 broadcast(
@@ -1065,13 +1066,17 @@ async fn start_screen_share(
     // None streams the primary monitor.
     let source = parse_source(source_kind.as_deref(), source_id);
     let quality = StreamQuality::from_name(quality.as_deref().unwrap_or(""));
-    *app.screen_share.lock().unwrap() = Some(ScreenShareSession::start(
-        sid,
-        channel,
-        quality.fps(),
-        quality.max_width(),
-        source,
-    ));
+    let session = ScreenShareSession::start(sid, channel, quality.fps(), quality.max_width(), source);
+    // Our own preview takes the same frames viewers get, so it moves at
+    // the stream's rate instead of the once-a-second stats poll.
+    let (preview_tx, preview_rx) = tokio::sync::mpsc::unbounded_channel();
+    session.add_subscriber(preview_tx);
+    let emitter = handle.clone();
+    let preview = ScreenWatch::from_frames(profile.id, preview_rx, None, move |user, seq, width, height, jpeg| {
+        let _ = emitter.emit("video-frame", video_frame_payload(user, Some(seq), width, height, &jpeg));
+    });
+    *app.own_preview.lock().unwrap() = Some(preview);
+    *app.screen_share.lock().unwrap() = Some(session);
 
     let event = ServerEvent::ScreenShare {
         user: profile.id,
@@ -1097,6 +1102,7 @@ async fn stop_screen_share(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
+    app.own_preview.lock().unwrap().take();
     let Some(session) = app.screen_share.lock().unwrap().take() else {
         return Ok(());
     };
@@ -1158,17 +1164,25 @@ async fn watch_screen(
 
     let emitter = handle.clone();
     let watch = ScreenWatch::start(user, media, move |user, seq, width, height, jpeg| {
-        let payload = serde_json::json!({
-            "user": user.to_string(),
-            "seq": seq,
-            "width": width,
-            "height": height,
-            "jpeg": base64::engine::general_purpose::STANDARD.encode(&jpeg),
-        });
-        let _ = emitter.emit("video-frame", payload);
+        let _ = emitter.emit("video-frame", video_frame_payload(user, Some(seq), width, height, &jpeg));
     });
     app.watches.lock().unwrap().insert(user, watch);
     Ok(())
+}
+
+/// One JPEG frame as the webview's `video-frame` and `camera-frame`
+/// events carry it.
+fn video_frame_payload(user: UserId, seq: Option<u64>, width: u32, height: u32, jpeg: &[u8]) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "user": user.to_string(),
+        "width": width,
+        "height": height,
+        "jpeg": base64::engine::general_purpose::STANDARD.encode(jpeg),
+    });
+    if let Some(seq) = seq {
+        payload["seq"] = serde_json::json!(seq);
+    }
+    payload
 }
 
 // ---------- Camera ----------
@@ -1265,13 +1279,7 @@ async fn watch_camera(
     };
     let emitter = handle.clone();
     let watch = ScreenWatch::start(user, media, move |user, _seq, width, height, jpeg| {
-        let payload = serde_json::json!({
-            "user": user.to_string(),
-            "width": width,
-            "height": height,
-            "jpeg": base64::engine::general_purpose::STANDARD.encode(&jpeg),
-        });
-        let _ = emitter.emit("camera-frame", payload);
+        let _ = emitter.emit("camera-frame", video_frame_payload(user, None, width, height, &jpeg));
     });
     app.camera_watches.lock().unwrap().insert(user, watch);
     Ok(())
@@ -3244,6 +3252,7 @@ async fn on_banned(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: 
     let in_voice_there = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
     if in_voice_there {
         *app.voice_session.lock().unwrap() = None;
+        app.own_preview.lock().unwrap().take();
         *app.screen_share.lock().unwrap() = None;
     }
     app.invites.lock().unwrap().remove(&sid);

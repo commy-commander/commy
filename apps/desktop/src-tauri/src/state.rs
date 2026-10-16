@@ -117,6 +117,8 @@ pub struct App {
     pub data_dir: OnceLock<PathBuf>,
     pub voice_session: Mutex<Option<VoiceSession>>,
     pub screen_share: Mutex<Option<ScreenShareSession>>,
+    /// Pumps our own share's frames to the webview while we stream.
+    pub own_preview: Mutex<Option<ScreenWatch>>,
     pub watches: Mutex<HashMap<UserId, ScreenWatch>>,
     pub camera: Mutex<Option<CameraSession>>,
     pub camera_watches: Mutex<HashMap<UserId, ScreenWatch>>,
@@ -187,6 +189,7 @@ impl Default for App {
             data_dir: OnceLock::new(),
             voice_session: Mutex::new(None),
             screen_share: Mutex::new(None),
+            own_preview: Mutex::new(None),
             watches: Mutex::new(HashMap::new()),
             camera: Mutex::new(None),
             camera_watches: Mutex::new(HashMap::new()),
