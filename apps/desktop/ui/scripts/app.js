@@ -951,6 +951,14 @@ function dayLabel(date) {
 
 // ---------- Rendering ----------
 
+// The webview's own right-click menu never shows: Commy draws its own
+// menus. Text fields and selected text keep it, for copy and paste.
+document.addEventListener("contextmenu", e => {
+  const editable = e.target.closest && e.target.closest("input, textarea, [contenteditable]:not([contenteditable=\"false\"])");
+  const selected = window.getSelection && String(window.getSelection()).length > 0;
+  if (!editable && !selected) e.preventDefault();
+});
+
 // ---------- Server rail: order, folders, drag and drop ----------
 
 // Per device: [{type:"server", id} | {type:"folder", id, name, open, servers:[id]}]
@@ -1448,12 +1456,21 @@ function appendVoiceUsers(list, channel) {
       setVoiceStatus(vu.lastChild, "headsetOff", "Server Deafened");
     }
     if (userId && (state.voice.muted_users || []).includes(userId)) vu.classList.add("muted-for-me");
+    // Click or right-click a name for its menu: mute, volume and, with
+    // the permissions, kick and ban for others; your own voice controls
+    // on your own row.
     if (userId && !isMe) {
-      vu.oncontextmenu = e => {
+      vu.onclick = vu.oncontextmenu = e => {
         e.preventDefault();
         e.stopPropagation();
         const member = server && server.members.find(m => m.id === userId);
         openMemberMenu(member || { id: userId, name: user }, e.clientX, e.clientY);
+      };
+    } else if (isMe) {
+      vu.onclick = vu.oncontextmenu = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        openSelfVoiceMenu(e.clientX, e.clientY);
       };
     }
     // Our own state is drawn from our settings, so a toggle shows at once.
@@ -4915,6 +4932,70 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
       }, "danger");
     }
   }
+  placeMenuAt(menu, x, y);
+}
+
+// Your own row in a voice channel: mute, deafen, your levels, disconnect.
+function openSelfVoiceMenu(x, y) {
+  if (!state.user) return;
+  closeFloating();
+  menuMember = null;
+  const menu = $("member-menu");
+  menu.replaceChildren(el("div", "ctx-title", state.user.display_name || state.user.username));
+  const item = (label, onClick, cls = "") => {
+    const btn = el("button", cls, label);
+    btn.onclick = () => {
+      closeFloating();
+      onClick();
+    };
+    menu.appendChild(btn);
+    return btn;
+  };
+  const sep = () => menu.appendChild(el("div", "ctx-sep"));
+  const level = (label, key, onChange) => {
+    const value = Math.round((state.voice[key] ?? 1) * 100);
+    const slider = el("div", "ctx-slider");
+    const text = el("div", "ctx-slider-label");
+    text.append(el("span", null, label), el("span", null, `${value}%`));
+    const range = el("input");
+    range.type = "range";
+    range.min = "0";
+    range.max = "200";
+    range.value = String(value);
+    range.oninput = () => {
+      text.lastChild.textContent = `${range.value}%`;
+      syncRangeFill(range);
+    };
+    range.onchange = () => onChange(Number(range.value) / 100);
+    slider.append(text, range);
+    menu.appendChild(slider);
+    syncRangeFill(range);
+  };
+  const setLevels = async (outputVolume, inputGain) => {
+    try {
+      state.voice = await invoke("set_volumes", { outputVolume, inputGain });
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+
+  item("Profile", () => openMemberCard(fullMember(state.user), { getBoundingClientRect: () => ({ left: x, top: y }) }));
+  sep();
+  item(state.voice.muted ? "Unmute" : "Mute", async () => {
+    state.voice = await invoke("set_muted", { muted: !state.voice.muted });
+    renderUserPanel();
+    renderChannels();
+  }, "ctx-check" + (state.voice.muted ? " checked" : ""));
+  item(state.voice.deafened ? "Undeafen" : "Deafen", async () => {
+    state.voice = await invoke("set_deafened", { deafened: !state.voice.deafened });
+    renderUserPanel();
+    renderChannels();
+  }, "ctx-check" + (state.voice.deafened ? " checked" : ""));
+  level("Microphone", "input_gain", v => setLevels(state.voice.output_volume ?? 1, v));
+  level("Speakers", "output_volume", v => setLevels(v, state.voice.input_gain ?? 1));
+  sep();
+  item("Voice Settings", () => openUserSettings("voice"));
+  item("Disconnect", () => disconnectVoice(), "danger");
   placeMenuAt(menu, x, y);
 }
 
