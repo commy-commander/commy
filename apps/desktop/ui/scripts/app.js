@@ -882,9 +882,9 @@ let railDrag = null;
 
 function dropZone(e, node, allowInto) {
   const r = node.getBoundingClientRect();
-  const y = (e.clientY - r.top) / r.height;
-  if (!allowInto) return y < 0.5 ? "before" : "after";
-  return y < 0.25 ? "before" : y > 0.75 ? "after" : "into";
+  const x = (e.clientX - r.left) / r.width;
+  if (!allowInto) return x < 0.5 ? "before" : "after";
+  return x < 0.25 ? "before" : x > 0.75 ? "after" : "into";
 }
 
 function makeDropTarget(node, target) {
@@ -1882,12 +1882,14 @@ async function saveAudioDevices() {
 // Places a fixed-position popup next to an anchor, kept on screen.
 function placePopup(popup, anchor, prefer = "above") {
   popup.classList.remove("hidden");
+  // Anchors in the top bar open downward, whatever the caller prefers.
+  if (anchor.closest && anchor.closest("#rail")) prefer = "below";
   const a = anchor.getBoundingClientRect();
   const p = popup.getBoundingClientRect();
   let top = prefer === "above" ? a.top - p.height - 8 : a.bottom + 8;
   if (top < 8) top = a.bottom + 8;
   if (top + p.height > window.innerHeight - 8) top = window.innerHeight - p.height - 8;
-  let left = Math.min(a.left, window.innerWidth - p.width - 8);
+  let left = Math.min(prefer === "below" && anchor.closest && anchor.closest("#rail") ? a.right - p.width : a.left, window.innerWidth - p.width - 8);
   popup.style.top = `${Math.max(8, top)}px`;
   popup.style.left = `${Math.max(8, left)}px`;
 }
