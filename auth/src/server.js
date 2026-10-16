@@ -1,12 +1,35 @@
 import http from "node:http";
 import { getMigrations } from "better-auth/db/migration";
 import { toNodeHandler } from "better-auth/node";
+import pg from "pg";
 import { createAuth } from "./auth.js";
 import { discoveryDocument, featureSummary, loadConfig } from "./config.js";
 import { dropDeviceNames } from "./devices.js";
 import { connectRedis } from "./redis.js";
 
 const config = loadConfig();
+
+// Better Auth checks the schema once, as it starts, and refuses requests after
+// a mismatch, so columns it no longer knows go before it starts.
+async function dropOldColumns(attempts = 30) {
+  const old = new pg.Pool({ connectionString: config.databaseUrl, max: 1 });
+  try {
+    for (let i = 1; ; i++) {
+      try {
+        await dropDeviceNames(old);
+        return;
+      } catch (err) {
+        if (i >= attempts) throw err;
+        console.warn(`[auth] database not ready (${err.code ?? err.message}), retrying`);
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  } finally {
+    await old.end();
+  }
+}
+
+await dropOldColumns();
 // Not awaited: sign-in does not depend on Redis, so the server starts without it
 const redis = config.redisUrl ? connectRedis(config.redisUrl) : null;
 redis?.ready.then(() => console.log("[auth] redis connected"));
@@ -20,7 +43,6 @@ async function migrate(attempts = 30) {
         console.log(`[auth] applying schema: ${toBeCreated.length} new tables, ${toBeAdded.length} altered`);
         await runMigrations();
       }
-      await dropDeviceNames(pool);
       return;
     } catch (err) {
       if (i >= attempts) throw err;

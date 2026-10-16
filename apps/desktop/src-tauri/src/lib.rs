@@ -2273,6 +2273,10 @@ async fn update_profile(
         let profile = guard.as_mut().ok_or("set a username first")?;
         profile.display_name = clean(display_name);
         profile.custom_status = clean(custom_status);
+        if presence != profile.presence {
+            // A new choice starts without an end time; set_status_expiry adds one.
+            profile.presence_until = None;
+        }
         profile.presence = presence;
         if let Some(emoji) = status_emoji {
             profile.status_emoji = emoji;
@@ -2290,9 +2294,15 @@ async fn update_profile(
 }
 
 /// Sets when the chosen presence and the custom status expire (unix
-/// seconds; None keeps them until changed).
+/// seconds; None keeps them until changed). The presence deadline also
+/// goes on the profile, so others see when you are back.
 #[tauri::command]
-fn set_status_expiry(app: tauri::State<'_, App>, presence_until: Option<i64>, status_until: Option<i64>) -> VoiceSettings {
+async fn set_status_expiry(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    presence_until: Option<i64>,
+    status_until: Option<i64>,
+) -> CmdResult<VoiceSettings> {
     let now = chrono::Utc::now().timestamp();
     let future = |t: Option<i64>| t.filter(|t| *t > now);
     let settings = {
@@ -2302,7 +2312,22 @@ fn set_status_expiry(app: tauri::State<'_, App>, presence_until: Option<i64>, st
         voice.clone()
     };
     app.persist_voice();
-    settings
+    let profile = {
+        let mut guard = app.profile.lock().unwrap();
+        match guard.as_mut() {
+            Some(profile) if profile.presence_until != settings.presence_until => {
+                profile.presence_until = settings.presence_until;
+                Some(profile.clone())
+            }
+            _ => None,
+        }
+    };
+    if let Some(profile) = profile {
+        app.persist_profile();
+        announce_profile(&app, &handle, &profile).await;
+        let _ = handle.emit("profile-changed", &profile);
+    }
+    Ok(settings)
 }
 
 /// What expires now, given the stored deadlines.
@@ -2338,6 +2363,7 @@ async fn run_status_expiry(handle: tauri::AppHandle) {
             let Some(profile) = guard.as_mut() else { continue };
             if presence {
                 profile.presence = Presence::Online;
+                profile.presence_until = None;
             }
             if status {
                 profile.custom_status = None;

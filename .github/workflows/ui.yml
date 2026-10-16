@@ -1,0 +1,35 @@
+# Checks for the desktop UI (plain HTML and JavaScript, no build step):
+# the node tests of the scripts that keep their logic free of the DOM.
+
+name: UI checks
+
+on:
+  push:
+    branches: [main]
+    paths: &ui-paths
+      - "apps/desktop/ui/**"
+      - ".github/workflows/ui.yml"
+  pull_request:
+    paths: *ui-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: UI tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax check every script
+        run: for f in apps/desktop/ui/scripts/*.js; do node --check "$f"; done
+      - name: node --test
+        run: node --test "apps/desktop/ui/tests/**/*.test.mjs"

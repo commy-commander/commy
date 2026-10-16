@@ -44,6 +44,10 @@ as_db "$pg_bin/initdb" -D "$work/pg" -A trust -U commy >/dev/null
 as_db "$pg_bin/pg_ctl" -D "$work/pg" -l "$work/pg/log" -w \
 	-o "-p $db_port -k $work/pg -c listen_addresses=127.0.0.1" start >/dev/null
 database="postgres://commy@127.0.0.1:$db_port/postgres"
+# A database from before device names were dropped: the server must start on it
+psql "$database" -q -v ON_ERROR_STOP=1 -c 'create table "linkedDevice" (
+	"id" text primary key, "nodeId" text not null unique, "name" text not null,
+	"userId" text not null, "createdAt" timestamptz not null, "lastSeenAt" timestamptz not null)'
 
 echo "starting the account server on $auth_port"
 [ -d "$root/auth/node_modules" ] || (cd "$root/auth" && npm ci --silent)
