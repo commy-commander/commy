@@ -1,7 +1,9 @@
+use crate::identity::Signature;
 use crate::ids::{ChannelId, MessageId, RoleId, ServerId, UserId};
 use crate::message::Message;
 use crate::server::Channel;
 use crate::user::{Presence, UserProfile};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Events replicated between peers in a server. Every event is applied
@@ -16,14 +18,22 @@ pub enum ServerEvent {
     MessageCreate {
         message: Message,
     },
+    /// `edited_at` is the author's edit time; `sig` signs the whole
+    /// message as it reads after the edit.
     MessageEdit {
         channel: ChannelId,
         message: MessageId,
         content: String,
+        edited_at: DateTime<Utc>,
+        sig: Signature,
     },
+    /// Signed by `by`, see [`crate::message::TombstoneProof`].
     MessageDelete {
         channel: ChannelId,
         message: MessageId,
+        by: UserId,
+        at: DateTime<Utc>,
+        sig: Signature,
     },
     ReactionToggle {
         channel: ChannelId,
@@ -182,5 +192,32 @@ mod tests {
         let bytes = postcard::to_stdvec(&event).unwrap();
         let back: ServerEvent = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(event, back);
+    }
+
+    #[test]
+    fn signed_events_roundtrip_both_formats() {
+        let identity = crate::identity::Identity::generate();
+        let server = ServerId::new();
+        let mut message = Message::new(ChannelId::new(), UserId::new(), "hi");
+        message.sign(server, &identity);
+        let proof = crate::message::TombstoneProof::sign(
+            server,
+            message.channel,
+            message.id,
+            message.author,
+            chrono::Utc::now(),
+            &identity,
+        );
+        let events = [
+            ServerEvent::MessageCreate { message: message.clone() },
+            message.edit_event(server, "edited", chrono::Utc::now(), &identity),
+            proof.into_event(),
+        ];
+        for event in events {
+            let json = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<ServerEvent>(&json).unwrap(), event);
+            let bytes = postcard::to_stdvec(&event).unwrap();
+            assert_eq!(postcard::from_bytes::<ServerEvent>(&bytes).unwrap(), event);
+        }
     }
 }

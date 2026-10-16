@@ -5,7 +5,8 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use commy_core::UserId;
+use chrono::{DateTime, Utc};
+use commy_core::{MessageId, UserId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -105,6 +106,17 @@ pub struct SafetySettings {
     /// Friend requests waiting for our answer.
     #[serde(default)]
     pub friend_in: HashSet<UserId>,
+    /// The last friend signal applied from each person, so a signed
+    /// signal sent to us again changes nothing.
+    #[serde(default)]
+    pub friend_signals: HashMap<UserId, SignalSeen>,
+}
+
+/// A friend signal that was applied: its DM id and when it was written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignalSeen {
+    pub id: MessageId,
+    pub at: DateTime<Utc>,
 }
 
 /// Friend requests and answers travel as DMs starting with this marker.
@@ -127,6 +139,18 @@ impl FriendSignal {
     pub fn decode(content: &str) -> Option<Self> {
         serde_json::from_str(content.strip_prefix(FRIEND_PREFIX)?).ok()
     }
+}
+
+/// Records a friend signal from `from` before it is applied. False for a
+/// replay: the signal applied last, or one written before it.
+pub fn note_friend_signal(s: &mut SafetySettings, from: UserId, id: MessageId, at: DateTime<Utc>) -> bool {
+    if let Some(last) = s.friend_signals.get(&from) {
+        if last.id == id || at < last.at {
+            return false;
+        }
+    }
+    s.friend_signals.insert(from, SignalSeen { id, at });
+    true
 }
 
 /// What a friend signal from `from` means for us, applied to our lists.
@@ -184,6 +208,7 @@ impl Default for SafetySettings {
             friends: HashSet::new(),
             friend_out: HashSet::new(),
             friend_in: HashSet::new(),
+            friend_signals: HashMap::new(),
         }
     }
 }
@@ -436,6 +461,27 @@ mod tests {
         s.set_blocked(d, true);
         apply_friend_signal(&mut s, d, FriendSignal::Request);
         assert!(!s.friend_in.contains(&d));
+    }
+
+    #[test]
+    fn replayed_friend_signals_are_ignored() {
+        let mut s = SafetySettings::default();
+        let friend = UserId::new();
+        let t0 = Utc::now();
+        let (decline, accept) = (MessageId::new(), MessageId::new());
+        assert!(note_friend_signal(&mut s, friend, decline, t0));
+        assert!(!note_friend_signal(&mut s, friend, decline, t0), "the same signal again");
+        assert!(note_friend_signal(&mut s, friend, accept, t0 + chrono::Duration::seconds(5)));
+        assert!(!note_friend_signal(&mut s, friend, decline, t0), "older than the last one");
+        // Each person has their own record.
+        assert!(note_friend_signal(&mut s, UserId::new(), decline, t0));
+
+        // It survives a restart.
+        let json = serde_json::to_string(&s).unwrap();
+        let mut loaded: SafetySettings = serde_json::from_str(&json).unwrap();
+        assert!(!note_friend_signal(&mut loaded, friend, accept, t0 + chrono::Duration::seconds(5)));
+        let old: SafetySettings = serde_json::from_str("{}").unwrap();
+        assert!(old.friend_signals.is_empty());
     }
 
     #[test]

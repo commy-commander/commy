@@ -2449,6 +2449,32 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .reply-bar:not(.hidden) + .gif-picker + .composer,
 .reply-bar:not(.hidden) ~ .composer { border-top-left-radius: 0; border-top-right-radius: 0; }
 
+/* Messages not yet delivered to anyone, and messages on their way to us */
+.msg.pending .msg-body > :not(.msg-head) { opacity: .6; }
+.msg-pending {
+  display: inline-flex;
+  align-self: center;
+  vertical-align: -2px;
+  margin-left: 4px;
+  color: var(--text-muted);
+  cursor: default;
+}
+.msg-head .msg-pending { margin-left: 0; }
+.awaited-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px 8px;
+  padding: 6px 14px;
+  background: var(--bg-dark);
+  border: 1px solid var(--bg-active);
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+.awaited-icon { display: inline-flex; flex-shrink: 0; color: var(--text-faint); }
+
 /* ---------- Reactions ---------- */
 .reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .reaction {

@@ -4,6 +4,8 @@
 //! <data>/profile.json          our identity
 //! <data>/voice.json            voice settings
 //! <data>/servers/<id>.json     one Snapshot per joined server
+//! <data>/outbox.json           sends waiting for someone to come online
+//! <data>/awaiting-snapshot.json servers joined that wait for a snapshot
 //! ```
 //!
 //! Writes go to a temp file first and are renamed into place so a
@@ -14,11 +16,11 @@ use anyhow::{Context, Result};
 use commy_core::{DmStore, ServerId, ServerState, Snapshot, UserProfile};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -33,7 +35,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     Ok(())
 }
 
-fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
+pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     let bytes = fs::read(path).ok()?;
     match serde_json::from_slice(&bytes) {
         Ok(value) => Some(value),
@@ -101,6 +103,26 @@ pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
     fs::create_dir_all(dir).ok()?;
     fs::write(&path, data_encoding::HEXLOWER.encode(&key)).ok()?;
     Some(key)
+}
+
+/// Servers joined that wait for their first snapshot.
+pub fn save_awaiting(dir: &Path, servers: &HashSet<ServerId>) -> Result<()> {
+    write_json(&dir.join("awaiting-snapshot.json"), servers)
+}
+
+/// Earlier builds saved each with a time, which no longer counts.
+pub fn load_awaiting(dir: &Path) -> HashSet<ServerId> {
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Saved {
+        Listed(HashSet<ServerId>),
+        Timed(HashMap<ServerId, i64>),
+    }
+    match read_json(&dir.join("awaiting-snapshot.json")) {
+        Some(Saved::Listed(set)) => set,
+        Some(Saved::Timed(map)) => map.into_keys().collect(),
+        None => HashSet::new(),
+    }
 }
 
 /// Invite tickets, kept so joined servers can be rejoined after a
@@ -177,15 +199,19 @@ mod tests {
     #[test]
     fn server_roundtrip_with_messages() {
         let dir = temp_dir("server");
-        let owner = UserId::new();
+        let identity = commy_core::Identity::generate();
+        let mut profile = UserProfile::new("owner");
+        profile.identity = Some(identity.public());
+        let owner = profile.id;
         let server = Server::new("persisted", owner);
         let channel = server.channels[0].id;
         let mut state = ServerState::new(server);
+        state.profiles.insert(owner, profile);
         for i in 0..3 {
+            let mut message = Message::new(channel, owner, format!("m{i}"));
+            message.sign(state.server.id, &identity);
             state
-                .apply(ServerEvent::MessageCreate {
-                    message: Message::new(channel, owner, format!("m{i}")),
-                })
+                .apply(ServerEvent::MessageCreate { message })
                 .unwrap();
         }
         save_server(&dir, &state).unwrap();

@@ -13,7 +13,11 @@
 //! - Voice and screen share use direct QUIC connections negotiated over
 //!   the gossip topic (signaling), falling back to iroh relays when
 //!   hole punching fails.
+//! - Members that were offline catch up on recent history with a
+//!   neighbor over a direct connection (see `catchup`). Messages carry
+//!   their author's signature, so any member can relay them.
 
+pub mod catchup;
 pub mod dm;
 pub mod entry_key;
 pub mod media;
@@ -23,10 +27,16 @@ pub mod relays;
 pub mod sealed;
 pub mod ticket;
 
+#[cfg(test)]
+mod test_support;
+
+pub use catchup::{
+    ApplyReport, CatchupError, CatchupFrame, CatchupStore, PeerCheck, Refusal, SessionReport, CATCHUP_ALPN,
+};
 pub use dm::{DmAck, DmEnvelope, DM_ALPN};
 pub use entry_key::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ENTRY_KEY_ALPN};
 pub use media::{MediaHello, MediaPacket, MEDIA_ALPN};
-pub use node::{CommyNode, MediaChannel, NetEvent};
+pub use node::{CommyNode, MediaChannel, NetEvent, SharedCatchupStore};
 pub use protocol::{Envelope, WirePayload, PROTOCOL_VERSION};
 pub use sealed::{SealError, SealKey};
 pub use ticket::{ServerTicket, TicketError};

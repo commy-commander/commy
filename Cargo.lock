@@ -878,9 +878,13 @@ name = "commy-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "ed25519-dalek",
+ "hmac",
  "postcard",
+ "rand 0.8.8",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 1.0.69",
  "uuid",
 ]
@@ -938,6 +942,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
+ "chrono",
  "commy-core",
  "data-encoding",
  "futures-lite",
