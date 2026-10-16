@@ -767,7 +767,7 @@
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">Desktop notifications</div>
-              <div class="setting-sub">Windows notifications for new messages while Commy is in the background. Direct messages always count. Right-click a server to change it for that server. Do Not Disturb silences everything.</div>
+              <div class="setting-sub">Desktop notifications and a sound for new messages while you are not looking at that conversation, including messages that arrive while Commy catches up after a wake-up. Direct messages always count. Right-click a server to change it for that server. Do Not Disturb silences everything.</div>
             </div>
             <select id="notify-level" class="compact-select">
               <option value="all">All messages</option>
@@ -1278,7 +1278,7 @@
       <div class="pp-presence" id="pp-presence">
         <button data-presence="online"><span class="presence-dot inline online"></span><span>Online</span></button>
         <button data-presence="idle"><span class="presence-dot inline idle"></span><span>Idle</span></button>
-        <button data-presence="do_not_disturb"><span class="presence-dot inline do_not_disturb"></span><span>Do Not Disturb<small>You will not get notifications</small></span></button>
+        <button data-presence="do_not_disturb"><span class="presence-dot inline do_not_disturb"></span><span>Do Not Disturb<small>No notifications or sounds. Others see when you are back</small></span></button>
         <button data-presence="invisible"><span class="presence-dot inline invisible"></span><span>Appear Offline<small>Look offline, still get every message</small></span></button>
       </div>
       <div class="pp-durations hidden" id="pp-durations">
@@ -1291,7 +1291,8 @@
           <input type="datetime-local" id="pp-custom-time" />
           <button class="btn-primary btn-small" id="pp-custom-set">Set</button>
         </div>
-        <button data-mins="never">Don't clear</button>
+        <button data-mins="never" id="pp-durations-never">Don't clear</button>
+        <div class="pp-durations-note hidden" id="pp-durations-note"></div>
       </div>
       <div class="pp-divider"></div>
       <button class="pp-link" id="pp-edit-profile">Edit Profile</button>
@@ -1410,6 +1411,7 @@
   <div class="mention-pop hidden" id="mention-pop" role="listbox"></div>
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/emoji.js"></script>
+  <script src="scripts/notify.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
   <script src="scripts/entry-list.js"></script>

@@ -54,6 +54,8 @@ pub struct MemberView {
     pub id: String,
     pub name: String,
     pub presence: String,
+    /// When a timed presence ends (unix seconds), shown as "back at".
+    pub presence_until: Option<i64>,
     pub custom_status: Option<String>,
     /// Hex color of their highest colored role, if any.
     pub color: Option<String>,
@@ -220,6 +222,7 @@ impl ServerView {
                     .ok()
                     .and_then(|v| v.as_str().map(String::from))
                     .unwrap_or_else(|| "offline".to_string()),
+                presence_until: p.presence_until,
                 custom_status: p.custom_status.clone(),
                 color: state.server.role_color_for(p.id),
                 roles: state
