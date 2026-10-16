@@ -843,6 +843,21 @@ impl ServerState {
                 *existing = role;
                 Ok(true)
             }
+            ServerEvent::ChannelBanner { server, channel, banner } => {
+                if server != self.server.id {
+                    return Err(StoreError::WrongServer);
+                }
+                // Malformed refs from a peer are dropped rather than stored.
+                let banner = banner.filter(|r| crate::server::ImageRef::parse(r).is_some());
+                let Some(target) = self.server.channels.iter_mut().find(|c| c.id == channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                if target.banner == banner {
+                    return Ok(false);
+                }
+                target.banner = banner;
+                Ok(true)
+            }
             ServerEvent::ServerImages { server, icon, banner } => {
                 if server != self.server.id {
                     return Err(StoreError::WrongServer);
@@ -1917,6 +1932,24 @@ mod tests {
                 name: "x".into(),
                 retention_days: None
             }),
+            Err(StoreError::UnknownChannel)
+        );
+    }
+
+    #[test]
+    fn channel_banner_sets_and_clears() {
+        let (mut state, channel, _) = fixture();
+        let sid = state.server.id;
+        let set = |banner: Option<&str>| ServerEvent::ChannelBanner { server: sid, channel, banner: banner.map(String::from) };
+        assert_eq!(state.apply(set(Some("abc123@provider1"))), Ok(true));
+        assert_eq!(state.server.channel(channel).unwrap().banner.as_deref(), Some("abc123@provider1"));
+        assert_eq!(state.apply(set(Some("abc123@provider1"))), Ok(false));
+        // A malformed ref clears rather than stores garbage.
+        assert_eq!(state.apply(set(Some("not a ref"))), Ok(true));
+        assert_eq!(state.server.channel(channel).unwrap().banner, None);
+        assert_eq!(state.apply(set(None)), Ok(false));
+        assert_eq!(
+            state.apply(ServerEvent::ChannelBanner { server: sid, channel: ChannelId::new(), banner: None }),
             Err(StoreError::UnknownChannel)
         );
     }

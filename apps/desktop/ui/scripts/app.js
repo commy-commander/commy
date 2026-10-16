@@ -48,6 +48,50 @@ const mock = {
   voice: { noise_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10 },
 };
 
+// Tiny drawn stand-ins for uploaded pictures in the browser preview.
+function mockCrabImage() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d");
+  g.fillStyle = "#ff4d4d";
+  g.beginPath();
+  g.ellipse(32, 36, 24, 18, 0, 0, Math.PI * 2);
+  g.fill();
+  for (const x of [20, 44]) {
+    g.beginPath();
+    g.arc(x, 24, 7, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.fillStyle = "#0b0d17";
+  for (const x of [20, 44]) {
+    g.beginPath();
+    g.arc(x, 24, 3, 0, Math.PI * 2);
+    g.fill();
+  }
+  return c.toDataURL("image/png");
+}
+
+function mockBannerImage() {
+  const c = document.createElement("canvas");
+  c.width = 960;
+  c.height = 320;
+  const g = c.getContext("2d");
+  const grad = g.createLinearGradient(0, 0, 960, 320);
+  grad.addColorStop(0, "#2a1d5c");
+  grad.addColorStop(0.6, "#8a3a7a");
+  grad.addColorStop(1, "#ff8a5b");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 960, 320);
+  g.fillStyle = "rgba(255,255,255,.75)";
+  for (let i = 0; i < 70; i++) {
+    const x = (i * 137) % 960, y = (i * 97) % 320, r = 0.6 + (i % 4) * 0.5;
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.fill();
+  }
+  return c.toDataURL("image/jpeg", 0.85);
+}
+
 function mockSeed() {
   const ch = (name, kind, topic) => ({
     id: crypto.randomUUID(), name, kind, topic: topic || null, voice_users: [],
@@ -59,7 +103,7 @@ function mockSeed() {
     channels: [
       ch("welcome", "text", "Start here"),
       ch("general", "text", "Anything goes"),
-      ch("rust-help", "text", "Borrow checker support group"),
+      ch(":ferris:-rust-help", "text", "Borrow checker support group"),
       ch("General", "voice"),
     ],
     members: [
@@ -73,6 +117,11 @@ function mockSeed() {
     { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages"], self_assignable: false, tag: null },
   ];
   server.game_tags = ["Rust", "Valorant"];
+  // A custom emoji and a channel banner so names and intros can be previewed.
+  server.emojis = [{ name: "ferris", image: "ferris@mock" }];
+  mock.expressions = { ...(mock.expressions || {}), "ferris@mock": mockCrabImage() };
+  mock.serverImages = { ...(mock.serverImages || {}), "welcome-banner@mock": mockBannerImage() };
+  server.channels[0].banner = "welcome-banner@mock";
   server.rules = "# Welcome\n1. Be kind to each other\n2. **No spam** or self promotion\n3. Keep it on topic, see https://commy.chat";
   server.needs_rules = true;
   server.members[0].tag = "RAID";
@@ -450,6 +499,13 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "unban_member": { const s = mock.servers[args.serverId]; s.banned = (s.banned || []).filter(b => b[0] !== args.userId); return null; }
+    case "set_channel_banner": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      const ref = args.data ? `mock${Date.now()}@mock` : null;
+      if (ref) mock.serverImages = { ...(mock.serverImages || {}), [ref]: `data:image/jpeg;base64,${args.data}` };
+      c.banner = ref;
+      return null;
+    }
     case "set_role_banner": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
       const ref = args.data ? `mock${Date.now()}@mock` : null;
@@ -1148,6 +1204,52 @@ async function confirmLeaveServer() {
   }
 }
 
+// Channel names can carry the server's custom emoji as ":name:" tokens.
+const CHANNEL_EMOJI_RE = /:([a-z0-9_]{2,32}):/g;
+
+function serverEmoji(name) {
+  const server = state.currentServer;
+  return ((server && server.emojis) || []).find(e => e.name === name) || null;
+}
+
+// Pieces of a channel name: strings and {emoji} objects. A dash that only
+// separates an emoji from the words is dropped, so ":ferris:-rust-help"
+// reads as the crab followed by "rust-help".
+function channelNameParts(name) {
+  const parts = [];
+  let last = 0;
+  CHANNEL_EMOJI_RE.lastIndex = 0;
+  let m;
+  while ((m = CHANNEL_EMOJI_RE.exec(name))) {
+    const emoji = serverEmoji(m[1]);
+    if (!emoji) continue;
+    let text = name.slice(last, m.index);
+    if (parts.length && typeof parts[parts.length - 1] === "object") text = text.replace(/^-/, "");
+    text = text.replace(/-$/, "");
+    if (text) parts.push(text);
+    parts.push({ emoji });
+    last = m.index + m[0].length;
+  }
+  let tail = name.slice(last);
+  if (parts.length && typeof parts[parts.length - 1] === "object") tail = tail.replace(/^-/, "");
+  if (tail) parts.push(tail);
+  return parts;
+}
+
+function channelNameNode(channel, cls = null) {
+  const span = el("span", cls);
+  for (const part of channelNameParts(channel.name)) {
+    if (typeof part === "string") span.appendChild(document.createTextNode(part));
+    else span.appendChild(customEmojiImg(part.emoji.name, part.emoji.image, "custom-emoji channel-emoji"));
+  }
+  return span;
+}
+
+// Plain-text name for places that cannot hold an image.
+function channelPlainName(channel) {
+  return channelNameParts(channel.name).filter(p => typeof p === "string").join(" ").trim() || channel.name;
+}
+
 function renderChannels() {
   const list = $("channel-list");
   list.innerHTML = "";
@@ -1186,7 +1288,13 @@ function renderChannels() {
 function textChannelRow(channel, canCreate) {
   const row = el("div", "channel");
   row.appendChild(el("span", "hash", "#"));
-  row.appendChild(el("span", null, channel.name));
+  row.appendChild(channelNameNode(channel, "channel-label"));
+  if (channel.banner) {
+    row.classList.add("has-banner");
+    loadServerImage(channel.banner).then(url => {
+      if (url) row.style.setProperty("--channel-banner", `url("${url}")`);
+    });
+  }
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
   if (unread.channels.get(channel.id)) row.classList.add("unread");
   row.onclick = () => selectChannel(channel);
@@ -1199,7 +1307,7 @@ function voiceChannelRow(channel, canCreate) {
   const icon = el("span", "channel-icon");
   icon.appendChild(svgIcon("speaker", 18));
   row.appendChild(icon);
-  row.appendChild(el("span", "channel-label", channel.name));
+  row.appendChild(channelNameNode(channel, "channel-label"));
   const full = voiceFull(channel);
   if (channel.id === state.voiceChannelId) {
     row.classList.add("active", "connected");
@@ -1963,7 +2071,7 @@ function renderEmojiPop(query) {
     appendCustomEmojiSections(grid, q, e => {
       $("emoji-pop").classList.add("hidden");
       if (emojiPopPick) emojiPopPick(`<:${e.name}:${e.image}>`);
-    });
+    }, emojiPopCustom === "local");
   }
   for (const [emoji, name] of EMOJI_DATA.filter(([, n]) => !q || n.includes(q)).slice(0, 160)) {
     const btn = el("button", null, emoji);
@@ -2108,7 +2216,7 @@ function openChannelSettings(channelId) {
   const channel = editingChannel();
   if (!channel) return;
   const voice = channel.kind === "voice";
-  $("channel-settings-title").textContent = voice ? channel.name : `# ${channel.name}`;
+  $("channel-settings-title").replaceChildren(...(voice ? [] : [document.createTextNode("# ")]), channelNameNode(channel));
   $("channel-edit-prefix").replaceChildren(voice ? svgIcon("speaker", 16) : document.createTextNode("#"));
   $("channel-edit-name").value = channel.name;
   const retention = String(channel.retention_days || 0);
@@ -2124,7 +2232,45 @@ function openChannelSettings(channelId) {
   $("channel-limit").value = String(channel.user_limit || 0);
   syncLimitLabel();
   syncChannelDirty();
+  paintChannelBannerCard(channel);
   openSettingsLayer("channel-settings", "overview");
+}
+
+function paintChannelBannerCard(channel) {
+  const preview = $("channel-banner-preview");
+  preview.innerHTML = "";
+  paintBanner(preview, channel.banner, "var(--bg-active)");
+  if (!channel.banner) preview.appendChild(el("span", null, "No banner"));
+  $("channel-banner-upload").textContent = channel.banner ? "Change Banner" : "Upload Banner";
+  $("channel-banner-remove").classList.toggle("hidden", !channel.banner);
+}
+
+async function setChannelBanner(data) {
+  const channel = editingChannel();
+  if (!channel) return;
+  try {
+    await invoke("set_channel_banner", { serverId: state.currentServer.id, channelId: channel.id, data });
+    await refreshCurrentServer();
+    openChannelSettings(channel.id);
+    if (state.currentChannel && state.currentChannel.id === channel.id) await selectChannel(editingChannel());
+    toast(data ? "Channel banner saved" : "Channel banner removed");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+// Puts an emoji picked from the popover into a name field at the caret.
+// Custom emoji become ":name:" tokens the name keeps as text.
+function insertEmojiInName(input, picked) {
+  const custom = parseEmojiToken(picked);
+  const text = custom ? `:${custom.name}:` : picked;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  input.value = input.value.slice(0, start) + text + input.value.slice(end);
+  const pos = start + text.length;
+  input.focus();
+  input.setSelectionRange(pos, pos);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function channelEdits() {
@@ -2399,11 +2545,18 @@ function renderMessages(messages) {
 // The top of every channel: where you are and what it is for.
 function buildChannelIntro(channel) {
   const intro = el("div", "channel-intro");
+  if (channel.banner) {
+    const banner = el("div", "channel-intro-banner");
+    paintBanner(banner, channel.banner, "var(--bg-raised)");
+    intro.appendChild(banner);
+  }
   const mark = el("div", "channel-intro-mark");
   if (channel.kind === "voice") mark.appendChild(svgIcon("speaker", 32));
   else mark.appendChild(el("span", "channel-intro-hash", "#"));
   intro.appendChild(mark);
-  intro.appendChild(el("h2", null, `Welcome to #${channel.name}`));
+  const title = el("h2", null, channel.kind === "voice" ? "Welcome to " : "Welcome to #");
+  title.appendChild(channelNameNode(channel));
+  intro.appendChild(title);
   intro.appendChild(el("p", null, channel.topic || "This is the start of the channel. Say something."));
   return intro;
 }
@@ -4989,9 +5142,9 @@ function appendRichText(div, text) {
 }
 
 // Custom emoji sections for a picker grid. `onPick` gets the emoji.
-function appendCustomEmojiSections(grid, query, onPick) {
+function appendCustomEmojiSections(grid, query, onPick, localOnly = false) {
   const { local, external } = usableCustomEmojis();
-  const groups = [local, ...external].filter(Boolean);
+  const groups = [local, ...(localOnly ? [] : external)].filter(Boolean);
   let any = false;
   for (const group of groups) {
     const matches = group.emojis.filter(e => !query || e.name.includes(query));
@@ -6311,9 +6464,9 @@ async function selectChannel(channel) {
   syncAwaitedBar();
   if (channel) clearChannelUnread(channel.id);
   renderChannels();
-  $("channel-name").textContent = channel ? channel.name : "no channel";
+  $("channel-name").replaceChildren(channel ? channelNameNode(channel) : document.createTextNode("no channel"));
   $("channel-topic").textContent = (channel && channel.topic) || "";
-  $("message-input").placeholder = channel ? `Message #${channel.name}` : "Select a channel";
+  $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
   if (!channel) return renderMessages([]);
   const messages = await invoke("get_messages", {
     serverId: state.currentServer.id,
@@ -7841,6 +7994,17 @@ function wireEvents() {
 
   // Channel settings
   $("channel-edit-name").addEventListener("input", syncChannelDirty);
+  $("channel-edit-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("channel-edit-name"), picked), { custom: "local" });
+  $("channel-banner-upload").onclick = async () => {
+    try {
+      const src = await chooseImage("Choose a channel banner", $("server-image-file"));
+      if (!src) return;
+      await setChannelBanner(await cropImageFile(src, 960, 320));
+    } catch (err) {
+      toast(String(err));
+    }
+  };
+  $("channel-banner-remove").onclick = () => setChannelBanner(null);
   $("channel-edit-name").addEventListener("keydown", e => {
     if (e.key === "Enter") saveChannelEdits();
   });
@@ -7870,6 +8034,7 @@ function wireEvents() {
   }
   $("create-voice-icon").appendChild(svgIcon("speaker", 22));
   $("create-channel-name").addEventListener("input", syncCreateChannelName);
+  $("create-channel-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("create-channel-name"), picked), { custom: "local" });
   $("create-channel-name").addEventListener("keydown", e => {
     if (e.key === "Enter" && !$("create-channel-save").disabled) saveCreateChannel();
   });
@@ -8337,7 +8502,7 @@ function openServerSettings(tab) {
     if (channel.kind === "voice") icon.appendChild(svgIcon("speaker", 18));
     else icon.textContent = "#";
     label.appendChild(icon);
-    label.appendChild(el("span", null, channel.name));
+    label.appendChild(channelNameNode(channel));
     label.appendChild(el("span", "kind", channel.kind));
     row.appendChild(label);
     const edit = el("button", "btn-secondary btn-small", "Edit");

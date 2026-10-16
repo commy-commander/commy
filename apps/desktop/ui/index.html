@@ -542,6 +542,9 @@
         <span class="prefixed-input">
           <span class="input-prefix" id="create-channel-prefix">#</span>
           <input id="create-channel-name" type="text" maxlength="50" placeholder="new-channel" autocomplete="off" />
+          <button type="button" class="input-emoji-btn" id="create-channel-emoji" title="Add an emoji to the name">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 17.5c2.3 0 4.3-1.4 5.1-3.5H6.9c.8 2.1 2.8 3.5 5.1 3.5z"/></svg>
+          </button>
         </span>
       </label>
       <div class="modal-actions">
@@ -985,8 +988,23 @@
               <span class="prefixed-input">
                 <span class="input-prefix" id="channel-edit-prefix">#</span>
                 <input id="channel-edit-name" type="text" maxlength="50" autocomplete="off" />
+                <button type="button" class="input-emoji-btn" id="channel-edit-emoji" title="Add an emoji to the name">
+                  <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 17.5c2.3 0 4.3-1.4 5.1-3.5H6.9c.8 2.1 2.8 3.5 5.1 3.5z"/></svg>
+                </button>
               </span>
             </label>
+            <div class="setting-sub">Custom emoji from this server can be part of the name.</div>
+          </div>
+          <div class="settings-card">
+            <div class="setting-title">Channel Banner</div>
+            <div class="role-banner-row">
+              <div class="role-banner-preview" id="channel-banner-preview"></div>
+              <div class="role-banner-actions">
+                <div class="setting-sub">Optional picture shown above the channel and behind its name in the channel list.</div>
+                <button class="btn-secondary btn-small" type="button" id="channel-banner-upload">Upload Banner</button>
+                <button class="btn-link danger hidden" type="button" id="channel-banner-remove">Remove</button>
+              </div>
+            </div>
           </div>
           <div class="settings-card setting-row">
             <div>

@@ -1904,6 +1904,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             if channel.user_limit > 0 {
                 events.push(ServerEvent::ChannelLimit { server: sid, channel: channel.id, user_limit: channel.user_limit });
             }
+            if channel.banner.is_some() {
+                events.push(ServerEvent::ChannelBanner { server: sid, channel: channel.id, banner: channel.banner.clone() });
+            }
         }
     }
     if perms.allows(Permissions::MUTE_MEMBERS) {
@@ -3022,6 +3025,40 @@ async fn set_role_banner(
     };
     let role = commy_core::server::Role { banner, ..existing };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
+}
+
+/// Sets or clears a channel's banner. `data` is a base64 JPEG or PNG
+/// (cropped in the webview); None removes it.
+#[tauri::command]
+async fn set_channel_banner(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    data: Option<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
+        state.server.channel(cid).ok_or("unknown channel")?;
+    }
+    let banner = match data {
+        None => None,
+        Some(b64) => {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|_| "image data is not valid base64".to_string())?;
+            if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
+                return Err("channel banners must be a JPEG or PNG under 1 MB".into());
+            }
+            Some(store_shared_blob(&app, bytes).await?)
+        }
+    };
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelBanner { server: sid, channel: cid, banner }).await
 }
 
 // ---------- Voice connection details ----------
@@ -5055,6 +5092,7 @@ pub fn run() {
             set_avatar,
             set_share_activity,
             update_channel,
+            set_channel_banner,
             edit_message,
             delete_message,
             list_audio_devices,

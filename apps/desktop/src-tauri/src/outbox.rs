@@ -501,6 +501,7 @@ pub fn needs_settled_key(event: &ServerEvent, me: Option<UserId>) -> bool {
         | E::EventRsvp { .. }
         | E::ChannelLayout { .. }
         | E::ChannelLimit { .. }
+        | E::ChannelBanner { .. }
         | E::RoleUpdate { .. }
         | E::VoiceModerate { .. }
         | E::MemberBan { .. }

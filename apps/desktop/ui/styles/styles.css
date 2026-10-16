@@ -231,6 +231,41 @@ body {
 .channel:hover { background: var(--bg-hover); color: var(--text-normal); }
 .channel.active { background: var(--bg-active); color: #fff; }
 .channel .hash { font-size: 17px; color: var(--text-faint); }
+.channel .channel-label { overflow: hidden; text-overflow: ellipsis; }
+.channel-emoji { width: 20px; height: 20px; vertical-align: -5px; margin: 0 2px 0 0; }
+.chat-header .channel-emoji { width: 22px; height: 22px; vertical-align: -6px; }
+.channel-intro h2 .channel-emoji { width: 30px; height: 30px; vertical-align: -6px; margin: 0 3px; }
+
+/* A channel banner sits behind the name in the list, fading in from the right. */
+.channel.has-banner {
+  position: relative;
+  isolation: isolate;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  color: var(--text-normal);
+}
+.channel.has-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--channel-banner);
+  background-size: cover;
+  background-position: center;
+  border-radius: inherit;
+  opacity: .85;
+}
+.channel.has-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--bg-mid) 0%, rgba(23, 28, 51, .92) 45%, rgba(23, 28, 51, .35) 100%);
+}
+.channel.has-banner:hover::after { background: linear-gradient(90deg, var(--bg-hover) 0%, rgba(30, 36, 64, .9) 45%, rgba(30, 36, 64, .3) 100%); }
+.channel.has-banner.active::after { background: linear-gradient(90deg, var(--bg-active) 0%, rgba(45, 53, 84, .9) 45%, rgba(45, 53, 84, .3) 100%); }
+.channel.has-banner .hash, .channel.has-banner .channel-label { text-shadow: 0 1px 2px rgba(0, 0, 0, .5); }
 
 .channel-icon {
   width: 20px;
@@ -454,6 +489,14 @@ body {
 
 /* Top of a channel */
 .channel-intro { margin-top: auto; padding: 24px 8px 8px; }
+.channel-intro-banner {
+  height: 180px;
+  border-radius: var(--radius);
+  background-size: cover;
+  background-position: center;
+  margin-bottom: 20px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
 .channel-intro-mark {
   width: 64px;
   height: 64px;
@@ -1862,6 +1905,21 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 .prefixed-input:focus-within { border-color: var(--focus); }
 .input-prefix { color: var(--text-muted); font-size: 18px; font-weight: 500; display: inline-flex; }
+.input-emoji-btn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  margin-right: 2px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.input-emoji-btn:hover { color: var(--header-primary); background: var(--bg-hover); }
 .modal .prefixed-input input[type="text"] { flex: 1; background: none; border: none; text-transform: none; letter-spacing: normal; font-weight: 400; }
 
 /* Channel group headers with a create button */
@@ -2016,7 +2074,9 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 
 .emoji-pop {
   position: fixed;
-  z-index: 140;
+  /* Above settings layers and modal backdrops, so pickers opened from
+     settings and dialogs are clickable. */
+  z-index: 180;
   width: 340px;
   max-height: 320px;
   background: var(--bg-dark);
