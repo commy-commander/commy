@@ -120,7 +120,7 @@ body {
 }
 .sidebar, .main, .members { grid-row: 2; }
 .sidebar, .members, .thread-panel, .dm-profile { border-radius: var(--radius-lg); overflow: hidden; }
-.main { border-radius: var(--radius-lg); }
+.main { border-radius: var(--radius-lg); position: relative; }
 
 /* Top bar: the mark, your servers, your account */
 .rail {
@@ -3790,3 +3790,165 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .si-role { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: var(--radius-pill); background: var(--bg-raised); border: 1px solid var(--line); font-size: 13px; color: var(--text-normal); }
 .si-role .role-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
 .btn-secondary.danger-text { color: var(--accent); }
+
+/* Pinned messages: header button, panel, marks, server-wide list */
+#pins-btn { position: relative; }
+.pin-count {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink, #fff);
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.pins-pop {
+  position: absolute;
+  top: 54px;
+  right: 12px;
+  width: 400px;
+  max-width: calc(100% - 24px);
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-darkest);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .55);
+  z-index: 120;
+  overflow: hidden;
+}
+.pins-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.pins-pop-title { font-family: var(--font-display); font-weight: 700; font-size: 15px; color: var(--header-primary); }
+.pins-pop-head .btn-link { font-size: 13px; color: var(--text-muted); padding: 0; }
+.pins-pop-head .btn-link:hover { color: var(--header-primary); text-decoration: underline; }
+.pins-list { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.pins-list-wide { max-height: 56vh; margin: 0 -8px; }
+.pin-row {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--t-hover, .12s) ease;
+}
+.pin-row:hover, .pin-row:focus-visible { background: var(--bg-hover); outline: none; }
+.pin-row .avatar { width: 32px; height: 32px; flex-shrink: 0; }
+.pin-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pin-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; padding-right: 24px; }
+.pin-author { font-family: var(--font-display); font-weight: 600; color: var(--header-primary); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pin-time, .pin-channel { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.pin-channel { margin-left: auto; }
+.pin-text {
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text-normal);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.pin-text.muted { color: var(--text-muted); font-style: italic; }
+.pin-thumb { max-width: 180px; max-height: 110px; border-radius: 8px; margin-top: 4px; }
+.pin-by { font-size: 12px; color: var(--text-faint); }
+.pin-unpin {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-hover, .12s) ease, background var(--t-hover, .12s) ease, color var(--t-hover, .12s) ease;
+}
+.pin-row:hover .pin-unpin, .pin-row:focus-within .pin-unpin { opacity: 1; }
+.pin-unpin:hover { background: var(--accent); color: var(--accent-ink, #fff); }
+.pins-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 36px 24px 40px;
+  color: var(--text-muted);
+}
+.pins-empty-mark {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  background: var(--bg-raised);
+  color: var(--header-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+.pins-empty strong { font-family: var(--font-display); font-size: 15px; color: var(--header-primary); }
+.pins-empty span { font-size: 13px; line-height: 1.4; max-width: 280px; }
+.pins-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 12px 4px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.pins-group-head .hash { font-size: 16px; color: var(--text-faint); }
+.pins-group-head .channel-icon { width: 18px; }
+.msg-pinned {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--text-muted);
+  cursor: default;
+}
+.msg-pinned svg { color: var(--accent); }
+.msg.pinned { box-shadow: inset 3px 0 0 rgba(255, 77, 77, .55); }
+
+/* Announcement channels */
+.channel .announce-icon { width: 20px; color: var(--text-faint); }
+.channel .announce-icon svg { width: 18px; height: 18px; }
+.chat-header .hash svg { vertical-align: -5px; }
+.announce-gate { border-color: var(--line); background: var(--bg-dark); }
+.announce-gate-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--bg-raised);
+  color: var(--header-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}

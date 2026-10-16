@@ -52,6 +52,8 @@ pub struct ChannelView {
     pub banner: Option<String>,
     /// Name-band colour (RGB hex), if set.
     pub color: Option<String>,
+    /// Pinned messages held here.
+    pub pins: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -145,6 +147,10 @@ pub struct ServerView {
     pub can_kick: bool,
     pub can_manage_messages: bool,
     pub can_invite: bool,
+    /// The viewer may pin and unpin messages.
+    pub can_pin: bool,
+    /// The viewer may post in announcement channels.
+    pub can_post_announcements: bool,
     pub game_tags: Vec<String>,
     pub game_tag_meta: Vec<commy_core::server::GameTagMeta>,
     pub rules: Option<String>,
@@ -216,6 +222,7 @@ impl ServerView {
                 user_limit: c.user_limit,
                 banner: c.banner.clone(),
                 color: c.color.clone(),
+                pins: state.server.pins_in(c.id).iter().filter(|p| state.has_message(p.message)).count(),
                 voice_user_ids: state
                     .voice_members(c.id)
                     .iter()
@@ -374,6 +381,8 @@ impl ServerView {
             can_kick: perms.allows(Permissions::KICK_MEMBERS),
             can_manage_messages: perms.allows(Permissions::MANAGE_MESSAGES),
             can_invite: perms.allows(Permissions::CREATE_INVITES),
+            can_pin: perms.can_pin(),
+            can_post_announcements: perms.can_announce(),
             game_tags: state.server.game_tags.clone(),
             game_tag_meta: state.server.game_tag_meta.clone(),
             rules: state.server.rules.clone(),
@@ -418,6 +427,8 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_server", Permissions::MANAGE_SERVER),
     ("manage_channels", Permissions::MANAGE_CHANNELS),
     ("manage_messages", Permissions::MANAGE_MESSAGES),
+    ("pin_messages", Permissions::PIN_MESSAGES),
+    ("post_announcements", Permissions::POST_ANNOUNCEMENTS),
     ("manage_roles", Permissions::MANAGE_ROLES),
     ("kick_members", Permissions::KICK_MEMBERS),
     ("ban_members", Permissions::BAN_MEMBERS),
@@ -532,6 +543,44 @@ pub struct MessageView {
     pub attachments: Vec<AttachmentView>,
     /// Ours and no member has received it yet.
     pub pending: bool,
+    pub pinned: bool,
+}
+
+/// A pinned message with who pinned it, for the pins panel.
+#[derive(Debug, Serialize)]
+pub struct PinView {
+    pub channel: String,
+    pub channel_name: String,
+    pub by: String,
+    pub by_name: String,
+    pub at: String,
+    pub message: MessageView,
+}
+
+/// Pins of one channel, or of the whole server, newest first. Pins
+/// whose message is not held here (not caught up yet, or expired) are
+/// left out.
+pub fn pin_views(state: &ServerState, channel: Option<ChannelId>) -> Vec<PinView> {
+    let mut pins: Vec<&commy_core::server::Pin> = state
+        .server
+        .pins
+        .iter()
+        .filter(|p| channel.is_none_or(|c| p.channel == c))
+        .collect();
+    pins.sort_by(|a, b| b.at.cmp(&a.at));
+    pins.into_iter()
+        .filter_map(|p| {
+            let message = state.message(p.message)?;
+            Some(PinView {
+                channel: p.channel.to_string(),
+                channel_name: state.server.channel(p.channel).map(|c| c.name.clone()).unwrap_or_default(),
+                by: p.by.to_string(),
+                by_name: display_name(state, p.by),
+                at: p.at.to_rfc3339(),
+                message: MessageView::build(message, state),
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Serialize)]
@@ -603,6 +652,7 @@ impl MessageView {
                 })
                 .collect(),
             pending: false,
+            pinned: state.server.is_pinned(message.id),
         }
     }
 

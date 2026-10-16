@@ -104,6 +104,7 @@ function mockSeed() {
       ch("welcome", "text", "Start here"),
       ch("general", "text", "Anything goes"),
       ch(":ferris:-rust-help", "text", "Borrow checker support group"),
+      ch("news", "announcement", "Patch notes and server news"),
       ch("General", "voice"),
     ],
     members: [
@@ -169,8 +170,31 @@ function mockSeed() {
     { id: "x4", channel: c0, author_id: "m2", author_name: "nova",
       content: "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43), created_at: new Date(Date.now() - 60e3).toISOString(), edited: false, attachments: [] },
   ];
+  // Two pins in #welcome and one announcement, for the pins panel preview.
+  mock.pins = [
+    { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
+    { channel: c0, message: "x1", by: "m1", at: new Date(Date.now() - 3000e3).toISOString() },
+  ];
+  const news = server.channels[3].id;
+  mock.messages[news] = [
+    { id: "n1", channel: news, author_id: "m1", author_name: "ferris",
+      content: "Voice update is live. Noise cancellation now has a one-click toggle in the voice panel. Restart to pick it up.",
+      created_at: new Date(Date.now() - 7200e3).toISOString(), edited: false, attachments: [], reactions: [{ emoji: "\u{1F389}", count: 3, users: ["m2", "m3", "me"] }] },
+  ];
+  mock.pins.push({ channel: news, message: "n1", by: "m1", at: new Date(Date.now() - 7000e3).toISOString() });
   // Doorbell: messages other members sent us that are still on their way.
   server.awaited = 2;
+}
+
+// Mock pins of a channel (or every channel), newest first, as the backend lists them.
+function mockPinViews(channelId) {
+  const server = Object.values(mock.servers)[0];
+  const names = new Map((server ? server.channels : []).map(c => [c.id, c.name]));
+  const byName = id => id === "me" ? (mock.user ? mock.user.username : "you") : ((server && server.members.find(m => m.id === id)) || { name: "Someone" }).name;
+  return sortPins((mock.pins || []).filter(p => !channelId || p.channel === channelId))
+    .map(p => ({ ...p, channel_name: names.get(p.channel) || "", by_name: byName(p.by), message: (mock.messages[p.channel] || []).find(m => m.id === p.message) }))
+    .filter(p => p.message)
+    .map(p => ({ ...p, message: { ...p.message, pinned: true } }));
 }
 
 // Fake screen capture for the browser preview: a labeled gradient with a clock.
@@ -220,12 +244,12 @@ async function mockInvoke(cmd, args = {}) {
       return {
         ...s, members, screen_shares: [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
-        channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, ...c })),
+        channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, ...c })),
         // Preview mode: set mock.plainMember = true in the console to see the app as a member without any management role.
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
-        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
       };
     }
     case "create_server": {
@@ -258,8 +282,21 @@ async function mockInvoke(cmd, args = {}) {
       return { server_name: "Pixel Pioneers", host, trusted: host === "commy.chat", account_server_host: "commy.chat",
         expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock" };
     }
-    case "get_messages": return mock.messages[args.channelId] || [];
+    case "get_messages": return (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+    case "get_pins": return mockPinViews(args.channelId || null);
+    case "pin_message": {
+      mock.pins = (mock.pins || []).filter(p => p.message !== args.messageId);
+      if (args.pinned) mock.pins.push({ channel: args.channelId, message: args.messageId, by: "me", at: new Date().toISOString() });
+      return null;
+    }
+    case "set_channel_kind": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      c.kind = args.kind;
+      return null;
+    }
     case "send_message": {
+      const chan = Object.values(mock.servers).flatMap(s => s.channels).find(c => c.id === args.channelId);
+      if (chan && chan.kind === "announcement" && mock.plainMember) throw "only members allowed to post announcements can write in this channel";
       const msg = {
         id: crypto.randomUUID(), channel: args.channelId, author_id: "me",
         author_name: mock.user.username, content: args.content,
@@ -694,6 +731,9 @@ const ICONS = {
   check: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z",
   close: "M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z",
   eye: "M12 5C7 5 2.7 8.1 1 12.5 2.7 16.9 7 20 12 20s9.3-3.1 11-7.5C21.3 8.1 17 5 12 5zm0 12.5a5 5 0 1 1 5-5 5 5 0 0 1-5 5zm0-8a3 3 0 1 0 3 3 3 3 0 0 0-3-3z",
+  pin: "M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z",
+  pinOff: "M3.3 2 2 3.3l5.6 5.6V9c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7h1.17l6.96 6.96 1.3-1.3zM16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.44 0-.8.28-.94.67L16.7 13.3c.66-.78 1.76-1.3 2.3-1.3v-2c-1.66 0-3-1.34-3-3z",
+  megaphone: "M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1v4h2v-4h1l5 3V6L8 9H4zm11.5 3c0-1.33-.58-2.53-1.5-3.35v6.69c.92-.81 1.5-2.01 1.5-3.34z",
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
 };
 
@@ -1389,9 +1429,19 @@ function renderChannels() {
   pushOverlayRoster();
 }
 
+// The mark before a channel name: a hash, or a megaphone for announcements.
+function channelMark(channel, size = 18) {
+  if (channel && channel.kind === "announcement") {
+    const icon = el("span", "channel-icon announce-icon");
+    icon.appendChild(svgIcon("megaphone", size));
+    return icon;
+  }
+  return el("span", "hash", "#");
+}
+
 function textChannelRow(channel, canCreate) {
   const row = el("div", "channel");
-  row.appendChild(el("span", "hash", "#"));
+  row.appendChild(channelMark(channel));
   row.appendChild(channelNameNode(channel, "channel-label"));
   paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
@@ -1806,9 +1856,10 @@ function onMessageCreated(msg) {
     if (state.currentServer && state.currentServer.id === msg.server) renderChannels();
   }
   const level = levelForServer(notifyPrefs(), msg.server);
-  const body = plainText(msg.content) || (msg.has_attachments ? "Sent an attachment" : "");
-  if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned: mentionsMe(msg.content) })) {
-    invoke("notify", { title: `${msg.author_name} (#${msg.channel_name}, ${msg.server_name})`, body, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
+  const announcement = Boolean(msg.announcement);
+  if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned: mentionsMe(msg.content), announcement })) {
+    const notice = messageNotice(msg, plainText);
+    invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
     playSound("message");
   }
 }
@@ -1840,7 +1891,7 @@ function onMessagesCaughtUp(payload) {
     }
     if (info.channel_name === undefined || isBlocked(info.author) || !isRecent(Number(info.at), now)) continue;
     const mentioned = Boolean(info.mentioned) || mentionsMe(info.content);
-    if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned })) {
+    if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement: Boolean(info.announcement) })) {
       const notice = caughtUpNotice({ ...info, count, server_name: payload.server_name }, plainText);
       notices.push({ ...notice, target: `channel:${server}:${channel}` });
     }
@@ -2168,6 +2219,7 @@ function closeFloating(except) {
   for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "member-card", "invite-menu", "audio-pop", "fp-menu"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
+  if (except !== "pins-pop") closePinsPanel();
 }
 
 let emojiPopPick = null;
@@ -2336,8 +2388,11 @@ function openChannelSettings(channelId) {
   const channel = editingChannel();
   if (!channel) return;
   const voice = channel.kind === "voice";
+  const announcement = channel.kind === "announcement";
   $("channel-settings-title").replaceChildren(...(voice ? [] : [document.createTextNode("# ")]), channelNameNode(channel));
-  $("channel-edit-prefix").replaceChildren(voice ? svgIcon("speaker", 16) : document.createTextNode("#"));
+  $("channel-edit-prefix").replaceChildren(voice ? svgIcon("speaker", 16) : announcement ? svgIcon("megaphone", 16) : document.createTextNode("#"));
+  $("channel-announce-row").classList.toggle("hidden", voice);
+  $("channel-edit-announce").checked = announcement;
   $("channel-edit-name").value = channel.name;
   const retention = String(channel.retention_days || 0);
   const select = $("channel-edit-retention");
@@ -2504,15 +2559,15 @@ function setCreateChannelKind(kind) {
     opt.classList.toggle("active", opt.dataset.kind === kind);
   }
   $("create-channel-prefix").replaceChildren(
-    kind === "voice" ? svgIcon("speaker", 16) : kind === "category" ? svgIcon("chevronDown", 16) : document.createTextNode("#"));
-  $("create-channel-name").placeholder = kind === "voice" ? "Hangout" : kind === "category" ? "Games" : "new-channel";
+    kind === "voice" ? svgIcon("speaker", 16) : kind === "category" ? svgIcon("chevronDown", 16) : kind === "announcement" ? svgIcon("megaphone", 16) : document.createTextNode("#"));
+  $("create-channel-name").placeholder = kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : "new-channel";
   syncCreateChannelName();
 }
 
 // Text channel names are lowercase with dashes.
 function syncCreateChannelName() {
   const input = $("create-channel-name");
-  if (createChannelKind === "text") {
+  if (createChannelKind === "text" || createChannelKind === "announcement") {
     const pos = input.selectionStart;
     const cleaned = input.value.toLowerCase().replace(/\s+/g, "-");
     if (cleaned !== input.value) {
@@ -2537,8 +2592,8 @@ async function saveCreateChannel() {
     hideModals();
     toast(`Created ${createChannelKind === "text" ? "#" : ""}${name}`);
     await refreshCurrentServer();
-    if (createChannelKind === "text") {
-      const made = state.currentServer.channels.filter(c => c.kind === "text").pop();
+    if (createChannelKind === "text" || createChannelKind === "announcement") {
+      const made = state.currentServer.channels.filter(c => c.kind === createChannelKind).pop();
       if (made) await selectChannel(made);
     }
   } catch (e) {
@@ -2701,13 +2756,18 @@ function buildChannelIntro(channel) {
     intro.appendChild(banner);
   }
   const mark = el("div", "channel-intro-mark");
+  const announcement = channel.kind === "announcement";
   if (channel.kind === "voice") mark.appendChild(svgIcon("speaker", 32));
+  else if (announcement) mark.appendChild(svgIcon("megaphone", 34));
   else mark.appendChild(el("span", "channel-intro-hash", "#"));
   intro.appendChild(mark);
   const title = el("h2", null, channel.kind === "voice" ? "Welcome to " : "Welcome to #");
   title.appendChild(channelNameNode(channel));
   intro.appendChild(title);
-  intro.appendChild(el("p", null, channel.topic || "This is the start of the channel. Say something."));
+  const fallback = announcement
+    ? "News for everyone in the server. Only members allowed to post announcements write here."
+    : "This is the start of the channel. Say something.";
+  intro.appendChild(el("p", null, channel.topic || fallback));
   return intro;
 }
 
@@ -2736,6 +2796,17 @@ function pendingMark() {
   return mark;
 }
 
+// Small pin next to the time of a pinned message.
+function pinnedMark() {
+  const mark = el("span", "msg-pinned");
+  mark.title = "Pinned";
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", "Pinned");
+  mark.appendChild(svgIcon("pin", 13));
+  mark.appendChild(document.createTextNode("Pinned"));
+  return mark;
+}
+
 function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {}) {
   const pending = Boolean(message.pending);
   const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : ""));
@@ -2754,8 +2825,10 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     decorateAuthor(author, message.author_id);
     head.appendChild(el("span", "msg-time", formatTime(message.created_at)));
     if (pending) head.appendChild(pendingMark());
+    if (message.pinned) head.appendChild(pinnedMark());
     body.appendChild(head);
   }
+  if (message.pinned) row.classList.add("pinned");
   // Grouped rows have no header, so the clock follows the text instead.
   let inlineMark = pending && grouped;
   if (message.content) {
@@ -2786,6 +2859,189 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   }
   row.appendChild(body);
   return row;
+}
+
+// ---------- Pinned messages ----------
+
+async function setPinned(message, pinned) {
+  if (!state.currentServer || !state.currentChannel) return;
+  const channel = state.currentChannel;
+  if (pinned && !pinRoomLeft(channel.pins)) {
+    toast(`A channel holds up to ${MAX_PINS_PER_CHANNEL} pinned messages. Unpin one first.`);
+    return;
+  }
+  try {
+    await invoke("pin_message", { serverId: state.currentServer.id, channelId: channel.id, messageId: message.id, pinned });
+    toast(pinned ? "Pinned" : "Unpinned");
+    await refreshCurrentServer();
+    if (!$("pins-pop").classList.contains("hidden")) await renderPinsPanel();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+// The pin button in the chat header: shown in text and announcement
+// channels, with the channel's pin count on it.
+function syncPinButton() {
+  const btn = $("pins-btn");
+  const channel = state.view === "server" ? state.currentChannel : null;
+  const { visible, count, title } = pinButtonState({ view: state.view, channel, count: channel && channel.pins });
+  btn.classList.toggle("hidden", !visible);
+  btn.title = title;
+  btn.classList.toggle("has-pins", count > 0);
+  const badge = $("pins-count");
+  badge.textContent = count > 99 ? "99+" : String(count);
+  badge.classList.toggle("hidden", count === 0);
+  if (!visible) closePinsPanel();
+}
+
+function closePinsPanel() {
+  $("pins-pop").classList.add("hidden");
+  $("pins-btn").classList.remove("active");
+}
+
+async function togglePinsPanel() {
+  const pop = $("pins-pop");
+  if (!pop.classList.contains("hidden")) return closePinsPanel();
+  closeFloating();
+  pop.classList.remove("hidden");
+  $("pins-btn").classList.add("active");
+  await renderPinsPanel();
+}
+
+async function renderPinsPanel() {
+  const list = $("pins-list");
+  if (!state.currentServer || !state.currentChannel) return;
+  let pins = [];
+  try {
+    pins = await invoke("get_pins", { serverId: state.currentServer.id, channelId: state.currentChannel.id });
+  } catch (e) {
+    toast(String(e));
+  }
+  list.innerHTML = "";
+  if (!pins.length) {
+    list.appendChild(pinsEmptyState());
+    return;
+  }
+  for (const pin of sortPins(pins)) list.appendChild(pinRow(pin, { jump: () => jumpToPin(pin, true) }));
+}
+
+function pinsEmptyState() {
+  const empty = el("div", "pins-empty");
+  const mark = el("div", "pins-empty-mark");
+  mark.appendChild(svgIcon("pin", 26));
+  empty.appendChild(mark);
+  empty.appendChild(el("strong", null, "No pinned messages yet"));
+  const hint = canPinIn(state.currentServer, state.currentChannel)
+    ? "Hover a message and choose Pin to keep it here for everyone."
+    : "Members who can pin messages keep the important ones here.";
+  empty.appendChild(el("span", null, hint));
+  return empty;
+}
+
+// One pinned message: who wrote it, when, the first lines, and for
+// members who may pin, a way to unpin it.
+function pinRow(pin, { jump, showChannel = false } = {}) {
+  const message = pin.message;
+  const row = el("div", "pin-row");
+  row.dataset.id = message.id;
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
+  row.appendChild(makeAvatar(message.author_id, message.author_name, "avatar avatar-sm"));
+  const body = el("div", "pin-body");
+  const head = el("div", "pin-head");
+  const author = el("span", "pin-author", message.author_name);
+  decorateAuthor(author, message.author_id);
+  head.appendChild(author);
+  head.appendChild(el("span", "pin-time", formatTime(message.created_at)));
+  if (showChannel) head.appendChild(el("span", "pin-channel", `#${pin.channel_name}`));
+  body.appendChild(head);
+  const text = pinExcerpt(message, plainText);
+  const excerpt = el("div", "pin-text", text);
+  if (!text) excerpt.classList.add("muted");
+  body.appendChild(excerpt);
+  const images = (message.attachments || []).filter(a => a.is_image);
+  if (images.length) {
+    const thumb = renderInlineImage(images[0]);
+    thumb.classList.add("pin-thumb");
+    body.appendChild(thumb);
+  }
+  body.appendChild(el("div", "pin-by", `Pinned by ${pin.by_name}`));
+  row.appendChild(body);
+  if (state.currentServer && state.currentServer.can_pin) {
+    const unpin = el("button", "pin-unpin");
+    unpin.title = "Unpin";
+    unpin.setAttribute("aria-label", "Unpin");
+    unpin.appendChild(svgIcon("close", 16));
+    unpin.onclick = async e => {
+      e.stopPropagation();
+      try {
+        await invoke("pin_message", { serverId: state.currentServer.id, channelId: pin.channel, messageId: message.id, pinned: false });
+        row.remove();
+        await refreshCurrentServer();
+        if (!$("pins-pop").classList.contains("hidden") && !$("pins-list").children.length) $("pins-list").appendChild(pinsEmptyState());
+        if (!$("modal-pins").classList.contains("hidden")) await renderServerPins();
+      } catch (err) {
+        toast(String(err));
+      }
+    };
+    row.appendChild(unpin);
+  }
+  row.onclick = jump;
+  row.onkeydown = e => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      jump();
+    }
+  };
+  return row;
+}
+
+// Opens the pin's channel if needed and scrolls to the message.
+async function jumpToPin(pin, fromPanel = false) {
+  if (!state.currentServer) return;
+  if (fromPanel) closePinsPanel();
+  else hideModals();
+  if (!state.currentChannel || state.currentChannel.id !== pin.channel) {
+    const channel = state.currentServer.channels.find(c => c.id === pin.channel);
+    if (!channel) {
+      toast("That channel is gone");
+      return;
+    }
+    await selectChannel(channel);
+  }
+  jumpToMessage(pin.message.id);
+}
+
+// Every pin in the server, grouped by channel, from the server menu.
+async function openServerPins() {
+  if (!state.currentServer) return;
+  closeFloating();
+  $("pins-modal-title").textContent = `Pinned in ${state.currentServer.name}`;
+  showModal("modal-pins");
+  await renderServerPins();
+}
+
+async function renderServerPins() {
+  const list = $("pins-modal-list");
+  let pins = [];
+  try {
+    pins = await invoke("get_pins", { serverId: state.currentServer.id, channelId: null });
+  } catch (e) {
+    toast(String(e));
+  }
+  list.innerHTML = "";
+  $("pins-modal-sub").textContent = pins.length
+    ? `${pins.length} pinned ${pins.length === 1 ? "message" : "messages"} across this server, newest first.`
+    : "Nothing is pinned in this server yet.";
+  for (const group of groupPinsByChannel(pins)) {
+    const head = el("div", "pins-group-head");
+    const channel = state.currentServer.channels.find(c => c.id === group.channel);
+    head.appendChild(channelMark(channel || { kind: "text" }, 16));
+    head.appendChild(channel ? channelNameNode(channel) : document.createTextNode(group.channel_name));
+    list.appendChild(head);
+    for (const pin of group.pins) list.appendChild(pinRow(pin, { jump: () => jumpToPin(pin) }));
+  }
 }
 
 // ---------- Replies and threads ----------
@@ -3030,6 +3286,10 @@ function messageActions(message, inThread = false) {
       add("reply", "Reply", () => startReply(message));
       add("thread", "Open Thread", () => openThread(message.id));
     }
+  }
+  if (state.view === "server" && canPinIn(state.currentServer, state.currentChannel)) {
+    if (message.pinned) add("pinOff", "Unpin", () => setPinned(message, false));
+    else add("pin", "Pin", () => setPinned(message, true));
   }
   if (state.view === "server" && isOwnMessage(message) && message.content) {
     add("pencil", "Edit", () => startEditMessage(message.id));
@@ -3789,7 +4049,14 @@ function maybePromptRoles() {
 function syncRulesGate() {
   const gated = state.view === "server" && Boolean(state.currentServer && state.currentServer.needs_rules);
   $("rules-gate").classList.toggle("hidden", !gated);
-  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated);
+  // Announcement channels take posts from announcers only; others see why.
+  const lock = gated ? null : composerLock({ view: state.view, server: state.currentServer, channel: state.currentChannel });
+  $("announce-gate").classList.toggle("hidden", !lock);
+  if (lock) {
+    $("announce-gate-title").textContent = lock.title;
+    $("announce-gate-text").textContent = lock.text;
+  }
+  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || Boolean(lock));
   if (gated && !rulesPrompted.has(state.currentServer.id)) {
     rulesPrompted.add(state.currentServer.id);
     openServerWelcome("rules");
@@ -6309,6 +6576,8 @@ function setViewMode(mode) {
   }
   if (dm) $("share-btn").classList.add("hidden");
   else renderShareButton();
+  syncPinButton();
+  syncRulesGate();
 }
 
 async function selectServer(serverId) {
@@ -6740,8 +7009,10 @@ async function selectChannel(channel) {
   if (channel) clearChannelUnread(channel.id);
   renderChannels();
   $("channel-name").replaceChildren(channel ? channelNameNode(channel) : document.createTextNode("no channel"));
+  $("chat-hash").replaceChildren(channel && channel.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
   $("channel-topic").textContent = (channel && channel.topic) || "";
   $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
+  syncPinButton();
   if (!channel) return renderMessages([]);
   const messages = await invoke("get_messages", {
     serverId: state.currentServer.id,
@@ -7992,9 +8263,9 @@ function wireEvents() {
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   // Clicks outside close floating menus; clicks inside keep them open.
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
-    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status")) return;
+    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn")) return;
     // The emoji picker and mention list opened from the card keep it open.
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
@@ -8100,6 +8371,7 @@ function wireEvents() {
     action();
   };
   $("sm-events").onclick = fromMenu(openEvents);
+  $("sm-pins").onclick = fromMenu(openServerPins);
   $("sm-rules").onclick = fromMenu(openRules);
   $("sm-roles").onclick = fromMenu(openChooseRoles);
   $("game-tag-input").addEventListener("keydown", e => {
@@ -8311,6 +8583,24 @@ function wireEvents() {
     syncChannelDirty();
   });
   $("channel-edit-save").onclick = saveChannelEdits;
+  $("channel-edit-announce").onchange = async e => {
+    const channel = editingChannel();
+    if (!channel || !state.currentServer) return;
+    const kind = e.target.checked ? "announcement" : "text";
+    try {
+      await invoke("set_channel_kind", { serverId: state.currentServer.id, channelId: channel.id, kind });
+      toast(kind === "announcement" ? "Now an announcement channel" : "Now a text channel");
+      await refreshCurrentServer();
+      openChannelSettings(channel.id);
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(String(err));
+    }
+  };
+  $("pins-btn").onclick = togglePinsPanel;
+  $("pins-all").onclick = openServerPins;
+  $("pins-modal-close").onclick = hideModals;
+  $("announce-gate-icon").appendChild(svgIcon("megaphone", 22));
   $("channel-edit-reset").onclick = () => openChannelSettings(editingChannelId);
   $("channel-settings-close").onclick = closeSettingsLayers;
   $("channel-delete-btn").onclick = openDeleteChannel;
@@ -8330,6 +8620,7 @@ function wireEvents() {
     opt.onclick = () => setCreateChannelKind(opt.dataset.kind);
   }
   $("create-voice-icon").appendChild(svgIcon("speaker", 22));
+  $("create-announcement-icon").appendChild(svgIcon("megaphone", 22));
   $("create-channel-name").addEventListener("input", syncCreateChannelName);
   $("create-channel-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("create-channel-name"), picked), { custom: "local" });
   $("create-channel-name").addEventListener("keydown", e => {
@@ -8643,6 +8934,8 @@ const PERMISSION_LABELS = [
   ["manage_server", "Manage Server"],
   ["manage_channels", "Manage Channels"],
   ["manage_messages", "Manage Messages"],
+  ["pin_messages", "Pin Messages"],
+  ["post_announcements", "Post Announcements"],
   ["manage_expressions", "Manage Expressions"],
   ["manage_events", "Manage Events"],
   ["manage_roles", "Manage Roles"],
@@ -8975,6 +9268,11 @@ async function refreshCurrentServer() {
     const still = state.currentServer.channels.find(c => c.id === keepChannel.id);
     if (still) {
       state.currentChannel = still;
+      syncPinButton();
+      if (still.kind !== keepChannel.kind) {
+        $("chat-hash").replaceChildren(still.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
+        syncRulesGate();
+      }
       const messages = await invoke("get_messages", {
         serverId: state.currentServer.id,
         channelId: still.id,

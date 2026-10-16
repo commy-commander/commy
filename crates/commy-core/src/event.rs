@@ -195,6 +195,21 @@ pub enum ServerEvent {
         channel: ChannelId,
         color: Option<String>,
     },
+    /// `by` pinned (or unpinned) a message in a channel at `at`.
+    MessagePin {
+        server: ServerId,
+        channel: ChannelId,
+        message: MessageId,
+        by: UserId,
+        at: DateTime<Utc>,
+        pinned: bool,
+    },
+    /// A text channel became an announcement channel, or the reverse.
+    ChannelKindSet {
+        server: ServerId,
+        channel: ChannelId,
+        kind: crate::server::ChannelKind,
+    },
 }
 
 #[cfg(test)]

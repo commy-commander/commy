@@ -1,4 +1,4 @@
-use crate::ids::{ChannelId, RoleId, ServerId, UserId};
+use crate::ids::{ChannelId, MessageId, RoleId, ServerId, UserId};
 use crate::permissions::Permissions;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -74,6 +74,19 @@ pub struct Role {
     #[serde(default)]
     pub banner: Option<String>,
 }
+
+/// A message pinned in a channel, see [`crate::ServerEvent::MessagePin`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pin {
+    pub channel: ChannelId,
+    pub message: MessageId,
+    /// Who pinned it.
+    pub by: UserId,
+    pub at: DateTime<Utc>,
+}
+
+/// Most pinned messages one channel holds.
+pub const MAX_PINS_PER_CHANNEL: usize = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
@@ -163,6 +176,9 @@ pub struct Server {
     /// invite links to it may be made that never expire.
     #[serde(default)]
     pub public: bool,
+    /// Pinned messages across all channels, in the order they were pinned.
+    #[serde(default)]
+    pub pins: Vec<Pin>,
 }
 
 impl Server {
@@ -219,6 +235,7 @@ impl Server {
             banned: vec![],
             afk_timeout_minutes: None,
             public: false,
+            pins: vec![],
         }
     }
 
@@ -261,6 +278,32 @@ impl Server {
             perms = Permissions::all();
         }
         perms
+    }
+
+    /// Whether `user` may pin and unpin messages here.
+    pub fn can_pin(&self, user: UserId) -> bool {
+        self.permissions_for(user).can_pin()
+    }
+
+    /// Whether `user` may post in `channel`: anyone with Send Messages in
+    /// a text channel, only announcers in an announcement channel.
+    pub fn can_post_in(&self, channel: ChannelId, user: UserId) -> bool {
+        let perms = self.permissions_for(user);
+        match self.channel(channel).map(|c| c.kind) {
+            Some(ChannelKind::Announcement) => perms.can_announce(),
+            _ => perms.allows(Permissions::SEND_MESSAGES),
+        }
+    }
+
+    pub fn is_pinned(&self, message: MessageId) -> bool {
+        self.pins.iter().any(|p| p.message == message)
+    }
+
+    /// Pins in `channel`, newest first.
+    pub fn pins_in(&self, channel: ChannelId) -> Vec<&Pin> {
+        let mut pins: Vec<&Pin> = self.pins.iter().filter(|p| p.channel == channel).collect();
+        pins.sort_by(|a, b| b.at.cmp(&a.at));
+        pins
     }
 
     /// The voice channel inactive users get parked in: the one chosen in
@@ -346,6 +389,58 @@ mod tests {
         server.roles.push(high_colorless);
         assert_eq!(server.role_color_for(owner).as_deref(), Some("aaaaaa"));
         assert_eq!(server.role_color_for(UserId::new()), None);
+    }
+
+    #[test]
+    fn announcement_channels_take_posts_from_announcers_only() {
+        let owner = UserId::new();
+        let mut server = Server::new("s", owner);
+        let news = Channel::new("news", ChannelKind::Announcement, 3);
+        let news_id = news.id;
+        let general = server.channels[0].id;
+        server.channels.push(news);
+        let plain = UserId::new();
+        let announcer = UserId::new();
+        let role = Role {
+            id: RoleId::new(),
+            name: "news team".to_string(),
+            color: None,
+            permissions: Permissions::POST_ANNOUNCEMENTS,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+        };
+        let rid = role.id;
+        server.roles.push(role);
+        for (user, roles) in [(plain, vec![]), (announcer, vec![rid])] {
+            server.members.push(Member { user, nickname: None, roles, joined_at: Utc::now() });
+        }
+        assert!(server.can_post_in(general, plain));
+        assert!(!server.can_post_in(news_id, plain));
+        assert!(server.can_post_in(news_id, announcer));
+        assert!(server.can_post_in(news_id, owner));
+        assert!(!server.can_post_in(news_id, UserId::new()));
+        assert!(!server.can_pin(plain));
+        assert!(server.can_pin(owner));
+    }
+
+    #[test]
+    fn pins_list_newest_first_per_channel() {
+        let owner = UserId::new();
+        let mut server = Server::new("s", owner);
+        let a = server.channels[0].id;
+        let b = ChannelId::new();
+        let t0 = Utc::now();
+        let (m1, m2, m3) = (MessageId::new(), MessageId::new(), MessageId::new());
+        server.pins.push(Pin { channel: a, message: m1, by: owner, at: t0 });
+        server.pins.push(Pin { channel: b, message: m2, by: owner, at: t0 + chrono::Duration::seconds(1) });
+        server.pins.push(Pin { channel: a, message: m3, by: owner, at: t0 + chrono::Duration::seconds(2) });
+        let ids: Vec<MessageId> = server.pins_in(a).iter().map(|p| p.message).collect();
+        assert_eq!(ids, vec![m3, m1]);
+        assert!(server.is_pinned(m2));
+        assert!(!server.is_pinned(MessageId::new()));
     }
 
     #[test]

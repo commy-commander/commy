@@ -188,6 +188,8 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePaylo
     server.rules = None;
     server.events.clear();
     server.deleted_events.clear();
+    // Members who may pin re-announce pins, like other structure.
+    server.pins.clear();
     let mut messages: Vec<commy_core::Message> = Vec::new();
     for channel in &state.server.channels {
         messages.extend(state.page(channel.id, None, per_channel).iter().cloned());
