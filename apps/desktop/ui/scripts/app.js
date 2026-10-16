@@ -631,6 +631,7 @@ const ICONS = {
   noise: "M7 18h2V6H7zm4 4h2V2h-2zm-8-8h2v-4H3zm12 4h2V6h-2zm4-8v4h2v-4z",
   soundboard: "M12 3v10.55A4 4 0 1 0 14 17V7h4V3z",
   flag: "M14.4 6 14 4H5v17h2v-7h5.6l.4 2h7V6z",
+  more: "M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
   block: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM4 12a8 8 0 0 1 12.9-6.3L5.7 16.9A7.9 7.9 0 0 1 4 12zm8 8a7.9 7.9 0 0 1-4.9-1.7L18.3 7.1A8 8 0 0 1 12 20z",
   trash: "M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z",
   eyeOff: "M12 7a5 5 0 0 1 5 5 4.9 4.9 0 0 1-.36 1.83l2.92 2.92A11.8 11.8 0 0 0 22.99 12 11.83 11.83 0 0 0 11.99 4.5a11.6 11.6 0 0 0-4 .7l2.17 2.16A4.9 4.9 0 0 1 12 7zM2 4.27l2.28 2.28.46.46A11.8 11.8 0 0 0 1 12a11.82 11.82 0 0 0 15.4 6.66l.43.42L19.73 22 21 20.73 3.27 3zM7.53 9.8l1.55 1.55A2.8 2.8 0 0 0 9 12a3 3 0 0 0 3 3 2.8 2.8 0 0 0 .65-.08l1.55 1.55A5 5 0 0 1 7 12a4.9 4.9 0 0 1 .53-2.2zm4.31-.78 3.15 3.15.02-.16a3 3 0 0 0-3-3z",
@@ -2068,7 +2069,7 @@ function placePopup(popup, anchor, prefer = "above") {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "member-card", "invite-menu", "audio-pop"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "member-card", "invite-menu", "audio-pop", "fp-menu"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
 }
@@ -4335,9 +4336,61 @@ async function openFullProfile(member) {
       hideModals();
       messageUser(person.id, person.name);
     };
-    buttons.append(friendButton(person, () => openFullProfile(member)), msg);
+    const more = el("button", "icon-btn fp-more");
+    more.type = "button";
+    more.title = "More";
+    more.setAttribute("aria-label", "More options");
+    more.appendChild(svgIcon("more", 20));
+    more.onclick = e => {
+      e.stopPropagation();
+      const r = more.getBoundingClientRect();
+      openProfileMenu(person, r.right - 220, r.bottom + 6);
+    };
+    buttons.append(friendButton(person, () => openFullProfile(member)), msg, more);
   }
+  const modal = $("modal-profile");
+  modal.oncontextmenu = isMe ? null : e => {
+    e.preventDefault();
+    openProfileMenu(person, e.clientX, e.clientY);
+  };
   showModal("modal-profile");
+}
+
+// Block and Report for the person whose full profile is open. The same
+// flows and show/hide rules as the member card: no Report where you share
+// no server with them or they own every one you share.
+function openProfileMenu(person, x, y) {
+  closeFloating();
+  const menu = $("fp-menu");
+  menu.replaceChildren(el("div", "ctx-title", person.name));
+  const item = (label, icon, onClick, cls = "") => {
+    const btn = el("button", cls);
+    btn.appendChild(svgIcon(icon, 18));
+    btn.appendChild(document.createTextNode(label));
+    btn.onclick = () => {
+      closeFloating();
+      onClick();
+    };
+    menu.appendChild(btn);
+  };
+  const blocked = isBlocked(person.id);
+  item(blocked ? "Unblock" : "Block", "block", () => {
+    if (blocked) setBlocked(person.id, person.name, false);
+    else {
+      hideModals();
+      openBlock(person.id, person.name);
+    }
+  });
+  const targets = state.currentServer && reportableIn(state.currentServer, person.id)
+    ? [state.currentServer]
+    : reportServersFor(person.id).filter(s => reportableIn(s, person.id));
+  if (targets.length) {
+    item("Report", "flag", () => {
+      hideModals();
+      openReport({ serverId: targets[0].id, servers: targets, userId: person.id, name: person.name });
+    }, "danger");
+  }
+  placeMenuAt(menu, x, y);
 }
 
 // ---------- Member profile card ----------
@@ -7763,7 +7816,7 @@ function wireEvents() {
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   // Clicks outside close floating menus; clicks inside keep them open.
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
     if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status")) return;
     // The emoji picker and mention list opened from the card keep it open.
