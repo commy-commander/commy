@@ -48,6 +48,10 @@ services:
       # Dev only secret, never reuse it on a real server
       BETTER_AUTH_SECRET: local-test-bench-secret-not-for-production
       BETTER_AUTH_URL: http://localhost:3001
+      # Optional keys from auth/.env: game search needs a Twitch app
+      TWITCH_CLIENT_ID: ${TWITCH_CLIENT_ID:-}
+      TWITCH_CLIENT_SECRET: ${TWITCH_CLIENT_SECRET:-}
+      KLIPY_API_KEY: ${KLIPY_API_KEY:-}
       SMTP_HOST: mail
       SMTP_PORT: "1025"
       SMTP_REQUIRE_TLS: "false"

@@ -17,7 +17,7 @@ Our Auth / Docs Website should use Postgres,Prisma,Auth.JS with Google Social Lo
 - `crates/commy-media/` - device I/O: cpal mic capture and playback, `JitterBuffer`, `Mixer`, xcap screen capture to MJPEG
 - `apps/desktop/src-tauri/` - Tauri 2 shell: commands in `src/lib.rs`, state in `src/state.rs`, view models in `src/view.rs`, voice/screen orchestration in `src/media_engine.rs`, disk persistence in `src/persist.rs`
 - `apps/desktop/ui/` - static frontend (no build step); works in a browser with a mock backend for preview; `images/`, `sounds/` (soundboard clips in `sounds/soundboard/`), `scripts/` (`emoji.js` holds the picker data), `styles/`, `fonts/`
-- Dev testing: run a second instance with `COMMY_DATA_DIR` set for P2P testing on one machine; `COMMY_AFK_SECS` shortens the AFK timeout; UI edits need `cargo build` (assets embed at compile time)
+- Dev testing: run a second instance with `COMMY_DATA_DIR` set for P2P testing on one machine (its webview storage moves there too, `COMMY_INSTANCE_LABEL` names the window); `auth/docker-compose.dev.yml` runs a local account server with mail catcher, Redis and Prisma Studio, optional keys go in `auth/.env`; `COMMY_AFK_SECS` shortens the AFK timeout; UI edits need `cargo build` (assets embed at compile time)
 - CI: "Rust checks" (`.github/workflows/rust.yml`) compiles every PR that touches Rust on Windows, macOS and Linux in a few minutes; never run "Desktop release" by hand to prove a branch compiles
 - The commy.chat website (Next.js) lives in its own private repository, commy-web; `auth/` is the Better Auth account server and `deploy/` the hosting stack
 
