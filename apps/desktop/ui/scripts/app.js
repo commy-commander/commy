@@ -4236,9 +4236,10 @@ function invitableServers(userId) {
   return state.servers.filter(s => s.can_invite && !shared.has(s.id));
 }
 
-function openInviteMenu(person, anchor) {
+async function openInviteMenu(person, anchor) {
   const menu = $("invite-menu");
   menu.replaceChildren(el("div", "ctx-title", `Invite ${person.name} to`));
+  await refreshPeople();
   const servers = invitableServers(person.id);
   for (const server of servers) {
     const btn = el("button", null, server.name);
@@ -4290,8 +4291,11 @@ function inviteCard(text) {
 
 // ---------- Full profile ----------
 
-function openFullProfile(member) {
+async function openFullProfile(member) {
   closeFloating();
+  // The people index is built lazily (first on entering Direct Messages),
+  // so refresh it here or the mutual servers list comes up empty or stale.
+  await refreshPeople();
   const person = { ...(state.people.get(member.id) || {}), ...member };
   paintBanner($("fp-banner"), person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
   const av = $("fp-avatar");
@@ -6097,32 +6101,17 @@ async function selectServer(serverId) {
 // Everyone we share a server with, keyed by user id. DMs have no presence
 // of their own, so presence, status and mutual servers come from here.
 async function refreshPeople() {
-  const people = new Map();
+  const views = [];
   for (const summary of state.servers) {
-    let server;
     try {
-      server = await invoke("get_server", { serverId: summary.id });
+      views.push(await invoke("get_server", { serverId: summary.id }));
     } catch {
       continue;
     }
-    rememberAvatars(server.members);
-    for (const member of server.members) {
-      if (state.user && member.id === state.user.id) continue;
-      const person = people.get(member.id) || {
-        id: member.id, name: member.name, presence: member.presence, presence_until: member.presence_until ?? null,
-        custom_status: member.custom_status, status_emoji: member.status_emoji, activity: member.activity, servers: [],
-      };
-      // Prefer the liveliest presence seen across servers.
-      if (person.presence === "offline" && member.presence !== "offline") person.presence = member.presence;
-      person.presence_until ||= member.presence_until ?? null;
-      person.custom_status ||= member.custom_status;
-      person.status_emoji ||= member.status_emoji;
-      person.activity ||= member.activity;
-      person.servers.push({ id: server.id, name: server.name });
-      people.set(member.id, person);
-    }
   }
-  state.people = people;
+  for (const server of views) rememberAvatars(server.members);
+  // The folding itself lives in people.js, shared with its tests.
+  state.people = indexPeople(views, state.user ? state.user.id : null);
 }
 
 function personPresence(userId) {
@@ -8258,6 +8247,8 @@ function wireEvents() {
       if (state.currentServer && serverId === state.currentServer.id) {
         await refreshCurrentServer();
       }
+      // Keep mutual servers and presence current while Direct Messages is open.
+      if (state.view === "dm") await refreshPeople();
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
