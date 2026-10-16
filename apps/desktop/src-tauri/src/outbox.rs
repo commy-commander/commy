@@ -484,6 +484,7 @@ pub fn needs_settled_key(event: &ServerEvent, me: Option<UserId>) -> bool {
         | E::SoundAdd { .. }
         | E::SoundRemove { .. }
         | E::ExpressionSettings { .. }
+        | E::PublicSet { .. }
         | E::SoundboardPlay { .. }
         | E::GameTagsSet { .. }
         | E::RulesSet { .. }

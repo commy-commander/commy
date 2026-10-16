@@ -140,6 +140,8 @@ pub enum ServerEvent {
     SoundRemove { server: ServerId, name: String },
     /// Server-wide sharing rules for emojis and sounds.
     ExpressionSettings { server: ServerId, emojis_shareable: bool, soundboard_open: bool },
+    /// The server was marked public, or private again.
+    PublicSet { server: ServerId, public: bool },
     /// Someone played a soundboard clip in a voice channel. Transient:
     /// peers play it, nothing is stored.
     SoundboardPlay { server: ServerId, channel: ChannelId, user: UserId, name: String },

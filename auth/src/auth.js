@@ -30,7 +30,11 @@ export function buildAuthOptions(config, { pool, send, fetch }) {
     }),
     commyDevices({ secret: config.secret, serverUrl: config.baseURL }),
     commyDeviceRequests({ secret: config.secret }),
-    commyInvites({ serverUrl: config.baseURL, requireAccount: config.invitesRequireAccount }),
+    commyInvites({
+      serverUrl: config.baseURL,
+      requireAccount: config.invitesRequireAccount,
+      maxPermanent: config.invitesMaxPermanent,
+    }),
     commyMedia({ secret: config.secret, klipyKey: config.klipyKey, igdb: config.igdb, fetch }),
     commyVault(),
   ];

@@ -154,7 +154,7 @@ async function mockInvoke(cmd, args = {}) {
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
         channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, ...c })),
         can_manage_server: true, can_manage_channels: true, can_manage_roles: true, can_kick: true, can_manage_messages: true,
-        emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open,
+        emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
         can_manage_expressions: true, can_upload_sounds: true, can_use_soundboard: true,
         can_mute: true, can_ban: true, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
       };
@@ -173,7 +173,17 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "join_server": throw "joining requires the desktop app";
     case "get_invite": return "commy" + "x".repeat(80) + " (mock invite, browser preview)";
-    case "create_invite_link": return "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43);
+    case "create_invite_link": {
+      const hours = { "1h": 1, "1d": 24, "7d": 168, "30d": 720 }[args.expires || "7d"];
+      if (!hours && !mock.servers[args.serverId]?.public) throw "Only links to a public server can last forever";
+      return { url: "https://commy.chat/i/KQ7M3N4P#" + "q".repeat(43),
+        expires_at: hours ? new Date(Date.now() + hours * 3600e3).toISOString() : null };
+    }
+    case "set_server_public": {
+      const s = mock.servers[args.serverId];
+      if (s) s.public = args.public;
+      return null;
+    }
     case "resolve_invite_link": {
       const host = /commy:\/\/i\/([^/]+)\//.exec(args.link)?.[1] || new URL(args.link).host;
       return { server_name: "Pixel Pioneers", host, trusted: host === "commy.chat", account_server_host: "commy.chat",
@@ -7026,6 +7036,7 @@ function wireEvents() {
     try {
       const invite = await invoke("get_invite", { serverId: state.currentServer.id });
       $("invite-text").value = invite;
+      resetInviteDialog();
       showModal("modal-invite");
     } catch (e) {
       toast(String(e));
@@ -7117,6 +7128,17 @@ function wireEvents() {
     }
   };
   $("emoji-share-toggle").addEventListener("change", saveExpressionSettings);
+  $("server-public-toggle").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_server_public", { serverId: server.id, public: e.target.checked });
+      server.public = e.target.checked;
+    } catch (err) {
+      toast(String(err));
+      e.target.checked = Boolean(server.public);
+    }
+  });
   $("sound-open-toggle").addEventListener("change", saveExpressionSettings);
 
   // Soundboard
@@ -8194,6 +8216,9 @@ function openServerSettings(tab) {
   $("rename-input").disabled = !server.can_manage_server;
   $("rename-save").classList.toggle("hidden", !server.can_manage_server);
   $("overview-readonly").classList.toggle("hidden", server.can_manage_server);
+  $("server-public-toggle").checked = Boolean(server.public);
+  $("server-public-toggle").disabled = !server.can_manage_server;
+  $("server-public-row").classList.toggle("readonly", !server.can_manage_server);
   const afkSelect = $("afk-channel-select");
   afkSelect.innerHTML = "";
   const none = el("option", null, "No AFK channel");

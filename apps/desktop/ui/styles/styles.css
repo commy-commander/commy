@@ -3655,6 +3655,9 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .invite-link-warning { margin: 4px 0 12px; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(255, 77, 77, .35); background: rgba(255, 77, 77, .08); color: var(--text-normal); font-size: 13px; line-height: 1.45; }
 .invite-field { font-size: 13px; line-height: 1.4; word-break: break-all; resize: none; color: var(--text-normal); }
 .invite-actions { display: flex; gap: 8px; }
+.invite-expiry { margin: 4px 0 12px; }
+.invite-expiry .segmented button { padding: 8px 6px; }
+.invite-expiry-note { margin: -4px 0 12px; min-height: 18px; }
 .invite-actions button { flex: 1; min-width: 0; }
 #modal-invite-link .sw-head { margin-bottom: 14px; }
 
