@@ -7,7 +7,7 @@ pub const MAX_EMOJI_BYTES: usize = 256 * 1024;
 /// Fifteen seconds of mp3 or ogg at up to 320 kbps, with headroom.
 pub const MAX_SOUND_BYTES: usize = 1024 * 1024;
 
-/// Soundboard clips bundled with the app (ui/soundeffects), available in
+/// Soundboard clips bundled with the app (ui/sounds/soundboard), available in
 /// every server. Played by name as "default:<id>".
 pub const DEFAULT_SOUNDS: &[&str] = &["airhorn", "ba_dum_tss", "cricket", "losing_horn"];
 

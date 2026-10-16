@@ -725,11 +725,19 @@ function loadAvatarImage(blob, provider) {
 
 // Fills an avatar element with an image, emoji or initials, keeping
 // any badges (presence dot) already inside it.
+// Stable per-person tint so a room full of initials still reads as people.
+function personTint(userId) {
+  let hash = 0;
+  for (const ch of String(userId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
+  return `hsl(${Math.abs(hash) % 360} 38% 44%)`;
+}
+
 function paintAvatar(node, userId, name) {
   for (const child of [...node.childNodes]) {
     if (child.nodeType === Node.TEXT_NODE || child.classList?.contains("avatar-face")) child.remove();
   }
   node.classList.remove("emoji-avatar", "image-avatar");
+  node.style.setProperty("--tint", personTint(userId));
   const raw = avatarFor(userId)?.avatar || "";
   let face;
   if (raw.startsWith("emoji:")) {
@@ -1359,7 +1367,7 @@ async function setServerImage(which, data) {
 // ---------- Sounds ----------
 
 // Files bundled in the ui folder. "none" plays nothing.
-const SOUND_FILES = { notification: "notification.mp3", ding: "ding.mp3", pop: "pop.wav", join: "join.mp3", leave: "leave.mp3" };
+const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3" };
 const SOUND_EVENTS = [
   { id: "message", label: "New message or mention", fallback: "notification" },
   { id: "dm", label: "Direct message", fallback: "ding" },
@@ -5090,10 +5098,10 @@ function saveSoundboardPrefs(prefs) {
 // Clips bundled with the app, in every server. Ids match DEFAULT_SOUNDS
 // in expressions.rs; peers play them by name ("default:<id>").
 const DEFAULT_SOUNDS = [
-  { id: "airhorn", label: "Airhorn", file: "soundeffects/airhorn.mp3" },
-  { id: "ba_dum_tss", label: "Ba Dum Tss", file: "soundeffects/ba-dum-tss.mp3" },
-  { id: "cricket", label: "Crickets", file: "soundeffects/cricket.mp3" },
-  { id: "losing_horn", label: "Losing Horn", file: "soundeffects/losing_horn.mp3" },
+  { id: "airhorn", label: "Airhorn", file: "sounds/soundboard/airhorn.mp3" },
+  { id: "ba_dum_tss", label: "Ba Dum Tss", file: "sounds/soundboard/ba-dum-tss.mp3" },
+  { id: "cricket", label: "Crickets", file: "sounds/soundboard/cricket.mp3" },
+  { id: "losing_horn", label: "Losing Horn", file: "sounds/soundboard/losing_horn.mp3" },
 ];
 
 function defaultSound(name) {
@@ -6051,7 +6059,7 @@ function bannerColor(userId) {
   let hash = 0;
   for (const ch of String(userId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
   const hue = Math.abs(hash) % 360;
-  return `linear-gradient(135deg, hsl(${hue} 65% 52%), hsl(${(hue + 40) % 360} 60% 42%))`;
+  return `linear-gradient(135deg, hsl(${hue} 42% 40%), hsl(${(hue + 40) % 360} 45% 26%))`;
 }
 
 // The start-of-history block at the top of every DM.
