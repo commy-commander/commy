@@ -852,8 +852,10 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         for sound in old.server.soundboard.iter().cloned() {
             let _ = state.apply(ServerEvent::SoundAdd { server, sound });
         }
+        // Older apps may still name someone appearing offline; keep presence
+        // as others see it, like every other way a profile arrives.
         for profile in profiles {
-            state.profiles.insert(profile.id, profile);
+            state.profiles.insert(profile.id, profile.as_seen_by_others());
         }
         // A key pinned here that the snapshot left out stays.
         for profile in old.profiles.values().filter(|p| p.identity.is_some()) {
