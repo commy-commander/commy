@@ -308,16 +308,34 @@ pub fn key_matches_pins(key: IdentityKey, pins: impl IntoIterator<Item = Option<
     pins.into_iter().flatten().all(|pinned| pinned == key)
 }
 
+/// Entries for `user` in the servers where they are a member now. An
+/// entry for anyone else may carry a key nobody checked.
+fn member_entries(servers: &HashMap<ServerId, ServerState>, user: UserId) -> impl Iterator<Item = &UserProfile> {
+    servers.values().filter(move |s| s.server.is_member(user)).filter_map(move |s| s.profiles.get(&user))
+}
+
+/// Our profile of `user` to keep as a contact: from a server where they
+/// are a member now, with the key those servers pin for them, or none when
+/// they disagree.
+pub fn member_profile(servers: &HashMap<ServerId, ServerState>, user: UserId) -> Option<UserProfile> {
+    let profile = member_entries(servers, user).next()?.clone();
+    let mut keys = member_entries(servers, user).filter_map(|p| p.identity);
+    let identity = keys.next().filter(|first| keys.all(|key| key == *first));
+    Some(UserProfile { identity, ..profile })
+}
+
 /// Whether an incoming DM is signed by its sender with the key we hold
-/// for them: the one pinned for the contact and in any server we share.
+/// for them: the one pinned for the contact once there is one, or else
+/// the one pinned in every server where they are a member now.
 pub fn dm_sender_trusted(app: &App, envelope: &DmEnvelope) -> bool {
     let Some(key) = envelope.sender.identity.filter(|_| envelope.signed_by_sender()) else {
         return false;
     };
     let user = envelope.sender.id;
-    let mut pins = vec![app.dms.lock().unwrap().pinned_key(user)];
-    pins.extend(app.servers.lock().unwrap().values().map(|s| s.identity_of(user)));
-    key_matches_pins(key, pins)
+    if let Some(pinned) = app.dms.lock().unwrap().pinned_key(user) {
+        return key == pinned;
+    }
+    key_matches_pins(key, member_entries(&app.servers.lock().unwrap(), user).map(|p| p.identity))
 }
 
 /// Checks an incoming DM before anything else looks at it. It must be
@@ -1133,13 +1151,82 @@ mod tests {
         assert!(dm_sender_trusted(&app, &envelope));
         assert!(!dm_sender_trusted(&app, &forged), "the contact pin wins");
 
-        // A key pinned in a shared server counts too.
+        // Without a contact pin, one in a server they are in counts.
         let app = App::default();
-        let mut state = ServerState::new(Server::new("s", UserId::new()));
+        let mut state = ServerState::new(Server::new("s", sender.id));
         state.profiles.insert(sender.id, sender.clone());
         app.servers.lock().unwrap().insert(state.server.id, state);
         assert!(dm_sender_trusted(&app, &envelope));
         assert!(!dm_sender_trusted(&app, &forged));
+    }
+
+    /// A server of ours with `user` in it, as a member or not, under `key`.
+    fn server_with(app: &App, user: &UserProfile, member: bool, key: IdentityKey) -> ServerId {
+        let owner = if member { user.id } else { UserId::new() };
+        let mut state = ServerState::new(Server::new("s", owner));
+        state.profiles.insert(user.id, UserProfile { identity: Some(key), ..user.clone() });
+        let sid = state.server.id;
+        app.servers.lock().unwrap().insert(sid, state);
+        sid
+    }
+
+    #[test]
+    fn a_key_planted_for_a_non_member_cuts_off_nobody() {
+        let real = Identity::generate();
+        let planted = Identity::generate().public();
+        let mut sender = UserProfile::new("sender");
+        sender.identity = Some(real.public());
+        let mut message = DmMessage::new(sender.id, UserId::new(), "hi");
+        message.sign(&hex(SENDER_NODE), &real);
+        let envelope = DmEnvelope { message, sender: sender.clone() };
+
+        // Pinned for the contact; a server holds them, not as a member, under another key.
+        let app = App::default();
+        app.dms.lock().unwrap().remember_contact(sender.clone());
+        server_with(&app, &sender, false, planted);
+        assert!(dm_sender_trusted(&app, &envelope));
+        // The contact pin wins over a member entry too.
+        server_with(&app, &sender, true, planted);
+        assert!(dm_sender_trusted(&app, &envelope));
+
+        // No contact pin yet: the non-member entry counts for nothing.
+        let app = App::default();
+        server_with(&app, &sender, false, planted);
+        assert!(dm_sender_trusted(&app, &envelope));
+        let member = server_with(&app, &sender, true, real.public());
+        assert!(dm_sender_trusted(&app, &envelope));
+        // Servers they are in that disagree are not trusted at all.
+        server_with(&app, &sender, true, planted);
+        assert!(!dm_sender_trusted(&app, &envelope));
+        app.servers.lock().unwrap().remove(&member);
+        assert!(!dm_sender_trusted(&app, &envelope));
+    }
+
+    #[test]
+    fn a_contact_is_taken_from_a_server_they_are_in() {
+        let real = Identity::generate().public();
+        let planted = Identity::generate().public();
+        let sender = UserProfile::new("sender");
+        let app = App::default();
+        server_with(&app, &sender, false, planted);
+        let servers = |app: &App| app.servers.lock().unwrap().clone();
+        assert_eq!(member_profile(&servers(&app), sender.id), None, "not a member anywhere");
+
+        let member = server_with(&app, &sender, true, real);
+        assert_eq!(member_profile(&servers(&app), sender.id).unwrap().identity, Some(real));
+        // Servers they are in that disagree pin nothing.
+        server_with(&app, &sender, true, planted);
+        let profile = member_profile(&servers(&app), sender.id).unwrap();
+        assert_eq!((profile.id, profile.identity), (sender.id, None));
+
+        // A key pinned for the contact is never replaced.
+        let mut dms = commy_core::DmStore::new();
+        dms.remember_contact(UserProfile { identity: Some(real), ..sender.clone() });
+        app.servers.lock().unwrap().remove(&member);
+        let other = member_profile(&servers(&app), sender.id).unwrap();
+        assert_eq!(other.identity, Some(planted));
+        dms.remember_contact(other);
+        assert_eq!(dms.pinned_key(sender.id), Some(real));
     }
 
     const SENDER_NODE: [u8; 32] = [1; 32];
@@ -1515,7 +1602,7 @@ mod tests {
             ServerEvent::MemberLeave { server: sid, user: other },
             ServerEvent::MemberBan { server: sid, user: other },
             ServerEvent::MemberUnban { server: sid, user: other },
-            ServerEvent::RoleAssign { server: sid, user: other, role },
+            ServerEvent::RoleAssign { server: sid, user: other, role, at: 1 },
             ServerEvent::RoleDelete { server: sid, role },
             ServerEvent::ChannelCreate { server: sid, channel: commy_core::Channel::new("new", commy_core::ChannelKind::Text, 3) },
             ServerEvent::ChannelDelete { server: sid, channel },

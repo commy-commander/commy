@@ -59,10 +59,11 @@ pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
         self_assignable: false,
         tag: None,
         banner: None,
+        updated_at: 0,
     };
     let id = role.id;
     state.apply(ServerEvent::RoleCreate { server, role }).unwrap();
-    state.apply(ServerEvent::RoleAssign { server, user, role: id }).unwrap();
+    state.apply(ServerEvent::RoleAssign { server, user, role: id, at: Utc::now().timestamp_millis() }).unwrap();
     user
 }
 

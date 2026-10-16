@@ -26,5 +26,5 @@ pub use ids::{ChannelId, MessageId, RoleId, ServerId, UserId};
 pub use message::{Attachment, Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES};
 pub use permissions::Permissions;
 pub use server::{Channel, ChannelKind, Member, Role, Server, SoundboardSound};
-pub use store::{ServerState, Snapshot, StoreError};
+pub use store::{RoleMark, ServerState, Snapshot, StoreError};
 pub use user::{Avatar, Presence, UserProfile};

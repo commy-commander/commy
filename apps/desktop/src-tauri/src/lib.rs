@@ -33,7 +33,8 @@ use view::{
 use base64::Engine as _;
 use commy_core::{
     Attachment, Channel, ChannelId, ChannelKind, DmMessage, Identity, Message, MessageId, Permissions,
-    Presence, RoleId, ServerEvent, ServerId, ServerState, StoreError, TombstoneProof, UserId, UserProfile,
+    Presence, RoleId, ServerEvent, ServerId, ServerState, Signature, StoreError, TombstoneProof, UserId, UserProfile,
+    MAX_MESSAGE_BYTES,
 };
 use commy_core::server::Role;
 use commy_media::screen::{SourceKind, StreamQuality};
@@ -130,31 +131,31 @@ async fn create_server(
     if name.is_empty() || name.len() > 100 {
         return Err("server name must be 1 to 100 characters".into());
     }
-    let profile = current_profile(&app)?;
+    // Needed before hosting; read again after it (see `own_server_state`).
+    current_profile(&app)?;
     account::require_account(&app)?;
 
-    let server = commy_core::Server::new(name.clone(), profile.id);
-    let server_id = server.id;
-    let mut state = ServerState::new(server);
-    state.profiles.insert(profile.id, profile);
-
+    let server_id = ServerId::new();
     // Host the gossip topic; tolerate offline mode so the UI still works.
-    let mut net = app.net.lock().await;
-    if let Some(node) = net.as_mut() {
-        match node.host_server(server_id, &name).await {
-            Ok(ticket) => {
-                app.invites
-                    .lock()
-                    .unwrap()
-                    .insert(server_id, ticket.encode());
+    let hosting = async {
+        let mut net = app.net.lock().await;
+        if let Some(node) = net.as_mut() {
+            match node.host_server(server_id, &name).await {
+                Ok(ticket) => {
+                    app.invites
+                        .lock()
+                        .unwrap()
+                        .insert(server_id, ticket.encode());
+                }
+                Err(e) => tracing::warn!("hosting server offline: {e}"),
             }
-            Err(e) => tracing::warn!("hosting server offline: {e}"),
         }
-    }
-    drop(net);
-
+        Ok(())
+    };
+    let (state, _, signing) = own_server_state(&app, server_id, &name, hosting).await?;
     let view = ServerView::for_viewer(&state, Some(state.server.owner));
     app.servers.lock().unwrap().insert(server_id, state);
+    drop(signing);
     app.persist_server(server_id);
     if let Some(dir) = app.data_dir() {
         let _ = persist::save_invites(dir, &app.invites.lock().unwrap().clone());
@@ -183,30 +184,30 @@ async fn join_server(
 /// Joins a server from its ticket: from an invite, or from your server list
 /// on another of your devices.
 pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: ServerTicket) -> CmdResult<ServerSummary> {
-    let profile = current_profile(app)?;
+    // Needed before joining; read again after it (see `own_server_state`).
+    current_profile(app)?;
 
-    let raw_ticket = ticket.encode();
-    let reached_peer = {
-        let mut net = app.net.lock().await;
-        let node = net.as_mut().ok_or("network is not ready yet")?;
-        node.join_server(&ticket).await.map_err(err_to_string)?
+    let joining = async {
+        let reached_peer = {
+            let mut net = app.net.lock().await;
+            let node = net.as_mut().ok_or("network is not ready yet")?;
+            node.join_server(&ticket).await.map_err(err_to_string)?
+        };
+        app.invites
+            .lock()
+            .unwrap()
+            .insert(ticket.server_id, ticket.encode());
+        if let Some(dir) = app.data_dir() {
+            let _ = persist::save_invites(dir, &app.invites.lock().unwrap().clone());
+        }
+        if !reached_peer {
+            tracing::warn!("joined topic but no members are online yet");
+        }
+        Ok(())
     };
-    app.invites
-        .lock()
-        .unwrap()
-        .insert(ticket.server_id, raw_ticket);
-    if let Some(dir) = app.data_dir() {
-        let _ = persist::save_invites(dir, &app.invites.lock().unwrap().clone());
-    }
-    if !reached_peer {
-        tracing::warn!("joined topic but no members are online yet");
-    }
 
     // Place a provisional local state; the SyncResponse will replace it.
-    let mut server = commy_core::Server::new(ticket.server_name.clone(), profile.id);
-    server.id = ticket.server_id;
-    let mut state = ServerState::new(server);
-    state.profiles.insert(profile.id, profile.clone());
+    let (state, profile, signing) = own_server_state(app, ticket.server_id, &ticket.server_name, joining).await?;
     let summary = ServerSummary::from_state(&state);
     app.servers.lock().unwrap().insert(ticket.server_id, state);
     // Only this state takes a snapshot, once (see `catchup::apply_snapshot`).
@@ -222,10 +223,34 @@ pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: Se
         }),
     )
     .await;
+    drop(signing);
 
     app.persist_server(ticket.server_id);
     let _ = handle.emit("servers-changed", ());
     Ok(summary)
+}
+
+/// Hosts or joins server `id` with `connect`, then makes our first state
+/// for it, with our own entry. That call can take long enough for our key,
+/// or our whole profile when the account's is taken on, to change
+/// meanwhile, so the entry is made from our profile as it is once it
+/// returns. The profile comes back for what we announce, with a hold on
+/// [`App::signing`] that keeps it current: keep it until the state is
+/// placed and the announcement sent.
+async fn own_server_state<'a>(
+    app: &'a App,
+    id: ServerId,
+    name: &str,
+    connect: impl std::future::Future<Output = CmdResult<()>>,
+) -> CmdResult<(ServerState, UserProfile, tokio::sync::RwLockReadGuard<'a, ()>)> {
+    connect.await?;
+    let signing = app.signing.read().await;
+    let profile = current_profile(app)?;
+    let mut server = commy_core::Server::new(name, profile.id);
+    server.id = id;
+    let mut state = ServerState::new(server);
+    state.profiles.insert(profile.id, profile.clone());
+    Ok((state, profile, signing))
 }
 
 #[tauri::command]
@@ -393,6 +418,26 @@ fn edit_time(original: &Message, now: chrono::DateTime<chrono::Utc>) -> chrono::
     }
 }
 
+/// Our edit of `original` to `content` made at `now`, signed over the
+/// whole edited message with its time from [`edit_time`]. Refused when the
+/// edited message is larger than the store takes, which also keeps the
+/// edit, carrying less than the message, within one gossip frame.
+fn sign_edit(
+    sid: ServerId,
+    original: &Message,
+    content: String,
+    now: chrono::DateTime<chrono::Utc>,
+    identity: &Identity,
+) -> CmdResult<ServerEvent> {
+    let edited_at = edit_time(original, now);
+    // A signature is the same size whatever it signs.
+    let edited = Message { content, edited_at: Some(edited_at), sig: Some(Signature([0; 64])), ..original.clone() };
+    if edited.authored_size() > MAX_MESSAGE_BYTES {
+        return Err("that edit is too long; try shortening it".into());
+    }
+    Ok(original.edit_event(sid, edited.content, edited_at, identity))
+}
+
 /// Edits one of our own messages.
 #[tauri::command]
 async fn edit_message(
@@ -420,12 +465,8 @@ async fn edit_message(
             return Err("you can only edit your own messages".into());
         }
         let original = state.messages(cid).iter().find(|m| m.id == mid).ok_or("that message no longer exists")?;
-        // Signed over the whole edited message, with our edit time.
-        original.edit_event(sid, content, edit_time(original, chrono::Utc::now()), &identity)
+        sign_edit(sid, original, content, chrono::Utc::now(), &identity)?
     };
-    if commy_net::protocol::gossip_size(&WirePayload::Event(edit.clone())) > commy_net::protocol::MAX_GOSSIP_BYTES {
-        return Err("that edit is too long to send".into());
-    }
     apply_and_broadcast(&app, &handle, sid, edit)
         .await?;
     Ok(())
@@ -1619,14 +1660,10 @@ fn open_dm(app: tauri::State<App>, user_id: String) -> CmdResult<DmThreadView> {
     if partner == me.id {
         return Err("you cannot message yourself".into());
     }
-    let profile = {
-        let servers = app.servers.lock().unwrap();
-        servers
-            .values()
-            .find_map(|s| s.profiles.get(&partner).cloned())
-    };
+    let profile = outbox::member_profile(&app.servers.lock().unwrap(), partner);
     let mut dms = app.dms.lock().unwrap();
     if let Some(profile) = profile {
+        // Keeps a key already pinned for them.
         dms.remember_contact(profile);
     }
     let name = dms
@@ -1759,14 +1796,13 @@ async fn rename_server(
 /// Channel, role and AFK events a reconnecting peer may have missed.
 /// Only members allowed to make those changes re-announce them.
 fn structure_announcements(app: &tauri::State<'_, App>, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
-    let deleted_roles = app.deleted_roles.lock().unwrap().of(sid);
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
-    structure_events(state, me, &deleted_roles)
+    structure_events(state, me, chrono::Utc::now())
 }
 
-/// [`structure_announcements`] for one server's state.
-fn structure_events(state: &ServerState, me: UserId, deleted_roles: &[RoleId]) -> Vec<ServerEvent> {
+/// [`structure_announcements`] for one server's state at `now`.
+fn structure_events(state: &ServerState, me: UserId, now: chrono::DateTime<chrono::Utc>) -> Vec<ServerEvent> {
     let sid = state.server.id;
     let mut events = Vec::new();
     if state.server.permissions_for(me).allows(Permissions::MANAGE_CHANNELS) {
@@ -1865,7 +1901,7 @@ fn structure_events(state: &ServerState, me: UserId, deleted_roles: &[RoleId]) -
             events.push(ServerEvent::MemberBan { server: sid, user: *user });
         }
     }
-    events.extend(roles::announcements(state, me, deleted_roles));
+    events.extend(roles::announcements(state, me, now));
     let custom = state.server.emojis_shareable || state.server.soundboard_open;
     if custom && state.server.permissions_for(me).allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ExpressionSettings {
@@ -2158,9 +2194,6 @@ async fn leave_server(
 /// Drops queued sends and catch-up state for a server we are no longer in.
 fn forget_server_outbox(app: &App, sid: ServerId) {
     app.catchup.lock().unwrap().forget_server(sid);
-    if app.deleted_roles.lock().unwrap().forget_server(sid) {
-        app.persist_deleted_roles();
-    }
     app.set_awaiting_snapshot(sid, false);
     if app.outbox.lock().unwrap().forget_server(sid) {
         app.persist_outbox();
@@ -2297,11 +2330,13 @@ mod structure_tests {
             self_assignable: false,
             tag: None,
             banner: None,
+            updated_at: chrono::Utc::now().timestamp_millis(),
         };
         state.apply(ServerEvent::RoleCreate { server: sid, role: mods.clone() }).unwrap();
-        state.apply(ServerEvent::RoleAssign { server: sid, user: member.id, role: mods.id }).unwrap();
+        state.apply(state.role_change(member.id, mods.id, true, chrono::Utc::now())).unwrap();
 
-        for event in structure_events(&state, owner.id, &[]) {
+        let now = chrono::Utc::now();
+        for event in structure_events(&state, owner.id, now) {
             let _ = offline.apply(event);
         }
         assert_eq!(offline.server.member(member.id).unwrap().roles, vec![mods.id]);
@@ -2310,7 +2345,7 @@ mod structure_tests {
         let roles_of = |events: Vec<ServerEvent>| {
             events.into_iter().filter(|e| matches!(e, ServerEvent::RoleCreate { .. } | ServerEvent::RoleAssign { .. })).count()
         };
-        assert_eq!(roles_of(structure_events(&state, member.id, &[])), 0);
+        assert_eq!(roles_of(structure_events(&state, member.id, now)), 0);
     }
 }
 
@@ -2351,6 +2386,80 @@ mod edit_tests {
         // Later than the last edit, it keeps its own time.
         let later = same + chrono::Duration::seconds(1);
         assert_eq!(edit_time(&last, later), later);
+    }
+
+    #[test]
+    fn an_edit_is_refused_by_us_exactly_where_the_store_refuses_it() {
+        let identity = Identity::generate();
+        let mut me = UserProfile::new("me");
+        me.identity = Some(identity.public());
+        let server = commy_core::Server::new("s", me.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = ServerState::new(server);
+        state.profiles.insert(me.id, me.clone());
+        let mut message = Message::new(channel, me.id, "short");
+        message.sign(sid, &identity);
+        state.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
+
+        let now = chrono::Utc::now();
+        let edit = |len: usize| sign_edit(sid, &message, "x".repeat(len), now, &identity);
+        let longest = (0..4000).collect::<Vec<_>>().partition_point(|&len| edit(len).is_ok()) - 1;
+        let fits = edit(longest).unwrap();
+        // Within one gossip frame, so nothing else needs checking.
+        let gossip = |event: &ServerEvent| commy_net::protocol::gossip_size(&WirePayload::Event(event.clone()));
+        assert!(gossip(&fits) <= commy_net::protocol::MAX_GOSSIP_BYTES);
+        assert_eq!(state.clone().apply(fits), Ok(true));
+
+        assert_eq!(edit(longest + 1), Err("that edit is too long; try shortening it".to_string()));
+        // That edit fits a gossip frame, yet the store refuses it.
+        let over = message.edit_event(sid, "x".repeat(longest + 1), now, &identity);
+        assert!(gossip(&over) <= commy_net::protocol::MAX_GOSSIP_BYTES);
+        assert_eq!(state.apply(over), Err(StoreError::TooLarge));
+    }
+}
+
+#[cfg(test)]
+mod own_server_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn our_entry_and_announcement_take_a_key_settled_while_connecting() {
+        let nanos = std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos();
+        let dir = std::env::temp_dir().join("commy-own-server-tests").join(format!("{nanos:x}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write_key = |identity: &Identity| {
+            let hex = data_encoding::HEXLOWER.encode(&identity.to_bytes());
+            std::fs::write(dir.join(commy_core::identity::IDENTITY_FILE), hex).unwrap();
+        };
+        // Our key was made in this run and is held back.
+        let held = Identity::generate();
+        write_key(&held);
+        let app = App::default();
+        app.data_dir.set(dir.clone()).unwrap();
+        *app.profile.lock().unwrap() = Some(UserProfile::new("me"));
+        app.reload_identity().unwrap();
+        app.mark_key_unsettled();
+        app.hold_key(std::time::Instant::now() + KEY_SETTLE_MAX);
+        assert_eq!(app.announced(current_profile(&app).unwrap()).identity, None);
+
+        // The account's key arrives and settles while we join.
+        let account = Identity::generate();
+        let joining = async {
+            write_key(&account);
+            let swap = app.signing.write().await;
+            settle::settle_loaded_key(&app, &swap).unwrap();
+            Ok(())
+        };
+        let sid = ServerId::new();
+        let (state, profile, signing) = own_server_state(&app, sid, "s", joining).await.unwrap();
+        assert_eq!(state.server.id, sid);
+        assert_eq!(state.identity_of(profile.id), Some(account.public()));
+        assert_eq!(app.announced(profile).identity, Some(account.public()));
+        // Nothing swaps our key while the hold is kept.
+        assert!(app.signing.try_write().is_err());
+        drop(signing);
+        assert!(app.signing.try_write().is_ok());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 
@@ -2813,7 +2922,8 @@ async fn update_role(
         if name.is_empty() || name.chars().count() > 50 {
             return Err("role names must be 1 to 50 characters".into());
         }
-        commy_core::server::Role { name, color, self_assignable, tag, ..existing.clone() }
+        let updated_at = commy_core::server::change_time(existing.updated_at, chrono::Utc::now());
+        commy_core::server::Role { name, color, self_assignable, tag, updated_at, ..existing.clone() }
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
@@ -2849,7 +2959,8 @@ async fn set_role_banner(
             Some(store_shared_blob(&app, bytes).await?)
         }
     };
-    let role = commy_core::server::Role { banner, ..existing };
+    let updated_at = commy_core::server::change_time(existing.updated_at, chrono::Utc::now());
+    let role = commy_core::server::Role { banner, updated_at, ..existing };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
 
@@ -3103,18 +3214,14 @@ async fn set_own_role(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         let pickable = state.server.roles.iter().any(|r| r.id == rid && r.self_assignable);
         if !pickable {
             return Err("that role cannot be picked".into());
         }
-    }
-    let event = if held {
-        ServerEvent::RoleAssign { server: sid, user: me.id, role: rid }
-    } else {
-        ServerEvent::RoleUnassign { server: sid, user: me.id, role: rid }
+        state.role_change(me.id, rid, held, chrono::Utc::now())
     };
     apply_and_broadcast(&app, &handle, sid, event).await
 }
@@ -3964,6 +4071,7 @@ async fn create_role(
             self_assignable: false,
             tag: None,
             banner: None,
+            updated_at: chrono::Utc::now().timestamp_millis(),
         }
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleCreate { server: sid, role }).await
@@ -3979,17 +4087,12 @@ async fn delete_role(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let remember = {
+    {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
-        roles::remembers_delete(state, rid)
-    };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleDelete { server: sid, role: rid }).await?;
-    if remember {
-        app.note_deleted_role(sid, rid);
     }
-    Ok(())
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleDelete { server: sid, role: rid }).await
 }
 
 #[tauri::command]
@@ -4005,15 +4108,11 @@ async fn set_member_role(
     let uid: UserId = user_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
-    }
-    let event = if grant {
-        ServerEvent::RoleAssign { server: sid, user: uid, role: rid }
-    } else {
-        ServerEvent::RoleUnassign { server: sid, user: uid, role: rid }
+        state.role_change(uid, rid, grant, chrono::Utc::now())
     };
     apply_and_broadcast(&app, &handle, sid, event).await
 }
@@ -4199,36 +4298,24 @@ async fn run_net_loop(
                     ServerEvent::VoiceState { user, channel, .. } => Some((*user, *channel)),
                     _ => None,
                 };
-                // A role deleted here stays deleted (see `roles`).
-                if app.deleted_roles.lock().unwrap().revives(server, &event) {
-                    continue;
-                }
-                let deleted_role = match &event {
-                    ServerEvent::RoleDelete { role, .. } => Some(*role),
-                    _ => None,
-                };
                 // Message events whose author key is not known yet wait for it.
                 let holdable = catchup::holdable(&event).then(|| event.clone());
                 let key_source = matches!(event, ServerEvent::MemberJoin { .. } | ServerEvent::ProfileUpdate { .. });
                 let presence = outbox::online_user(&event);
-                let (applied, was_online, new_message, remember) = {
+                let (applied, was_online, new_message) = {
                     let mut servers = app.servers.lock().unwrap();
                     match servers.get_mut(&server) {
                         Some(state) => {
                             let was_online = presence.map(|(user, _)| {
                                 state.profiles.get(&user).is_some_and(|p| p.presence.is_visible_online())
                             });
-                            let remember = deleted_role.filter(|role| roles::remembers_delete(state, *role));
                             // Only a message now shown here is news.
                             let (applied, new_message) = catchup::apply_live(state, event);
-                            (applied, was_online, new_message, remember)
+                            (applied, was_online, new_message)
                         }
                         None => continue,
                     }
                 };
-                if let (Ok(_), Some(role)) = (&applied, remember) {
-                    app.note_deleted_role(server, role);
-                }
                 if applied.is_ok() {
                     if key_source {
                         catchup::release_held(&handle, server);
@@ -4581,7 +4668,6 @@ pub fn run() {
                 if let Some(dms) = persist::load_dms(&dir) {
                     *app.dms.lock().unwrap() = dms;
                 }
-                *app.deleted_roles.lock().unwrap() = roles::DeletedRoles::load(&dir);
                 *app.account.lock().unwrap() = account::load(&dir);
                 if let Some(creds) = persist::load_integrations(&dir) {
                     *app.igdb_creds.lock().unwrap() = creds;

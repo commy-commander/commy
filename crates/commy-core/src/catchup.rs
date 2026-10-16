@@ -47,7 +47,7 @@ pub struct BucketDigest {
 }
 
 /// A bucket's items as (id, version) pairs: a message's edit time, see
-/// [`message_version`], or a delete proof's signer and time, see
+/// [`message_version`], or a delete proof's signer, channel and time, see
 /// [`proof_version`].
 pub type BucketItems = (BucketKey, Vec<(MessageId, i64)>);
 
@@ -91,12 +91,13 @@ pub fn message_version(message: &Message) -> i64 {
     message.edited_at.map_or(0, |t| t.timestamp_millis())
 }
 
-/// A delete proof's signer and time folded into 64 bits, so each
-/// signer's proof for a message is an item of its own.
+/// A delete proof's signer, channel and time folded into 64 bits, so
+/// each proof kept for a message is an item of its own.
 pub fn proof_version(proof: &TombstoneProof) -> i64 {
     let digest = Sha256::new()
         .chain_update(PROOF_DOMAIN)
         .chain_update(proof.by.0.as_bytes())
+        .chain_update(proof.channel.0.as_bytes())
         .chain_update(proof.at.timestamp_millis().to_be_bytes())
         .finalize();
     let mut out = [0u8; 8];
@@ -143,7 +144,8 @@ fn covered(state: &ServerState, channel: ChannelId, now: DateTime<Utc>) -> impl 
         .filter(move |m| m.sig.is_some() && m.created_at >= since && m.created_at < until)
 }
 
-/// Delete proofs that catch-up carries: made inside the window, for a
+/// Delete proofs that catch-up carries: valid here (see
+/// [`ServerState::tombstones_since`]), made inside the window, for a
 /// channel that still exists.
 fn covered_tombstones(state: &ServerState, now: DateTime<Utc>) -> impl Iterator<Item = &TombstoneProof> {
     let until = day_start(last_day(now).saturating_add(1));
@@ -230,8 +232,9 @@ pub fn items(state: &ServerState, keys: &[BucketKey], now: DateTime<Utc>) -> Vec
 }
 
 /// Compares item lists of the same buckets. Returns the ids the peer
-/// lacks (see [`Listing::holds`]) and the ids we lack, each newest first
-/// and without duplicates. Not capped, see [`cap`].
+/// lacks (see [`Listing::holds`]) and the ids we lack, each without
+/// duplicates: messages first, so delete proofs never crowd them out of
+/// a session, then proofs, each newest first. Not capped, see [`cap`].
 pub fn diff(ours: &[BucketItems], theirs: &[BucketItems]) -> (Vec<MessageId>, Vec<MessageId>) {
     (lacking(ours, theirs), lacking(theirs, ours))
 }
@@ -272,13 +275,13 @@ impl Listing {
 /// Ids of items in `have` that `other` does not hold.
 fn lacking(have: &[BucketItems], other: &[BucketItems]) -> Vec<MessageId> {
     let other = Listing::new(other);
-    let mut found: Vec<(u32, i64, MessageId)> = Vec::new();
+    let mut found: Vec<(bool, u32, i64, MessageId)> = Vec::new();
     for (key, list) in have {
+        let message = matches!(key, BucketKey::Messages { .. });
         for &(id, version) in list {
             if !other.holds(*key, id, version) {
                 // A proof's version orders nothing.
-                let order = if matches!(key, BucketKey::Tombstones { .. }) { 0 } else { version };
-                found.push((key.day(), order, id));
+                found.push((message, key.day(), if message { version } else { 0 }, id));
             }
         }
     }
@@ -286,12 +289,13 @@ fn lacking(have: &[BucketItems], other: &[BucketItems]) -> Vec<MessageId> {
     let mut seen = HashSet::new();
     found
         .into_iter()
-        .filter_map(|(_, _, id)| seen.insert(id).then_some(id))
+        .filter_map(|(_, _, _, id)| seen.insert(id).then_some(id))
         .collect()
 }
 
-/// Keeps the first [`CATCHUP_MAX_ITEMS`] ids (the newest, for lists
-/// from [`diff`]) and returns how many were dropped.
+/// Keeps the first [`CATCHUP_MAX_ITEMS`] ids (messages, then proofs,
+/// each the newest first for lists from [`diff`]) and returns how many
+/// were dropped.
 pub fn cap(ids: &mut Vec<MessageId>) -> usize {
     let dropped = ids.len().saturating_sub(CATCHUP_MAX_ITEMS);
     ids.truncate(CATCHUP_MAX_ITEMS);
@@ -322,7 +326,7 @@ mod tests {
             if let Some(m) = from.message(*id) {
                 to.apply(ServerEvent::MessageCreate { message: m.clone() }).unwrap();
             }
-            for p in from.tombstones_for(*id) {
+            for p in from.valid_tombstones_for(&[*id]) {
                 to.apply(p.clone().into_event()).unwrap();
             }
         }
@@ -585,8 +589,11 @@ mod tests {
         let now = Utc::now();
         let (p1, p2) = (proof(&state, &m, owner, now), proof(&state, &m, other, now));
         let later = proof(&state, &m, owner, now + Duration::seconds(1));
+        let voice = state.server.channels[1].id;
+        let elsewhere = TombstoneProof::sign(state.server.id, voice, m.id, owner, now, &crate::test_support::identity_for(owner));
         assert_ne!(proof_version(&p1), proof_version(&p2));
         assert_ne!(proof_version(&p1), proof_version(&later));
+        assert_ne!(proof_version(&p1), proof_version(&elsewhere));
         let key = BucketKey::Tombstones { day: day_number(now) };
         let (v1, v2) = (proof_version(&p1), proof_version(&p2));
         // Whichever proof ranks higher, each side lacks the one it has not got.
@@ -612,6 +619,20 @@ mod tests {
         assert_eq!((they_lack, we_want), (vec![id], vec![id]));
         let both = vec![(messages, vec![(id, 0)]), (tombstones, vec![(id, 0)])];
         assert_eq!(diff(&both, &[]).0, vec![id], "listed once");
+    }
+
+    #[test]
+    fn diff_lists_messages_before_proofs() {
+        let channel = ChannelId::new();
+        let (old, new, gone) = (MessageId::new(), MessageId::new(), MessageId::new());
+        let ours = vec![
+            (BucketKey::Messages { channel, day: 9 }, vec![(old, 0)]),
+            (BucketKey::Messages { channel, day: 10 }, vec![(new, 0)]),
+            (BucketKey::Tombstones { day: 11 }, vec![(gone, 7)]),
+        ];
+        // Even a proof dated later waits behind every message.
+        assert_eq!(diff(&ours, &[]).0, vec![new, old, gone]);
+        assert_eq!(diff(&[], &ours).1, vec![new, old, gone]);
     }
 
     #[test]
@@ -717,9 +738,65 @@ mod tests {
     }
 
     #[test]
+    fn two_deletes_naming_different_channels_settle_the_same() {
+        for right_first in [true, false] {
+            let (mut a, channel, _) = fixture();
+            let sid = a.server.id;
+            let author = join(&mut a, "author");
+            let mut b = a.clone();
+            let now = Utc::now();
+            let m = post(&a, channel, author, "regretted");
+            a.apply(ServerEvent::MessageCreate { message: m.clone() }).unwrap();
+            // The wrong one is the earlier, so a replica choosing between
+            // the two by time alone would keep it.
+            let voice = a.server.channels[1].id;
+            let identity = crate::test_support::identity_for(author);
+            let wrong = TombstoneProof::sign(sid, voice, m.id, author, now - Duration::seconds(1), &identity);
+            let right = proof(&a, &m, author, now);
+            let order = if right_first { [&right, &wrong] } else { [&wrong, &right] };
+            for p in order {
+                let _ = a.apply(p.clone().into_event());
+                b.apply(p.clone().into_event()).unwrap();
+            }
+            assert!(!a.has_message(m.id), "right first: {right_first}");
+            reconcile(&mut a, &mut b, now);
+            assert_eq!(digests(&a, now), digests(&b, now), "right first: {right_first}");
+            assert_eq!(reconcile(&mut a, &mut b, now), (vec![], vec![]));
+            // Only the one that removed it counts as accepted, after a
+            // restart too.
+            let restored = ServerState::from_snapshot(a.snapshot());
+            assert_eq!(restored.snapshot().accepted, vec![(m.id, author, channel, author)]);
+            // A late copy stays out on both.
+            for state in [&mut a, &mut b] {
+                state.apply(ServerEvent::MessageCreate { message: m.clone() }).unwrap();
+                assert!(!state.has_message(m.id));
+            }
+        }
+    }
+
+    #[test]
+    fn a_message_taken_in_drops_the_proofs_naming_another_channel() {
+        let (mut a, channel, _) = fixture();
+        let author = join(&mut a, "author");
+        let moderator = join_moderator(&mut a, "moderator");
+        let mut b = a.clone();
+        let now = Utc::now();
+        let first = post(&a, channel, author, "first");
+        a.apply(ServerEvent::MessageCreate { message: first.clone() }).unwrap();
+        a.apply(proof(&a, &first, moderator, now).into_event()).unwrap();
+        // The author signs another message under the same id elsewhere.
+        let voice = a.server.channels[1].id;
+        let again = signed(&a, Message { channel: voice, content: "again".into(), ..first.clone() });
+        for state in [&mut a, &mut b] {
+            assert_eq!(state.apply(ServerEvent::MessageCreate { message: again.clone() }), Ok(true));
+        }
+        assert!(a.tombstone(first.id).is_none());
+        assert_eq!(digests(&a, now), digests(&b, now));
+    }
+
+    #[test]
     fn another_deleters_proof_does_not_hide_the_authors_from_catch_up() {
         let (mut n, channel, _) = fixture();
-        let sid = n.server.id;
         let author = join(&mut n, "author");
         let moderator = join_moderator(&mut n, "moderator");
         let mut q = n.clone();
@@ -735,7 +812,7 @@ mod tests {
         // Even once the moderator's own no longer counts, a stale replica's
         // late copy stays out on n.
         let role = n.server.member(moderator).unwrap().roles[0];
-        n.apply(ServerEvent::RoleUnassign { server: sid, user: moderator, role }).unwrap();
+        n.apply(n.role_change(moderator, role, false, now)).unwrap();
         n.apply(ServerEvent::MessageCreate { message: x.clone() }).unwrap();
         assert!(!n.has_message(x.id));
     }

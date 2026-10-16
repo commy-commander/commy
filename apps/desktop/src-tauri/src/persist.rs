@@ -6,7 +6,6 @@
 //! <data>/servers/<id>.json     one Snapshot per joined server
 //! <data>/outbox.json           sends waiting for someone to come online
 //! <data>/awaiting-snapshot.json servers joined that wait for a snapshot
-//! <data>/deleted-roles.json    roles deleted per server
 //! ```
 //!
 //! Writes go to a temp file first and are renamed into place so a

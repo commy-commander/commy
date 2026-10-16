@@ -747,16 +747,15 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         return false;
     }
     let me = app.profile.lock().unwrap().clone();
-    let deleted_roles = app.deleted_roles.lock().unwrap().of(server);
     let mut held = Vec::new();
     {
         let mut servers = app.servers.lock().unwrap();
         // Snapshots carry no emojis or sounds; keep any announced already.
         // A server left meanwhile stays gone.
-        let Some((emojis, sounds, rules, scheduled)) = servers
-            .get(&server)
-            .map(|s| (s.server.emojis.clone(), s.server.soundboard.clone(), s.server.rules.clone(), s.server.events.clone()))
-        else {
+        let Some((emojis, sounds, rules, scheduled, deleted_roles)) = servers.get(&server).map(|s| {
+            let s = &s.server;
+            (s.emojis.clone(), s.soundboard.clone(), s.rules.clone(), s.events.clone(), s.deleted_roles.clone())
+        }) else {
             return false;
         };
         let mut state = ServerState::new(remote_server);
@@ -1622,14 +1621,15 @@ mod tests {
         let sid = real.server.id;
         let role = commy_core::server::Role { id: commy_core::RoleId::new(), position: 1, ..real.server.roles[0].clone() };
         real.apply(ServerEvent::RoleCreate { server: sid, role: role.clone() }).unwrap();
-        real.apply(ServerEvent::RoleAssign { server: sid, user: me.id(), role: role.id }).unwrap();
+        real.apply(real.role_change(me.id(), role.id, true, chrono::Utc::now())).unwrap();
         let mut provisional = commy_core::Server::new("s", me.id());
         provisional.id = sid;
-        let app = app_with(&me, ServerState::new(provisional));
+        let mut provisional = ServerState::new(provisional);
+        // Its delete overtook the snapshot of a member that missed it.
+        provisional.apply(ServerEvent::RoleDelete { server: sid, role: role.id }).unwrap();
+        let app = app_with(&me, provisional);
         app.set_awaiting_snapshot(sid, true);
 
-        // Its delete overtook the snapshot of a member that missed it.
-        app.note_deleted_role(sid, role.id);
         assert!(apply_snapshot(&TestHandle::new(app.clone()), sid, snapshot_of(&real)));
         let state = app.servers.lock().unwrap()[&sid].clone();
         assert!(!state.server.roles.iter().any(|r| r.id == role.id));

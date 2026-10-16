@@ -82,21 +82,24 @@ pub enum ServerEvent {
     ServerRename { server: ServerId, name: String },
     /// A member changed their profile (display name, status, presence).
     ProfileUpdate { profile: UserProfile },
-    /// A role was created.
+    /// A role was created. For a role already known it is an update.
     RoleCreate { server: ServerId, role: crate::server::Role },
-    /// A role was deleted; it is removed from every member.
+    /// A role was deleted for good; it is removed from every member.
     RoleDelete { server: ServerId, role: RoleId },
-    /// A role was granted to a member.
+    /// A role was granted to a member at `at` (ms since the epoch). The
+    /// latest grant or removal of a role for a member wins.
     RoleAssign {
         server: ServerId,
         user: UserId,
         role: RoleId,
+        at: i64,
     },
-    /// A role was taken from a member.
+    /// A role was taken from a member at `at`, see `RoleAssign`.
     RoleUnassign {
         server: ServerId,
         user: UserId,
         role: RoleId,
+        at: i64,
     },
     /// The AFK voice channel was chosen; None turns the AFK channel off.
     /// Appended last so older variants keep their wire tags.
@@ -156,7 +159,7 @@ pub enum ServerEvent {
     ChannelLayout { server: ServerId, channel: ChannelId, parent: Option<ChannelId>, position: u32 },
     /// Voice channel member cap; 0 is unlimited.
     ChannelLimit { server: ServerId, channel: ChannelId, user_limit: u32 },
-    /// A role's name, color, tag or self-assign setting changed.
+    /// A role's definition changed; the newest wins, see `Role::updated_at`.
     RoleUpdate { server: ServerId, role: crate::server::Role },
     /// A moderator muted or deafened someone in voice for everyone.
     VoiceModerate { server: ServerId, user: UserId, muted: bool, deafened: bool },

@@ -64,6 +64,7 @@ pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
         self_assignable: false,
         tag: None,
         banner: None,
+        updated_at: 0,
     };
     let id = role.id;
     state
@@ -74,6 +75,7 @@ pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
             server,
             user,
             role: id,
+            at: Utc::now().timestamp_millis(),
         })
         .unwrap();
     user

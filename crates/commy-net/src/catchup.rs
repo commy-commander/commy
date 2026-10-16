@@ -369,14 +369,12 @@ pub fn check_peer(state: &ServerState, user: UserId, key: &IdentityKey) -> PeerC
 }
 
 /// [`CatchupStore::get`] over one server's state, in the order of `ids`,
-/// with every delete proof held for each id. Proofs for channels that no
-/// longer exist are left out.
+/// with every delete proof valid here for each id (see
+/// `ServerState::tombstones_since`). Proofs for channels that no longer
+/// exist are left out.
 pub fn collect(state: &ServerState, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>) {
-    let mut order: HashMap<MessageId, usize> = HashMap::with_capacity(ids.len());
-    for id in ids {
-        let next = order.len();
-        order.entry(*id).or_insert(next);
-    }
+    let ids = dedup(ids.iter().copied());
+    let order: HashMap<MessageId, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
     let mut messages: Vec<&Message> = state
         .server
         .channels
@@ -385,17 +383,13 @@ pub fn collect(state: &ServerState, ids: &[MessageId]) -> (Vec<Message>, Vec<Tom
         .filter(|m| order.contains_key(&m.id))
         .collect();
     messages.sort_by_key(|m| order[&m.id]);
-    let mut tombstones: Vec<&TombstoneProof> = order
-        .keys()
-        .flat_map(|id| state.tombstones_for(*id))
+    let tombstones = state
+        .valid_tombstones_for(&ids)
+        .into_iter()
         .filter(|p| state.server.channel(p.channel).is_some())
+        .cloned()
         .collect();
-    // Stable, so each id's proofs stay best first.
-    tombstones.sort_by_key(|p| order[&p.message]);
-    (
-        messages.into_iter().cloned().collect(),
-        tombstones.into_iter().cloned().collect(),
-    )
+    (messages.into_iter().cloned().collect(), tombstones)
 }
 
 /// [`CatchupStore::profiles`] over one server's state: the profiles of
@@ -412,18 +406,19 @@ pub fn profiles_of(state: &ServerState, users: &[UserId]) -> Vec<UserProfile> {
 }
 
 /// [`CatchupStore::apply_profiles`] over one server's state. Each
-/// profile whose key we lack pins that key and is stored, unless the user
-/// is banned. Membership is left alone: a relayed profile never makes
-/// anyone a member, nor brings back one who left or was kicked. Profiles
-/// of users whose key we know already are left alone too, so a relayed
-/// copy never replaces a fresher one. Returns the users whose key we
-/// learned.
+/// profile of a current member whose key we lack pins that key and is
+/// stored. Anyone else's is ignored: a relayed profile never pins a key
+/// for someone not a member here, nor makes anyone a member, so their
+/// items wait for their own join. Profiles of members whose key we know
+/// already are left alone too, so a relayed copy never replaces a
+/// fresher one. Returns the users whose key we learned.
 pub fn apply_profiles(state: &mut ServerState, profiles: Vec<UserProfile>) -> Vec<UserId> {
     let mut learned = Vec::new();
     for mut profile in profiles {
         let user = profile.id;
         if profile.identity.is_none()
             || state.identity_of(user).is_some()
+            || !state.server.is_member(user)
             || state.server.banned.contains(&user)
         {
             continue;
@@ -1948,6 +1943,7 @@ mod tests {
                 self_assignable: false,
                 tag: None,
                 banner: None,
+                updated_at: 0,
             };
             let rid = role.id;
             let grant = [
@@ -1956,6 +1952,7 @@ mod tests {
                     server,
                     user: moderator,
                     role: rid,
+                    at: Utc::now().timestamp_millis(),
                 },
             ];
             for event in &grant {
@@ -1971,7 +1968,7 @@ mod tests {
 
             let (ra, _) = either_way(&a, &b, a_dials).await;
             // b keeps the proof without applying it, and holds it as far as
-            // a can tell.
+            // a can tell, but lists it nowhere while it is not valid there.
             assert!(b.has(spam.id), "{case}");
             let kept: Vec<TombstoneProof> =
                 b.with(|s| s.tombstones_for(spam.id).into_iter().cloned().collect());
@@ -1984,7 +1981,7 @@ mod tests {
                     .filter(|d| matches!(d.key, BucketKey::Tombstones { .. }))
                     .collect()
             };
-            assert_eq!(proofs(&a), proofs(&b), "{case}");
+            assert!(proofs(&b).is_empty(), "{case}");
             let (_, rb) = either_way(&a, &b, a_dials).await;
             assert!(rb.received.is_empty(), "{case}");
 
@@ -2002,7 +1999,7 @@ mod tests {
     /// A store holding `recent` ids deleted today and `old` ids deleted
     /// yesterday, each with `per_id` proofs from the owner and
     /// moderators, and an empty peer. The proofs are spread over enough
-    /// signers that none passes `MAX_ORPHAN_PROOFS` on either side.
+    /// signers that none passes `MAX_UNAPPLIED_PROOFS` on either side.
     fn many_proofs(
         recent: usize,
         old: usize,
@@ -2011,7 +2008,7 @@ mod tests {
         let (mut state, channel, owner) = fixture();
         let friend = join(&mut state, "friend");
         let pool = ((recent + old) * per_id)
-            .div_ceil(commy_core::store::MAX_ORPHAN_PROOFS)
+            .div_ceil(commy_core::store::MAX_UNAPPLIED_PROOFS)
             .max(per_id);
         let signers: Vec<UserId> = std::iter::once(owner)
             .chain((1..pool).map(|i| join_moderator(&mut state, &format!("mod {i}"))))
@@ -2068,6 +2065,138 @@ mod tests {
             let (_, rb) = either_way(&a, &b, a_dials).await;
             assert_eq!(sorted(rb.received), sorted(old_ids), "{case}");
             assert_eq!(a.digests(), b.digests(), "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn proofs_not_valid_here_are_never_offered() {
+        for a_dials in [true, false] {
+            let (mut state, channel, owner) = fixture();
+            let server = state.server.id;
+            let author = join(&mut state, "author");
+            let member = join(&mut state, "member");
+            let moderator = join_moderator(&mut state, "moderator");
+            let role = state.server.member(moderator).unwrap().roles[0];
+            let newcomer = join(&mut state, "newcomer");
+            let a = MemStore::new(state.clone(), owner);
+            let b = MemStore::new(state, newcomer);
+            // Older than catch-up carries, so the newcomer never gets it.
+            let old = a.with(|s| post_at(s, channel, author, "old", day_ago(35)));
+            a.add(&old);
+            let shared = a.post_as(author, channel, "shared");
+            b.add(&shared);
+            let now = Utc::now();
+            a.with(|s| {
+                // A member's deletes of others' messages wait here, unapplied.
+                for m in [&old, &shared] {
+                    let p = proof_at(s, m, member, now);
+                    s.apply(p.into_event()).unwrap();
+                }
+                // A moderator's delete of a message never seen here, whose
+                // role then goes.
+                let unseen = post(s, channel, author, "never seen");
+                let p = proof_at(s, &unseen, moderator, now);
+                s.apply(p.into_event()).unwrap();
+            });
+            let demote = ServerEvent::RoleUnassign {
+                server,
+                user: moderator,
+                role,
+                at: Utc::now().timestamp_millis(),
+            };
+            for store in [&a, &b] {
+                store.with(|s| s.apply(demote.clone()).unwrap());
+            }
+            let case = format!("a dials {a_dials}");
+            for _ in 0..2 {
+                let (ra, rb) = either_way(&a, &b, a_dials).await;
+                assert!(ra.received.is_empty() && rb.received.is_empty(), "{case}");
+                assert_eq!(a.digests(), b.digests(), "{case}");
+            }
+            assert!(b.with(|s| s.tombstone(shared.id).is_none()), "{case}");
+            assert!(a.has(old.id) && a.has(shared.id), "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn replicas_holding_different_full_sets_of_proofs_converge() {
+        use commy_core::store::MAX_UNAPPLIED_PROOFS;
+        let (mut state, channel, owner) = fixture();
+        let signers: Vec<UserId> = (0..3)
+            .map(|i| join(&mut state, &format!("signer {i}")))
+            .collect();
+        let friend = join(&mut state, "friend");
+        let a = MemStore::new(state.clone(), owner);
+        let b = MemStore::new(state, friend);
+        let server = a.server();
+        let base = Utc::now() - chrono::Duration::hours(2);
+        // Each side holds every other one of a signer's earliest 2 * MAX
+        // deletes of messages never seen, a full set each.
+        let mut best = Vec::new();
+        for by in &signers {
+            let proofs: Vec<TombstoneProof> = (0..2 * MAX_UNAPPLIED_PROOFS)
+                .map(|i| {
+                    let at = base + chrono::Duration::milliseconds(i as i64);
+                    let id = MessageId::for_author(*by);
+                    TombstoneProof::sign(server, channel, id, *by, at, &identity_for(*by))
+                })
+                .collect();
+            for (store, skip) in [(&a, 0), (&b, 1)] {
+                store.with(|s| {
+                    for p in proofs.iter().skip(skip).step_by(2) {
+                        assert_eq!(s.apply(p.clone().into_event()), Ok(true));
+                    }
+                });
+            }
+            best.extend(proofs[..MAX_UNAPPLIED_PROOFS].iter().cloned());
+        }
+        let real = a.post(channel, "real");
+        let mut sessions = 0;
+        while a.digests() != b.digests() {
+            sessions += 1;
+            assert!(sessions <= 4, "still apart after {} sessions", sessions - 1);
+            either_way(&a, &b, sessions % 2 == 1).await;
+        }
+        assert!(b.has(real.id));
+        let kept = |store: &MemStore| {
+            let mut list = store.with(|s| s.snapshot().tombstone_proofs);
+            list.sort_by_key(|p| (p.by, p.at));
+            list
+        };
+        best.sort_by_key(|p| (p.by, p.at));
+        assert_eq!(kept(&a), best);
+        assert_eq!(kept(&b), best);
+    }
+
+    #[tokio::test]
+    async fn proofs_dated_tomorrow_never_crowd_out_a_message() {
+        use commy_core::store::MAX_UNAPPLIED_PROOFS;
+        const { assert!(3 * MAX_UNAPPLIED_PROOFS > CATCHUP_MAX_ITEMS) };
+        for a_dials in [true, false] {
+            let (mut state, channel, owner) = fixture();
+            let signers: Vec<UserId> = (0..3)
+                .map(|i| join(&mut state, &format!("signer {i}")))
+                .collect();
+            let friend = join(&mut state, "friend");
+            let a = MemStore::new(state.clone(), owner);
+            let b = MemStore::new(state, friend);
+            let server = a.server();
+            let tomorrow_ms = (day_number(Utc::now()) as i64 + 1) * 86_400_000;
+            let tomorrow = DateTime::from_timestamp_millis(tomorrow_ms).unwrap();
+            a.with(|s| {
+                for by in &signers {
+                    for _ in 0..MAX_UNAPPLIED_PROOFS {
+                        let id = MessageId::for_author(*by);
+                        let p = TombstoneProof::sign(server, channel, id, *by, tomorrow, &identity_for(*by));
+                        s.apply(p.into_event()).unwrap();
+                    }
+                }
+            });
+            let real = a.post(channel, "real");
+            let (ra, _) = either_way(&a, &b, a_dials).await;
+            let case = format!("a dials {a_dials}");
+            assert!(b.has(real.id), "{case}");
+            assert!(ra.delivered.contains(&real.id), "{case}");
         }
     }
 
@@ -2619,7 +2748,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn history_from_members_never_met_comes_with_their_keys() {
+    async fn history_comes_with_the_keys_of_members_known_without_one() {
         let (mut base, channel, owner) = fixture();
         let server = base.server.id;
         let c_user = join(&mut base, "c");
@@ -2649,21 +2778,30 @@ mod tests {
         let from_d = a.post_as(d.id, channel, "me too");
 
         let (rc, ra) = ok_session(&c, &a).await;
-        assert_eq!(rc.held, 0);
-        assert_eq!(sorted(rc.received), sorted(vec![from_b.id, from_d.id]));
-        assert!(c.has(from_b.id) && c.has(from_d.id));
+        // d's key comes along; b, whose join c has not seen, waits for it.
+        assert_eq!((rc.received, rc.held), (vec![from_d.id], 1));
+        assert!(c.has(from_d.id) && !c.has(from_b.id));
         c.with(|s| {
-            // Membership comes from b's own join, not from a relayed profile.
-            assert!(!s.server.is_member(b_user) && s.profiles.contains_key(&b_user));
-            assert_eq!(s.identity_of(b_user), Some(identity_for(b_user).public()));
             assert_eq!(s.identity_of(d.id), d.identity);
+            assert!(!s.server.is_member(b_user) && !s.profiles.contains_key(&b_user));
         });
-        assert_eq!(sorted(ra.delivered), sorted(vec![from_b.id, from_d.id]));
+        assert_eq!(ra.delivered, vec![from_d.id]);
+
+        // b's own join lets the held message in.
+        let held = std::mem::take(&mut *c.held.lock().unwrap());
+        let profile = a.with(|s| s.profiles[&b_user].clone());
+        c.with(|s| {
+            s.apply(ServerEvent::MemberJoin { server, profile }).unwrap();
+            for event in held {
+                assert_eq!(s.apply(event), Ok(true));
+            }
+        });
+        assert!(c.has(from_b.id));
         assert_eq!(a.digests(), c.digests());
     }
 
     #[test]
-    fn apply_profiles_pins_keys_without_making_members() {
+    fn apply_profiles_pins_keys_of_members_only() {
         let (mut state, _, _) = fixture();
         let server = state.server.id;
         let friend = join(&mut state, "friend");
@@ -2697,13 +2835,13 @@ mod tests {
                 no_key.clone(),
             ],
         );
-        assert_eq!(learned, vec![newcomer.id, keyless.id]);
+        assert_eq!(learned, vec![keyless.id]);
         assert_eq!(state.server.members, members, "membership is left alone");
-        assert_eq!(state.identity_of(newcomer.id), newcomer.identity);
-        assert_eq!(state.profiles[&newcomer.id].presence, Presence::Offline);
         assert_eq!(state.identity_of(keyless.id), keyless.identity);
         assert_eq!(state.profiles[&keyless.id].presence, Presence::Idle);
-        assert!(!state.profiles.contains_key(&banned.id) && !state.profiles.contains_key(&no_key.id));
+        for absent in [&newcomer, &banned, &no_key] {
+            assert!(!state.profiles.contains_key(&absent.id), "{}", absent.username);
+        }
         // A known key is never replaced, nor the profile around it.
         assert_eq!(
             state.identity_of(friend),
@@ -2749,7 +2887,7 @@ mod tests {
             server,
             user: kicked.id,
         };
-        // c and e know the member only from a profile without a key, and
+        // c knows the member only from a profile without a key, and
         // applied the kick.
         let mut c_state = base.clone();
         c_state
@@ -2758,10 +2896,10 @@ mod tests {
                 profile: keyless,
             })
             .unwrap();
-        c_state.apply(kick.clone()).unwrap();
-        let c = MemStore::new(c_state.clone(), viewer);
-        let e = MemStore::new(c_state, viewer);
-        // a has the member's key and has not heard of the kick yet.
+        c_state.apply(kick).unwrap();
+        let c = MemStore::new(c_state, viewer);
+        // a has the member's key and has not heard of the kick yet, so it
+        // sends the profile along.
         let mut a_state = base;
         a_state
             .apply(ServerEvent::MemberJoin {
@@ -2772,21 +2910,28 @@ mod tests {
         let a = MemStore::new(a_state, owner);
         let old = a.post_as(kicked.id, channel, "posted before the kick");
 
-        let (rc, _) = ok_session(&c, &a).await;
-        assert_eq!(rc.received, vec![old.id]);
+        let (rc, ra) = ok_session(&c, &a).await;
+        assert_eq!((rc.held, rc.received.len()), (1, 0));
+        assert!(ra.delivered.is_empty() && !c.has(old.id));
         let key = kicked.identity.unwrap();
         c.with(|s| {
             assert!(!s.server.is_member(kicked.id), "still out");
-            assert_eq!(s.identity_of(kicked.id), Some(key));
+            assert_eq!(s.identity_of(kicked.id), None);
             assert_eq!(check_peer(s, kicked.id, &key), PeerCheck::Unknown);
         });
+    }
 
-        // Once a applies the kick too, it no longer vouches for the key.
-        a.with(|s| s.apply(kick).unwrap());
-        let (re, _) = ok_session(&e, &a).await;
-        assert_eq!((re.held, re.received.len()), (1, 0));
-        e.with(|s| {
-            assert!(!s.server.is_member(kicked.id) && s.identity_of(kicked.id).is_none());
+    /// Makes `profile`'s user a member of `store` known without a key, as
+    /// one who joined through an older version.
+    fn join_without_key(store: &MemStore, profile: &UserProfile) {
+        let profile = UserProfile {
+            identity: None,
+            ..profile.clone()
+        };
+        store.with(|s| {
+            let server = s.server.id;
+            s.apply(ServerEvent::MemberJoin { server, profile })
+                .unwrap()
         });
     }
 
@@ -2820,6 +2965,9 @@ mod tests {
         };
         // A page's worth may come before the page that names them.
         let ahead = profiles(PROFILE_MARGIN);
+        for p in &ahead {
+            join_without_key(&b, p);
+        }
         let got = receive(&b, vec![CatchupFrame::Profiles(ahead.clone()), CatchupFrame::Done]).await;
         assert!(got.unwrap().applied.is_empty());
         let one_more = vec![
@@ -2869,6 +3017,8 @@ mod tests {
         let base = a.with(|s| s.clone());
         let fits = profile_of_size("fits", MAX_RELAYED_PROFILE_BYTES);
         let over = profile_of_size("over", MAX_RELAYED_PROFILE_BYTES + 1);
+        join_without_key(&b, &fits);
+        join_without_key(&b, &over);
         let frames = vec![
             CatchupFrame::Profiles(vec![fits.clone(), over.clone()]),
             CatchupFrame::Push {
@@ -2943,6 +3093,7 @@ mod tests {
         let count = 2 * PAGE_SIZE + 10;
         let authors: Vec<UserId> = a.with(|s| (0..count).map(|i| join(s, &format!("m{i}"))).collect());
         for author in &authors {
+            join_without_key(&b, &a.with(|s| s.profiles[author].clone()));
             a.post_as(*author, channel, "first post");
         }
         let (rb, ra) = ok_session(&b, &a).await;
