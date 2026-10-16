@@ -368,6 +368,13 @@ pub struct ScreenShareSession {
 const ENCODERS: usize = 2;
 const JPEG_QUALITY: u8 = 60;
 
+/// Produces raw frames on demand: a monitor or window capturer, or a
+/// synthetic source in tests. Opened and used on the capture thread
+/// alone, since platform capture handles are not sendable.
+pub type FrameSource = Box<dyn FnMut() -> anyhow::Result<image::RgbaImage>>;
+/// Opens a [`FrameSource`]; called again whenever grabbing fails.
+pub type FrameOpener = Box<dyn FnMut() -> anyhow::Result<FrameSource> + Send>;
+
 impl ScreenShareSession {
     pub fn start(
         server: ServerId,
@@ -376,6 +383,16 @@ impl ScreenShareSession {
         max_width: u32,
         source: Option<(commy_media::screen::SourceKind, u32)>,
     ) -> Self {
+        let opener: FrameOpener = Box::new(move || {
+            let capturer = commy_media::screen::Capturer::open(source)?;
+            Ok(Box::new(move || capturer.grab()) as FrameSource)
+        });
+        Self::start_with(server, channel, fps, max_width, opener)
+    }
+
+    /// [`ScreenShareSession::start`] with any frame source, so the
+    /// capture-encode-fan-out pipeline runs without a display.
+    pub fn start_with(server: ServerId, channel: ChannelId, fps: u32, max_width: u32, mut open: FrameOpener) -> Self {
         let subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<MediaPacket>>>> =
             Arc::new(Mutex::new(Vec::new()));
         let latest = Arc::new(Mutex::new(None));
@@ -390,12 +407,12 @@ impl ScreenShareSession {
             let stop = stop.clone();
             std::thread::spawn(move || {
                 let interval = std::time::Duration::from_micros(1_000_000 / fps.max(1) as u64);
-                let mut capturer = None;
+                let mut capturer: Option<FrameSource> = None;
                 let mut seq: u64 = 0;
                 while !stop.load(Ordering::Relaxed) {
                     let started = std::time::Instant::now();
                     if capturer.is_none() {
-                        match commy_media::screen::Capturer::open(source) {
+                        match open() {
                             Ok(c) => capturer = Some(c),
                             Err(e) => {
                                 tracing::warn!("screen capture unavailable: {e}");
@@ -404,7 +421,7 @@ impl ScreenShareSession {
                             }
                         }
                     }
-                    match capturer.as_ref().map(|c| c.grab()) {
+                    match capturer.as_mut().map(|grab| grab()) {
                         Some(Ok(image)) => {
                             match raw_tx.try_send((seq, image)) {
                                 Ok(()) | Err(std::sync::mpsc::TrySendError::Full(_)) => {}
@@ -482,23 +499,39 @@ impl Drop for ScreenShareSession {
     }
 }
 
-/// A screen we are watching: pump remote frames to the webview.
+/// A screen we are watching: pump frames to the webview. The frames come
+/// from a peer's media channel, or from our own share for the sharer's
+/// preview, which must move at the stream's rate rather than a timer's.
 pub struct ScreenWatch {
     pub task: JoinHandle<()>,
+    /// Keeps a peer's media channel open for as long as we watch.
+    _channel: Option<mpsc::UnboundedSender<MediaPacket>>,
 }
 
 impl ScreenWatch {
     pub fn start(
         user: UserId,
-        mut media: MediaChannel,
+        media: MediaChannel,
+        emit: impl Fn(UserId, u64, u32, u32, Vec<u8>) + Send + 'static,
+    ) -> Self {
+        let MediaChannel { incoming, outgoing, .. } = media;
+        Self::from_frames(user, incoming, Some(outgoing), emit)
+    }
+
+    /// Watches a stream of packets; `emit` runs for every video frame
+    /// that is still the newest when it is picked up.
+    pub fn from_frames(
+        user: UserId,
+        mut incoming: mpsc::UnboundedReceiver<MediaPacket>,
+        channel: Option<mpsc::UnboundedSender<MediaPacket>>,
         emit: impl Fn(UserId, u64, u32, u32, Vec<u8>) + Send + 'static,
     ) -> Self {
         let task = tokio::spawn(async move {
             let mut last_seq: Option<u64> = None;
-            while let Some(mut packet) = media.incoming.recv().await {
+            while let Some(mut packet) = incoming.recv().await {
                 // Show only the newest frame; anything that queued up
                 // while the webview was busy is already stale.
-                while let Ok(newer) = media.incoming.try_recv() {
+                while let Ok(newer) = incoming.try_recv() {
                     packet = newer;
                 }
                 if let MediaPacket::Video { seq, width, height, jpeg } = packet {
@@ -511,7 +544,7 @@ impl ScreenWatch {
                 }
             }
         });
-        Self { task }
+        Self { task, _channel: channel }
     }
 }
 
@@ -638,6 +671,54 @@ mod tests {
         let u2 = UserId::new();
         assert_eq!(mixer_key(u1), mixer_key(u1));
         assert_ne!(mixer_key(u1), mixer_key(u2));
+    }
+}
+
+#[cfg(test)]
+mod share_tests {
+    use super::*;
+    use std::sync::atomic::AtomicU64;
+
+    fn synthetic() -> FrameOpener {
+        Box::new(|| {
+            let mut n: u8 = 0;
+            Ok(Box::new(move || {
+                n = n.wrapping_add(1);
+                Ok(image::RgbaImage::from_pixel(64, 48, image::Rgba([n, 0, 0, 255])))
+            }) as FrameSource)
+        })
+    }
+
+    /// The sharer's own preview and every viewer get frames at the
+    /// stream's rate. A preview that polled on a one-second timer showed
+    /// about 1 fps; this fails for anything under a quarter of 30 fps.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn own_preview_and_viewers_see_frames_at_stream_rate() {
+        let session = ScreenShareSession::start_with(ServerId::new(), ChannelId::new(), 30, 64, synthetic());
+        let (preview_tx, preview_rx) = mpsc::unbounded_channel();
+        let (viewer_tx, mut viewer_rx) = mpsc::unbounded_channel();
+        session.add_subscriber(preview_tx);
+        session.add_subscriber(viewer_tx);
+        let shown = Arc::new(AtomicU64::new(0));
+        let counter = shown.clone();
+        let _preview = ScreenWatch::from_frames(UserId::new(), preview_rx, None, move |_, _, w, h, jpeg| {
+            assert_eq!((w, h), (64, 48));
+            assert_eq!(&jpeg[..2], &[0xff, 0xd8]);
+            counter.fetch_add(1, Ordering::Relaxed);
+        });
+        let mut viewer_frames = 0u64;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+        while let Ok(Some(packet)) = tokio::time::timeout_at(deadline, viewer_rx.recv()).await {
+            if matches!(packet, MediaPacket::Video { .. }) {
+                viewer_frames += 1;
+            }
+        }
+        drop(viewer_rx);
+        let previewed = shown.load(Ordering::Relaxed);
+        assert!(viewer_frames >= 8, "viewer got {viewer_frames} frames in a second");
+        assert!(previewed >= 8, "own preview showed {previewed} frames in a second");
+        assert_eq!(session.viewer_count(), 1, "the dropped viewer is no longer counted");
+        drop(session);
     }
 }
 
