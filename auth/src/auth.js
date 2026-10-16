@@ -8,6 +8,7 @@ import { commyInvites } from "./invites.js";
 import { commyMedia } from "./media.js";
 import { commyVault } from "./vault.js";
 import { createMailer } from "./mailer.js";
+import { redisRateLimitStorage } from "./rate-limit.js";
 
 export function socialProviders(config) {
   const providers = {};
@@ -18,7 +19,9 @@ export function socialProviders(config) {
   return providers;
 }
 
-export function buildAuthOptions(config, { pool, send, fetch }) {
+// `redis` is a connected handle from connectRedis, or null to keep doorbell
+// rings in the database and rate-limit counters in memory
+export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
   const plugins = [
     // Desktop clients hold a session token and send it as a Bearer header
     bearer(),
@@ -40,7 +43,7 @@ export function buildAuthOptions(config, { pool, send, fetch }) {
   ];
 
   // Content-free wake-ups for messages sent while their recipient was offline
-  if (config.doorbell) plugins.push(commyDoorbell());
+  if (config.doorbell) plugins.push(commyDoorbell({ redis }));
 
   if (config.turnstile) {
     plugins.push(
@@ -137,6 +140,8 @@ export function buildAuthOptions(config, { pool, send, fetch }) {
       enabled: true,
       window: 60,
       max: 100,
+      // Shared, restart-proof counters under keyed hashes; in memory without Redis
+      ...(redis ? { customStorage: redisRateLimitStorage(redis, config.secret) } : {}),
       customRules: {
         "/sign-up/email": { window: 600, max: 5 },
         "/sign-in/email": { window: 60, max: 10 },
@@ -163,9 +168,9 @@ export function buildAuthOptions(config, { pool, send, fetch }) {
   };
 }
 
-export function createAuth(config) {
+export function createAuth(config, { redis = null } = {}) {
   const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 10 });
   const send = createMailer(config);
-  const options = buildAuthOptions(config, { pool, send });
+  const options = buildAuthOptions(config, { pool, send, redis });
   return { auth: betterAuth(options), options, pool };
 }

@@ -30,7 +30,7 @@ which is what makes rollback possible.
 4. Once the new container passes its health check the old one is stopped. If it
    never becomes healthy, the new container is removed instead, the old one keeps
    serving, and that image is skipped until a newer one is published.
-   `postgres` and `caddy` are never touched.
+   `postgres`, `redis` and `caddy` are never touched.
 
 Watch it with `docker compose logs -f agent`.
 
@@ -70,7 +70,7 @@ by `docker compose up -d` in that folder. Google OAuth needs each domain's
   account server, and release builds never use staging.
 - `docker-compose.env.yml` turns off the per-stack Caddy and joins `web` and
   `auth` to the shared `commy-public` network under those aliases. Each
-  environment's Postgres stays on its own private network.
+  environment's Postgres and Redis stay on its own private network.
 - `docker-compose.agent.yml` adds the agent. It mounts the checkout read only and
   the Docker socket.
 

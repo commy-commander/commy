@@ -69,9 +69,10 @@ echo "edge: Caddy is serving $DOMAIN, staging.$DOMAIN and dev.$DOMAIN"
 
 for env in $ENVS; do
 	cd "$ROOT/commy-$env/deploy"
-	# The agent starts auth and web as soon as their image tag exists on GHCR
-	docker compose up -d postgres agent
-	echo "commy-$env: database and deploy agent running"
+	# The agent starts auth and web (without their dependencies) as soon as
+	# their image tag exists on GHCR, so everything auth needs starts here
+	docker compose up -d postgres redis agent
+	echo "commy-$env: database, redis and deploy agent running"
 done
 
 # One iroh relay serves every environment, run from the first checkout
