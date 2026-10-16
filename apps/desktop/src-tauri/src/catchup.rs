@@ -833,8 +833,12 @@ fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
         access.emit("server-event", server.to_string().into());
     }
     if !changes.fresh.is_empty() {
-        let servers = app.servers.lock().unwrap();
-        access.emit("messages-caught-up", caught_up_payload(server, &changes.fresh, servers.get(&server)));
+        // Named with the lock held, emitted without it.
+        let payload = {
+            let servers = app.servers.lock().unwrap();
+            caught_up_payload(server, &changes.fresh, servers.get(&server))
+        };
+        access.emit("messages-caught-up", payload);
     }
 }
 
