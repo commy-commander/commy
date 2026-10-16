@@ -52,6 +52,9 @@ pub struct ServerFeatures {
     /// GIF files and game covers load through the server's /commy/media.
     #[serde(default)]
     pub media: bool,
+    /// Sealed per-account items such as your server list (/commy/vault).
+    #[serde(default)]
+    pub vault: bool,
 }
 
 impl AccountState {
@@ -533,6 +536,7 @@ async fn poll_for_token(
     match finish_sign_in(&app, &server, &doc, &token).await {
         Ok(()) => {
             let _ = handle.emit("account-changed", ());
+            crate::entry_list::schedule(&handle);
         }
         Err(e) => fail(&e),
     }
@@ -783,7 +787,7 @@ mod tests {
         assert!(state.server_offers("gifs") && state.server_offers("games"));
         // Only servers that say so load images
         assert!(!state.server_offers("media"));
-        state.features = Some(ServerFeatures { gifs: true, games: false, media: true });
+        state.features = Some(ServerFeatures { gifs: true, games: false, media: true, vault: false });
         assert!(state.server_offers("gifs"));
         assert!(!state.server_offers("games"));
         assert!(state.server_offers("media"));
@@ -803,7 +807,7 @@ mod tests {
         let mut with = base;
         with["features"] = serde_json::json!({ "gifs": true, "games": false });
         let new: Discovery = serde_json::from_value(with).unwrap();
-        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, media: false }));
+        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, media: false, vault: false }));
     }
 
     #[test]

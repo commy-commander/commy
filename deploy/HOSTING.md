@@ -224,6 +224,9 @@ never reach this stack. The auth database holds:
 - linked devices: iroh node id, device name, first and last link time
 - invite links: the code, the sealed invite (unreadable without the link),
   creator account if the app was signed in, expiry
+- each account's sealed server list (`vaultItem`): bytes sealed with a key
+  only that account's devices hold, plus a version and the last change time.
+  The operator can see its size, not which servers are in it
 - the relay: IP addresses and node ids of connected apps while they are
   connected, and monthly byte totals; relayed traffic is encrypted end to end
 - short-lived rows for verification, device sign-in codes, and a keyed hash

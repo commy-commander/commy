@@ -291,6 +291,15 @@
     </div>
 
 
+    <div class="modal hidden" id="modal-entry-key">
+      <h2>Allow <span id="entry-key-device"></span>?</h2>
+      <p>One of your devices wants your server list and identity, so it can join your servers as you. Only allow it if you just signed in there yourself.</p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="entry-key-deny">Deny</button>
+        <button class="btn-primary" id="entry-key-allow">Allow</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-leave-server">
       <h2 id="leave-server-title">Leave Server</h2>
       <p id="leave-server-body">Are you sure you want to leave? You will not be able to rejoin unless you are invited again, and your copy of its history is removed from this device.</p>
@@ -569,6 +578,27 @@
             <div class="setting-sub" id="acct-device-line"></div>
           </div>
           <div class="setting-sub">Signing out keeps your chats on this device, but you need to sign in again to join or create servers. To use a different account server, sign out and choose it on the sign-in screen.</div>
+
+          <h2 class="settings-subhead">Your servers on every device</h2>
+          <div class="settings-card entry-card">
+            <div class="account-line">
+              <div>
+                <div class="setting-title" id="entry-state"></div>
+                <div class="setting-sub" id="entry-detail"></div>
+              </div>
+              <button class="btn-secondary btn-small" id="entry-sync">Sync now</button>
+            </div>
+            <div class="setting-sub">Your devices share your server list and identity, locked with a key that only your devices have. Your account server keeps a copy it cannot read, so it never learns which servers you are in.</div>
+            <div class="entry-recovery">
+              <button class="btn-link" id="entry-show-code">Show recovery code</button>
+              <input id="entry-code" type="text" readonly class="hidden" spellcheck="false" />
+              <div class="setting-sub hidden" id="entry-code-note">Keep this somewhere safe. If you lose every device, it is the only way to get your server list back.</div>
+            </div>
+            <div class="entry-recovery hidden" id="entry-enter">
+              <input id="entry-code-input" type="text" autocomplete="off" spellcheck="false" placeholder="Paste your recovery code" />
+              <button class="btn-secondary btn-small" id="entry-code-use">Use code</button>
+            </div>
+          </div>
         </section>
 
         <section class="settings-page" data-page="voice">
@@ -1272,5 +1302,6 @@
   <script src="emoji.js"></script>
   <script src="app.js"></script>
   <script src="invite-link.js"></script>
+  <script src="entry-list.js"></script>
 </body>
 </html>

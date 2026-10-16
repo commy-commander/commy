@@ -8317,6 +8317,7 @@ function renderAccountSettings() {
   $("acct-device-line").textContent = account.device_linked
     ? "This device is linked to your account."
     : "This device is not linked yet; it links automatically on sign-in.";
+  if (typeof refreshEntryStatus === "function") refreshEntryStatus();
 }
 
 boot().catch(e => toast(String(e)));

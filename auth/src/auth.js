@@ -5,6 +5,7 @@ import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
 import { commyInvites } from "./invites.js";
 import { commyMedia } from "./media.js";
+import { commyVault } from "./vault.js";
 import { createMailer } from "./mailer.js";
 
 export function socialProviders(config) {
@@ -30,6 +31,7 @@ export function buildAuthOptions(config, { pool, send, fetch }) {
     commyDeviceRequests({ secret: config.secret }),
     commyInvites({ serverUrl: config.baseURL, requireAccount: config.invitesRequireAccount }),
     commyMedia({ secret: config.secret, klipyKey: config.klipyKey, igdb: config.igdb, fetch }),
+    commyVault(),
   ];
 
   if (config.turnstile) {
