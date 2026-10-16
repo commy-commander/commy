@@ -7,7 +7,7 @@ SSH keys or server secrets stored in the repository.
 
 | Environment | Image tag  | Updated by                                         | URL (example)                |
 |-------------|------------|----------------------------------------------------|------------------------------|
-| dev         | `:dev`     | every merge to `main` that touches `web/`, `auth/` or `deploy/` | `https://dev.commy.chat`     |
+| dev         | `:dev`     | every merge to `main` (website: in commy-web; auth: here, touching `auth/` or `deploy/`) | `https://dev.commy.chat`     |
 | staging     | `:staging` | pushing a release tag like `v0.2.0`                | `https://staging.commy.chat` |
 | prod        | `:prod`    | running **Promote images** and approving it        | `https://commy.chat`         |
 
@@ -16,11 +16,13 @@ which is what makes rollback possible.
 
 ## How an update reaches the server
 
-1. `.github/workflows/images.yml` runs the agent tests, brings the whole
-   three-environment stack up from `setup-vps.sh` on a CI machine, and only then
-   builds and pushes the images.
+1. `.github/workflows/images.yml` runs the agent tests and brings the whole
+   three-environment stack up from `setup-vps.sh` on a CI machine while it builds
+   the image. The image is pushed untagged and only gets its `dev`, `sha-` or
+   release tags once every test has passed.
 2. The agent (`agent/commy-agent.sh`, enabled by `docker-compose.agent.yml`)
-   runs `docker compose pull` every minute.
+   runs `docker compose pull` every minute (every 10 seconds on dev, set by
+   `AGENT_INTERVAL` in that environment's `.env`).
 3. When `auth` or `web` has a new image, the agent starts a second container on
    the new image next to the running one. Caddy sends traffic to both while they
    overlap and retries for up to 15 seconds if a connection fails, so visitors
@@ -49,7 +51,8 @@ an environment appears on its own after its first build or promotion. Running th
 script again keeps existing checkouts and `.env` files. Pass a third argument
 such as `"prod"` to set up fewer environments.
 
-Afterwards, optional settings (Google sign-in, SMTP, Turnstile) go in each
+Afterwards, optional settings (Google and Twitch sign-in, SMTP, Turnstile, GIF and
+game search keys) go in each
 `/srv/commy-<env>/deploy/.env` as described in [HOSTING.md](HOSTING.md), followed
 by `docker compose up -d` in that folder. Google OAuth needs each domain's
 `/api/auth/callback/google` added as a redirect URI.
@@ -59,8 +62,12 @@ by `docker compose up -d` in that folder. Google OAuth needs each domain's
 - `edge/` is the only thing listening on ports 80, 443 and 8443. It routes each domain
   to that environment's containers by network alias (`commy-staging-web`,
   `commy-staging-auth`) and adds `X-Robots-Tag: noindex` on staging and dev.
-  Port 8443 serves the shared iroh relay at `relay.<domain>` (a DNS-only record),
-  which `setup-vps.sh` starts once as the `commy-relay` project.
+  Port 8443 serves the iroh relays: `relay.<domain>` for release builds (the
+  `commy-relay` project, from the prod checkout, STUN on 3478/udp) and
+  `relay-staging.<domain>` for test builds (the `commy-relay-staging` project,
+  from the staging checkout, STUN on 3479/udp). Both are DNS-only records, and
+  `setup-vps.sh` starts both. Test builds never use the production relay or
+  account server, and release builds never use staging.
 - `docker-compose.env.yml` turns off the per-stack Caddy and joins `web` and
   `auth` to the shared `commy-public` network under those aliases. Each
   environment's Postgres stays on its own private network.
@@ -89,8 +96,11 @@ With the domain's DNS on Cloudflare:
   Applications > Add > Self-hosted, with `staging.commy.chat` and
   `dev.commy.chat` as the application domains and an Allow policy for your email
   addresses. Testing the desktop app against staging also needs a second
-  application on `staging.commy.chat/api/auth` with a Bypass policy, since the app
-  cannot complete the Access login.
+  application with a Bypass policy (include: Everyone) covering
+  `staging.commy.chat/api/auth` and `staging.commy.chat/.well-known/commy-auth.json`,
+  since the app cannot complete the Access login and discovers the account server
+  through that document first. The approval page the app opens in the browser stays
+  behind Access, which is fine because a browser can complete the login.
 - **Certificates for hosts behind Access.** Access redirects every plain HTTP
   request, so Let's Encrypt cannot validate staging and dev. Give Caddy a
   Cloudflare origin certificate for them instead: SSL/TLS > Origin Server >
@@ -124,7 +134,7 @@ sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
 ```
 
 - **ufw** denies incoming connections except SSH (rate limited), port 80 and
-  the iroh relay ports (`PUBLIC_PORTS`, default `3478/udp 7842/udp 8443/tcp`),
+  the iroh relay ports (`PUBLIC_PORTS`, default `3478/udp 3479/udp 7842/udp 8443/tcp`),
   which stay open to everyone because clients reach the relay directly.
 - **HTTPS only from Cloudflare.** Port 443 is accepted only from
   [Cloudflare's ranges](https://www.cloudflare.com/ips/), both in ufw and in
@@ -156,13 +166,15 @@ AUTH_IMAGE=ghcr.io/commy-commander/commy-auth:prod
 
 ## Shipping a change
 
-- **Dev**: merge a pull request. The dev site updates a minute or two after the
-  **Server images** workflow finishes.
-- **Staging**: push a release tag (`git tag v0.2.0 && git push origin v0.2.0`).
+- **Dev**: merge a pull request. The dev site updates within about 30 seconds after the
+  **Server images** workflow finishes (for the website: the **Website image**
+  workflow in the commy-web repository).
+- **Staging**: run the "Cut release" workflow in both repositories with the same version (or push a release tag such as `v0.2.0` to each). Suffixed versions like `0.2.0-rc.1` are published as pre-releases, and their desktop builds sign in to staging.commy.chat by default.
   The same tag also builds the desktop release.
 - **Prod**: Actions > **Promote images** > Run workflow > `prod`. A required
   reviewer approves it under the run's **Review deployments** button, then prod
-  picks up the exact images staging is running.
+  picks up the exact images staging is running. The website has the same
+  **Promote image** workflow in the commy-web repository; run both.
 
 Changes to the compose files themselves (a new environment variable, a new
 service) are not picked up by the agent: run

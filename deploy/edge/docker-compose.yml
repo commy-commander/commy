@@ -11,7 +11,7 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"
-      # iroh relay (relay.<domain>, DNS only), see ../docker-compose.relay.yml
+      # iroh relays (relay.<domain> and relay-staging.<domain>, DNS only), see ../docker-compose.relay.yml
       - "8443:8443"
     environment:
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
@@ -20,6 +20,7 @@ services:
       DEV_DOMAIN: ${DEV_DOMAIN:-dev.${PROD_DOMAIN}}
       DOCS_DOMAIN: ${DOCS_DOMAIN:-docs.${PROD_DOMAIN}}
       RELAY_DOMAIN: ${RELAY_DOMAIN:-relay.${PROD_DOMAIN}}
+      STAGING_RELAY_DOMAIN: ${STAGING_RELAY_DOMAIN:-relay-staging.${PROD_DOMAIN}}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # Optional Cloudflare origin certificate for hosts behind Cloudflare Access

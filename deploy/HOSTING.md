@@ -7,7 +7,7 @@ runs all of them on one machine with Docker Compose:
 | Service    | Image                 | Role                                                  |
 |------------|-----------------------|-------------------------------------------------------|
 | `caddy`    | `caddy:2.10-alpine`   | Public entry on ports 80/443, automatic HTTPS         |
-| `web`      | built from `../web`   | Website and docs (Next.js)                            |
+| `web`      | `ghcr.io/commy-commander/commy-web` | Website and docs (Next.js, own repository) |
 | `auth`     | built from `../auth`  | Better Auth server: accounts, desktop sign-in, devices |
 | `postgres` | `postgres:16-alpine`  | Auth database, private network only                   |
 
@@ -54,21 +54,91 @@ values into its environment editor.
 
 Email and password works with no extra setup. The rest are optional:
 
-- **Google**: create an OAuth client (type Web application) at
-  https://console.cloud.google.com/apis/credentials with redirect URI
-  `https://<DOMAIN>/api/auth/callback/google`, then set `GOOGLE_CLIENT_ID` and
-  `GOOGLE_CLIENT_SECRET`.
-- **Email** (magic links, verification, password reset): set `SMTP_URL`, for
-  example `smtps://user:pass@smtp.example.org:465`, and `EMAIL_FROM`. With
-  SMTP set, new email accounts must verify their address before signing in.
-  Without it, accounts are unverified and password reset is unavailable (the
+- **Google**: in https://console.cloud.google.com, configure the OAuth consent
+  screen (External, scopes `openid`, `email`, `profile`), then create an
+  OAuth client of type Web application with authorised JavaScript origin
+  `https://<DOMAIN>` and redirect URI `https://<DOMAIN>/api/auth/callback/google`.
+  Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+- **Twitch**: register an application at https://dev.twitch.tv/console/apps
+  (category Website Integration, client type Confidential) with OAuth Redirect
+  URL `https://<DOMAIN>/api/auth/callback/twitch`, then set `TWITCH_CLIENT_ID`
+  and `TWITCH_CLIENT_SECRET`. Commy asks Twitch for the account email; a
+  Twitch sign-in joins an existing Commy account only when Twitch reports that
+  email as verified.
+- **Email** (verification, password reset, magic links): set `SMTP_HOST`,
+  `SMTP_PORT` (587 for STARTTLS, 465 for TLS), `SMTP_USER`, `SMTP_PASSWORD`
+  and `EMAIL_FROM`, or a single `SMTP_URL`. Many providers want an
+  app-specific SMTP token as the password, and `EMAIL_FROM` must be an address
+  that user may send from. With SMTP set, new email accounts must verify their
+  address before signing in; a sign-in attempt with an unverified address sends
+  a fresh link, and the sign-in page offers a resend. Verification links last
+  24 hours, reset links 1 hour, and a reset signs out every other session.
+  Without SMTP, accounts work unverified and password reset is unavailable (the
   emails are dropped, never logged).
+
+Every redirect URI follows the site's public URL, so a staging copy on
+`staging.<DOMAIN>` needs its own redirect URIs added to the same Google client
+and Twitch application (both accept several).
 - **Bot check**: set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` from a
   Cloudflare Turnstile widget for your domain to put a bot check on sign-up,
   sign-in, magic links and password reset. Recommended for any public instance.
 
+See [GIF search and Twitch](#gif-search-and-twitch) below for GIFs, game
+search and the Twitch app they share.
+
 Set `ALLOW_SIGNUP=false` to close registration on a private instance.
 Run `docker compose up -d` after any `.env` change.
+
+## GIF search and Twitch
+
+Signed in apps search GIFs (KLIPY) and games (IGDB, which uses a Twitch
+application) through your account server. The keys stay in your `.env`: apps
+only ever get results, so your users need no keys of their own and nothing
+worth extracting ships in the app. The GIF files and game covers load through
+the server as well (`/api/auth/commy/media`), so apps talk only to their
+account server and KLIPY and IGDB never see your users' addresses. That route
+needs a signed in app and fetches only from `static.klipy.com` and
+`images.igdb.com`, so it is not an open proxy; it holds up to 64 MB of recent
+images in memory. Budget for the image traffic: a chat GIF is usually 1 to 3 MB. The discovery document lists what is set up
+under `features`, and the app hides a search your server does not offer
+(GIF button, game suggestions) unless the user adds a key of their own.
+
+1. **Twitch app** (sign-in and game search). Sign in at
+   https://dev.twitch.tv/console/apps (Twitch asks you to turn on two-factor
+   sign-in first) and choose Register Your Application:
+   - Name: anything unique, such as your instance name
+   - OAuth Redirect URLs: `https://<DOMAIN>/api/auth/callback/twitch`
+     (add one per hostname, for example a staging copy, with Add)
+   - Category: Website Integration
+   - Client Type: Confidential
+
+   Open Manage, copy the Client ID, press New Secret and copy the secret.
+2. **KLIPY key** (GIFs). Sign in at https://partner.klipy.com/api-keys, choose
+   Add Platform, then Create API Key, and copy it. Test keys are rate limited;
+   use Request Production in the key menu before opening to the public.
+3. Fill in `deploy/.env`:
+
+   ```sh
+   TWITCH_CLIENT_ID=<client id>
+   TWITCH_CLIENT_SECRET=<client secret>
+   KLIPY_API_KEY=<klipy key>
+   ```
+
+   Leave `IGDB_CLIENT_ID` and `IGDB_CLIENT_SECRET` blank: game search reuses
+   the Twitch app. Set them only to use a separate Twitch app for IGDB, for
+   example to offer game search without Twitch sign-in.
+4. Run `docker compose up -d`, then check the start of the auth log with
+   `docker compose logs auth | head`. It prints one line such as
+   `[auth] google=off twitch=on email=on turnstile=on gifs=on games=on (twitch app) signup=on`
+   and a warning naming any half-filled pair, such as a client id without its
+   secret. `https://<DOMAIN>/.well-known/commy-auth.json` should show
+   `"features":{"gifs":true,"games":true}`.
+
+Apps already signed in pick up a change the next time they start. Leaving a
+value blank turns that part off cleanly: the search answers 404 ("not set up on
+this account server") and the app hides it. Search terms are forwarded to
+KLIPY or IGDB and never logged or stored; failed upstream calls are logged
+with the key masked.
 
 ## Pointing the desktop app at your server
 
@@ -93,17 +163,28 @@ server cannot be replayed on another.
 ## Invite links
 
 The app turns a server invite into a short link on its account server,
-`https://<DOMAIN>/i/<CODE>`. The page there shows the server name and opens
-the app with `commy://i/<DOMAIN>/<CODE>`, so the code is always resolved on
-the server that issued it. People can also paste the link into Add a Server.
+`https://<DOMAIN>/i/<CODE>#<KEY>`. The page there shows the server name and
+opens the app with `commy://i/<DOMAIN>/<CODE>#<KEY>`, so the code is always
+resolved on the server that issued it. People can also paste the link into Add
+a Server.
+
+The app seals the invite with `<KEY>` (AES-256-GCM) before sending it, and the
+key only travels in the link's `#` fragment, which browsers and the app never
+send to a server. The account server stores the code, the sealed invite and
+its expiry, so it cannot tell which Commy server an invite opens, what it is
+called, or who shared it. The invite page opens the sealed invite in the
+visitor's browser to show the server name. Links made by older app versions
+have no key; they keep working until they expire, and the server no longer
+accepts new ones.
 
 - Anonymous links expire after 7 days, links from signed in apps after up to
   30. Creating links is limited to 30 per hour per IP; set
   `INVITES_REQUIRE_ACCOUNT=true` to only allow signed in apps.
 - The app warns before joining from a link whose server is not the account
   server it is set to, since anyone can run a Commy server.
-- The stored invite contains what any Commy invite contains: the server id
-  and name, and the network addresses of the member who created it.
+- Inside the seal is what any Commy invite contains: the server id and name,
+  and the network addresses of the member who created it. Only people with the
+  link can read it.
 
 ## iroh relay
 
@@ -141,14 +222,21 @@ never reach this stack. The auth database holds:
 - Google sign-ins: provider account id, with OAuth tokens encrypted at rest
 - sessions: token and expiry only (IP address and user agent are not stored)
 - linked devices: iroh node id, device name, first and last link time
-- invite links: the invite ticket, server name, creator account if signed in, expiry
+- invite links: the code, the sealed invite (unreadable without the link),
+  creator account if the app was signed in, expiry
+- each account's sealed server list (`vaultItem`): bytes sealed with a key
+  only that account's devices hold, plus a version and the last change time.
+  The operator can see its size, not which servers are in it
 - the relay: IP addresses and node ids of connected apps while they are
   connected, and monthly byte totals; relayed traffic is encrypted end to end
 - short-lived rows for verification, device sign-in codes, and a keyed hash
   of the requesting network (deleted after 15 minutes, never the raw IP)
 
-IP addresses are used in memory for rate limiting only. Caddy writes no access
-logs, and the auth server logs no emails, links or tokens.
+IP addresses are used in memory for rate limiting only. The single server
+Caddyfile writes no access logs. The shared edge proxy (`edge/`) writes JSON
+access logs to `/var/log/commy-caddy`, except for invite pages and invite
+lookups, which are never logged. The auth server logs no emails, links or
+tokens.
 
 ## Abuse controls
 

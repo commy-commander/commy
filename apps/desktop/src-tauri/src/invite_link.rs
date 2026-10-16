@@ -1,14 +1,20 @@
-//! Shareable invite links. `https://<server>/i/<CODE>` (and the
-//! `commy://i/<host>/<CODE>` deep link its landing page opens) map a short
-//! code to a server ticket stored on that account server, so a link always
-//! resolves on the server that issued it.
+//! Shareable invite links. `https://<server>/i/<CODE>#<KEY>` (and the
+//! `commy://i/<host>/<CODE>#<KEY>` deep link its landing page opens) map a
+//! short code to a server ticket stored on that account server, so a link
+//! always resolves on the server that issued it. The ticket is sealed with
+//! KEY, which only travels in the link's fragment: browsers and this app never
+//! send a fragment to a server, so the account server cannot tell which Commy
+//! server an invite opens or who is in it. Links without a key are from
+//! older versions and still open until they expire.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use commy_net::sealed::{self, Purpose, SealKey};
 use commy_net::ServerTicket;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -16,7 +22,12 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::App;
 
-pub const DEFAULT_ACCOUNT_SERVER: &str = "https://commy.chat";
+/// commy.chat, unless the build sets COMMY_DEFAULT_ACCOUNT_SERVER (test builds
+/// from pre-release tags use https://staging.commy.chat).
+pub const DEFAULT_ACCOUNT_SERVER: &str = match option_env!("COMMY_DEFAULT_ACCOUNT_SERVER") {
+    Some(server) => server,
+    None => "https://commy.chat",
+};
 pub const SCHEME: &str = "commy";
 const CODE_ALPHABET: &str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_LENGTH: usize = 8;
@@ -24,18 +35,28 @@ const MAX_LINK_LEN: usize = 2048;
 const PORT_FILE: &str = "link.port";
 const HANDOFF_PREFIX: &str = "commy-link-v1 ";
 
+/// Anonymous links last 7 days; reuse one for a little less than that.
+const REUSE_LINK_FOR: Duration = Duration::from_secs(6 * 24 * 60 * 60);
+
 static PENDING: Mutex<Option<String>> = Mutex::new(None);
+/// Links this run created, by ticket, so sharing twice gives the same link.
+static CREATED: Mutex<Option<HashMap<String, (String, Instant)>>> = Mutex::new(None);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteLink {
     /// scheme://host[:port] of the server that issued the code
     pub origin: String,
     pub code: String,
+    /// The key that opens the sealed ticket. None for links from older versions.
+    pub key: Option<String>,
 }
 
 impl InviteLink {
     pub fn url(&self) -> String {
-        format!("{}/i/{}", self.origin, self.code)
+        match &self.key {
+            Some(key) => format!("{}/i/{}#{key}", self.origin, self.code),
+            None => format!("{}/i/{}", self.origin, self.code),
+        }
     }
 
     pub fn host(&self) -> &str {
@@ -97,8 +118,13 @@ fn percent_decode(input: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// Parses `https://host/i/CODE` or `commy://i/host/CODE`. Anything else,
-/// including other paths, credentials or non-https servers, is rejected.
+fn valid_key(fragment: &str) -> Option<String> {
+    SealKey::from_text(fragment).ok().map(|_| fragment.to_string())
+}
+
+/// Parses `https://host/i/CODE#KEY` or `commy://i/host/CODE#KEY` (KEY is
+/// optional for older links). Anything else, including other paths,
+/// credentials, non-https servers or a malformed key, is rejected.
 pub fn parse(input: &str) -> Option<InviteLink> {
     let input = input.trim();
     if input.len() > MAX_LINK_LEN {
@@ -127,7 +153,11 @@ pub fn parse(input: &str) -> Option<InviteLink> {
         }
         (origin_of(&url)?, segments[1])
     };
-    Some(InviteLink { origin, code: normalize_code(code)? })
+    let key = match url.fragment() {
+        None => None,
+        Some(fragment) => Some(valid_key(fragment)?),
+    };
+    Some(InviteLink { origin, code: normalize_code(code)?, key })
 }
 
 pub fn looks_like_link(input: &str) -> bool {
@@ -196,7 +226,8 @@ pub async fn resolve_invite_link(app: tauri::State<'_, App>, link: String) -> Re
     }
     let body: ResolveResponse = res.json().await.map_err(|_| "The invite server sent an invalid reply".to_string())?;
     // The server name comes from the ticket itself, not from the web server
-    let ticket = ServerTicket::decode(body.ticket.trim()).map_err(|_| "The invite server sent an invalid invite".to_string())?;
+    let raw = open_ticket(&body.ticket, parsed.key.as_deref())?;
+    let ticket = ServerTicket::decode(&raw).map_err(|_| "The invite server sent an invalid invite".to_string())?;
     let account = account_server();
     Ok(ResolvedInvite {
         link: parsed.url(),
@@ -207,6 +238,41 @@ pub async fn resolve_invite_link(app: tauri::State<'_, App>, link: String) -> Re
         trusted: parsed.origin == account,
         account_server_host: host_of(&account),
     })
+}
+
+/// What an invite link seals: the ticket, and the server name for the
+/// website's invite page.
+#[derive(Serialize, Deserialize)]
+struct SealedInvite {
+    #[serde(rename = "t")]
+    ticket: String,
+    #[serde(rename = "n")]
+    name: String,
+}
+
+fn seal_ticket(key: &SealKey, raw: &str, name: &str) -> String {
+    let payload = serde_json::to_vec(&SealedInvite { ticket: raw.to_string(), name: name.to_string() })
+        .expect("invite serialization cannot fail");
+    key.seal(Purpose::Invite, &payload)
+}
+
+/// The ticket a resolved invite holds. A link with a key only accepts a
+/// sealed ticket that key opens; a link without one is from an older version.
+fn open_ticket(stored: &str, key: Option<&str>) -> Result<String, String> {
+    let stored = stored.trim();
+    match key {
+        Some(key) => {
+            let key = SealKey::from_text(key).map_err(|_| "This invite link is damaged".to_string())?;
+            let bytes = key
+                .open(Purpose::Invite, stored)
+                .map_err(|_| "This invite link is damaged or was changed".to_string())?;
+            let invite: SealedInvite =
+                serde_json::from_slice(&bytes).map_err(|_| "The invite server sent an invalid invite".to_string())?;
+            Ok(invite.ticket)
+        }
+        None if sealed::is_sealed(stored) => Err("This invite link is missing its key. Ask for a new link.".into()),
+        None => Ok(stored.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -221,10 +287,18 @@ pub async fn create_invite_link(app: tauri::State<'_, App>, server_id: String) -
         .ok_or("no invite available; you may be offline")?;
     let ticket = ServerTicket::decode(&raw).map_err(|e| e.to_string())?;
     let origin = account_server();
+    let cache_key = format!("{origin} {raw}");
+    if let Some((url, at)) = CREATED.lock().unwrap().as_ref().and_then(|m| m.get(&cache_key)) {
+        if at.elapsed() < REUSE_LINK_FOR {
+            return Ok(url.clone());
+        }
+    }
+    // The account server only ever gets the sealed ticket; the key stays in the link
+    let key = SealKey::generate();
     let res = app
         .http
         .post(format!("{origin}/api/auth/commy/invites/create"))
-        .json(&serde_json::json!({ "ticket": raw, "serverName": ticket.server_name }))
+        .json(&serde_json::json!({ "ticket": seal_ticket(&key, &raw, &ticket.server_name) }))
         .send()
         .await
         .map_err(|_| format!("Could not reach {}", host_of(&origin)))?;
@@ -234,7 +308,11 @@ pub async fn create_invite_link(app: tauri::State<'_, App>, server_id: String) -
     let body: CreateResponse = res.json().await.map_err(|_| "The invite server sent an invalid reply".to_string())?;
     // Only hand out a link that points back at our own account server
     match parse(&body.url) {
-        Some(link) if link.origin == origin => Ok(link.url()),
+        Some(link) if link.origin == origin && link.key.is_none() => {
+            let url = InviteLink { key: Some(key.to_text()), ..link }.url();
+            CREATED.lock().unwrap().get_or_insert_with(HashMap::new).insert(cache_key, (url.clone(), Instant::now()));
+            Ok(url)
+        }
         _ => Err("The invite server sent an unexpected link".into()),
     }
 }
@@ -435,8 +513,47 @@ pub fn register_scheme() {}
 mod tests {
     use super::*;
 
+    // A fixed test key: the bytes 0 to 31 as unpadded base64url
+    fn test_key() -> String {
+        data_encoding::BASE64URL_NOPAD.encode(&(0u8..32).collect::<Vec<_>>())
+    }
+
     fn link(origin: &str, code: &str) -> Option<InviteLink> {
-        Some(InviteLink { origin: origin.into(), code: code.into() })
+        Some(InviteLink { origin: origin.into(), code: code.into(), key: None })
+    }
+
+    fn keyed(origin: &str, code: &str) -> Option<InviteLink> {
+        Some(InviteLink { origin: origin.into(), code: code.into(), key: Some(test_key()) })
+    }
+
+    #[test]
+    fn parses_links_with_keys() {
+        let key = test_key();
+        assert_eq!(parse(&format!("https://commy.chat/i/AB23CD45#{key}")), keyed("https://commy.chat", "AB23CD45"));
+        assert_eq!(parse(&format!("commy://i/commy.chat/AB23CD45#{key}")), keyed("https://commy.chat", "AB23CD45"));
+        let l = parse(&format!("commy://i/localhost%3A8443/AB23CD45#{key}")).unwrap();
+        assert_eq!(l.url(), format!("https://localhost:8443/i/AB23CD45#{key}"));
+        assert_eq!(parse(&l.url()), Some(l));
+        let too_long = format!("https://commy.chat/i/AB23CD45#{key}A");
+        let bad_char = format!("https://commy.chat/i/AB23CD45#{}+", &key[..key.len() - 1]);
+        for bad in ["https://commy.chat/i/AB23CD45#", "https://commy.chat/i/AB23CD45#short", &too_long, &bad_char] {
+            assert_eq!(parse(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn sealed_tickets_need_their_key() {
+        let text = test_key();
+        let key = SealKey::from_text(&text).unwrap();
+        let sealed = seal_ticket(&key, "commyticket", "Pixel Pioneers");
+        assert!(!sealed.contains("commyticket") && !sealed.contains("Pixel"));
+        assert_eq!(open_ticket(&sealed, Some(&text)).unwrap(), "commyticket");
+        assert!(open_ticket(&sealed, None).is_err());
+        assert!(open_ticket(&sealed, Some(&SealKey::generate().to_text())).is_err());
+        // A keyed link never accepts a plain ticket in place of a sealed one
+        assert!(open_ticket("commyticket", Some(&text)).is_err());
+        // Older links without a key still open plain tickets
+        assert_eq!(open_ticket(" commyticket ", None).unwrap(), "commyticket");
     }
 
     #[test]

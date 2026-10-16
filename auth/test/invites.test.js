@@ -10,12 +10,14 @@ import {
   clampDays,
   generateCode,
   normalizeCode,
-  normalizeServerName,
+  isPlainTicket,
   validTicket,
 } from "../src/invites.js";
 
 const ORIGIN = "http://localhost:3001";
-const TICKET = "commy" + "abcdefgh234567".repeat(5);
+// What the app sends: the server ticket sealed with a key only the link carries
+const TICKET = "sealed1." + "AbCd-_0123456789".repeat(5);
+const PLAIN_TICKET = "commy" + "abcdefgh234567".repeat(5);
 const ENV = { BETTER_AUTH_SECRET: "test-secret-".repeat(4), DATABASE_URL: "postgres://unused", BETTER_AUTH_URL: ORIGIN };
 
 function makeAuth(extraEnv = {}) {
@@ -49,18 +51,14 @@ test("codes use an unambiguous alphabet", () => {
   }
 });
 
-test("tickets must look like Commy invites", () => {
+test("only sealed tickets are accepted", () => {
   assert.equal(validTicket(` ${TICKET} `), TICKET);
-  assert.equal(validTicket("commyshort"), null);
+  assert.equal(validTicket(PLAIN_TICKET), null, "a plain ticket would reveal the server");
+  assert.ok(isPlainTicket(PLAIN_TICKET));
+  assert.equal(validTicket("sealed1.short"), null);
+  assert.equal(validTicket("sealed1." + "a".repeat(30) + "+/="), null);
   assert.equal(validTicket("https://evil.example/" + "a".repeat(50)), null);
-  assert.equal(validTicket("commy" + "A".repeat(50)), null);
-  assert.equal(validTicket("commy" + "a".repeat(5000)), null);
-});
-
-test("server names drop control and direction override characters", () => {
-  assert.equal(normalizeServerName("  Gaming‮ Night\n"), "Gaming Night");
-  assert.equal(normalizeServerName(""), "a Commy server");
-  assert.equal(normalizeServerName("x".repeat(300)).length, 100);
+  assert.equal(validTicket("sealed1." + "a".repeat(9000)), null);
 });
 
 test("expiry is clamped by account state", () => {
@@ -86,28 +84,49 @@ test("anonymous create, dedupe, resolve and expiry", async () => {
   });
   assert.equal(created.status, 200, JSON.stringify(created.json));
   assert.match(created.json.url, new RegExp(`^${ORIGIN}/i/[${CODE_ALPHABET}]{8}$`));
+  assert.equal(created.json.serverName, null, "a server name sent by an old client is ignored");
+  assert.equal(created.json.sealed, true);
+  assert.equal(db.invite[0].serverName, "", "nothing names the server");
   assert.equal(created.json.ticket, undefined, "create never echoes the ticket");
   const days = (new Date(created.json.expiresAt) - Date.now()) / 86400000;
   assert.ok(days > 6.9 && days <= 7, "anonymous links last at most 7 days");
 
-  const again = await call("POST", "/commy/invites/create", { body: { ticket: TICKET, serverName: "Rust Club 2" } });
+  const again = await call("POST", "/commy/invites/create", { body: { ticket: TICKET } });
   assert.equal(again.json.code, created.json.code);
   assert.equal(db.invite.length, 1);
 
   const resolved = await call("GET", "/commy/invites/resolve", { query: { code: created.json.code.toLowerCase() } });
   assert.equal(resolved.status, 200);
   assert.equal(resolved.json.ticket, TICKET);
-  assert.equal(resolved.json.serverName, "Rust Club 2");
+  assert.equal(resolved.json.serverName, null);
 
   db.invite[0].expiresAt = new Date(Date.now() - 1000);
   assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: created.json.code } })).status, 404);
   assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: "nope" } })).status, 404);
 });
 
-test("invalid tickets are refused", async () => {
-  const { call } = makeAuth();
+test("invalid and plain tickets are refused", async () => {
+  const { db, call } = makeAuth();
   const r = await call("POST", "/commy/invites/create", { body: { ticket: "javascript:alert(1)" } });
   assert.equal(r.status, 400);
+  const plain = await call("POST", "/commy/invites/create", { body: { ticket: PLAIN_TICKET, serverName: "Rust Club" } });
+  assert.equal(plain.status, 400);
+  assert.match(plain.json.message, /Update Commy/);
+  assert.equal(db.invite.length, 0);
+});
+
+test("plain invites made before sealing still resolve until they expire", async () => {
+  const { db, call } = makeAuth();
+  const now = new Date();
+  db.invite.push({
+    id: "old", code: "AB23CD45", ticket: PLAIN_TICKET, serverName: "Rust Club", createdBy: null,
+    createdAt: now, expiresAt: new Date(now.getTime() + 86400000),
+  });
+  const r = await call("GET", "/commy/invites/resolve", { query: { code: "AB23CD45" } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ticket, PLAIN_TICKET);
+  assert.equal(r.json.serverName, "Rust Club");
+  assert.equal(r.json.sealed, false);
 });
 
 test("servers can require an account, and only the creator can revoke", async () => {

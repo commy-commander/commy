@@ -339,6 +339,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_igdb_credentials":
       mock.integrations = { igdb_client_id: args.clientId, igdb_configured: Boolean(args.clientId) };
       return args.clientId ? [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }] : [];
+    case "gif_search": return null;
     case "search_games":
       return [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }, { id: 71, name: "Portal", cover: "co1x7d", year: 2007 }]
         .filter(g => g.name.toLowerCase().includes(args.query.toLowerCase()));
@@ -389,11 +390,11 @@ async function mockInvoke(cmd, args = {}) {
     case "set_about": mock.user.about = args.about; return mock.user;
     case "set_server_afk_timeout": mock.servers[args.serverId].afk_timeout_minutes = args.minutes; return null;
     case "voice_stats":
-      return { codec: "PCM 16-bit, 48 kHz mono", bitrate_kbps: 768, links: [
+      return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, links: [
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", relay: "https://use1-1.relay.iroh.network./", addr: "192.168.1.24:51820", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "iroh-fan", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", relay: "https://euw1-1.relay.iroh.network./", addr: null, tx_bytes: 0, rx_bytes: 0 },
       ] };
-    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, server_from_env: false, device_linked: true, pending_code: null });
+    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_media: false });
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
@@ -3079,6 +3080,24 @@ function appendInlineMarkdown(node, text) {
   if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
 }
 
+// ---------- Images through the account server ----------
+
+// GIF files and game covers load through the signed in account server, so
+// the image hosts never see the user's address. The server keeps the same
+// list of hosts (MEDIA_HOSTS in auth/src/media.js).
+const MEDIA_HOSTS = new Set(["static.klipy.com", "images.igdb.com"]);
+
+function viaAccountServer(url) {
+  if (!account.server_media || !window.__TAURI__) return url;
+  try {
+    if (!MEDIA_HOSTS.has(new URL(url).hostname)) return url;
+  } catch {
+    return url;
+  }
+  // commy-media://localhost/ on macOS and Linux, http://commy-media.localhost/ on Windows
+  return `${window.__TAURI__.core.convertFileSrc("", "commy-media")}?u=${encodeURIComponent(url)}`;
+}
+
 // ---------- IGDB ----------
 
 let integrations = { igdb_client_id: "", igdb_configured: false };
@@ -3092,7 +3111,7 @@ async function loadIntegrations() {
 }
 
 function igdbCover(imageId, size = "t_cover_small") {
-  return /^[A-Za-z0-9]{1,32}$/.test(imageId || "") ? `https://images.igdb.com/igdb/image/upload/${size}/${imageId}.jpg` : null;
+  return /^[A-Za-z0-9]{1,32}$/.test(imageId || "") ? viaAccountServer(`https://images.igdb.com/igdb/image/upload/${size}/${imageId}.jpg`) : null;
 }
 
 function renderIntegrations() {
@@ -3137,7 +3156,8 @@ function closeGameSearch() {
 
 function queueGameSearch(query) {
   clearTimeout(gameSearchTimer);
-  if (!integrations.igdb_configured || query.trim().length < 2) {
+  // Own credentials or the account server's; with neither it finds nothing.
+  if (query.trim().length < 2) {
     closeGameSearch();
     return;
   }
@@ -5454,7 +5474,7 @@ function renderImageEmbed(url) {
   };
   const img = el("img", "chat-image");
   keepScrolledOnLoad(img);
-  img.src = url;
+  img.src = viaAccountServer(url);
   img.loading = "lazy";
   img.onclick = () => openLightbox(img.src, url, null);
   img.onerror = () => wrap.remove();
@@ -6098,10 +6118,20 @@ async function sendMessage() {
 
 const GIF_KEY = "commy.gif";
 const GIF_HELP = {
-  klipy: 'Free key: sign in at <a data-href="https://partner.klipy.com/api-keys">partner.klipy.com</a>, open API Keys, choose Add Platform, then Create API Key and copy it. Test keys are rate limited; use Request Production in the key menu for more.',
-  giphy: 'Free key: sign in at <a data-href="https://developers.giphy.com/dashboard/">developers.giphy.com</a>, choose Create an App, pick API, and copy the key.',
+  klipy: 'To get a key, sign in at <a data-href="https://partner.klipy.com/api-keys">partner.klipy.com</a>, open API Keys, choose Add Platform, then Create API Key and copy it. Test keys are rate limited; use Request Production in the key menu for more.',
+  giphy: 'To get a key, sign in at <a data-href="https://developers.giphy.com/dashboard/">developers.giphy.com</a>, choose Create an App, pick API, and copy the key.',
 };
 const GIF_PROVIDERS = new Set(["klipy", "giphy"]);
+
+// The account server's discovery document says whether it searches GIFs.
+// Old servers do not say, so the button stays and the picker explains.
+function serverHasGifs() {
+  return account.server_gifs !== false;
+}
+
+function syncGifButton() {
+  $("gif-btn").classList.toggle("hidden", !gifSettings().key && !serverHasGifs());
+}
 
 function gifSettings() {
   let saved = {};
@@ -6129,9 +6159,19 @@ function klipyRatio(file, sizes) {
   return 0;
 }
 
-// Returns [{ preview, url, title }] from the configured provider.
+// Returns [{ preview, url, title }] from the configured provider. Without a
+// key of their own, people search through their account server's key.
 async function searchGifs(query, settings = gifSettings()) {
-  if (!settings.key) throw new Error("no-key");
+  if (!settings.key) {
+    let hits;
+    try {
+      hits = await invoke("gif_search", { query });
+    } catch (e) {
+      throw new Error(String(e));
+    }
+    if (!hits) throw new Error("no-key");
+    return hits;
+  }
   const q = encodeURIComponent(query.trim());
   if (settings.provider === "klipy") {
     // KLIPY puts the key in the path rather than the query string.
@@ -6176,7 +6216,7 @@ async function renderGifResults(query) {
   const token = ++gifSearchToken;
   grid.replaceChildren(el("div", "gif-note", "Searching..."));
   const settings = gifSettings();
-  $("gif-attrib").textContent = settings.provider === "klipy" ? "Powered by KLIPY" : "Powered by GIPHY";
+  $("gif-attrib").textContent = settings.key && settings.provider === "giphy" ? "Powered by GIPHY" : "Powered by KLIPY";
   try {
     const gifs = await searchGifs(query, settings);
     if (token !== gifSearchToken) return;
@@ -6191,7 +6231,7 @@ async function renderGifResults(query) {
       btn.title = gif.title;
       btn.style.aspectRatio = `1 / ${ratio}`;
       const img = el("img");
-      img.src = gif.preview;
+      img.src = viaAccountServer(gif.preview);
       img.alt = gif.title;
       img.loading = "lazy";
       img.decoding = "async";
@@ -6207,7 +6247,7 @@ async function renderGifResults(query) {
     if (token !== gifSearchToken) return;
     const note = el("div", "gif-note");
     if (e.message === "no-key") {
-      note.textContent = "Add a GIF API key to search. ";
+      note.textContent = "Your account server does not offer GIF search. Add your own GIF API key to search. ";
       const link = el("button", "btn-link", "Open GIF settings");
       link.onclick = () => {
         closeGifPicker();
@@ -6215,7 +6255,9 @@ async function renderGifResults(query) {
       };
       note.appendChild(link);
     } else {
-      note.textContent = `Could not load GIFs: ${e.message}. Check your API key in Settings, then GIFs.`;
+      note.textContent = settings.key
+        ? `Could not load GIFs: ${e.message}. Check your API key in Settings, then GIFs.`
+        : `Could not load GIFs: ${e.message}.`;
     }
     grid.replaceChildren(note);
   }
@@ -7276,7 +7318,7 @@ function wireEvents() {
   });
 
   // GIFs
-  $("gif-btn").classList.remove("hidden");
+  syncGifButton();
   $("gif-btn").onclick = () => ($("gif-picker").classList.contains("hidden") ? openGifPicker("") : closeGifPicker());
   $("gif-search").addEventListener("input", e => {
     clearTimeout(gifSearchTimer);
@@ -7291,7 +7333,11 @@ function wireEvents() {
     }
   });
   const syncGifHelp = () => {
+    const intro = serverHasGifs()
+      ? "Optional: GIF search works through your Commy account without a key."
+      : `${account.server_host || "Your account server"} does not offer GIF search, so add a key of your own to search.`;
     $("gif-key-help").innerHTML = GIF_HELP[$("gif-provider").value] || "";
+    $("gif-key-help").prepend(`${intro} `);
     for (const a of $("gif-key-help").querySelectorAll("a[data-href]")) {
       a.onclick = () => invoke("open_url", { url: a.dataset.href }).catch(() => window.open(a.dataset.href, "_blank"));
     }
@@ -7301,8 +7347,10 @@ function wireEvents() {
     const settings = { provider: $("gif-provider").value, key: $("gif-key").value.trim() };
     try { localStorage.setItem(GIF_KEY, JSON.stringify(settings)); } catch { /* session only */ }
     toast(settings.key ? "GIF key saved" : "GIF key removed");
+    syncGifButton();
   };
   $("gif-key-test").onclick = async () => {
+    if (!$("gif-key").value.trim()) return toast("Paste a key first");
     try {
       const gifs = await searchGifs("hello", { provider: $("gif-provider").value, key: $("gif-key").value.trim() });
       toast(gifs.length ? "The key works" : "The key works, but no results came back");
@@ -7875,7 +7923,11 @@ function openUserSettings(tab) {
   $("account-about").value = state.user.about || "";
   loadOverlaySettings().then(renderOverlaySettings);
   loadIntegrations().then(renderIntegrations);
-  loadAccount().then(renderAccountSettings);
+  loadAccount().then(() => {
+    renderAccountSettings();
+    // The GIF help depends on what the account server offers
+    $("gif-provider").dispatchEvent(new Event("change"));
+  });
   $("notify-level").value = notifyPrefs().level;
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
   $("output-vol").value = Math.round((state.voice.output_volume ?? 1) * 100);
@@ -8199,6 +8251,7 @@ async function loadAccount() {
   } catch {
     /* keep the last state */
   }
+  syncGifButton();
 }
 
 let signInUrl = null;
@@ -8209,6 +8262,8 @@ function showSignIn() {
   $("signin-error").classList.add("hidden");
   const select = $("signin-server-select");
   const custom = !account.is_default_server;
+  const defaultHost = account.default_server_host || "commy.chat";
+  select.options[0].text = defaultHost === "commy.chat" ? "commy.chat (free Commy service)" : `${defaultHost} (test server)`;
   if (custom && ![...select.options].some(o => o.value === account.server)) {
     select.insertBefore(new Option(account.server_host, account.server), select.options[1]);
   }
@@ -8262,6 +8317,7 @@ function renderAccountSettings() {
   $("acct-device-line").textContent = account.device_linked
     ? "This device is linked to your account."
     : "This device is not linked yet; it links automatically on sign-in.";
+  if (typeof refreshEntryStatus === "function") refreshEntryStatus();
 }
 
 boot().catch(e => toast(String(e)));

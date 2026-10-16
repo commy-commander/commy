@@ -24,6 +24,7 @@ anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 postcard = { version = "1", features = ["alloc"] }
 data-encoding = "2"
+aes-gcm = "0.10"
 tracing = "0.1"
 
 # P2P stack

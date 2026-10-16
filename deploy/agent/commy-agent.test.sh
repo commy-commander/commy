@@ -38,6 +38,7 @@ docker() {
 	"compose ps") cut -d' ' -f1 "$FAKE/containers" ;;
 	"compose pull")
 		[ -f "$FAKE/pull_fails" ] && return 1
+		[ -f "$FAKE/pull_fails_$4" ] && return 1
 		[ -f "$FAKE/remote" ] && cp "$FAKE/remote" "$FAKE/tag"
 		return 0
 		;;
@@ -160,6 +161,36 @@ SERVICES="auth web"
 run_once
 check "every watched service is inspected" "$(called 'compose ps -q')" "2"
 SERVICES="web"
+
+
+# Pull retries before giving up
+reset
+touch "$FAKE/pull_fails"
+PULL_TRIES=3
+run_once
+check "pull is retried" "$(called 'compose pull --quiet web')" "3"
+
+# A failed pull still starts an image that is already local
+reset
+: >"$FAKE/containers"
+touch "$FAKE/pull_fails"
+run_once
+check "local image starts despite a failed pull" "$(called 'compose up -d --no-deps --no-build web')" "1"
+
+# One service failing to pull does not block the others
+reset
+SERVICES="auth web"
+touch "$FAKE/pull_fails_auth"
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "other services still update" "$(images)" "sha256:new"
+SERVICES="web"
+
+# Jitter stays within a third of the interval, capped at 20 seconds
+INTERVAL=10
+check "short interval keeps jitter small" "$(jitter | awk '{ print ($1 <= 3) }')" "1"
+INTERVAL=600
+check "jitter is capped at 20s" "$(jitter | awk '{ print ($1 <= 20) }')" "1"
 
 rm -rf "$FAKE"
 if [ "$failures" -ne 0 ]; then

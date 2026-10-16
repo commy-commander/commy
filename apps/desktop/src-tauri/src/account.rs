@@ -35,6 +35,42 @@ pub struct AccountState {
     pub user: Option<AccountUser>,
     #[serde(default)]
     pub device_linked: bool,
+    /// Searches the signed in server runs with its own keys, from its
+    /// discovery document. None for servers that predate the list.
+    #[serde(default)]
+    pub features: Option<ServerFeatures>,
+}
+
+/// Which keyed searches an account server has set up (`features` in
+/// /.well-known/commy-auth.json). The keys stay on the server.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServerFeatures {
+    #[serde(default)]
+    pub gifs: bool,
+    #[serde(default)]
+    pub games: bool,
+    /// GIF files and game covers load through the server's /commy/media.
+    #[serde(default)]
+    pub media: bool,
+    /// Sealed per-account items such as your server list (/commy/vault).
+    #[serde(default)]
+    pub vault: bool,
+}
+
+impl AccountState {
+    /// Whether the signed in server offers a search. Servers that do not
+    /// list their features are asked anyway and answer 404 when it is off.
+    pub fn server_offers(&self, kind: &str) -> bool {
+        is_signed_in(self)
+            && match (self.features, kind) {
+                (Some(f), "media") => f.media,
+                (None, "media") => false,
+                (None, _) => true,
+                (Some(f), "gifs") => f.gifs,
+                (Some(f), "games") => f.games,
+                _ => false,
+            }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -117,6 +153,8 @@ struct Discovery {
     #[serde(rename = "deviceAuthorization")]
     device: DeviceEndpoints,
     endpoints: Endpoints,
+    #[serde(default)]
+    features: Option<ServerFeatures>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -176,6 +214,116 @@ async fn discover(http: &reqwest::Client, server: &str) -> Result<Discovery, Str
     Ok(doc)
 }
 
+// ---------- Searches run by the account server ----------
+
+#[derive(Deserialize)]
+struct SearchResponse<T> {
+    results: Vec<T>,
+}
+
+/// Runs a GIF or game search on the account server, which holds the
+/// service keys so the app never carries them. `Ok(None)` when nobody is
+/// signed in or the server has that search turned off.
+pub async fn server_search<T: serde::de::DeserializeOwned>(app: &App, kind: &str, query: &str) -> Result<Option<Vec<T>>, String> {
+    let (server, token) = {
+        let state = app.account.lock().unwrap();
+        if !state.server_offers(kind) {
+            return Ok(None);
+        }
+        match (state.signed_in_server.clone(), state.token.clone()) {
+            (Some(server), Some(token)) => (server, token),
+            _ => return Ok(None),
+        }
+    };
+    let host = host_of(&server);
+    let res = app
+        .http
+        .get(format!("{server}/api/auth/commy/{kind}/search"))
+        .query(&[("q", query)])
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|_| format!("Could not reach {host}"))?;
+    match res.status().as_u16() {
+        200 => {}
+        // Older account servers and servers without the key
+        404 => return Ok(None),
+        401 => return Err(format!("Sign in to {host} again to search")),
+        429 => return Err("Too many searches, try again in a minute".into()),
+        _ => return Err(format!("{host} could not search right now")),
+    }
+    let body: SearchResponse<T> = res.json().await.map_err(|_| format!("{host} sent an unexpected reply"))?;
+    Ok(Some(body.results))
+}
+
+// ---------- Images loaded through the account server ----------
+
+/// Largest image passed on to the page; the server caps at the same size.
+const MAX_MEDIA_BYTES: usize = 15 * 1024 * 1024;
+
+fn media_response(status: u16, content_type: &str, body: Vec<u8>) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(status)
+        .header("Content-Type", content_type)
+        .header("Cache-Control", "private, max-age=86400")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(body)
+        .unwrap_or_default()
+}
+
+/// The image a `commy-media:` request asks for: its `u` query parameter.
+pub fn media_target(request_uri: &str) -> Option<String> {
+    let uri = reqwest::Url::parse(request_uri).ok()?;
+    let target = uri.query_pairs().find(|(k, _)| k == "u")?.1.into_owned();
+    target.starts_with("https://").then_some(target)
+}
+
+/// Serves `commy-media:` requests from the page: GIF files and game covers
+/// fetched through the signed in account server with this app's token, so
+/// the image hosts never see the user's address. The server decides which
+/// URLs it will load.
+pub async fn media_image(app: &App, request_uri: &str) -> tauri::http::Response<Vec<u8>> {
+    let Some(target) = media_target(request_uri) else {
+        return media_response(400, "text/plain", Vec::new());
+    };
+    let (server, token) = {
+        let state = app.account.lock().unwrap();
+        if !state.server_offers("media") {
+            return media_response(404, "text/plain", Vec::new());
+        }
+        match (state.signed_in_server.clone(), state.token.clone()) {
+            (Some(server), Some(token)) => (server, token),
+            _ => return media_response(404, "text/plain", Vec::new()),
+        }
+    };
+    let res = app
+        .http
+        .get(format!("{server}/api/auth/commy/media"))
+        .query(&[("u", target.as_str())])
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await;
+    let Ok(res) = res else { return media_response(502, "text/plain", Vec::new()) };
+    if !res.status().is_success() {
+        return media_response(res.status().as_u16(), "text/plain", Vec::new());
+    }
+    let content_type = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if !content_type.starts_with("image/") || res.content_length().unwrap_or(0) as usize > MAX_MEDIA_BYTES {
+        return media_response(502, "text/plain", Vec::new());
+    }
+    match res.bytes().await {
+        Ok(body) if body.len() <= MAX_MEDIA_BYTES => media_response(200, &content_type, body.to_vec()),
+        _ => media_response(502, "text/plain", Vec::new()),
+    }
+}
+
 // ---------- Commands ----------
 
 #[derive(Serialize)]
@@ -185,10 +333,17 @@ pub struct AccountView {
     server: String,
     server_host: String,
     is_default_server: bool,
+    /// Host of the server this build uses when none is chosen.
+    default_server_host: String,
     /// Set by COMMY_AUTH_URL, so the setting cannot change it.
     server_from_env: bool,
     device_linked: bool,
     pending_code: Option<String>,
+    /// The signed in server searches GIFs or games for this app.
+    server_gifs: bool,
+    server_games: bool,
+    /// GIF and cover images load through the signed in server.
+    server_media: bool,
 }
 
 fn view(app: &App) -> AccountView {
@@ -199,10 +354,14 @@ fn view(app: &App) -> AccountView {
         user: if is_signed_in(&state) { state.user.clone() } else { None },
         server_host: host_of(&server),
         is_default_server: server == DEFAULT_ACCOUNT_SERVER,
+        default_server_host: host_of(DEFAULT_ACCOUNT_SERVER),
         server_from_env: std::env::var("COMMY_AUTH_URL").ok().and_then(|s| normalize_origin(&s)).is_some(),
         server,
         device_linked: state.device_linked,
         pending_code: app.sign_in.lock().unwrap().as_ref().map(|p| p.user_code.clone()),
+        server_gifs: state.server_offers("gifs"),
+        server_games: state.server_offers("games"),
+        server_media: state.server_offers("media"),
     }
 }
 
@@ -377,6 +536,7 @@ async fn poll_for_token(
     match finish_sign_in(&app, &server, &doc, &token).await {
         Ok(()) => {
             let _ = handle.emit("account-changed", ());
+            crate::entry_list::schedule(&handle);
         }
         Err(e) => fail(&e),
     }
@@ -416,6 +576,8 @@ async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -
         name: crate::safety::truncate(&session.user.name, 64),
         email: crate::safety::truncate(&session.user.email, 120),
     };
+    // Game lookups cached under the previous account may now resolve differently
+    app.igdb.lock().await.resolved.clear();
     let device_linked = link_device(app, server, doc, token).await.map_err(|e| {
         tracing::warn!("device link failed: {e}");
         e
@@ -426,6 +588,7 @@ async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -
         state.token = Some(token.to_string());
         state.user = Some(user);
         state.device_linked = device_linked.is_ok();
+        state.features = doc.features;
         if let Some(dir) = app.data_dir() {
             save(dir, &state);
         }
@@ -487,6 +650,7 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
         state.user = None;
         state.signed_in_server = None;
         state.device_linked = false;
+        state.features = None;
         if let Some(dir) = app.data_dir() {
             save(dir, &state);
         }
@@ -510,18 +674,35 @@ pub async fn verify_saved_session(handle: AppHandle) {
     let Ok(res) = app.http.get(&doc.endpoints.session).bearer_auth(&token).send().await else { return };
     // A null session (revoked or expired) signs us out; network trouble does not.
     let valid = res.status().is_success() && res.json::<Option<SessionResponse>>().await.ok().flatten().is_some();
-    if !valid {
-        {
+    if valid {
+        // The operator may have added or removed a search key since sign-in
+        let changed = {
             let mut state = app.account.lock().unwrap();
-            state.token = None;
-            state.user = None;
-            state.signed_in_server = None;
-            if let Some(dir) = app.data_dir() {
-                save(dir, &state);
+            let changed = state.features != doc.features;
+            if changed {
+                state.features = doc.features;
+                if let Some(dir) = app.data_dir() {
+                    save(dir, &state);
+                }
             }
+            changed
+        };
+        if changed {
+            let _ = handle.emit("account-changed", ());
         }
-        let _ = handle.emit("account-changed", ());
+        return;
     }
+    {
+        let mut state = app.account.lock().unwrap();
+        state.token = None;
+        state.user = None;
+        state.signed_in_server = None;
+        state.features = None;
+        if let Some(dir) = app.data_dir() {
+            save(dir, &state);
+        }
+    }
+    let _ = handle.emit("account-changed", ());
 }
 
 #[cfg(test)]
@@ -565,6 +746,7 @@ mod tests {
                 link_challenge: format!("{api}/commy/devices/challenge"),
                 register_device: format!("{api}/commy/devices/register"),
             },
+            features: None,
         }
     }
 
@@ -591,5 +773,50 @@ mod tests {
         state.signed_in_server = Some(effective_server());
         state.token = None;
         assert!(!is_signed_in(&state));
+    }
+
+    #[test]
+    fn searches_follow_the_server_feature_list() {
+        let mut state = AccountState {
+            token: Some("t".into()),
+            user: Some(AccountUser { id: "u".into(), name: "n".into(), email: "e".into() }),
+            signed_in_server: Some(effective_server()),
+            ..Default::default()
+        };
+        // Servers that do not list features are asked anyway
+        assert!(state.server_offers("gifs") && state.server_offers("games"));
+        // Only servers that say so load images
+        assert!(!state.server_offers("media"));
+        state.features = Some(ServerFeatures { gifs: true, games: false, media: true, vault: false });
+        assert!(state.server_offers("gifs"));
+        assert!(!state.server_offers("games"));
+        assert!(state.server_offers("media"));
+        state.token = None;
+        assert!(!state.server_offers("gifs"));
+    }
+
+    #[test]
+    fn discovery_features_are_optional() {
+        let base = serde_json::json!({
+            "issuer": "https://chat.example.org",
+            "deviceAuthorization": { "clientId": "c", "deviceCodeEndpoint": "x", "tokenEndpoint": "x" },
+            "endpoints": { "session": "x", "signOut": "x", "linkChallenge": "x", "registerDevice": "x" },
+        });
+        let old: Discovery = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(old.features, None);
+        let mut with = base;
+        with["features"] = serde_json::json!({ "gifs": true, "games": false });
+        let new: Discovery = serde_json::from_value(with).unwrap();
+        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, media: false, vault: false }));
+    }
+
+    #[test]
+    fn media_requests_name_one_https_image() {
+        let gif = "https://static.klipy.com/ii/a/b.gif";
+        let encoded = "https%3A%2F%2Fstatic.klipy.com%2Fii%2Fa%2Fb.gif";
+        assert_eq!(media_target(&format!("commy-media://localhost/?u={encoded}")).as_deref(), Some(gif));
+        assert_eq!(media_target(&format!("http://commy-media.localhost/?u={encoded}")).as_deref(), Some(gif));
+        assert_eq!(media_target("commy-media://localhost/?u=file%3A%2F%2F%2Fetc%2Fpasswd"), None);
+        assert_eq!(media_target("commy-media://localhost/"), None);
     }
 }

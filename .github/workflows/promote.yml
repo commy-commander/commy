@@ -1,6 +1,7 @@
-# Copies an existing web and auth image to the staging or prod tag without rebuilding.
-# The deploy agent in that environment picks the change up within a minute.
+# Copies an existing auth image to the staging or prod tag without rebuilding.
+# The deploy agent in that environment picks the change up within about a minute.
 # The "production" environment requires approval before this runs for prod.
+# The website image is promoted by the same workflow in its own repository, commy-web.
 
 name: Promote images
 
@@ -46,7 +47,7 @@ jobs:
           if [ -z "$SOURCE" ]; then
             if [ "$TARGET" = prod ]; then SOURCE=staging; else SOURCE=dev; fi
           fi
-          for svc in web auth; do
+          for svc in auth; do
             repo="ghcr.io/${OWNER}/commy-${svc}"
             digest="$(docker buildx imagetools inspect "$repo:$SOURCE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
             echo "$svc: $repo:$SOURCE ($digest) -> $repo:$TARGET"

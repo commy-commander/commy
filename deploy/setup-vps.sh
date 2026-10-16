@@ -52,8 +52,10 @@ BETTER_AUTH_SECRET=$(openssl rand -base64 32)
 WEB_IMAGE=$IMAGES/commy-web:$env
 AUTH_IMAGE=$IMAGES/commy-auth:$env
 EOF
+		# Dev follows every merge, so its agent checks for new images more often
+		if [ "$env" = dev ]; then echo "AGENT_INTERVAL=10" >>"$envfile"; fi
 		chmod 600 "$envfile"
-		echo "commy-$env: wrote $envfile (add Google and SMTP settings there later)"
+		echo "commy-$env: wrote $envfile (add Google, Twitch and SMTP settings there later)"
 	fi
 done
 
@@ -79,10 +81,17 @@ if [ -f "$relay_dir/docker-compose.relay.yml" ]; then
 		up -d --build relay relay-proxy relay-meter)
 	echo "relay: running for relay.$DOMAIN"
 fi
+# Test builds use their own relay, run from the staging checkout
+if echo " $ENVS " | grep -q " staging " && [ -f "$ROOT/commy-staging/deploy/docker-compose.relay.yml" ]; then
+	(cd "$ROOT/commy-staging/deploy" && RELAY_PROXY_ALIAS=commy-relay-staging-proxy STUN_PORT=3479 RELAY_MONTHLY_LIMIT_GB=500 \
+		docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml \
+		up -d --build relay relay-proxy relay-meter)
+	echo "relay: running for relay-staging.$DOMAIN (test builds)"
+fi
 
 cat <<EOF
 
-Done. Each environment's agent pulls its image tag every minute:
+Done. Each environment's agent pulls its image tag every minute (dev every 10s):
   dev     <- every merge to main
   staging <- every release tag (v*)
   prod    <- the "Promote images" workflow in GitHub Actions

@@ -5,6 +5,7 @@
 mod account;
 mod activity;
 mod afk;
+mod entry_list;
 mod expressions;
 mod media_engine;
 mod igdb;
@@ -69,7 +70,7 @@ fn get_user(app: tauri::State<App>) -> Option<UserProfile> {
     app.profile.lock().unwrap().clone()
 }
 
-fn current_profile(app: &tauri::State<App>) -> CmdResult<UserProfile> {
+fn current_profile(app: &App) -> CmdResult<UserProfile> {
     let mut profile = app
         .profile
         .lock()
@@ -123,6 +124,8 @@ async fn create_server(
     if let Some(dir) = app.data_dir() {
         let _ = persist::save_invites(dir, &app.invites.lock().unwrap().clone());
     }
+    entry_list::record_join(&app, server_id);
+    entry_list::schedule(&handle);
     let _ = handle.emit("servers-changed", ());
     Ok(view)
 }
@@ -135,7 +138,17 @@ async fn join_server(
 ) -> CmdResult<ServerSummary> {
     account::require_account(&app)?;
     let ticket = ServerTicket::decode(&ticket).map_err(err_to_string)?;
-    let profile = current_profile(&app)?;
+    let id = ticket.server_id;
+    let summary = join_ticket(&app, &handle, ticket).await?;
+    entry_list::record_join(&app, id);
+    entry_list::schedule(&handle);
+    Ok(summary)
+}
+
+/// Joins a server from its ticket: from an invite, or from your server list
+/// on another of your devices.
+pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: ServerTicket) -> CmdResult<ServerSummary> {
+    let profile = current_profile(app)?;
 
     let raw_ticket = ticket.encode();
     let reached_peer = {
@@ -164,7 +177,7 @@ async fn join_server(
 
     // Announce ourselves to the topic.
     broadcast(
-        &app,
+        app,
         ticket.server_id,
         WirePayload::Event(ServerEvent::MemberJoin {
             server: ticket.server_id,
@@ -2047,6 +2060,8 @@ async fn leave_server(
     if let Some(dir) = app.data_dir() {
         let _ = persist::delete_server(dir, sid);
     }
+    entry_list::record_leave(&app, sid);
+    entry_list::schedule(&handle);
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
@@ -2091,6 +2106,8 @@ async fn update_profile(
     app.persist_profile();
     announce_profile(&app, &handle, &profile).await;
     let _ = handle.emit("profile-changed", &profile);
+    entry_list::record_profile_edit(&app);
+    entry_list::schedule(&handle);
     Ok(profile)
 }
 
@@ -2718,8 +2735,11 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
             }
         })
         .collect();
-    // Voice travels as raw 16-bit PCM, 48 kHz mono, in 10 ms frames.
-    Ok(VoiceStatsView { links, codec: "PCM 16-bit, 48 kHz mono".into(), bitrate_kbps: 768 })
+    Ok(VoiceStatsView {
+        links,
+        codec: "Opus, 48 kHz mono, 10 ms frames".into(),
+        bitrate_kbps: (commy_audio::codec::VOICE_BITRATE / 1000) as u32,
+    })
 }
 
 // ---------- Moderation and personal voice controls ----------
@@ -3364,6 +3384,8 @@ async fn set_avatar(
     app.persist_profile();
     announce_profile(&app, &handle, &profile).await;
     let _ = handle.emit("profile-changed", &profile);
+    entry_list::record_profile_edit(&app);
+    entry_list::schedule(&handle);
     Ok(profile)
 }
 
@@ -3486,14 +3508,32 @@ async fn enrich_activity(app: &tauri::State<'_, App>, activity: Option<String>) 
     let Some(text) = activity else { return (None, None) };
     let Some(name) = text.strip_prefix("Playing ") else { return (Some(text), None) };
     let creds = app.igdb_creds.lock().unwrap().clone();
-    if !creds.configured() {
-        return (Some(text), None);
-    }
-    let hit = app.igdb.lock().await.resolve(&app.http, &creds, name).await;
+    let hit = if creds.configured() {
+        app.igdb.lock().await.resolve(&app.http, &creds, name).await
+    } else {
+        resolve_game_via_account(app, name).await
+    };
     match hit {
         Some(game) => (Some(format!("Playing {}", game.name)), game.cover),
         None => (Some(text), None),
     }
+}
+
+/// Same as `IgdbClient::resolve`, but through the account server's IGDB
+/// access. Misses and "not offered" are cached so the 2 second activity
+/// poll does not repeat the request; network errors are not.
+async fn resolve_game_via_account(app: &tauri::State<'_, App>, name: &str) -> Option<igdb::GameHit> {
+    let key = igdb::normalize(name);
+    if let Some(hit) = app.igdb.lock().await.resolved.get(&key) {
+        return hit.clone();
+    }
+    let hit = match account::server_search::<igdb::GameHit>(app, "games", name).await {
+        Ok(Some(hits)) => igdb::best_match(name, &igdb::safe_hits(hits)).cloned(),
+        Ok(None) => None,
+        Err(_) => return None,
+    };
+    app.igdb.lock().await.resolved.insert(key, hit.clone());
+    hit
 }
 
 #[derive(serde::Serialize)]
@@ -3549,9 +3589,39 @@ async fn set_igdb_credentials(
 async fn search_games(app: tauri::State<'_, App>, query: String) -> CmdResult<Vec<igdb::GameHit>> {
     let creds = app.igdb_creds.lock().unwrap().clone();
     if !creds.configured() {
-        return Ok(Vec::new());
+        if query.trim().chars().count() < 2 {
+            return Ok(Vec::new());
+        }
+        // No credentials of our own: the account server searches for us.
+        let hits = account::server_search::<igdb::GameHit>(&app, "games", query.trim()).await?;
+        return Ok(igdb::safe_hits(hits.unwrap_or_default()));
     }
     app.igdb.lock().await.search(&app.http, &creds, &query).await
+}
+
+/// One GIF from the account server's search.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct GifHit {
+    preview: String,
+    url: String,
+    #[serde(default)]
+    ratio: f64,
+    #[serde(default)]
+    title: String,
+}
+
+/// GIF search through the account server, which holds the KLIPY key.
+/// `None` means the server does not offer it, so the app asks for a key.
+#[tauri::command]
+async fn gif_search(app: tauri::State<'_, App>, query: String) -> CmdResult<Option<Vec<GifHit>>> {
+    let query: String = query.trim().chars().take(100).collect();
+    let hits = account::server_search::<GifHit>(&app, "gifs", &query).await?;
+    Ok(hits.map(|hits| {
+        hits.into_iter()
+            .filter(|g| g.preview.starts_with("https://") && g.url.starts_with("https://"))
+            .map(|g| GifHit { title: safety::truncate(&g.title, 200), ..g })
+            .collect()
+    }))
 }
 
 #[tauri::command]
@@ -3912,7 +3982,7 @@ fn set_deafened(app: tauri::State<App>, deafened: bool) -> VoiceSettings {
 // ---------- Event plumbing ----------
 
 /// Broadcasts a payload if the network is up; logs and continues if not.
-async fn broadcast(app: &tauri::State<'_, App>, server: ServerId, payload: WirePayload) {
+async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
     let net = app.net.lock().await;
     if let Some(node) = net.as_ref() {
         if let Err(e) = node.broadcast(server, payload).await {
@@ -4347,6 +4417,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(App::default())
+        // GIFs and game covers, loaded through the account server
+        .register_asynchronous_uri_scheme_protocol("commy-media", |ctx, request, responder| {
+            let handle = ctx.app_handle().clone();
+            let uri = request.uri().to_string();
+            tauri::async_runtime::spawn(async move {
+                let app = handle.state::<App>();
+                responder.respond(account::media_image(&app, &uri).await);
+            });
+        })
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -4372,6 +4451,12 @@ pub fn run() {
         })
         .setup(|tauri_app| {
             let handle = tauri_app.handle().clone();
+            // Test builds (pre-release tags) use only the staging servers; say so
+            if option_env!("COMMY_TEST_BUILD").is_some() {
+                if let Some(window) = tauri_app.get_webview_window("main") {
+                    let _ = window.set_title("Commy (test build)");
+                }
+            }
             {
                 // After persisted settings load below; the overlay window
                 // is created only once the main window exists.
@@ -4451,6 +4536,9 @@ pub fn run() {
                     Ok((mut node, events, media, dms)) => {
                         let app = handle.state::<App>();
                         let hex = node.node_id_hex();
+                        if let Some(asks) = node.take_entry_key_requests() {
+                            tauri::async_runtime::spawn(entry_list::run_entry_key_requests(handle.clone(), asks));
+                        }
 
                         // Reconnect persisted servers: re-host the ones we
                         // own, rejoin the rest via their stored invites.
@@ -4561,7 +4649,13 @@ pub fn run() {
                         tauri::async_runtime::spawn(run_afk_watchdog(handle.clone()));
                         tauri::async_runtime::spawn(run_status_expiry(handle.clone()));
                         tauri::async_runtime::spawn(run_event_reminders(handle.clone()));
-                        tauri::async_runtime::spawn(account::verify_saved_session(handle.clone()));
+                        {
+                            let handle = handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                account::verify_saved_session(handle.clone()).await;
+                                entry_list::schedule(&handle);
+                            });
+                        }
                         tauri::async_runtime::spawn(run_share_heartbeat(handle.clone()));
                         tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
                         tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
@@ -4593,6 +4687,7 @@ pub fn run() {
             get_integrations,
             set_igdb_credentials,
             search_games,
+            gif_search,
             get_overlay_settings,
             overlay_hotkey_problems,
             set_overlay_settings,
@@ -4637,6 +4732,11 @@ pub fn run() {
             invite_link::create_invite_link,
             invite_link::account_server_info,
             invite_link::take_pending_invite_link,
+            entry_list::entry_list_status,
+            entry_list::entry_list_sync,
+            entry_list::entry_list_recovery_code,
+            entry_list::entry_list_use_recovery_code,
+            entry_list::answer_entry_key_request,
             get_messages,
             send_message,
             attach_file,

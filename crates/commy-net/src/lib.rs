@@ -6,7 +6,8 @@
 //!   (`commy_core::ServerEvent`) are broadcast to the topic and applied
 //!   to each member's local `ServerState`.
 //! - Invites are self-contained tickets: topic id plus the addresses of
-//!   one or more members to bootstrap from. No central registry.
+//!   one or more members to bootstrap from. No central registry. Invite
+//!   links store tickets sealed with a key that only travels in the link.
 //! - Files, avatars, emojis and soundboard clips transfer via
 //!   iroh-blobs, addressed by blake3 hash. Messages only carry hashes.
 //! - Voice and screen share use direct QUIC connections negotiated over
@@ -14,14 +15,18 @@
 //!   hole punching fails.
 
 pub mod dm;
+pub mod entry_key;
 pub mod media;
 pub mod node;
 pub mod protocol;
 pub mod relays;
+pub mod sealed;
 pub mod ticket;
 
 pub use dm::{DmAck, DmEnvelope, DM_ALPN};
+pub use entry_key::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ENTRY_KEY_ALPN};
 pub use media::{MediaHello, MediaPacket, MEDIA_ALPN};
 pub use node::{CommyNode, MediaChannel, NetEvent};
 pub use protocol::{Envelope, WirePayload, PROTOCOL_VERSION};
+pub use sealed::{SealError, SealKey};
 pub use ticket::{ServerTicket, TicketError};

@@ -14,6 +14,58 @@ function stripSlash(url) {
   return url.replace(/\/+$/, "");
 }
 
+// A client id and secret pair, trimmed because pasted values often carry
+// stray spaces. Half a pair turns the feature off and says why at startup.
+function oauthClient(env, prefix, warnings, uses) {
+  const clientId = (env[`${prefix}_CLIENT_ID`] ?? "").trim();
+  const clientSecret = (env[`${prefix}_CLIENT_SECRET`] ?? "").trim();
+  if (clientId && clientSecret) return { clientId, clientSecret };
+  if (clientId || clientSecret) {
+    const missing = clientId ? `${prefix}_CLIENT_SECRET` : `${prefix}_CLIENT_ID`;
+    warnings.push(`${missing} is empty, so ${uses} stays off until both ${prefix}_CLIENT_ID and ${prefix}_CLIENT_SECRET are set`);
+  }
+  return null;
+}
+
+// Mail settings come either as one SMTP_URL or as separate SMTP_HOST,
+// SMTP_PORT, SMTP_USER and SMTP_PASSWORD values. The separate form avoids
+// URL-encoding passwords and app tokens.
+function smtpConfig(env, errors) {
+  const host = (env.SMTP_HOST ?? "").trim();
+  if (!env.SMTP_URL && !host) return null;
+
+  let transport;
+  let user = "";
+  if (env.SMTP_URL) {
+    transport = env.SMTP_URL;
+    try {
+      user = decodeURIComponent(new URL(env.SMTP_URL).username);
+    } catch {
+      errors.push("SMTP_URL must look like smtp://user:password@host:587 or smtps://...:465");
+    }
+  } else {
+    const port = Number(env.SMTP_PORT || 587);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      errors.push("SMTP_PORT must be a valid TCP port");
+    }
+    user = (env.SMTP_USER ?? "").trim();
+    const pass = env.SMTP_PASSWORD ?? "";
+    if (user && !pass) errors.push("SMTP_PASSWORD is required when SMTP_USER is set");
+    // 465 is TLS from the first byte; anything else must upgrade with STARTTLS
+    const secure = env.SMTP_SECURE ? env.SMTP_SECURE === "true" : port === 465;
+    transport = {
+      host,
+      port,
+      secure,
+      requireTLS: !secure && env.SMTP_REQUIRE_TLS !== "false",
+      ...(user ? { auth: { user, pass } } : {}),
+    };
+  }
+
+  const fallbackFrom = user.includes("@") ? `Commy <${user}>` : "Commy <no-reply@localhost>";
+  return { transport, from: env.EMAIL_FROM || fallbackFrom };
+}
+
 export function loadConfig(env = process.env) {
   const errors = [];
 
@@ -39,23 +91,24 @@ export function loadConfig(env = process.env) {
     errors.push("PORT must be a valid TCP port");
   }
 
+  const smtp = smtpConfig(env, errors);
+
   if (errors.length > 0) {
     throw new Error(`Invalid auth server configuration:\n- ${errors.join("\n- ")}`);
   }
 
-  const google =
-    env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
-      ? { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET }
-      : null;
+  // Optional settings that are half filled in; logged, never fatal
+  const warnings = [];
+  const google = oauthClient(env, "GOOGLE", warnings, "Google sign-in");
+  const twitch = oauthClient(env, "TWITCH", warnings, "Twitch sign-in");
+  // IGDB signs in with a Twitch application; the sign-in app works for both
+  const igdb = oauthClient(env, "IGDB", warnings, "the separate IGDB app") ?? twitch;
+  const klipyKey = (env.KLIPY_API_KEY ?? "").trim() || null;
 
   const turnstile =
     env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
       ? { siteKey: env.TURNSTILE_SITE_KEY, secretKey: env.TURNSTILE_SECRET_KEY }
       : null;
-
-  const smtp = env.SMTP_URL
-    ? { url: env.SMTP_URL, from: env.EMAIL_FROM || "Commy <no-reply@localhost>" }
-    : null;
 
   return {
     port,
@@ -69,9 +122,28 @@ export function loadConfig(env = process.env) {
     allowSignup: env.ALLOW_SIGNUP !== "false",
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
     google,
+    twitch,
     smtp,
     turnstile,
+    igdb,
+    klipyKey,
+    warnings,
   };
+}
+
+// One line for the startup log saying which optional parts are on, so an
+// operator can check their .env without reading the discovery document.
+export function featureSummary(config) {
+  const on = (value) => (value ? "on" : "off");
+  return [
+    `google=${on(config.google)}`,
+    `twitch=${on(config.twitch)}`,
+    `email=${on(config.smtp)}`,
+    `turnstile=${on(config.turnstile)}`,
+    `gifs=${on(config.klipyKey)}`,
+    `games=${on(config.igdb)}${config.igdb && config.igdb === config.twitch ? " (twitch app)" : ""}`,
+    `signup=${on(config.allowSignup)}`,
+  ].join(" ");
 }
 
 // Public discovery document the desktop app reads from a custom server URL.
@@ -84,7 +156,10 @@ export function discoveryDocument(config) {
     api,
     providers: {
       google: Boolean(config.google),
+      twitch: Boolean(config.twitch),
       magicLink: Boolean(config.smtp),
+      emailVerification: Boolean(config.smtp),
+      passwordReset: Boolean(config.smtp),
       emailPassword: true,
     },
     turnstileSiteKey: config.turnstile?.siteKey ?? null,
@@ -103,6 +178,20 @@ export function discoveryDocument(config) {
       removeDevice: `${api}/commy/devices/remove`,
       createInvite: `${api}/commy/invites/create`,
       resolveInvite: `${api}/commy/invites/resolve`,
+      gifSearch: `${api}/commy/gifs/search`,
+      gameSearch: `${api}/commy/games/search`,
+      media: `${api}/commy/media`,
+      vault: `${api}/commy/vault`,
+      vaultPut: `${api}/commy/vault/put`,
+    },
+    // Searches the server runs for signed in apps with its own keys
+    features: {
+      gifs: Boolean(config.klipyKey),
+      games: Boolean(config.igdb),
+      // GIF files and game covers load through /commy/media
+      media: true,
+      // Sealed per-account items such as the server list, see vault.js
+      vault: true,
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,

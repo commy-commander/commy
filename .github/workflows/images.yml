@@ -1,8 +1,13 @@
-# Builds the web and auth server images and publishes them to GHCR.
+# Builds the auth server image and publishes it to GHCR.
 #   push to main   -> :dev and :sha-<commit>   (dev environment updates itself)
 #   tag v1.2.3     -> :1.2.3 and :staging       (staging updates itself)
 #   pull request   -> build only
+# The image builds alongside the tests and is pushed by digest only; the tags above
+# are added in the last job once every test passes, so nothing untested is tagged.
+# Merges in a row build side by side; Publish runs one at a time and moves :dev
+# only for the newest commit on main, so an older run never wins.
 # Production is updated by the "Promote images" workflow. See deploy/DEPLOYING.md.
+# The website image is built the same way from its own repository, commy-web.
 
 name: Server images
 
@@ -10,15 +15,35 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths: ["web/**", "auth/**", "deploy/**", ".github/workflows/images.yml"]
+    paths: ["auth/**", "deploy/**", ".github/workflows/images.yml"]
   pull_request:
-    paths: ["web/**", "auth/**", "deploy/**", ".github/workflows/images.yml"]
+    paths: ["auth/**", "deploy/**", ".github/workflows/images.yml"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to a pull request cancels its older run; main and tags never wait here
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
+  auth-tests:
+    name: Auth server tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: auth/package-lock.json
+      - run: npm ci
+        working-directory: auth
+      - run: npm test
+        working-directory: auth
+
   agent-tests:
     name: Deploy agent tests
     runs-on: ubuntu-latest
@@ -39,8 +64,12 @@ jobs:
       - name: Build images into a local registry
         run: |
           docker run -d --name registry -p 5000:5000 registry:2
+          # The auth image is built from this checkout; the website comes from its
+          # own repository, so its published image stands in for it here.
+          docker build -q -t "localhost:5000/commy-auth:candidate" auth
+          docker pull -q ghcr.io/commy-commander/commy-web:dev
+          docker tag ghcr.io/commy-commander/commy-web:dev localhost:5000/commy-web:candidate
           for svc in web auth; do
-            docker build -q -t "localhost:5000/commy-$svc:candidate" "$svc"
             for env in prod staging dev; do
               docker tag "localhost:5000/commy-$svc:candidate" "localhost:5000/commy-$svc:$env"
               docker push -q "localhost:5000/commy-$svc:$env"
@@ -82,15 +111,16 @@ jobs:
 
   image:
     name: ${{ matrix.service }} image
-    needs: [agent-tests, stack-e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    outputs:
+      auth-digest: ${{ steps.build.outputs.digest }}
     strategy:
       fail-fast: false
       matrix:
-        service: [web, auth]
+        service: [auth]
     steps:
       - uses: actions/checkout@v4
 
@@ -107,20 +137,70 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/commy-${{ matrix.service }}
+          labels: |
+            org.opencontainers.image.licenses=AGPL-3.0-only
+
+      # Pushed untagged: the agents only follow tags, which "Publish" adds below
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.service }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || format('type=image,name=ghcr.io/{0}/commy-{1},push-by-digest=true,name-canonical=true,push=true', github.repository_owner, matrix.service) }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  publish:
+    name: Publish ${{ matrix.service }}
+    needs: [auth-tests, agent-tests, stack-e2e, image]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ matrix.service }}-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [auth]
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/commy-${{ matrix.service }}
           tags: |
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=sha-,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
             type=raw,value=staging,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-test') }}
           flavor: latest=false
-          labels: |
-            org.opencontainers.image.licenses=AGPL-3.0-only
 
-      - uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.service }}
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+      - name: Tag the tested image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/commy-${{ matrix.service }}@${{ needs.image.outputs[format('{0}-digest', matrix.service)] }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A newer commit on main publishes :dev itself; this one keeps only its sha- tag
+          newest=true
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            head="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+            [ "$head" = "$GITHUB_SHA" ] || { newest=false; echo "main is now at $head, leaving :dev to that run"; }
+          fi
+          args=""
+          for tag in $TAGS; do
+            case "$tag" in *:dev) [ "$newest" = true ] || continue ;; esac
+            args="$args --tag $tag"
+          done
+          [ -n "$args" ] || { echo "No tags for $GITHUB_REF"; exit 0; }
+          # shellcheck disable=SC2086
+          docker buildx imagetools create $args "$IMAGE"
+          docker buildx imagetools inspect "$IMAGE"
