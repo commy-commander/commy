@@ -6379,20 +6379,27 @@ async function selectDm(userId, name) {
   state.currentDm = { user: userId, name };
   clearDmUnread(userId);
   if (state.view !== "dm") setViewMode("dm");
-  const presence = personPresence(userId);
   $("chat-hash").textContent = "@";
   $("channel-name").textContent = name;
-  $("chat-presence").className = `presence-dot inline ${presence}`;
-  const person = state.people.get(userId);
-  $("chat-presence").title = presenceLabel({ ...(person || {}), presence });
-  $("channel-topic").textContent = (person && subLine(person)) || "";
+  renderDmHeader(userId, name);
   $("message-input").placeholder = `Message @${name}`;
   $("dm-profile-btn").classList.remove("hidden");
-  renderDmProfile(userId, name);
   const threads = await renderDmThreads();
   renderDmRequestBar(threads.find(t => t.user === userId) || null);
   const messages = await invoke("get_dm_messages", { userId });
   renderMessages(messages.map(dmToRenderable));
+}
+
+// The conversation header and the profile panel of the open conversation:
+// presence dot, "Back at 4:40 PM", what they are doing. Redrawn whenever a
+// profile update arrives, so a return time shows without reopening the chat.
+function renderDmHeader(userId, name) {
+  const presence = personPresence(userId);
+  const person = state.people.get(userId);
+  $("chat-presence").className = `presence-dot inline ${presence}`;
+  $("chat-presence").title = presenceLabel({ ...(person || {}), presence });
+  $("channel-topic").textContent = (person && subLine(person)) || "";
+  renderDmProfile(userId, name);
 }
 
 function renderDmProfile(userId, name) {
@@ -8277,7 +8284,11 @@ function wireEvents() {
         await refreshCurrentServer();
       }
       // Keep mutual servers and presence current while Direct Messages is open.
-      if (state.view === "dm") await refreshPeople();
+      if (state.view === "dm") {
+        await refreshPeople();
+        await renderDmThreads();
+        if (state.currentDm) renderDmHeader(state.currentDm.user, state.currentDm.name);
+      }
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
