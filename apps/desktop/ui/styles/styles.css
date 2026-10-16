@@ -1518,6 +1518,8 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .vp-voice .split-btn .caret-btn { width: 20px; height: 34px; border-radius: 0; border-left: 1px solid var(--bg-darkest); }
 .vp-voice .icon-btn:hover, .vp-voice .caret-btn:hover { background: var(--bg-active); }
 .vp-voice .icon-btn.danger { color: var(--red); }
+.vp-voice #vp-camera.active { background: var(--accent); color: var(--accent-ink); }
+.vp-voice #vp-camera.active:hover { background: var(--accent-hover); }
 .vp-voice .icon-btn > svg { width: 20px; height: 20px; }
 .vp-conn-meta { flex: 1; min-width: 0; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
 .vp-conn-meta:hover .vp-where { color: var(--text-normal); text-decoration: underline; }
@@ -1534,28 +1536,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 #vp-nc.on { color: var(--accent); }
 .vp-hangup:hover { color: var(--red); }
 
-.vp-actions { display: flex; gap: 8px; }
-.vp-action {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 34px;
-  border: none;
-  border-radius: var(--radius-pill);
-  background: var(--bg-raised);
-  color: var(--header-primary);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--t-hover) ease, color var(--t-hover) ease;
-}
-.vp-action:hover { background: var(--bg-active); }
-.vp-action.active { background: var(--accent); color: var(--accent-ink); }
-.vp-action.active:hover { background: var(--accent-hover); }
-.vp-action-icon { display: inline-flex; }
 
 .vp-live {
   background: var(--bg-dark);
@@ -2006,9 +1986,10 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .member > div:not(.avatar) { flex: 1; min-width: 0; }
 .member-name { display: flex; align-items: center; }
 .member-name .live-badge { margin-left: 6px; }
-.member-voice { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; padding-left: 6px; color: var(--text-faint); }
-.member-voice .off { display: inline-flex; color: var(--red); }
 .user-sub.empty { min-height: 14px; }
+.member .user-sub { display: flex; align-items: center; gap: 4px; min-height: 14px; }
+.member .user-sub .sub-voice { display: inline-flex; flex: 0 0 auto; color: var(--text-muted); }
+.member .user-sub .sub-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .elapsed { font-variant-numeric: tabular-nums; }
 .voice-user-time { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; margin-right: 2px; }
 
@@ -2372,7 +2353,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   color: var(--text-muted);
   font-size: 13px;
 }
-.vp-actions .vp-action { min-width: 0; }
 
 .field-label.grow { flex: 1; min-width: 0; }
 .field-label.grow select { width: 100%; }
@@ -2429,7 +2409,7 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 /* ---------- Icon alignment baseline ----------
    Every icon button centers a block-level SVG at a fixed size, so
    icons drawn at different sizes in markup still line up. */
-button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
+button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .icon-btn { padding: 0; line-height: 0; flex-shrink: 0; }
 .icon-btn > svg { width: 20px; height: 20px; }
 .header-btns .icon-btn { width: 28px; height: 28px; }
@@ -2446,7 +2426,6 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .vp-conn .icon-btn > svg { width: 20px; height: 20px; }
 .vp-status { line-height: 18px; white-space: nowrap; overflow: hidden; }
 .vp-signal svg { width: 14px; height: 14px; }
-.vp-action-icon svg { width: 18px; height: 18px; }
 .msg-actions button svg { width: 18px; height: 18px; }
 .settings-close svg { width: 18px; height: 18px; }
 .channel { align-items: center; }
@@ -2853,8 +2832,8 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .user-panel { gap: 4px; }
 .user-chip {
   /* A fixed footprint: the pill never grows or shrinks with the status under the name. */
-  flex: 0 0 196px;
-  width: 196px;
+  flex: 0 0 164px;
+  width: 164px;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -3048,8 +3027,6 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .expr-delete:hover { color: var(--red); }
 
 /* Soundboard */
-.vp-action-label { display: none; }
-#vp-soundboard svg { width: 18px; height: 18px; }
 .soundboard-pop {
   position: fixed;
   z-index: 140;

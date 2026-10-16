@@ -94,14 +94,9 @@
             <button class="icon-btn" id="deafen-btn" title="Deafen"></button>
             <button class="caret-btn" id="deafen-caret" title="Output Options"></button>
           </div>
-          <button class="icon-btn" id="vp-nc" title="Noise Cancellation"></button>
+          <button class="icon-btn" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
         </div>
         <button class="vp-game-share hidden" id="vp-game-share"></button>
-        <div class="vp-actions">
-          <button class="vp-action" id="vp-camera" title="Turn On Camera"><span class="vp-action-icon" id="vp-camera-icon"></span><span class="vp-action-label" id="vp-camera-label">Camera</span></button>
-          <button class="vp-action" id="vp-share" title="Share Your Screen"><span class="vp-action-icon" id="vp-share-icon"></span><span class="vp-action-label" id="vp-share-label">Share Screen</span></button>
-          <button class="vp-action" id="vp-soundboard" title="Soundboard"></button>
-        </div>
       </section>
 
     </aside>
@@ -114,6 +109,8 @@
         <span class="presence-dot inline hidden" id="chat-presence"></span>
         <span class="topic" id="channel-topic"></span>
         <div class="header-actions">
+          <button class="icon-btn hidden" id="vp-nc" title="Noise Cancellation"></button>
+          <button class="icon-btn hidden" id="vp-soundboard" title="Soundboard"></button>
           <button class="icon-btn hidden" id="dm-profile-btn" title="Hide User Profile">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"/></svg>
           </button>
