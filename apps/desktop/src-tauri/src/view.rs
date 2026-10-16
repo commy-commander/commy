@@ -11,15 +11,18 @@ pub struct ServerSummary {
     pub name: String,
     pub member_count: usize,
     pub icon: Option<String>,
+    /// The viewer may invite people to this server.
+    pub can_invite: bool,
 }
 
 impl ServerSummary {
-    pub fn from_state(state: &ServerState) -> Self {
+    pub fn from_state(state: &ServerState, viewer: Option<UserId>) -> Self {
         Self {
             id: state.server.id.to_string(),
             name: state.server.name.clone(),
             member_count: state.server.members.len(),
             icon: state.server.icon.clone(),
+            can_invite: viewer.is_some_and(|me| state.server.permissions_for(me).allows(Permissions::CREATE_INVITES)),
         }
     }
 }
@@ -40,6 +43,8 @@ pub struct ChannelView {
     pub position: u32,
     /// Voice member cap; 0 is unlimited.
     pub user_limit: u32,
+    /// Banner image ref, if the channel has one.
+    pub banner: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,6 +130,7 @@ pub struct ServerView {
     pub can_manage_roles: bool,
     pub can_kick: bool,
     pub can_manage_messages: bool,
+    pub can_invite: bool,
     pub game_tags: Vec<String>,
     pub game_tag_meta: Vec<commy_core::server::GameTagMeta>,
     pub rules: Option<String>,
@@ -194,6 +200,7 @@ impl ServerView {
                 parent: c.parent.map(|p| p.to_string()),
                 position: c.position,
                 user_limit: c.user_limit,
+                banner: c.banner.clone(),
                 voice_user_ids: state
                     .voice_members(c.id)
                     .iter()
@@ -339,6 +346,7 @@ impl ServerView {
             can_manage_roles: perms.allows(Permissions::MANAGE_ROLES),
             can_kick: perms.allows(Permissions::KICK_MEMBERS),
             can_manage_messages: perms.allows(Permissions::MANAGE_MESSAGES),
+            can_invite: perms.allows(Permissions::CREATE_INVITES),
             game_tags: state.server.game_tags.clone(),
             game_tag_meta: state.server.game_tag_meta.clone(),
             rules: state.server.rules.clone(),
@@ -389,6 +397,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("mute_members", Permissions::MUTE_MEMBERS),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("manage_events", Permissions::MANAGE_EVENTS),
+    ("create_invites", Permissions::CREATE_INVITES),
     ("administrator", Permissions::ADMINISTRATOR),
 ];
 

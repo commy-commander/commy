@@ -28,6 +28,9 @@ pub struct Channel {
     /// Voice channels: most people allowed in at once; 0 is unlimited.
     #[serde(default)]
     pub user_limit: u32,
+    /// Optional banner image ref shown at the top of the channel.
+    #[serde(default)]
+    pub banner: Option<String>,
 }
 
 impl Channel {
@@ -41,6 +44,7 @@ impl Channel {
             position,
             retention_days: None,
             user_limit: 0,
+            banner: None,
         }
     }
 }
@@ -234,11 +238,20 @@ impl Server {
         let Some(member) = self.member(user) else {
             return Permissions::NONE;
         };
+        // Inviting is only ever granted by a role someone was given, so
+        // the everyone role cannot hand it out, even on servers created
+        // when the default member permissions still included it.
         let mut perms = self
             .roles
             .iter()
             .filter(|r| r.position == 0 || member.roles.contains(&r.id))
-            .fold(Permissions::NONE, |acc, r| acc | r.permissions);
+            .fold(Permissions::NONE, |acc, r| {
+                let mut p = r.permissions;
+                if r.position == 0 {
+                    p.remove(Permissions::CREATE_INVITES);
+                }
+                acc | p
+            });
         if perms.contains(Permissions::ADMINISTRATOR) {
             perms = Permissions::all();
         }
@@ -357,6 +370,36 @@ mod tests {
         let perms = server.permissions_for(user);
         assert!(perms.allows(Permissions::SEND_MESSAGES));
         assert!(!perms.allows(Permissions::KICK_MEMBERS));
+        assert!(!perms.allows(Permissions::CREATE_INVITES));
+    }
+
+    #[test]
+    fn everyone_role_never_grants_invites() {
+        let owner = UserId::new();
+        let mut server = Server::new("s", owner);
+        // A server made before the default changed still has it on everyone.
+        server.roles[0].permissions.insert(Permissions::CREATE_INVITES);
+        let plain = UserId::new();
+        let inviter = UserId::new();
+        let invite_role = Role {
+            id: RoleId::new(),
+            name: "greeters".to_string(),
+            color: None,
+            permissions: Permissions::CREATE_INVITES,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+        };
+        let rid = invite_role.id;
+        server.roles.push(invite_role);
+        for (user, roles) in [(plain, vec![]), (inviter, vec![rid])] {
+            server.members.push(Member { user, nickname: None, roles, joined_at: Utc::now() });
+        }
+        assert!(!server.permissions_for(plain).allows(Permissions::CREATE_INVITES));
+        assert!(server.permissions_for(inviter).allows(Permissions::CREATE_INVITES));
+        assert!(server.permissions_for(owner).allows(Permissions::CREATE_INVITES));
     }
 
     #[test]

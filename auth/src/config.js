@@ -123,6 +123,8 @@ export function loadConfig(env = process.env) {
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
     invitesMaxPermanent: Number(env.INVITES_MAX_PERMANENT) > 0 ? Math.floor(Number(env.INVITES_MAX_PERMANENT)) : undefined,
     doorbell: env.DOORBELL !== "false",
+    // Optional Redis for doorbell rings and rate-limit counters
+    redisUrl: (env.REDIS_URL ?? "").trim() || null,
     google,
     twitch,
     smtp,
@@ -145,6 +147,7 @@ export function featureSummary(config) {
     `gifs=${on(config.klipyKey)}`,
     `games=${on(config.igdb)}${config.igdb && config.igdb === config.twitch ? " (twitch app)" : ""}`,
     `doorbell=${on(config.doorbell)}`,
+    `redis=${on(config.redisUrl)}`,
     `signup=${on(config.allowSignup)}`,
   ].join(" ");
 }

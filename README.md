@@ -19,7 +19,7 @@ crates/commy-audio      Voice DSP: RNNoise noise cancellation toggle,
                         mute gate, VAD, 48 kHz / 10 ms frames
 crates/commy-media      Device I/O: mic capture, playback mixing with
                         jitter buffers, screen capture (MJPEG)
-auth                    Account server: Better Auth, Postgres
+auth                    Account server: Better Auth, Postgres, Redis
 deploy                  Self-hosting stack and deploy pipeline
                         (the commy.chat website lives in its own
                         repository, commy-web)

@@ -32,6 +32,14 @@ jobs:
   auth-tests:
     name: Auth server tests
     runs-on: ubuntu-latest
+    # The Redis-backed doorbell and rate-limit tests run against a real Redis
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 3s --health-retries 20
+    env:
+      REDIS_TEST_URL: redis://127.0.0.1:6379
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

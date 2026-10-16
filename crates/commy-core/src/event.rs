@@ -179,6 +179,12 @@ pub enum ServerEvent {
         key: Option<crate::doorbell::DoorbellKey>,
         sig: Signature,
     },
+    /// A channel's banner image changed; None clears it.
+    ChannelBanner {
+        server: ServerId,
+        channel: ChannelId,
+        banner: Option<String>,
+    },
 }
 
 #[cfg(test)]
