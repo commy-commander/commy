@@ -15,6 +15,10 @@ pub struct DmMessage {
     pub to: UserId,
     pub content: String,
     pub created_at: DateTime<Utc>,
+    /// Hex node id of the device that sends it. Signed, so a copy sent on
+    /// from another node can be told apart. Empty on older messages.
+    #[serde(default)]
+    pub from_node: String,
     /// Sender's signature over [`DmMessage::signing_bytes`]. None on
     /// messages from before signing existed.
     #[serde(default)]
@@ -31,6 +35,7 @@ impl DmMessage {
             to,
             content: content.into(),
             created_at: Utc::now(),
+            from_node: String::new(),
             sig: None,
         }
     }
@@ -44,11 +49,14 @@ impl DmMessage {
             self.to,
             self.content.as_str(),
             self.created_at.timestamp_millis(),
+            self.from_node.as_str(),
         );
         postcard::to_stdvec(&fields).expect("postcard encodes plain tuples")
     }
 
-    pub fn sign(&mut self, identity: &Identity) {
+    /// Signs the message as sent from `node` (hex node id), our device now.
+    pub fn sign(&mut self, node: &str, identity: &Identity) {
+        self.from_node = node.to_string();
         self.sig = Some(identity.sign(&self.signing_bytes()));
     }
 
@@ -138,6 +146,9 @@ impl DmStore {
 mod tests {
     use super::*;
 
+    /// A sending device's node id, in hex.
+    const NODE: &str = "0101010101010101010101010101010101010101010101010101010101010101";
+
     #[test]
     fn insert_dedupes_and_orders() {
         let mut store = DmStore::new();
@@ -182,26 +193,28 @@ mod tests {
 
     #[test]
     fn signed_message_verifies() {
-        let (alice, bob) = (Identity::generate(), Identity::generate());
+        let (signer, stranger) = (Identity::generate(), Identity::generate());
         let mut msg = DmMessage::new(UserId::new(), UserId::new(), "signed");
-        assert!(!msg.verify(&alice.public()), "unsigned");
-        msg.sign(&alice);
-        assert!(msg.verify(&alice.public()));
-        assert!(!msg.verify(&bob.public()), "wrong key");
+        assert!(!msg.verify(&signer.public()), "unsigned");
+        msg.sign(NODE, &signer);
+        assert_eq!(msg.from_node, NODE);
+        assert!(msg.verify(&signer.public()));
+        assert!(!msg.verify(&stranger.public()), "wrong key");
     }
 
     #[test]
     fn tampering_any_signed_field_breaks_the_signature() {
-        let alice = Identity::generate();
+        let signer = Identity::generate();
         let mut msg = DmMessage::new(UserId::new(), UserId::new(), "original");
-        msg.sign(&alice);
-        let key = alice.public();
-        let tampered: [fn(&mut DmMessage); 6] = [
+        msg.sign(NODE, &signer);
+        let key = signer.public();
+        let tampered: [fn(&mut DmMessage); 7] = [
             |m| m.id = MessageId::new(),
             |m| m.from = UserId::new(),
             |m| m.to = UserId::new(),
             |m| m.content.push('!'),
             |m| m.created_at += chrono::Duration::milliseconds(1),
+            |m| m.from_node = "ff".repeat(32),
             |m| m.sig.as_mut().unwrap().0[0] ^= 1,
         ];
         for change in tampered {
@@ -213,7 +226,8 @@ mod tests {
 
     #[test]
     fn signing_bytes_match_the_spec() {
-        let msg = DmMessage::new(UserId::new(), UserId::new(), "spec");
+        let mut msg = DmMessage::new(UserId::new(), UserId::new(), "spec");
+        msg.from_node = NODE.into();
         let expected = postcard::to_stdvec(&(
             "commy-dm/v1",
             msg.id,
@@ -221,6 +235,7 @@ mod tests {
             msg.to,
             "spec",
             msg.created_at.timestamp_millis(),
+            NODE,
         ))
         .unwrap();
         assert_eq!(msg.signing_bytes(), expected);
@@ -228,15 +243,15 @@ mod tests {
 
     #[test]
     fn signature_survives_both_encodings() {
-        let alice = Identity::generate();
+        let signer = Identity::generate();
         let mut msg = DmMessage::new(UserId::new(), UserId::new(), "wire and disk");
-        msg.sign(&alice);
+        msg.sign(NODE, &signer);
         let wire: DmMessage = postcard::from_bytes(&postcard::to_stdvec(&msg).unwrap()).unwrap();
         assert_eq!(wire, msg);
-        assert!(wire.verify(&alice.public()));
+        assert!(wire.verify(&signer.public()));
         let json = serde_json::to_string(&msg).unwrap();
         let disk: DmMessage = serde_json::from_str(&json).unwrap();
-        assert!(disk.verify(&alice.public()));
+        assert!(disk.verify(&signer.public()));
     }
 
     #[test]
@@ -244,8 +259,10 @@ mod tests {
         let msg = DmMessage::new(UserId::new(), UserId::new(), "old");
         let mut json = serde_json::to_value(&msg).unwrap();
         json.as_object_mut().unwrap().remove("sig");
+        json.as_object_mut().unwrap().remove("from_node");
         let back: DmMessage = serde_json::from_value(json).unwrap();
         assert_eq!(back.sig, None);
+        assert_eq!(back.from_node, "");
         assert_eq!(back.content, "old");
     }
 

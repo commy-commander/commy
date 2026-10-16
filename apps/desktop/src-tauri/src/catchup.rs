@@ -31,6 +31,10 @@ pub const RECENT_SESSION: Duration = Duration::from_secs(60);
 /// Each server catches up with one random neighbor this often.
 pub const PERIODIC_INTERVAL: Duration = Duration::from_secs(600);
 
+/// Servers that catch-up changed are saved together this long after the
+/// first change, not once per page; a session's end saves its server at once.
+pub const SAVE_DELAY: Duration = Duration::from_secs(2);
+
 /// Events held per server for an unknown author key, and for how long.
 pub const HOLD_CAP: usize = 1000;
 pub const HOLD_FOR: Duration = Duration::from_secs(15 * 60);
@@ -48,8 +52,12 @@ pub struct Catchup {
     held: HashMap<ServerId, VecDeque<(Instant, ServerEvent)>>,
     /// New messages from others per channel, not yet told to the webview.
     fresh: HashMap<ServerId, HashMap<ChannelId, u32>>,
-    /// Servers changed in memory and not saved yet.
+    /// Servers changed since the webview was last told.
     dirty: HashSet<ServerId>,
+    /// Servers changed in memory and not saved yet.
+    unsaved: HashSet<ServerId>,
+    /// A delayed save of `unsaved` is on its way.
+    save_scheduled: bool,
 }
 
 /// What catch-up changed in one server since the last look.
@@ -145,6 +153,7 @@ impl Catchup {
     /// Notes that a server changed, with the channels of new messages.
     pub fn note_applied(&mut self, server: ServerId, fresh: impl IntoIterator<Item = ChannelId>) {
         self.dirty.insert(server);
+        self.unsaved.insert(server);
         let counts = self.fresh.entry(server).or_default();
         for channel in fresh {
             *counts.entry(channel).or_default() += 1;
@@ -161,11 +170,33 @@ impl Catchup {
         }
     }
 
+    /// True when a server waits to be saved and no save is on its way yet;
+    /// the caller then starts one (see [`SAVE_DELAY`]).
+    pub fn schedule_save(&mut self) -> bool {
+        if self.unsaved.is_empty() || self.save_scheduled {
+            return false;
+        }
+        self.save_scheduled = true;
+        true
+    }
+
+    /// The servers to save now; the next change schedules a save again.
+    pub fn take_unsaved(&mut self) -> Vec<ServerId> {
+        self.save_scheduled = false;
+        self.unsaved.drain().collect()
+    }
+
+    /// True when `server` waited to be saved, which the caller now does.
+    pub fn take_unsaved_server(&mut self, server: ServerId) -> bool {
+        self.unsaved.remove(&server)
+    }
+
     /// Everything about a server we left.
     pub fn forget_server(&mut self, server: ServerId) {
         self.held.remove(&server);
         self.fresh.remove(&server);
         self.dirty.remove(&server);
+        self.unsaved.remove(&server);
         self.completed.retain(|(s, _), _| *s != server);
     }
 }
@@ -323,6 +354,9 @@ pub trait AppAccess: Send + Sync + 'static {
     fn app(&self) -> &App;
     /// Tells the webview something changed.
     fn emit(&self, event: &str, payload: serde_json::Value);
+    /// Saves the servers changed meanwhile after [`SAVE_DELAY`], in the
+    /// background (see [`save_unsaved`]).
+    fn save_later(&self);
 }
 
 impl AppAccess for tauri::AppHandle {
@@ -333,20 +367,38 @@ impl AppAccess for tauri::AppHandle {
     fn emit(&self, event: &str, payload: serde_json::Value) {
         let _ = Emitter::emit(self, event, payload);
     }
+
+    fn save_later(&self) {
+        let handle = self.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(SAVE_DELAY).await;
+            save_unsaved(handle.app());
+        });
+    }
+}
+
+/// Saves every server catch-up changed since the last save.
+pub fn save_unsaved(app: &App) {
+    let servers = app.catchup.lock().unwrap().take_unsaved();
+    for server in servers {
+        app.persist_server(server);
+    }
 }
 
 /// An `App` without a webview that records what it would have been told.
+/// Delayed saves run on a thread of their own.
 #[cfg(test)]
 #[derive(Clone, Default)]
 pub struct TestHandle {
     pub app: Arc<App>,
     events: Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
+    pub saves_scheduled: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[cfg(test)]
 impl TestHandle {
     pub fn new(app: Arc<App>) -> Self {
-        Self { app, events: Default::default() }
+        Self { app, events: Default::default(), saves_scheduled: Default::default() }
     }
 
     /// Events emitted since the last call, oldest first.
@@ -363,6 +415,15 @@ impl AppAccess for TestHandle {
 
     fn emit(&self, event: &str, payload: serde_json::Value) {
         self.events.lock().unwrap().push((event.to_string(), payload));
+    }
+
+    fn save_later(&self) {
+        self.saves_scheduled.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let app = self.app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(SAVE_DELAY);
+            save_unsaved(&app);
+        });
     }
 }
 
@@ -429,7 +490,11 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
         let unread = Unread::of(app, server);
         let (report, held, fresh) = {
             let mut servers = app.servers.lock().unwrap();
-            let Some(state) = servers.get_mut(&server) else { return ApplyReport::default() };
+            let Some(state) = servers.get_mut(&server) else {
+                // Left meanwhile: nothing was taken, so the peer counts none of it.
+                let rejected = messages.iter().map(|m| m.id).chain(tombstones.iter().map(|p| p.message));
+                return ApplyReport { rejected: dedup(rejected), ..Default::default() };
+            };
             apply_page(state, &unread, messages, tombstones)
         };
         let now = Instant::now();
@@ -442,12 +507,18 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
                 catchup.note_applied(server, fresh);
             }
         }
-        // Saved and shown at once, however the session ends.
+        // Shown at once and saved soon, however the session ends.
         if !report.applied.is_empty() {
             flush(&self.0, server, false);
         }
         report
     }
+}
+
+/// Ids in their first order, each once.
+fn dedup(ids: impl IntoIterator<Item = MessageId>) -> Vec<MessageId> {
+    let mut seen = HashSet::new();
+    ids.into_iter().filter(|id| seen.insert(*id)).collect()
 }
 
 /// The catch-up store handed to the node.
@@ -532,7 +603,8 @@ pub fn on_caught_up(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32],
 }
 
 /// Clears pending sends the peer confirmed it holds, then saves and
-/// announces what the session changed.
+/// announces what the session changed. A session that fails before this
+/// runs is saved by the delayed save its pages scheduled.
 pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<&SessionReport>) {
     let app = access.app();
     let mut outbox_changed = false;
@@ -549,16 +621,23 @@ pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<
     if outbox_changed {
         app.persist_outbox();
     }
+    if app.catchup.lock().unwrap().take_unsaved_server(server) {
+        app.persist_server(server);
+    }
     flush(access, server, outbox_changed);
 }
 
-/// Saves a server that catch-up or released events changed and tells the
-/// webview: `server-event` to redraw, `messages-caught-up` for unread counts.
+/// Tells the webview what catch-up or released events changed in a
+/// server, `server-event` to redraw and `messages-caught-up` for unread
+/// counts, and schedules saving it (see [`SAVE_DELAY`]).
 fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
     let app = access.app();
-    let changes = app.catchup.lock().unwrap().take_changes(server);
-    if changes.changed {
-        app.persist_server(server);
+    let (changes, save) = {
+        let mut catchup = app.catchup.lock().unwrap();
+        (catchup.take_changes(server), catchup.schedule_save())
+    };
+    if save {
+        access.save_later();
     }
     if changes.changed || redraw {
         access.emit("server-event", server.to_string().into());
@@ -685,6 +764,76 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
     access.emit("server-event", server.to_string().into());
     access.emit("servers-changed", serde_json::Value::Null);
     true
+}
+
+/// The nodes a stored invite bootstraps from, or None when it is unreadable.
+pub fn invite_nodes(raw: &str) -> Option<Vec<[u8; 32]>> {
+    let ticket = commy_net::ServerTicket::decode(raw).ok()?;
+    Some(ticket.bootstrap.iter().map(|addr| *addr.node_id.as_bytes()).collect())
+}
+
+/// At startup, whether a server an earlier version joined still waits for
+/// its first snapshot, which that version did not record: its state is the
+/// placeholder made on joining (ours, with our profile only and no
+/// messages), and its stored invite names nodes, none of them ours, so we
+/// did not create it.
+pub fn joined_placeholder(state: &ServerState, me: UserId, invite: Option<&[[u8; 32]]>, our_node: [u8; 32]) -> bool {
+    let placeholder = state.server.owner == me
+        && state.profiles.keys().all(|id| *id == me)
+        && state.server.channels.iter().all(|c| state.messages(c.id).is_empty());
+    let joined = invite.is_some_and(|nodes| !nodes.is_empty() && !nodes.contains(&our_node));
+    placeholder && joined
+}
+
+/// Marks the servers [`joined_placeholder`] finds as awaiting a snapshot.
+pub fn mark_joined_placeholders(app: &App, invites: &HashMap<ServerId, String>, our_node: [u8; 32]) {
+    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let found: Vec<ServerId> = app
+        .servers
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|state| {
+            let nodes = invites.get(&state.server.id).and_then(|raw| invite_nodes(raw));
+            joined_placeholder(state, me, nodes.as_deref(), our_node)
+        })
+        .map(|state| state.server.id)
+        .collect();
+    for server in found {
+        if !app.awaits_snapshot(server) {
+            tracing::info!("{server} still waits for its first snapshot");
+            app.set_awaiting_snapshot(server, true);
+        }
+    }
+}
+
+/// Catches up every server with each of its current neighbors now, after
+/// sending what waited for them. Used once our key settled, since both
+/// were held back until then.
+pub async fn catch_up_with_neighbors(handle: &tauri::AppHandle) {
+    let app = handle.state::<App>();
+    let servers: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let neighbors: Vec<(ServerId, Vec<[u8; 32]>)> = {
+        let net = app.net.lock().await;
+        let Some(node) = net.as_ref() else { return };
+        servers.into_iter().map(|sid| (sid, node.neighbors(sid))).collect()
+    };
+    for (server, peers) in &neighbors {
+        if !peers.is_empty() {
+            crate::outbox::flush_queued(&app, *server).await;
+        }
+    }
+    for (server, peer) in every_neighbor(neighbors) {
+        spawn_session(handle.clone(), server, peer, None, true);
+    }
+}
+
+/// One session for each server and each of its neighbors.
+fn every_neighbor(neighbors: Vec<(ServerId, Vec<[u8; 32]>)>) -> Vec<SessionKey> {
+    neighbors
+        .into_iter()
+        .flat_map(|(server, peers)| peers.into_iter().map(move |peer| (server, peer)))
+        .collect()
 }
 
 /// Every [`PERIODIC_INTERVAL`], each server catches up with one random
@@ -923,6 +1072,14 @@ mod tests {
     }
 
     #[test]
+    fn a_settled_key_catches_up_with_every_neighbor() {
+        let (a, b) = (ServerId::new(), ServerId::new());
+        let (one, two) = ([1u8; 32], [2u8; 32]);
+        let sessions = every_neighbor(vec![(a, vec![one, two]), (b, vec![]), (b, vec![two])]);
+        assert_eq!(sessions, vec![(a, one), (a, two), (b, two)]);
+    }
+
+    #[test]
     fn neighbor_pick_wraps_around() {
         assert_eq!(pick(&[], 5), None);
         let list = [[1u8; 32], [2u8; 32], [3u8; 32]];
@@ -1002,8 +1159,12 @@ mod tests {
         dir
     }
 
+    fn saved_has(dir: &std::path::Path, sid: ServerId, id: MessageId) -> bool {
+        crate::persist::load_servers(dir).iter().any(|s| s.server.id == sid && s.has_message(id))
+    }
+
     #[test]
-    fn applied_pages_are_saved_and_shown_at_once() {
+    fn applied_pages_are_shown_at_once_and_saved_together() {
         let owner = Member::new("owner");
         let friend = Member::new("friend");
         let (mut state, channel) = server(&owner);
@@ -1015,20 +1176,63 @@ mod tests {
         let handle = TestHandle::new(app.clone());
         let store = AppStore(handle.clone());
 
-        // A page applied in a session that never finishes is on disk and
-        // on screen without waiting for the session's end.
-        let page = friend.post(&app.servers.lock().unwrap()[&sid], channel, "mid-session");
-        store.apply(sid, vec![page.clone()], vec![]);
-        let saved = crate::persist::load_servers(&dir);
-        assert!(saved.iter().any(|s| s.server.id == sid && s.has_message(page.id)));
+        // Pages applied in a session that never finishes, as when a peer's
+        // session with us fails: shown at once, not saved per page.
+        let first = friend.post(&app.servers.lock().unwrap()[&sid], channel, "first page");
+        let second = friend.post(&app.servers.lock().unwrap()[&sid], channel, "second page");
+        store.apply(sid, vec![first.clone()], vec![]);
         let names: Vec<String> = handle.take_events().into_iter().map(|(name, _)| name).collect();
         assert_eq!(names, ["server-event", "messages-caught-up"]);
+        store.apply(sid, vec![second.clone()], vec![]);
+        assert_eq!(handle.take_events().len(), 2);
+        assert!(!saved_has(&dir, sid, first.id), "not saved per page");
+        assert_eq!(handle.saves_scheduled.load(std::sync::atomic::Ordering::SeqCst), 1, "one save for both");
+
+        // The delayed save writes both, not before its delay.
+        let started = Instant::now();
+        while !saved_has(&dir, sid, second.id) && started.elapsed() < SAVE_DELAY * 5 {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(started.elapsed() >= SAVE_DELAY - Duration::from_millis(500));
+        assert!(saved_has(&dir, sid, first.id) && saved_has(&dir, sid, second.id));
         assert_eq!(app.catchup.lock().unwrap().take_changes(sid), Changes::default(), "nothing left over");
 
-        // A page that changes nothing says nothing.
-        store.apply(sid, vec![page], vec![]);
+        // A page that changes nothing says nothing and saves nothing.
+        store.apply(sid, vec![second], vec![]);
         assert!(handle.take_events().is_empty());
+        assert_eq!(handle.saves_scheduled.load(std::sync::atomic::Ordering::SeqCst), 1);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_session_that_ends_saves_its_server_at_once() {
+        let owner = Member::new("owner");
+        let friend = Member::new("friend");
+        let (mut state, channel) = server(&owner);
+        join(&mut state, &friend);
+        let sid = state.server.id;
+        let app = app_with(&owner, state);
+        let dir = temp_dir("session-end");
+        app.data_dir.set(dir.clone()).unwrap();
+        let handle = TestHandle::new(app.clone());
+        let page = friend.post(&app.servers.lock().unwrap()[&sid], channel, "page");
+        AppStore(handle.clone()).apply(sid, vec![page.clone()], vec![]);
+        assert!(!saved_has(&dir, sid, page.id));
+        after_session(&handle, sid, Some(&SessionReport::default()));
+        assert!(saved_has(&dir, sid, page.id));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_server_left_meanwhile_takes_nothing() {
+        let owner = Member::new("owner");
+        let (state, channel) = server(&owner);
+        let message = owner.post(&state, channel, "for a server we left");
+        let proof = TombstoneProof::sign(state.server.id, channel, MessageId::new(), owner.id(), Utc::now(), &owner.identity);
+        let app = app_with(&owner, state);
+        let gone = ServerId::new();
+        let report = AppStore(TestHandle::new(app)).apply(gone, vec![message.clone(), message.clone()], vec![proof.clone()]);
+        assert_eq!(report, ApplyReport { rejected: vec![message.id, proof.message], ..Default::default() });
     }
 
     #[test]
@@ -1051,16 +1255,17 @@ mod tests {
         let state = app.servers.lock().unwrap()[&sid].clone();
         assert!(state.has_message(message.id));
         assert_eq!(state.identity_of(absent.id()), Some(absent.identity.public()));
-        assert!(state.server.is_member(absent.id()));
+        assert!(!state.server.is_member(absent.id()), "a relayed profile makes nobody a member");
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 0);
         let caught_up = caught_up_payload(sid, &HashMap::from([(channel, 1)]));
         assert!(handle.take_events().contains(&("messages-caught-up".into(), caught_up)));
 
-        // Only profiles with a key are taken or passed on.
+        // Only profiles with a key are taken, and only members' passed on.
         let unkeyed = UserProfile::new("unkeyed");
         store.apply_profiles(sid, vec![unkeyed.clone()]);
-        assert!(!app.servers.lock().unwrap()[&sid].server.is_member(unkeyed.id));
-        assert_eq!(store.profiles(sid, &[absent.id(), unkeyed.id, absent.id()]), vec![absent.profile.clone()]);
+        assert!(!app.servers.lock().unwrap()[&sid].profiles.contains_key(&unkeyed.id));
+        let asked = [absent.id(), unkeyed.id, owner.id(), owner.id()];
+        assert_eq!(store.profiles(sid, &asked), vec![owner.profile.clone()]);
     }
 
     #[test]
@@ -1310,5 +1515,58 @@ mod tests {
         // A hold that ran out counts as settled.
         app.hold_key(Instant::now());
         assert!(store.local_identity(sid).is_some());
+    }
+
+    #[test]
+    fn servers_joined_before_the_upgrade_still_wait_for_their_snapshot() {
+        let me = Member::new("member");
+        let owner = Member::new("owner");
+        let (ours, inviter) = ([1u8; 32], [2u8; 32]);
+        // What joining leaves until the snapshot: ours, with only us in it.
+        let (placeholder, channel) = server(&me);
+        assert!(joined_placeholder(&placeholder, me.id(), Some(&[inviter]), ours));
+
+        // An invite of our own is a server we created; without a readable
+        // invite we cannot tell, so nothing changes.
+        assert!(!joined_placeholder(&placeholder, me.id(), Some(&[ours]), ours));
+        assert!(!joined_placeholder(&placeholder, me.id(), Some(&[inviter, ours]), ours));
+        assert!(!joined_placeholder(&placeholder, me.id(), Some(&[]), ours));
+        assert!(!joined_placeholder(&placeholder, me.id(), None, ours));
+
+        // History, someone else, or another owner: the state is real.
+        let mut talked = placeholder.clone();
+        talked.apply(ServerEvent::MessageCreate { message: me.post(&placeholder, channel, "hi") }).unwrap();
+        assert!(!joined_placeholder(&talked, me.id(), Some(&[inviter]), ours));
+        let mut met = placeholder.clone();
+        join(&mut met, &owner);
+        assert!(!joined_placeholder(&met, me.id(), Some(&[inviter]), ours));
+        let mut theirs = ServerState::new(Server::new("s", owner.id()));
+        theirs.profiles.insert(me.id(), me.profile.clone());
+        assert!(!joined_placeholder(&theirs, me.id(), Some(&[inviter]), ours));
+    }
+
+    #[tokio::test]
+    async fn startup_marks_servers_joined_from_someone_elses_invite() {
+        let (mut inviter, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
+        let me = Member::new("member");
+        let (joined, _) = server(&me);
+        let (created, _) = server(&me);
+        let (sid, created_id) = (joined.server.id, created.server.id);
+        let ticket = tokio::time::timeout(Duration::from_secs(30), inviter.host_server(sid, "s")).await.unwrap().unwrap();
+        let theirs = inviter.node_id_bytes();
+        assert_eq!(invite_nodes(&ticket.encode()), Some(vec![theirs]));
+        assert_eq!(invite_nodes("not an invite"), None);
+
+        let app = app_with(&me, joined);
+        app.servers.lock().unwrap().insert(created_id, created);
+        let mut own = ticket.clone();
+        own.server_id = created_id;
+        let invites = HashMap::from([(sid, ticket.encode()), (created_id, own.encode())]);
+        // Seen from the inviter's node, both invites are its own.
+        mark_joined_placeholders(&app, &invites, theirs);
+        assert!(app.awaiting_snapshot.lock().unwrap().is_empty());
+        mark_joined_placeholders(&app, &HashMap::from([(sid, ticket.encode())]), [9; 32]);
+        assert_eq!(*app.awaiting_snapshot.lock().unwrap(), HashSet::from([sid]));
+        inviter.shutdown().await.ok();
     }
 }

@@ -61,6 +61,11 @@ fn default_true() -> bool {
     true
 }
 
+/// Lies next to `identity.key` while that key may still give way to the
+/// account's, from before the key is made until it settles. A restart
+/// in between holds the key back again.
+pub const UNSETTLED_FILE: &str = "identity.unsettled";
+
 /// Puts our current key on our own entry of a server. Returns None when
 /// nothing changed, else the key the entry held before, if any.
 fn set_own_key(
@@ -230,7 +235,44 @@ impl App {
 
     /// Our key is final. True when it was held back until now.
     pub fn settle_key(&self) -> bool {
-        self.key_hold.lock().unwrap().take().is_some()
+        let held = self.key_hold.lock().unwrap().take().is_some();
+        if let Some(dir) = self.data_dir() {
+            if let Err(e) = std::fs::remove_file(dir.join(UNSETTLED_FILE)) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!("could not record that our key settled: {e}");
+                }
+            }
+        }
+        held
+    }
+
+    /// Records that our key may still be replaced, before it is made.
+    pub fn mark_key_unsettled(&self) {
+        let Some(dir) = self.data_dir() else { return };
+        let written = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(dir.join(UNSETTLED_FILE), b""));
+        if let Err(e) = written {
+            tracing::warn!("could not record that our key is new: {e}");
+        }
+    }
+
+    pub fn key_marked_unsettled(&self) -> bool {
+        self.data_dir().is_some_and(|dir| dir.join(UNSETTLED_FILE).exists())
+    }
+
+    /// At startup: holds our key back for at most `max` when it has not
+    /// settled since it was made, on a device signed in to an account
+    /// whose key may replace it. Without an account there is nothing to
+    /// wait for, so the key settles at once. True when it is held.
+    pub fn hold_unsettled_key(&self, signed_in: bool, max: std::time::Duration) -> bool {
+        if !self.key_marked_unsettled() {
+            return false;
+        }
+        if !signed_in {
+            self.settle_key();
+            return false;
+        }
+        self.hold_key(Instant::now() + max);
+        true
     }
 
     /// Our profile as we announce it: without the key while it may still
@@ -441,6 +483,37 @@ mod tests {
         app.hold_key(Instant::now());
         assert!(app.key_settled());
         assert_eq!(app.announced(me.clone()), me);
+    }
+
+    #[test]
+    fn a_key_not_settled_is_held_again_after_a_restart() {
+        let dir = temp_dir("unsettled");
+        let max = std::time::Duration::from_secs(120);
+        let first = App::default();
+        first.data_dir.set(dir.clone()).unwrap();
+        assert!(!first.hold_unsettled_key(true, max), "an old key is not held");
+        first.mark_key_unsettled();
+        assert!(first.hold_unsettled_key(true, max));
+        assert!(!first.key_settled());
+
+        // Quit before it settled: the next run holds it again.
+        let second = App::default();
+        second.data_dir.set(dir.clone()).unwrap();
+        assert!(second.hold_unsettled_key(true, max));
+        assert!(!second.key_settled());
+        assert!(second.settle_key());
+        assert!(!dir.join(UNSETTLED_FILE).exists());
+
+        let third = App::default();
+        third.data_dir.set(dir.clone()).unwrap();
+        assert!(!third.hold_unsettled_key(true, max), "settled for good");
+        assert!(third.key_settled());
+
+        // Signed out, there is no account key to wait for.
+        third.mark_key_unsettled();
+        assert!(!third.hold_unsettled_key(false, max));
+        assert!(third.key_settled() && !third.key_marked_unsettled());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

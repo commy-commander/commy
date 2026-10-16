@@ -28,14 +28,20 @@ pub enum StoreError {
     BadSignature,
     #[error("not allowed")]
     NotAllowed,
+    #[error("dated too far ahead")]
+    TooFarAhead,
 }
 
 /// Days a delete proof is kept, well past the catch-up window.
 pub const TOMBSTONE_KEEP_DAYS: i64 = 60;
 
-/// Most delete proofs kept for one message, each from a different
-/// deleter.
-pub const MAX_PROOFS_PER_MESSAGE: usize = 4;
+/// Most delete proofs kept for one message from signers who are neither
+/// a moderator nor its author, the earliest first. Those two are never
+/// pushed out.
+pub const MAX_OTHER_PROOFS: usize = 8;
+
+/// How far ahead of our clock a signed time may be, in ms.
+pub const MAX_AHEAD_MS: i64 = 86_400_000;
 
 /// A delete proof as held here. `accepted_for` is the author of the
 /// message this peer checked the proof against when it applied it. Such
@@ -158,7 +164,8 @@ impl ServerState {
     /// returns how many were removed. Every peer runs this locally, so
     /// expired history disappears everywhere without a delete event.
     /// Delete proofs older than [`TOMBSTONE_KEEP_DAYS`] go too, as do
-    /// proofs for channels that no longer exist.
+    /// proofs for channels that no longer exist and proofs dated more
+    /// than [`MAX_AHEAD_MS`] ahead.
     pub fn prune_expired(&mut self, now: DateTime<Utc>) -> usize {
         let mut removed = 0;
         for channel in &self.server.channels {
@@ -171,7 +178,9 @@ impl ServerState {
         }
         let keep_from = now - chrono::Duration::days(TOMBSTONE_KEEP_DAYS);
         let channels = &self.messages;
-        retain_proofs(&mut self.tombstones, |p| p.at >= keep_from && channels.contains_key(&p.channel));
+        retain_proofs(&mut self.tombstones, |p| {
+            p.at >= keep_from && !too_far_ahead(p.at, now) && channels.contains_key(&p.channel)
+        });
         removed
     }
 
@@ -818,13 +827,19 @@ impl ServerState {
     }
 
     /// Signed create. A copy of a message we already hold is taken only
-    /// as a newer signed edit of it.
+    /// as a newer signed edit of it. A late copy kept out by a delete
+    /// returns Ok(true) when checking it changed the stored proofs, so
+    /// callers save them.
     fn create_message(&mut self, message: Message) -> Result<bool, StoreError> {
         let key = self
             .identity_of(message.author)
             .ok_or(StoreError::UnknownAuthorKey(message.author))?;
         if !message.verify(self.server.id, &key) {
             return Err(StoreError::BadSignature);
+        }
+        let now = Utc::now();
+        if too_far_ahead(message.created_at, now) || message.edited_at.is_some_and(|t| too_far_ahead(t, now)) {
+            return Err(StoreError::TooFarAhead);
         }
         if !self.messages.contains_key(&message.channel) {
             return Err(StoreError::UnknownChannel);
@@ -833,28 +848,30 @@ impl ServerState {
             // A proof accepted here for this author keeps it out, as does
             // one the author or a moderator signed. Any other is void.
             let author = message.author;
-            let mut blocked = false;
+            let before = list.len();
+            let (mut blocked, mut bound) = (false, false);
             for s in &mut list {
                 if s.proof.channel == message.channel
                     && (s.accepted_for == Some(author) || self.may_delete(s.proof.by, author))
                 {
+                    bound |= s.accepted_for.is_none();
                     s.accepted_for.get_or_insert(author);
                     blocked = true;
                 }
             }
             list.retain(|s| s.accepted_for.is_some());
+            let changed = bound || list.len() != before;
             if !list.is_empty() {
                 self.tombstones.insert(message.id, list);
             }
             if blocked {
-                return Ok(false);
+                return Ok(changed);
             }
         }
         if self.deleted_messages.contains(&message.id) {
             return Ok(false);
         }
         // A late copy of an already-expired message stays gone.
-        let now = Utc::now();
         if self.retention_cutoff(message.channel, now).is_some_and(|cutoff| message.created_at < cutoff) {
             return Ok(false);
         }
@@ -903,6 +920,9 @@ impl ServerState {
         if !msg.verify_edit(server, &content, edited_at, &sig, &key) {
             return Err(StoreError::BadSignature);
         }
+        if too_far_ahead(edited_at, Utc::now()) {
+            return Err(StoreError::TooFarAhead);
+        }
         if Some(edited_at.timestamp_millis()) <= millis(msg.edited_at) {
             return Ok(false);
         }
@@ -919,6 +939,9 @@ impl ServerState {
         if !proof.verify(self.server.id, &key) {
             return Err(StoreError::BadSignature);
         }
+        if too_far_ahead(proof.at, Utc::now()) {
+            return Err(StoreError::TooFarAhead);
+        }
         let list = self.messages.get(&proof.channel).ok_or(StoreError::UnknownChannel)?;
         if let Some(pos) = list.iter().position(|m| m.id == proof.message) {
             let author = list[pos].author;
@@ -934,9 +957,11 @@ impl ServerState {
         Ok(self.store_proof(proof, None))
     }
 
-    /// Keeps a proof next to the others for its message: one per deleter
-    /// and at most [`MAX_PROOFS_PER_MESSAGE`], the best ranked winning.
-    /// Returns whether anything changed.
+    /// Keeps a proof next to the others for its message, one per deleter.
+    /// Proofs accepted here, or signed by a moderator or by the message's
+    /// author when known, are always kept; of the others at most
+    /// [`MAX_OTHER_PROOFS`], the best ranked. Returns whether anything
+    /// changed.
     fn store_proof(&mut self, proof: TombstoneProof, accepted_for: Option<UserId>) -> bool {
         let server = &self.server;
         let rank = |s: &StoredProof| proof_rank(server, s);
@@ -957,17 +982,34 @@ impl ServerState {
             }
             return changed;
         }
-        if list.len() < MAX_PROOFS_PER_MESSAGE {
-            list.push(new);
-            return true;
-        }
-        match list.iter_mut().max_by_key(|s| rank(s)) {
-            Some(worst) if rank(&new) < rank(worst) => {
-                *worst = new;
-                true
+        let by = new.proof.by;
+        list.push(new);
+        // Only an accepted proof tells who wrote the message.
+        let author = list.iter().find_map(|s| s.accepted_for);
+        let kept = |s: &StoredProof| {
+            s.accepted_for.is_some()
+                || Some(s.proof.by) == author
+                || server.permissions_for(s.proof.by).allows(Permissions::MANAGE_MESSAGES)
+        };
+        // Dropping only the new one changes nothing.
+        let (mut dropped_new, mut dropped_other) = (false, false);
+        while list.iter().filter(|s| !kept(s)).count() > MAX_OTHER_PROOFS {
+            let Some(worst) = list
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| !kept(s))
+                .max_by_key(|(_, s)| rank(s))
+                .map(|(i, _)| i)
+            else {
+                break;
+            };
+            if list.swap_remove(worst).proof.by == by {
+                dropped_new = true;
+            } else {
+                dropped_other = true;
             }
-            _ => false,
         }
+        !dropped_new || dropped_other
     }
 
     /// The author may delete their own message; Manage Messages may
@@ -1045,6 +1087,11 @@ fn proof_rank(server: &Server, stored: &StoredProof) -> (bool, bool, DateTime<Ut
     (stored.accepted_for.is_none(), !moderator, stored.proof.at, stored.proof.sig.0)
 }
 
+/// Whether a signed time lies more than [`MAX_AHEAD_MS`] past `now`.
+fn too_far_ahead(t: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    t.timestamp_millis().saturating_sub(now.timestamp_millis()) > MAX_AHEAD_MS
+}
+
 /// Keeps only the proofs `keep` accepts, dropping emptied entries.
 fn retain_proofs(map: &mut HashMap<MessageId, Vec<StoredProof>>, keep: impl Fn(&TombstoneProof) -> bool) {
     map.retain(|_, list| {
@@ -1062,7 +1109,7 @@ fn millis(t: Option<DateTime<Utc>>) -> Option<i64> {
 mod tests {
     use super::*;
     use crate::ids::ServerId;
-    use crate::test_support::{delete, edit, fixture, identity_for, join, post, proof, signed};
+    use crate::test_support::{delete, edit, fixture, identity_for, join, join_moderator, post, proof, signed};
 
     #[test]
     fn message_create_and_read_back() {
@@ -1622,6 +1669,9 @@ mod tests {
         let (mut state, channel, owner) = fixture();
         let msg = post(&state, channel, owner, "racy");
         assert_eq!(state.apply(delete(&state, &msg, owner)), Ok(true));
+        // The first late copy binds the proof, which needs saving.
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: msg.clone() }), Ok(true));
+        assert!(!state.has_message(msg.id));
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: msg }), Ok(false));
     }
 
@@ -1867,27 +1917,6 @@ mod tests {
         state.apply(ServerEvent::MessageCreate { message: message.clone() })
     }
 
-    /// Adds a member holding a role with Manage Messages.
-    fn join_moderator(state: &mut ServerState) -> UserId {
-        let sid = state.server.id;
-        let user = join(state, "moderator");
-        let role = crate::server::Role {
-            id: crate::ids::RoleId::new(),
-            name: "mods".into(),
-            color: None,
-            permissions: Permissions::MANAGE_MESSAGES,
-            position: 1,
-            hoist: false,
-            self_assignable: false,
-            tag: None,
-            banner: None,
-        };
-        let rid = role.id;
-        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
-        state.apply(ServerEvent::RoleAssign { server: sid, user, role: rid }).unwrap();
-        user
-    }
-
     #[test]
     fn profiles_pin_the_first_identity_key() {
         let (mut state, _, _) = fixture();
@@ -2009,10 +2038,10 @@ mod tests {
     #[test]
     fn same_id_from_another_author_cannot_overwrite() {
         let (mut state, channel, owner) = fixture();
-        let mallory = join(&mut state, "mallory");
+        let intruder = join(&mut state, "intruder");
         let original = post(&state, channel, owner, "mine");
         create(&mut state, &original).unwrap();
-        let mut fake = Message::new(channel, mallory, "hijacked");
+        let mut fake = Message::new(channel, intruder, "hijacked");
         fake.id = original.id;
         fake.edited_at = Some(Utc::now());
         let fake = signed(&state, fake);
@@ -2021,7 +2050,7 @@ mod tests {
 
         // Ids are unique across channels too.
         let voice = state.server.channels[1].id;
-        let mut copy = Message::new(voice, mallory, "dup");
+        let mut copy = Message::new(voice, intruder, "dup");
         copy.id = original.id;
         let copy = signed(&state, copy);
         assert_eq!(create(&mut state, &copy), Ok(false));
@@ -2071,7 +2100,7 @@ mod tests {
         let (mut state, channel, _) = fixture();
         let sid = state.server.id;
         let author = join(&mut state, "author");
-        let moderator = join_moderator(&mut state);
+        let moderator = join_moderator(&mut state, "moderator");
         let stranger = join(&mut state, "stranger");
         let (a, b, c) = (
             post(&state, channel, author, "a"),
@@ -2106,7 +2135,7 @@ mod tests {
         let (mut state, channel, _) = fixture();
         let sid = state.server.id;
         let author = join(&mut state, "author");
-        let moderator = join_moderator(&mut state);
+        let moderator = join_moderator(&mut state, "moderator");
         let stranger = join(&mut state, "stranger");
 
         // A stranger's proof is kept, then voided when the message shows up.
@@ -2119,6 +2148,8 @@ mod tests {
         // A moderator's proof keeps it out.
         let two = post(&state, channel, author, "two");
         assert_eq!(state.apply(delete(&state, &two, moderator)), Ok(true));
+        assert_eq!(create(&mut state, &two), Ok(true), "the proof is bound");
+        assert!(!state.has_message(two.id));
         assert_eq!(create(&mut state, &two), Ok(false));
 
         // A proof naming another channel does not apply.
@@ -2134,7 +2165,8 @@ mod tests {
         assert_eq!(state.apply(delete(&state, &four, moderator)), Ok(true));
         assert_eq!(state.apply(delete(&state, &four, author)), Ok(true));
         assert_eq!(state.tombstone(four.id).map(|p| p.by), Some(moderator));
-        assert_eq!(create(&mut state, &four), Ok(false));
+        assert_eq!(create(&mut state, &four), Ok(true));
+        assert!(!state.has_message(four.id));
         let left: Vec<UserId> = state.tombstones_for(four.id).iter().map(|p| p.by).collect();
         assert_eq!(left, vec![moderator, author], "the stranger's proof is void");
     }
@@ -2160,7 +2192,7 @@ mod tests {
             ("ban", |server, user, _| ServerEvent::MemberBan { server, user }),
         ];
         for (how, demote) in demotions {
-            let moderator = join_moderator(&mut state);
+            let moderator = join_moderator(&mut state, "moderator");
             let msg = post(&state, channel, author, how);
             create(&mut state, &msg).unwrap();
             assert_eq!(state.apply(delete(&state, &msg, moderator)), Ok(true));
@@ -2177,14 +2209,15 @@ mod tests {
         let (mut state, channel, _) = fixture();
         let sid = state.server.id;
         let author = join(&mut state, "author");
-        let moderator = join_moderator(&mut state);
+        let moderator = join_moderator(&mut state, "moderator");
         let role = mods_role(&state, moderator);
         let checked = post(&state, channel, author, "checked");
         let unchecked = post(&state, channel, author, "unchecked");
         state.apply(delete(&state, &checked, moderator)).unwrap();
         state.apply(delete(&state, &unchecked, moderator)).unwrap();
         // The message turns up while its deleter is still a moderator.
-        assert_eq!(create(&mut state, &checked), Ok(false));
+        assert_eq!(create(&mut state, &checked), Ok(true));
+        assert!(!state.has_message(checked.id));
         state.apply(ServerEvent::RoleUnassign { server: sid, user: moderator, role }).unwrap();
         assert_eq!(create(&mut state, &checked), Ok(false));
         // A proof never checked is judged by current permissions.
@@ -2199,13 +2232,13 @@ mod tests {
     fn acceptance_does_not_cover_another_author_reusing_the_id() {
         let (mut state, channel, _) = fixture();
         let author = join(&mut state, "author");
-        let mallory = join(&mut state, "mallory");
+        let intruder = join(&mut state, "intruder");
         let real = post(&state, channel, author, "real");
-        let mut decoy = Message::new(channel, mallory, "decoy");
+        let mut decoy = Message::new(channel, intruder, "decoy");
         decoy.id = real.id;
         let decoy = signed(&state, decoy);
         create(&mut state, &decoy).unwrap();
-        assert_eq!(state.apply(delete(&state, &decoy, mallory)), Ok(true));
+        assert_eq!(state.apply(delete(&state, &decoy, intruder)), Ok(true));
         assert_eq!(create(&mut state, &decoy), Ok(false));
         assert_eq!(create(&mut state, &real), Ok(true));
     }
@@ -2214,7 +2247,7 @@ mod tests {
     fn snapshot_without_accepted_proofs_still_loads() {
         let (mut state, channel, _) = fixture();
         let author = join(&mut state, "author");
-        let moderator = join_moderator(&mut state);
+        let moderator = join_moderator(&mut state, "moderator");
         let msg = post(&state, channel, author, "rude");
         create(&mut state, &msg).unwrap();
         state.apply(delete(&state, &msg, moderator)).unwrap();
@@ -2223,43 +2256,155 @@ mod tests {
         json.as_object_mut().unwrap().remove("accepted_proofs");
         let mut restored = ServerState::from_snapshot(serde_json::from_value(json).unwrap());
         assert_eq!(restored.tombstone(msg.id), state.tombstone(msg.id));
-        assert_eq!(create(&mut restored, &msg), Ok(false), "still a moderator");
+        assert_eq!(create(&mut restored, &msg), Ok(true), "still a moderator, bound again");
+        assert!(!restored.has_message(msg.id));
     }
 
     #[test]
     fn a_strangers_proof_does_not_shut_out_the_authors() {
         let (mut state, channel, _) = fixture();
         let author = join(&mut state, "author");
-        let mallory = join(&mut state, "mallory");
+        let stranger = join(&mut state, "stranger");
         let msg = post(&state, channel, author, "mine");
-        assert_eq!(state.apply(delete(&state, &msg, mallory)), Ok(true));
+        assert_eq!(state.apply(delete(&state, &msg, stranger)), Ok(true));
         let own = proof(&state, &msg, author, Utc::now());
         assert_eq!(state.apply(own.clone().into_event()), Ok(true));
         assert_eq!(state.apply(own.clone().into_event()), Ok(false), "redelivery");
         assert_eq!(state.tombstones_for(msg.id).len(), 2);
-        assert_eq!(create(&mut state, &msg), Ok(false));
+        assert_eq!(create(&mut state, &msg), Ok(true));
+        assert!(!state.has_message(msg.id));
         assert_eq!(state.tombstones_for(msg.id), vec![&own], "the stranger's proof is void");
     }
 
     #[test]
-    fn proofs_per_message_are_capped_keeping_a_moderators() {
+    fn proofs_from_others_are_capped_keeping_the_earliest() {
         let (mut state, channel, _) = fixture();
         let author = join(&mut state, "author");
-        let moderator = join_moderator(&mut state);
         let strangers: Vec<UserId> =
-            (0..=MAX_PROOFS_PER_MESSAGE).map(|i| join(&mut state, &format!("s{i}"))).collect();
+            (0..=MAX_OTHER_PROOFS).map(|i| join(&mut state, &format!("s{i}"))).collect();
         let msg = post(&state, channel, author, "busy");
         let now = Utc::now();
         for (i, s) in strangers.iter().enumerate() {
             let p = proof(&state, &msg, *s, now + chrono::Duration::seconds(i as i64));
-            assert_eq!(state.apply(p.into_event()), Ok(i < MAX_PROOFS_PER_MESSAGE), "proof {i}");
+            assert_eq!(state.apply(p.into_event()), Ok(i < MAX_OTHER_PROOFS), "proof {i}");
         }
-        // A moderator's proof displaces the latest stranger's.
-        let by_mod = proof(&state, &msg, moderator, now + chrono::Duration::days(1));
-        assert_eq!(state.apply(by_mod.into_event()), Ok(true));
+        // An earlier one displaces the latest.
+        let early = join(&mut state, "early");
+        let p = proof(&state, &msg, early, now - chrono::Duration::days(1));
+        assert_eq!(state.apply(p.into_event()), Ok(true));
         let kept: Vec<UserId> = state.tombstones_for(msg.id).iter().map(|p| p.by).collect();
-        assert_eq!(kept, [&[moderator], &strangers[..MAX_PROOFS_PER_MESSAGE - 1]].concat());
-        assert_eq!(create(&mut state, &msg), Ok(false));
+        assert_eq!(kept, [&[early], &strangers[..MAX_OTHER_PROOFS - 1]].concat());
+    }
+
+    #[test]
+    fn backdated_proofs_never_push_out_the_authors_or_a_moderators() {
+        let (mut state, channel, _) = fixture();
+        let author = join(&mut state, "author");
+        let moderator = join_moderator(&mut state, "moderator");
+        let strangers: Vec<UserId> =
+            (0..MAX_OTHER_PROOFS + 3).map(|i| join(&mut state, &format!("s{i}"))).collect();
+        let mut lacking = state.clone();
+        let msg = post(&state, channel, author, "contested");
+        create(&mut state, &msg).unwrap();
+        let now = Utc::now();
+        // Here the moderator's delete removes the message, which names its
+        // author; the author's own delete comes later, unchecked.
+        assert_eq!(state.apply(proof(&state, &msg, moderator, now).into_event()), Ok(true));
+        assert_eq!(state.apply(proof(&state, &msg, author, now).into_event()), Ok(true));
+        // A replica that never had the message only knows the moderator.
+        assert_eq!(lacking.apply(proof(&lacking, &msg, moderator, now).into_event()), Ok(true));
+        for (i, s) in strangers.iter().enumerate() {
+            let backdated = now - chrono::Duration::days(30) - chrono::Duration::seconds(i as i64);
+            let p = proof(&state, &msg, *s, backdated);
+            state.apply(p.clone().into_event()).unwrap();
+            lacking.apply(p.into_event()).unwrap();
+        }
+        let earliest: Vec<UserId> = strangers.iter().rev().take(MAX_OTHER_PROOFS).copied().collect();
+        for (replica, protected) in [(&state, vec![moderator, author]), (&lacking, vec![moderator])] {
+            let kept: Vec<UserId> = replica.tombstones_for(msg.id).iter().map(|p| p.by).collect();
+            assert_eq!(kept.len(), protected.len() + MAX_OTHER_PROOFS);
+            for user in protected.iter().chain(&earliest) {
+                assert!(kept.contains(user));
+            }
+        }
+        assert_eq!(create(&mut state, &msg), Ok(true));
+        assert_eq!(create(&mut lacking, &msg), Ok(true));
+        assert!(!state.has_message(msg.id) && !lacking.has_message(msg.id));
+    }
+
+    #[test]
+    fn proofs_from_moderators_are_never_capped() {
+        let (mut state, channel, _) = fixture();
+        let author = join(&mut state, "author");
+        let moderators: Vec<UserId> =
+            (0..MAX_OTHER_PROOFS + 2).map(|i| join_moderator(&mut state, &format!("m{i}"))).collect();
+        let stranger = join(&mut state, "stranger");
+        let msg = post(&state, channel, author, "reported");
+        let now = Utc::now();
+        for (i, m) in moderators.iter().enumerate() {
+            let p = proof(&state, &msg, *m, now + chrono::Duration::seconds(i as i64));
+            assert_eq!(state.apply(p.into_event()), Ok(true), "moderator {i}");
+        }
+        let early = proof(&state, &msg, stranger, now - chrono::Duration::days(1));
+        assert_eq!(state.apply(early.into_event()), Ok(true));
+        let kept: Vec<UserId> = state.tombstones_for(msg.id).iter().map(|p| p.by).collect();
+        assert_eq!(kept.len(), moderators.len() + 1);
+        assert!(moderators.iter().all(|m| kept.contains(m)));
+    }
+
+    #[test]
+    fn a_blocked_late_copy_that_binds_a_proof_asks_for_a_save() {
+        let (mut state, channel, _) = fixture();
+        let author = join(&mut state, "author");
+        let moderator = join_moderator(&mut state, "moderator");
+        let msg = post(&state, channel, author, "late");
+        state.apply(delete(&state, &msg, moderator)).unwrap();
+        assert!(state.snapshot().accepted_proofs.is_empty());
+        assert_eq!(create(&mut state, &msg), Ok(true));
+        assert_eq!(state.snapshot().accepted_proofs, vec![(msg.id, moderator, author)]);
+        assert_eq!(create(&mut state, &msg), Ok(false), "nothing left to bind");
+        assert!(!state.has_message(msg.id));
+    }
+
+    #[test]
+    fn times_more_than_a_day_ahead_are_refused() {
+        let (mut state, channel, owner) = fixture();
+        let now = Utc::now();
+        let ahead = |hours: i64| now + chrono::Duration::hours(hours);
+        let dated = |state: &ServerState, at| signed(state, Message { created_at: at, ..Message::new(channel, owner, "soon") });
+        let far = dated(&state, ahead(25));
+        assert_eq!(create(&mut state, &far), Err(StoreError::TooFarAhead));
+        let near = dated(&state, ahead(23));
+        assert_eq!(create(&mut state, &near), Ok(true));
+
+        let msg = post(&state, channel, owner, "edit me");
+        create(&mut state, &msg).unwrap();
+        assert_eq!(state.apply(edit(&state, &msg, "later", ahead(25))), Err(StoreError::TooFarAhead));
+        let copy = signed(&state, Message { content: "later".into(), edited_at: Some(ahead(25)), ..msg.clone() });
+        assert_eq!(create(&mut state, &copy), Err(StoreError::TooFarAhead));
+        assert_eq!(state.message(msg.id).unwrap().content, "edit me");
+        assert_eq!(state.apply(edit(&state, &msg, "soon", ahead(23))), Ok(true));
+
+        let gone = post(&state, channel, owner, "gone");
+        assert_eq!(state.apply(proof(&state, &gone, owner, ahead(25)).into_event()), Err(StoreError::TooFarAhead));
+        assert!(state.tombstone(gone.id).is_none());
+        assert_eq!(state.apply(proof(&state, &gone, owner, ahead(23)).into_event()), Ok(true));
+    }
+
+    #[test]
+    fn prune_drops_proofs_dated_far_ahead() {
+        let (mut state, channel, owner) = fixture();
+        let now = Utc::now();
+        let (a, b) = (post(&state, channel, owner, "a"), post(&state, channel, owner, "b"));
+        // Saved by a version that took any date.
+        let mut snapshot = state.snapshot();
+        snapshot.tombstone_proofs.push(proof(&state, &a, owner, now + chrono::Duration::days(3)));
+        snapshot.tombstone_proofs.push(proof(&state, &b, owner, now + chrono::Duration::hours(1)));
+        state = ServerState::from_snapshot(snapshot);
+        assert!(state.tombstone(a.id).is_some());
+        state.prune_expired(now);
+        assert!(state.tombstone(a.id).is_none());
+        assert!(state.tombstone(b.id).is_some());
     }
 
     #[test]
@@ -2288,7 +2433,7 @@ mod tests {
         let (mut a, channel, _) = fixture();
         let author = join(&mut a, "author");
         let strangers: Vec<UserId> =
-            (0..MAX_PROOFS_PER_MESSAGE + 2).map(|i| join(&mut a, &format!("s{i}"))).collect();
+            (0..MAX_OTHER_PROOFS + 2).map(|i| join(&mut a, &format!("s{i}"))).collect();
         let mut b = a.clone();
         let msg = post(&a, channel, author, "contested");
         let at = Utc::now();
@@ -2301,7 +2446,7 @@ mod tests {
         }
         let mut expected: Vec<&TombstoneProof> = proofs.iter().collect();
         expected.sort_by_key(|p| p.sig.0);
-        expected.truncate(MAX_PROOFS_PER_MESSAGE);
+        expected.truncate(MAX_OTHER_PROOFS);
         assert_eq!(a.tombstones_for(msg.id), expected);
         assert_eq!(b.tombstones_for(msg.id), expected);
     }

@@ -3,7 +3,8 @@
 //! message envelopes, and waits for a per-message ack so delivery is
 //! confirmed. Both peers must be online; offline inboxes would need
 //! hosted infrastructure, which Commy does not have by design. Each
-//! message is signed with the sender's identity key.
+//! message is signed with the sender's identity key, along with the node
+//! it is sent from; receivers take it only from that node.
 
 use commy_core::{DmMessage, UserProfile};
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,14 @@ impl DmEnvelope {
                 .identity
                 .is_some_and(|key| self.message.verify(&key))
     }
+
+    /// True when the message says it is sent from `node`. Only meaningful
+    /// once the signature is checked, which covers that field.
+    pub fn sent_from(&self, node: &[u8; 32]) -> bool {
+        data_encoding::HEXLOWER_PERMISSIVE
+            .decode(self.message.from_node.trim().as_bytes())
+            .is_ok_and(|bytes| bytes == node)
+    }
 }
 
 /// Receiver's reply on the same stream confirming the message landed.
@@ -44,13 +53,36 @@ mod tests {
     use crate::test_support::keyed_profile;
     use commy_core::{Identity, UserId};
 
-    /// Envelope from a keyed sender, signed by them.
+    const NODE: [u8; 32] = [3; 32];
+
+    /// Envelope from a keyed sender on [`NODE`], signed by them.
     fn signed_envelope(content: &str) -> (DmEnvelope, Identity) {
         let sender = keyed_profile("sender");
         let identity = crate::test_support::identity_for(sender.id);
         let mut message = DmMessage::new(sender.id, UserId::new(), content);
-        message.sign(&identity);
+        message.sign(&data_encoding::HEXLOWER.encode(&NODE), &identity);
         (DmEnvelope { message, sender }, identity)
+    }
+
+    #[test]
+    fn a_dm_names_the_node_it_is_sent_from() {
+        let (envelope, identity) = signed_envelope("from my device");
+        assert!(envelope.sent_from(&NODE));
+        assert!(!envelope.sent_from(&[4; 32]));
+        let mut upper = envelope.clone();
+        upper.message.from_node = upper.message.from_node.to_uppercase();
+        assert!(upper.sent_from(&NODE));
+        let mut unnamed = envelope.clone();
+        unnamed.message.from_node.clear();
+        assert!(!unnamed.sent_from(&NODE));
+
+        // Naming another node takes a new signature.
+        let mut moved = envelope.clone();
+        moved.message.from_node = data_encoding::HEXLOWER.encode(&[4; 32]);
+        assert!(moved.sent_from(&[4; 32]));
+        assert!(!moved.signed_by_sender());
+        moved.message.sign(&data_encoding::HEXLOWER.encode(&[4; 32]), &identity);
+        assert!(moved.signed_by_sender());
     }
 
     #[tokio::test]

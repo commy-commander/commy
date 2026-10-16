@@ -219,8 +219,8 @@ impl ProtocolHandler for MediaAcceptor {
     }
 }
 
-/// A DM as it arrived. The sender profile in the envelope is not
-/// signed, so only `node` tells which node it really came from.
+/// A DM as it arrived, from the node its message names. The sender
+/// profile in the envelope is not signed; `node` is the node it came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IncomingDm {
     pub envelope: DmEnvelope,
@@ -228,8 +228,10 @@ pub struct IncomingDm {
     pub node: [u8; 32],
 }
 
-/// Accepts inbound DM connections: reads envelopes, acks each one,
-/// and forwards them to the app with the sending node.
+/// Accepts inbound DM connections: reads envelopes, acks each one, and
+/// forwards them to the app with the sending node. A message that names
+/// another node than the connection's is a copy sent on by someone else,
+/// and is refused.
 #[derive(Debug)]
 struct DmAcceptor {
     tx: mpsc::UnboundedSender<IncomingDm>,
@@ -252,7 +254,7 @@ impl ProtocolHandler for DmAcceptor {
                 .await
                 .map_err(|e| anyhow::anyhow!("bad dm frame: {e}"))?
             {
-                let accepted = tx.send(IncomingDm { envelope, node }).is_ok();
+                let accepted = envelope.sent_from(&node) && tx.send(IncomingDm { envelope, node }).is_ok();
                 write_frame(&mut send, &DmAck { accepted })
                     .await
                     .map_err(|e| anyhow::anyhow!("dm ack failed: {e}"))?;
@@ -278,13 +280,19 @@ const CATCHUP_SESSION_TIMEOUT: Duration = Duration::from_secs(300);
 /// so that frame is not cut off.
 const CATCHUP_LINGER: Duration = Duration::from_secs(10);
 
-/// Limits on inbound catch-up sessions. A node holds at most one at a
-/// time, its Hello must pass within the handshake time, and a session
-/// slot is taken only after that, so a peer that cannot sign as a
-/// member never holds one.
+/// Hellos one node may have waiting to be checked at once.
+const MAX_HANDSHAKES_PER_NODE: usize = 4;
+
+/// Limits on inbound catch-up sessions. A node may have a few Hellos
+/// waiting to be checked, each of which must pass within the handshake
+/// time. Only then does a session take a slot, one per node and server,
+/// so a peer that cannot sign as a member never holds one.
 struct Inbound {
     sessions: Arc<tokio::sync::Semaphore>,
-    peers: Mutex<HashSet<[u8; 32]>>,
+    /// Hellos waiting to be checked, per node.
+    handshakes: Mutex<HashMap<[u8; 32], usize>>,
+    /// Sessions running, per node and server.
+    running: Mutex<HashSet<([u8; 32], ServerId)>>,
     handshake: Duration,
 }
 
@@ -292,14 +300,15 @@ impl Inbound {
     fn new(sessions: usize, handshake: Duration) -> Self {
         Self {
             sessions: Arc::new(tokio::sync::Semaphore::new(sessions)),
-            peers: Mutex::default(),
+            handshakes: Mutex::default(),
+            running: Mutex::default(),
             handshake,
         }
     }
 
     /// Runs the responder side of a session from `peer`, or asks it to
-    /// retry when it already has one, no store is set yet or every slot
-    /// is taken.
+    /// retry when it has too many Hellos waiting, already runs a session
+    /// for that server, no store is set yet or every slot is taken.
     async fn serve<IO, S>(
         &self,
         mut io: IO,
@@ -311,7 +320,7 @@ impl Inbound {
         IO: AsyncRead + AsyncWrite + Unpin,
         S: CatchupStore + ?Sized,
     {
-        let Some(_slot) = self.claim(peer) else {
+        let Some(waiting) = self.begin_handshake(peer) else {
             return Err(refuse(&mut io, Refusal::Busy).await);
         };
         let Some(store) = store else {
@@ -320,6 +329,10 @@ impl Inbound {
         let admitted = tokio::time::timeout(self.handshake, admit(&mut io, store, local, peer))
             .await
             .map_err(|_| CatchupError::Timeout)??;
+        drop(waiting);
+        let Some(_running) = self.begin_session(peer, admitted.server) else {
+            return Err(refuse(&mut io, Refusal::Busy).await);
+        };
         let Ok(_permit) = self.sessions.clone().try_acquire_owned() else {
             return Err(refuse(&mut io, Refusal::Busy).await);
         };
@@ -329,30 +342,64 @@ impl Inbound {
             .map_err(|_| CatchupError::Timeout)?
     }
 
-    /// Reserves `peer`'s one inbound slot, or None when it holds it.
-    fn claim(&self, peer: [u8; 32]) -> Option<PeerSlot<'_>> {
-        let mut peers = self.peers.lock().unwrap_or_else(|e| e.into_inner());
-        // A slot made here and dropped would free the holder's slot.
-        if !peers.insert(peer) {
+    /// Counts a Hello from `peer` as waiting, or None when it has
+    /// [`MAX_HANDSHAKES_PER_NODE`] waiting already.
+    fn begin_handshake(&self, peer: [u8; 32]) -> Option<Handshake<'_>> {
+        let mut waiting = self.handshakes.lock().unwrap_or_else(|e| e.into_inner());
+        let count = waiting.entry(peer).or_default();
+        if *count >= MAX_HANDSHAKES_PER_NODE {
             return None;
         }
-        Some(PeerSlot {
-            peers: &self.peers,
+        *count += 1;
+        Some(Handshake {
+            waiting: &self.handshakes,
             peer,
+        })
+    }
+
+    /// Reserves the one session `peer` may run for `server`, or None
+    /// when it runs one.
+    fn begin_session(&self, peer: [u8; 32], server: ServerId) -> Option<Running<'_>> {
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        // A guard made here and dropped would free the holder's slot.
+        if !running.insert((peer, server)) {
+            return None;
+        }
+        Some(Running {
+            running: &self.running,
+            key: (peer, server),
         })
     }
 }
 
-/// A node's inbound slot, freed on drop.
-struct PeerSlot<'a> {
-    peers: &'a Mutex<HashSet<[u8; 32]>>,
+/// A Hello waiting to be checked, counted until dropped.
+struct Handshake<'a> {
+    waiting: &'a Mutex<HashMap<[u8; 32], usize>>,
     peer: [u8; 32],
 }
 
-impl Drop for PeerSlot<'_> {
+impl Drop for Handshake<'_> {
     fn drop(&mut self) {
-        let mut peers = self.peers.lock().unwrap_or_else(|e| e.into_inner());
-        peers.remove(&self.peer);
+        let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = waiting.get_mut(&self.peer) {
+            *count -= 1;
+            if *count == 0 {
+                waiting.remove(&self.peer);
+            }
+        }
+    }
+}
+
+/// A node's session for one server, freed on drop.
+struct Running<'a> {
+    running: &'a Mutex<HashSet<([u8; 32], ServerId)>>,
+    key: ([u8; 32], ServerId),
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        running.remove(&self.key);
     }
 }
 
@@ -1050,9 +1097,9 @@ mod tests {
     const OTHER: [u8; 32] = [3; 32];
 
     /// A full session from `guest` on `node`, served through `inbound`.
-    async fn session_through(
+    async fn session_through<S: CatchupStore>(
         inbound: &Inbound,
-        host: &crate::test_support::MemStore,
+        host: &S,
         guest: &crate::test_support::MemStore,
         node: [u8; 32],
     ) -> (
@@ -1067,42 +1114,138 @@ mod tests {
         )
     }
 
-    /// Waits until `inbound` holds a slot for `node`.
-    async fn claimed(inbound: &Inbound, node: [u8; 32]) {
-        while !inbound.peers.lock().unwrap().contains(&node) {
+    /// Hellos from `node` that `inbound` is waiting to check.
+    fn waiting(inbound: &Inbound, node: [u8; 32]) -> usize {
+        inbound.handshakes.lock().unwrap().get(&node).copied().unwrap_or(0)
+    }
+
+    /// Waits until `inbound` waits for `count` Hellos from `node`.
+    async fn until_waiting(inbound: &Inbound, node: [u8; 32], count: usize) {
+        while waiting(inbound, node) < count {
             tokio::task::yield_now().await;
         }
     }
 
+    /// Waits until `inbound` runs a session from `node` for `server`.
+    async fn until_running(inbound: &Inbound, node: [u8; 32], server: ServerId) {
+        while !inbound.running.lock().unwrap().contains(&(node, server)) {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    /// The guest's Hello on `x`, so a session from GUEST passes admit.
+    async fn say_hello(x: &mut tokio::io::DuplexStream, guest: &crate::test_support::MemStore) {
+        use crate::catchup::{CatchupFrame, HelloRole};
+        let hello = CatchupFrame::hello(
+            &guest.identity,
+            HelloRole::Initiator,
+            guest.server(),
+            guest.me,
+            GUEST,
+            HOST,
+            chrono::Utc::now().timestamp_millis(),
+        );
+        write_frame(x, &hello).await.unwrap();
+    }
+
     #[tokio::test]
-    async fn one_inbound_session_per_node() {
+    async fn a_node_may_have_a_few_hellos_waiting() {
         use crate::catchup::CatchupFrame;
         let (host, guest, _) = members();
         let inbound = Inbound::new(MAX_CATCHUP_SESSIONS, HANDSHAKE_TIMEOUT);
 
-        // The guest's node opens a session and has not said hello yet.
-        let (quiet, first) = tokio::io::duplex(1024);
-        let held = inbound.serve(first, Some(&host), HOST, GUEST);
-        let (mut x, second) = tokio::io::duplex(1024);
+        // The guest's node opens as many sessions as allowed, silent so far.
+        let (mut quiet, mut held) = (Vec::new(), Vec::new());
+        for _ in 0..MAX_HANDSHAKES_PER_NODE {
+            let (x, y) = tokio::io::duplex(1024);
+            quiet.push(x);
+            held.push(inbound.serve(y, Some(&host), HOST, GUEST));
+        }
+        let (mut x, extra) = tokio::io::duplex(1024);
         let again = async {
-            claimed(&inbound, GUEST).await;
-            let result = inbound.serve(second, Some(&host), HOST, GUEST).await;
+            until_waiting(&inbound, GUEST, MAX_HANDSHAKES_PER_NODE).await;
+            let result = inbound.serve(extra, Some(&host), HOST, GUEST).await;
             let reply: Option<CatchupFrame> = read_frame(&mut x).await.unwrap();
-            drop(quiet);
+            quiet.clear();
             (result, reply)
         };
-        let (held, (again, reply)) = tokio::join!(held, again);
+        let (held, (again, reply)) = tokio::join!(futures_util::future::join_all(held), again);
         assert!(matches!(
             again.unwrap_err(),
             CatchupError::Rejected(Refusal::Busy)
         ));
         assert_eq!(reply, Some(Refusal::Busy.frame()));
-        assert!(matches!(held.unwrap_err(), CatchupError::Closed));
+        for outcome in held {
+            assert!(matches!(outcome.unwrap_err(), CatchupError::Closed));
+        }
+        assert_eq!(waiting(&inbound, GUEST), 0);
 
-        // Once that one ended, the node may come back.
+        // Once those ended, the node may come back.
         let (rg, rh) = session_through(&inbound, &host, &guest, GUEST).await;
         assert_eq!(rg.unwrap().received.len(), 1);
         rh.unwrap();
+    }
+
+    #[tokio::test]
+    async fn one_session_per_node_and_server() {
+        use crate::catchup::RETRY_AFTER_MS;
+        use crate::test_support::MultiStore;
+        let (first, guest, _) = members();
+        let (second, guest_elsewhere, _) = members();
+        let server = guest.server();
+        let host = MultiStore(vec![first, second]);
+        let inbound = Inbound::new(MAX_CATCHUP_SESSIONS, HANDSHAKE_TIMEOUT);
+
+        // The guest's node runs a session for one server and goes quiet.
+        let (mut x, y) = tokio::io::duplex(8 * 1024);
+        say_hello(&mut x, &guest).await;
+        let held = inbound.serve(y, Some(&host), HOST, GUEST);
+        let next = async {
+            until_running(&inbound, GUEST, server).await;
+            let same = session_through(&inbound, &host, &guest, GUEST).await;
+            let other = session_through(&inbound, &host, &guest_elsewhere, GUEST).await;
+            drop(x);
+            (same, other)
+        };
+        let (held, ((rs, rh), (ro, rho))) = tokio::join!(held, next);
+        // A second session for the same server waits for the first.
+        assert_eq!(rs.unwrap_err().retry_after_ms(), Some(RETRY_AFTER_MS));
+        assert!(matches!(
+            rh.unwrap_err(),
+            CatchupError::Rejected(Refusal::Busy)
+        ));
+        // Another server from the same node goes ahead.
+        assert_eq!(ro.unwrap().received.len(), 1);
+        assert_eq!(rho.unwrap().0, guest_elsewhere.server());
+        assert!(matches!(held.unwrap_err(), CatchupError::Closed));
+        assert!(inbound.running.lock().unwrap().is_empty());
+
+        // Once the first ended, the same server may come back.
+        let (rg, rh) = session_through(&inbound, &host, &guest, GUEST).await;
+        assert_eq!(rg.unwrap().received.len(), 1);
+        rh.unwrap();
+    }
+
+    #[tokio::test]
+    async fn parallel_sessions_for_several_servers_from_one_node_all_run() {
+        use crate::test_support::MultiStore;
+        let (hosts, guests): (Vec<_>, Vec<_>) = (0..3)
+            .map(|_| {
+                let (host, guest, _) = members();
+                (host, guest)
+            })
+            .unzip();
+        let host = MultiStore(hosts);
+        let inbound = Inbound::new(MAX_CATCHUP_SESSIONS, HANDSHAKE_TIMEOUT);
+        let sessions = guests
+            .iter()
+            .map(|guest| session_through(&inbound, &host, guest, GUEST));
+        let outcomes = futures_util::future::join_all(sessions).await;
+        for ((rg, rh), guest) in outcomes.into_iter().zip(&guests) {
+            assert_eq!(rg.unwrap().received.len(), 1);
+            assert_eq!(rh.unwrap().0, guest.server());
+        }
+        assert!(host.0.iter().zip(&guests).all(|(h, g)| h.digests() == g.digests()));
     }
 
     #[tokio::test]
@@ -1114,7 +1257,7 @@ mod tests {
         let (silent, quiet) = tokio::io::duplex(1024);
         let stalled = inbound.serve(quiet, Some(&host), HOST, OTHER);
         let member = async {
-            claimed(&inbound, OTHER).await;
+            until_waiting(&inbound, OTHER, 1).await;
             session_through(&inbound, &host, &guest, GUEST).await
         };
         let (stalled, (rg, rh)) = tokio::join!(stalled, member);
@@ -1123,28 +1266,19 @@ mod tests {
         rh.unwrap();
         assert!(matches!(stalled.unwrap_err(), CatchupError::Timeout));
         assert!(started.elapsed() < Duration::from_secs(5));
-        // Its slot is free again.
-        assert!(inbound.claim(OTHER).is_some());
+        // Its Hello no longer counts.
+        assert_eq!(waiting(&inbound, OTHER), 0);
         drop(silent);
     }
 
     #[tokio::test]
     async fn members_past_the_session_limit_are_asked_to_retry() {
-        use crate::catchup::{CatchupFrame, HelloRole, RETRY_AFTER_MS};
+        use crate::catchup::RETRY_AFTER_MS;
         let (host, guest, other) = members();
         let inbound = Inbound::new(1, HANDSHAKE_TIMEOUT);
         // The guest says hello, then goes quiet while holding the slot.
         let (mut x, first) = tokio::io::duplex(8 * 1024);
-        let hello = CatchupFrame::hello(
-            &guest.identity,
-            HelloRole::Initiator,
-            guest.server(),
-            guest.me,
-            GUEST,
-            HOST,
-            chrono::Utc::now().timestamp_millis(),
-        );
-        write_frame(&mut x, &hello).await.unwrap();
+        say_hello(&mut x, &guest).await;
         let held = inbound.serve(first, Some(&host), HOST, GUEST);
         let next = async {
             while inbound.sessions.available_permits() > 0 {
@@ -1249,10 +1383,9 @@ mod tests {
 
         let mut sender = keyed_profile("sender");
         sender.node = Some(data_encoding::HEXLOWER.encode(&[9u8; 32]));
-        let envelope = DmEnvelope {
-            message: DmMessage::new(sender.id, UserId::new(), "hi"),
-            sender,
-        };
+        let mut message = DmMessage::new(sender.id, UserId::new(), "hi");
+        message.from_node = a.node_id_hex();
+        let envelope = DmEnvelope { message, sender };
         tokio::time::timeout(within(30), a.send_dm(&b.node_id_hex(), &envelope))
             .await
             .unwrap()
@@ -1264,6 +1397,50 @@ mod tests {
         assert_eq!(got.envelope, envelope);
         assert_eq!(got.node, a.node_id_bytes());
         a.shutdown().await.ok();
+        b.shutdown().await.ok();
+    }
+
+    /// A signed DM sent again from a node other than the one it names is
+    /// refused before the app sees it.
+    #[tokio::test]
+    async fn a_dm_sent_on_from_another_node_is_refused() {
+        use crate::test_support::{identity_for, keyed_profile};
+        use commy_core::{DmMessage, UserId};
+        let within = Duration::from_secs;
+        let (a, _, _, _) = CommyNode::spawn(None).await.unwrap();
+        let (relay, _, _, _) = CommyNode::spawn(None).await.unwrap();
+        let (b, _, _, mut b_dms) = CommyNode::spawn(None).await.unwrap();
+        let addr = tokio::time::timeout(within(30), b.node_addr())
+            .await
+            .unwrap()
+            .unwrap();
+        a.node.net().add_node_addr(addr.clone()).await.unwrap();
+        relay.node.net().add_node_addr(addr).await.unwrap();
+
+        let sender = keyed_profile("sender");
+        let mut message = DmMessage::new(sender.id, UserId::new(), "for you only");
+        message.sign(&a.node_id_hex(), &identity_for(sender.id));
+        let envelope = DmEnvelope { message, sender };
+        assert!(envelope.signed_by_sender());
+
+        // The relay holds a real signed copy and sends it from its own node.
+        let replay = tokio::time::timeout(within(30), relay.send_dm(&b.node_id_hex(), &envelope))
+            .await
+            .unwrap();
+        assert!(replay.is_err(), "refused");
+        // From the node it names, the same message goes through.
+        tokio::time::timeout(within(30), a.send_dm(&b.node_id_hex(), &envelope))
+            .await
+            .unwrap()
+            .unwrap();
+        let got = tokio::time::timeout(within(10), b_dms.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((got.envelope, got.node), (envelope, a.node_id_bytes()));
+        assert!(b_dms.try_recv().is_err(), "only the direct copy arrived");
+        a.shutdown().await.ok();
+        relay.shutdown().await.ok();
         b.shutdown().await.ok();
     }
 

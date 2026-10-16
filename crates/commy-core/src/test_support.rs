@@ -2,9 +2,10 @@
 
 use crate::event::ServerEvent;
 use crate::identity::Identity;
-use crate::ids::{ChannelId, UserId};
+use crate::ids::{ChannelId, RoleId, UserId};
 use crate::message::{Message, TombstoneProof};
-use crate::server::Server;
+use crate::permissions::Permissions;
+use crate::server::{Role, Server};
 use crate::store::ServerState;
 use crate::user::UserProfile;
 use chrono::{DateTime, Utc};
@@ -42,6 +43,27 @@ pub fn join(state: &mut ServerState, username: &str) -> UserId {
     let server = state.server.id;
     state.apply(ServerEvent::MemberJoin { server, profile }).unwrap();
     id
+}
+
+/// Adds a keyed member holding a role with Manage Messages.
+pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
+    let server = state.server.id;
+    let user = join(state, username);
+    let role = Role {
+        id: RoleId::new(),
+        name: "mods".into(),
+        color: None,
+        permissions: Permissions::MANAGE_MESSAGES,
+        position: 1,
+        hoist: false,
+        self_assignable: false,
+        tag: None,
+        banner: None,
+    };
+    let id = role.id;
+    state.apply(ServerEvent::RoleCreate { server, role }).unwrap();
+    state.apply(ServerEvent::RoleAssign { server, user, role: id }).unwrap();
+    user
 }
 
 /// Signs `message` as its author.

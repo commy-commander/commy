@@ -12,20 +12,21 @@
 //! 2. The initiator sends `Digests`; the responder answers `Items` pages
 //!    for the buckets that differ, then `ItemsEnd` naming any bucket of
 //!    the initiator's it left out.
-//! 3. The initiator sends `Want`, then `Profiles` and `Push` pages of
-//!    what the responder lacks, then `Done`.
-//! 4. The responder applies them and answers `Applied`, then sends
-//!    `Profiles` and `Push` pages of what was wanted, then `Done`.
+//! 3. The initiator sends `Want`, then `Push` pages of what the
+//!    responder lacks, each after a `Profiles` frame with the signers it
+//!    names first, then `Done`.
+//! 4. The responder applies them and answers `Applied`, then sends what
+//!    was wanted the same way, then `Done`.
 //! 5. The initiator applies them and answers `Applied`.
 
 use crate::media::{read_frame, write_frame, MediaError, MAX_MEDIA_FRAME};
 use commy_core::catchup::{
-    bucket_digest, cap, current_window, day_number, diff, mismatched, BucketItems,
+    bucket_digest, cap, current_window, day_number, diff, mismatched, BucketItems, Listing,
     CATCHUP_MAX_ITEMS,
 };
 use commy_core::{
-    BucketDigest, BucketKey, Identity, IdentityKey, Message, MessageId, ServerEvent, ServerId,
-    ServerState, Signature, TombstoneProof, UserId, UserProfile,
+    BucketDigest, BucketKey, Identity, IdentityKey, Message, MessageId, Presence, ServerEvent,
+    ServerId, ServerState, Signature, TombstoneProof, UserId, UserProfile,
 };
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
@@ -55,8 +56,22 @@ pub const FRAME_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Longest a responder waits for the initiator's `Applied` after its
-/// own `Done`. Without it, nothing it sent counts as delivered.
-pub const APPLIED_TIMEOUT: Duration = Duration::from_secs(10);
+/// own `Done`. Without it, nothing it sent counts as delivered. The
+/// initiator may still be applying pages sent earlier, so no less than
+/// [`FRAME_TIMEOUT`].
+pub const APPLIED_TIMEOUT: Duration = FRAME_TIMEOUT;
+
+/// Most bytes of profiles a peer may have waiting for the page they
+/// precede.
+pub const MAX_PROFILE_BYTES: usize = 2 * 1024 * 1024;
+
+/// Profiles a peer may send beyond the signers of the pages it sent so
+/// far: those of the one page they precede.
+pub const PROFILE_SLACK: usize = PAGE_SIZE;
+
+/// Largest profile sent along, so a full page of signers stays within
+/// [`MAX_PROFILE_BYTES`].
+const PROFILE_SIZE: usize = MAX_PROFILE_BYTES / PAGE_SIZE;
 
 /// Most bucket digests a peer may send.
 pub const MAX_DIGESTS: usize = 50_000;
@@ -110,8 +125,8 @@ pub enum CatchupFrame {
     /// End of the responder's `Items`. `omitted` names buckets of the
     /// initiator's digests it did not compare, which so prove nothing.
     ItemsEnd { omitted: Vec<BucketKey> },
-    /// Profiles of the signers of the pages that follow, so a peer that
-    /// has not met them yet can check their items.
+    /// Profiles of signers named by the next `Push` page and by no
+    /// earlier one, so a peer that has not met them yet can check it.
     Profiles(Vec<UserProfile>),
     /// What became of the other side's pages: ids set aside until their
     /// signer's key is known, and ids refused or ignored. The peer holds
@@ -317,7 +332,7 @@ pub trait CatchupStore {
     fn items(&self, server: ServerId, keys: &[BucketKey]) -> Vec<BucketItems>;
     /// The messages and delete proofs we hold among `ids`, see [`collect`].
     fn get(&self, server: ServerId, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>);
-    /// Profiles that carry a key among `users`, see [`profiles_of`].
+    /// Keyed profiles of current members among `users`, see [`profiles_of`].
     fn profiles(&self, server: ServerId, users: &[UserId]) -> Vec<UserProfile>;
     /// Takes the profiles a peer sent along with a page, before that
     /// page is applied, see [`apply_profiles`]. Held items whose signer
@@ -347,8 +362,9 @@ pub fn check_peer(state: &ServerState, user: UserId, key: &IdentityKey) -> PeerC
     }
 }
 
-/// [`CatchupStore::get`] over one server's state, in the order of `ids`.
-/// Proofs for channels that no longer exist are left out.
+/// [`CatchupStore::get`] over one server's state, in the order of `ids`,
+/// with every delete proof held for each id. Proofs for channels that no
+/// longer exist are left out.
 pub fn collect(state: &ServerState, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>) {
     let mut order: HashMap<MessageId, usize> = HashMap::with_capacity(ids.len());
     for id in ids {
@@ -365,9 +381,10 @@ pub fn collect(state: &ServerState, ids: &[MessageId]) -> (Vec<Message>, Vec<Tom
     messages.sort_by_key(|m| order[&m.id]);
     let mut tombstones: Vec<&TombstoneProof> = order
         .keys()
-        .filter_map(|id| state.tombstone(*id))
+        .flat_map(|id| state.tombstones_for(*id))
         .filter(|p| state.server.channel(p.channel).is_some())
         .collect();
+    // Stable, so each id's proofs stay best first.
     tombstones.sort_by_key(|p| order[&p.message]);
     (
         messages.into_iter().cloned().collect(),
@@ -376,10 +393,12 @@ pub fn collect(state: &ServerState, ids: &[MessageId]) -> (Vec<Message>, Vec<Tom
 }
 
 /// [`CatchupStore::profiles`] over one server's state: the profiles of
-/// `users` that carry a key, once each, in the order asked.
+/// `users` that are members now and carry a key, once each, in the order
+/// asked.
 pub fn profiles_of(state: &ServerState, users: &[UserId]) -> Vec<UserProfile> {
     dedup(users.iter().copied())
         .into_iter()
+        .filter(|user| state.server.is_member(*user))
         .filter_map(|user| state.profiles.get(&user))
         .filter(|p| p.identity.is_some())
         .cloned()
@@ -387,24 +406,29 @@ pub fn profiles_of(state: &ServerState, users: &[UserId]) -> Vec<UserProfile> {
 }
 
 /// [`CatchupStore::apply_profiles`] over one server's state. Each
-/// profile whose key we lack is taken the way a `MemberJoin` is: a
-/// banned user is skipped, the first key seen is pinned, and the user
-/// becomes a member if they were not one. Profiles of users whose key
-/// we know already are left alone, so a relayed copy never replaces a
-/// fresher one. Returns the users whose key we learned.
+/// profile whose key we lack pins that key and is stored, unless the user
+/// is banned. Membership is left alone: a relayed profile never makes
+/// anyone a member, nor brings back one who left or was kicked. Profiles
+/// of users whose key we know already are left alone too, so a relayed
+/// copy never replaces a fresher one. Returns the users whose key we
+/// learned.
 pub fn apply_profiles(state: &mut ServerState, profiles: Vec<UserProfile>) -> Vec<UserId> {
-    let server = state.server.id;
     let mut learned = Vec::new();
-    for profile in profiles {
+    for mut profile in profiles {
         let user = profile.id;
-        if profile.identity.is_none() || state.identity_of(user).is_some() {
+        if profile.identity.is_none()
+            || state.identity_of(user).is_some()
+            || state.server.banned.contains(&user)
+        {
             continue;
         }
-        match state.apply(ServerEvent::MemberJoin { server, profile }) {
-            Ok(_) if state.identity_of(user).is_some() => learned.push(user),
-            Ok(_) => {}
-            Err(e) => tracing::debug!("catch-up profile of {user} refused: {e}"),
-        }
+        // Presence comes live from the user, not from a relayed copy.
+        profile.presence = state
+            .profiles
+            .get(&user)
+            .map_or(Presence::Offline, |p| p.presence);
+        state.profiles.insert(user, profile);
+        learned.push(user);
     }
     learned
 }
@@ -513,12 +537,16 @@ where
     log_capped("fetch", cap(&mut we_want));
 
     send(&mut io, &CatchupFrame::Want(we_want.clone())).await?;
-    let pushed = send_items(&mut io, store, server, &they_lack).await?;
+    // The responder takes only items of the buckets it listed.
+    let pushed = send_items(&mut io, store, server, &they_lack, |key| listed.contains(&key)).await?;
     let verdict = read_applied(&mut io).await?;
 
     let wanted: HashSet<MessageId> = we_want.into_iter().collect();
     let got = receive_pages(&mut io, store, server, |id, _| wanted.contains(&id)).await?;
-    send(&mut io, &got.verdict()).await?;
+    // Our pages are in; the peer hanging up first loses only its count.
+    if let Err(e) = send(&mut io, &got.verdict()).await {
+        tracing::debug!("catch-up peer left before our Applied: {e}");
+    }
 
     let pushed_set: HashSet<MessageId> = pushed.iter().copied().collect();
     let peer_had: Vec<MessageId> = initiator_peer_had(&settled, &sent, &mine, &theirs)
@@ -682,7 +710,7 @@ where
 
     let got = receive_pages(&mut io, store, server, |_, key| answered.contains(&key)).await?;
     send(&mut io, &got.verdict()).await?;
-    let pushed = send_items(&mut io, store, server, &want).await?;
+    let pushed = send_items(&mut io, store, server, &want, |_| true).await?;
     let verdict = match tokio::time::timeout(APPLIED_TIMEOUT, read_applied(&mut io)).await {
         Ok(Ok(verdict)) => Some(verdict),
         Ok(Err(e)) => {
@@ -769,26 +797,31 @@ fn verified(settled: &[BucketItems], digests: &HashMap<BucketKey, BucketDigest>)
 }
 
 /// Ids of ours the responder holds at no lower version: the buckets that
-/// matched, and whatever its item lists show for the rest.
+/// matched, and whatever its item lists show for the rest. An id with a
+/// delete proof the responder lacks does not count.
 fn initiator_peer_had(
     settled: &[BucketItems],
     sent: &HashMap<BucketKey, BucketDigest>,
     mine: &[BucketItems],
     theirs: &[BucketItems],
 ) -> Vec<MessageId> {
-    let mut index: HashMap<(BucketKey, MessageId), i64> = HashMap::new();
-    for (key, list) in theirs {
+    let listing = Listing::new(theirs);
+    let (mut confirmed, mut lacked) = (Vec::new(), HashSet::new());
+    for (key, list) in mine {
         for &(id, version) in list {
-            let v = index.entry((*key, id)).or_insert(version);
-            *v = (*v).max(version);
+            if listing.holds(*key, id, version) {
+                confirmed.push(id);
+            } else {
+                lacked.insert(id);
+            }
         }
     }
-    let confirmed = mine.iter().flat_map(|(key, list)| {
-        list.iter()
-            .filter(|(id, version)| index.get(&(*key, *id)).is_some_and(|v| v >= version))
-            .map(|(id, _)| *id)
-    });
-    dedup(verified(settled, sent).into_iter().chain(confirmed))
+    dedup(
+        verified(settled, sent)
+            .into_iter()
+            .chain(confirmed)
+            .filter(|id| !lacked.contains(id)),
+    )
 }
 
 /// What the peer holds of ours: what we pushed minus what its `Applied`
@@ -827,6 +860,11 @@ impl Received {
 /// Reads `Profiles` and `Push` pages until `Done`, applying the items
 /// inside the window that `accept` lets through, each page after the
 /// profiles of its signers. Items left out count as rejected.
+///
+/// Profiles apply to the page right after them and are dropped once it
+/// is in. A peer that sends more than [`PROFILE_SLACK`] profiles beyond
+/// the signers its pages named so far, or has more than
+/// [`MAX_PROFILE_BYTES`] of them waiting, ends the session.
 async fn receive_pages<IO, S>(
     io: &mut IO,
     store: &S,
@@ -839,22 +877,30 @@ where
 {
     // A message and its delete proof per id at most; empty pages count too.
     let mut budget = 2 * CATCHUP_MAX_ITEMS;
-    let mut profile_budget = 2 * CATCHUP_MAX_ITEMS;
-    let mut profiles: HashMap<UserId, UserProfile> = HashMap::new();
+    let mut waiting: HashMap<UserId, (UserProfile, usize)> = HashMap::new();
+    let mut waiting_bytes = 0usize;
+    let mut profiles_sent = 0usize;
+    let mut signers: HashSet<UserId> = HashSet::new();
     let mut out = Received::default();
     let window = current_window();
     let fits = |id: MessageId, key: BucketKey| window.contains(&key.day()) && accept(id, key);
     loop {
         match read(io).await? {
             CatchupFrame::Profiles(list) => {
-                profile_budget = profile_budget
-                    .checked_sub(list.len().max(1))
-                    .ok_or(CatchupError::TooMuch)?;
-                profiles.extend(
-                    list.into_iter()
-                        .filter(|p| p.identity.is_some())
-                        .map(|p| (p.id, p)),
-                );
+                profiles_sent += list.len().max(1);
+                if profiles_sent > signers.len() + PROFILE_SLACK {
+                    return Err(CatchupError::TooMuch);
+                }
+                for profile in list.into_iter().filter(|p| p.identity.is_some()) {
+                    let size = encoded_len(&profile);
+                    if let Some((_, old)) = waiting.insert(profile.id, (profile, size)) {
+                        waiting_bytes -= old;
+                    }
+                    waiting_bytes += size;
+                }
+                if waiting_bytes > MAX_PROFILE_BYTES {
+                    return Err(CatchupError::TooMuch);
+                }
             }
             CatchupFrame::Push {
                 messages,
@@ -864,6 +910,12 @@ where
                 budget = budget
                     .checked_sub(size.max(1))
                     .ok_or(CatchupError::TooMuch)?;
+                signers.extend(
+                    tombstones
+                        .iter()
+                        .map(|p| p.by)
+                        .chain(messages.iter().map(|m| m.author)),
+                );
                 let (messages, refused): (Vec<Message>, Vec<Message>) = messages
                     .into_iter()
                     .partition(|m| fits(m.id, message_key(m)));
@@ -872,17 +924,23 @@ where
                     .into_iter()
                     .partition(|p| fits(p.message, tombstone_key(p)));
                 out.rejected.extend(refused.iter().map(|p| p.message));
+                let profiles: Vec<UserProfile> = dedup(
+                    tombstones
+                        .iter()
+                        .map(|p| p.by)
+                        .chain(messages.iter().map(|m| m.author)),
+                )
+                .into_iter()
+                .filter_map(|user| waiting.remove(&user).map(|(p, _)| p))
+                .collect();
+                // What this page did not use goes.
+                waiting.clear();
+                waiting_bytes = 0;
                 if messages.is_empty() && tombstones.is_empty() {
                     continue;
                 }
-                let signers: Vec<UserProfile> = tombstones
-                    .iter()
-                    .map(|p| p.by)
-                    .chain(messages.iter().map(|m| m.author))
-                    .filter_map(|user| profiles.remove(&user))
-                    .collect();
-                if !signers.is_empty() {
-                    store.apply_profiles(server, signers);
+                if !profiles.is_empty() {
+                    store.apply_profiles(server, profiles);
                 }
                 let report = store.apply(server, messages, tombstones);
                 out.applied.extend(report.applied);
@@ -904,6 +962,10 @@ where
         held: dedup(out.held),
         rejected: dedup(out.rejected),
     })
+}
+
+fn encoded_len<T: Serialize>(value: &T) -> usize {
+    postcard::to_stdvec(value).map_or(usize::MAX, |b| b.len())
 }
 
 fn message_key(m: &Message) -> BucketKey {
@@ -959,62 +1021,76 @@ async fn read_items<R: AsyncRead + Unpin>(
     }
 }
 
-/// Sends what we hold among `ids` as `Profiles` of its signers, then
-/// `Push` pages, then `Done`. Returns the ids sent.
+/// Sends what we hold among `ids` in the buckets `keep` lets through as
+/// `Push` pages, each after a `Profiles` frame with the keyed profiles
+/// of the signers it names first, then `Done`. Returns the ids sent.
 async fn send_items<IO, S>(
     io: &mut IO,
     store: &S,
     server: ServerId,
     ids: &[MessageId],
+    keep: impl Fn(BucketKey) -> bool,
 ) -> Result<Vec<MessageId>, CatchupError>
 where
     IO: AsyncWrite + Unpin,
     S: CatchupStore + ?Sized,
 {
-    let (messages, tombstones) = if ids.is_empty() {
+    let (mut messages, mut tombstones) = if ids.is_empty() {
         (Vec::new(), Vec::new())
     } else {
         store.get(server, ids)
     };
+    messages.retain(|m| keep(message_key(m)));
+    tombstones.retain(|p| keep(tombstone_key(p)));
     let signers = dedup(
         tombstones
             .iter()
             .map(|p| p.by)
             .chain(messages.iter().map(|m| m.author)),
     );
-    let mut profiles = if signers.is_empty() {
-        Vec::new()
+    let mut profiles: HashMap<UserId, UserProfile> = if signers.is_empty() {
+        HashMap::new()
     } else {
-        store.profiles(server, &signers)
+        store
+            .profiles(server, &signers)
+            .into_iter()
+            .filter(|p| p.identity.is_some())
+            .filter(|p| {
+                let fits = encoded_len(p) <= PROFILE_SIZE;
+                if !fits {
+                    tracing::debug!("catch-up profile of {} is too large to send", p.id);
+                }
+                fits
+            })
+            .map(|p| (p.id, p))
+            .collect()
     };
-    profiles.retain(|p| p.identity.is_some());
-    for chunk in chunks(profiles) {
-        write_frame(io, &CatchupFrame::Profiles(chunk)).await?;
-    }
-    let sent = send_pages(io, messages, tombstones).await?;
-    send(io, &CatchupFrame::Done).await?;
-    Ok(sent)
-}
-
-/// Sends items as `Push` pages and returns the ids sent.
-async fn send_pages<W: AsyncWrite + Unpin>(
-    io: &mut W,
-    messages: Vec<Message>,
-    tombstones: Vec<TombstoneProof>,
-) -> Result<Vec<MessageId>, CatchupError> {
     let mut sent = Vec::new();
     for page in pages(messages, tombstones) {
-        if let CatchupFrame::Push {
+        let CatchupFrame::Push {
             messages,
             tombstones,
         } = &page
-        {
-            sent.extend(tombstones.iter().map(|p| p.message));
-            sent.extend(messages.iter().map(|m| m.id));
+        else {
+            continue;
+        };
+        let ahead: Vec<UserProfile> = dedup(
+            tombstones
+                .iter()
+                .map(|p| p.by)
+                .chain(messages.iter().map(|m| m.author)),
+        )
+        .into_iter()
+        .filter_map(|user| profiles.remove(&user))
+        .collect();
+        for chunk in chunks(ahead) {
+            write_frame(io, &CatchupFrame::Profiles(chunk)).await?;
         }
+        sent.extend(tombstones.iter().map(|p| p.message));
+        sent.extend(messages.iter().map(|m| m.id));
         write_frame(io, &page).await?;
     }
-    io.flush().await.map_err(MediaError::from)?;
+    send(io, &CatchupFrame::Done).await?;
     Ok(dedup(sent))
 }
 
@@ -1223,7 +1299,8 @@ fn now_ms() -> i64 {
 mod tests {
     use super::*;
     use crate::test_support::{
-        fixture, identity_for, join, keyed_profile, post, post_at, MemStore,
+        fixture, identity_for, join, join_moderator, keyed_profile, post, post_at, proof_at,
+        MemStore,
     };
     use chrono::{DateTime, Utc};
     use commy_core::{Channel, ChannelId, ChannelKind, Snapshot};
@@ -1476,6 +1553,54 @@ mod tests {
                 "a_dials = {a_dials}"
             );
             assert_eq!(a.digests(), b.digests());
+        }
+    }
+
+    #[tokio::test]
+    async fn every_moderators_delete_reaches_a_replica_that_missed_one() {
+        for (days_apart, a_dials) in [(0, true), (0, false), (1, true), (1, false)] {
+            let (mut state, channel, owner) = fixture();
+            let author = join(&mut state, "author");
+            let first = join_moderator(&mut state, "first");
+            let second = join_moderator(&mut state, "second");
+            let a = MemStore::new(state.clone(), owner);
+            let c = MemStore::new(state, author);
+            let spam = a.post_as(author, channel, "spam");
+            c.add(&spam);
+            let now = Utc::now();
+            let (p1, p2) = a.with(|s| {
+                let p1 = proof_at(s, &spam, first, now - chrono::Duration::days(days_apart));
+                (p1, proof_at(s, &spam, second, now))
+            });
+            a.with(|s| {
+                s.apply(p1.clone().into_event()).unwrap();
+                s.apply(p2.clone().into_event()).unwrap();
+            });
+            // c missed the second moderator's delete.
+            c.with(|s| s.apply(p1.clone().into_event()).unwrap());
+            assert_ne!(a.digests(), c.digests());
+
+            let case = format!("days apart {days_apart}, a dials {a_dials}");
+            if a_dials {
+                ok_session(&a, &c).await;
+            } else {
+                ok_session(&c, &a).await;
+            }
+            let held = |store: &MemStore| {
+                let mut by: Vec<UserId> =
+                    store.with(|s| s.tombstones_for(spam.id).iter().map(|p| p.by).collect());
+                by.sort();
+                by
+            };
+            let mut both = vec![first, second];
+            both.sort();
+            assert_eq!(held(&c), both, "{case}");
+            assert_eq!(held(&a), both, "{case}");
+            assert_eq!(a.digests(), c.digests(), "{case}");
+            // Nothing is left to move.
+            let (ra, rc) = ok_session(&a, &c).await;
+            assert!(ra.received.is_empty() && rc.received.is_empty(), "{case}");
+            assert!(!a.has(spam.id) && !c.has(spam.id));
         }
     }
 
@@ -2276,7 +2401,8 @@ mod tests {
         assert_eq!(sorted(rc.received), sorted(vec![from_b.id, from_d.id]));
         assert!(c.has(from_b.id) && c.has(from_d.id));
         c.with(|s| {
-            assert!(s.server.is_member(b_user));
+            // Membership comes from b's own join, not from a relayed profile.
+            assert!(!s.server.is_member(b_user) && s.profiles.contains_key(&b_user));
             assert_eq!(s.identity_of(b_user), Some(identity_for(b_user).public()));
             assert_eq!(s.identity_of(d.id), d.identity);
         });
@@ -2285,7 +2411,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_profiles_follows_the_member_join_rules() {
+    fn apply_profiles_pins_keys_without_making_members() {
         let (mut state, _, _) = fixture();
         let server = state.server.id;
         let friend = join(&mut state, "friend");
@@ -2295,6 +2421,7 @@ mod tests {
         let keyless = keyed_profile("keyless");
         let mut stored = keyless.clone();
         stored.identity = None;
+        stored.presence = Presence::Idle;
         state
             .apply(ServerEvent::MemberJoin {
                 server,
@@ -2306,7 +2433,7 @@ mod tests {
         forged.username = "forged".into();
         let mut no_key = keyed_profile("no key");
         no_key.identity = None;
-        let members = state.server.members.len();
+        let members = state.server.members.clone();
 
         let learned = apply_profiles(
             &mut state,
@@ -2319,11 +2446,12 @@ mod tests {
             ],
         );
         assert_eq!(learned, vec![newcomer.id, keyless.id]);
-        assert_eq!(state.server.members.len(), members + 1);
-        assert!(state.server.is_member(newcomer.id));
-        assert!(!state.server.is_member(banned.id) && !state.server.is_member(no_key.id));
+        assert_eq!(state.server.members, members, "membership is left alone");
         assert_eq!(state.identity_of(newcomer.id), newcomer.identity);
+        assert_eq!(state.profiles[&newcomer.id].presence, Presence::Offline);
         assert_eq!(state.identity_of(keyless.id), keyless.identity);
+        assert_eq!(state.profiles[&keyless.id].presence, Presence::Idle);
+        assert!(!state.profiles.contains_key(&banned.id) && !state.profiles.contains_key(&no_key.id));
         // A known key is never replaced, nor the profile around it.
         assert_eq!(
             state.identity_of(friend),
@@ -2345,9 +2473,228 @@ mod tests {
                 profile: keyless.clone(),
             })
             .unwrap();
-        let found = profiles_of(&state, &[friend, keyless.id, owner, friend, UserId::new()]);
-        let ids: Vec<UserId> = found.iter().map(|p| p.id).collect();
-        assert_eq!(ids, vec![friend, owner]);
+        let former = join(&mut state, "former");
+        state
+            .apply(ServerEvent::MemberLeave {
+                server,
+                user: former,
+            })
+            .unwrap();
+        let asked = [friend, keyless.id, owner, former, friend, UserId::new()];
+        let ids: Vec<UserId> = profiles_of(&state, &asked).iter().map(|p| p.id).collect();
+        assert_eq!(ids, vec![friend, owner], "keyed members only");
+    }
+
+    #[tokio::test]
+    async fn relayed_history_never_brings_back_a_kicked_member() {
+        let (mut base, channel, owner) = fixture();
+        let server = base.server.id;
+        let viewer = join(&mut base, "viewer");
+        let kicked = keyed_profile("kicked");
+        let mut keyless = kicked.clone();
+        keyless.identity = None;
+        let kick = ServerEvent::MemberLeave {
+            server,
+            user: kicked.id,
+        };
+        // c and e know the member only from a profile without a key, and
+        // applied the kick.
+        let mut c_state = base.clone();
+        c_state
+            .apply(ServerEvent::MemberJoin {
+                server,
+                profile: keyless,
+            })
+            .unwrap();
+        c_state.apply(kick.clone()).unwrap();
+        let c = MemStore::new(c_state.clone(), viewer);
+        let e = MemStore::new(c_state, viewer);
+        // a has the member's key and has not heard of the kick yet.
+        let mut a_state = base;
+        a_state
+            .apply(ServerEvent::MemberJoin {
+                server,
+                profile: kicked.clone(),
+            })
+            .unwrap();
+        let a = MemStore::new(a_state, owner);
+        let old = a.post_as(kicked.id, channel, "posted before the kick");
+
+        let (rc, _) = ok_session(&c, &a).await;
+        assert_eq!(rc.received, vec![old.id]);
+        let key = kicked.identity.unwrap();
+        c.with(|s| {
+            assert!(!s.server.is_member(kicked.id), "still out");
+            assert_eq!(s.identity_of(kicked.id), Some(key));
+            assert_eq!(check_peer(s, kicked.id, &key), PeerCheck::Unknown);
+        });
+
+        // Once a applies the kick too, it no longer vouches for the key.
+        a.with(|s| s.apply(kick).unwrap());
+        let (re, _) = ok_session(&e, &a).await;
+        assert_eq!((re.held, re.received.len()), (1, 0));
+        e.with(|s| {
+            assert!(!s.server.is_member(kicked.id) && s.identity_of(kicked.id).is_none());
+        });
+    }
+
+    /// Feeds `frames` to the receiving side of a session and returns how
+    /// it ended.
+    async fn receive(store: &MemStore, frames: Vec<CatchupFrame>) -> Result<Received, CatchupError> {
+        let (mut x, mut y) = tokio::io::duplex(64 * 1024);
+        let feed = async move {
+            for frame in frames {
+                if write_frame(&mut x, &frame).await.is_err() {
+                    break;
+                }
+            }
+        };
+        let take = async move {
+            let accept_all = |_: MessageId, _: BucketKey| true;
+            let result = receive_pages(&mut y, store, store.server(), accept_all).await;
+            // Hanging up lets a feed cut short finish.
+            drop(y);
+            result
+        };
+        let ((), result) = tokio::join!(feed, take);
+        result
+    }
+
+    #[tokio::test]
+    async fn profiles_beyond_the_pages_signers_end_the_session() {
+        let (a, b, channel) = pair();
+        let profiles = |n: usize| -> Vec<UserProfile> {
+            (0..n).map(|i| keyed_profile(&format!("p{i}"))).collect()
+        };
+        // A page's worth may come before the page that names them.
+        let ahead = profiles(PROFILE_SLACK);
+        let got = receive(&b, vec![CatchupFrame::Profiles(ahead.clone()), CatchupFrame::Done]).await;
+        assert!(got.unwrap().applied.is_empty());
+        let one_more = vec![
+            CatchupFrame::Profiles(ahead.clone()),
+            CatchupFrame::Profiles(profiles(1)),
+            CatchupFrame::Done,
+        ];
+        assert!(matches!(receive(&b, one_more).await.unwrap_err(), CatchupError::TooMuch));
+        // Signers of pages already sent count on top.
+        let base = a.with(|s| s.clone());
+        let page: Vec<Message> = ahead.iter().map(|p| post(&base, channel, p.id, "hi")).collect();
+        let named = vec![
+            CatchupFrame::Profiles(ahead.clone()),
+            CatchupFrame::Push {
+                messages: page.clone(),
+                tombstones: vec![],
+            },
+            CatchupFrame::Profiles(profiles(PROFILE_SLACK)),
+            CatchupFrame::Done,
+        ];
+        let got = receive(&b, named).await.unwrap();
+        assert_eq!(got.applied.len(), PROFILE_SLACK);
+        let past = vec![
+            CatchupFrame::Push {
+                messages: page,
+                tombstones: vec![],
+            },
+            CatchupFrame::Profiles(profiles(2 * PROFILE_SLACK + 1)),
+            CatchupFrame::Done,
+        ];
+        assert!(matches!(receive(&b, past).await.unwrap_err(), CatchupError::TooMuch));
+    }
+
+    #[tokio::test]
+    async fn profiles_past_the_byte_limit_end_the_session() {
+        let (_, b, _) = pair();
+        let large = |about_bytes: usize| {
+            let mut p = keyed_profile("large");
+            p.about = Some("x".repeat(about_bytes));
+            p
+        };
+        // Each encodes to a little under half the limit.
+        let half = MAX_PROFILE_BYTES / 2 - 1024;
+        let fits = vec![
+            CatchupFrame::Profiles(vec![large(half), large(half)]),
+            CatchupFrame::Done,
+        ];
+        assert!(receive(&b, fits).await.is_ok());
+        let over = vec![
+            CatchupFrame::Profiles(vec![large(half), large(half), large(half)]),
+            CatchupFrame::Done,
+        ];
+        assert!(matches!(receive(&b, over).await.unwrap_err(), CatchupError::TooMuch));
+        // Profiles a page did not use do not add up across pages.
+        let mut spread = Vec::new();
+        for _ in 0..4 {
+            spread.push(CatchupFrame::Profiles(vec![large(half)]));
+            spread.push(CatchupFrame::Push {
+                messages: vec![],
+                tombstones: vec![],
+            });
+        }
+        spread.push(CatchupFrame::Done);
+        assert!(receive(&b, spread).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn many_signers_bring_their_profiles_page_by_page() {
+        let (a, b, channel) = pair();
+        let count = 2 * PAGE_SIZE + 10;
+        let authors: Vec<UserId> = a.with(|s| (0..count).map(|i| join(s, &format!("m{i}"))).collect());
+        for author in &authors {
+            a.post_as(*author, channel, "first post");
+        }
+        let (rb, ra) = ok_session(&b, &a).await;
+        assert_eq!((rb.received.len(), rb.held), (count, 0));
+        assert_eq!(ra.delivered.len(), count);
+        b.with(|s| {
+            assert!(authors.iter().all(|u| s.identity_of(*u).is_some()));
+        });
+    }
+
+    #[tokio::test]
+    async fn initiator_keeps_its_report_when_the_peer_leaves_before_its_applied() {
+        let (a, b, channel) = pair();
+        let only_a = a.post(channel, "only a");
+        let only_b = b.post(channel, "only b");
+        let server = a.server();
+        let (x, mut y) = tokio::io::duplex(64 * 1024);
+        let fake_responder = async move {
+            let _hello = read(&mut y).await.unwrap();
+            send(&mut y, &responder_hello(&b)).await.unwrap();
+            let CatchupFrame::Digests(theirs) = read(&mut y).await.unwrap() else {
+                panic!("expected digests");
+            };
+            let keys = mismatched(&b.digests(), &theirs);
+            let listed = CatchupStore::items(&b, server, &keys);
+            send(&mut y, &CatchupFrame::Items(listed)).await.unwrap();
+            send(&mut y, &CatchupFrame::ItemsEnd { omitted: vec![] })
+                .await
+                .unwrap();
+            let CatchupFrame::Want(want) = read(&mut y).await.unwrap() else {
+                panic!("expected want");
+            };
+            let got = receive_pages(&mut y, &b, server, |_, _| true)
+                .await
+                .unwrap();
+            send(&mut y, &got.verdict()).await.unwrap();
+            send_items(&mut y, &b, server, &want, |_| true).await.unwrap();
+            // Gone before the initiator's `Applied`, as when the peer
+            // stopped waiting for it.
+            drop(y);
+            b
+        };
+        let (ra, b) = tokio::join!(
+            run_initiator(x, &a, &a.identity, server, a.me, NODE_A, NODE_B),
+            fake_responder
+        );
+        let ra = ra.expect("the report survives");
+        assert_eq!(ra.delivered, vec![only_a.id]);
+        assert_eq!(ra.received, vec![only_b.id]);
+        assert!(a.has(only_b.id) && b.has(only_a.id));
+    }
+
+    #[test]
+    fn the_responder_waits_for_applied_as_long_as_for_any_frame() {
+        assert!(APPLIED_TIMEOUT >= FRAME_TIMEOUT);
     }
 
     #[tokio::test]
@@ -2366,7 +2713,13 @@ mod tests {
         let tomorrow = ahead(1, "tomorrow");
         let later = ahead(3, "in three days");
         a.add(&tomorrow);
-        a.add(&later);
+        // Refused when it arrives now, but data saved before may hold it.
+        a.with(|s| {
+            let mut list = s.messages(channel).to_vec();
+            list.push(later.clone());
+            *s = with_messages(s, channel, list);
+        });
+        assert!(a.has(later.id));
 
         let (ra, rb) = ok_session(&a, &b).await;
         assert!(b.has(tomorrow.id) && !b.has(later.id));

@@ -8,8 +8,8 @@ use crate::catchup::{
 use chrono::{DateTime, Utc};
 use commy_core::catchup::{digests, items, BucketItems};
 use commy_core::{
-    BucketDigest, BucketKey, ChannelId, Identity, IdentityKey, Message, MessageId, Server,
-    ServerEvent, ServerId, ServerState, TombstoneProof, UserId, UserProfile,
+    BucketDigest, BucketKey, ChannelId, Identity, IdentityKey, Message, MessageId, Permissions,
+    Role, RoleId, Server, ServerEvent, ServerId, ServerState, TombstoneProof, UserId, UserProfile,
 };
 use std::sync::Mutex;
 
@@ -48,6 +48,52 @@ pub fn join(state: &mut ServerState, username: &str) -> UserId {
         .apply(ServerEvent::MemberJoin { server, profile })
         .unwrap();
     id
+}
+
+/// Adds a keyed member holding a role with Manage Messages.
+pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
+    let user = join(state, username);
+    let server = state.server.id;
+    let role = Role {
+        id: RoleId::new(),
+        name: "mods".into(),
+        color: None,
+        permissions: Permissions::MANAGE_MESSAGES,
+        position: 1,
+        hoist: false,
+        self_assignable: false,
+        tag: None,
+        banner: None,
+    };
+    let id = role.id;
+    state
+        .apply(ServerEvent::RoleCreate { server, role })
+        .unwrap();
+    state
+        .apply(ServerEvent::RoleAssign {
+            server,
+            user,
+            role: id,
+        })
+        .unwrap();
+    user
+}
+
+/// Signed delete of `message` by `by`, made at `at`.
+pub fn proof_at(
+    state: &ServerState,
+    message: &Message,
+    by: UserId,
+    at: DateTime<Utc>,
+) -> TombstoneProof {
+    TombstoneProof::sign(
+        state.server.id,
+        message.channel,
+        message.id,
+        by,
+        at,
+        &identity_for(by),
+    )
 }
 
 /// New message from `author`, signed.
@@ -179,5 +225,66 @@ impl CatchupStore for MemStore {
         let (report, held) = self.with(|s| apply_items(s, messages, tombstones));
         self.held.lock().unwrap().extend(held);
         report
+    }
+}
+
+/// Several servers behind one store, the way the app holds them.
+pub struct MultiStore(pub Vec<MemStore>);
+
+impl MultiStore {
+    fn of(&self, server: ServerId) -> Option<&MemStore> {
+        self.0.iter().find(|s| s.server() == server)
+    }
+}
+
+impl CatchupStore for MultiStore {
+    fn local_identity(&self, server: ServerId) -> Option<(UserId, Identity)> {
+        self.of(server)?.local_identity(server)
+    }
+
+    fn verify_peer(&self, server: ServerId, user: UserId, key: &IdentityKey) -> PeerCheck {
+        self.of(server)
+            .map_or(PeerCheck::Denied, |s| s.verify_peer(server, user, key))
+    }
+
+    fn digests(&self, server: ServerId) -> Vec<BucketDigest> {
+        self.of(server)
+            .map(|s| CatchupStore::digests(s, server))
+            .unwrap_or_default()
+    }
+
+    fn items(&self, server: ServerId, keys: &[BucketKey]) -> Vec<BucketItems> {
+        self.of(server)
+            .map(|s| s.items(server, keys))
+            .unwrap_or_default()
+    }
+
+    fn get(&self, server: ServerId, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>) {
+        self.of(server)
+            .map(|s| s.get(server, ids))
+            .unwrap_or_default()
+    }
+
+    fn profiles(&self, server: ServerId, users: &[UserId]) -> Vec<UserProfile> {
+        self.of(server)
+            .map(|s| s.profiles(server, users))
+            .unwrap_or_default()
+    }
+
+    fn apply_profiles(&self, server: ServerId, profiles: Vec<UserProfile>) {
+        if let Some(s) = self.of(server) {
+            s.apply_profiles(server, profiles);
+        }
+    }
+
+    fn apply(
+        &self,
+        server: ServerId,
+        messages: Vec<Message>,
+        tombstones: Vec<TombstoneProof>,
+    ) -> ApplyReport {
+        self.of(server)
+            .map(|s| s.apply(server, messages, tombstones))
+            .unwrap_or_default()
     }
 }
