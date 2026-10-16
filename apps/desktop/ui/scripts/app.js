@@ -1041,7 +1041,11 @@ function dropZone(e, node, allowInto) {
   return x < 0.25 ? "before" : x > 0.75 ? "after" : "into";
 }
 
-function makeDropTarget(node, target) {
+// Server tiles and folder heads take drops from the rail drag above.
+// (Channel rows have their own `makeDropTarget` further down; the two
+// used to share a name, and the later one won, which is how folders
+// stopped forming.)
+function makeRailDropTarget(node, target) {
   node.addEventListener("dragover", e => {
     if (!railDrag || railDrag.id === target.id) return;
     e.preventDefault();
@@ -1100,7 +1104,7 @@ function railServerButton(server, folderId) {
     e.dataTransfer.setData("text/plain", server.id);
   });
   btn.addEventListener("dragend", () => (railDrag = null));
-  makeDropTarget(btn, { kind: "server", id: server.id, folder: folderId || null });
+  makeRailDropTarget(btn, { kind: "server", id: server.id, folder: folderId || null });
   return wrap;
 }
 
@@ -1159,7 +1163,7 @@ function renderServerRail() {
       e.dataTransfer.setData("text/plain", item.id);
     });
     head.addEventListener("dragend", () => (railDrag = null));
-    makeDropTarget(head, { kind: "folder", id: item.id, folder: null });
+    makeRailDropTarget(head, { kind: "folder", id: item.id, folder: null });
     folder.prepend(head);
     if (item.open) for (const s of servers) folder.appendChild(railServerButton(s, item.id));
     list.appendChild(folder);
@@ -1876,15 +1880,6 @@ async function openCameraStream() {
     if (deviceId) return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     throw e;
   }
-}
-
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
 }
 
 async function startCamera() {
