@@ -3368,14 +3368,45 @@ async function acceptRules() {
   if (!server) return;
   try {
     await invoke("accept_rules", { serverId: server.id });
-    hideModals();
     await refreshCurrentServer();
-    toast("Thanks! You can chat now");
     rolePromptPending.delete(state.currentServer.id);
-    if (selfAssignableRoles(state.currentServer).length) openChooseRoles();
+    if (selfAssignableRoles(state.currentServer).length) openServerWelcome("roles");
+    else {
+      hideModals();
+      toast("Thanks! You can chat now");
+    }
   } catch (e) {
     toast(String(e));
   }
+}
+
+// One panel for joining a server: read the rules, then pick roles, without
+// a second dialog popping up behind the first.
+function openServerWelcome(step) {
+  const server = state.currentServer;
+  if (!server) return;
+  closeFloating();
+  const hasRoles = selfAssignableRoles(server).length > 0;
+  const twoSteps = Boolean(server.rules) && hasRoles;
+  paintServerIcon($("sw-icon"), server);
+  $("sw-title").textContent = step === "rules" ? `Welcome to ${server.name}` : `You are in, ${state.user ? state.user.username : "friend"}`;
+  $("sw-sub").textContent = step === "rules"
+    ? "This server asks new members to read its rules before posting."
+    : `${server.name} has roles you can give yourself.`;
+  $("sw-steps").classList.toggle("hidden", !twoSteps);
+  for (const dot of $("sw-steps").children) {
+    dot.classList.toggle("active", dot.dataset.step === step);
+    dot.classList.toggle("done", step === "roles" && dot.dataset.step === "rules");
+  }
+  $("sw-rules").classList.toggle("hidden", step !== "rules");
+  $("sw-roles").classList.toggle("hidden", step !== "roles");
+  if (step === "rules") $("sw-rules").replaceChildren(renderMarkdown(server.rules || ""));
+  else renderRolePicker(server, $("sw-role-list"));
+  $("sw-later").classList.toggle("hidden", step === "rules" && server.needs_rules);
+  $("sw-next").textContent = step === "rules" ? "I Have Read and Agree" : "Done";
+  $("sw-next").onclick = step === "rules" ? acceptRules : hideModals;
+  showModal("modal-server-welcome");
+  $("sw-next").focus();
 }
 
 // Servers we just joined that should offer the role picker once.
@@ -3387,7 +3418,7 @@ function maybePromptRoles() {
   if (!selfAssignableRoles(server).length) return;
   if (!$("modal-backdrop").classList.contains("hidden")) return;
   rolePromptPending.delete(server.id);
-  openChooseRoles();
+  openServerWelcome("roles");
 }
 
 // The composer is replaced by an accept prompt until the rules are accepted.
@@ -3397,7 +3428,7 @@ function syncRulesGate() {
   if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated);
   if (gated && !rulesPrompted.has(state.currentServer.id)) {
     rulesPrompted.add(state.currentServer.id);
-    openRules();
+    openServerWelcome("rules");
   }
   if (!gated) maybePromptRoles();
 }
@@ -4148,9 +4179,14 @@ function openChooseRoles() {
   const server = state.currentServer;
   if (!server) return;
   closeFloating();
+  renderRolePicker(server, $("role-pick-list"));
+  showModal("modal-choose-roles");
+}
+
+// Fills a list with the server's self-assignable roles as toggles.
+function renderRolePicker(server, list) {
   const me = server.members.find(m => state.user && m.id === state.user.id);
   const held = new Set(me ? me.roles : []);
-  const list = $("role-pick-list");
   list.replaceChildren();
   for (const role of selfAssignableRoles(server)) {
     const row = el("button", "role-pick" + (held.has(role.id) ? " held" : "") + (role.banner ? " has-banner" : ""));
@@ -4180,7 +4216,6 @@ function openChooseRoles() {
     list.appendChild(row);
   }
   if (!list.childElementCount) list.appendChild(el("div", "manage-empty", "This server has no roles to pick yet"));
-  showModal("modal-choose-roles");
 }
 
 // Inline editor under a role row in Server Settings, Roles.
@@ -5873,6 +5908,10 @@ function renderDmHome() {
   $("message-input").placeholder = "Pick a conversation to start chatting";
   const box = $("messages");
   box.innerHTML = "";
+  if (!state.servers.length) {
+    box.appendChild(buildWelcomeHome());
+    return;
+  }
   const empty = el("div", "empty-state dm-empty");
   const art = el("div", "dm-empty-art");
   art.appendChild(svgIcon("chat", 56));
@@ -5883,6 +5922,27 @@ function renderDmHome() {
   start.onclick = openNewDm;
   empty.appendChild(start);
   box.appendChild(empty);
+}
+
+// The first thing a new person sees: no servers yet, two ways to get one.
+function buildWelcomeHome() {
+  const home = el("div", "empty-state welcome-home");
+  const mark = el("img", "welcome-mark");
+  mark.src = "images/commy_v2.png";
+  mark.alt = "";
+  mark.draggable = false;
+  home.appendChild(mark);
+  const name = state.user ? state.user.username : "";
+  home.appendChild(el("h3", null, name ? `Welcome, ${name}` : "Welcome to Commy"));
+  home.appendChild(el("p", null, "Servers are where your friends gather: text channels, voice and screen sharing, all connected directly between members. Start one, or join a friend's with an invite."));
+  const actions = el("div", "welcome-actions");
+  const create = el("button", "btn-primary", "Create a Server");
+  create.onclick = () => { showModal("modal-add-server"); $("create-name-input").focus(); };
+  const join = el("button", "btn-secondary", "Join with an Invite");
+  join.onclick = () => { showModal("modal-add-server"); $("join-ticket-input").focus(); };
+  actions.append(create, join);
+  home.appendChild(actions);
+  return home;
 }
 
 async function renderDmThreads() {
@@ -6845,6 +6905,7 @@ function wireEvents() {
       renderUserPanel();
       await refreshServers();
       if (state.servers.length) await selectServer(state.servers[0].id);
+      else await enterDmMode();
     } catch (e) {
       toast(String(e));
     }
@@ -7521,7 +7582,8 @@ function wireEvents() {
   $("rules-remove").onclick = () => saveRules(true);
   $("rules-close").onclick = hideModals;
   $("rules-accept").onclick = acceptRules;
-  $("rules-gate-open").onclick = openRules;
+  $("rules-gate-open").onclick = () => openServerWelcome("rules");
+  $("sw-later").onclick = hideModals;
   $("events-close").replaceChildren(svgIcon("close", 18));
   $("events-close").onclick = closeEvents;
   $("event-create").onclick = () => openEventEditor(null);
@@ -8345,6 +8407,7 @@ async function continueBoot() {
   renderUserPanel();
   await refreshServers();
   if (state.servers.length) await selectServer(state.servers[0].id);
+  else await enterDmMode();
 }
 
 // ---------- Commy account ----------
