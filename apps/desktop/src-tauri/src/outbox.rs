@@ -806,7 +806,7 @@ where
         };
         // Signed again with the current key and node, either may have changed.
         message.sign(&node, &identity);
-        let envelope = DmEnvelope { message, sender: me };
+        let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
         if !send(envelope).await {
             failed = true;
             break;

@@ -145,7 +145,9 @@ async function mockInvoke(cmd, args = {}) {
       if (!s) throw "unknown server";
       const members = [...s.members];
       if (mock.user && !members.some(m => m.id === "me")) {
-        members.unshift({ id: "me", name: mock.user.username, presence: "online", custom_status: null });
+        // Like the real store: appearing offline is kept as plain offline.
+        const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
+        members.unshift({ id: "me", name: mock.user.username, presence, custom_status: null });
       }
       return {
         ...s, members, screen_shares: [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
@@ -4813,7 +4815,7 @@ async function setStatusExpiry(changes) {
 function openDurations(mode, anchor) {
   durationMode = mode;
   $("pp-durations-title").textContent = mode.kind === "presence"
-    ? `${({ invisible: "Invisible", ...PRESENCE_LABELS })[mode.presence] || "Status"} for how long?`
+    ? `${({ invisible: "Appear Offline", ...PRESENCE_LABELS })[mode.presence] || "Status"} for how long?`
     : "Clear custom status after";
   const pad = n => String(n).padStart(2, "0");
   const later = new Date(Date.now() + 2 * 3600e3);
@@ -5805,7 +5807,7 @@ function renderUserPanel() {
   const bits = [];
   if (state.voice.muted) bits.push("muted");
   if (state.voice.deafened) bits.push("deafened");
-  const label = presence === "idle" ? "Idle" : PRESENCE_LABELS[presence] || "Invisible";
+  const label = presence === "idle" ? "Idle" : PRESENCE_LABELS[presence] || "Appearing offline";
   $("me-status").textContent = bits.length ? `${label}, ${bits.join(", ")}` : (statusLine(state.user) || label);
   $("mute-btn").classList.toggle("danger", state.voice.muted);
   $("deafen-btn").classList.toggle("danger", state.voice.deafened);
