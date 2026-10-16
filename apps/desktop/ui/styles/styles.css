@@ -3605,7 +3605,12 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .fp-head { display: flex; align-items: flex-end; justify-content: space-between; padding: 0 20px; height: 56px; position: relative; }
 .fp-head .avatar { position: absolute; left: 20px; top: -56px; width: 112px; height: 112px; font-size: 36px; box-shadow: 0 0 0 7px var(--bg-dark); }
 .fp-head .presence-dot { width: 20px; height: 20px; box-shadow: 0 0 0 5px var(--bg-dark); right: 4px; bottom: 4px; }
-.fp-buttons { margin-left: auto; display: flex; gap: 8px; }
+.fp-buttons { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.fp-more { width: 32px; height: 32px; border-radius: 50%; background: var(--bg-raised); color: var(--text-normal); }
+.fp-more:hover { background: var(--bg-active); color: var(--header-primary); }
+/* Above the profile modal and its backdrop. */
+.fp-menu { z-index: 180; }
+.fp-menu button { display: flex; align-items: center; gap: 10px; }
 .fp-body { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; }
 .fp-name-row { display: flex; align-items: center; }
 .fp-name { font-size: 24px; font-weight: 700; color: var(--header-primary); font-family: var(--font-display); letter-spacing: -.01em; }
