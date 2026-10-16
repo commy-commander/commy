@@ -24,6 +24,7 @@ mod state;
 mod toast;
 mod tray;
 mod view;
+mod wake;
 
 use media_engine::{should_dial, CameraSession, MicTest, ScreenShareSession, ScreenWatch, VoiceSession};
 use state::{App, VoiceSettings};
@@ -314,6 +315,8 @@ async fn commit_message(
     app.persist_server(sid);
     // Members who look offline get a content-free wake-up.
     doorbell::ring(handle, sid, message.id, !delivered);
+    // Members who may be resting outside the mesh get a wake by node id.
+    wake::after_send(handle, sid, message.id);
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(view.with_pending(!delivered))
 }
@@ -1988,6 +1991,11 @@ async fn run_mesh_healer(handle: tauri::AppHandle) {
     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     loop {
         let app = handle.state::<App>();
+        // Resting is leaving the mesh on purpose; a wake brings us back.
+        if wake::is_resting(&app) {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            continue;
+        }
         let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
         let targets: Vec<(ServerId, Vec<String>)> = {
             let servers = app.servers.lock().unwrap();
@@ -4474,6 +4482,7 @@ async fn run_net_loop(
             NetEvent::CaughtUp { server, peer, report } => {
                 catchup::on_caught_up(&handle, server, peer, &report);
             }
+            NetEvent::Wake { from } => wake::handle_wake(&handle, from),
         }
     }
 }
@@ -4938,6 +4947,7 @@ pub fn run() {
                         tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
                         tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
                         tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
+                        tauri::async_runtime::spawn(wake::run_watchdog(handle.clone()));
                         tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
                         tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
                         tauri::async_runtime::spawn(outbox::run_dm_outbox(handle.clone()));

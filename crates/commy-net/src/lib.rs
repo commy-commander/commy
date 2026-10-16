@@ -16,16 +16,21 @@
 //! - Members that were offline catch up on recent history with a
 //!   neighbor over a direct connection (see `catchup`). Messages carry
 //!   their author's signature, so any member can relay them.
+//! - A device can rest: it leaves every mesh and keeps only its relay
+//!   link. A member with news wakes it by node id (see `wake`).
 
 pub mod catchup;
 pub mod dm;
 pub mod entry_key;
+#[cfg(feature = "test-relay")]
+pub mod local_relay;
 pub mod media;
 pub mod node;
 pub mod protocol;
 pub mod relays;
 pub mod sealed;
 pub mod ticket;
+pub mod wake;
 
 #[cfg(test)]
 mod test_support;
@@ -40,3 +45,4 @@ pub use node::{CommyNode, MediaChannel, NetEvent, SharedCatchupStore};
 pub use protocol::{Envelope, WirePayload, PROTOCOL_VERSION};
 pub use sealed::{SealError, SealKey};
 pub use ticket::{ServerTicket, TicketError};
+pub use wake::WAKE_ALPN;

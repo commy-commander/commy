@@ -158,6 +158,8 @@ pub struct App {
     /// Where members listen for missed-message wake-ups, and ids we were
     /// told about and do not hold yet.
     pub doorbell: Mutex<crate::doorbell::Doorbell>,
+    /// Whether we rest outside the mesh, and the wakes sent and taken.
+    pub rest: Mutex<crate::wake::Rest>,
     /// Servers joined from a ticket that still wait for their first
     /// snapshot. Only these take one (see `catchup::apply_snapshot`); an
     /// entry goes once a snapshot is taken or the server is left.
@@ -217,6 +219,7 @@ impl Default for App {
             dm_wake: tokio::sync::Notify::new(),
             catchup: Mutex::new(crate::catchup::Catchup::default()),
             doorbell: Mutex::new(crate::doorbell::Doorbell::default()),
+            rest: Mutex::new(crate::wake::Rest::default()),
             awaiting_snapshot: Mutex::new(HashSet::new()),
             key_hold: Mutex::new(None),
             signing: tokio::sync::RwLock::new(()),

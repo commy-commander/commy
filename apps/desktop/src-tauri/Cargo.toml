@@ -11,7 +11,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 # End-to-end tests against a running account server, see scripts/e2e.sh
-e2e = []
+e2e = ["commy-net/test-relay"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
