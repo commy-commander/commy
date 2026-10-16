@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, shouldNotify, mentionsName, levelForServer, isRecent, caughtUpNotice } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, shouldNotify, messageNotice, mentionsName, levelForServer, isRecent, caughtUpNotice } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -29,6 +29,25 @@ test("mentions level only pings on a mention, DMs always", () => {
   assert.equal(shouldNotify({ level: "mentions", presence: "idle", focusedOnIt: false, isDm: true, mentioned: false }), true);
   assert.equal(shouldNotify({ level: "online", presence: "idle", focusedOnIt: false, isDm: false, mentioned: false }), false);
   assert.equal(shouldNotify({ level: "online", presence: "online", focusedOnIt: false, isDm: false, mentioned: false }), true);
+});
+
+test("announcements reach members who only want mentions, but never Do Not Disturb or a muted server", () => {
+  const base = { presence: "online", focusedOnIt: false, isDm: false, mentioned: false, announcement: true };
+  assert.equal(shouldNotify({ ...base, level: "mentions" }), true);
+  assert.equal(shouldNotify({ ...base, level: "mentions", announcement: false }), false);
+  assert.equal(shouldNotify({ ...base, level: "online" }), true);
+  assert.equal(shouldNotify({ ...base, level: "online", presence: "idle" }), false);
+  assert.equal(shouldNotify({ ...base, level: "none" }), false);
+  assert.equal(shouldNotify({ ...base, level: "mentions", presence: "do_not_disturb" }), false);
+  assert.equal(shouldNotify({ ...base, level: "mentions", focusedOnIt: true }), false);
+});
+
+test("an announcement is named as one in its notification", () => {
+  const msg = { author_name: "ferris", channel_name: "news", server_name: "Rust Hangout", content: "**Patch day**", has_attachments: false };
+  const strip = s => s.replace(/\*\*/g, "");
+  assert.deepEqual(messageNotice({ ...msg, announcement: true }, strip), { title: "Announcement in #news (Rust Hangout)", body: "ferris: Patch day" });
+  assert.deepEqual(messageNotice(msg, strip), { title: "ferris (#news, Rust Hangout)", body: "Patch day" });
+  assert.equal(messageNotice({ ...msg, content: "", has_attachments: true }, strip).body, "Sent an attachment");
 });
 
 test("muted and per-server choices win over the global level", () => {

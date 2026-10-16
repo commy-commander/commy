@@ -114,6 +114,10 @@
         <span class="presence-dot inline hidden" id="chat-presence"></span>
         <span class="topic" id="channel-topic"></span>
         <div class="header-actions">
+          <button class="icon-btn hidden" id="pins-btn" title="Pinned Messages" aria-haspopup="dialog">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>
+            <span class="pin-count hidden" id="pins-count"></span>
+          </button>
           <button class="icon-btn hidden" id="dm-profile-btn" title="Hide User Profile">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"/></svg>
           </button>
@@ -122,6 +126,13 @@
           </button>
         </div>
       </header>
+      <section class="pins-pop hidden" id="pins-pop" role="dialog" aria-label="Pinned Messages">
+        <header class="pins-pop-head">
+          <span class="pins-pop-title">Pinned Messages</span>
+          <button class="btn-link" id="pins-all">All pins in this server</button>
+        </header>
+        <div class="pins-list" id="pins-list"></div>
+      </section>
       <div class="stage hidden" id="video-pane">
         <div class="stage-view" id="stage-view">
           <img id="video-frame" alt="Shared screen" />
@@ -170,6 +181,13 @@
         </div>
         <div class="dm-request-actions">
           <button class="btn-primary btn-small" id="rules-gate-open">Read Rules</button>
+        </div>
+      </div>
+      <div class="dm-request-bar announce-gate hidden" id="announce-gate">
+        <span class="announce-gate-icon" id="announce-gate-icon"></span>
+        <div class="dm-request-text">
+          <strong id="announce-gate-title">Only announcers post here</strong>
+          <span id="announce-gate-text"></span>
         </div>
       </div>
       <div class="dm-request-bar hidden" id="dm-request-bar">
@@ -415,6 +433,15 @@
       </div>
     </div>
 
+    <div class="modal modal-wide hidden" id="modal-pins" role="dialog" aria-label="Pinned Messages">
+      <h2 id="pins-modal-title">Pinned Messages</h2>
+      <p id="pins-modal-sub">Everything pinned across this server, newest first.</p>
+      <div class="pins-list pins-list-wide" id="pins-modal-list"></div>
+      <div class="modal-actions">
+        <button class="btn-primary" id="pins-modal-close">Done</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-choose-roles">
       <h2>Choose Roles</h2>
       <p>Pick the roles that fit you. They show next to your name in this server, and you can change them any time from Roles at the top of the channel list.</p>
@@ -528,6 +555,11 @@
         <button class="kind-option" data-kind="voice">
           <span class="kind-icon" id="create-voice-icon"></span>
           <span class="kind-text"><strong>Voice</strong><span>Hang out together with voice and screen share</span></span>
+          <span class="kind-radio"></span>
+        </button>
+        <button class="kind-option" data-kind="announcement">
+          <span class="kind-icon" id="create-announcement-icon"></span>
+          <span class="kind-text"><strong>Announcement</strong><span>Only members allowed to post announcements write here; everyone reads</span></span>
           <span class="kind-radio"></span>
         </button>
         <button class="kind-option" data-kind="category">
@@ -1015,6 +1047,13 @@
               </div>
             </div>
           </div>
+          <div class="settings-card setting-row" id="channel-announce-row">
+            <div>
+              <div class="setting-title">Announcement Channel</div>
+              <div class="setting-sub">Only members allowed to post announcements can write here. Everyone can read and react, and new posts notify members who only want @mentions.</div>
+            </div>
+            <input type="checkbox" id="channel-edit-announce" class="switch" />
+          </div>
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">Message Retention</div>
@@ -1377,6 +1416,7 @@
     <button class="ctx-check" id="sm-mute">Mute Server</button>
     <div class="ctx-sep"></div>
     <button id="sm-invite">Invite People</button>
+    <button id="sm-pins">Pinned Messages</button>
     <button id="sm-events">Events</button>
     <button id="sm-rules" class="hidden">Server Rules</button>
     <button id="sm-roles" class="hidden">Choose Roles</button>
@@ -1411,6 +1451,7 @@
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/notify.js"></script>
+  <script src="scripts/pins.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>

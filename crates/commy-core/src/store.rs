@@ -37,6 +37,10 @@ pub enum StoreError {
     ProofLimit,
     #[error("delete names another channel than the message's")]
     WrongChannel,
+    #[error("that channel already has as many pinned messages as it can hold")]
+    PinLimit,
+    #[error("only members allowed to post announcements can write in that channel")]
+    NotAnnouncer,
 }
 
 /// Days a delete proof is kept, well past the catch-up window.
@@ -470,6 +474,7 @@ impl ServerState {
                 }
                 let before = self.server.channels.len();
                 self.server.channels.retain(|c| c.id != channel);
+                self.server.pins.retain(|p| p.channel != channel);
                 for m in self.messages.remove(&channel).into_iter().flatten() {
                     self.index.remove(&m.id);
                 }
@@ -894,6 +899,59 @@ impl ServerState {
                 target.color = color;
                 Ok(true)
             }
+            ServerEvent::MessagePin { server, channel, message, by, at, pinned } => {
+                if server != self.server.id {
+                    return Err(StoreError::WrongServer);
+                }
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                let held = self.server.pins.iter().position(|p| p.message == message);
+                match (pinned, held) {
+                    // The first pin stands: a redelivered or later copy keeps
+                    // every replica showing the same pinner and time.
+                    (true, Some(_)) => Ok(false),
+                    (false, None) => Ok(false),
+                    (false, Some(pos)) => {
+                        self.server.pins.remove(pos);
+                        Ok(true)
+                    }
+                    (true, None) => {
+                        // Pins of a message held here must name its channel; a
+                        // message not held yet may still arrive, so it is kept.
+                        if self.index.get(&message).is_some_and(|c| *c != channel) {
+                            return Err(StoreError::WrongChannel);
+                        }
+                        if self.deleted_messages.contains(&message) || self.tombstones.contains_key(&message) {
+                            return Ok(false);
+                        }
+                        if too_far_ahead(at, Utc::now()) {
+                            return Err(StoreError::TooFarAhead);
+                        }
+                        let count = self.server.pins.iter().filter(|p| p.channel == channel).count();
+                        if count >= crate::server::MAX_PINS_PER_CHANNEL {
+                            return Err(StoreError::PinLimit);
+                        }
+                        self.server.pins.push(crate::server::Pin { channel, message, by, at });
+                        Ok(true)
+                    }
+                }
+            }
+            ServerEvent::ChannelKindSet { server, channel, kind } => {
+                if server != self.server.id {
+                    return Err(StoreError::WrongServer);
+                }
+                let Some(target) = self.server.channels.iter_mut().find(|c| c.id == channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                // Only text channels become announcement channels and back.
+                let text_like = |k: ChannelKind| matches!(k, ChannelKind::Text | ChannelKind::Announcement);
+                if !text_like(kind) || !text_like(target.kind) || target.kind == kind {
+                    return Ok(false);
+                }
+                target.kind = kind;
+                Ok(true)
+            }
             ServerEvent::ServerImages { server, icon, banner } => {
                 if server != self.server.id {
                     return Err(StoreError::WrongServer);
@@ -1026,6 +1084,14 @@ impl ServerState {
         }
         if !self.messages.contains_key(&message.channel) {
             return Err(StoreError::UnknownChannel);
+        }
+        // Announcement channels take posts from announcers only; an edit
+        // of a post already held is the author's and goes through.
+        if !self.has_message(message.id)
+            && self.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement)
+            && !self.server.can_post_in(message.channel, message.author)
+        {
+            return Err(StoreError::NotAnnouncer);
         }
         if !self.has_message(message.id) {
             if let Some(changed) = self.bind_proofs(&message) {
@@ -1174,6 +1240,7 @@ impl ServerState {
                 list.remove(pos);
             }
             self.index.remove(&proof.message);
+            self.server.pins.retain(|p| p.message != proof.message);
             self.store_proof(proof, Some(author));
             return Ok(true);
         }
@@ -1440,7 +1507,9 @@ fn supersedes(stored: &Message, edited_at: Option<DateTime<Utc>>, sig: &Signatur
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ids::ServerId;
+    use crate::ids::{RoleId, ServerId};
+    use crate::permissions::Permissions;
+    use crate::server::{Channel, Role};
     use crate::test_support::{
         delete, edit, fixture, identity_for, join, join_moderator, keyed_profile, post, post_at, proof, signed,
     };
@@ -2060,6 +2129,143 @@ mod tests {
             state.apply(ServerEvent::ChannelColor { server: sid, channel: ChannelId::new(), color: None }),
             Err(StoreError::UnknownChannel)
         );
+    }
+
+    fn pin_event(state: &ServerState, channel: ChannelId, message: MessageId, by: UserId, pinned: bool) -> ServerEvent {
+        ServerEvent::MessagePin { server: state.server.id, channel, message, by, at: Utc::now(), pinned }
+    }
+
+    #[test]
+    fn pins_set_once_and_clear() {
+        let (mut state, channel, owner) = fixture();
+        let msg = post(&state, channel, owner, "keep this");
+        state.apply(ServerEvent::MessageCreate { message: msg.clone() }).unwrap();
+        assert_eq!(state.apply(pin_event(&state, channel, msg.id, owner, true)), Ok(true));
+        assert!(state.server.is_pinned(msg.id));
+        let first = state.server.pins[0].clone();
+        // A second pin, even by someone else, changes nothing.
+        let other = join(&mut state, "other");
+        assert_eq!(state.apply(pin_event(&state, channel, msg.id, other, true)), Ok(false));
+        assert_eq!(state.server.pins, vec![first]);
+        assert_eq!(state.apply(pin_event(&state, channel, msg.id, owner, false)), Ok(true));
+        assert!(!state.server.is_pinned(msg.id));
+        assert_eq!(state.apply(pin_event(&state, channel, msg.id, owner, false)), Ok(false));
+        assert_eq!(
+            state.apply(pin_event(&state, ChannelId::new(), msg.id, owner, true)),
+            Err(StoreError::UnknownChannel)
+        );
+        assert_eq!(
+            state.apply(ServerEvent::MessagePin { server: ServerId::new(), channel, message: msg.id, by: owner, at: Utc::now(), pinned: true }),
+            Err(StoreError::WrongServer)
+        );
+    }
+
+    #[test]
+    fn pin_must_name_the_messages_channel_and_respects_the_cap() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let other = Channel::new("other", ChannelKind::Text, 5);
+        let other_id = other.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: other }).unwrap();
+        let msg = post(&state, channel, owner, "here");
+        state.apply(ServerEvent::MessageCreate { message: msg.clone() }).unwrap();
+        assert_eq!(state.apply(pin_event(&state, other_id, msg.id, owner, true)), Err(StoreError::WrongChannel));
+        // A pin can arrive before its message does.
+        let later = MessageId::for_author(owner);
+        assert_eq!(state.apply(pin_event(&state, channel, later, owner, true)), Ok(true));
+        for _ in 1..crate::server::MAX_PINS_PER_CHANNEL {
+            assert_eq!(state.apply(pin_event(&state, channel, MessageId::for_author(owner), owner, true)), Ok(true));
+        }
+        assert_eq!(state.apply(pin_event(&state, channel, msg.id, owner, true)), Err(StoreError::PinLimit));
+        // Another channel has its own room.
+        let m2 = post(&state, other_id, owner, "there");
+        state.apply(ServerEvent::MessageCreate { message: m2.clone() }).unwrap();
+        assert_eq!(state.apply(pin_event(&state, other_id, m2.id, owner, true)), Ok(true));
+        assert_eq!(state.server.pins_in(other_id).len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_message_or_its_channel_drops_the_pin() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let msg = post(&state, channel, owner, "gone soon");
+        state.apply(ServerEvent::MessageCreate { message: msg.clone() }).unwrap();
+        state.apply(pin_event(&state, channel, msg.id, owner, true)).unwrap();
+        assert_eq!(state.apply(delete(&state, &msg, owner)), Ok(true));
+        assert!(!state.server.is_pinned(msg.id));
+        // Nor does a pin of a deleted message come back.
+        assert_eq!(state.apply(pin_event(&state, channel, msg.id, owner, true)), Ok(false));
+        let other = Channel::new("other", ChannelKind::Text, 5);
+        let other_id = other.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: other }).unwrap();
+        let m2 = post(&state, other_id, owner, "x");
+        state.apply(ServerEvent::MessageCreate { message: m2.clone() }).unwrap();
+        state.apply(pin_event(&state, other_id, m2.id, owner, true)).unwrap();
+        state.apply(ServerEvent::ChannelDelete { server: sid, channel: other_id }).unwrap();
+        assert!(state.server.pins.is_empty());
+    }
+
+    #[test]
+    fn pins_survive_a_snapshot() {
+        let (mut state, channel, owner) = fixture();
+        let msg = post(&state, channel, owner, "pinned");
+        state.apply(ServerEvent::MessageCreate { message: msg.clone() }).unwrap();
+        state.apply(pin_event(&state, channel, msg.id, owner, true)).unwrap();
+        let back = ServerState::from_snapshot(state.snapshot());
+        assert_eq!(back.server.pins, state.server.pins);
+    }
+
+    #[test]
+    fn announcement_channels_take_posts_from_announcers_only() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let news = Channel::new("news", ChannelKind::Announcement, 5);
+        let news_id = news.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: news }).unwrap();
+        let plain = join(&mut state, "plain");
+        let manager = join_moderator(&mut state, "mods");
+        // Manage Messages is not enough; Manage Channels or Post Announcements is.
+        let blocked = post(&state, news_id, plain, "psst");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: blocked }), Err(StoreError::NotAnnouncer));
+        let blocked = post(&state, news_id, manager, "psst");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: blocked }), Err(StoreError::NotAnnouncer));
+        let role = Role {
+            id: RoleId::new(),
+            name: "news".into(),
+            color: None,
+            permissions: Permissions::POST_ANNOUNCEMENTS,
+            position: 2,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+        };
+        let rid = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: plain, role: rid }).unwrap();
+        let allowed = post(&state, news_id, plain, "Patch day!");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: allowed.clone() }), Ok(true));
+        let owners = post(&state, news_id, owner, "Welcome");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: owners }), Ok(true));
+        // Losing the role later does not reject an edit of an existing post.
+        state.apply(ServerEvent::RoleUnassign { server: sid, user: plain, role: rid }).unwrap();
+        let later = Utc::now() + chrono::Duration::seconds(1);
+        assert_eq!(state.apply(edit(&state, &allowed, "Patch day, 6pm", later)), Ok(true));
+    }
+
+    #[test]
+    fn text_channels_switch_to_announcements_and_back() {
+        let (mut state, channel, _) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let set = |c: ChannelId, kind: ChannelKind| ServerEvent::ChannelKindSet { server: sid, channel: c, kind };
+        assert_eq!(state.apply(set(channel, ChannelKind::Announcement)), Ok(true));
+        assert_eq!(state.server.channel(channel).unwrap().kind, ChannelKind::Announcement);
+        assert_eq!(state.apply(set(channel, ChannelKind::Announcement)), Ok(false));
+        assert_eq!(state.apply(set(channel, ChannelKind::Text)), Ok(true));
+        assert_eq!(state.apply(set(voice, ChannelKind::Announcement)), Ok(false));
+        assert_eq!(state.apply(set(channel, ChannelKind::Voice)), Ok(false));
+        assert_eq!(state.apply(set(ChannelId::new(), ChannelKind::Text)), Err(StoreError::UnknownChannel));
     }
 
     #[test]
