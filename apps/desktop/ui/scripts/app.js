@@ -208,7 +208,14 @@ async function mockInvoke(cmd, args = {}) {
       if (mock.user && !members.some(m => m.id === "me")) {
         // Like the real store: appearing offline is kept as plain offline.
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        members.unshift({ id: "me", name: mock.user.username, presence, custom_status: null });
+        const me = { id: "me", name: mock.user.username, presence, custom_status: null };
+        // Mirror the real member view: own voice state shows in the list too.
+        const vc = s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
+        if (vc) {
+          const at = vc.voice_user_ids.indexOf("me");
+          Object.assign(me, { voice_channel: vc.id, voice_since: vc.voice_since[at], voice_muted: vc.voice_muted[at], voice_deafened: vc.voice_deafened[at] });
+        }
+        members.unshift(me);
       }
       return {
         ...s, members, screen_shares: [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
@@ -908,17 +915,30 @@ function activityWithTime(person) {
   return person.activity_since ? `${person.activity} for ${elapsedWords(person.activity_since)}` : person.activity;
 }
 
-// "In voice · General · 12:34" with its icons, for a member in a call.
-function voiceLine(member, server) {
-  const channel = member.voice_channel && server && (server.channels || []).find(c => c.id === member.voice_channel);
+// The voice channel a member is in, if any, on the server shown.
+function voiceChannelOf(member, server) {
+  return member.voice_channel && server && (server.channels || []).find(c => c.id === member.voice_channel);
+}
+
+// Small glyphs at the end of a member's name line: a speaker while they
+// are in voice, plus mic or headset struck through when they muted or
+// deafened themselves. The clock stays on the voice channel rows.
+function voiceGlyphs(member, channel) {
   if (!channel) return null;
-  const line = el("div", "user-sub voice");
-  line.appendChild(svgIcon("speaker", 12));
-  line.appendChild(el("span", "voice-line-text", `In voice · ${channelPlainName(channel)} · `));
-  line.appendChild(liveElapsed(member.voice_since, "clock"));
-  if (member.voice_muted) line.appendChild(el("span", "vs-icon off")).appendChild(svgIcon("micOff", 12));
-  if (member.voice_deafened) line.appendChild(el("span", "vs-icon off")).appendChild(svgIcon("headsetOff", 12));
-  return line;
+  const cluster = el("span", "member-voice");
+  cluster.appendChild(svgIcon("speaker", 14));
+  if (member.voice_muted) cluster.appendChild(el("span", "off")).appendChild(svgIcon("micOff", 14));
+  if (member.voice_deafened) cluster.appendChild(el("span", "off")).appendChild(svgIcon("headsetOff", 14));
+  return cluster;
+}
+
+// What a hover tells about a member: the call and the game, in full.
+function memberHover(member, channel) {
+  const lines = [];
+  if (channel) lines.push(`In voice · ${channelPlainName(channel)} · ${elapsedClock(member.voice_since)}`);
+  const game = activityWithTime(member);
+  if (game) lines.push(game);
+  return lines.join("\n");
 }
 
 // statusLine, backLine, subLine and presenceLabel live in presence.js, shared with its tests.
@@ -2589,12 +2609,15 @@ function renderMembers() {
         };
         nameRow.appendChild(live);
       }
+      const channel = voiceChannelOf(member, state.currentServer);
+      const glyphs = voiceGlyphs(member, channel);
+      if (glyphs) nameRow.appendChild(glyphs);
       meta.appendChild(nameRow);
-      const inVoice = voiceLine(member, state.currentServer);
-      if (inVoice) meta.appendChild(inVoice);
-      const game = activityWithTime(member);
-      if (game) row.title = game;
-      const sub = inVoice ? "" : subLine(member);
+      const hover = memberHover(member, channel);
+      if (hover) row.title = hover;
+      // The line under the name is always there, so rows keep one height.
+      const sub = subLine(member);
+      if (!sub) meta.appendChild(el("div", "user-sub empty"));
       if (sub) {
         // The activity colour only when the line is the activity alone.
         const line = el("div", "user-sub" + (member.activity && !backLine(member) ? " activity" : ""), sub);
@@ -6247,14 +6270,11 @@ function renderUserPanel() {
   $("me-avatar").replaceChildren();
   paintAvatar($("me-avatar"), state.user.id, state.user.display_name || state.user.username);
   $("me-avatar").appendChild(el("span", "presence-dot " + presence));
-  const bits = [];
-  if (state.voice.muted) bits.push("muted");
-  if (state.voice.deafened) bits.push("deafened");
   // One short line: when you are back (the dot already says Do Not Disturb),
-  // else the presence word; mute and deafen follow it.
+  // else the presence word. Mute and deafen live in the voice panel now.
   const back = backLine(state.user);
   const label = presence === "invisible" ? "Appearing offline" : (back || PRESENCE_LABELS[presence] || "Online");
-  $("me-status").textContent = bits.length ? `${label}, ${bits.join(", ")}` : label;
+  $("me-status").textContent = label;
   $("me-status").classList.toggle("back", Boolean(back));
   $("mute-btn").classList.toggle("danger", state.voice.muted);
   $("deafen-btn").classList.toggle("danger", state.voice.deafened);
