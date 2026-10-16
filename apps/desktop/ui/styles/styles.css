@@ -3686,3 +3686,15 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .entry-recovery { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .entry-recovery input { flex: 1; min-width: 240px; font-family: var(--font-code, monospace); font-size: 13px; }
 .entry-recovery .setting-sub { flex-basis: 100%; }
+
+/* Server info: what members without a management role see instead of Server Settings */
+.si-banner { height: 120px; margin: -4px -4px 14px; border-radius: 12px; background-size: cover; background-position: center; }
+.si-games { padding: 10px 0 0; }
+.si-games .game-chip.small { font-size: 12px; padding: 3px 9px; color: var(--text-normal); }
+.si-section { margin-top: 14px; }
+.si-label { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+#si-rules { margin: 0; max-height: 36vh; }
+.si-roles { display: flex; flex-wrap: wrap; gap: 6px; }
+.si-role { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: var(--radius-pill); background: var(--bg-raised); border: 1px solid var(--line); font-size: 13px; color: var(--text-normal); }
+.si-role .role-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+.btn-secondary.danger-text { color: var(--accent); }
