@@ -347,6 +347,29 @@
       </div>
     </div>
 
+    <div class="modal modal-wide hidden" id="modal-server-welcome">
+      <div class="sw-head">
+        <div class="server-icon sw-icon" id="sw-icon"></div>
+        <div class="sw-titles">
+          <h2 id="sw-title">Welcome</h2>
+          <p id="sw-sub"></p>
+        </div>
+      </div>
+      <div class="sw-steps hidden" id="sw-steps">
+        <span class="sw-step" data-step="rules">Rules</span>
+        <span class="sw-step" data-step="roles">Roles</span>
+      </div>
+      <div class="rules-body hidden" id="sw-rules"></div>
+      <div class="sw-roles hidden" id="sw-roles">
+        <p class="sw-roles-hint">Pick the roles that fit you. They show next to your name here, and you can change them any time from Roles at the top of the channel list.</p>
+        <div class="role-pick-list" id="sw-role-list"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="sw-later">Later</button>
+        <button class="btn-primary" id="sw-next">I Have Read and Agree</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-choose-roles">
       <h2>Choose Roles</h2>
       <p>Pick the roles that fit you. They show next to your name in this server, and you can change them any time from Roles at the top of the channel list.</p>
