@@ -1490,6 +1490,15 @@ function loadServerImage(ref) {
   return Promise.resolve(serverImages.get(ref));
 }
 
+// A quiet banner for a server without one: a soft, dark slope from the
+// server's own tint, so the header keeps the same height either way.
+function quietBanner(serverId) {
+  let hash = 0;
+  for (const ch of String(serverId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
+  const hue = Math.abs(hash) % 360;
+  return `linear-gradient(135deg, hsl(${hue} 24% 24%), hsl(${(hue + 40) % 360} 26% 13%))`;
+}
+
 // Stable per-server color for places that show many servers at once.
 function serverTint(serverId) {
   let hash = 0;
@@ -1522,9 +1531,13 @@ function paintSidebarBanner() {
     $("invite-btn").classList.toggle("hidden", !state.currentServer.can_invite);
   }
   const banner = $("sidebar-banner");
-  const ref = state.view === "server" && state.currentServer ? state.currentServer.banner : null;
-  header.classList.toggle("has-banner", Boolean(ref));
+  const server = state.view === "server" ? state.currentServer : null;
+  const ref = server ? server.banner : null;
+  // Every server gets the banner-height header, so switching between
+  // one with a picture and one without never moves the channel list.
+  header.classList.toggle("has-banner", Boolean(server));
   banner.style.backgroundImage = "";
+  banner.style.background = server && !ref ? quietBanner(server.id) : "";
   if (!ref) return;
   loadServerImage(ref).then(url => {
     if (url && state.currentServer && state.currentServer.banner === ref) {
