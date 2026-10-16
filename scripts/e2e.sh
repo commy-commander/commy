@@ -1,7 +1,8 @@
 #!/bin/sh
-# End-to-end tests of private invite links, the message doorbell and offline
-# delivery: the desktop app's own code on real iroh nodes, against the account
-# server running on a throwaway Postgres. Then the edge Caddy checks.
+# End-to-end tests of private invite links, the message doorbell, offline
+# delivery and waking a resting device: the desktop app's own code on real iroh
+# nodes, against the account server running on a throwaway Postgres. Then the
+# edge Caddy checks.
 # Run from anywhere: sh scripts/e2e.sh   (needs Postgres binaries, Node 22, Rust)
 # An argument picks tests by name, e.g. sh scripts/e2e.sh doorbell
 

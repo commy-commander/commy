@@ -1,5 +1,5 @@
-//! End-to-end checks of private invite links, the message doorbell and
-//! offline delivery, with the app's own code on real iroh nodes and a real
+//! End-to-end checks of private invite links, the message doorbell,
+//! offline delivery and waking a resting device, with the app's own code on real iroh nodes and a real
 //! account server. Each device is an `App` without a webview; its network
 //! events are handled the way `run_net_loop` handles them.
 //!
@@ -11,11 +11,13 @@ use crate::doorbell;
 use crate::invite_link;
 use crate::outbox::{self, Outbox};
 use crate::state::App;
+use crate::wake;
 use commy_core::doorbell as bell;
 use commy_core::{
-    ChannelId, ChannelKind, Identity, IdentityKey, Message, MessageId, ServerEvent, ServerId, StoreError, TombstoneProof,
-    UserId, UserProfile,
+    ChannelId, ChannelKind, Identity, IdentityKey, Message, MessageId, Presence, ServerEvent, ServerId, StoreError,
+    TombstoneProof, UserId, UserProfile,
 };
+use commy_net::local_relay::LocalRelay;
 use commy_net::sealed::SealKey;
 use commy_net::{CommyNode, NetEvent, ServerTicket, WirePayload};
 use std::path::PathBuf;
@@ -84,6 +86,8 @@ struct Device {
     secret: [u8; 32],
     pump: Option<JoinHandle<()>>,
     dir: PathBuf,
+    /// Relays the node uses instead of the app's (see [`LocalRelay`]).
+    relays: Option<commy_net::local_relay::RelayMap>,
 }
 
 impl Device {
@@ -97,7 +101,14 @@ impl Device {
         profile.identity = Some(identity.public());
         *app.profile.lock().unwrap() = Some(profile);
         *app.identity.lock().unwrap() = Some(identity);
-        Self { access: TestHandle::new(Arc::new(app)), secret: CommyNode::generate_secret(), pump: None, dir }
+        Self { access: TestHandle::new(Arc::new(app)), secret: CommyNode::generate_secret(), pump: None, dir, relays: None }
+    }
+
+    /// A device whose only relay is `relay`.
+    fn on_relay(name: &str, relay: &LocalRelay) -> Self {
+        let mut device = Self::new(name);
+        device.relays = Some(relay.map());
+        device
     }
 
     fn app(&self) -> &App {
@@ -119,7 +130,10 @@ impl Device {
     /// Starts the node and rejoins every server, as the app does at launch.
     async fn online(&mut self) {
         let app = self.app();
-        let (mut node, events, _media, _dms) = CommyNode::spawn(Some(self.secret)).await.unwrap();
+        let (mut node, events, _media, _dms) = match &self.relays {
+            Some(relays) => CommyNode::spawn_with(Some(self.secret), Some(relays.clone())).await.unwrap(),
+            None => CommyNode::spawn(Some(self.secret)).await.unwrap(),
+        };
         let hex = node.node_id_hex();
         *app.node_hex.lock().unwrap() = Some(hex.clone());
         let me = {
@@ -265,6 +279,40 @@ impl Device {
     fn outbox_on_disk(&self) -> Outbox {
         Outbox::load(&self.dir)
     }
+
+    /// Away, the way AFK sets it: Idle for every member to see.
+    async fn go_away(&self, server: ServerId) {
+        let app = self.app();
+        let profile = {
+            let mut profile = app.profile.lock().unwrap();
+            let profile = profile.as_mut().unwrap();
+            profile.presence = Presence::Idle;
+            profile.clone()
+        };
+        app.auto_idle.store(true, std::sync::atomic::Ordering::Relaxed);
+        let event = ServerEvent::ProfileUpdate { profile: app.announced(profile) };
+        app.servers.lock().unwrap().get_mut(&server).unwrap().apply(event.clone()).unwrap();
+        assert!(outbox::broadcast_local(app, server, event).await);
+    }
+
+    fn presence_of(&self, server: ServerId, user: UserId) -> Option<Presence> {
+        self.app().servers.lock().unwrap()[&server].profiles.get(&user).map(|p| p.presence)
+    }
+
+    /// In the server's mesh; None while the node is busy.
+    fn joined(&self, server: ServerId) -> Option<bool> {
+        let net = self.app().net.try_lock().ok()?;
+        Some(net.as_ref().is_some_and(|n| n.is_joined(server)))
+    }
+
+    fn home_relay(&self) -> Option<String> {
+        let net = self.app().net.try_lock().ok()?;
+        net.as_ref()?.home_relay()
+    }
+
+    fn node_bytes(&self) -> [u8; 32] {
+        data_encoding::HEXLOWER.decode(self.node_hex().as_bytes()).unwrap().try_into().unwrap()
+    }
 }
 
 impl Drop for Device {
@@ -380,6 +428,21 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
                 app.catchup.lock().unwrap().record_completed((server, peer), Instant::now());
                 catchup::after_session(&access, server, Some(&report));
             }
+            // As `wake::handle_wake`: back into the mesh, then a catch-up
+            // with whoever woke us.
+            NetEvent::Wake { from } => {
+                let servers = wake::on_wake(app, from);
+                if servers.is_empty() {
+                    continue;
+                }
+                let access = access.clone();
+                tokio::spawn(async move {
+                    wake::unrest(access.app()).await;
+                    for server in servers {
+                        session(access.clone(), server, from).await;
+                    }
+                });
+            }
         }
     }
 }
@@ -387,7 +450,10 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
 /// An owner with a server, and members who joined it from its ticket and
 /// know each other's doorbells.
 async fn community(names: &[&str]) -> (Vec<Device>, ServerId) {
-    let mut devices: Vec<Device> = names.iter().map(|n| Device::new(n)).collect();
+    gather(names.iter().map(|n| Device::new(n)).collect()).await
+}
+
+async fn gather(mut devices: Vec<Device>) -> (Vec<Device>, ServerId) {
     for d in devices.iter_mut() {
         d.online().await;
     }
@@ -703,4 +769,88 @@ async fn offline_edits_and_deletes_arrive_in_order_signed() {
     for d in devices.iter_mut() {
         d.offline().await;
     }
+}
+
+// ---------- 4. Waking a resting device ----------
+
+/// Needs a direct line to localhost: iroh sends relay traffic through
+/// `HTTPS_PROXY` when one is set and ignores `NO_PROXY`, so behind a proxy
+/// the local relay is out of reach and the wake times out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wake_through_the_relay_brings_a_resting_device_back() {
+    init_logs();
+    let relay = LocalRelay::start().await.unwrap();
+    let relay_url = relay.url.to_string();
+    let devices = ["ada", "grace", "linus"].map(|n| Device::on_relay(n, &relay)).into_iter().collect();
+    let (mut devices, server) = gather(devices).await;
+    let [sender, sleeper, other] = &mut devices[..] else { unreachable!() };
+    for d in [&*sender, &*sleeper, &*other] {
+        wait_until("every device to pick the local relay", || d.home_relay().as_deref() == Some(relay_url.as_str())).await;
+    }
+    let sleeper_id = sleeper.me().id;
+
+    // The sleeper goes away, then rests: out of every mesh, relay link kept
+    sleeper.go_away(server).await;
+    wait_until("the others to see the sleeper away", || {
+        sender.presence_of(server, sleeper_id) == Some(Presence::Idle)
+            && other.presence_of(server, sleeper_id) == Some(Presence::Idle)
+    })
+    .await;
+    // Catch-up sessions from joining (retried every 2 s) finish first; a
+    // resting device still answers catch-up, it just starts none.
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    assert_eq!(wake::rest(sleeper.app()).await, 1);
+    assert!(wake::is_resting(sleeper.app()));
+    assert_eq!(sleeper.joined(server), Some(false));
+    assert_eq!(sleeper.home_relay().as_deref(), Some(relay_url.as_str()), "still on the relay");
+
+    // Messages go out to the mesh; the resting device misses them
+    let mut sent = Vec::new();
+    for text in ["Chapter 3 tonight at eight", "Bring the annotated copy", "Snacks are on me"] {
+        let (message, delivered, _) = sender.send(server, text).await;
+        assert!(delivered, "the other member is online");
+        sent.push(message);
+    }
+    for m in &sent {
+        wait_until("the online member to get the messages", || other.message(server, m.id).is_some()).await;
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(sent.iter().all(|m| sleeper.message(server, m.id).is_none()), "nothing reaches a resting device");
+
+    // The sender wakes only devices of members who look away or offline
+    assert_eq!(wake::targets(sender.app(), server), vec![sleeper.node_hex()]);
+    let woken = wake::wake_members(sender.app(), server).await;
+    eprintln!("wakes sent: {woken:?}");
+    assert_eq!(woken, vec![(sleeper.node_hex(), true)], "one wake, and it landed");
+    assert!(wake::wake_members(sender.app(), server).await.is_empty(), "one wake per device per 30 s");
+
+    // Woken: back in the mesh, and catch-up with the sender brings every message
+    for m in &sent {
+        wait_until("the woken device to catch up", || sleeper.message(server, m.id).is_some()).await;
+        assert!(sleeper.message(server, m.id).unwrap().verify(server, &sender.key()), "signed by its author");
+    }
+    assert!(!wake::is_resting(sleeper.app()));
+    wait_until("the woken device to rejoin the mesh", || sleeper.joined(server) == Some(true)).await;
+    wait_until("the woken device to have a neighbor", || sleeper.neighbors(server).is_some_and(|n| n > 0)).await;
+    let (live, delivered, _) = sender.send(server, "See you all there").await;
+    assert!(delivered);
+    wait_until("live messages to flow again", || sleeper.message(server, live.id).is_some()).await;
+    assert!(wake::on_wake(sleeper.app(), sender.node_bytes()).is_empty(), "an awake device ignores wakes");
+
+    // A device that is not a member cannot wake anyone
+    let mut stranger = Device::on_relay("mallory", &relay);
+    stranger.online().await;
+    wake::rest(sleeper.app()).await;
+    assert!(wake::on_wake(sleeper.app(), stranger.node_bytes()).is_empty());
+    let ring = stranger.app().net.lock().await.as_ref().unwrap().wake(&sleeper.node_hex());
+    assert!(ring.await.is_ok(), "the wake itself is answered");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(wake::is_resting(sleeper.app()), "but a stranger's wake changes nothing");
+    assert_eq!(sleeper.joined(server), Some(false));
+
+    stranger.offline().await;
+    for d in devices.iter_mut() {
+        d.offline().await;
+    }
+    relay.stop().await;
 }

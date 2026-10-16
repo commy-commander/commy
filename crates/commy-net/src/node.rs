@@ -54,6 +54,9 @@ pub enum NetEvent {
         peer: [u8; 32],
         report: SessionReport,
     },
+    /// A device woke us (see `crate::wake`): we should rejoin the
+    /// servers we share with it and catch up.
+    Wake { from: [u8; 32] },
 }
 
 /// A peer QUIC connection, re-exported for link statistics.
@@ -471,6 +474,18 @@ struct TopicHandle {
     sender: tokio::sync::Mutex<TopicSink>,
     /// Live set of direct gossip neighbors on this topic.
     neighbors: tokio::sync::watch::Receiver<BTreeSet<[u8; 32]>>,
+    /// The task reading the topic's events. Gossip quits a topic only once
+    /// both the sink and the event stream are gone, so dropping the handle
+    /// stops it too. (iroh 0.28's RPC layer logs a "called after complete"
+    /// panic in its own task when a subscription ends; the topic is still
+    /// left cleanly.)
+    reader: tokio::task::AbortHandle,
+}
+
+impl Drop for TopicHandle {
+    fn drop(&mut self) {
+        self.reader.abort();
+    }
 }
 
 /// Applies a gossip membership event to the neighbor set and returns
@@ -537,13 +552,32 @@ impl CommyNode {
         mpsc::UnboundedReceiver<MediaChannel>,
         mpsc::UnboundedReceiver<IncomingDm>,
     )> {
+        let relays = match crate::relays::relay_map(&crate::relays::own_relays()) {
+            Ok(map) => Some(map),
+            Err(e) => {
+                tracing::warn!("using default relays: {e:#}");
+                None
+            }
+        };
+        Self::spawn_with(secret, relays).await
+    }
+
+    /// [`CommyNode::spawn`] with these relays (None: iroh's defaults).
+    pub async fn spawn_with(
+        secret: Option<[u8; 32]>,
+        relays: Option<iroh::net::relay::RelayMap>,
+    ) -> Result<(
+        Self,
+        mpsc::UnboundedReceiver<NetEvent>,
+        mpsc::UnboundedReceiver<MediaChannel>,
+        mpsc::UnboundedReceiver<IncomingDm>,
+    )> {
         let (media_tx, media_rx) = mpsc::unbounded_channel();
         let (dm_tx, dm_rx) = mpsc::unbounded_channel();
         let (entry_key_tx, entry_key_rx) = mpsc::unbounded_channel();
         let mut builder = iroh::node::Node::memory();
-        match crate::relays::relay_map(&crate::relays::own_relays()) {
-            Ok(map) => builder = builder.relay_mode(iroh::net::relay::RelayMode::Custom(map)),
-            Err(e) => tracing::warn!("using default relays: {e:#}"),
+        if let Some(map) = relays {
+            builder = builder.relay_mode(iroh::net::relay::RelayMode::Custom(map));
         }
         if let Some(bytes) = secret {
             builder = builder.secret_key(iroh::net::key::SecretKey::from_bytes(&bytes));
@@ -568,6 +602,7 @@ impl CommyNode {
                 Arc::new(crate::entry_key::EntryKeyAcceptor { tx: entry_key_tx }),
             )
             .accept(CATCHUP_ALPN.to_vec(), Arc::new(catchup))
+            .accept(crate::wake::WAKE_ALPN.to_vec(), Arc::new(crate::wake::WakeAcceptor::new(events_tx.clone())))
             .spawn()
             .await
             .context("failed to start iroh node")?;
@@ -805,7 +840,7 @@ impl CommyNode {
         let events_tx = self.events_tx.clone();
         let our_id = self.node_id_bytes();
         let (neighbors_tx, neighbors_rx) = tokio::sync::watch::channel(BTreeSet::new());
-        tokio::spawn(async move {
+        let reader = tokio::spawn(async move {
             let mut stream = Box::pin(stream);
             while let Some(item) = stream.next().await {
                 let Ok(GossipNetEvent::Gossip(event)) = item else {
@@ -862,6 +897,7 @@ impl CommyNode {
             TopicHandle {
                 sender: tokio::sync::Mutex::new(Box::pin(sink)),
                 neighbors: neighbors_rx,
+                reader: reader.abort_handle(),
             },
         );
         Ok(())
@@ -1004,6 +1040,56 @@ impl CommyNode {
 
     pub fn leave_server(&mut self, server_id: ServerId) {
         self.topics.remove(&server_id);
+    }
+
+    /// The relay we are reachable through, once one is picked.
+    pub fn home_relay(&self) -> Option<String> {
+        self.node.endpoint().home_relay().map(|r| r.to_string())
+    }
+
+    /// True while we are in a server's gossip mesh.
+    pub fn is_joined(&self, server_id: ServerId) -> bool {
+        self.topics.contains_key(&server_id)
+    }
+
+    /// Leaves every server's mesh, keeping the endpoint and its relay
+    /// link, and returns the servers left. See [`CommyNode::rejoin`].
+    pub fn rest(&mut self) -> Vec<ServerId> {
+        self.topics.drain().map(|(id, _)| id).collect()
+    }
+
+    /// Joins a server's mesh again after [`CommyNode::rest`], dialing its
+    /// members. Nothing happens when we are already in it.
+    pub async fn rejoin(&mut self, server_id: ServerId, peers_hex: &[String]) -> Result<()> {
+        if self.is_joined(server_id) {
+            return Ok(());
+        }
+        let our_id = self.node_id_bytes();
+        let relay = self.node.endpoint().home_relay();
+        let mut ids = Vec::new();
+        for hex in peers_hex {
+            let Ok(id) = parse_node_hex(hex) else { continue };
+            if *id.as_bytes() == our_id {
+                continue;
+            }
+            let mut addr = NodeAddr::new(id);
+            if let Some(relay) = relay.clone() {
+                addr = addr.with_relay_url(relay);
+            }
+            self.node.net().add_node_addr(addr).await.ok();
+            ids.push(id);
+        }
+        self.join_topic(server_id, topic_for(server_id), ids).await
+    }
+
+    /// Wakes a resting device by node id (see `crate::wake`), through our
+    /// home relay, which members usually share. The future does not
+    /// borrow the node.
+    pub fn wake(&self, node_hex: &str) -> impl Future<Output = Result<()>> + Send + 'static {
+        let endpoint = self.node.endpoint().clone();
+        let relay = endpoint.home_relay();
+        let node = parse_node_hex(node_hex);
+        async move { crate::wake::send(endpoint, node?, relay).await }
     }
 
     pub async fn shutdown(self) -> Result<()> {

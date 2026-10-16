@@ -127,6 +127,11 @@ Working today:
   themselves there after 5 minutes with no audible mic input, no
   keyboard or mouse use, and no active screen share
   (COMMY_AFK_SECS overrides the timeout)
+- Resting (test setting): with COMMY_REST_AFTER_SECS set, an away
+  client leaves every server's mesh after that many idle seconds and
+  keeps only its relay link; a member who sends a message wakes it by
+  node id (`commy/wake/1`, one byte, no server or message named) and it
+  rejoins and catches up
 - Mic test loopback and multi-instance support (COMMY_DATA_DIR) for
   single-machine voice testing
 - Desktop UI shell

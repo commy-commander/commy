@@ -523,6 +523,9 @@ pub fn may_send(app: &App, neighbors: usize, event: &ServerEvent) -> bool {
 /// out yet (see [`may_send`]) or the send fails, it waits here (see
 /// [`Outbox::note_local`]). Returns true when it went out.
 pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) -> bool {
+    // Anything we send while resting brings us back into the mesh; this
+    // one waits for the first neighbor like any other.
+    crate::wake::unrest(app).await;
     let delivered = {
         let net = app.net.lock().await;
         match net.as_ref() {

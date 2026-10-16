@@ -209,6 +209,11 @@ impl Doorbell {
         before != awaited.len()
     }
 
+    /// Members' devices we know in a server: (node hex, member).
+    pub(crate) fn devices(&self, server: ServerId) -> Vec<(String, UserId)> {
+        self.saved.peers.get(&server).map_or_else(Vec::new, |peers| peers.iter().map(|(n, p)| (n.clone(), p.user)).collect())
+    }
+
     pub(crate) fn awaited_count(&self, server: ServerId) -> usize {
         self.saved.awaited.get(&server).map_or(0, HashMap::len)
     }
@@ -312,7 +317,7 @@ fn held_ids(state: &ServerState, key: &DoorbellKey) -> HashSet<String> {
         .collect()
 }
 
-fn member_ok(state: &ServerState, user: UserId) -> bool {
+pub(crate) fn member_ok(state: &ServerState, user: UserId) -> bool {
     state.server.is_member(user) && !state.server.banned.contains(&user)
 }
 
@@ -489,6 +494,24 @@ fn queue_ring(handle: &tauri::AppHandle, url: String, token: String, id: Option<
             }
         }
     });
+}
+
+/// Rings one device for a message, e.g. when a wake did not reach it.
+pub fn ring_device(handle: &tauri::AppHandle, server: ServerId, node: &str, message: MessageId) {
+    let target = {
+        let app = handle.state::<App>();
+        let servers = app.servers.lock().unwrap();
+        let Some(state) = servers.get(&server) else { return };
+        let doorbell = app.doorbell.lock().unwrap();
+        let Some(peer) = doorbell.saved.peers.get(&server).and_then(|p| p.get(node)) else { return };
+        if !member_ok(state, peer.user) {
+            return;
+        }
+        let day = bell::day_of(chrono::Utc::now());
+        (peer.url.clone(), bell::token(&peer.key, day), bell::blinded_id(&peer.key, message))
+    };
+    let (url, token, id) = target;
+    queue_ring(handle, url, token, Some(id));
 }
 
 /// One ring: `ids` (none for a hello) to `token` at a ring endpoint.
@@ -700,6 +723,10 @@ async fn nudge(handle: &tauri::AppHandle, server: ServerId) {
         let Some(state) = servers.get(&server) else { return };
         state.profiles.values().filter(|p| Some(p.id) != me).filter_map(|p| p.node.clone()).collect()
     };
+    // A ring while resting: back into the mesh first.
+    if crate::wake::unrest(&app).await > 0 {
+        tracing::info!("a doorbell ring woke us from resting");
+    }
     let neighbors = {
         let net = app.net.lock().await;
         let Some(node) = net.as_ref() else { return };
