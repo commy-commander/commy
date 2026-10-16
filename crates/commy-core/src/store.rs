@@ -33,6 +33,20 @@ pub enum StoreError {
 /// Days a delete proof is kept, well past the catch-up window.
 pub const TOMBSTONE_KEEP_DAYS: i64 = 60;
 
+/// Most delete proofs kept for one message, each from a different
+/// deleter.
+pub const MAX_PROOFS_PER_MESSAGE: usize = 4;
+
+/// A delete proof as held here. `accepted_for` is the author of the
+/// message this peer checked the proof against when it applied it. Such
+/// a proof keeps that message out even if the deleter later loses the
+/// right to delete it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StoredProof {
+    proof: TombstoneProof,
+    accepted_for: Option<UserId>,
+}
+
 /// Replicated state of one server, held in memory by every member.
 /// Events are idempotent where possible so that gossip redelivery
 /// does not corrupt state.
@@ -50,9 +64,9 @@ pub struct ServerState {
     /// Ids of messages deleted before deletes were signed, so a late
     /// copy cannot bring one back.
     deleted_messages: std::collections::HashSet<MessageId>,
-    /// Signed deletes by message id. They keep late copies out and are
-    /// relayed by catch-up.
-    tombstones: HashMap<MessageId, TombstoneProof>,
+    /// Signed deletes by message id, at most one per deleter. They keep
+    /// late copies out and are relayed by catch-up.
+    tombstones: HashMap<MessageId, Vec<StoredProof>>,
 }
 
 /// Durable image of a server, written to disk between sessions.
@@ -66,6 +80,9 @@ pub struct Snapshot {
     pub deleted_messages: Vec<MessageId>,
     #[serde(default)]
     pub tombstone_proofs: Vec<TombstoneProof>,
+    /// (message, deleter, author) of each proof this peer accepted.
+    #[serde(default)]
+    pub accepted_proofs: Vec<(MessageId, UserId, UserId)>,
 }
 
 impl ServerState {
@@ -97,7 +114,11 @@ impl ServerState {
                 .map(|(id, list)| (*id, list.clone()))
                 .collect(),
             deleted_messages: self.deleted_messages.iter().copied().collect(),
-            tombstone_proofs: self.tombstones.values().cloned().collect(),
+            tombstone_proofs: self.stored_proofs().map(|s| s.proof.clone()).collect(),
+            accepted_proofs: self
+                .stored_proofs()
+                .filter_map(|s| s.accepted_for.map(|author| (s.proof.message, s.proof.by, author)))
+                .collect(),
         }
     }
 
@@ -112,11 +133,18 @@ impl ServerState {
             state.profiles.insert(profile.id, profile);
         }
         state.deleted_messages = snapshot.deleted_messages.into_iter().collect();
-        state.tombstones = snapshot
-            .tombstone_proofs
+        let accepted: HashMap<(MessageId, UserId), UserId> = snapshot
+            .accepted_proofs
             .into_iter()
-            .map(|p| (p.message, p))
+            .map(|(message, by, author)| ((message, by), author))
             .collect();
+        for proof in snapshot.tombstone_proofs {
+            // Proofs for channels deleted since are of no use.
+            if state.messages.contains_key(&proof.channel) {
+                let accepted_for = accepted.get(&(proof.message, proof.by)).copied();
+                state.store_proof(proof, accepted_for);
+            }
+        }
         for (channel, list) in snapshot.messages {
             // Only keep channels that still exist on the server.
             if state.messages.contains_key(&channel) {
@@ -129,7 +157,8 @@ impl ServerState {
     /// Drops messages older than each channel's retention window and
     /// returns how many were removed. Every peer runs this locally, so
     /// expired history disappears everywhere without a delete event.
-    /// Delete proofs older than [`TOMBSTONE_KEEP_DAYS`] go too.
+    /// Delete proofs older than [`TOMBSTONE_KEEP_DAYS`] go too, as do
+    /// proofs for channels that no longer exist.
     pub fn prune_expired(&mut self, now: DateTime<Utc>) -> usize {
         let mut removed = 0;
         for channel in &self.server.channels {
@@ -141,7 +170,8 @@ impl ServerState {
             }
         }
         let keep_from = now - chrono::Duration::days(TOMBSTONE_KEEP_DAYS);
-        self.tombstones.retain(|_, p| p.at >= keep_from);
+        let channels = &self.messages;
+        retain_proofs(&mut self.tombstones, |p| p.at >= keep_from && channels.contains_key(&p.channel));
         removed
     }
 
@@ -170,14 +200,30 @@ impl ServerState {
         self.message(id).is_some()
     }
 
-    /// Delete proof for a message id, if one is stored.
+    /// Best delete proof stored for a message id, if any. See
+    /// [`Self::tombstones_for`] for the order.
     pub fn tombstone(&self, id: MessageId) -> Option<&TombstoneProof> {
-        self.tombstones.get(&id)
+        let list = self.tombstones.get(&id)?;
+        list.iter().min_by_key(|s| proof_rank(&self.server, s)).map(|s| &s.proof)
     }
 
-    /// Delete proofs made at or after `since`, in no particular order.
+    /// Every delete proof stored for a message id, one per deleter, best
+    /// first: accepted here, then a moderator's, then the earliest, then
+    /// the lowest signature.
+    pub fn tombstones_for(&self, id: MessageId) -> Vec<&TombstoneProof> {
+        let mut list: Vec<&StoredProof> = self.tombstones.get(&id).into_iter().flatten().collect();
+        list.sort_by_key(|s| proof_rank(&self.server, s));
+        list.into_iter().map(|s| &s.proof).collect()
+    }
+
+    /// Delete proofs made at or after `since`, in no particular order. A
+    /// message deleted by several people has one proof for each.
     pub fn tombstones_since(&self, since: DateTime<Utc>) -> impl Iterator<Item = &TombstoneProof> {
-        self.tombstones.values().filter(move |p| p.at >= since)
+        self.stored_proofs().map(|s| &s.proof).filter(move |p| p.at >= since)
+    }
+
+    fn stored_proofs(&self) -> impl Iterator<Item = &StoredProof> {
+        self.tombstones.values().flatten()
     }
 
     pub fn messages(&self, channel: ChannelId) -> &[Message] {
@@ -303,6 +349,7 @@ impl ServerState {
                 let before = self.server.channels.len();
                 self.server.channels.retain(|c| c.id != channel);
                 self.messages.remove(&channel);
+                retain_proofs(&mut self.tombstones, |p| p.channel != channel);
                 let new_tombstone = !self.server.deleted_channels.contains(&channel);
                 if new_tombstone {
                     self.server.deleted_channels.push(channel);
@@ -782,12 +829,26 @@ impl ServerState {
         if !self.messages.contains_key(&message.channel) {
             return Err(StoreError::UnknownChannel);
         }
-        if let Some(proof) = self.tombstones.get(&message.id) {
-            if proof.channel == message.channel && self.may_delete(proof.by, message.author) {
+        if let Some(mut list) = self.tombstones.remove(&message.id) {
+            // A proof accepted here for this author keeps it out, as does
+            // one the author or a moderator signed. Any other is void.
+            let author = message.author;
+            let mut blocked = false;
+            for s in &mut list {
+                if s.proof.channel == message.channel
+                    && (s.accepted_for == Some(author) || self.may_delete(s.proof.by, author))
+                {
+                    s.accepted_for.get_or_insert(author);
+                    blocked = true;
+                }
+            }
+            list.retain(|s| s.accepted_for.is_some());
+            if !list.is_empty() {
+                self.tombstones.insert(message.id, list);
+            }
+            if blocked {
                 return Ok(false);
             }
-            // Signed by someone who could not delete this message: void.
-            self.tombstones.remove(&message.id);
         }
         if self.deleted_messages.contains(&message.id) {
             return Ok(false);
@@ -860,23 +921,53 @@ impl ServerState {
         }
         let list = self.messages.get(&proof.channel).ok_or(StoreError::UnknownChannel)?;
         if let Some(pos) = list.iter().position(|m| m.id == proof.message) {
-            if !self.may_delete(proof.by, list[pos].author) {
+            let author = list[pos].author;
+            if !self.may_delete(proof.by, author) {
                 return Err(StoreError::NotAllowed);
             }
             if let Some(list) = self.messages.get_mut(&proof.channel) {
                 list.remove(pos);
             }
-            self.tombstones.insert(proof.message, proof);
+            self.store_proof(proof, Some(author));
             return Ok(true);
         }
-        // First proof wins, unless a moderator's replaces a member's.
-        if let Some(old) = self.tombstones.get(&proof.message) {
-            if *old == proof || self.is_moderator(old.by) || !self.is_moderator(proof.by) {
-                return Ok(false);
+        Ok(self.store_proof(proof, None))
+    }
+
+    /// Keeps a proof next to the others for its message: one per deleter
+    /// and at most [`MAX_PROOFS_PER_MESSAGE`], the best ranked winning.
+    /// Returns whether anything changed.
+    fn store_proof(&mut self, proof: TombstoneProof, accepted_for: Option<UserId>) -> bool {
+        let server = &self.server;
+        let rank = |s: &StoredProof| proof_rank(server, s);
+        let mut new = StoredProof { proof, accepted_for };
+        let list = self.tombstones.entry(new.proof.message).or_default();
+        if let Some(old) = list.iter_mut().find(|s| s.proof.by == new.proof.by) {
+            let mut changed = false;
+            if old.proof.channel == new.proof.channel {
+                // The same delete made twice (two devices, a retry) keeps
+                // the acceptance either one had.
+                new.accepted_for = new.accepted_for.or(old.accepted_for);
+                changed = old.accepted_for != new.accepted_for;
+                old.accepted_for = new.accepted_for;
             }
+            if rank(&new) < rank(old) {
+                *old = new;
+                return true;
+            }
+            return changed;
         }
-        self.tombstones.insert(proof.message, proof);
-        Ok(true)
+        if list.len() < MAX_PROOFS_PER_MESSAGE {
+            list.push(new);
+            return true;
+        }
+        match list.iter_mut().max_by_key(|s| rank(s)) {
+            Some(worst) if rank(&new) < rank(worst) => {
+                *worst = new;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The author may delete their own message; Manage Messages may
@@ -944,6 +1035,22 @@ impl ServerState {
 fn retention_cutoff(channel: &crate::server::Channel, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let days = channel.retention_days.filter(|d| *d > 0)?;
     Some(now - chrono::Duration::days(days as i64))
+}
+
+/// Preference between proofs for one message, lowest first: accepted
+/// here, then a moderator's, then the earliest, then the lowest
+/// signature, so peers holding the same proofs keep the same ones.
+fn proof_rank(server: &Server, stored: &StoredProof) -> (bool, bool, DateTime<Utc>, [u8; 64]) {
+    let moderator = server.permissions_for(stored.proof.by).allows(Permissions::MANAGE_MESSAGES);
+    (stored.accepted_for.is_none(), !moderator, stored.proof.at, stored.proof.sig.0)
+}
+
+/// Keeps only the proofs `keep` accepts, dropping emptied entries.
+fn retain_proofs(map: &mut HashMap<MessageId, Vec<StoredProof>>, keep: impl Fn(&TombstoneProof) -> bool) {
+    map.retain(|_, list| {
+        list.retain(|s| keep(&s.proof));
+        !list.is_empty()
+    });
 }
 
 /// Edit time in ms; None (never edited) orders first.
@@ -2021,13 +2128,232 @@ mod tests {
         assert_eq!(state.apply(elsewhere.into_event()), Ok(true));
         assert_eq!(create(&mut state, &three), Ok(true));
 
-        // First proof wins, except that a moderator's replaces a member's.
+        // Each deleter's proof is kept, a moderator's ranking first.
         let four = post(&state, channel, author, "four");
         assert_eq!(state.apply(delete(&state, &four, stranger)), Ok(true));
         assert_eq!(state.apply(delete(&state, &four, moderator)), Ok(true));
-        assert_eq!(state.apply(delete(&state, &four, author)), Ok(false));
+        assert_eq!(state.apply(delete(&state, &four, author)), Ok(true));
         assert_eq!(state.tombstone(four.id).map(|p| p.by), Some(moderator));
         assert_eq!(create(&mut state, &four), Ok(false));
+        let left: Vec<UserId> = state.tombstones_for(four.id).iter().map(|p| p.by).collect();
+        assert_eq!(left, vec![moderator, author], "the stranger's proof is void");
+    }
+
+    fn reload(state: &ServerState) -> ServerState {
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        ServerState::from_snapshot(serde_json::from_str(&json).unwrap())
+    }
+
+    fn mods_role(state: &ServerState, user: UserId) -> crate::ids::RoleId {
+        state.server.member(user).unwrap().roles[0]
+    }
+
+    #[test]
+    fn accepted_delete_outlives_the_deleters_role() {
+        let (mut state, channel, _) = fixture();
+        let sid = state.server.id;
+        let author = join(&mut state, "author");
+        type Demote = fn(ServerId, UserId, crate::ids::RoleId) -> ServerEvent;
+        let demotions: [(&str, Demote); 3] = [
+            ("leave", |server, user, _| ServerEvent::MemberLeave { server, user }),
+            ("unassign", |server, user, role| ServerEvent::RoleUnassign { server, user, role }),
+            ("ban", |server, user, _| ServerEvent::MemberBan { server, user }),
+        ];
+        for (how, demote) in demotions {
+            let moderator = join_moderator(&mut state);
+            let msg = post(&state, channel, author, how);
+            create(&mut state, &msg).unwrap();
+            assert_eq!(state.apply(delete(&state, &msg, moderator)), Ok(true));
+            assert_eq!(state.apply(demote(sid, moderator, mods_role(&state, moderator))), Ok(true));
+            assert!(!state.is_moderator(moderator), "{how}");
+            assert_eq!(create(&mut state, &msg), Ok(false), "{how}");
+            assert_eq!(state.tombstone(msg.id).map(|p| p.by), Some(moderator), "{how}");
+            assert_eq!(create(&mut reload(&state), &msg), Ok(false), "{how}, after a restart");
+        }
+    }
+
+    #[test]
+    fn early_proof_binds_once_checked_against_the_message() {
+        let (mut state, channel, _) = fixture();
+        let sid = state.server.id;
+        let author = join(&mut state, "author");
+        let moderator = join_moderator(&mut state);
+        let role = mods_role(&state, moderator);
+        let checked = post(&state, channel, author, "checked");
+        let unchecked = post(&state, channel, author, "unchecked");
+        state.apply(delete(&state, &checked, moderator)).unwrap();
+        state.apply(delete(&state, &unchecked, moderator)).unwrap();
+        // The message turns up while its deleter is still a moderator.
+        assert_eq!(create(&mut state, &checked), Ok(false));
+        state.apply(ServerEvent::RoleUnassign { server: sid, user: moderator, role }).unwrap();
+        assert_eq!(create(&mut state, &checked), Ok(false));
+        // A proof never checked is judged by current permissions.
+        assert_eq!(create(&mut state, &unchecked), Ok(true));
+        assert!(state.tombstone(unchecked.id).is_none());
+        let later = post(&state, channel, author, "later");
+        create(&mut state, &later).unwrap();
+        assert_eq!(state.apply(delete(&state, &later, moderator)), Err(StoreError::NotAllowed));
+    }
+
+    #[test]
+    fn acceptance_does_not_cover_another_author_reusing_the_id() {
+        let (mut state, channel, _) = fixture();
+        let author = join(&mut state, "author");
+        let mallory = join(&mut state, "mallory");
+        let real = post(&state, channel, author, "real");
+        let mut decoy = Message::new(channel, mallory, "decoy");
+        decoy.id = real.id;
+        let decoy = signed(&state, decoy);
+        create(&mut state, &decoy).unwrap();
+        assert_eq!(state.apply(delete(&state, &decoy, mallory)), Ok(true));
+        assert_eq!(create(&mut state, &decoy), Ok(false));
+        assert_eq!(create(&mut state, &real), Ok(true));
+    }
+
+    #[test]
+    fn snapshot_without_accepted_proofs_still_loads() {
+        let (mut state, channel, _) = fixture();
+        let author = join(&mut state, "author");
+        let moderator = join_moderator(&mut state);
+        let msg = post(&state, channel, author, "rude");
+        create(&mut state, &msg).unwrap();
+        state.apply(delete(&state, &msg, moderator)).unwrap();
+        let mut json = serde_json::to_value(state.snapshot()).unwrap();
+        assert_eq!(json["accepted_proofs"].as_array().map(Vec::len), Some(1));
+        json.as_object_mut().unwrap().remove("accepted_proofs");
+        let mut restored = ServerState::from_snapshot(serde_json::from_value(json).unwrap());
+        assert_eq!(restored.tombstone(msg.id), state.tombstone(msg.id));
+        assert_eq!(create(&mut restored, &msg), Ok(false), "still a moderator");
+    }
+
+    #[test]
+    fn a_strangers_proof_does_not_shut_out_the_authors() {
+        let (mut state, channel, _) = fixture();
+        let author = join(&mut state, "author");
+        let mallory = join(&mut state, "mallory");
+        let msg = post(&state, channel, author, "mine");
+        assert_eq!(state.apply(delete(&state, &msg, mallory)), Ok(true));
+        let own = proof(&state, &msg, author, Utc::now());
+        assert_eq!(state.apply(own.clone().into_event()), Ok(true));
+        assert_eq!(state.apply(own.clone().into_event()), Ok(false), "redelivery");
+        assert_eq!(state.tombstones_for(msg.id).len(), 2);
+        assert_eq!(create(&mut state, &msg), Ok(false));
+        assert_eq!(state.tombstones_for(msg.id), vec![&own], "the stranger's proof is void");
+    }
+
+    #[test]
+    fn proofs_per_message_are_capped_keeping_a_moderators() {
+        let (mut state, channel, _) = fixture();
+        let author = join(&mut state, "author");
+        let moderator = join_moderator(&mut state);
+        let strangers: Vec<UserId> =
+            (0..=MAX_PROOFS_PER_MESSAGE).map(|i| join(&mut state, &format!("s{i}"))).collect();
+        let msg = post(&state, channel, author, "busy");
+        let now = Utc::now();
+        for (i, s) in strangers.iter().enumerate() {
+            let p = proof(&state, &msg, *s, now + chrono::Duration::seconds(i as i64));
+            assert_eq!(state.apply(p.into_event()), Ok(i < MAX_PROOFS_PER_MESSAGE), "proof {i}");
+        }
+        // A moderator's proof displaces the latest stranger's.
+        let by_mod = proof(&state, &msg, moderator, now + chrono::Duration::days(1));
+        assert_eq!(state.apply(by_mod.into_event()), Ok(true));
+        let kept: Vec<UserId> = state.tombstones_for(msg.id).iter().map(|p| p.by).collect();
+        assert_eq!(kept, [&[moderator], &strangers[..MAX_PROOFS_PER_MESSAGE - 1]].concat());
+        assert_eq!(create(&mut state, &msg), Ok(false));
+    }
+
+    #[test]
+    fn the_same_delete_made_twice_settles_on_the_earliest() {
+        let (mut a, channel, _) = fixture();
+        let author = join(&mut a, "author");
+        let mut b = a.clone();
+        let msg = post(&a, channel, author, "twice");
+        create(&mut a, &msg).unwrap();
+        // Deleted from two devices either side of UTC midnight.
+        let midnight = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let early = proof(&a, &msg, author, midnight - chrono::Duration::minutes(1));
+        let late = proof(&a, &msg, author, midnight + chrono::Duration::minutes(1));
+        assert_eq!(a.apply(late.clone().into_event()), Ok(true));
+        assert_eq!(b.apply(early.clone().into_event()), Ok(true));
+        assert_eq!(a.apply(early.clone().into_event()), Ok(true));
+        assert_eq!(b.apply(late.into_event()), Ok(false));
+        for state in [&a, &b] {
+            assert_eq!(state.tombstones_for(msg.id), vec![&early]);
+        }
+        assert_eq!(a.tombstones[&msg.id][0].accepted_for, Some(author), "acceptance is kept");
+    }
+
+    #[test]
+    fn equal_proofs_at_the_cap_keep_the_lowest_signatures() {
+        let (mut a, channel, _) = fixture();
+        let author = join(&mut a, "author");
+        let strangers: Vec<UserId> =
+            (0..MAX_PROOFS_PER_MESSAGE + 2).map(|i| join(&mut a, &format!("s{i}"))).collect();
+        let mut b = a.clone();
+        let msg = post(&a, channel, author, "contested");
+        let at = Utc::now();
+        let proofs: Vec<TombstoneProof> = strangers.iter().map(|s| proof(&a, &msg, *s, at)).collect();
+        for p in &proofs {
+            a.apply(p.clone().into_event()).unwrap();
+        }
+        for p in proofs.iter().rev() {
+            b.apply(p.clone().into_event()).unwrap();
+        }
+        let mut expected: Vec<&TombstoneProof> = proofs.iter().collect();
+        expected.sort_by_key(|p| p.sig.0);
+        expected.truncate(MAX_PROOFS_PER_MESSAGE);
+        assert_eq!(a.tombstones_for(msg.id), expected);
+        assert_eq!(b.tombstones_for(msg.id), expected);
+    }
+
+    #[test]
+    fn deleting_a_channel_drops_its_proofs() {
+        use crate::catchup::{digests, mismatched};
+        let (mut a, text, owner) = fixture();
+        let sid = a.server.id;
+        let doomed = crate::server::Channel::new("doomed", ChannelKind::Text, 5);
+        let doomed_id = doomed.id;
+        a.apply(ServerEvent::ChannelCreate { server: sid, channel: doomed }).unwrap();
+        let mut b = a.clone();
+        let gone = post(&a, doomed_id, owner, "gone");
+        let kept = post(&a, text, owner, "kept");
+        let now = Utc::now();
+        a.apply(proof(&a, &gone, owner, now).into_event()).unwrap();
+        let kept_proof = proof(&a, &kept, owner, now);
+        for state in [&mut a, &mut b] {
+            state.apply(kept_proof.clone().into_event()).unwrap();
+            state.apply(ServerEvent::ChannelDelete { server: sid, channel: doomed_id }).unwrap();
+        }
+        assert!(a.tombstone(gone.id).is_none());
+        assert_eq!(a.tombstone(kept.id), Some(&kept_proof));
+        assert!(mismatched(&digests(&a, now), &digests(&b, now)).is_empty());
+    }
+
+    #[test]
+    fn load_and_prune_drop_proofs_for_missing_channels() {
+        let (mut state, text, owner) = fixture();
+        let sid = state.server.id;
+        let doomed = crate::server::Channel::new("doomed", ChannelKind::Text, 5);
+        let doomed_id = doomed.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: doomed }).unwrap();
+        let gone = post(&state, doomed_id, owner, "gone");
+        let kept = post(&state, text, owner, "kept");
+        state.apply(delete(&state, &gone, owner)).unwrap();
+        state.apply(delete(&state, &kept, owner)).unwrap();
+
+        // Saved by a version that kept proofs after their channel went.
+        let mut snapshot = state.snapshot();
+        snapshot.server.channels.retain(|c| c.id != doomed_id);
+        let restored = ServerState::from_snapshot(snapshot);
+        assert!(restored.tombstone(gone.id).is_none());
+        assert!(restored.tombstone(kept.id).is_some());
+
+        state.server.channels.retain(|c| c.id != doomed_id);
+        state.messages.remove(&doomed_id);
+        assert!(state.tombstone(gone.id).is_some());
+        state.prune_expired(Utc::now());
+        assert!(state.tombstone(gone.id).is_none());
+        assert!(state.tombstone(kept.id).is_some());
     }
 
     #[test]
@@ -2045,6 +2371,7 @@ mod tests {
         // Files written before proofs existed lack the field.
         let mut json = serde_json::to_value(&snapshot).unwrap();
         json.as_object_mut().unwrap().remove("tombstone_proofs");
+        json.as_object_mut().unwrap().remove("accepted_proofs");
         let mut restored = ServerState::from_snapshot(serde_json::from_value(json).unwrap());
         assert_eq!(restored.messages(channel), std::slice::from_ref(&legacy));
         assert_eq!(create(&mut restored, &gone), Ok(false), "unproven tombstone still holds");

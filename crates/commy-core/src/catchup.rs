@@ -4,12 +4,13 @@
 //! lives in `commy-net`.
 
 use crate::ids::{ChannelId, MessageId};
-use crate::message::Message;
+use crate::message::{Message, TombstoneProof};
 use crate::store::ServerState;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ops::RangeInclusive;
 
 /// UTC days of history covered, counting today.
 pub const CATCHUP_DAYS: u32 = 30;
@@ -57,6 +58,27 @@ pub fn first_day(now: DateTime<Utc>) -> u32 {
     day_number(now).saturating_sub(CATCHUP_DAYS - 1)
 }
 
+/// Last day inside the window: tomorrow, for a peer whose clock is
+/// already past midnight. Anything dated later stays out of catch-up.
+pub fn last_day(now: DateTime<Utc>) -> u32 {
+    day_number(now).saturating_add(1)
+}
+
+/// Days of the window at `now`, from [`first_day`] to [`last_day`].
+pub fn window(now: DateTime<Utc>) -> RangeInclusive<u32> {
+    first_day(now)..=last_day(now)
+}
+
+/// The window as of now, by this device's clock.
+pub fn current_window() -> RangeInclusive<u32> {
+    window(Utc::now())
+}
+
+/// Whether `day` lies in the window at `now`.
+pub fn in_window(day: u32, now: DateTime<Utc>) -> bool {
+    window(now).contains(&day)
+}
+
 fn day_start(day: u32) -> DateTime<Utc> {
     DateTime::from_timestamp_millis(day as i64 * DAY_MS).unwrap_or(DateTime::<Utc>::MIN_UTC)
 }
@@ -77,43 +99,58 @@ pub fn item_hash(id: MessageId, version: i64) -> [u8; 16] {
     out
 }
 
+/// Digest of one bucket's items.
+pub fn bucket_digest(key: BucketKey, list: &[(MessageId, i64)]) -> BucketDigest {
+    let mut hash = [0u8; 16];
+    for &(id, version) in list {
+        xor_into(&mut hash, item_hash(id, version));
+    }
+    BucketDigest { key, count: list.len() as u32, hash }
+}
+
+fn xor_into(hash: &mut [u8; 16], item: [u8; 16]) {
+    for (h, b) in hash.iter_mut().zip(item) {
+        *h ^= b;
+    }
+}
+
 /// Messages of a channel that catch-up carries: signed (unsigned ones
-/// from older versions would be refused anyway), inside retention, and
-/// created at or after `from` when given.
-fn covered(
-    state: &ServerState,
-    channel: ChannelId,
-    from: Option<DateTime<Utc>>,
-    now: DateTime<Utc>,
-) -> impl Iterator<Item = &Message> {
-    let since = match (state.retention_cutoff(channel, now), from) {
-        (Some(a), Some(b)) => Some(a.max(b)),
-        (a, b) => a.or(b),
-    };
+/// from older versions would be refused anyway), inside retention and
+/// dated inside the window.
+fn covered(state: &ServerState, channel: ChannelId, now: DateTime<Utc>) -> impl Iterator<Item = &Message> {
+    let from = day_start(first_day(now));
+    let since = state.retention_cutoff(channel, now).map_or(from, |cutoff| cutoff.max(from));
+    let until = day_start(last_day(now).saturating_add(1));
     state
         .messages(channel)
         .iter()
-        .filter(move |m| m.sig.is_some() && !since.is_some_and(|s| m.created_at < s))
+        .filter(move |m| m.sig.is_some() && m.created_at >= since && m.created_at < until)
+}
+
+/// Delete proofs that catch-up carries: made inside the window, for a
+/// channel that still exists.
+fn covered_tombstones(state: &ServerState, now: DateTime<Utc>) -> impl Iterator<Item = &TombstoneProof> {
+    let until = day_start(last_day(now).saturating_add(1));
+    state
+        .tombstones_since(day_start(first_day(now)))
+        .filter(move |p| p.at < until && state.server.channel(p.channel).is_some())
 }
 
 /// Digests of every non-empty bucket in the window, sorted by key.
 pub fn digests(state: &ServerState, now: DateTime<Utc>) -> Vec<BucketDigest> {
-    let from = day_start(first_day(now));
     let mut buckets: BTreeMap<BucketKey, (u32, [u8; 16])> = BTreeMap::new();
     let mut add = |key: BucketKey, id: MessageId, version: i64| {
         let (count, hash) = buckets.entry(key).or_insert((0, [0; 16]));
         *count += 1;
-        for (h, b) in hash.iter_mut().zip(item_hash(id, version)) {
-            *h ^= b;
-        }
+        xor_into(hash, item_hash(id, version));
     };
     for channel in &state.server.channels {
-        for m in covered(state, channel.id, Some(from), now) {
+        for m in covered(state, channel.id, now) {
             let key = BucketKey::Messages { channel: channel.id, day: day_number(m.created_at) };
             add(key, m.id, message_version(m));
         }
     }
-    for proof in state.tombstones_since(from) {
+    for proof in covered_tombstones(state, now) {
         add(BucketKey::Tombstones { day: day_number(proof.at) }, proof.message, 0);
     }
     buckets
@@ -135,14 +172,14 @@ pub fn mismatched(ours: &[BucketDigest], theirs: &[BucketDigest]) -> Vec<BucketK
         .collect()
 }
 
-/// Items of the requested buckets, one entry per distinct key (empty
-/// when we hold nothing there), sorted by key. Keys outside our window
-/// are answered too, so peers whose clocks straddle midnight agree.
+/// Items of the requested buckets inside the window, one entry per
+/// distinct key (empty when we hold nothing there), sorted by key. Keys
+/// outside the window get no entry.
 pub fn items(state: &ServerState, keys: &[BucketKey], now: DateTime<Utc>) -> Vec<BucketItems> {
     let mut out: BTreeMap<BucketKey, Vec<(MessageId, i64)>> = BTreeMap::new();
     let mut channel_days: HashMap<ChannelId, HashSet<u32>> = HashMap::new();
     let mut tombstone_days: HashSet<u32> = HashSet::new();
-    for key in keys {
+    for key in keys.iter().filter(|k| in_window(k.day(), now)) {
         out.entry(*key).or_default();
         match *key {
             BucketKey::Messages { channel, day } => {
@@ -154,7 +191,7 @@ pub fn items(state: &ServerState, keys: &[BucketKey], now: DateTime<Utc>) -> Vec
         }
     }
     for (channel, days) in &channel_days {
-        for m in covered(state, *channel, None, now) {
+        for m in covered(state, *channel, now) {
             let day = day_number(m.created_at);
             if days.contains(&day) {
                 let key = BucketKey::Messages { channel: *channel, day };
@@ -163,7 +200,7 @@ pub fn items(state: &ServerState, keys: &[BucketKey], now: DateTime<Utc>) -> Vec
         }
     }
     if !tombstone_days.is_empty() {
-        for proof in state.tombstones_since(DateTime::<Utc>::MIN_UTC) {
+        for proof in covered_tombstones(state, now) {
             let day = day_number(proof.at);
             if tombstone_days.contains(&day) {
                 out.entry(BucketKey::Tombstones { day }).or_default().push((proof.message, 0));
@@ -262,6 +299,10 @@ mod tests {
         assert_eq!(day_start(20_000), at(20_000, 0));
         assert_eq!(first_day(at(20_000, 123)), 20_000 - 29);
         assert_eq!(first_day(at(3, 0)), 0);
+        assert_eq!(last_day(at(20_000, 123)), 20_001);
+        let now = at(20_000, 5);
+        assert!(in_window(20_000 - 29, now) && in_window(20_001, now));
+        assert!(!in_window(20_000 - 30, now) && !in_window(20_002, now));
     }
 
     #[test]
@@ -388,19 +429,83 @@ mod tests {
         let m = post(&state, channel, owner, "hi");
         state.apply(ServerEvent::MessageCreate { message: m.clone() }).unwrap();
         let today = BucketKey::Messages { channel, day: day_number(now) };
-        let other = BucketKey::Messages { channel: ChannelId::new(), day: 4 };
+        let other = BucketKey::Messages { channel: ChannelId::new(), day: day_number(now) };
         let out = items(&state, &[today, other, today], now);
         assert_eq!(out.len(), 2, "duplicates collapse");
         assert!(out.contains(&(today, vec![(m.id, 0)])));
         assert!(out.contains(&(other, vec![])));
 
-        // Days before our window are answered on request.
+        // Days outside our window get no entry, even when we hold items there.
         let mut old = Message::new(channel, owner, "old");
         old.created_at = now - Duration::days(45);
         let old = signed(&state, old);
         state.apply(ServerEvent::MessageCreate { message: old.clone() }).unwrap();
         let old_key = BucketKey::Messages { channel, day: day_number(old.created_at) };
-        assert_eq!(items(&state, &[old_key], now), vec![(old_key, vec![(old.id, 0)])]);
+        let far = BucketKey::Tombstones { day: day_number(now) + 2 };
+        assert!(items(&state, &[old_key, far], now).is_empty());
+    }
+
+    #[test]
+    fn future_dated_items_stay_out_of_the_window() {
+        let (mut state, channel, owner) = fixture();
+        let now = Utc::now();
+        let (mut ids, mut proofs) = (vec![], vec![]);
+        for days in [1, 3] {
+            let mut m = Message::new(channel, owner, "from the future");
+            m.created_at = now + Duration::days(days);
+            let m = signed(&state, m);
+            ids.push(m.id);
+            state.apply(ServerEvent::MessageCreate { message: m }).unwrap();
+            // The store may refuse a proof dated ahead; either way it stays out.
+            let gone = post(&state, channel, owner, "deleted later");
+            let _ = state.apply(proof(&state, &gone, owner, now + Duration::days(days)).into_event());
+            proofs.push(state.tombstone(gone.id).is_some());
+        }
+        assert!(state.has_message(ids[1]), "it still applies normally");
+        let tomorrow = day_number(now) + 1;
+        let keys: Vec<BucketKey> = digests(&state, now).iter().map(|d| d.key).collect();
+        let mut expected = vec![BucketKey::Messages { channel, day: tomorrow }];
+        if proofs[0] {
+            expected.push(BucketKey::Tombstones { day: tomorrow });
+        }
+        assert_eq!(keys, expected);
+        let later = [BucketKey::Messages { channel, day: tomorrow + 2 }, BucketKey::Tombstones { day: tomorrow + 2 }];
+        assert!(items(&state, &later, now).is_empty());
+        let next = BucketKey::Messages { channel, day: tomorrow };
+        assert_eq!(items(&state, &[next], now), vec![(next, vec![(ids[0], 0)])]);
+    }
+
+    #[test]
+    fn proofs_for_channels_that_are_gone_stay_out() {
+        let (mut state, channel, owner) = fixture();
+        let now = Utc::now();
+        let m = post(&state, channel, owner, "in a channel about to go");
+        state.apply(ServerEvent::MessageCreate { message: m.clone() }).unwrap();
+        state.apply(delete(&state, &m, owner)).unwrap();
+        let key = BucketKey::Tombstones { day: day_number(now) };
+        assert_eq!(items(&state, &[key], now), vec![(key, vec![(m.id, 0)])]);
+        // As left behind by an older version, or held by a peer that has
+        // not pruned yet.
+        state.server.channels.retain(|c| c.id != channel);
+        assert!(state.tombstone(m.id).is_some());
+        assert!(digests(&state, now).is_empty());
+        assert_eq!(items(&state, &[key], now), vec![(key, vec![])]);
+        let (other, _, _) = fixture();
+        assert!(mismatched(&digests(&state, now), &digests(&other, now)).is_empty());
+    }
+
+    #[test]
+    fn bucket_digest_matches_digests() {
+        let (mut state, channel, owner) = fixture();
+        let now = Utc::now();
+        for text in ["a", "b", "c"] {
+            let m = post(&state, channel, owner, text);
+            state.apply(ServerEvent::MessageCreate { message: m }).unwrap();
+        }
+        let sent = digests(&state, now);
+        let listed = items(&state, &[sent[0].key], now);
+        assert_eq!(bucket_digest(listed[0].0, &listed[0].1), sent[0]);
+        assert_eq!(bucket_digest(sent[0].key, &[]), BucketDigest { key: sent[0].key, count: 0, hash: [0; 16] });
     }
 
     #[test]

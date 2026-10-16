@@ -4,15 +4,18 @@
 //! neighbor connects. DMs to a partner who is offline wait too and are
 //! retried in order. Everything is kept in `<data>/outbox.json`.
 
+use crate::catchup::AppAccess;
 use crate::state::App;
 use commy_core::catchup::{day_number, first_day};
-use commy_core::{IdentityKey, MessageId, Presence, ServerEvent, ServerId, ServerState, UserId};
+use commy_core::{IdentityKey, MessageId, Presence, ServerEvent, ServerId, ServerState, UserId, UserProfile};
+use commy_net::node::IncomingDm;
 use commy_net::{DmEnvelope, WirePayload};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 pub const OUTBOX_FILE: &str = "outbox.json";
 
@@ -276,6 +279,32 @@ pub fn dm_sender_trusted(app: &App, envelope: &DmEnvelope) -> bool {
     key_matches_pins(key, pins)
 }
 
+/// True when a node id in hex names `node`.
+fn names_node(hex: Option<&str>, node: [u8; 32]) -> bool {
+    hex.and_then(|h| data_encoding::HEXLOWER_PERMISSIVE.decode(h.trim().as_bytes()).ok())
+        .is_some_and(|bytes| bytes == node)
+}
+
+/// Checks an incoming DM before anything else looks at it. It must be
+/// addressed to us and signed by its sender with the key we hold for
+/// them. Returns the sender's profile to cache as a contact, or None to
+/// drop the DM. The node in that profile is not signed, so it is kept
+/// only when it is the node the DM came from; otherwise the node cached
+/// for the contact stays, and a relayed DM cannot point us elsewhere.
+pub fn screen_dm(app: &App, dm: &IncomingDm) -> Option<UserProfile> {
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id)?;
+    let envelope = &dm.envelope;
+    if envelope.message.to != me || !dm_sender_trusted(app, envelope) {
+        return None;
+    }
+    let mut sender = envelope.sender.clone();
+    if !names_node(sender.node.as_deref(), dm.node) {
+        tracing::debug!("a DM from {} came from another node than it names", sender.id);
+        sender.node = app.dms.lock().unwrap().contacts.get(&sender.id).and_then(|p| p.node.clone());
+    }
+    Some(sender)
+}
+
 // ---------- Network glue ----------
 
 /// Broadcasts an event we already applied locally. When no neighbor is
@@ -304,7 +333,8 @@ pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) ->
 }
 
 /// Re-broadcasts a server's queued events, oldest first, now that a
-/// neighbor is connected. What fails to go out stays queued.
+/// neighbor is connected. An event leaves the queue only once it went out
+/// with a neighbor connected; the rest stay queued for the next one.
 pub async fn flush_queued(app: &App, server: ServerId) {
     let events = app.outbox.lock().unwrap().take_queued(server);
     if events.is_empty() {
@@ -317,7 +347,11 @@ pub async fn flush_queued(app: &App, server: ServerId) {
         let sent = {
             let net = app.net.lock().await;
             match net.as_ref() {
-                Some(node) => node.broadcast(server, WirePayload::Event(event.clone())).await,
+                // A neighbor may have left since the event that woke us.
+                Some(node) if node.neighbor_count(server) > 0 => {
+                    node.broadcast(server, WirePayload::Event(event.clone())).await
+                }
+                Some(_) => Err(anyhow::anyhow!("no neighbor is connected")),
                 None => Err(anyhow::anyhow!("network is not ready")),
             }
         };
@@ -327,14 +361,21 @@ pub async fn flush_queued(app: &App, server: ServerId) {
             break;
         }
     }
-    tracing::info!("re-sent {} of {total} queued events", total - left.len());
+    let sent = total - left.len();
+    tracing::info!("re-sent {sent} of {total} queued events");
     app.outbox.lock().unwrap().requeue(server, left);
-    app.persist_outbox();
+    if sent > 0 {
+        app.persist_outbox();
+    }
 }
 
 /// Sends one DM now. False when the partner has no known address, the
-/// network is not up, or delivery failed.
+/// network is not up, delivery failed, or our key may still change (the
+/// partner would pin the one we are about to drop).
 pub async fn try_send_dm(app: &App, partner: UserId, envelope: &DmEnvelope) -> bool {
+    if !app.key_settled() {
+        return false;
+    }
     let Some(hex) = crate::node_hex_for_user(app, partner) else { return false };
     let send = {
         let net = app.net.lock().await;
@@ -368,6 +409,14 @@ pub fn wake_dm(app: &App, partner: UserId) {
     }
     app.dm_backoff.lock().unwrap().wake(partner, Instant::now());
     app.dm_wake.notify_one();
+}
+
+/// Retries every partner's waiting DMs right away.
+pub fn wake_all_dms(app: &App) {
+    let partners = app.outbox.lock().unwrap().dm_partners();
+    for partner in partners {
+        wake_dm(app, partner);
+    }
 }
 
 /// A node became a gossip neighbor: retry DMs to whoever is on it.
@@ -411,7 +460,23 @@ pub async fn run_dm_outbox(handle: tauri::AppHandle) {
 /// Tries a partner's waiting DMs in order, stopping at the first failure.
 async fn deliver_dms(handle: &tauri::AppHandle, partner: UserId) {
     let app = handle.state::<App>();
-    let (Ok(me), Some(identity)) = (crate::current_profile(&app), app.identity()) else { return };
+    deliver_dms_with(handle, partner, |envelope| {
+        let app = &app;
+        async move { try_send_dm(app, partner, &envelope).await }
+    })
+    .await;
+}
+
+/// [`deliver_dms`] over any transport. A delivery tells the webview with
+/// `dm-sent`, not `dm-changed`: nothing arrived, ours went out.
+async fn deliver_dms_with<A, F, Fut>(access: &A, partner: UserId, send: F)
+where
+    A: AppAccess,
+    F: Fn(DmEnvelope) -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let app = access.app();
+    let (Ok(me), Some(identity)) = (crate::current_profile(app), app.identity()) else { return };
     if app.safety.lock().unwrap().is_blocked(partner) {
         return;
     }
@@ -428,7 +493,7 @@ async fn deliver_dms(handle: &tauri::AppHandle, partner: UserId) {
         // Signed again with the current key, which may have been swapped.
         message.sign(&identity);
         let envelope = DmEnvelope { message, sender: me.clone() };
-        if !try_send_dm(&app, partner, &envelope).await {
+        if !send(envelope).await {
             failed = true;
             break;
         }
@@ -444,14 +509,16 @@ async fn deliver_dms(handle: &tauri::AppHandle, partner: UserId) {
     }
     if changed {
         app.persist_outbox();
-        let _ = handle.emit("dm-changed", partner.to_string());
+        access.emit("dm-sent", partner.to_string().into());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commy_core::{Identity, Message, Server, TombstoneProof, UserProfile};
+    use crate::catchup::TestHandle;
+    use commy_core::{DmMessage, Identity, Message, Server, TombstoneProof};
+    use std::sync::{Arc, Mutex};
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let nanos = std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos();
@@ -777,5 +844,135 @@ mod tests {
         app.servers.lock().unwrap().insert(state.server.id, state);
         assert!(dm_sender_trusted(&app, &envelope));
         assert!(!dm_sender_trusted(&app, &forged));
+    }
+
+    const SENDER_NODE: [u8; 32] = [1; 32];
+    const OTSENDER_NODE: [u8; 32] = [2; 32];
+
+    fn hex(node: [u8; 32]) -> String {
+        data_encoding::HEXLOWER.encode(&node)
+    }
+
+    #[test]
+    fn dms_must_be_ours_and_cannot_move_a_contact() {
+        let app = App::default();
+        let me = UserProfile::new("me");
+        *app.profile.lock().unwrap() = Some(me.clone());
+        let identity = Identity::generate();
+        let mut sender = UserProfile::new("sender");
+        sender.identity = Some(identity.public());
+        sender.node = Some(hex(SENDER_NODE));
+        let signed_to = |to: UserId| {
+            let mut message = DmMessage::new(sender.id, to, "hi");
+            message.sign(&identity);
+            message
+        };
+        let incoming = |message: DmMessage, sender: &UserProfile, node: [u8; 32]| IncomingDm {
+            envelope: DmEnvelope { message, sender: sender.clone() },
+            node,
+        };
+
+        // Signed by the sender, for us, from their node: taken as it came.
+        let direct = incoming(signed_to(me.id), &sender, SENDER_NODE);
+        assert_eq!(screen_dm(&app, &direct), Some(sender.clone()));
+        app.dms.lock().unwrap().remember_contact(sender.clone());
+
+        // Their signed DM to someone else, sent on to us: dropped.
+        let someone_else = UserId::new();
+        assert_eq!(screen_dm(&app, &incoming(signed_to(someone_else), &sender, OTSENDER_NODE)), None);
+        assert_eq!(screen_dm(&app, &incoming(signed_to(someone_else), &sender, SENDER_NODE)), None);
+
+        // One of theirs to us, sent again from another node: still
+        // theirs, but the node we reach them on stays.
+        let relayed = screen_dm(&app, &incoming(signed_to(me.id), &sender, OTSENDER_NODE)).unwrap();
+        assert_eq!(relayed.node, Some(hex(SENDER_NODE)));
+        let mut elsewhere = sender.clone();
+        elsewhere.node = Some(hex(OTSENDER_NODE));
+        let claimed = screen_dm(&app, &incoming(signed_to(me.id), &elsewhere, SENDER_NODE)).unwrap();
+        assert_eq!(claimed.node, Some(hex(SENDER_NODE)), "a node it did not come from is not taken");
+
+        // A first contact that names another node gets none.
+        let fresh = App::default();
+        *fresh.profile.lock().unwrap() = Some(me.clone());
+        assert_eq!(screen_dm(&fresh, &incoming(signed_to(me.id), &sender, OTSENDER_NODE)).unwrap().node, None);
+
+        // Unsigned, or before we have a profile: dropped.
+        let mut unsigned = signed_to(me.id);
+        unsigned.sig = None;
+        assert_eq!(screen_dm(&app, &incoming(unsigned, &sender, SENDER_NODE)), None);
+        assert_eq!(screen_dm(&App::default(), &direct), None);
+    }
+
+    #[test]
+    fn concurrent_saves_leave_the_latest_outbox() {
+        let dir = temp_dir("concurrent");
+        let app = Arc::new(App::default());
+        app.data_dir.set(dir.clone()).unwrap();
+        let writers: Vec<_> = (0..8)
+            .map(|_| {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..40 {
+                        queue_dm(&app, UserId::new(), MessageId::new());
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        assert_eq!(app.outbox.lock().unwrap().dm_partners().len(), 8 * 40);
+        assert_eq!(Outbox::load(&dir), *app.outbox.lock().unwrap(), "the file holds the last state");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn queued_events_wait_for_a_neighbor() {
+        let app = App::default();
+        let sid = ServerId::new();
+        app.outbox.lock().unwrap().note_local(sid, &rename(sid, "offline"), false);
+        flush_queued(&app, sid).await;
+        assert_eq!(app.outbox.lock().unwrap().clone().take_queued(sid), vec![rename(sid, "offline")]);
+
+        // The network is up and we are on the topic, but nobody is connected.
+        let (mut node, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(30), node.host_server(sid, "s")).await.unwrap().unwrap();
+        *app.net.lock().await = Some(node);
+        flush_queued(&app, sid).await;
+        assert_eq!(app.outbox.lock().unwrap().clone().take_queued(sid), vec![rename(sid, "offline")]);
+        let node = app.net.lock().await.take();
+        if let Some(node) = node {
+            node.shutdown().await.ok();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_waiting_dm_going_out_is_not_a_new_one() {
+        let app = Arc::new(App::default());
+        let identity = Identity::generate();
+        let mut me = UserProfile::new("me");
+        me.identity = Some(identity.public());
+        *app.profile.lock().unwrap() = Some(me.clone());
+        *app.identity.lock().unwrap() = Some(identity);
+        let partner = UserId::new();
+        let message = DmMessage::new(me.id, partner, "while you were away");
+        app.dms.lock().unwrap().insert(partner, message.clone());
+        app.outbox.lock().unwrap().add_dm(partner, message.id);
+        let handle = TestHandle::new(app.clone());
+
+        // Still unreachable: kept, and nothing to tell.
+        deliver_dms_with(&handle, partner, |_| async { false }).await;
+        assert!(app.outbox.lock().unwrap().has_dms(partner));
+        assert!(handle.take_events().is_empty());
+
+        let sent = Mutex::new(Vec::new());
+        deliver_dms_with(&handle, partner, |envelope: DmEnvelope| {
+            sent.lock().unwrap().push(envelope.message.id);
+            async { true }
+        })
+        .await;
+        assert_eq!(*sent.lock().unwrap(), vec![message.id]);
+        assert!(!app.outbox.lock().unwrap().has_dms(partner));
+        assert_eq!(handle.take_events(), vec![("dm-sent".to_string(), partner.to_string().into())]);
     }
 }

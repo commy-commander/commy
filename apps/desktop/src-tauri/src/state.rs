@@ -3,9 +3,10 @@ use commy_audio::VoiceProcessor;
 use commy_core::{DmStore, Identity, ServerId, ServerState, UserId, UserProfile};
 use commy_net::CommyNode;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 fn default_gain() -> f32 {
     1.0
@@ -60,15 +61,16 @@ fn default_true() -> bool {
     true
 }
 
-/// Puts our current key on our own entry of a server. Returns true when
-/// it changed.
-fn set_own_key(state: &mut ServerState, me: UserId, key: commy_core::IdentityKey) -> bool {
+/// Puts our current key on our own entry of a server. Returns None when
+/// nothing changed, else the key the entry held before, if any.
+fn set_own_key(
+    state: &mut ServerState,
+    me: UserId,
+    key: commy_core::IdentityKey,
+) -> Option<Option<commy_core::IdentityKey>> {
     match state.profiles.get_mut(&me) {
-        Some(profile) if profile.identity != Some(key) => {
-            profile.identity = Some(key);
-            true
-        }
-        _ => false,
+        Some(profile) if profile.identity != Some(key) => Some(profile.identity.replace(key)),
+        _ => None,
     }
 }
 
@@ -148,6 +150,12 @@ pub struct App {
     pub dm_wake: tokio::sync::Notify,
     /// Catch-up sessions, and events held for an unknown author key.
     pub catchup: Mutex<crate::catchup::Catchup>,
+    /// Servers joined from a ticket that still wait for their first
+    /// snapshot. Only these take one (see `catchup::apply_snapshot`).
+    pub awaiting_snapshot: Mutex<HashSet<ServerId>>,
+    /// While set, our key was made in this run and may still give way to
+    /// the account's key, so it is not announced before that time.
+    pub key_hold: Mutex<Option<Instant>>,
 }
 
 impl Default for App {
@@ -194,6 +202,8 @@ impl Default for App {
             dm_backoff: Mutex::new(crate::outbox::DmBackoff::default()),
             dm_wake: tokio::sync::Notify::new(),
             catchup: Mutex::new(crate::catchup::Catchup::default()),
+            awaiting_snapshot: Mutex::new(HashSet::new()),
+            key_hold: Mutex::new(None),
         }
     }
 }
@@ -206,6 +216,57 @@ impl App {
     /// The identity key we sign with, once loaded.
     pub fn identity(&self) -> Option<Identity> {
         self.identity.lock().unwrap().clone()
+    }
+
+    /// Keeps our key to ourselves until `until`, or until [`App::settle_key`].
+    pub fn hold_key(&self, until: Instant) {
+        *self.key_hold.lock().unwrap() = Some(until);
+    }
+
+    /// True once our key may be announced and pinned by others.
+    pub fn key_settled(&self) -> bool {
+        self.key_hold.lock().unwrap().is_none_or(|until| Instant::now() >= until)
+    }
+
+    /// Our key is final. True when it was held back until now.
+    pub fn settle_key(&self) -> bool {
+        self.key_hold.lock().unwrap().take().is_some()
+    }
+
+    /// Our profile as we announce it: without the key while it may still
+    /// be replaced, so nobody pins one we are about to drop.
+    pub fn announced(&self, mut profile: UserProfile) -> UserProfile {
+        if !self.key_settled() {
+            profile.identity = None;
+        }
+        profile
+    }
+
+    pub fn awaits_snapshot(&self, server: ServerId) -> bool {
+        self.awaiting_snapshot.lock().unwrap().contains(&server)
+    }
+
+    /// Marks a server as waiting for its first snapshot, or not any more.
+    pub fn set_awaiting_snapshot(&self, server: ServerId, awaiting: bool) {
+        let changed = {
+            let mut set = self.awaiting_snapshot.lock().unwrap();
+            if awaiting {
+                set.insert(server)
+            } else {
+                set.remove(&server)
+            }
+        };
+        if changed {
+            self.persist_awaiting();
+        }
+    }
+
+    pub fn persist_awaiting(&self) {
+        let Some(dir) = self.data_dir() else { return };
+        let set = self.awaiting_snapshot.lock().unwrap();
+        if let Err(e) = crate::persist::save_awaiting(dir, &set) {
+            tracing::warn!("failed to persist servers awaiting a snapshot: {e}");
+        }
     }
 
     /// Re-reads `identity.key` (another module may have replaced it),
@@ -235,7 +296,16 @@ impl App {
             let mut servers = self.servers.lock().unwrap();
             servers
                 .values_mut()
-                .filter_map(|state| set_own_key(state, profile.id, key).then_some(state.server.id))
+                .filter_map(|state| {
+                    let before = set_own_key(state, profile.id, key)?;
+                    if before.is_some() {
+                        tracing::warn!(
+                            "server {} had another key pinned for us; members who pinned it reject what we sign",
+                            state.server.id
+                        );
+                    }
+                    Some(state.server.id)
+                })
                 .collect()
         };
         for id in updated {
@@ -282,8 +352,14 @@ impl App {
 
     pub fn persist_outbox(&self) {
         let Some(dir) = self.data_dir() else { return };
-        let outbox = self.outbox.lock().unwrap().clone();
-        if let Err(e) = outbox.save(dir) {
+        self.write_outbox(|outbox| outbox.save(dir));
+    }
+
+    /// Writes the outbox while holding its lock, so saves from several
+    /// tasks land one at a time and the last one is the newest state.
+    fn write_outbox(&self, write: impl FnOnce(&crate::outbox::Outbox) -> anyhow::Result<()>) {
+        let outbox = self.outbox.lock().unwrap();
+        if let Err(e) = write(&outbox) {
             tracing::warn!("failed to persist outbox: {e}");
         }
     }
@@ -350,6 +426,68 @@ mod tests {
     }
 
     #[test]
+    fn a_key_held_back_stays_out_of_announcements() {
+        let app = App::default();
+        let mut me = UserProfile::new("me");
+        me.identity = Some(Identity::generate().public());
+        assert_eq!(app.announced(me.clone()), me, "settled unless held");
+        app.hold_key(Instant::now() + std::time::Duration::from_secs(120));
+        assert!(!app.key_settled());
+        assert_eq!(app.announced(me.clone()).identity, None);
+        assert!(app.settle_key());
+        assert!(!app.settle_key(), "settled once");
+        assert_eq!(app.announced(me.clone()), me);
+        // The hold ends by itself when its time is up.
+        app.hold_key(Instant::now());
+        assert!(app.key_settled());
+        assert_eq!(app.announced(me.clone()), me);
+    }
+
+    #[test]
+    fn servers_awaiting_a_snapshot_survive_a_restart() {
+        let dir = temp_dir("awaiting");
+        let app = App::default();
+        app.data_dir.set(dir.clone()).unwrap();
+        let (a, b) = (ServerId::new(), ServerId::new());
+        app.set_awaiting_snapshot(a, true);
+        app.set_awaiting_snapshot(b, true);
+        app.set_awaiting_snapshot(b, false);
+        assert!(app.awaits_snapshot(a) && !app.awaits_snapshot(b));
+        assert_eq!(crate::persist::load_awaiting(&dir), HashSet::from([a]));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn outbox_saves_never_overlap() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let app = Arc::new(App::default());
+        let writing = Arc::new(AtomicUsize::new(0));
+        let overlapped = Arc::new(AtomicBool::new(false));
+        let writers: Vec<_> = (0..4)
+            .map(|_| {
+                let (app, writing, overlapped) = (app.clone(), writing.clone(), overlapped.clone());
+                std::thread::spawn(move || {
+                    for _ in 0..5 {
+                        app.write_outbox(|_| {
+                            if writing.fetch_add(1, Ordering::SeqCst) > 0 {
+                                overlapped.store(true, Ordering::SeqCst);
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(2));
+                            writing.fetch_sub(1, Ordering::SeqCst);
+                            Ok(())
+                        });
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        assert!(!overlapped.load(Ordering::SeqCst), "two saves wrote the file at once");
+    }
+
+    #[test]
     fn own_key_changes_only_our_entry() {
         let me = UserProfile::new("me");
         let other = UserProfile::new("other");
@@ -357,10 +495,14 @@ mod tests {
         state.profiles.insert(me.id, me.clone());
         state.profiles.insert(other.id, other.clone());
         let key = Identity::generate().public();
-        assert!(set_own_key(&mut state, me.id, key));
-        assert!(!set_own_key(&mut state, me.id, key), "no change the second time");
+        assert_eq!(set_own_key(&mut state, me.id, key), Some(None));
+        assert_eq!(set_own_key(&mut state, me.id, key), None, "no change the second time");
         assert_eq!(state.identity_of(me.id), Some(key));
         assert_eq!(state.identity_of(other.id), None);
-        assert!(!set_own_key(&mut state, UserId::new(), key), "not a member here");
+        assert_eq!(set_own_key(&mut state, UserId::new(), key), None, "not a member here");
+        // A different key pinned for us is reported, then replaced.
+        let next = Identity::generate().public();
+        assert_eq!(set_own_key(&mut state, me.id, next), Some(Some(key)));
+        assert_eq!(state.identity_of(me.id), Some(next));
     }
 }

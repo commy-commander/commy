@@ -1,7 +1,10 @@
 //! Test helpers: servers whose members hold identity keys, and an
 //! in-memory catch-up store.
 
-use crate::catchup::{apply_items, check_peer, collect, ApplyReport, CatchupStore, PeerCheck};
+use crate::catchup::{
+    apply_items, apply_profiles, check_peer, collect, profiles_of, ApplyReport, CatchupStore,
+    PeerCheck,
+};
 use chrono::{DateTime, Utc};
 use commy_core::catchup::{digests, items, BucketItems};
 use commy_core::{
@@ -157,6 +160,14 @@ impl CatchupStore for MemStore {
 
     fn get(&self, _: ServerId, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>) {
         self.with(|s| collect(s, ids))
+    }
+
+    fn profiles(&self, _: ServerId, users: &[UserId]) -> Vec<UserProfile> {
+        self.with(|s| profiles_of(s, users))
+    }
+
+    fn apply_profiles(&self, _: ServerId, profiles: Vec<UserProfile>) {
+        self.with(|s| apply_profiles(s, profiles));
     }
 
     fn apply(

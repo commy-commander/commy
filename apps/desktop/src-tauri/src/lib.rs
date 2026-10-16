@@ -94,15 +94,41 @@ fn signing_key(app: &App) -> CmdResult<Identity> {
     app.identity().ok_or_else(|| "your identity key is not ready yet".to_string())
 }
 
+/// Refuses direct sends while our key may still be replaced, since the
+/// receiver would pin the one we are about to drop.
+fn key_settled(app: &App) -> CmdResult<()> {
+    if app.key_settled() {
+        Ok(())
+    } else {
+        Err("your identity is still being set up; try again in a minute".into())
+    }
+}
+
 /// Re-reads the identity key file, which another module may have
-/// replaced, and announces the key to every server we are in.
+/// replaced, announces the key to every server we are in, and sends the
+/// DMs that waited for it.
 pub async fn reload_identity(handle: &tauri::AppHandle) -> std::io::Result<()> {
     let app = handle.state::<App>();
     if let Some(profile) = app.reload_identity()? {
         announce_profile(&app, handle, &profile).await;
         let _ = handle.emit("profile-changed", &profile);
     }
+    outbox::wake_all_dms(&app);
     Ok(())
+}
+
+/// Longest a key made in this run on a signed-in device is kept to
+/// ourselves while the server list sync may replace it.
+const KEY_SETTLE_MAX: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Our key is final (see `App::hold_key`): announce it if it was held back.
+pub async fn settle_key(handle: &tauri::AppHandle) {
+    if !handle.state::<App>().settle_key() {
+        return;
+    }
+    if let Err(e) = reload_identity(handle).await {
+        tracing::warn!("could not announce our identity key: {e}");
+    }
 }
 
 // ---------- Servers ----------
@@ -196,6 +222,8 @@ pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: Se
     state.profiles.insert(profile.id, profile.clone());
     let summary = ServerSummary::from_state(&state);
     app.servers.lock().unwrap().insert(ticket.server_id, state);
+    // Only this state takes a snapshot, once (see `catchup::apply_snapshot`).
+    app.set_awaiting_snapshot(ticket.server_id, true);
 
     // Announce ourselves to the topic.
     broadcast(
@@ -203,7 +231,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: Se
         ticket.server_id,
         WirePayload::Event(ServerEvent::MemberJoin {
             server: ticket.server_id,
-            profile,
+            profile: app.announced(profile),
         }),
     )
     .await;
@@ -1258,6 +1286,7 @@ fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
 
 async fn send_friend_signal(app: &tauri::State<'_, App>, to: UserId, signal: safety::FriendSignal) -> CmdResult<()> {
     let me = current_profile(app)?;
+    key_settled(app)?;
     let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
     let mut message = DmMessage::new(me.id, to, signal.encode());
     message.sign(&signing_key(app)?);
@@ -1455,6 +1484,7 @@ async fn report_user(
     if reported == me.id {
         return Err("you cannot report yourself".into());
     }
+    key_settled(&app)?;
     let (owner, excerpt) = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
@@ -2117,6 +2147,7 @@ async fn leave_server(
 /// Drops queued sends and catch-up state for a server we are no longer in.
 fn forget_server_outbox(app: &App, sid: ServerId) {
     app.catchup.lock().unwrap().forget_server(sid);
+    app.set_awaiting_snapshot(sid, false);
     if app.outbox.lock().unwrap().forget_server(sid) {
         app.persist_outbox();
     }
@@ -3485,8 +3516,10 @@ async fn announce_profile(app: &tauri::State<'_, App>, handle: &tauri::AppHandle
         }
         servers.keys().copied().collect()
     };
+    // Peers see our key only once it is settled.
+    let announced = app.announced(profile.clone());
     for sid in server_ids {
-        outbox::broadcast_local(app, sid, ServerEvent::ProfileUpdate { profile: profile.clone() }).await;
+        outbox::broadcast_local(app, sid, ServerEvent::ProfileUpdate { profile: announced.clone() }).await;
         app.persist_server(sid);
         let _ = handle.emit("server-event", &sid.to_string());
     }
@@ -4125,13 +4158,7 @@ async fn run_net_loop(
                 }
             }
             NetEvent::SyncRequested { server, .. } => {
-                let payload = {
-                    let servers = app.servers.lock().unwrap();
-                    servers
-                        .get(&server)
-                        .map(|state| commy_net::protocol::build_sync_response(state, 50))
-                };
-                if let Some(payload) = payload {
+                if let Some(payload) = catchup::snapshot_for(&app, server) {
                     let net = app.net.lock().await;
                     if let Some(node) = net.as_ref() {
                         if let Err(e) = node.broadcast(server, payload).await {
@@ -4141,105 +4168,24 @@ async fn run_net_loop(
                 }
             }
             NetEvent::SyncReceived { server, payload } => {
-                // Snapshots are for newcomers; an established local copy
-                // must not be overwritten by someone else's sync reply.
-                // "Newcomer" means we hold no message history yet.
-                let sparse = {
-                    let servers = app.servers.lock().unwrap();
-                    servers
-                        .get(&server)
-                        .map(|s| {
-                            s.profiles.len() <= 1
-                                || s.server
-                                    .channels
-                                    .iter()
-                                    .all(|c| s.messages(c.id).is_empty())
-                        })
-                        .unwrap_or(true)
-                };
-                if !sparse {
-                    continue;
-                }
-                if let WirePayload::SyncResponse {
-                    server: remote_server,
-                    profiles,
-                    recent_messages,
-                } = payload
-                {
-                    {
-                        let mut servers = app.servers.lock().unwrap();
-                        // Snapshots carry no emojis or sounds; keep any announced already.
-                        let (emojis, sounds, rules, scheduled) = servers
-                            .get(&server)
-                            .map(|s| (s.server.emojis.clone(), s.server.soundboard.clone(), s.server.rules.clone(), s.server.events.clone()))
-                            .unwrap_or_default();
-                        let mut state = ServerState::new(remote_server);
-                        if rules.is_some() {
-                            let _ = state.apply(ServerEvent::RulesSet { server, rules });
-                        }
-                        for event in scheduled {
-                            let rsvps = event.rsvps.clone();
-                            let id = event.id.clone();
-                            let _ = state.apply(ServerEvent::EventUpsert { server, event });
-                            for (user, rsvp) in rsvps {
-                                let _ = state.apply(ServerEvent::EventRsvp { server, event: id.clone(), user, rsvp: Some(rsvp) });
-                            }
-                        }
-                        for emoji in emojis {
-                            let _ = state.apply(ServerEvent::EmojiAdd { server, emoji });
-                        }
-                        for sound in sounds {
-                            let _ = state.apply(ServerEvent::SoundAdd { server, sound });
-                        }
-                        for profile in profiles {
-                            state.profiles.insert(profile.id, profile);
-                        }
-                        // Keep our own profile visible, with the key we sign with.
-                        if let Some(me) = app.profile.lock().unwrap().clone() {
-                            let key = me.identity;
-                            let entry = state.profiles.entry(me.id).or_insert(me);
-                            entry.identity = key.or(entry.identity);
-                        }
-                        for message in recent_messages {
-                            let event = ServerEvent::MessageCreate { message };
-                            if let Err(StoreError::UnknownAuthorKey(_)) = state.apply(event.clone()) {
-                                catchup::hold(&app, server, event);
-                            }
-                        }
-                        servers.insert(server, state);
-                    }
-                    app.persist_server(server);
-                    catchup::release_held(&handle, server);
-                    let _ = handle.emit("server-event", &server.to_string());
-                    let _ = handle.emit("servers-changed", ());
-                }
+                // Only a server joined from a ticket takes one, once; an
+                // established state never gets rebuilt from someone's reply.
+                catchup::apply_snapshot(&handle, server, payload);
             }
             NetEvent::VoiceDial { .. } => {}
             NetEvent::NeighborUp { server, peer } => {
                 // A peer connected on the topic: make sure they know us,
-                // and pull state if ours still looks empty.
+                // and pull a snapshot while we wait for our first one.
                 let me = app.profile.lock().unwrap().clone();
                 let Some(me) = me else { continue };
                 let my_id = me.id;
-                let needs_sync = {
-                    let servers = app.servers.lock().unwrap();
-                    servers
-                        .get(&server)
-                        .map(|s| {
-                            s.profiles.len() <= 1
-                                || s.server
-                                    .channels
-                                    .iter()
-                                    .all(|c| s.messages(c.id).is_empty())
-                        })
-                        .unwrap_or(false)
-                };
+                let needs_sync = app.awaits_snapshot(server);
                 broadcast(
                     &app,
                     server,
                     WirePayload::Event(ServerEvent::MemberJoin {
                         server,
-                        profile: me,
+                        profile: app.announced(me),
                     }),
                 )
                 .await;
@@ -4369,26 +4315,39 @@ fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
 /// Stores DMs arriving from peers and notifies the webview.
 async fn run_dm_loop(
     handle: tauri::AppHandle,
-    mut envelopes: tokio::sync::mpsc::UnboundedReceiver<DmEnvelope>,
+    mut incoming: tokio::sync::mpsc::UnboundedReceiver<commy_net::node::IncomingDm>,
 ) {
-    while let Some(envelope) = envelopes.recv().await {
+    while let Some(dm) = incoming.recv().await {
         let app = handle.state::<App>();
-        let partner = envelope.sender.id;
-        // Signed by the sender, with the key we pinned for them if any.
-        if !outbox::dm_sender_trusted(&app, &envelope) {
-            tracing::warn!("dropped a DM whose signature or key does not match its sender");
+        // Addressed to us and signed by the sender with the key we pinned
+        // for them, if any; the node we cache for them is the one it came from.
+        let Some(sender) = outbox::screen_dm(&app, &dm) else {
+            tracing::warn!("dropped a DM not addressed to us or not signed by its sender");
             continue;
-        }
+        };
+        let envelope = dm.envelope;
+        let partner = sender.id;
         if envelope.message.content.starts_with(safety::REPORT_PREFIX) {
             receive_report(&app, &handle, partner, &envelope.message.content);
             continue;
         }
         if let Some(signal) = safety::FriendSignal::decode(&envelope.message.content) {
+            // A signed signal sent to us again must not undo a later one.
+            let fresh = safety::note_friend_signal(
+                &mut app.safety.lock().unwrap(),
+                partner,
+                envelope.message.id,
+                envelope.message.created_at,
+            );
+            if !fresh {
+                tracing::debug!("ignored a friend signal from {partner} seen before");
+                continue;
+            }
             let reply = {
                 let mut s = app.safety.lock().unwrap();
                 safety::apply_friend_signal(&mut s, partner, signal)
             };
-            app.dms.lock().unwrap().remember_contact(envelope.sender.clone());
+            app.dms.lock().unwrap().remember_contact(sender.clone());
             app.persist_dms();
             app.persist_safety();
             if let Some(reply) = reply {
@@ -4396,7 +4355,7 @@ async fn run_dm_loop(
             }
             let _ = handle.emit("friends-changed", serde_json::json!({
                 "user": partner.to_string(),
-                "name": envelope.sender.visible_name(),
+                "name": sender.visible_name(),
                 "signal": signal,
             }));
             continue;
@@ -4434,14 +4393,14 @@ async fn run_dm_loop(
         }
         let notice = serde_json::json!({
             "user": partner.to_string(),
-            "name": envelope.sender.visible_name(),
+            "name": sender.visible_name(),
             "content": envelope.message.content.clone(),
             "request": verdict != safety::Verdict::Inbox,
             "spam": verdict == safety::Verdict::Spam,
         });
         let inserted = {
             let mut dms = app.dms.lock().unwrap();
-            dms.remember_contact(envelope.sender);
+            dms.remember_contact(sender);
             dms.insert(partner, envelope.message)
         };
         if inserted {
@@ -4619,6 +4578,9 @@ pub fn run() {
                 for state in persist::load_servers(&dir) {
                     app.servers.lock().unwrap().insert(state.server.id, state);
                 }
+                let mut awaiting = persist::load_awaiting(&dir);
+                awaiting.retain(|id| app.servers.lock().unwrap().contains_key(id));
+                *app.awaiting_snapshot.lock().unwrap() = awaiting;
                 let mut queue = outbox::Outbox::load(&dir);
                 let now = chrono::Utc::now();
                 let pruned = app.servers.lock().unwrap().values().fold(false, |acc, s| queue.prune(s, now) | acc);
@@ -4628,8 +4590,21 @@ pub fn run() {
                 }
             }
             // Our identity key signs messages; peers learn it from our profile.
+            let key_file = app.data_dir().map(|dir| dir.join(commy_core::identity::IDENTITY_FILE));
+            let key_before = key_file.as_ref().and_then(|path| std::fs::read(path).ok());
             if let Err(e) = app.reload_identity() {
                 tracing::error!("identity key unavailable: {e}");
+            }
+            let key_made = key_file.is_some() && key_file.as_ref().and_then(|path| std::fs::read(path).ok()) != key_before;
+            if key_made && account::is_signed_in(&app.account.lock().unwrap()) {
+                // The account may already sign with another key, which the
+                // server list sync brings; until then ours stays unannounced.
+                app.hold_key(std::time::Instant::now() + KEY_SETTLE_MAX);
+                let handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(KEY_SETTLE_MAX).await;
+                    settle_key(&handle).await;
+                });
             }
 
             let node_key = app

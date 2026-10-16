@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
-use commy_core::{ServerId, UserProfile};
+use commy_core::{Identity, ServerId, UserProfile};
 use commy_net::sealed::{Purpose, SealKey};
 use commy_net::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ServerTicket};
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,9 @@ pub struct EntryList {
 
 impl EntryList {
     /// Combines two lists. Joins and leaves are kept by time, so a leave
-    /// after the latest join wins; the identity already shared wins.
+    /// after the latest join wins; the identity already shared wins. A
+    /// shared list without a key takes this device's when it is the same
+    /// person, so the first device to sync publishes it.
     pub fn merge(shared: &EntryList, local: &EntryList) -> EntryList {
         let mut left = shared.left.clone();
         for (id, at) in &local.left {
@@ -87,7 +89,11 @@ impl EntryList {
         EntryList {
             profile,
             profile_at,
-            identity: if shared.profile.is_some() { shared.identity.clone() } else { local.identity.clone() },
+            identity: if shared.profile.is_some() {
+                shared.identity.clone().or_else(|| local.identity.clone().filter(|_| same_person))
+            } else {
+                local.identity.clone()
+            },
             servers,
             left,
         }
@@ -190,14 +196,88 @@ fn read_identity(dir: &Path) -> Option<String> {
     Some(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
-fn write_identity(dir: &Path, encoded: &str) {
+/// The identity a shared value holds: the identity file, base64.
+fn decode_identity(encoded: &str) -> Option<Identity> {
     use base64::Engine;
-    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) {
-        let tmp = dir.join(format!("{IDENTITY_FILE}.tmp"));
-        if std::fs::write(&tmp, bytes).is_ok() {
-            let _ = std::fs::remove_file(dir.join(IDENTITY_FILE));
-            let _ = std::fs::rename(&tmp, dir.join(IDENTITY_FILE));
+    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+    let text = std::str::from_utf8(&bytes).ok()?;
+    let secret: [u8; 32] = data_encoding::HEXLOWER_PERMISSIVE.decode(text.trim().as_bytes()).ok()?.try_into().ok()?;
+    Some(Identity::from_bytes(&secret))
+}
+
+/// Writes the account's identity file, readable by this user only. False
+/// when the shared value is not a key, which is then never written.
+fn write_identity(dir: &Path, encoded: &str) -> bool {
+    use base64::Engine;
+    use std::io::Write;
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(encoded) {
+        Ok(bytes) if decode_identity(encoded).is_some() => bytes,
+        _ => {
+            tracing::warn!("the shared identity is not a valid key; keeping ours");
+            return false;
         }
+    };
+    let tmp = dir.join(format!("{IDENTITY_FILE}.tmp"));
+    let _ = std::fs::remove_file(&tmp);
+    let written = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        // Replaces the old file in one step, so a key is always there.
+        std::fs::rename(&tmp, dir.join(IDENTITY_FILE))
+    })();
+    if let Err(e) = written {
+        tracing::warn!("could not write the shared identity: {e}");
+        let _ = std::fs::remove_file(&tmp);
+        return false;
+    }
+    true
+}
+
+/// What a sync does about who this device is, from both lists.
+#[derive(Debug, PartialEq)]
+enum IdentityStep {
+    /// Same person with the same key, or no key shared yet: merge as usual.
+    Keep,
+    /// Same person, but the account signs with another key: switch to it.
+    UseShared(String),
+    /// A device without servers of its own becomes the account.
+    Adopt,
+    /// The account has no key to give yet, so this device waits for the
+    /// one that has it instead of signing as the account with its own.
+    WaitForKey,
+    /// This device has servers of its own and keeps its identity.
+    OwnIdentity,
+}
+
+fn identity_step(local: &EntryList, shared: &EntryList) -> IdentityStep {
+    let mine = local.profile.as_ref().map(|p| p.id);
+    let theirs = shared.profile.as_ref().map(|p| p.id);
+    let (Some(mine), Some(theirs)) = (mine, theirs) else { return IdentityStep::Keep };
+    if mine != theirs {
+        return if !local.servers.is_empty() || !local.left.is_empty() {
+            IdentityStep::OwnIdentity
+        } else if shared.identity.as_deref().and_then(decode_identity).is_none() {
+            IdentityStep::WaitForKey
+        } else {
+            IdentityStep::Adopt
+        };
+    }
+    let Some(encoded) = &shared.identity else { return IdentityStep::Keep };
+    let Some(account) = decode_identity(encoded) else { return IdentityStep::Keep };
+    let ours = local.identity.as_deref().and_then(decode_identity);
+    if ours.is_some_and(|ours| ours.public() == account.public()) {
+        IdentityStep::Keep
+    } else {
+        IdentityStep::UseShared(encoded.clone())
     }
 }
 
@@ -380,10 +460,12 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
     let Some(dir) = app.data_dir().cloned() else { return Ok(()) };
     let Some(s) = session(&app) else {
         set_status(handle, "off", "", 0, false);
+        crate::settle_key(handle).await;
         return Ok(());
     };
     if app.account.lock().unwrap().features.is_some_and(|f| !f.vault) {
         set_status(handle, "unsupported", "Your account server cannot keep a server list yet.", 0, false);
+        crate::settle_key(handle).await;
         return Ok(());
     }
     if app.profile.lock().unwrap().is_none() {
@@ -397,6 +479,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
             Ok(Fetched::Item(item)) => item,
             Ok(Fetched::Unsupported) => {
                 set_status(handle, "unsupported", "Your account server cannot keep a server list yet.", 0, false);
+                crate::settle_key(handle).await;
                 return Ok(());
             }
             Err(e) => {
@@ -436,23 +519,32 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
             },
         };
 
-        // A device with its own identity and its own servers stays out
-        let mine = local.profile.as_ref().map(|p| p.id);
-        let theirs = shared.profile.as_ref().map(|p| p.id);
-        if let (Some(mine), Some(theirs)) = (mine, theirs) {
-            if mine != theirs {
-                if local.servers.is_empty() && local.left.is_empty() {
-                    adopt_identity(handle, &app, &dir, &shared);
-                } else {
-                    set_status(
-                        handle,
-                        "own_identity",
-                        "This device already had servers under its own identity, so it keeps them and does not share your list.",
-                        shared.servers.len(),
-                        true,
-                    );
-                    return Ok(());
-                }
+        match identity_step(&local, &shared) {
+            IdentityStep::Keep => {}
+            IdentityStep::UseShared(encoded) => use_shared_key(handle, &app, &dir, &encoded).await,
+            IdentityStep::Adopt => adopt_identity(handle, &app, &dir, &shared).await,
+            IdentityStep::WaitForKey => {
+                set_status(
+                    handle,
+                    "waiting",
+                    "Your other device has not shared your identity yet. Open Commy there and this device follows.",
+                    shared.servers.len(),
+                    true,
+                );
+                schedule_later(handle, KEY_WAIT_RETRY);
+                return Ok(());
+            }
+            // A device with its own identity and its own servers stays out
+            IdentityStep::OwnIdentity => {
+                set_status(
+                    handle,
+                    "own_identity",
+                    "This device already had servers under its own identity, so it keeps them and does not share your list.",
+                    shared.servers.len(),
+                    true,
+                );
+                crate::settle_key(handle).await;
+                return Ok(());
             }
         }
 
@@ -469,11 +561,14 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
 
         if merged == shared && item.data.is_some() {
             set_status(handle, "synced", "", merged.servers.len(), true);
+            crate::settle_key(handle).await;
             return Ok(());
         }
         match put(&app, &s, merged.seal(&key), item.version).await? {
             Put::Done => {
+                // Our key is the account's now, or already was.
                 set_status(handle, "synced", "", merged.servers.len(), true);
+                crate::settle_key(handle).await;
                 return Ok(());
             }
             Put::Conflict => {
@@ -489,26 +584,48 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
     Err("Your devices kept changing the server list at the same time; it will sync again soon".into())
 }
 
-/// Takes on the account's identity on a device that has no servers yet.
-fn adopt_identity(handle: &AppHandle, app: &App, dir: &Path, shared: &EntryList) {
-    let Some(profile) = shared.profile.clone() else { return };
-    if let Some(identity) = &shared.identity {
-        write_identity(dir, identity);
+/// How long a device waiting for the account's key waits before it looks again.
+const KEY_WAIT_RETRY: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Syncs again after `delay`.
+fn schedule_later(handle: &AppHandle, delay: std::time::Duration) {
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(delay).await;
+        schedule(&handle);
+    });
+}
+
+/// Takes on the account's identity on a device that has no servers yet:
+/// its profile and its key, announced together. Only called with a key
+/// to take (see [`identity_step`]).
+async fn adopt_identity(handle: &AppHandle, app: &App, dir: &Path, shared: &EntryList) {
+    let (Some(profile), Some(identity)) = (shared.profile.clone(), shared.identity.as_deref()) else { return };
+    if !write_identity(dir, identity) {
+        return;
     }
     let node = app.node_hex.lock().unwrap().clone();
     let adopted = UserProfile { node, ..profile };
     *app.profile.lock().unwrap() = Some(adopted.clone());
     app.persist_profile();
-    // Sign with the adopted key from now on.
-    let adopted = match app.reload_identity() {
-        Ok(Some(profile)) => profile,
-        Ok(None) => adopted,
-        Err(e) => {
-            tracing::warn!("could not load the adopted identity: {e}");
-            adopted
-        }
-    };
-    let _ = handle.emit("profile-changed", &adopted);
+    // Sign with the adopted key from now on, and tell everyone.
+    app.settle_key();
+    if let Err(e) = crate::reload_identity(handle).await {
+        tracing::warn!("could not load the adopted identity: {e}");
+        let _ = handle.emit("profile-changed", &adopted);
+    }
+}
+
+/// Same person, but the account signs with another key than this device
+/// made: switch to it and announce it.
+async fn use_shared_key(handle: &AppHandle, app: &App, dir: &Path, encoded: &str) {
+    if !write_identity(dir, encoded) {
+        return;
+    }
+    app.settle_key();
+    if let Err(e) = crate::reload_identity(handle).await {
+        tracing::warn!("could not load the account's identity: {e}");
+    }
 }
 
 fn same_shared_fields(a: Option<&UserProfile>, b: Option<&UserProfile>) -> bool {
@@ -762,6 +879,102 @@ mod tests {
         let merged = EntryList::merge(&EntryList::default(), &local);
         assert_eq!(merged.profile.unwrap().username, "second");
         assert_eq!(merged.identity.as_deref(), Some("b3RoZXI="));
+    }
+
+    /// An identity file's contents as a shared list carries them.
+    fn shared_identity(identity: &Identity) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(data_encoding::HEXLOWER.encode(&identity.to_bytes()))
+    }
+
+    #[test]
+    fn the_first_device_to_sync_publishes_the_missing_key() {
+        // Lists shared before keys existed name the account but carry none.
+        let account = UserProfile::new("account");
+        let shared = EntryList { profile: Some(account.clone()), ..Default::default() };
+        let first = shared_identity(&Identity::generate());
+        let local = EntryList { profile: Some(account.clone()), identity: Some(first.clone()), ..Default::default() };
+        assert_eq!(EntryList::merge(&shared, &local).identity, Some(first.clone()));
+
+        // Once it is there, it wins over another device's key.
+        let published = EntryList::merge(&shared, &local);
+        let second = EntryList { identity: Some(shared_identity(&Identity::generate())), ..local.clone() };
+        assert_eq!(EntryList::merge(&published, &second).identity, Some(first));
+
+        // Someone else's key is never published as the account's.
+        let stranger = EntryList { profile: Some(UserProfile::new("other")), ..second };
+        assert_eq!(EntryList::merge(&shared, &stranger).identity, None);
+    }
+
+    #[test]
+    fn devices_take_the_account_key_only_when_there_is_one() {
+        let account = UserProfile::new("account");
+        let key = Identity::generate();
+        let ours = Identity::generate();
+        let list = |profile: &UserProfile, identity: Option<&Identity>| EntryList {
+            profile: Some(profile.clone()),
+            identity: identity.map(shared_identity),
+            ..Default::default()
+        };
+        let shared = list(&account, Some(&key));
+
+        // Same person and key, or no key shared yet: nothing to do.
+        assert_eq!(identity_step(&list(&account, Some(&key)), &shared), IdentityStep::Keep);
+        assert_eq!(identity_step(&list(&account, Some(&ours)), &list(&account, None)), IdentityStep::Keep);
+        assert_eq!(identity_step(&list(&account, Some(&ours)), &EntryList::default()), IdentityStep::Keep);
+        // Same person, another key: the account's wins.
+        assert_eq!(
+            identity_step(&list(&account, Some(&ours)), &shared),
+            IdentityStep::UseShared(shared_identity(&key))
+        );
+        assert_eq!(identity_step(&list(&account, None), &shared), IdentityStep::UseShared(shared_identity(&key)));
+
+        // A new device adopts the account only along with its key.
+        let device = UserProfile::new("new device");
+        assert_eq!(identity_step(&list(&device, Some(&ours)), &shared), IdentityStep::Adopt);
+        assert_eq!(identity_step(&list(&device, Some(&ours)), &list(&account, None)), IdentityStep::WaitForKey);
+        let damaged = EntryList { identity: Some("bm90IGEga2V5".into()), ..shared.clone() };
+        assert_eq!(identity_step(&list(&device, Some(&ours)), &damaged), IdentityStep::WaitForKey);
+        assert_eq!(identity_step(&list(&account, Some(&ours)), &damaged), IdentityStep::Keep, "never a damaged key");
+        // One with servers of its own keeps its identity.
+        let busy = EntryList {
+            servers: BTreeMap::from([(ServerId::new(), entry("mine", Utc::now()))]),
+            ..list(&device, Some(&ours))
+        };
+        assert_eq!(identity_step(&busy, &shared), IdentityStep::OwnIdentity);
+    }
+
+    #[test]
+    fn the_shared_key_is_written_for_this_user_only() {
+        let dir = std::env::temp_dir().join(format!("commy-entry-identity-{}-{:x}", std::process::id(), rand_tag()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(IDENTITY_FILE);
+        std::fs::write(&path, "old").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let key = Identity::generate();
+        assert!(write_identity(&dir, &shared_identity(&key)));
+        let loaded = commy_core::identity::load_or_create(&dir).unwrap();
+        assert_eq!(loaded.public(), key.public());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        // Something that is not a key is never written.
+        assert!(!write_identity(&dir, "bm90IGEga2V5"));
+        assert!(!write_identity(&dir, "%%%"));
+        assert_eq!(commy_core::identity::load_or_create(&dir).unwrap().public(), key.public());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "no temp file left behind");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn rand_tag() -> u128 {
+        std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos()
     }
 
     #[test]

@@ -7906,6 +7906,15 @@ function wireEvents() {
         toast("New direct message");
       }
     });
+    // One of our waiting DMs went out: redraw, nothing new arrived.
+    window.__TAURI__.event.listen("dm-sent", async event => {
+      if (state.view !== "dm") return;
+      if (state.currentDm && event.payload === state.currentDm.user) {
+        await selectDm(state.currentDm.user, state.currentDm.name);
+      } else {
+        await renderDmThreads();
+      }
+    });
     window.__TAURI__.event.listen("afk-disconnected", async () => {
       toast("You were disconnected from voice for inactivity");
       state.voiceChannelId = null;

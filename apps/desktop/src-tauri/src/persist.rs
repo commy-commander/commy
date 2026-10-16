@@ -5,6 +5,7 @@
 //! <data>/voice.json            voice settings
 //! <data>/servers/<id>.json     one Snapshot per joined server
 //! <data>/outbox.json           sends waiting for someone to come online
+//! <data>/awaiting-snapshot.json servers joined that wait for a snapshot
 //! ```
 //!
 //! Writes go to a temp file first and are renamed into place so a
@@ -15,7 +16,7 @@ use anyhow::{Context, Result};
 use commy_core::{DmStore, ServerId, ServerState, Snapshot, UserProfile};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -102,6 +103,14 @@ pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
     fs::create_dir_all(dir).ok()?;
     fs::write(&path, data_encoding::HEXLOWER.encode(&key)).ok()?;
     Some(key)
+}
+
+pub fn save_awaiting(dir: &Path, servers: &HashSet<ServerId>) -> Result<()> {
+    write_json(&dir.join("awaiting-snapshot.json"), servers)
+}
+
+pub fn load_awaiting(dir: &Path) -> HashSet<ServerId> {
+    read_json(&dir.join("awaiting-snapshot.json")).unwrap_or_default()
 }
 
 /// Invite tickets, kept so joined servers can be rejoined after a
