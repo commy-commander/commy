@@ -1,5 +1,5 @@
-# Fast compile check for pull requests that touch Rust code: cargo check on Windows,
-# macOS and Linux, plus the test suite on Linux. Use this instead of running
+# Fast compile check for pull requests that touch Rust code: cargo check on Windows
+# and macOS, and the test suite (which compiles everything) on Linux. Use this instead of running
 # "Desktop release" to prove a branch builds.
 # Dependency caches are saved from main only; pull requests restore them.
 
@@ -29,6 +29,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # Debug info roughly doubles build time and cache size; CI only needs pass or fail
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
   check:
@@ -38,7 +40,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux check and tests
+          - name: Linux tests
             os: ubuntu-22.04
           - name: Windows check
             os: windows-latest
@@ -67,7 +69,9 @@ jobs:
           key: ${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # cargo test builds everything cargo check would, so Linux skips the check
       - name: cargo check
+        if: runner.os != 'Linux'
         run: cargo check --workspace --all-targets --locked
 
       - name: cargo test
