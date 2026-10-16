@@ -281,14 +281,21 @@
     <div class="modal hidden" id="modal-invite">
       <h2>Invite People</h2>
       <p>Anyone with this invite can join while you are online.</p>
-      <textarea id="invite-text" readonly rows="4"></textarea>
-      <button class="btn-primary" id="invite-copy">Copy Invite</button>
-      <button class="btn-secondary" id="invite-link-copy">Copy Invite Link</button>
+      <textarea id="invite-text" class="invite-field" readonly rows="3" aria-label="Invite"></textarea>
+      <div class="invite-actions">
+        <button class="btn-primary" id="invite-link-copy">Copy Invite Link</button>
+        <button class="btn-secondary" id="invite-copy">Copy Invite Code</button>
+      </div>
     </div>
 
     <div class="modal hidden" id="modal-invite-link">
-      <h2>Join <span id="invite-link-name"></span>?</h2>
-      <p id="invite-link-host"></p>
+      <div class="sw-head">
+        <div class="server-icon sw-icon" id="invite-link-icon" aria-hidden="true"></div>
+        <div class="sw-titles">
+          <h2>Join <span id="invite-link-name"></span>?</h2>
+          <p id="invite-link-host"></p>
+        </div>
+      </div>
       <div class="invite-link-warning hidden" id="invite-link-warning" role="alert"></div>
       <div class="modal-actions">
         <button class="btn-secondary" id="invite-link-cancel">Cancel</button>

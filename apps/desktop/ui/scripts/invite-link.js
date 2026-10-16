@@ -26,6 +26,7 @@ async function openInviteLink(link) {
     const invite = await invoke("resolve_invite_link", { link });
     pendingInvite = invite;
     $("invite-link-name").textContent = invite.server_name;
+    $("invite-link-icon").textContent = initials(invite.server_name);
     const expires = new Date(invite.expires_at);
     $("invite-link-host").textContent = `Invite from ${invite.host}` +
       (isNaN(expires) ? "" : `, expires ${expires.toLocaleDateString(undefined, { month: "long", day: "numeric" })}`);
@@ -67,7 +68,14 @@ async function joinPendingInvite() {
 // Chat messages containing an invite link get the same Join card as raw tickets.
 function inviteLinkCard(link) {
   const card = el("div", "invite-card");
-  card.appendChild(el("div", "invite-card-title", "You've been invited to join a server"));
+  const mark = el("div", "invite-card-mark");
+  mark.appendChild(svgIcon("serverAdd", 18));
+  card.appendChild(mark);
+  const text = el("div", "invite-card-text");
+  text.appendChild(el("div", "invite-card-title", "You've been invited to join a server"));
+  const host = (/^commy:\/\/i\/([^/]+)\//i.exec(link) || [])[1] || (/^https?:\/\/([^/]+)/i.exec(link) || [])[1] || "";
+  text.appendChild(el("div", "invite-card-sub", host ? `Invite link from ${host}` : "Invite link"));
+  card.appendChild(text);
   const join = el("button", "btn-primary btn-small", "Join");
   join.onclick = () => openInviteLink(link);
   card.appendChild(join);
