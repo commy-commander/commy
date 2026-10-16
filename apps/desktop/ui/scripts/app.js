@@ -6770,6 +6770,10 @@ function startOwnPreview() {
       }
       $("vp-viewers").textContent = own.viewers === 1 ? "1 watching" : `${own.viewers} watching`;
       $("vp-viewers").classList.toggle("hidden", !own.viewers);
+      if (state.stageMode === "self") {
+        $("stage-viewers").textContent = own.viewers === 1 ? "1 watching" : `${own.viewers} watching`;
+        $("stage-viewers").classList.toggle("hidden", !own.viewers);
+      }
       // Live encode rate from the frame counter between ticks.
       const now = performance.now();
       if (ownFpsSample && own.frames >= ownFpsSample.frames) {
@@ -6803,6 +6807,8 @@ function openStage(mode, label) {
   stageStats.times = [];
   $("video-label").textContent = label;
   $("stage-stats").textContent = "";
+  $("stage-viewers").textContent = "";
+  $("stage-viewers").classList.add("hidden");
   $("video-frame").removeAttribute("src");
   $("stage-wait").classList.remove("hidden");
   $("video-pane").classList.remove("hidden");
@@ -6828,7 +6834,7 @@ function showStageFrame(src, width, height) {
   const span = (now - stageStats.times[0]) / 1000;
   const fps = span > 0 ? Math.round((stageStats.times.length - 1) / span) : 0;
   const res = width && height ? `${width}x${height}` : "";
-  $("stage-stats").textContent = [res, fps ? `${fps} fps` : ""].filter(Boolean).join("  ");
+  $("stage-stats").textContent = [res, fps ? `${fps} fps` : ""].filter(Boolean).join(" \u00b7 ");
 }
 
 function toggleStageFocus() {
