@@ -75,9 +75,9 @@ struct Saved {
 
 /// Doorbell endpoints an account server offers.
 #[derive(Debug, Clone, PartialEq)]
-struct Endpoints {
-    ring: String,
-    take: String,
+pub(crate) struct Endpoints {
+    pub(crate) ring: String,
+    pub(crate) take: String,
 }
 
 #[derive(Debug, Default)]
@@ -117,7 +117,7 @@ impl Doorbell {
     }
 
     /// Our key in a server, made on first use. True when it is new.
-    fn own_key(&mut self, server: ServerId) -> (DoorbellKey, bool) {
+    pub(crate) fn own_key(&mut self, server: ServerId) -> (DoorbellKey, bool) {
         if let Some(key) = self.saved.own.get(&server) {
             return (*key, false);
         }
@@ -209,7 +209,7 @@ impl Doorbell {
         before != awaited.len()
     }
 
-    fn awaited_count(&self, server: ServerId) -> usize {
+    pub(crate) fn awaited_count(&self, server: ServerId) -> usize {
         self.saved.awaited.get(&server).map_or(0, HashMap::len)
     }
 }
@@ -259,7 +259,7 @@ fn endpoints_of(doc: Discovery, origin: &str) -> Option<Endpoints> {
 }
 
 /// The doorbell endpoints of an account server, checked at most hourly.
-async fn endpoints(app: &App, origin: &str) -> Option<Endpoints> {
+pub(crate) async fn endpoints(app: &App, origin: &str) -> Option<Endpoints> {
     if let Some((at, found)) = app.doorbell.lock().unwrap().origins.get(origin) {
         if at.elapsed() < ORIGIN_TTL {
             return found.clone();
@@ -321,7 +321,7 @@ fn member_ok(state: &ServerState, user: UserId) -> bool {
 /// Our signed announcement for a server: our account server and key when
 /// it offers the doorbell, else none so members stop ringing us there.
 /// None while our key may still change or the network is not up.
-async fn announcement(app: &App, server: ServerId) -> Option<ServerEvent> {
+pub(crate) async fn announcement(app: &App, server: ServerId) -> Option<ServerEvent> {
     if !app.key_settled() {
         return None;
     }
@@ -401,25 +401,28 @@ pub fn on_announce(app: &App, server: ServerId, event: &ServerEvent) {
 /// message reached nobody, so every device is rung; otherwise only those
 /// of members who do not look online.
 pub fn ring(handle: &tauri::AppHandle, server: ServerId, message: MessageId, everyone: bool) {
-    let app = handle.state::<App>();
-    let our_node = app.node_hex.lock().unwrap().clone();
-    let day = bell::day_of(chrono::Utc::now());
-    let targets: Vec<(String, String, String)> = {
-        let servers = app.servers.lock().unwrap();
-        let Some(state) = servers.get(&server) else { return };
-        let doorbell = app.doorbell.lock().unwrap();
-        let Some(peers) = doorbell.saved.peers.get(&server) else { return };
-        peers
-            .iter()
-            .filter(|(node, _)| Some(node.as_str()) != our_node.as_deref())
-            .filter(|(_, p)| member_ok(state, p.user))
-            .filter(|(_, p)| everyone || !state.profiles.get(&p.user).is_some_and(|u| u.presence.is_visible_online()))
-            .map(|(_, p)| (p.url.clone(), bell::token(&p.key, day), bell::blinded_id(&p.key, message)))
-            .collect()
-    };
+    let targets = ring_targets(&handle.state::<App>(), server, message, everyone);
     for (url, token, id) in targets {
         queue_ring(handle, url, token, Some(id));
     }
+}
+
+/// The devices [`ring`] rings for a message: (account server origin,
+/// today's token, blinded id) for each.
+pub(crate) fn ring_targets(app: &App, server: ServerId, message: MessageId, everyone: bool) -> Vec<(String, String, String)> {
+    let our_node = app.node_hex.lock().unwrap().clone();
+    let day = bell::day_of(chrono::Utc::now());
+    let servers = app.servers.lock().unwrap();
+    let Some(state) = servers.get(&server) else { return Vec::new() };
+    let doorbell = app.doorbell.lock().unwrap();
+    let Some(peers) = doorbell.saved.peers.get(&server) else { return Vec::new() };
+    peers
+        .iter()
+        .filter(|(node, _)| Some(node.as_str()) != our_node.as_deref())
+        .filter(|(_, p)| member_ok(state, p.user))
+        .filter(|(_, p)| everyone || !state.profiles.get(&p.user).is_some_and(|u| u.presence.is_visible_online()))
+        .map(|(_, p)| (p.url.clone(), bell::token(&p.key, day), bell::blinded_id(&p.key, message)))
+        .collect()
 }
 
 /// Adds an id (or, with None, a hello) to a device's next ring, starting
@@ -469,9 +472,7 @@ fn queue_ring(handle: &tauri::AppHandle, url: String, token: String, id: Option<
                 tokio::time::sleep(wait).await;
                 continue;
             }
-            let body = serde_json::json!({ "token": token, "ids": chunk });
-            let sent = app.http.post(&endpoints.ring).json(&body).timeout(Duration::from_secs(15)).send().await;
-            match sent.and_then(|r| r.error_for_status()) {
+            match send_ring(&app, &endpoints.ring, &token, chunk).await {
                 Ok(_) => {
                     chunks.next();
                 }
@@ -488,6 +489,13 @@ fn queue_ring(handle: &tauri::AppHandle, url: String, token: String, id: Option<
             }
         }
     });
+}
+
+/// One ring: `ids` (none for a hello) to `token` at a ring endpoint.
+pub(crate) async fn send_ring(app: &App, ring: &str, token: &str, ids: &[String]) -> reqwest::Result<()> {
+    let body = serde_json::json!({ "token": token, "ids": ids });
+    app.http.post(ring).json(&body).timeout(Duration::from_secs(15)).send().await?.error_for_status()?;
+    Ok(())
 }
 
 /// Wakes every member device of a server we know, once per
@@ -549,14 +557,14 @@ pub async fn run(handle: tauri::AppHandle) {
 }
 
 #[derive(Deserialize)]
-struct Taken {
+pub(crate) struct Taken {
     #[serde(default)]
-    ids: Vec<String>,
+    pub(crate) ids: Vec<String>,
     #[serde(default)]
-    hello: bool,
+    pub(crate) hello: bool,
 }
 
-async fn take(app: &App, endpoints: &Endpoints, token: &str, wait: u64) -> anyhow::Result<Taken> {
+pub(crate) async fn take(app: &App, endpoints: &Endpoints, token: &str, wait: u64) -> anyhow::Result<Taken> {
     let body = serde_json::json!({ "token": token, "wait": wait });
     let res = app
         .http
@@ -639,21 +647,11 @@ fn rand_jitter(base: u64) -> u64 {
 /// hello means someone is back, so we reach out too.
 fn on_taken(handle: &tauri::AppHandle, server: ServerId, key: &DoorbellKey, taken: Taken) {
     let app = handle.state::<App>();
-    let ids: Vec<String> = taken
-        .ids
-        .into_iter()
-        .filter(|id| id.len() == 24 && id.bytes().all(|b| b.is_ascii_hexdigit()))
-        .collect();
-    let changed = !ids.is_empty() && {
-        let held = {
-            let servers = app.servers.lock().unwrap();
-            let Some(state) = servers.get(&server) else { return };
-            held_ids(state, key)
-        };
-        app.doorbell.lock().unwrap().add_awaited(server, ids, &held, now_secs())
-    };
+    if !app.servers.lock().unwrap().contains_key(&server) {
+        return;
+    }
+    let changed = note_taken(&app, server, key, taken.ids);
     if changed {
-        persist(&app);
         let _ = tauri::Emitter::emit(handle, "server-event", &server.to_string());
     }
     if changed || taken.hello {
@@ -661,6 +659,25 @@ fn on_taken(handle: &tauri::AppHandle, server: ServerId, key: &DoorbellKey, take
         let handle = handle.clone();
         tauri::async_runtime::spawn(async move { nudge(&handle, server).await });
     }
+}
+
+/// Awaits the ids we took that we do not hold, and saves them. True when
+/// the awaited set changed.
+pub(crate) fn note_taken(app: &App, server: ServerId, key: &DoorbellKey, ids: Vec<String>) -> bool {
+    let ids: Vec<String> = ids.into_iter().filter(|id| id.len() == 24 && id.bytes().all(|b| b.is_ascii_hexdigit())).collect();
+    if ids.is_empty() {
+        return false;
+    }
+    let held = {
+        let servers = app.servers.lock().unwrap();
+        let Some(state) = servers.get(&server) else { return false };
+        held_ids(state, key)
+    };
+    let changed = app.doorbell.lock().unwrap().add_awaited(server, ids, &held, now_secs());
+    if changed {
+        persist(app);
+    }
+    changed
 }
 
 /// Re-dials a server's members and catches up with current neighbors, at
@@ -722,7 +739,8 @@ pub fn settle<A: AppAccess>(access: &A, server: ServerId) {
 }
 
 /// A message arrived: it is no longer on its way.
-pub fn arrived(app: &App, handle: &tauri::AppHandle, server: ServerId, message: MessageId) {
+pub fn arrived<A: AppAccess>(access: &A, server: ServerId, message: MessageId) {
+    let app = access.app();
     let changed = {
         let mut doorbell = app.doorbell.lock().unwrap();
         let Some(key) = doorbell.saved.own.get(&server).copied() else { return };
@@ -731,7 +749,7 @@ pub fn arrived(app: &App, handle: &tauri::AppHandle, server: ServerId, message: 
     };
     if changed {
         persist(app);
-        let _ = tauri::Emitter::emit(handle, "server-event", &server.to_string());
+        access.emit("server-event", serde_json::json!(server.to_string()));
     }
 }
 
@@ -739,6 +757,11 @@ pub fn arrived(app: &App, handle: &tauri::AppHandle, server: ServerId, message: 
 #[tauri::command]
 pub fn get_awaited(app: tauri::State<'_, App>, server_id: String) -> Result<u32, String> {
     let server: ServerId = server_id.parse().map_err(|e| format!("{e}"))?;
+    Ok(awaited(&app, server))
+}
+
+/// The count [`get_awaited`] shows: "N messages are on their way".
+pub(crate) fn awaited(app: &App, server: ServerId) -> u32 {
     // Messages can arrive by any path (live, catch-up, held, snapshot), so
     // what we now hold is checked here, when the count is shown.
     let (changed, count) = {
@@ -753,9 +776,9 @@ pub fn get_awaited(app: tauri::State<'_, App>, server_id: String) -> Result<u32,
         (changed, doorbell.awaited_count(server) as u32)
     };
     if changed {
-        persist(&app);
+        persist(app);
     }
-    Ok(count)
+    count
 }
 
 #[cfg(test)]

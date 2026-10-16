@@ -54,6 +54,10 @@ jobs:
         run: sh deploy/agent/commy-agent.test.sh
       - name: Integration tests (real Docker, local registry)
         run: sh deploy/agent/integration.test.sh
+      - name: Edge proxy checks (real Caddy)
+        run: |
+          shellcheck -s sh deploy/edge/edge.test.sh
+          sh deploy/edge/edge.test.sh
 
   stack-e2e:
     name: VPS setup end to end
