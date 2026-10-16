@@ -1,0 +1,80 @@
+# Shared by the "Desktop release" jobs: works out the version from the tag and writes
+# the release-only Tauri config, icons and macOS Info.plist into apps/desktop/src-tauri.
+
+name: Release config
+description: Resolve the release version and write the release Tauri config
+outputs:
+  full:
+    description: Full version, e.g. 0.2.0-rc.1
+    value: ${{ steps.version.outputs.full }}
+  app:
+    description: Numeric app version for installers, e.g. 0.2.0
+    value: ${{ steps.version.outputs.app }}
+  test_build:
+    description: "1 for pre-release tags, which use only the staging servers"
+    value: ${{ steps.version.outputs.test_build }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve version
+      id: version
+      shell: bash
+      run: |
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          full="${GITHUB_REF_NAME#v}"
+        else
+          full="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
+        fi
+        # Installers (NSIS, deb) only accept numeric versions, so drop any pre-release suffix
+        echo "full=$full" >> "$GITHUB_OUTPUT"
+        echo "app=${full%%-*}" >> "$GITHUB_OUTPUT"
+        # Pre-release tags (v0.2.0-rc.1) are test builds: they use only the staging
+        # account server and staging relay, and say "test build" in the title
+        if [[ "$GITHUB_REF_TYPE" == "tag" && "$full" == *-* ]]; then
+          echo "test_build=1" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Generate icons and release config
+      working-directory: apps/desktop/src-tauri
+      shell: bash
+      run: |
+        npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" icon icons/icon.png --output icons
+        cat > tauri.release.conf.json <<EOF
+        {
+          "version": "${{ steps.version.outputs.app }}",
+          "bundle": {
+            "active": true,
+            "publisher": "Commy",
+            "copyright": "AGPL-3.0-only",
+            "category": "SocialNetworking",
+            "shortDescription": "Peer to peer voice, video and chat",
+            "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+            "windows": { "nsis": { "installMode": "currentUser" } },
+            "macOS": { "minimumSystemVersion": "11.0" }
+          },
+          "plugins": { "deep-link": { "desktop": { "schemes": ["commy"] } } }
+        }
+        EOF
+        # Invite links open the app through commy:// (src/invite_link.rs). The deep-link
+        # entry above registers it in the Windows installer and .deb; macOS reads Info.plist.
+        cat > Info.plist <<'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>CFBundleURLTypes</key>
+          <array>
+            <dict>
+              <key>CFBundleURLName</key>
+              <string>chat.commy.desktop</string>
+              <key>CFBundleURLSchemes</key>
+              <array><string>commy</string></array>
+            </dict>
+          </array>
+          <key>NSMicrophoneUsageDescription</key>
+          <string>Commy uses the microphone for voice chat.</string>
+          <key>NSCameraUsageDescription</key>
+          <string>Commy uses the camera for video calls.</string>
+        </dict>
+        </plist>
+        EOF
