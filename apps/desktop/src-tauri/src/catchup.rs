@@ -431,6 +431,8 @@ pub trait AppAccess: Send + Sync + 'static {
     /// Saves the servers changed meanwhile after [`SAVE_DELAY`], in the
     /// background (see [`save_unsaved`]).
     fn save_later(&self);
+    /// Starts a catch-up session with a neighbor.
+    fn catch_up(&self, server: ServerId, peer: [u8; 32]);
 }
 
 impl AppAccess for tauri::AppHandle {
@@ -448,6 +450,10 @@ impl AppAccess for tauri::AppHandle {
             tokio::time::sleep(SAVE_DELAY).await;
             save_unsaved(handle.app());
         });
+    }
+
+    fn catch_up(&self, server: ServerId, peer: [u8; 32]) {
+        spawn_session(self.clone(), server, peer, None, false);
     }
 }
 
@@ -499,6 +505,9 @@ impl AppAccess for TestHandle {
             save_unsaved(&app);
         });
     }
+
+    /// The harness starts its sessions on NeighborUp, as the app also does.
+    fn catch_up(&self, _server: ServerId, _peer: [u8; 32]) {}
 }
 
 /// [`CatchupStore`] over `App.servers`. Every call locks briefly.

@@ -283,6 +283,10 @@ mod tests {
         fn save_later(&self) {
             self.handle.save_later();
         }
+
+        fn catch_up(&self, server: commy_core::ServerId, peer: [u8; 32]) {
+            self.handle.catch_up(server, peer);
+        }
     }
 
     impl KeyNet for FakeNet {

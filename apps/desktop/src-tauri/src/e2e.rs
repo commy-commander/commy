@@ -613,6 +613,60 @@ async fn doorbell_wakes_offline_members_and_catch_up_delivers() {
     }
 }
 
+/// Linked devices are kept as an id, node id, owner and two times: no
+/// computer name or anything else that describes them.
+#[test]
+fn linked_devices_keep_nothing_descriptive() {
+    assert_eq!(columns("linkedDevice"), ["createdAt", "id", "lastSeenAt", "nodeId", "userId"]);
+}
+
+/// The bench case: the sender closes, the member comes back alone and
+/// sees "1 message is on its way" from the app's own listener, before any
+/// peer is reachable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn doorbell_banner_shows_before_any_peer_is_back() {
+    init_logs();
+    let (mut devices, server) = community(&["ada", "grace"]).await;
+    let [sender, member] = &mut devices[..] else { unreachable!() };
+
+    member.offline().await;
+    wait_until("the sender to have no neighbors", || sender.neighbors(server) == Some(0)).await;
+    let (message, delivered, rings) = sender.send(server, "Snacks are on me").await;
+    assert!(!delivered && rings.len() == 1);
+    sender.offline().await;
+
+    // The member's app starts as it does at launch: network up, listener running
+    member.online().await;
+    member.access.take_events();
+    let launched = Instant::now();
+    let listener = tokio::spawn(doorbell::run(member.access.clone()));
+    wait_until("the banner to show", || member.awaited(server) == 1).await;
+    let took = launched.elapsed();
+    eprintln!("rings taken {took:?} after launch");
+    assert!(took < Duration::from_secs(10), "rings are taken right after launch, not after a delay ({took:?})");
+    assert_eq!(member.neighbors(server), Some(0), "no peer is back yet");
+    let refreshed = member.access.take_events().into_iter().any(|(event, payload)| {
+        event == "server-event" && payload == serde_json::json!(server.to_string())
+    });
+    assert!(refreshed, "the window is told to refresh the banner");
+
+    // The sender comes back and dials the member, as the app's mesh healer
+    // does: the message arrives and the banner goes
+    sender.online().await;
+    let member_node = member.node_hex();
+    {
+        let net = sender.app().net.lock().await;
+        net.as_ref().unwrap().join_peers(server, &[member_node]).await.unwrap();
+    }
+    wait_until("the message to arrive", || member.message(server, message.id).is_some()).await;
+    assert_eq!(member.awaited(server), 0);
+
+    listener.abort();
+    for d in devices.iter_mut() {
+        d.offline().await;
+    }
+}
+
 #[tokio::test]
 async fn doorbell_limits_hold() {
     let origin = auth_url();
@@ -681,7 +735,9 @@ async fn offline_edits_and_deletes_arrive_in_order_signed() {
     assert!(!author.edit(server, kept.id, "final words").await);
     assert!(!author.delete(server, gone.id).await);
 
-    // Waiting on the author: the kept message, then the edit and delete in order
+    // Waiting on the author: the kept message, edited in place, and the
+    // delete. Edits of a message still pending travel with it, so none can
+    // reach the reader before the message it changes.
     let mut saved = author.outbox_on_disk();
     assert!(saved.is_pending(server, kept.id));
     assert!(!saved.is_pending(server, gone.id), "a deleted message is not sent");
@@ -696,15 +752,25 @@ async fn offline_edits_and_deletes_arrive_in_order_signed() {
         .collect();
     eprintln!("queued while offline: {kinds:?}");
     assert_eq!(kinds.last().unwrap(), &format!("delete {}", gone.id));
-    assert!(kinds.contains(&format!("edit {} final words", kept.id)));
-    let final_edit = kinds.iter().position(|k| k == &format!("edit {} final words", kept.id)).unwrap();
-    if let Some(second) = kinds.iter().position(|k| k == &format!("edit {} second draft", kept.id)) {
-        assert!(second < final_edit, "edits keep their order");
-    }
+    assert!(!kinds.iter().any(|k| k.starts_with("edit ")), "edits of a pending message are not queued");
+
+    // Edited once it went out: that edit is queued and arrives after it
+    reader.online().await;
+    wait_until("the kept message to arrive", || reader.message(server, kept.id).is_some()).await;
+    assert_eq!(reader.message(server, kept.id).unwrap().content, "final words");
+    reader.offline().await;
+    wait_until("the author to have no neighbors", || author.neighbors(server) == Some(0)).await;
+    wait_until("the author's pending send to clear", || !author.app().outbox.lock().unwrap().has_pending(server)).await;
+    assert!(!author.edit(server, kept.id, "final words, really").await);
+    let queued = author.outbox_on_disk().take_queued(server);
+    assert!(
+        queued.iter().any(|e| matches!(e, ServerEvent::MessageEdit { message, .. } if *message == kept.id)),
+        "an edit of a delivered message waits in the queue"
+    );
 
     reader.online().await;
     wait_until("the final edit to arrive", || {
-        reader.message(server, kept.id).is_some_and(|m| m.content == "final words")
+        reader.message(server, kept.id).is_some_and(|m| m.content == "final words, really")
     })
     .await;
     let want = author.message(server, kept.id).unwrap();
