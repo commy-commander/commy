@@ -36,16 +36,16 @@ pub fn fixture() -> (ServerState, ChannelId, UserId) {
     (state, channel, owner_id)
 }
 
-/// Adds a keyed member and returns their id.
+/// Adds a keyed member, joined since ever, and returns their id.
 pub fn join(state: &mut ServerState, username: &str) -> UserId {
     let profile = keyed_profile(username);
     let id = profile.id;
     let server = state.server.id;
-    state.apply(ServerEvent::MemberJoin { server, profile }).unwrap();
+    state.apply(ServerEvent::MemberJoin { server, profile, at: 0 }).unwrap();
     id
 }
 
-/// Adds a keyed member holding a role with Manage Messages.
+/// Adds a keyed member holding a role with Manage Messages since ever.
 pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
     let server = state.server.id;
     let user = join(state, username);
@@ -63,7 +63,7 @@ pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
     };
     let id = role.id;
     state.apply(ServerEvent::RoleCreate { server, role }).unwrap();
-    state.apply(ServerEvent::RoleAssign { server, user, role: id, at: Utc::now().timestamp_millis() }).unwrap();
+    state.apply(ServerEvent::RoleAssign { server, user, role: id, at: 0 }).unwrap();
     user
 }
 
@@ -76,6 +76,11 @@ pub fn signed(state: &ServerState, mut message: Message) -> Message {
 /// New message from `author`, signed.
 pub fn post(state: &ServerState, channel: ChannelId, author: UserId, content: &str) -> Message {
     signed(state, Message::new(channel, author, content))
+}
+
+/// New message from `author` written at `at`, signed.
+pub fn post_at(state: &ServerState, channel: ChannelId, author: UserId, content: &str, at: DateTime<Utc>) -> Message {
+    signed(state, Message { created_at: at, ..Message::new(channel, author, content) })
 }
 
 /// Edit of `message` signed by its author.

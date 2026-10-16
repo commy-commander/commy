@@ -43,6 +43,10 @@ pub const HOLD_BYTES: usize = 4 * 1024 * 1024;
 
 type SessionKey = (ServerId, [u8; 32]);
 
+/// An event held until its signer's key is known: when it was held, the
+/// signer, and the event.
+pub type Held = (Instant, UserId, ServerEvent);
+
 /// Catch-up bookkeeping kept in `App.catchup`.
 #[derive(Debug, Default)]
 pub struct Catchup {
@@ -52,7 +56,7 @@ pub struct Catchup {
     completed: HashMap<SessionKey, Instant>,
     /// Remote message events whose signer has no known key yet, with
     /// their size (see [`held_size`]).
-    held: HashMap<ServerId, VecDeque<(Instant, ServerEvent, usize)>>,
+    held: HashMap<ServerId, VecDeque<(Held, usize)>>,
     /// New messages from others per channel, not yet told to the webview.
     fresh: HashMap<ServerId, HashMap<ChannelId, u32>>,
     /// Servers changed since the webview was last told.
@@ -98,12 +102,12 @@ impl Catchup {
     /// Holds an event until its signer's key arrives; the oldest go past
     /// the caps (see [`trim_held`]). One already held for the same message
     /// and kind is kept instead, or replaced by a newer edit.
-    pub fn hold(&mut self, server: ServerId, event: ServerEvent, now: Instant) {
+    pub fn hold(&mut self, server: ServerId, signer: UserId, event: ServerEvent, now: Instant) {
         let queue = self.held.entry(server).or_default();
         if let Some(key) = hold_key(&event) {
-            if let Some(slot) = queue.iter_mut().find(|(_, held, _)| hold_key(held) == Some(key)) {
-                if let Some(size) = held_size(&event).filter(|_| newer_edit(&event, &slot.1)) {
-                    *slot = (slot.0, event, size);
+            if let Some(slot) = queue.iter_mut().find(|((_, _, held), _)| hold_key(held) == Some(key)) {
+                if let Some(size) = held_size(&event).filter(|_| newer_edit(&event, &slot.0 .2)) {
+                    *slot = ((slot.0 .0, signer, event), size);
                     trim_held(queue);
                 }
                 return;
@@ -113,7 +117,7 @@ impl Catchup {
             tracing::debug!("not holding an event too large to send");
             return;
         };
-        queue.push_back((now, event, size));
+        queue.push_back(((now, signer, event), size));
         trim_held(queue);
     }
 
@@ -122,25 +126,37 @@ impl Catchup {
         self.held.get(&server).map_or(0, VecDeque::len)
     }
 
-    /// The server's held events, oldest first, without expired ones.
-    pub fn take_held(&mut self, server: ServerId, now: Instant) -> Vec<(Instant, ServerEvent)> {
-        self.held
-            .remove(&server)
-            .map(|queue| queue.into_iter().filter(|(at, _, _)| !expired(*at, now)).map(|(at, e, _)| (at, e)).collect())
-            .unwrap_or_default()
+    /// [`Self::take_held`] for every signer.
+    #[cfg(test)]
+    pub fn take_all_held(&mut self, server: ServerId, now: Instant) -> Vec<Held> {
+        let signers = self.held.get(&server).map(|q| q.iter().map(|((_, by, _), _)| *by).collect()).unwrap_or_default();
+        self.take_held(server, &signers, now)
+    }
+
+    /// The server's held events signed by one of `signers`, oldest first;
+    /// the others stay held. Expired ones go.
+    pub fn take_held(&mut self, server: ServerId, signers: &HashSet<UserId>, now: Instant) -> Vec<Held> {
+        let Some(queue) = self.held.get_mut(&server) else { return Vec::new() };
+        let (taken, kept): (VecDeque<_>, VecDeque<_>) =
+            queue.drain(..).filter(|((at, _, _), _)| !expired(*at, now)).partition(|((_, by, _), _)| signers.contains(by));
+        *queue = kept;
+        if queue.is_empty() {
+            self.held.remove(&server);
+        }
+        taken.into_iter().map(|(held, _)| held).collect()
     }
 
     /// Puts events still waiting back in front of any held meanwhile,
     /// unless the same one was held again in between.
-    pub fn restore_held(&mut self, server: ServerId, events: Vec<(Instant, ServerEvent)>) {
+    pub fn restore_held(&mut self, server: ServerId, events: Vec<Held>) {
         if events.is_empty() {
             return;
         }
         let queue = self.held.entry(server).or_default();
-        for (at, event) in events.into_iter().rev() {
-            let again = hold_key(&event).is_some_and(|key| queue.iter().any(|(_, e, _)| hold_key(e) == Some(key)));
-            if let Some(size) = held_size(&event).filter(|_| !again) {
-                queue.push_front((at, event, size));
+        for held in events.into_iter().rev() {
+            let again = hold_key(&held.2).is_some_and(|key| queue.iter().any(|((_, _, e), _)| hold_key(e) == Some(key)));
+            if let Some(size) = held_size(&held.2).filter(|_| !again) {
+                queue.push_front((held, size));
             }
         }
         trim_held(queue);
@@ -149,7 +165,7 @@ impl Catchup {
     /// Drops held events past [`HOLD_FOR`] in every server.
     pub fn expire_held(&mut self, now: Instant) {
         for queue in self.held.values_mut() {
-            queue.retain(|(at, _, _)| !expired(*at, now));
+            queue.retain(|((at, _, _), _)| !expired(*at, now));
         }
         self.held.retain(|_, queue| !queue.is_empty());
     }
@@ -218,10 +234,10 @@ fn held_size(event: &ServerEvent) -> Option<usize> {
 }
 
 /// Drops the oldest held events past [`HOLD_CAP`] or [`HOLD_BYTES`].
-fn trim_held(queue: &mut VecDeque<(Instant, ServerEvent, usize)>) {
-    let mut bytes: usize = queue.iter().map(|(_, _, size)| size).sum();
+fn trim_held(queue: &mut VecDeque<(Held, usize)>) {
+    let mut bytes: usize = queue.iter().map(|(_, size)| size).sum();
     while queue.len() > HOLD_CAP || bytes > HOLD_BYTES {
-        let Some((_, _, size)) = queue.pop_front() else { break };
+        let Some((_, size)) = queue.pop_front() else { break };
         bytes -= size;
     }
 }
@@ -297,20 +313,22 @@ impl Unread {
     }
 }
 
-/// Applies one catch-up page. Returns the report, the events to hold,
-/// and the channels of new messages that count as unread.
+/// Applies one catch-up page. Returns the report, the events to hold
+/// with their signer, and the channels of new messages that count as
+/// unread.
 pub fn apply_page(
     state: &mut ServerState,
     unread: &Unread,
     messages: Vec<Message>,
     tombstones: Vec<TombstoneProof>,
-) -> (ApplyReport, Vec<ServerEvent>, Vec<ChannelId>) {
+) -> (ApplyReport, Vec<(UserId, ServerEvent)>, Vec<ChannelId>) {
     let new: HashMap<MessageId, ChannelId> = messages
         .iter()
         .filter(|m| unread.counts(state, m))
         .map(|m| (m.id, m.channel))
         .collect();
     let (report, held) = apply_items(state, messages, tombstones);
+    let held = held.into_iter().filter_map(|event| Some((item_signer(&event)?, event))).collect();
     let fresh = report
         .applied
         .iter()
@@ -320,19 +338,28 @@ pub fn apply_page(
     (report, held, fresh)
 }
 
+/// Who signed a catch-up item: a message's author, a delete's deleter.
+fn item_signer(event: &ServerEvent) -> Option<UserId> {
+    match event {
+        ServerEvent::MessageCreate { message } => Some(message.author),
+        ServerEvent::MessageDelete { by, .. } => Some(*by),
+        _ => None,
+    }
+}
+
 /// Outcome of retrying held events.
 #[derive(Debug, Default)]
 pub struct Retried {
     pub changed: bool,
     pub fresh: Vec<ChannelId>,
-    /// Events whose signer is still unknown, with their hold time.
-    pub still: Vec<(Instant, ServerEvent)>,
+    /// Events whose signer is still unknown.
+    pub still: Vec<Held>,
 }
 
 /// Re-applies held events in order; those still missing a key stay held.
-pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<(Instant, ServerEvent)>) -> Retried {
+pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<Held>) -> Retried {
     let mut out = Retried::default();
-    for (at, event) in events {
+    for (at, _, event) in events {
         let new_message = match &event {
             ServerEvent::MessageCreate { message } if unread.counts(state, message) => Some((message.id, message.channel)),
             _ => None,
@@ -347,25 +374,37 @@ pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<(Instant
                 }
             }
             Ok(false) => {}
-            Err(StoreError::UnknownAuthorKey(_)) => out.still.push((at, event)),
+            Err(StoreError::UnknownAuthorKey(signer)) => out.still.push((at, signer, event)),
             Err(e) => tracing::debug!("held event rejected: {e}"),
         }
     }
     out
 }
 
-/// Applies a live event from a peer. Returns the store's answer and, for
-/// a create, the message when it is new here: absent before, present
-/// after. A late copy kept out by a stored delete may return Ok(true)
-/// because its proof changed, but it is no new message.
-pub fn apply_live(state: &mut ServerState, event: ServerEvent) -> (Result<bool, StoreError>, Option<Message>) {
+/// Applies a live event from a peer. Returns the store's answer; for a
+/// create, the message when it is new here, absent before and present
+/// after (a late copy kept out by a stored delete may return Ok(true)
+/// because its proof changed, but it is no new message); and for a join
+/// or profile, the user when it pinned their key, so what was held for
+/// it may go in.
+pub fn apply_live(
+    state: &mut ServerState,
+    event: ServerEvent,
+) -> (Result<bool, StoreError>, Option<Message>, Option<UserId>) {
     let created = match &event {
         ServerEvent::MessageCreate { message } if !state.has_message(message.id) => Some(message.clone()),
         _ => None,
     };
+    let keyless = match &event {
+        ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } => {
+            Some(profile.id).filter(|user| state.identity_of(*user).is_none())
+        }
+        _ => None,
+    };
     let applied = state.apply(event);
     let created = created.filter(|m| matches!(applied, Ok(true)) && state.has_message(m.id));
-    (applied, created)
+    let pinned = keyless.filter(|user| applied.is_ok() && state.identity_of(*user).is_some());
+    (applied, created, pinned)
 }
 
 /// Payload of `messages-caught-up`: new messages per channel, so the
@@ -517,7 +556,7 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
         }
         app.catchup.lock().unwrap().note_applied(server, []);
         // Items held for these keys can go in now.
-        release_held(&self.0, server);
+        release_held(&self.0, server, &learned);
     }
 
     fn apply(&self, server: ServerId, messages: Vec<Message>, tombstones: Vec<TombstoneProof>) -> ApplyReport {
@@ -535,8 +574,8 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
         let now = Instant::now();
         {
             let mut catchup = app.catchup.lock().unwrap();
-            for event in held {
-                catchup.hold(server, event, now);
+            for (signer, event) in held {
+                catchup.hold(server, signer, event, now);
             }
             if !report.applied.is_empty() {
                 catchup.note_applied(server, fresh);
@@ -659,6 +698,10 @@ pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<
     if app.catchup.lock().unwrap().take_unsaved_server(server) {
         app.persist_server(server);
     }
+    // We are established there now; no snapshot replaces that state.
+    if report.is_some() {
+        app.close_snapshot_window(server);
+    }
     flush(access, server, outbox_changed);
 }
 
@@ -683,15 +726,21 @@ fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
 }
 
 /// Holds a remote message event whose signer has no known key yet.
-pub fn hold(app: &App, server: ServerId, event: ServerEvent) {
-    app.catchup.lock().unwrap().hold(server, event, Instant::now());
+pub fn hold(app: &App, server: ServerId, signer: UserId, event: ServerEvent) {
+    app.catchup.lock().unwrap().hold(server, signer, event, Instant::now());
 }
 
-/// Retries a server's held events, after a member's profile (and so
-/// perhaps their key) arrived. New messages bump unread counts silently.
-pub fn release_held<A: AppAccess>(access: &A, server: ServerId) {
+/// Retries a server's held events signed by `signers`, whose keys just
+/// became known; the rest stay held. New messages bump unread counts
+/// silently.
+pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserId]) {
     let app = access.app();
-    let events = app.catchup.lock().unwrap().take_held(server, Instant::now());
+    let signers: HashSet<UserId> = signers.iter().copied().collect();
+    let events = if signers.is_empty() {
+        Vec::new()
+    } else {
+        app.catchup.lock().unwrap().take_held(server, &signers, Instant::now())
+    };
     if events.is_empty() {
         flush(access, server, false);
         return;
@@ -714,10 +763,14 @@ pub fn release_held<A: AppAccess>(access: &A, server: ServerId) {
 
 // ---------- The first snapshot ----------
 
-/// The snapshot we answer a newcomer's request with. While our key may
-/// still be replaced, it stays out of it, and so does what we signed with
-/// it: our messages arrive by catch-up once it settled.
+/// The snapshot we answer a newcomer's request with, none for a server
+/// that never took its own: what we hold there is a placeholder. While
+/// our key may still be replaced, it stays out of it, and so does what we
+/// signed with it: our messages arrive by catch-up once it settled.
 pub fn snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
+    if app.lacks_snapshot(server) {
+        return None;
+    }
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let settled = app.key_settled();
     let mut payload = commy_net::protocol::build_sync_response(app.servers.lock().unwrap().get(&server)?, 50);
@@ -734,20 +787,23 @@ pub fn snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
 
 /// Takes a `SyncResponse` that arrived on `server`'s topic. Only a server
 /// joined from a ticket that still waits for its first snapshot takes
-/// one, and only a snapshot of that same server: it replaces the
-/// provisional state, trusting the keys it carries. Every other state
-/// keeps its pinned keys and delete proofs; catch-up brings what it
-/// lacks. Returns true when the snapshot was taken.
+/// one, inside its window (see `App::awaiting_snapshot`), and only a
+/// snapshot of that same server: it replaces the provisional state,
+/// trusting the keys it carries. Every other state keeps its pinned keys
+/// and delete proofs; catch-up brings what it lacks. Returns true when
+/// the snapshot was taken.
 pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WirePayload) -> bool {
     let app = access.app();
-    let WirePayload::SyncResponse { server: remote_server, profiles, recent_messages } = payload else {
+    let WirePayload::SyncResponse { server: mut remote_server, members, profiles, recent_messages } = payload else {
         return false;
     };
     if !app.awaits_snapshot(server) || remote_server.id != server {
         return false;
     }
+    remote_server.members = members.into_iter().map(member_of).collect();
     let me = app.profile.lock().unwrap().clone();
     let mut held = Vec::new();
+    let learned: Vec<UserId>;
     {
         let mut servers = app.servers.lock().unwrap();
         // Snapshots carry no emojis or sounds; keep any announced already.
@@ -758,6 +814,10 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         }) else {
             return false;
         };
+        // The time of the join we announced, and the keys known so far.
+        let joined = me.as_ref().and_then(|me| servers.get(&server)?.joined_at(me.id));
+        let known: HashSet<UserId> =
+            servers.get(&server).map(|s| s.profiles.values().filter(|p| p.identity.is_some()).map(|p| p.id).collect()).unwrap_or_default();
         let mut state = ServerState::new(remote_server);
         if rules.is_some() {
             let _ = state.apply(ServerEvent::RulesSet { server, rules });
@@ -789,28 +849,36 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
             let key = me.identity;
             let entry = state.profiles.entry(me.id).or_insert_with(|| me.clone());
             entry.identity = key.or(entry.identity);
-            if let Err(e) = state.apply(ServerEvent::MemberJoin { server, profile: me }) {
+            let at = joined.unwrap_or_else(|| Utc::now().timestamp_millis());
+            if let Err(e) = state.apply(ServerEvent::MemberJoin { server, profile: me, at }) {
                 tracing::warn!("could not join {server} from its snapshot: {e}");
             }
         }
         for message in recent_messages {
             let event = ServerEvent::MessageCreate { message };
-            if let Err(StoreError::UnknownAuthorKey(_)) = state.apply(event.clone()) {
-                held.push(event);
+            if let Err(StoreError::UnknownAuthorKey(signer)) = state.apply(event.clone()) {
+                held.push((signer, event));
             }
         }
+        learned = state.profiles.values().filter(|p| p.identity.is_some() && !known.contains(&p.id)).map(|p| p.id).collect();
         servers.insert(server, state);
     }
-    for event in held {
-        hold(app, server, event);
+    for (signer, event) in held {
+        hold(app, server, signer, event);
     }
     app.persist_server(server);
     // Still a newcomer here, so released history is not counted as unread.
-    release_held(access, server);
+    release_held(access, server, &learned);
     app.set_awaiting_snapshot(server, false);
     access.emit("server-event", server.to_string().into());
     access.emit("servers-changed", serde_json::Value::Null);
     true
+}
+
+/// A member as a snapshot carried them.
+fn member_of(m: commy_net::protocol::SyncMember) -> commy_core::Member {
+    let joined_at = chrono::DateTime::from_timestamp_millis(m.joined_ms).unwrap_or_default();
+    commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at }
 }
 
 /// The nodes a stored invite bootstraps from, or None when it is unreadable.
@@ -847,7 +915,8 @@ pub fn mark_joined_placeholders(app: &App, invites: &HashMap<ServerId, String>, 
         .map(|state| state.server.id)
         .collect();
     for server in found {
-        if !app.awaits_snapshot(server) {
+        // One whose window closed stays closed.
+        if !app.lacks_snapshot(server) {
             tracing::info!("{server} still waits for its first snapshot");
             app.set_awaiting_snapshot(server, true);
         }
@@ -925,7 +994,15 @@ mod tests {
 
     fn join(state: &mut ServerState, member: &Member) {
         let server = state.server.id;
-        state.apply(ServerEvent::MemberJoin { server, profile: member.profile.clone() }).unwrap();
+        state.apply(ServerEvent::MemberJoin { server, profile: member.profile.clone(), at: 0 }).unwrap();
+    }
+
+    /// `member` joins without a key, as an announcement made while their
+    /// key was held back.
+    fn join_without_key(state: &mut ServerState, member: &Member) {
+        let server = state.server.id;
+        let profile = UserProfile { identity: None, ..member.profile.clone() };
+        state.apply(ServerEvent::MemberJoin { server, profile, at: 0 }).unwrap();
     }
 
     /// Unread counting as `member` sees it, blocking nobody.
@@ -971,29 +1048,30 @@ mod tests {
         let channel = ChannelId::new();
         let users: Vec<UserId> = (0..HOLD_CAP + 10).map(|_| UserId::new()).collect();
         let typing = |i: usize| ServerEvent::TypingStart { channel, user: users[i] };
+        let who = UserId::new();
         let t0 = Instant::now();
         for i in 0..HOLD_CAP + 2 {
-            catchup.hold(sid, typing(i), t0);
+            catchup.hold(sid, who, typing(i), t0);
         }
         assert_eq!(catchup.held_count(sid), HOLD_CAP);
-        let held = catchup.take_held(sid, t0);
+        let held = catchup.take_all_held(sid, t0);
         assert_eq!(held.len(), HOLD_CAP);
-        assert_eq!(held[0].1, typing(2), "the oldest were dropped");
+        assert_eq!(held[0].2, typing(2), "the oldest were dropped");
         assert_eq!(catchup.held_count(sid), 0);
 
-        catchup.hold(sid, typing(0), t0);
-        catchup.hold(sid, typing(1), t0 + Duration::from_secs(60));
+        catchup.hold(sid, who, typing(0), t0);
+        catchup.hold(sid, who, typing(1), t0 + Duration::from_secs(60));
         let later = t0 + HOLD_FOR + Duration::from_secs(1);
-        assert_eq!(catchup.take_held(sid, later), vec![(t0 + Duration::from_secs(60), typing(1))]);
+        assert_eq!(catchup.take_all_held(sid, later), vec![(t0 + Duration::from_secs(60), who, typing(1))]);
 
-        catchup.hold(sid, typing(3), t0);
+        catchup.hold(sid, who, typing(3), t0);
         catchup.expire_held(later);
         assert_eq!(catchup.held_count(sid), 0);
 
         // Restored events go in front of ones held meanwhile.
-        catchup.hold(sid, typing(9), t0);
-        catchup.restore_held(sid, vec![(t0, typing(1)), (t0, typing(2))]);
-        let order: Vec<ServerEvent> = catchup.take_held(sid, t0).into_iter().map(|(_, e)| e).collect();
+        catchup.hold(sid, who, typing(9), t0);
+        catchup.restore_held(sid, vec![(t0, who, typing(1)), (t0, who, typing(2))]);
+        let order: Vec<ServerEvent> = catchup.take_all_held(sid, t0).into_iter().map(|(_, _, e)| e).collect();
         assert_eq!(order, vec![typing(1), typing(2), typing(9)]);
     }
 
@@ -1021,20 +1099,21 @@ mod tests {
         assert!(fits < events.len() && events.len() < HOLD_CAP);
         let mut catchup = Catchup::default();
         let t0 = Instant::now();
+        let by = stranger.id();
         for event in &events {
-            catchup.hold(sid, event.clone(), t0);
+            catchup.hold(sid, by, event.clone(), t0);
         }
         // One too large to send is not held, and pushes nothing out.
-        catchup.hold(sid, post(800, 5000), t0);
-        let held: Vec<ServerEvent> = catchup.take_held(sid, t0).into_iter().map(|(_, e)| e).collect();
+        catchup.hold(sid, by, post(800, 5000), t0);
+        let held: Vec<ServerEvent> = catchup.take_all_held(sid, t0).into_iter().map(|(_, _, e)| e).collect();
         assert!(held.iter().map(size).sum::<usize>() <= HOLD_BYTES);
         assert_eq!(held.len(), fits);
         assert_eq!(held, events[events.len() - fits..], "the oldest were dropped");
 
         // Put back in front of newer ones, the oldest go again.
-        catchup.hold(sid, events[0].clone(), t0);
-        catchup.restore_held(sid, held.iter().map(|e| (t0, e.clone())).collect());
-        let again: Vec<ServerEvent> = catchup.take_held(sid, t0).into_iter().map(|(_, e)| e).collect();
+        catchup.hold(sid, by, events[0].clone(), t0);
+        catchup.restore_held(sid, held.iter().map(|e| (t0, by, e.clone())).collect());
+        let again: Vec<ServerEvent> = catchup.take_all_held(sid, t0).into_iter().map(|(_, _, e)| e).collect();
         assert!(again.iter().map(size).sum::<usize>() <= HOLD_BYTES);
         assert!(!again.contains(&held[0]));
         assert_eq!(again.last(), Some(&events[0]));
@@ -1090,16 +1169,16 @@ mod tests {
             ServerEvent::MessageCreate { message: second.clone() },
         ] {
             assert_eq!(state.apply(event.clone()), Err(StoreError::UnknownAuthorKey(newcomer.id())));
-            catchup.hold(sid, event, t0);
+            catchup.hold(sid, newcomer.id(), event, t0);
         }
-        let retried = retry_held(&mut state, &unread_for(&owner), catchup.take_held(sid, t0));
+        let retried = retry_held(&mut state, &unread_for(&owner), catchup.take_all_held(sid, t0));
         assert!(!retried.changed && retried.fresh.is_empty());
         assert_eq!(retried.still.len(), 2, "still no key");
         catchup.restore_held(sid, retried.still);
 
         join(&mut state, &newcomer);
-        catchup.hold(sid, edit, t0);
-        let retried = retry_held(&mut state, &unread_for(&owner), catchup.take_held(sid, t0));
+        catchup.hold(sid, newcomer.id(), edit, t0);
+        let retried = retry_held(&mut state, &unread_for(&owner), catchup.take_all_held(sid, t0));
         assert!(retried.changed && retried.still.is_empty());
         assert_eq!(retried.fresh, vec![channel, channel], "the edit is not a new message");
         assert_eq!(state.message(first.id).unwrap().content, "first, edited");
@@ -1107,7 +1186,7 @@ mod tests {
 
         // Our own messages coming back are not unread.
         let mine = owner.post(&state, channel, "mine");
-        let retried = retry_held(&mut state, &unread_for(&owner), vec![(t0, ServerEvent::MessageCreate { message: mine })]);
+        let retried = retry_held(&mut state, &unread_for(&owner), vec![(t0, owner.id(), ServerEvent::MessageCreate { message: mine })]);
         assert!(retried.changed && retried.fresh.is_empty());
     }
 
@@ -1136,7 +1215,7 @@ mod tests {
         assert!(!report.applied.contains(&known.id));
         assert_eq!(fresh, vec![channel], "only the friend's new message is unread");
         assert_eq!(report.held, vec![theirs.id]);
-        assert_eq!(held, vec![ServerEvent::MessageCreate { message: theirs }]);
+        assert_eq!(held, vec![(stranger.id(), ServerEvent::MessageCreate { message: theirs })]);
         assert!(!state.has_message(deleted.id));
     }
 
@@ -1151,25 +1230,25 @@ mod tests {
         let delete = TombstoneProof::sign(sid, channel, message.id, friend.id(), Utc::now(), &friend.identity);
 
         // The delete overtook the create.
-        assert_eq!(apply_live(&mut state, delete.into_event()), (Ok(true), None));
+        assert_eq!(apply_live(&mut state, delete.into_event()), (Ok(true), None, None));
         let create = ServerEvent::MessageCreate { message: message.clone() };
-        assert_eq!(apply_live(&mut state, create.clone()), (Ok(true), None), "only its proof changed");
+        assert_eq!(apply_live(&mut state, create.clone()), (Ok(true), None, None), "only its proof changed");
         assert!(!state.has_message(message.id));
-        assert_eq!(apply_live(&mut state, create), (Ok(false), None));
+        assert_eq!(apply_live(&mut state, create), (Ok(false), None, None));
 
         // A new message is news once; a newer copy of it is not.
         let fresh = friend.post(&state, channel, "hello");
         let create = ServerEvent::MessageCreate { message: fresh.clone() };
-        assert_eq!(apply_live(&mut state, create.clone()), (Ok(true), Some(fresh.clone())));
-        assert_eq!(apply_live(&mut state, create), (Ok(false), None));
+        assert_eq!(apply_live(&mut state, create.clone()), (Ok(true), Some(fresh.clone()), None));
+        assert_eq!(apply_live(&mut state, create), (Ok(false), None, None));
         let mut edited = fresh.clone();
         edited.content = "hello again".into();
         edited.edited_at = Some(Utc::now() + chrono::Duration::seconds(1));
         edited.sign(sid, &friend.identity);
-        assert_eq!(apply_live(&mut state, ServerEvent::MessageCreate { message: edited }), (Ok(true), None));
+        assert_eq!(apply_live(&mut state, ServerEvent::MessageCreate { message: edited }), (Ok(true), None, None));
         // Other events bring no message.
         let rename = ServerEvent::ServerRename { server: sid, name: "renamed".into() };
-        assert_eq!(apply_live(&mut state, rename), (Ok(true), None));
+        assert_eq!(apply_live(&mut state, rename), (Ok(true), None, None));
     }
 
     #[test]
@@ -1247,7 +1326,7 @@ mod tests {
         assert!(handle.take_events().is_empty(), "nothing changed");
 
         join(app.servers.lock().unwrap().get_mut(&sid).unwrap(), &late);
-        let held = app.catchup.lock().unwrap().take_held(sid, Instant::now());
+        let held = app.catchup.lock().unwrap().take_all_held(sid, Instant::now());
         let retried = retry_held(app.servers.lock().unwrap().get_mut(&sid).unwrap(), &unread_for(&owner), held);
         assert_eq!(retried.fresh, vec![channel]);
         assert!(app.servers.lock().unwrap()[&sid].has_message(early.id));
@@ -1345,8 +1424,9 @@ mod tests {
         let handle = TestHandle::new(app.clone());
         let store = AppStore(handle.clone());
 
-        // Relayed history from a member we never met waits for their key.
+        // Relayed history from a member whose key we lack waits for it.
         let absent = Member::new("absent");
+        join_without_key(app.servers.lock().unwrap().get_mut(&sid).unwrap(), &absent);
         let message = absent.post(&app.servers.lock().unwrap()[&sid], channel, "while you were away");
         store.apply(sid, vec![message.clone()], vec![]);
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 1);
@@ -1356,7 +1436,6 @@ mod tests {
         let state = app.servers.lock().unwrap()[&sid].clone();
         assert!(state.has_message(message.id));
         assert_eq!(state.identity_of(absent.id()), Some(absent.identity.public()));
-        assert!(!state.server.is_member(absent.id()), "a relayed profile makes nobody a member");
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 0);
         let caught_up = caught_up_payload(sid, &HashMap::from([(channel, 1)]));
         assert!(handle.take_events().contains(&("messages-caught-up".into(), caught_up)));
@@ -1366,7 +1445,59 @@ mod tests {
         store.apply_profiles(sid, vec![unkeyed.clone()]);
         assert!(!app.servers.lock().unwrap()[&sid].profiles.contains_key(&unkeyed.id));
         let asked = [absent.id(), unkeyed.id, owner.id(), owner.id()];
-        assert_eq!(store.profiles(sid, &asked), vec![owner.profile.clone()]);
+        let absent_here = app.servers.lock().unwrap()[&sid].profiles[&absent.id()].clone();
+        assert_eq!(store.profiles(sid, &asked), vec![absent_here, owner.profile.clone()]);
+    }
+
+    #[test]
+    fn only_what_a_key_just_pinned_signed_is_released() {
+        let owner = Member::new("owner");
+        let friend = Member::new("friend");
+        let (a, b) = (Member::new("a"), Member::new("b"));
+        let (mut state, channel) = server(&owner);
+        join(&mut state, &friend);
+        for member in [&a, &b] {
+            join_without_key(&mut state, member);
+        }
+        let sid = state.server.id;
+        let app = app_with(&owner, state);
+        let handle = TestHandle::new(app.clone());
+        let store = AppStore(handle.clone());
+        let post = |m: &Member, text: &str| m.post(&app.servers.lock().unwrap()[&sid], channel, text);
+        let (by_a, by_b) = (post(&a, "from a"), post(&b, "from b"));
+        store.apply(sid, vec![by_a.clone(), by_b.clone()], vec![]);
+        assert_eq!(app.catchup.lock().unwrap().held_count(sid), 2);
+        // b's key is known by now, though nothing named b since.
+        app.servers.lock().unwrap().get_mut(&sid).unwrap().profiles.get_mut(&b.id()).unwrap().identity =
+            Some(b.identity.public());
+        handle.take_events();
+        // What the net loop does with a live event.
+        let live = |event: ServerEvent| {
+            let pinned = apply_live(app.servers.lock().unwrap().get_mut(&sid).unwrap(), event).2;
+            release_held(&handle, sid, pinned.as_slice());
+            pinned
+        };
+        let has = |m: &Message| app.servers.lock().unwrap()[&sid].has_message(m.id);
+
+        // Joins and profiles that pin no key release nothing.
+        let keyless = UserProfile { identity: None, ..a.profile.clone() };
+        assert_eq!(live(ServerEvent::MemberJoin { server: sid, profile: keyless, at: 0 }), None);
+        assert_eq!(live(ServerEvent::ProfileUpdate { profile: friend.profile.clone() }), None);
+        assert!(!has(&by_a) && !has(&by_b));
+        assert_eq!(app.catchup.lock().unwrap().held_count(sid), 2);
+        assert!(handle.take_events().is_empty());
+
+        // a's key arrives: only a's message goes in.
+        assert_eq!(live(ServerEvent::ProfileUpdate { profile: a.profile.clone() }), Some(a.id()));
+        assert!(has(&by_a) && !has(&by_b));
+        assert_eq!(app.catchup.lock().unwrap().held_count(sid), 1);
+        let caught_up = caught_up_payload(sid, &HashMap::from([(channel, 1)]));
+        assert!(handle.take_events().contains(&("messages-caught-up".into(), caught_up)));
+
+        // A Profiles frame that pins nothing new releases nothing either.
+        store.apply_profiles(sid, vec![a.profile.clone(), b.profile.clone(), friend.profile.clone()]);
+        assert!(!has(&by_b));
+        assert_eq!(app.catchup.lock().unwrap().held_count(sid), 1);
     }
 
     #[test]
@@ -1378,35 +1509,36 @@ mod tests {
         let t0 = Instant::now();
         let mut catchup = Catchup::default();
         // Every session pushes the same message again.
+        let by = owner.id();
         for _ in 0..3 {
-            catchup.hold(sid, ServerEvent::MessageCreate { message: message.clone() }, t0);
+            catchup.hold(sid, by, ServerEvent::MessageCreate { message: message.clone() }, t0);
         }
         assert_eq!(catchup.held_count(sid), 1);
 
         // Of two edits of one message, the later one stays.
         let first = message.edit_event(sid, "one", Utc::now(), &owner.identity);
         let second = message.edit_event(sid, "two", Utc::now() + chrono::Duration::seconds(1), &owner.identity);
-        catchup.hold(sid, second.clone(), t0);
-        catchup.hold(sid, first.clone(), t0);
+        catchup.hold(sid, by, second.clone(), t0);
+        catchup.hold(sid, by, first.clone(), t0);
         assert_eq!(catchup.held_count(sid), 2);
-        let held: Vec<ServerEvent> = catchup.take_held(sid, t0).into_iter().map(|(_, e)| e).collect();
+        let held: Vec<ServerEvent> = catchup.take_all_held(sid, t0).into_iter().map(|(_, _, e)| e).collect();
         assert_eq!(held, vec![ServerEvent::MessageCreate { message: message.clone() }, second.clone()]);
-        catchup.hold(sid, first, t0);
-        catchup.hold(sid, second.clone(), t0);
-        assert_eq!(catchup.take_held(sid, t0), vec![(t0, second)]);
+        catchup.hold(sid, by, first, t0);
+        catchup.hold(sid, by, second.clone(), t0);
+        assert_eq!(catchup.take_all_held(sid, t0), vec![(t0, by, second)]);
 
         // Each deleter's proof is its own.
         let other = Member::new("other");
         let by_owner = TombstoneProof::sign(sid, channel, message.id, owner.id(), Utc::now(), &owner.identity);
         let by_other = TombstoneProof::sign(sid, channel, message.id, other.id(), Utc::now(), &other.identity);
         for proof in [&by_owner, &by_other, &by_owner] {
-            catchup.hold(sid, proof.clone().into_event(), t0);
+            catchup.hold(sid, proof.by, proof.clone().into_event(), t0);
         }
         assert_eq!(catchup.held_count(sid), 2);
 
         // Restoring does not bring back one held again meanwhile.
-        let again = catchup.take_held(sid, t0);
-        catchup.hold(sid, by_owner.clone().into_event(), t0);
+        let again = catchup.take_all_held(sid, t0);
+        catchup.hold(sid, by, by_owner.clone().into_event(), t0);
         catchup.restore_held(sid, again);
         assert_eq!(catchup.held_count(sid), 2);
     }
@@ -1425,7 +1557,7 @@ mod tests {
         assert!(fresh.is_empty());
 
         let released = pest.post(&state, channel, "released");
-        let retried = retry_held(&mut state, &unread, vec![(Instant::now(), ServerEvent::MessageCreate { message: released.clone() })]);
+        let retried = retry_held(&mut state, &unread, vec![(Instant::now(), pest.id(), ServerEvent::MessageCreate { message: released.clone() })]);
         assert!(retried.changed && state.has_message(released.id));
         assert!(retried.fresh.is_empty());
 
@@ -1478,6 +1610,7 @@ mod tests {
 
         // Released from the hold queue: not counted either.
         let stranger = Member::new("stranger");
+        join_without_key(app.servers.lock().unwrap().get_mut(&sid).unwrap(), &stranger);
         let held = stranger.post(&app.servers.lock().unwrap()[&sid], channel, "held");
         store.apply(sid, vec![held.clone()], vec![]);
         store.apply_profiles(sid, vec![stranger.profile.clone()]);
@@ -1550,10 +1683,16 @@ mod tests {
         assert!(app.awaits_snapshot(sid));
         assert!(handle.take_events().is_empty());
 
+        // The owner's live message beat the snapshot that brings their key.
+        let early = owner.post(&real, channel, "before the snapshot");
+        hold(&app, sid, owner.id(), ServerEvent::MessageCreate { message: early.clone() });
         assert!(apply_snapshot(&handle, sid, snapshot_of(&real)));
         let state = app.servers.lock().unwrap()[&sid].clone();
         assert_eq!(state.server.owner, owner.id());
-        assert!(state.has_message(hello.id));
+        let ms = |m: &commy_core::Member| (m.user, m.roles.clone(), m.joined_at.timestamp_millis());
+        assert_eq!(state.server.members.iter().map(ms).collect::<Vec<_>>(), real.server.members.iter().map(ms).collect::<Vec<_>>());
+        assert!(state.has_message(hello.id) && state.has_message(early.id));
+        assert_eq!(app.catchup.lock().unwrap().held_count(sid), 0);
         assert_eq!(state.identity_of(me.id()), Some(me.identity.public()));
         assert!(!app.awaits_snapshot(sid), "one snapshot only");
         let names: Vec<String> = handle.take_events().into_iter().map(|(name, _)| name).collect();
@@ -1610,6 +1749,80 @@ mod tests {
         assert_eq!(initiated.unwrap().received, vec![later.id]);
         assert_eq!(responded.unwrap().0, sid);
         assert!(app.servers.lock().unwrap()[&sid].has_message(later.id));
+    }
+
+    /// The provisional state of `me` joining server `sid` from a ticket.
+    fn placeholder(me: &Member, sid: ServerId) -> ServerState {
+        let mut provisional = commy_core::Server::new("s", me.id());
+        provisional.id = sid;
+        let mut state = ServerState::new(provisional);
+        state.profiles.insert(me.id(), me.profile.clone());
+        state
+    }
+
+    #[test]
+    fn no_snapshot_replaces_our_state_once_its_window_closed() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        // No snapshot fit, but the owner's join pinned their key here.
+        let mut ours = placeholder(&me, sid);
+        join(&mut ours, &owner);
+        // A member's crafted snapshot claims another key for the owner.
+        let mut forged = real.clone();
+        forged.profiles.get_mut(&owner.id()).unwrap().identity = Some(Identity::generate().public());
+        let dir = temp_dir("window");
+        for how in ["time", "session", "restart"] {
+            let app = app_with(&me, ours.clone());
+            let handle = TestHandle::new(app.clone());
+            app.set_awaiting_snapshot(sid, true);
+            match how {
+                "time" => {
+                    app.awaiting_snapshot.lock().unwrap().insert(sid, Utc::now().timestamp_millis() - 1);
+                }
+                "session" => after_session(&handle, sid, Some(&SessionReport::default())),
+                _ => {
+                    let past = HashMap::from([(sid, Utc::now().timestamp_millis() - 1)]);
+                    crate::persist::save_awaiting(&dir, &past).unwrap();
+                    *app.awaiting_snapshot.lock().unwrap() = crate::persist::load_awaiting(&dir, i64::MAX);
+                }
+            }
+            assert!(!app.awaits_snapshot(sid) && app.lacks_snapshot(sid), "{how}");
+            assert!(!apply_snapshot(&handle, sid, snapshot_of(&forged)), "{how}");
+            let state = app.servers.lock().unwrap()[&sid].clone();
+            assert_eq!(state.identity_of(owner.id()), Some(owner.identity.public()), "{how}");
+            assert_eq!(state.server.owner, me.id(), "{how}: nothing replaced");
+            // Startup does not open it again.
+            mark_joined_placeholders(&app, &HashMap::new(), [9; 32]);
+            assert!(!app.awaits_snapshot(sid), "{how}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        // A session that fails closes nothing.
+        let app = app_with(&me, ours);
+        app.set_awaiting_snapshot(sid, true);
+        after_session(&TestHandle::new(app.clone()), sid, None);
+        assert!(app.awaits_snapshot(sid));
+    }
+
+    #[test]
+    fn a_placeholder_is_never_handed_out() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let app = app_with(&me, placeholder(&me, sid));
+        app.set_awaiting_snapshot(sid, true);
+        assert!(snapshot_for(&app, sid).is_none(), "still waiting for ours");
+        app.close_snapshot_window(sid);
+        assert!(snapshot_for(&app, sid).is_none(), "never took one");
+        // Once a snapshot is taken, we answer with what we hold.
+        app.set_awaiting_snapshot(sid, true);
+        assert!(apply_snapshot(&TestHandle::new(app.clone()), sid, snapshot_of(&real)));
+        let Some(WirePayload::SyncResponse { server, .. }) = snapshot_for(&app, sid) else { panic!("no snapshot") };
+        assert_eq!(server.owner, owner.id());
     }
 
     #[test]
@@ -1752,7 +1965,12 @@ mod tests {
         mark_joined_placeholders(&app, &invites, theirs);
         assert!(app.awaiting_snapshot.lock().unwrap().is_empty());
         mark_joined_placeholders(&app, &HashMap::from([(sid, ticket.encode())]), [9; 32]);
-        assert_eq!(*app.awaiting_snapshot.lock().unwrap(), HashSet::from([sid]));
+        assert_eq!(app.awaiting_snapshot.lock().unwrap().keys().copied().collect::<HashSet<_>>(), HashSet::from([sid]));
+        assert!(app.awaits_snapshot(sid));
+        // Its window closes, and stays closed after a restart.
+        app.close_snapshot_window(sid);
+        mark_joined_placeholders(&app, &HashMap::from([(sid, ticket.encode())]), [9; 32]);
+        assert!(!app.awaits_snapshot(sid));
         inviter.shutdown().await.ok();
     }
 }

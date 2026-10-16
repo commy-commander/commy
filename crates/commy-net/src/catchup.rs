@@ -1628,9 +1628,10 @@ mod tests {
             let second = join_moderator(&mut state, "second");
             let a = MemStore::new(state.clone(), owner);
             let c = MemStore::new(state, author);
-            let spam = a.post_as(author, channel, "spam");
-            c.add(&spam);
             let now = Utc::now();
+            let spam = a.with(|s| post_at(s, channel, author, "spam", day_ago(2)));
+            a.add(&spam);
+            c.add(&spam);
             let (p1, p2) = a.with(|s| {
                 let p1 = proof_at(s, &spam, first, now - chrono::Duration::days(days_apart));
                 (p1, proof_at(s, &spam, second, now))
@@ -1701,6 +1702,7 @@ mod tests {
             s.apply(ServerEvent::MemberJoin {
                 server: s.server.id,
                 profile,
+                at: 0,
             })
             .unwrap();
             for event in held {
@@ -2092,8 +2094,8 @@ mod tests {
                     let p = proof_at(s, m, member, now);
                     s.apply(p.into_event()).unwrap();
                 }
-                // A moderator's delete of a message never seen here, whose
-                // role then goes.
+                // A moderator's delete of a message never seen here, made
+                // after a demotion heard of only later.
                 let unseen = post(s, channel, author, "never seen");
                 let p = proof_at(s, &unseen, moderator, now);
                 s.apply(p.into_event()).unwrap();
@@ -2102,7 +2104,8 @@ mod tests {
                 server,
                 user: moderator,
                 role,
-                at: Utc::now().timestamp_millis(),
+                at: (now - chrono::Duration::minutes(1)).timestamp_millis(),
+                since: None,
             };
             for store in [&a, &b] {
                 store.with(|s| s.apply(demote.clone()).unwrap());
@@ -2761,6 +2764,7 @@ mod tests {
             .apply(ServerEvent::MemberJoin {
                 server,
                 profile: d_without_key,
+                at: 0,
             })
             .unwrap();
         // b joined while c was away, so c has never seen them at all.
@@ -2770,6 +2774,7 @@ mod tests {
             .apply(ServerEvent::MemberJoin {
                 server,
                 profile: d.clone(),
+                at: 0,
             })
             .unwrap();
         let a = MemStore::new(a_state, owner);
@@ -2791,7 +2796,7 @@ mod tests {
         let held = std::mem::take(&mut *c.held.lock().unwrap());
         let profile = a.with(|s| s.profiles[&b_user].clone());
         c.with(|s| {
-            s.apply(ServerEvent::MemberJoin { server, profile }).unwrap();
+            s.apply(ServerEvent::MemberJoin { server, profile, at: 0 }).unwrap();
             for event in held {
                 assert_eq!(s.apply(event), Ok(true));
             }
@@ -2816,6 +2821,7 @@ mod tests {
             .apply(ServerEvent::MemberJoin {
                 server,
                 profile: stored,
+                at: 0,
             })
             .unwrap();
         let mut forged = state.profiles[&friend].clone();
@@ -2861,6 +2867,7 @@ mod tests {
             .apply(ServerEvent::MemberJoin {
                 server,
                 profile: keyless.clone(),
+                at: 0,
             })
             .unwrap();
         let former = join(&mut state, "former");
@@ -2868,6 +2875,7 @@ mod tests {
             .apply(ServerEvent::MemberLeave {
                 server,
                 user: former,
+                at: 1,
             })
             .unwrap();
         let asked = [friend, keyless.id, owner, former, friend, UserId::new()];
@@ -2886,6 +2894,7 @@ mod tests {
         let kick = ServerEvent::MemberLeave {
             server,
             user: kicked.id,
+            at: 1,
         };
         // c knows the member only from a profile without a key, and
         // applied the kick.
@@ -2894,6 +2903,7 @@ mod tests {
             .apply(ServerEvent::MemberJoin {
                 server,
                 profile: keyless,
+                at: 0,
             })
             .unwrap();
         c_state.apply(kick).unwrap();
@@ -2905,6 +2915,7 @@ mod tests {
             .apply(ServerEvent::MemberJoin {
                 server,
                 profile: kicked.clone(),
+                at: 0,
             })
             .unwrap();
         let a = MemStore::new(a_state, owner);
@@ -2930,7 +2941,7 @@ mod tests {
         };
         store.with(|s| {
             let server = s.server.id;
-            s.apply(ServerEvent::MemberJoin { server, profile })
+            s.apply(ServerEvent::MemberJoin { server, profile, at: 0 })
                 .unwrap()
         });
     }

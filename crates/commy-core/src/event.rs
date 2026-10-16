@@ -41,13 +41,21 @@ pub enum ServerEvent {
         emoji: String,
         user: UserId,
     },
+    /// A user joined, or announces that they are in, at `at` (ms since
+    /// the epoch). The latest join, leave or ban of a user wins, see
+    /// [`crate::store::MemberMark`].
     MemberJoin {
         server: ServerId,
         profile: UserProfile,
+        #[serde(default)]
+        at: i64,
     },
+    /// A user left or was kicked at `at`, see `MemberJoin`.
     MemberLeave {
         server: ServerId,
         user: UserId,
+        #[serde(default)]
+        at: i64,
     },
     PresenceUpdate {
         user: UserId,
@@ -94,12 +102,16 @@ pub enum ServerEvent {
         role: RoleId,
         at: i64,
     },
-    /// A role was taken from a member at `at`, see `RoleAssign`.
+    /// A role was taken from a member at `at`, see `RoleAssign`. `since`
+    /// is when the grant it ends was made, if known, see
+    /// [`crate::store::RoleMark::since`].
     RoleUnassign {
         server: ServerId,
         user: UserId,
         role: RoleId,
         at: i64,
+        #[serde(default)]
+        since: Option<i64>,
     },
     /// The AFK voice channel was chosen; None turns the AFK channel off.
     /// Appended last so older variants keep their wire tags.
@@ -163,8 +175,20 @@ pub enum ServerEvent {
     RoleUpdate { server: ServerId, role: crate::server::Role },
     /// A moderator muted or deafened someone in voice for everyone.
     VoiceModerate { server: ServerId, user: UserId, muted: bool, deafened: bool },
-    MemberBan { server: ServerId, user: UserId },
-    MemberUnban { server: ServerId, user: UserId },
+    /// A user was banned at `at`, see `MemberJoin`.
+    MemberBan {
+        server: ServerId,
+        user: UserId,
+        #[serde(default)]
+        at: i64,
+    },
+    /// A ban made before `at` was lifted; the user counts as left then.
+    MemberUnban {
+        server: ServerId,
+        user: UserId,
+        #[serde(default)]
+        at: i64,
+    },
     /// Server-wide voice idle limit; None turns it off.
     AfkTimeoutSet { server: ServerId, minutes: Option<u32> },
 }
@@ -195,6 +219,26 @@ mod tests {
         let bytes = postcard::to_stdvec(&event).unwrap();
         let back: ServerEvent = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(event, back);
+    }
+
+    #[test]
+    fn events_saved_before_membership_times_still_load() {
+        let (server, user, role) = (ServerId::new(), UserId::new(), RoleId::new());
+        let events = [
+            ServerEvent::MemberLeave { server, user, at: 0 },
+            ServerEvent::MemberBan { server, user, at: 0 },
+            ServerEvent::MemberUnban { server, user, at: 0 },
+            ServerEvent::MemberJoin { server, profile: UserProfile::new("x"), at: 0 },
+            ServerEvent::RoleUnassign { server, user, role, at: 7, since: None },
+        ];
+        for event in events {
+            let mut json = serde_json::to_value(&event).unwrap();
+            let fields = json.as_object_mut().unwrap().values_mut().next().unwrap().as_object_mut().unwrap();
+            if fields.remove("since").is_none() {
+                fields.remove("at");
+            }
+            assert_eq!(serde_json::from_value::<ServerEvent>(json).unwrap(), event);
+        }
     }
 
     #[test]

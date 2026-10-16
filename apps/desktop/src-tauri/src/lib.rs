@@ -33,8 +33,8 @@ use view::{
 use base64::Engine as _;
 use commy_core::{
     Attachment, Channel, ChannelId, ChannelKind, DmMessage, Identity, Message, MessageId, Permissions,
-    Presence, RoleId, ServerEvent, ServerId, ServerState, Signature, StoreError, TombstoneProof, UserId, UserProfile,
-    MAX_MESSAGE_BYTES,
+    Membership, Presence, RoleId, ServerEvent, ServerId, ServerState, Signature, StoreError, TombstoneProof, UserId,
+    UserProfile, MAX_MESSAGE_BYTES,
 };
 use commy_core::server::Role;
 use commy_media::screen::{SourceKind, StreamQuality};
@@ -207,7 +207,10 @@ pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: Se
     };
 
     // Place a provisional local state; the SyncResponse will replace it.
-    let (state, profile, signing) = own_server_state(app, ticket.server_id, &ticket.server_name, joining).await?;
+    let (mut state, profile, signing) = own_server_state(app, ticket.server_id, &ticket.server_name, joining).await?;
+    // Later announcements of our join keep this time.
+    let at = chrono::Utc::now().timestamp_millis();
+    let _ = state.apply(ServerEvent::MemberJoin { server: ticket.server_id, profile: profile.clone(), at });
     let summary = ServerSummary::from_state(&state);
     app.servers.lock().unwrap().insert(ticket.server_id, state);
     // Only this state takes a snapshot, once (see `catchup::apply_snapshot`).
@@ -220,6 +223,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: Se
         WirePayload::Event(ServerEvent::MemberJoin {
             server: ticket.server_id,
             profile: app.announced(profile),
+            at,
         }),
     )
     .await;
@@ -1793,16 +1797,22 @@ async fn rename_server(
     Ok(())
 }
 
-/// Channel, role and AFK events a reconnecting peer may have missed.
-/// Only members allowed to make those changes re-announce them.
+/// Channel, role, membership and AFK events a reconnecting peer may have
+/// missed. Only members allowed to make those changes re-announce them.
 fn structure_announcements(app: &tauri::State<'_, App>, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
-    structure_events(state, me, chrono::Utc::now())
+    structure_events(state, me, chrono::Utc::now(), &mut app.announcing.lock().unwrap())
 }
 
-/// [`structure_announcements`] for one server's state at `now`.
-fn structure_events(state: &ServerState, me: UserId, now: chrono::DateTime<chrono::Utc>) -> Vec<ServerEvent> {
+/// [`structure_announcements`] for one server's state at `now`, with the
+/// next round of role and membership changes (see [`roles::Cursors`]).
+fn structure_events(
+    state: &ServerState,
+    me: UserId,
+    now: chrono::DateTime<chrono::Utc>,
+    cursors: &mut roles::Cursors,
+) -> Vec<ServerEvent> {
     let sid = state.server.id;
     let mut events = Vec::new();
     if state.server.permissions_for(me).allows(Permissions::MANAGE_CHANNELS) {
@@ -1898,10 +1908,11 @@ fn structure_events(state: &ServerState, me: UserId, now: chrono::DateTime<chron
     }
     if perms.allows(Permissions::BAN_MEMBERS) {
         for user in &state.server.banned {
-            events.push(ServerEvent::MemberBan { server: sid, user: *user });
+            let at = state.member_mark(*user).filter(|m| m.state == Membership::Banned).map_or(0, |m| m.at);
+            events.push(ServerEvent::MemberBan { server: sid, user: *user, at });
         }
     }
-    events.extend(roles::announcements(state, me, now));
+    events.extend(cursors.next_round(state, me, now));
     let custom = state.server.emojis_shareable || state.server.soundboard_open;
     if custom && state.server.permissions_for(me).allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ExpressionSettings {
@@ -2152,7 +2163,7 @@ async fn kick_member(
         &app,
         &handle,
         sid,
-        ServerEvent::MemberLeave { server: sid, user: target },
+        ServerEvent::MemberLeave { server: sid, user: target, at: member_change_time(&app, sid, target) },
     )
     .await
 }
@@ -2170,7 +2181,11 @@ async fn leave_server(
     broadcast(
         &app,
         sid,
-        WirePayload::Event(ServerEvent::MemberLeave { server: sid, user: me.id }),
+        WirePayload::Event(ServerEvent::MemberLeave {
+            server: sid,
+            user: me.id,
+            at: member_change_time(&app, sid, me.id),
+        }),
     )
     .await;
     {
@@ -2194,6 +2209,7 @@ async fn leave_server(
 /// Drops queued sends and catch-up state for a server we are no longer in.
 fn forget_server_outbox(app: &App, sid: ServerId) {
     app.catchup.lock().unwrap().forget_server(sid);
+    app.announcing.lock().unwrap().forget(sid);
     app.set_awaiting_snapshot(sid, false);
     if app.outbox.lock().unwrap().forget_server(sid) {
         app.persist_outbox();
@@ -2317,7 +2333,7 @@ mod structure_tests {
         let member = UserProfile::new("member");
         let mut state = ServerState::new(commy_core::Server::new("s", owner.id));
         let sid = state.server.id;
-        state.apply(ServerEvent::MemberJoin { server: sid, profile: member.clone() }).unwrap();
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: member.clone(), at: 0 }).unwrap();
         // The member is offline while it becomes a moderator.
         let mut offline = state.clone();
         let mods = Role {
@@ -2336,7 +2352,7 @@ mod structure_tests {
         state.apply(state.role_change(member.id, mods.id, true, chrono::Utc::now())).unwrap();
 
         let now = chrono::Utc::now();
-        for event in structure_events(&state, owner.id, now) {
+        for event in structure_events(&state, owner.id, now, &mut roles::Cursors::default()) {
             let _ = offline.apply(event);
         }
         assert_eq!(offline.server.member(member.id).unwrap().roles, vec![mods.id]);
@@ -2345,7 +2361,7 @@ mod structure_tests {
         let roles_of = |events: Vec<ServerEvent>| {
             events.into_iter().filter(|e| matches!(e, ServerEvent::RoleCreate { .. } | ServerEvent::RoleAssign { .. })).count()
         };
-        assert_eq!(roles_of(structure_events(&state, member.id, now)), 0);
+        assert_eq!(roles_of(structure_events(&state, member.id, now, &mut roles::Cursors::default())), 0);
     }
 }
 
@@ -3074,7 +3090,8 @@ async fn ban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server
             return Err("you cannot ban that member".into());
         }
     }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberBan { server: sid, user }).await
+    let at = member_change_time(&app, sid, user);
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberBan { server: sid, user, at }).await
 }
 
 #[tauri::command]
@@ -3083,7 +3100,22 @@ async fn unban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     manage_check(&app, sid, me.id, Permissions::BAN_MEMBERS, "unban members")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberUnban { server: sid, user }).await
+    let at = member_change_time(&app, sid, user);
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberUnban { server: sid, user, at }).await
+}
+
+/// The time for a join, leave, ban or unban of `user` in server `sid`
+/// made now (see [`ServerState::member_change_time`]).
+fn member_change_time(app: &App, sid: ServerId, user: UserId) -> i64 {
+    let now = chrono::Utc::now();
+    let servers = app.servers.lock().unwrap();
+    servers.get(&sid).map_or(now.timestamp_millis(), |s| s.member_change_time(user, now))
+}
+
+/// When `user` joined server `sid`, to announce that join again: 0 for
+/// a member from before join times were kept.
+fn joined_at(app: &App, sid: ServerId, user: UserId) -> i64 {
+    app.servers.lock().unwrap().get(&sid).and_then(|s| s.joined_at(user)).unwrap_or(0)
 }
 
 /// We were banned: drop the server from this device and say so.
@@ -4300,9 +4332,8 @@ async fn run_net_loop(
                 };
                 // Message events whose author key is not known yet wait for it.
                 let holdable = catchup::holdable(&event).then(|| event.clone());
-                let key_source = matches!(event, ServerEvent::MemberJoin { .. } | ServerEvent::ProfileUpdate { .. });
                 let presence = outbox::online_user(&event);
-                let (applied, was_online, new_message) = {
+                let (applied, was_online, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
                     match servers.get_mut(&server) {
                         Some(state) => {
@@ -4310,15 +4341,16 @@ async fn run_net_loop(
                                 state.profiles.get(&user).is_some_and(|p| p.presence.is_visible_online())
                             });
                             // Only a message now shown here is news.
-                            let (applied, new_message) = catchup::apply_live(state, event);
-                            (applied, was_online, new_message)
+                            let (applied, new_message, pinned) = catchup::apply_live(state, event);
+                            (applied, was_online, new_message, pinned)
                         }
                         None => continue,
                     }
                 };
                 if applied.is_ok() {
-                    if key_source {
-                        catchup::release_held(&handle, server);
+                    // Only what this key signed is tried again.
+                    if let Some(user) = pinned {
+                        catchup::release_held(&handle, server, &[user]);
                     }
                     // A partner turning online gets their waiting DMs now.
                     if let (Some((user, now)), Some(false)) = (presence, was_online) {
@@ -4347,7 +4379,7 @@ async fn run_net_loop(
                     }
                     Ok(false) => {}
                     Err(e) => match (e, holdable) {
-                        (StoreError::UnknownAuthorKey(_), Some(event)) => catchup::hold(&app, server, event),
+                        (StoreError::UnknownAuthorKey(signer), Some(event)) => catchup::hold(&app, server, signer, event),
                         (e, _) => tracing::warn!("rejected remote event: {e}"),
                     },
                 }
@@ -4375,12 +4407,14 @@ async fn run_net_loop(
                 let Some(me) = me else { continue };
                 let my_id = me.id;
                 let needs_sync = app.awaits_snapshot(server);
+                let at = joined_at(&app, server, my_id);
                 broadcast(
                     &app,
                     server,
                     WirePayload::Event(ServerEvent::MemberJoin {
                         server,
                         profile: app.announced(me),
+                        at,
                     }),
                 )
                 .await;
@@ -4691,9 +4725,12 @@ pub fn run() {
                 for state in persist::load_servers(&dir) {
                     app.servers.lock().unwrap().insert(state.server.id, state);
                 }
-                let mut awaiting = persist::load_awaiting(&dir);
-                awaiting.retain(|id| app.servers.lock().unwrap().contains_key(id));
+                let listed_until = chrono::Utc::now().timestamp_millis() + state::SNAPSHOT_WINDOW_MS;
+                let mut awaiting = persist::load_awaiting(&dir, listed_until);
+                awaiting.retain(|id, _| app.servers.lock().unwrap().contains_key(id));
                 *app.awaiting_snapshot.lock().unwrap() = awaiting;
+                // Saved with its times, so no window opens again on restart.
+                app.persist_awaiting();
                 let mut queue = outbox::Outbox::load(&dir);
                 let now = chrono::Utc::now();
                 let pruned = app.servers.lock().unwrap().values().fold(false, |acc, s| queue.prune(s, now) | acc);
@@ -4745,8 +4782,10 @@ pub fn run() {
                             .unwrap_or_default();
                         // Joined on an earlier version and still waiting.
                         catchup::mark_joined_placeholders(&app, &stored_invites, node.node_id_bytes());
-                        // A joined server's placeholder names us as owner;
-                        // it rejoins from its invite rather than being hosted.
+                        // A joined server without its snapshot keeps a
+                        // placeholder naming us as owner, even once its
+                        // window closed; it rejoins from its invite rather
+                        // than being hosted.
                         let awaiting = app.awaiting_snapshot.lock().unwrap().clone();
                         let to_restore: Vec<(ServerId, String, bool)> = {
                             let servers = app.servers.lock().unwrap();
@@ -4754,7 +4793,7 @@ pub fn run() {
                                 .values()
                                 .map(|s| {
                                     let id = s.server.id;
-                                    let rejoin = awaiting.contains(&id) && stored_invites.contains_key(&id);
+                                    let rejoin = awaiting.contains_key(&id) && stored_invites.contains_key(&id);
                                     (id, s.server.name.clone(), Some(s.server.owner) == me && !rejoin)
                                 })
                                 .collect()
@@ -4829,14 +4868,17 @@ pub fn run() {
                         app.persist_profile();
                         // Re-assert our own membership and current address
                         // in every server state. MemberJoin is idempotent
-                        // and also repairs a state that lost our entry.
+                        // and also repairs a state that lost our entry; at
+                        // the time we joined, it never undoes a later kick.
                         if let Some(me) = me {
                             let mut servers = app.servers.lock().unwrap();
                             for state in servers.values_mut() {
                                 let sid = state.server.id;
+                                let at = state.joined_at(me.id).unwrap_or(0);
                                 let _ = state.apply(ServerEvent::MemberJoin {
                                     server: sid,
                                     profile: me.clone(),
+                                    at,
                                 });
                             }
                         }

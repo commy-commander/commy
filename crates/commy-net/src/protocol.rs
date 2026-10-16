@@ -1,4 +1,4 @@
-use commy_core::{ServerEvent, ServerState};
+use commy_core::{ServerEvent, ServerState, UserId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -27,9 +27,11 @@ pub enum WirePayload {
     /// New member asking any peer for the current server state.
     SyncRequest,
     /// Snapshot of server metadata for a newcomer, serialized
-    /// separately because ServerState holds derived indexes.
+    /// separately because ServerState holds derived indexes. The members
+    /// travel in `members`, not in `server`, see [`build_sync_response`].
     SyncResponse {
         server: commy_core::Server,
+        members: Vec<SyncMember>,
         profiles: Vec<commy_core::UserProfile>,
         recent_messages: Vec<commy_core::Message>,
     },
@@ -38,6 +40,24 @@ pub enum WirePayload {
         channel: commy_core::ChannelId,
         from_user: commy_core::UserId,
     },
+}
+
+/// A member as a snapshot carries them: half the size of a
+/// [`commy_core::Member`] on the wire, as the join time is in ms since
+/// the epoch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncMember {
+    pub user: UserId,
+    pub nickname: Option<String>,
+    pub roles: Vec<commy_core::RoleId>,
+    pub joined_ms: i64,
+}
+
+impl From<&commy_core::Member> for SyncMember {
+    fn from(m: &commy_core::Member) -> Self {
+        let joined_ms = m.joined_at.timestamp_millis();
+        Self { user: m.user, nickname: m.nickname.clone(), roles: m.roles.clone(), joined_ms }
+    }
 }
 
 /// Versioned, sender-attributed wrapper for every gossip frame.
@@ -94,8 +114,6 @@ impl Envelope {
     }
 }
 
-/// Builds the snapshot a newcomer receives, capped to the most recent
-/// messages per channel so the frame stays small.
 /// Largest envelope we put on gossip. iroh-gossip 0.28 closes the whole
 /// connection when a frame exceeds its 4096 byte limit (framing included),
 /// so every broadcast must stay comfortably under it.
@@ -109,10 +127,29 @@ pub fn gossip_size(payload: &WirePayload) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-/// Snapshot for a newcomer, trimmed to fit one gossip frame: the newest
-/// messages are kept and older ones dropped until it fits. Emojis, sounds,
-/// rules and calendar events are left out (they alone can exceed a frame);
-/// members re-announce them one event at a time.
+/// Encoded size of one item of a snapshot.
+fn encoded<T: Serialize>(item: &T) -> usize {
+    postcard::to_stdvec(item).map_or(0, |b| b.len())
+}
+
+/// Snapshot for a newcomer, at most `per_channel` of the newest messages
+/// of each channel, trimmed to fit one gossip frame. Emojis, sounds,
+/// rules and calendar events are always left out (they alone can exceed
+/// a frame); members re-announce them one event at a time. What does not
+/// fit goes in this order, so what a newcomer needs to take part (the
+/// owner, channels, roles and member list) stays longest:
+/// 1. profiles, but the owner's and those of the carried messages'
+///    authors; role holders' go last;
+/// 2. structure members announce anyway: images, game tags, rule
+///    acceptances, voice moderation, deleted channels and roles, bans;
+/// 3. messages, the oldest first, each author's profile with their last
+///    message;
+/// 4. members, the latest to join first and role holders last, then the
+///    owner's profile.
+///
+/// Members left out are learned from their own join, which each member
+/// announces to new neighbors, or from those who may kick or ban, who
+/// announce the joins of the last 30 days.
 pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePayload {
     let mut server = state.server.clone();
     server.emojis.clear();
@@ -120,24 +157,89 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePaylo
     server.rules = None;
     server.events.clear();
     server.deleted_events.clear();
-    let mut recent = Vec::new();
+    let mut messages: Vec<commy_core::Message> = Vec::new();
     for channel in &state.server.channels {
-        recent.extend(state.page(channel.id, None, per_channel).iter().cloned());
+        messages.extend(state.page(channel.id, None, per_channel).iter().cloned());
     }
-    // Newest last, so trimming from the front drops the oldest.
-    recent.sort_by_key(|m| m.created_at);
-    let build = |messages: Vec<commy_core::Message>| WirePayload::SyncResponse {
+    // Newest first, so trimming from the end drops the oldest.
+    messages.sort_by_key(|m| std::cmp::Reverse(m.created_at));
+    let owner = server.owner;
+    let role_holders = server.members.iter().filter(|m| !m.roles.is_empty()).map(|m| m.user);
+    let members = server.members.iter().map(|m| m.user);
+    let mut former: Vec<UserId> = state.profiles.keys().copied().collect();
+    former.sort();
+    let mut seen = std::collections::HashSet::new();
+    let order = std::iter::once(owner).chain(messages.iter().map(|m| m.author)).chain(role_holders);
+    let order: Vec<UserId> = order.chain(members).chain(former).filter(|u| seen.insert(*u)).collect();
+    let mut profiles: Vec<commy_core::UserProfile> =
+        order.iter().filter_map(|u| state.profiles.get(u)).cloned().collect();
+    let mut members: Vec<SyncMember> = std::mem::take(&mut server.members).iter().map(SyncMember::from).collect();
+    let build = |server: &commy_core::Server,
+                 members: &[SyncMember],
+                 profiles: &[commy_core::UserProfile],
+                 messages: &[commy_core::Message]| WirePayload::SyncResponse {
         server: server.clone(),
-        profiles: state.profiles.values().cloned().collect(),
-        recent_messages: messages,
+        members: members.to_vec(),
+        profiles: profiles.to_vec(),
+        // Oldest first, as they are applied.
+        recent_messages: messages.iter().rev().cloned().collect(),
     };
-    let mut payload = build(recent.clone());
-    while gossip_size(&payload) > MAX_GOSSIP_BYTES && !recent.is_empty() {
-        let drop = (recent.len() / 4).max(1);
-        recent.drain(..drop);
-        payload = build(recent.clone());
+    // An upper bound kept as items go: a list's length prefix only shrinks.
+    let mut size = gossip_size(&build(&server, &members, &profiles, &messages));
+    let fits = |size: usize| size <= MAX_GOSSIP_BYTES;
+    let needed = |user: UserId, messages: &[commy_core::Message]| {
+        user == owner || messages.iter().any(|m| m.author == user)
+    };
+
+    // 1. Profiles no carried message needs, the least wanted first.
+    while !fits(size) {
+        let Some(last) = profiles.last() else { break };
+        if needed(last.id, &messages) {
+            break;
+        }
+        size -= encoded(last);
+        profiles.pop();
     }
-    payload
+    // 2. Structure announced anyway.
+    type Step = fn(&mut commy_core::Server);
+    let steps: [Step; 7] = [
+        |s| (s.icon, s.banner) = (None, None),
+        |s| (s.game_tags, s.game_tag_meta) = (Vec::new(), Vec::new()),
+        |s| s.rules_accepted.clear(),
+        |s| (s.server_muted, s.server_deafened) = (Vec::new(), Vec::new()),
+        |s| s.deleted_channels.clear(),
+        |s| s.deleted_roles.clear(),
+        |s| s.banned.clear(),
+    ];
+    for step in steps {
+        if fits(size) {
+            break;
+        }
+        let before = encoded(&server);
+        step(&mut server);
+        size -= before - encoded(&server);
+    }
+    // 3. Messages, the oldest first.
+    while !fits(size) {
+        let Some(message) = messages.pop() else { break };
+        size -= encoded(&message);
+        if !needed(message.author, &messages) {
+            if let Some(pos) = profiles.iter().position(|p| p.id == message.author) {
+                size -= encoded(&profiles.remove(pos));
+            }
+        }
+    }
+    // 4. Members, the latest to join first and role holders last.
+    if !fits(size) {
+        members.sort_by_key(|m| (m.user != owner, m.roles.is_empty(), state.joined_at(m.user).unwrap_or(0)));
+        while !fits(size) && members.len() > 1 {
+            size -= members.pop().map_or(0, |m| encoded(&m));
+        }
+    }
+    if !fits(size) {
+        profiles.clear();
+    }
+    build(&server, &members, &profiles, &messages)
 }
 
 #[cfg(test)]
@@ -285,6 +387,7 @@ mod tests {
             server,
             profiles,
             recent_messages,
+            ..
         } = build_sync_response(&state, 50)
         else {
             panic!("wrong payload kind");
@@ -317,6 +420,179 @@ mod tests {
             keyless.apply(ServerEvent::MessageCreate { message: first }),
             Err(commy_core::StoreError::UnknownAuthorKey(author))
         );
+    }
+
+    /// A server as communities run it: `members` members with full
+    /// profiles, roles held by some, categories of channels, images, game
+    /// tags, a few bans and some talk.
+    fn realistic(members: usize) -> ServerState {
+        use commy_core::{Channel, ChannelKind, Permissions, Role, RoleId, UserProfile};
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let filled = |mut p: UserProfile, i: usize| {
+            p.display_name = Some(format!("Player {i:03}"));
+            p.avatar = (i % 10 < 7).then(|| format!("blob:{}", "a1".repeat(32)));
+            p.node = Some("f0".repeat(32));
+            p.custom_status = i.is_multiple_of(5).then(|| "streaming later".to_string());
+            p.activity = i.is_multiple_of(10).then(|| "Some Game".to_string());
+            p.about = (i % 10 == 1).then(|| "x".repeat(60));
+            p
+        };
+        let me = state.profiles[&owner].clone();
+        state.profiles.insert(owner, filled(me, 0));
+        let image = format!("{}@{}", "c3".repeat(32), "d4".repeat(32));
+        state.server.icon = Some(image.clone());
+        state.server.banner = Some(image);
+        state.server.game_tags = vec!["Strategy".into(), "Shooter".into(), "Racing".into()];
+        let mut text = vec![channel];
+        for (i, name) in ["info", "community"].into_iter().enumerate() {
+            let category = Channel::new(name, ChannelKind::Category, 10 + i as u32 * 10);
+            let parent = category.id;
+            state.apply(ServerEvent::ChannelCreate { server: sid, channel: category }).unwrap();
+            for j in 0..3 {
+                let mut c = Channel::new(format!("{name}-{j}"), ChannelKind::Text, 11 + (i * 10 + j) as u32);
+                c.parent = Some(parent);
+                c.topic = Some("what this channel is for".into());
+                text.push(c.id);
+                state.apply(ServerEvent::ChannelCreate { server: sid, channel: c }).unwrap();
+            }
+        }
+        let roles: Vec<RoleId> = ["Admin", "Moderator", "Regular", "Events", "Streamer"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let role = Role {
+                    id: RoleId::new(),
+                    name: name.into(),
+                    color: Some("5865f2".into()),
+                    permissions: if i < 2 { Permissions::MANAGE_MESSAGES } else { Permissions::NONE },
+                    position: 5 - i as u32,
+                    hoist: i < 2,
+                    self_assignable: i >= 3,
+                    tag: None,
+                    banner: None,
+                    updated_at: 1,
+                };
+                let id = role.id;
+                state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+                id
+            })
+            .collect();
+        let mut users = vec![owner];
+        for i in 1..members {
+            let profile = filled(crate::test_support::keyed_profile(&format!("player_{i:03}")), i);
+            let user = profile.id;
+            state.apply(ServerEvent::MemberJoin { server: sid, profile, at: 1_000 + i as i64 }).unwrap();
+            if i.is_multiple_of(7) {
+                let role = roles[i % roles.len()];
+                state.apply(ServerEvent::RoleAssign { server: sid, user, role, at: 2_000 + i as i64 }).unwrap();
+            }
+            users.push(user);
+        }
+        for _ in 0..3 {
+            state.apply(ServerEvent::MemberBan { server: sid, user: UserId::new(), at: 3_000 }).unwrap();
+        }
+        for i in 0..40 {
+            let author = users[(i * 3) % users.len()];
+            let message = post(&state, text[i % 3], author, &format!("message {i} about the match tonight"));
+            state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        }
+        state
+    }
+
+    /// The parts of a snapshot.
+    fn parts(payload: WirePayload) -> (Server, Vec<SyncMember>, Vec<commy_core::UserProfile>, Vec<Message>) {
+        let WirePayload::SyncResponse { server, members, profiles, recent_messages } = payload else {
+            panic!("not a snapshot")
+        };
+        (server, members, profiles, recent_messages)
+    }
+
+    #[test]
+    fn large_servers_get_a_snapshot_that_fits() {
+        for members in [15, 50, 94, 100, 200] {
+            let state = realistic(members);
+            let payload = build_sync_response(&state, 50);
+            let size = gossip_size(&payload);
+            let (server, kept, profiles, recent) = parts(payload);
+            eprintln!("{members} members: {size} bytes, {} members, {} profiles, {} messages", kept.len(), profiles.len(), recent.len());
+            assert!(size <= MAX_GOSSIP_BYTES, "{members}");
+            // What a newcomer needs to take part.
+            assert_eq!(server.owner, state.server.owner);
+            assert_eq!((&server.channels, &server.roles), (&state.server.channels, &state.server.roles));
+            assert!(server.members.is_empty(), "they travel on their own");
+            assert!(kept.iter().any(|m| m.user == state.server.owner));
+            assert!(profiles.iter().any(|p| p.id == state.server.owner), "{members}: the owner's key");
+            // Every carried message comes with its author's key.
+            assert!(recent.iter().all(|m| profiles.iter().any(|p| p.id == m.author)), "{members}");
+            if kept.len() == members {
+                continue;
+            }
+            // The role holders stay, then the earliest to join.
+            let kept_ids: std::collections::HashSet<UserId> = kept.iter().map(|m| m.user).collect();
+            assert!(state.server.members.iter().filter(|m| !m.roles.is_empty()).all(|m| kept_ids.contains(&m.user)));
+            let joined = |user: UserId| state.joined_at(user).unwrap_or(0);
+            let dropped = state.server.members.iter().filter(|m| !kept_ids.contains(&m.user));
+            let first_dropped = dropped.map(|m| joined(m.user)).min().unwrap();
+            assert!(kept.iter().filter(|m| m.roles.is_empty()).all(|m| joined(m.user) < first_dropped));
+            assert!(recent.is_empty() && profiles.len() == 1, "members go last");
+        }
+        // With 50 members there is room for keys and talk as well; up to
+        // about 90 everyone is taken in, and of 200 more than 80 are.
+        let (_, kept, profiles, recent) = parts(build_sync_response(&realistic(50), 50));
+        assert!(kept.len() == 50 && profiles.len() > 1 && !recent.is_empty());
+        assert_eq!(parts(build_sync_response(&realistic(90), 50)).1.len(), 90);
+        assert!(parts(build_sync_response(&realistic(200), 50)).1.len() > 80);
+    }
+
+    #[test]
+    fn a_snapshot_trims_profiles_then_announced_structure_then_messages() {
+        let state = realistic(15);
+        let all = gossip_size(&WirePayload::SyncResponse {
+            server: state.server.clone(),
+            members: vec![],
+            profiles: state.profiles.values().cloned().collect(),
+            recent_messages: vec![],
+        });
+        assert!(all > MAX_GOSSIP_BYTES, "its profiles alone are too many");
+        let (server, members, profiles, recent) = parts(build_sync_response(&state, 50));
+        assert_eq!(members.len(), 15);
+        // Profiles of those who wrote nothing carried went first, before
+        // any structure or message.
+        let authors: std::collections::HashSet<UserId> = recent.iter().map(|m| m.author).collect();
+        assert!(profiles.iter().all(|p| p.id == state.server.owner || authors.contains(&p.id)));
+        assert!(server.icon.is_none() && server.banner.is_none() && server.game_tags.is_empty());
+        assert!(server.banned.is_empty(), "bans are announced again");
+        assert!(!recent.is_empty() && recent.len() < 40, "messages last, the newest kept");
+        let newest = state.server.channels.iter().flat_map(|c| state.messages(c.id)).max_by_key(|m| m.created_at).unwrap();
+        assert_eq!(recent.last().map(|m| m.id), Some(newest.id));
+
+        // A small server keeps it all but what is always left out.
+        let (mut small, channel, owner) = fixture();
+        let friend = join(&mut small, "friend");
+        small.server.icon = Some("icon".into());
+        small.apply(ServerEvent::MemberBan { server: small.server.id, user: UserId::new(), at: 1 }).unwrap();
+        let message = post(&small, channel, friend, "hi");
+        small.apply(ServerEvent::MessageCreate { message }).unwrap();
+        let (server, members, profiles, recent) = parts(build_sync_response(&small, 50));
+        assert_eq!((members.len(), profiles.len(), recent.len()), (2, 2, 1));
+        assert_eq!((server.icon.as_deref(), server.banned.len()), (Some("icon"), 1));
+        assert_eq!(profiles[0].id, owner);
+    }
+
+    #[test]
+    fn snapshot_members_keep_what_a_member_holds() {
+        let (mut state, _, _) = fixture();
+        let user = join(&mut state, "member");
+        let member = commy_core::Member {
+            nickname: Some("nick".into()),
+            roles: vec![state.server.roles[0].id],
+            ..state.server.member(user).unwrap().clone()
+        };
+        let carried = SyncMember::from(&member);
+        assert_eq!((carried.user, &carried.nickname, &carried.roles), (member.user, &member.nickname, &member.roles));
+        assert_eq!(carried.joined_ms, member.joined_at.timestamp_millis());
+        assert!(encoded(&carried) < encoded(&member) - 20);
     }
 
     #[test]
