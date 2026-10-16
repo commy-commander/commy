@@ -4229,9 +4229,10 @@ function invitableServers(userId) {
   return state.servers.filter(s => s.can_invite && !shared.has(s.id));
 }
 
-function openInviteMenu(person, anchor) {
+async function openInviteMenu(person, anchor) {
   const menu = $("invite-menu");
   menu.replaceChildren(el("div", "ctx-title", `Invite ${person.name} to`));
+  await refreshPeople();
   const servers = invitableServers(person.id);
   for (const server of servers) {
     const btn = el("button", null, server.name);
@@ -4283,8 +4284,11 @@ function inviteCard(text) {
 
 // ---------- Full profile ----------
 
-function openFullProfile(member) {
+async function openFullProfile(member) {
   closeFloating();
+  // The people index is built lazily (first on entering Direct Messages),
+  // so refresh it here or the mutual servers list comes up empty or stale.
+  await refreshPeople();
   const person = { ...(state.people.get(member.id) || {}), ...member };
   paintBanner($("fp-banner"), person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
   const av = $("fp-avatar");
@@ -8225,6 +8229,8 @@ function wireEvents() {
       if (state.currentServer && serverId === state.currentServer.id) {
         await refreshCurrentServer();
       }
+      // Keep mutual servers and presence current while Direct Messages is open.
+      if (state.view === "dm") await refreshPeople();
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
