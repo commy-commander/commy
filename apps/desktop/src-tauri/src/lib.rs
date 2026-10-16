@@ -213,7 +213,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     // Place a provisional local state; the SyncResponse will replace it.
     let (mut state, profile, signing) = own_server_state(app, ticket.server_id, &ticket.server_name, joining).await?;
     let _ = state.apply(ServerEvent::MemberJoin { server: ticket.server_id, profile: profile.clone() });
-    let summary = ServerSummary::from_state(&state);
+    let summary = ServerSummary::from_state(&state, Some(profile.id));
     app.servers.lock().unwrap().insert(ticket.server_id, state);
     // Only this state takes a snapshot, once (see `catchup::apply_snapshot`).
     // Announce ourselves to the topic, and ask for it again.
@@ -252,8 +252,9 @@ async fn own_server_state<'a>(
 
 #[tauri::command]
 fn list_servers(app: tauri::State<App>) -> Vec<ServerSummary> {
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let servers = app.servers.lock().unwrap();
-    let mut list: Vec<ServerSummary> = servers.values().map(ServerSummary::from_state).collect();
+    let mut list: Vec<ServerSummary> = servers.values().map(|s| ServerSummary::from_state(s, me)).collect();
     list.sort_by(|a, b| a.name.cmp(&b.name));
     list
 }
@@ -270,6 +271,7 @@ fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView
 #[tauri::command]
 fn get_invite(app: tauri::State<App>, server_id: String) -> CmdResult<String> {
     let id = server_id.parse().map_err(err_to_string)?;
+    require_invite_permission(&app, id)?;
     app.invites
         .lock()
         .unwrap()
@@ -1757,6 +1759,15 @@ fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
     } else {
         perms
     }
+}
+
+/// Invites come only from members whose roles grant Create Invites
+/// (the owner always can).
+pub(crate) fn require_invite_permission(app: &App, sid: ServerId) -> CmdResult<()> {
+    let me = current_profile(app)?;
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    require_permission(app, state, me.id, Permissions::CREATE_INVITES, "invite people")
 }
 
 fn require_permission(
