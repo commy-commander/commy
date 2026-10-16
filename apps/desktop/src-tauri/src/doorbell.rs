@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 pub const DOORBELL_FILE: &str = "doorbell.json";
 /// Ids for one device are gathered this long into one ring.
@@ -501,11 +501,7 @@ async fn listen(handle: tauri::AppHandle, server: ServerId) {
             let wait = if day == today { TAKE_WAIT_SECS } else { 0 };
             match take(&app, &endpoints, &bell::token(&key, day), wait).await {
                 Ok(taken) => {
-                    let changed = {
-                        let mut doorbell = app.doorbell.lock().unwrap();
-                        let moved = doorbell.saved.last_take.insert(server, day) != Some(day);
-                        moved
-                    };
+                    let changed = app.doorbell.lock().unwrap().saved.last_take.insert(server, day) != Some(day);
                     if changed {
                         persist(&app);
                     }
@@ -557,7 +553,7 @@ fn on_taken(handle: &tauri::AppHandle, server: ServerId, key: &DoorbellKey, take
     };
     if changed {
         persist(&app);
-        let _ = handle.emit("server-event", &server.to_string());
+        let _ = tauri::Emitter::emit(handle, "server-event", &server.to_string());
     }
     if changed || taken.hello {
         app.doorbell.lock().unwrap().nudged_at.remove(&server);
@@ -631,7 +627,7 @@ pub fn arrived(app: &App, handle: &tauri::AppHandle, server: ServerId, message: 
     };
     if changed {
         persist(app);
-        let _ = handle.emit("server-event", &server.to_string());
+        let _ = tauri::Emitter::emit(handle, "server-event", &server.to_string());
     }
 }
 

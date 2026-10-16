@@ -459,7 +459,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
 pub fn needs_settled_key(event: &ServerEvent, me: Option<UserId>) -> bool {
     use ServerEvent as E;
     match event {
-        E::MessageCreate { .. } | E::MessageEdit { .. } | E::MessageDelete { .. } => true,
+        E::MessageCreate { .. } | E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
         E::MemberJoin { profile, .. } | E::ProfileUpdate { profile } => me.is_none_or(|me| me == profile.id),
         E::ReactionToggle { .. }
         | E::MemberLeave { .. }
