@@ -3602,7 +3602,7 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .conn-title { font-size: 14px; font-weight: 700; color: var(--text-normal); }
 .conn-rates { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .conn-links { display: flex; flex-direction: column; gap: 8px; }
-.conn-link { background: var(--bg-dark); border-radius: 6px; padding: 8px 10px; }
+.conn-link { background: var(--bg-dark); border-radius: 10px; padding: 8px 10px; }
 .conn-link-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .conn-name { flex: 1; font-size: 13px; font-weight: 600; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conn-badge { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 8px; }

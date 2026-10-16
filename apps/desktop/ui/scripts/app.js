@@ -398,8 +398,8 @@ async function mockInvoke(cmd, args = {}) {
     case "set_server_afk_timeout": mock.servers[args.serverId].afk_timeout_minutes = args.minutes; return null;
     case "voice_stats":
       return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, links: [
-        { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", relay: "https://relay.commy.chat/", addr: "192.168.1.24:51820", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
-        { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", relay: "https://relay.commy.chat/", addr: null, tx_bytes: 0, rx_bytes: 0 },
+        { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
+        { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
     case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_media: false });
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
@@ -3027,13 +3027,11 @@ async function refreshConnPop() {
     stat("Ping", `${Math.round(link.rtt_ms)} ms`);
     stat("Packet loss", `${link.loss_pct.toFixed(link.loss_pct < 1 ? 2 : 1)}%`);
     stat("Jitter", `${link.jitter_ms.toFixed(1)} ms`);
-    const path = link.path === "direct" ? "Direct (peer to peer)"
-      : link.path === "relay" ? "Via relay"
-      : link.path === "mixed" ? "Direct and relay"
+    const path = link.path === "direct" ? "Connected directly"
+      : link.path === "relay" ? "Connected through a relay"
+      : link.path === "mixed" ? "Connected directly and through a relay"
       : "Connecting";
-    stat("Route", path);
-    if (link.relay && link.path !== "direct") stat("Relay", link.relay.replace(/^https?:\/\//, "").replace(/\/$/, ""));
-    if (link.addr) stat("Address", link.addr);
+    stat("Connection", path);
     row.appendChild(grid);
     list.appendChild(row);
   }
