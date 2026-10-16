@@ -5075,10 +5075,12 @@ async function setStatusExpiry(changes) {
   const statusUntil = "status" in changes ? changes.status : current.status_until ?? null;
   try {
     state.voice = await invoke("set_status_expiry", { presenceUntil, statusUntil });
+    if (state.user) state.user.presence_until = state.voice.presence_until ?? null;
   } catch (e) {
     toast(String(e));
   }
   renderProfilePopover();
+  renderUserPanel();
 }
 
 function openDurations(mode, anchor) {
@@ -5124,14 +5126,16 @@ async function applyDuration(until) {
 function renderStatusExpiry() {
   const v = state.voice || {};
   const user = state.user || {};
+  // Each presence keeps one small line. While a timed one runs, that line
+  // becomes "Until 4:40 PM" instead of stacking on the description.
   for (const btn of $("pp-presence").querySelectorAll("button")) {
-    btn.querySelector(".pp-until")?.remove();
+    const small = btn.querySelector("small");
+    if (!small) continue;
+    if (!small.dataset.text) small.dataset.text = small.textContent;
     const active = btn.dataset.presence === (user.presence || "online");
-    if (active && v.presence_until && btn.dataset.presence !== "online") {
-      btn.querySelector("span:last-child").appendChild(el("small", "pp-until", `Until ${formatUntil(v.presence_until)}`));
-    } else if (active && btn.dataset.presence === "do_not_disturb") {
-      btn.querySelector("span:last-child").appendChild(el("small", "pp-until", "Until you turn it off"));
-    }
+    const until = active && btn.dataset.presence !== "online" ? v.presence_until : null;
+    small.textContent = until ? `Until ${formatUntil(until)}` : small.dataset.text;
+    small.classList.toggle("pp-until", Boolean(until));
   }
   const hasStatus = Boolean(user.custom_status || user.status_emoji);
   const expiry = $("pp-status-expiry");
@@ -6083,8 +6087,12 @@ function renderUserPanel() {
   const bits = [];
   if (state.voice.muted) bits.push("muted");
   if (state.voice.deafened) bits.push("deafened");
-  const label = presence === "invisible" ? "Appearing offline" : presenceLabel(state.user);
-  $("me-status").textContent = bits.length ? `${label}, ${bits.join(", ")}` : (subLine(state.user) || label);
+  // One short line: when you are back (the dot already says Do Not Disturb),
+  // else the presence word; mute and deafen follow it.
+  const back = backLine(state.user);
+  const label = presence === "invisible" ? "Appearing offline" : (back || PRESENCE_LABELS[presence] || "Online");
+  $("me-status").textContent = bits.length ? `${label}, ${bits.join(", ")}` : label;
+  $("me-status").classList.toggle("back", Boolean(back));
   $("mute-btn").classList.toggle("danger", state.voice.muted);
   $("deafen-btn").classList.toggle("danger", state.voice.deafened);
   setIcon($("mute-btn"), state.voice.muted ? "micOff" : "mic");

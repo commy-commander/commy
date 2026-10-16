@@ -2820,9 +2820,10 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 /* ---------- Profile bar: one profile button plus three equal icon buttons ---------- */
 .user-panel { gap: 4px; }
 .user-chip {
-  flex: 1;
+  /* A fixed footprint: the pill never grows or shrinks with the status under the name. */
+  flex: 0 0 196px;
+  width: 196px;
   min-width: 0;
-  max-width: 220px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2839,6 +2840,8 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
 .user-chip:hover { background: var(--bg-hover); }
 .user-chip .user-meta, .user-chip .user-meta:hover { background: none; padding: 0; cursor: inherit; min-height: 0; }
 .user-chip .user-name, .user-chip .user-sub { display: block; }
+.user-chip .user-sub { min-height: 14px; line-height: 14px; }
+.user-chip .user-sub.back { color: var(--accent-hover); font-weight: 500; }
 .user-chip #me-avatar { cursor: inherit; }
 /* Whole-pixel boxes so the three icons share one rhythm. */
 .user-actions { flex: 0 0 auto; }
@@ -3181,7 +3184,8 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
   cursor: pointer;
 }
 .pp-expiry:hover { color: var(--text-normal); text-decoration: underline; }
-.pp-until { color: var(--accent-hover) !important; }
+.pp-presence small.pp-until { color: var(--accent-hover); }
+.pp-presence button:hover small.pp-until { color: #fff; }
 .pp-durations-note { padding: 6px 12px 2px; font-size: 12px; color: var(--text-muted); }
 .pp-durations {
   position: fixed;
