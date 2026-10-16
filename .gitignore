@@ -33,3 +33,6 @@ safety.json
 # Claude Code local settings
 .claude/settings.local.json
 .claude/launch.json
+
+# Licensed stock art kept locally, never published
+apps/desktop/ui/stock-assets/

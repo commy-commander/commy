@@ -90,7 +90,7 @@ npm run dev
 Before bundling installers, generate platform icons once:
 
 ```sh
-cargo tauri icon path/to/commy-logo.png
+cargo tauri icon apps/desktop/ui/images/commy_v2.png
 ```
 
 then set `bundle.active` to `true` in `apps/desktop/src-tauri/tauri.conf.json`.
