@@ -212,7 +212,12 @@ fn host_of(origin: &str) -> String {
 
 #[tauri::command]
 pub async fn resolve_invite_link(app: tauri::State<'_, App>, link: String) -> Result<ResolvedInvite, String> {
-    let parsed = parse(&link).ok_or("That is not a Commy invite link")?;
+    resolve(&app, &link).await
+}
+
+/// Looks up an invite link on the server that issued it and opens its ticket.
+pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, String> {
+    let parsed = parse(link).ok_or("That is not a Commy invite link")?;
     let mut url = Url::parse(&format!("{}/api/auth/commy/invites/resolve", parsed.origin)).map_err(|e| e.to_string())?;
     url.query_pairs_mut().append_pair("code", &parsed.code);
     let res = app
@@ -277,6 +282,12 @@ fn open_ticket(stored: &str, key: Option<&str>) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn create_invite_link(app: tauri::State<'_, App>, server_id: String) -> Result<String, String> {
+    create(&app, &server_id).await
+}
+
+/// Stores a server's ticket, sealed, on our account server and returns
+/// the link that opens it.
+pub(crate) async fn create(app: &App, server_id: &str) -> Result<String, String> {
     let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
     let raw = app
         .invites

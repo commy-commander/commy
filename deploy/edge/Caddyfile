@@ -44,6 +44,9 @@
 	@auth path /api/auth/* /.well-known/commy-auth.json
 	handle @auth {
 		reverse_proxy {args[0]}-auth:3001 {
+			# The visitor's address alone: the auth server's rate limits ignore a
+			# forwarded chain and would put every visitor in one shared bucket
+			header_up X-Forwarded-For {client_ip}
 			lb_try_duration 15s
 		}
 	}

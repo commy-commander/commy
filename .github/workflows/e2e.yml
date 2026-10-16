@@ -1,0 +1,70 @@
+# End-to-end tests: private invite links, the message doorbell and offline
+# delivery, with the desktop app's own code on real nodes against the account
+# server on Postgres, then the edge proxy checks. See scripts/e2e.sh.
+
+name: End-to-end tests
+
+on:
+  pull_request:
+    paths:
+      - "apps/desktop/src-tauri/**"
+      - "crates/**"
+      - "auth/**"
+      - "deploy/edge/**"
+      - "scripts/e2e.sh"
+      - "Cargo.lock"
+      - ".github/workflows/e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/src-tauri/**"
+      - "crates/**"
+      - "auth/**"
+      - "deploy/edge/**"
+      - "scripts/e2e.sh"
+      - "Cargo.lock"
+      - ".github/workflows/e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Invites, doorbell and offline delivery
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libasound2-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxrandr-dev \
+            libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
+            libxdo-dev libssl-dev clang cmake shellcheck
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: auth/package-lock.json
+
+      - run: npm ci
+        working-directory: auth
+
+      - run: shellcheck -s sh scripts/e2e.sh deploy/edge/edge.test.sh
+
+      - run: sh scripts/e2e.sh

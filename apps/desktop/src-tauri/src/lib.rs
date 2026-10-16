@@ -8,6 +8,8 @@ mod afk;
 mod entry_list;
 mod catchup;
 mod doorbell;
+#[cfg(all(test, feature = "e2e"))]
+mod e2e;
 mod expressions;
 mod media_engine;
 mod igdb;
@@ -184,7 +186,7 @@ async fn join_server(
 
 /// Joins a server from its ticket: from an invite, or from your server list
 /// on another of your devices.
-pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: ServerTicket) -> CmdResult<ServerSummary> {
+pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, ticket: ServerTicket) -> CmdResult<ServerSummary> {
     // Needed before joining; read again after it (see `own_server_state`).
     current_profile(app)?;
 
@@ -220,7 +222,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: Se
     drop(signing);
 
     app.persist_server(ticket.server_id);
-    let _ = handle.emit("servers-changed", ());
+    handle.emit("servers-changed", serde_json::Value::Null);
     Ok(summary)
 }
 
@@ -4389,7 +4391,7 @@ async fn run_net_loop(
                             react_to_voice_change(&app, server, user, channel).await;
                         }
                         if let Some(message) = new_message {
-                            doorbell::arrived(&app, &handle, server, message.id);
+                            doorbell::arrived(&handle, server, message.id);
                             notify_new_message(&app, &handle, server, &message);
                         }
                         let _ = handle.emit("server-event", &server.to_string());
