@@ -476,9 +476,7 @@ struct TopicHandle {
     neighbors: tokio::sync::watch::Receiver<BTreeSet<[u8; 32]>>,
     /// The task reading the topic's events. Gossip quits a topic only once
     /// both the sink and the event stream are gone, so dropping the handle
-    /// stops it too. (iroh 0.28's RPC layer logs a "called after complete"
-    /// panic in its own task when a subscription ends; the topic is still
-    /// left cleanly.)
+    /// stops it too.
     reader: tokio::task::AbortHandle,
 }
 
@@ -830,12 +828,23 @@ impl CommyNode {
         bootstrap: Vec<NodeId>,
     ) -> Result<()> {
         let topic = TopicId::from_bytes(topic_bytes);
-        let (sink, stream) = self
+        // Straight to the gossip actor, not through the node's RPC client:
+        // ending an RPC subscription panics a task in iroh 0.28, and the
+        // node shuts down on any panicked task.
+        let gossip = self
             .node
-            .gossip()
-            .subscribe(topic, bootstrap)
-            .await
-            .context("failed to subscribe to server topic")?;
+            .get_protocol::<iroh_gossip::net::Gossip>(iroh_gossip::net::GOSSIP_ALPN)
+            .context("gossip is not running")?;
+        let (commands, updates) = async_channel::bounded::<GossipCommand>(64);
+        let stream = gossip.join_with_stream(
+            topic,
+            iroh_gossip::net::JoinOptions::with_bootstrap(bootstrap),
+            Box::pin(updates),
+        );
+        let sink = futures_util::sink::unfold(commands, |commands, command: GossipCommand| async move {
+            commands.send(command).await.map_err(|_| anyhow::anyhow!("gossip is gone"))?;
+            anyhow::Ok(commands)
+        });
 
         let events_tx = self.events_tx.clone();
         let our_id = self.node_id_bytes();

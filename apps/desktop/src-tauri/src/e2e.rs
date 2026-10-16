@@ -773,9 +773,6 @@ async fn offline_edits_and_deletes_arrive_in_order_signed() {
 
 // ---------- 4. Waking a resting device ----------
 
-/// Needs a direct line to localhost: iroh sends relay traffic through
-/// `HTTPS_PROXY` when one is set and ignores `NO_PROXY`, so behind a proxy
-/// the local relay is out of reach and the wake times out.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_wake_through_the_relay_brings_a_resting_device_back() {
     init_logs();
