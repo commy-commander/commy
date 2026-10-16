@@ -2,14 +2,28 @@
 # Run "Cut release" (or push a tag like v0.2.0) to release. Tags containing "-test" create a draft release,
 # other tags with a suffix (v0.2.0-rc.1) a pre-release test build that uses only the staging servers.
 # Pull requests that touch this file and manual runs build everything without publishing.
+# To check that a branch compiles, use "Rust checks" instead; it takes a few minutes.
+# Pushes to main that change dependencies, and a twice weekly schedule, build on main
+# so tag builds start from warm dependency caches (tags can only read caches from main).
 
 name: Desktop release
 
 on:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - ".github/workflows/release.yml"
+      - ".github/actions/release-config/**"
   pull_request:
-    paths: [".github/workflows/release.yml"]
+    paths:
+      - ".github/workflows/release.yml"
+      - ".github/actions/release-config/**"
+  schedule:
+    # Unused caches expire after 7 days
+    - cron: "17 4 * * 1,4"
   workflow_dispatch:
 
 permissions:
@@ -36,12 +50,16 @@ jobs:
             target: x86_64-pc-windows-msvc
             rust_targets: x86_64-pc-windows-msvc
             bundles: nsis
-          - name: macOS universal
+          # The two macOS halves build side by side; "macOS universal" joins and bundles them
+          - name: macOS arm64
             # Pinned: macos-latest twice sat 15 minutes without a runner and was cancelled
             os: macos-15
-            target: universal-apple-darwin
-            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
-            bundles: app,dmg
+            target: aarch64-apple-darwin
+            rust_targets: aarch64-apple-darwin
+          - name: macOS x64
+            os: macos-15
+            target: x86_64-apple-darwin
+            rust_targets: x86_64-apple-darwin
           - name: Linux x64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -70,71 +88,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          # Only main's caches are readable by tags and pull requests
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Resolve version
+      - name: Release config
         id: version
-        run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            full="${GITHUB_REF_NAME#v}"
-          else
-            full="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
-          fi
-          # Installers (NSIS, deb) only accept numeric versions, so drop any pre-release suffix
-          echo "full=$full" >> "$GITHUB_OUTPUT"
-          echo "app=${full%%-*}" >> "$GITHUB_OUTPUT"
-          # Pre-release tags (v0.2.0-rc.1) are test builds: they use only the staging
-          # account server and staging relay, and say "test build" in the title
-          if [[ "$GITHUB_REF_TYPE" == "tag" && "$full" == *-* ]]; then
-            echo "test_build=1" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Generate icons and release config
-        working-directory: apps/desktop/src-tauri
-        run: |
-          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" icon icons/icon.png --output icons
-          cat > tauri.release.conf.json <<EOF
-          {
-            "version": "${{ steps.version.outputs.app }}",
-            "bundle": {
-              "active": true,
-              "publisher": "Commy",
-              "copyright": "AGPL-3.0-only",
-              "category": "SocialNetworking",
-              "shortDescription": "Peer to peer voice, video and chat",
-              "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-              "windows": { "nsis": { "installMode": "currentUser" } },
-              "macOS": { "minimumSystemVersion": "11.0" }
-            },
-            "plugins": { "deep-link": { "desktop": { "schemes": ["commy"] } } }
-          }
-          EOF
-          # Invite links open the app through commy:// (src/invite_link.rs). The deep-link
-          # entry above registers it in the Windows installer and .deb; macOS reads Info.plist.
-          cat > Info.plist <<'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleURLTypes</key>
-            <array>
-              <dict>
-                <key>CFBundleURLName</key>
-                <string>chat.commy.desktop</string>
-                <key>CFBundleURLSchemes</key>
-                <array><string>commy</string></array>
-              </dict>
-            </array>
-            <key>NSMicrophoneUsageDescription</key>
-            <string>Commy uses the microphone for voice chat.</string>
-            <key>NSCameraUsageDescription</key>
-            <string>Commy uses the camera for video calls.</string>
-          </dict>
-          </plist>
-          EOF
+        uses: ./.github/actions/release-config
 
       - name: Build and bundle
         working-directory: apps/desktop/src-tauri
@@ -150,11 +113,17 @@ jobs:
           echo "Test build: ${COMMY_TEST_BUILD:-no}"
           echo "Account server: ${COMMY_DEFAULT_ACCOUNT_SERVER:-https://commy.chat}"
           echo "Relay: ${COMMY_DEFAULT_RELAY:-https://relay.commy.chat:8443}"
+          if [ -n "${{ matrix.bundles }}" ]; then
+            bundle_args=(--bundles "${{ matrix.bundles }}")
+          else
+            bundle_args=(--no-bundle)
+          fi
           npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" build \
-            --ci --target "${{ matrix.target }}" --bundles "${{ matrix.bundles }}" \
+            --ci --target "${{ matrix.target }}" "${bundle_args[@]}" \
             --config tauri.release.conf.json
 
       - name: Collect artifacts
+        if: matrix.bundles
         env:
           VERSION: ${{ steps.version.outputs.full }}
           TARGET: ${{ matrix.target }}
@@ -169,12 +138,6 @@ jobs:
               cp "$bundle"/nsis/*-setup.exe "$out/Commy_${VERSION}_x64-setup.exe"
               7z a -tzip "$out/Commy_${VERSION}_x64-portable.zip" "./target/$TARGET/release/commy-desktop.exe"
               ;;
-            macOS)
-              scheme="$(/usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes:0:CFBundleURLSchemes:0" "$bundle/macos/Commy.app/Contents/Info.plist")"
-              [ "$scheme" = commy ] || { echo "Info.plist does not declare commy://"; exit 1; }
-              cp "$bundle"/dmg/*.dmg "$out/Commy_${VERSION}_universal.dmg"
-              tar -czf "$out/Commy_${VERSION}_universal.app.tar.gz" -C "$bundle/macos" Commy.app
-              ;;
             Linux)
               cp "$bundle"/deb/*.deb "$out/Commy_${VERSION}_amd64.deb"
               cp "$bundle"/appimage/*.AppImage "$out/Commy_${VERSION}_amd64.AppImage"
@@ -183,14 +146,86 @@ jobs:
           ls -la "$out"
 
       - uses: actions/upload-artifact@v4
+        if: matrix.bundles
         with:
           name: commy-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+          retention-days: ${{ github.ref_type == 'tag' && 90 || 7 }}
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
+        with:
+          name: macos-bin-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/commy-desktop
+          if-no-files-found: error
+          retention-days: 1
+
+  macos-universal:
+    name: macOS universal
+    needs: build
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Release config
+        id: version
+        uses: ./.github/actions/release-config
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-bin-*
+          path: bins
+
+      # The same join "tauri build --target universal-apple-darwin" does after building both halves
+      - name: Join the arm64 and x64 binaries
+        run: |
+          out=target/universal-apple-darwin/release
+          mkdir -p "$out"
+          lipo -create -output "$out/commy-desktop" \
+            bins/macos-bin-aarch64-apple-darwin/commy-desktop \
+            bins/macos-bin-x86_64-apple-darwin/commy-desktop
+          chmod +x "$out/commy-desktop"
+          lipo -info "$out/commy-desktop"
+
+      - name: Bundle
+        working-directory: apps/desktop/src-tauri
+        run: |
+          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" bundle \
+            --ci --target universal-apple-darwin --bundles app,dmg \
+            --config tauri.release.conf.json
+
+      - name: Collect artifacts
+        env:
+          VERSION: ${{ steps.version.outputs.full }}
+          TARGET: universal-apple-darwin
+        run: |
+          out="$PWD/dist"
+          mkdir -p "$out"
+          bundle="target/$TARGET/release/bundle"
+          scheme="$(/usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes:0:CFBundleURLSchemes:0" "$bundle/macos/Commy.app/Contents/Info.plist")"
+          [ "$scheme" = commy ] || { echo "Info.plist does not declare commy://"; exit 1; }
+          cp "$bundle"/dmg/*.dmg "$out/Commy_${VERSION}_universal.dmg"
+          tar -czf "$out/Commy_${VERSION}_universal.app.tar.gz" -C "$bundle/macos" Commy.app
+          ls -la "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: commy-universal-apple-darwin
+          path: dist/*
+          if-no-files-found: error
+          retention-days: ${{ github.ref_type == 'tag' && 90 || 7 }}
 
   publish:
     name: Publish release
-    needs: build
+    needs: [build, macos-universal]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
@@ -198,6 +233,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: commy-*
           path: dist
           merge-multiple: true
 

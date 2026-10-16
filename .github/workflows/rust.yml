@@ -1,0 +1,79 @@
+# Fast compile check for pull requests that touch Rust code: cargo check on Windows
+# and macOS, and the test suite (which compiles everything) on Linux. Use this instead of running
+# "Desktop release" to prove a branch builds.
+# Dependency caches are saved from main only; pull requests restore them.
+
+name: Rust checks
+
+on:
+  push:
+    branches: [main]
+    paths: &rust-paths
+      - "crates/**"
+      - "apps/desktop/src-tauri/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    paths: *rust-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Debug info roughly doubles build time and cache size; CI only needs pass or fail
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux tests
+            os: ubuntu-22.04
+          - name: Windows check
+            os: windows-latest
+          - name: macOS check
+            os: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libasound2-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxrandr-dev \
+            libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
+            libxdo-dev libssl-dev clang cmake
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # cargo test builds everything cargo check would, so Linux skips the check
+      - name: cargo check
+        if: runner.os != 'Linux'
+        run: cargo check --workspace --all-targets --locked
+
+      - name: cargo test
+        if: runner.os == 'Linux'
+        run: cargo test --workspace --locked
