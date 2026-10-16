@@ -1503,6 +1503,22 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   gap: 8px;
 }
 .vp-conn { display: flex; align-items: center; gap: 2px; }
+/* Mute, deafen and noise cancellation: a row of equal segments under the
+   connection line, each a fixed footprint so toggling never shifts them. */
+.vp-voice { display: flex; gap: 8px; }
+.vp-voice .split-btn, .vp-voice > .icon-btn {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+.vp-voice .split-btn { display: flex; align-items: stretch; overflow: hidden; }
+.vp-voice .split-btn .icon-btn { flex: 1; height: 34px; border-radius: 0; }
+.vp-voice .split-btn .caret-btn { width: 20px; height: 34px; border-radius: 0; border-left: 1px solid var(--bg-darkest); }
+.vp-voice .icon-btn:hover, .vp-voice .caret-btn:hover { background: var(--bg-active); }
+.vp-voice .icon-btn.danger { color: var(--red); }
+.vp-voice .icon-btn > svg { width: 20px; height: 20px; }
 .vp-conn-meta { flex: 1; min-width: 0; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
 .vp-conn-meta:hover .vp-where { color: var(--text-normal); text-decoration: underline; }
 .vp-status {
@@ -1985,9 +2001,14 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .avatar.avatar-lg.emoji-avatar, .avatar.avatar-xl.emoji-avatar { font-size: 72px; }
 .msg .avatar.emoji-avatar { font-size: 40px; }
 .user-sub.activity { color: var(--green); font-weight: 500; }
-.user-sub.voice { display: flex; align-items: center; gap: 4px; color: var(--text-normal); }
-.user-sub.voice .vs-icon { color: var(--text-faint); }
-.user-sub.voice .vs-icon.off { color: var(--red); }
+/* People panel: name line glyphs for voice, one reserved sub line. */
+.member { min-height: 44px; }
+.member > div:not(.avatar) { flex: 1; min-width: 0; }
+.member-name { display: flex; align-items: center; }
+.member-name .live-badge { margin-left: 6px; }
+.member-voice { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; padding-left: 6px; color: var(--text-faint); }
+.member-voice .off { display: inline-flex; color: var(--red); }
+.user-sub.empty { min-height: 14px; }
 .elapsed { font-variant-numeric: tabular-nums; }
 .voice-user-time { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; margin-right: 2px; }
 
