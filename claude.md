@@ -16,7 +16,7 @@ Our Auth / Docs Website should use Postgres,Prisma,Auth.JS with Google Social Lo
 - `crates/commy-audio/` - voice DSP: `VoiceProcessor` with RNNoise noise cancellation toggle, mute gate, VAD (480-sample frames at 48 kHz)
 - `crates/commy-media/` - device I/O: cpal mic capture and playback, `JitterBuffer`, `Mixer`, xcap screen capture to MJPEG
 - `apps/desktop/src-tauri/` - Tauri 2 shell: commands in `src/lib.rs`, state in `src/state.rs`, view models in `src/view.rs`, voice/screen orchestration in `src/media_engine.rs`, disk persistence in `src/persist.rs`
-- `apps/desktop/ui/` - static frontend (no build step); works in a browser with a mock backend for preview; `emoji.js` holds the picker data
+- `apps/desktop/ui/` - static frontend (no build step); works in a browser with a mock backend for preview; `images/`, `sounds/` (soundboard clips in `sounds/soundboard/`), `scripts/` (`emoji.js` holds the picker data), `styles/`, `fonts/`
 - Dev testing: run a second instance with `COMMY_DATA_DIR` set for P2P testing on one machine; `COMMY_AFK_SECS` shortens the AFK timeout; UI edits need `cargo build` (assets embed at compile time)
 - The commy.chat website (Next.js) lives in its own private repository, commy-web; `auth/` is the Better Auth account server and `deploy/` the hosting stack
 

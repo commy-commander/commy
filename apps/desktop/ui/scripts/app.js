@@ -1350,7 +1350,7 @@ async function setServerImage(which, data) {
 // ---------- Sounds ----------
 
 // Files bundled in the ui folder. "none" plays nothing.
-const SOUND_FILES = { notification: "notification.mp3", ding: "ding.mp3", pop: "pop.wav", join: "join.mp3", leave: "leave.mp3" };
+const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3" };
 const SOUND_EVENTS = [
   { id: "message", label: "New message or mention", fallback: "notification" },
   { id: "dm", label: "Direct message", fallback: "ding" },
@@ -5013,10 +5013,10 @@ function saveSoundboardPrefs(prefs) {
 // Clips bundled with the app, in every server. Ids match DEFAULT_SOUNDS
 // in expressions.rs; peers play them by name ("default:<id>").
 const DEFAULT_SOUNDS = [
-  { id: "airhorn", label: "Airhorn", file: "soundeffects/airhorn.mp3" },
-  { id: "ba_dum_tss", label: "Ba Dum Tss", file: "soundeffects/ba-dum-tss.mp3" },
-  { id: "cricket", label: "Crickets", file: "soundeffects/cricket.mp3" },
-  { id: "losing_horn", label: "Losing Horn", file: "soundeffects/losing_horn.mp3" },
+  { id: "airhorn", label: "Airhorn", file: "sounds/soundboard/airhorn.mp3" },
+  { id: "ba_dum_tss", label: "Ba Dum Tss", file: "sounds/soundboard/ba-dum-tss.mp3" },
+  { id: "cricket", label: "Crickets", file: "sounds/soundboard/cricket.mp3" },
+  { id: "losing_horn", label: "Losing Horn", file: "sounds/soundboard/losing_horn.mp3" },
 ];
 
 function defaultSound(name) {
