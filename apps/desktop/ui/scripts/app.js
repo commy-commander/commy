@@ -153,10 +153,11 @@ async function mockInvoke(cmd, args = {}) {
         ...s, members, screen_shares: [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
         channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, ...c })),
-        can_manage_server: true, can_manage_channels: true, can_manage_roles: true, can_kick: true, can_manage_messages: true,
+        // Preview mode: set mock.plainMember = true in the console to see the app as a member without any management role.
+        can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
-        can_manage_expressions: true, can_upload_sounds: true, can_use_soundboard: true,
-        can_mute: true, can_ban: true, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
+        can_mute: !mock.plainMember, can_ban: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
       };
     }
     case "create_server": {
@@ -1078,9 +1079,11 @@ function openServerMenu(server, x, y, folderId) {
   // Rules and roles live in the full server view; fetch it for the menu.
   $("sm-rules").classList.add("hidden");
   $("sm-roles").classList.add("hidden");
+  $("sm-settings").textContent = "Server Settings";
   invoke("get_server", { serverId: server.id }).then(full => {
     $("sm-rules").classList.toggle("hidden", !full.rules);
     $("sm-roles").classList.toggle("hidden", !selfAssignableRoles(full).length);
+    $("sm-settings").textContent = canOpenServerSettings(full) ? "Server Settings" : "Server Info";
   }).catch(() => {});
   placeMenuAt($("server-menu"), x, y);
 }
@@ -1311,6 +1314,9 @@ function paintServerIcon(node, server) {
 
 function paintSidebarBanner() {
   const header = $("server-name-header");
+  if (state.view === "server" && state.currentServer) {
+    $("server-settings-btn").title = canOpenServerSettings(state.currentServer) ? "Server Settings" : "Server Info";
+  }
   const banner = $("sidebar-banner");
   const ref = state.view === "server" && state.currentServer ? state.currentServer.banner : null;
   header.classList.toggle("has-banner", Boolean(ref));
@@ -7237,6 +7243,8 @@ function wireEvents() {
   };
 
   $("leave-server-btn").onclick = () => state.currentServer && openLeaveServer(state.currentServer.id);
+  $("si-close").onclick = hideModals;
+  $("si-leave").onclick = () => state.currentServer && openLeaveServer(state.currentServer.id);
 
   // Account
   $("user-chip").onclick = e => {
@@ -8205,9 +8213,62 @@ function openUserSettings(tab) {
 }
 
 // Re-opening keeps the current tab so actions inside a tab do not jump away.
+// Server Settings is for members who can manage something. Everyone else
+// gets a read-only Server Info panel so no control ever silently fails.
+function canOpenServerSettings(server) {
+  const isOwner = Boolean(state.user && server.owner === state.user.id);
+  return isOwner || Boolean(server.can_manage_server || server.can_manage_channels || server.can_manage_roles ||
+    server.can_kick || server.can_manage_expressions || server.can_upload_sounds);
+}
+
+function openServerInfo(server) {
+  const me = state.user && server.members.find(m => m.id === state.user.id);
+  const online = server.members.filter(m => m.presence && m.presence !== "offline").length;
+  paintServerIcon($("si-icon"), server);
+  $("si-title").textContent = server.name;
+  const count = server.members.length;
+  $("si-sub").textContent = [`${count} member${count === 1 ? "" : "s"}`, online ? `${online} online` : "", server.public ? "Public server" : ""].filter(Boolean).join(" \u00b7 ");
+  const banner = $("si-banner");
+  banner.style.backgroundImage = "";
+  banner.classList.toggle("hidden", !server.banner);
+  if (server.banner) {
+    const ref = server.banner;
+    loadServerImage(ref).then(url => { if (url && server.banner === ref) banner.style.backgroundImage = `url("${url}")`; });
+  }
+  const games = $("si-games");
+  games.replaceChildren();
+  for (const tag of server.game_tags || []) {
+    const chip = el("span", "game-chip small", tag);
+    const cover = tagCover(server, tag, "t_thumb");
+    if (cover) {
+      const img = el("img", "game-chip-cover");
+      img.src = cover;
+      chip.prepend(img);
+    }
+    games.appendChild(chip);
+  }
+  games.classList.toggle("hidden", !games.childElementCount);
+  $("si-rules-wrap").classList.toggle("hidden", !server.rules);
+  $("si-rules").replaceChildren(server.rules ? renderMarkdown(server.rules) : "");
+  const held = (server.roles || []).filter(r => me && (me.roles || []).includes(r.id));
+  const roles = $("si-roles");
+  roles.replaceChildren();
+  for (const role of held) {
+    const chip = el("span", "si-role");
+    const dot = el("span", "role-dot");
+    if (role.color) dot.style.background = `#${role.color}`;
+    chip.append(dot, document.createTextNode(role.name));
+    if (role.tag) chip.appendChild(roleTagChip(role.tag, role.color));
+    roles.appendChild(chip);
+  }
+  $("si-roles-wrap").classList.toggle("hidden", !held.length);
+  showModal("modal-server-info");
+}
+
 function openServerSettings(tab) {
   if (!state.currentServer) return;
   const server = state.currentServer;
+  if (!canOpenServerSettings(server)) return openServerInfo(server);
   const layer = $("server-settings");
   const canMembers = server.can_kick || server.can_manage_roles;
   $("server-settings-title").textContent = server.name;
