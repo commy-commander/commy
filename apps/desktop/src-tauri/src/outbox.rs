@@ -84,8 +84,8 @@ impl Outbox {
 
     /// Records a local event after its broadcast. Our message that reached
     /// nobody becomes pending; any other lasting event that reached nobody
-    /// is queued. A delete also drops its message from pending, delivered
-    /// or not. Returns true when the outbox changed.
+    /// is queued, except an edit of a pending message. A delete also drops
+    /// its message from pending, delivered or not. Returns true when the outbox changed.
     pub fn note_local(&mut self, server: ServerId, event: &ServerEvent, delivered: bool) -> bool {
         let mut changed = false;
         if let ServerEvent::MessageDelete { message, .. } = event {
@@ -102,6 +102,14 @@ impl Outbox {
             list.push(message.id);
             return true;
         }
+        // An edit of a message still pending rides along with it: catch-up
+        // carries the message whole, and sent on its own the edit would
+        // reach peers before the message it changes.
+        if let ServerEvent::MessageEdit { message, .. } = event {
+            if self.is_pending(server, *message) {
+                return changed;
+            }
+        }
         let list = self.queued.entry(server).or_default();
         list.retain(|old| !supersedes(event, old));
         list.push(event.clone());
@@ -112,7 +120,6 @@ impl Outbox {
         true
     }
 
-    #[cfg(test)]
     pub fn is_pending(&self, server: ServerId, id: MessageId) -> bool {
         self.pending.get(&server).is_some_and(|list| list.contains(&id))
     }
@@ -876,6 +883,8 @@ mod tests {
 
         let edit = message.edit_event(sid, "edited", chrono::Utc::now(), &identity);
         assert!(outbox.note_local(sid, &rename(sid, "a"), false));
+        assert!(!outbox.note_local(sid, &edit, false), "an edit of a pending message rides along with it");
+        assert!(outbox.clear_delivered(sid, [message.id]));
         assert!(outbox.note_local(sid, &edit, false));
         assert_eq!(outbox.take_queued(sid), vec![rename(sid, "a"), edit]);
         assert!(outbox.take_queued(sid).is_empty(), "taking clears the queue");
@@ -1007,7 +1016,7 @@ mod tests {
         assert_eq!(loaded, outbox);
         assert!(loaded.is_pending(sid, message.id));
         assert_eq!(loaded.dm_queue(partner), vec![dm]);
-        assert_eq!(loaded.clone().take_queued(sid).len(), 3);
+        assert_eq!(loaded.clone().take_queued(sid).len(), 2, "the edit rides along with its pending message");
 
         std::fs::write(dir.join(OUTBOX_FILE), b"{broken").unwrap();
         assert_eq!(Outbox::load(&dir), Outbox::default(), "a corrupt file is ignored");
@@ -1662,6 +1671,8 @@ mod tests {
         // Someone is connected, but our key may still change.
         assert!(!broadcast_local(&app, sid, ServerEvent::MessageCreate { message: message.clone() }).await);
         assert!(app.outbox.lock().unwrap().is_pending(sid, message.id));
+        // Once it went out, an edit of it waits in the queue.
+        app.outbox.lock().unwrap().clear_delivered(sid, [message.id]);
         let edit = message.edit_event(sid, "held", chrono::Utc::now(), &identity);
         assert!(!broadcast_local(&app, sid, edit.clone()).await);
         // What carries no key of ours goes now, and so does one queued
@@ -1719,7 +1730,7 @@ mod tests {
             message.sign(sid, identity);
             message
         };
-        // Written with the key held back: one waiting, one we edited.
+        // Written with the key held back: one waiting, one sent that we edited.
         let waiting = post(me.id, &held, "waiting");
         let edited = post(me.id, &held, "first");
         let theirs = post(other.id, &member, "theirs");
@@ -1739,9 +1750,7 @@ mod tests {
         app.servers.lock().unwrap().insert(sid, state);
         {
             let mut outbox = app.outbox.lock().unwrap();
-            for message in [&waiting, &edited] {
-                outbox.note_local(sid, &ServerEvent::MessageCreate { message: (*message).clone() }, false);
-            }
+            outbox.note_local(sid, &ServerEvent::MessageCreate { message: waiting.clone() }, false);
             outbox.note_local(sid, &edit, false);
             outbox.note_local(sid, &delete, false);
         }
@@ -1781,6 +1790,6 @@ mod tests {
         assert!(now_edited.verify_edit(sid, content, *edited_at, sig, &key));
         let proof = TombstoneProof { channel: *c, message: *m, by: *by, at: *at, sig: *proof_sig };
         assert!(proof.verify(sid, &key) && proof.message == theirs.id);
-        assert_eq!(app.outbox.lock().unwrap().pending_ids(sid), HashSet::from([waiting.id, edited.id]), "same ids");
+        assert_eq!(app.outbox.lock().unwrap().pending_ids(sid), HashSet::from([waiting.id]), "same ids");
     }
 }

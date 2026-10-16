@@ -268,7 +268,8 @@ never reach this stack. The auth database holds:
 - accounts: email, display name, avatar URL, password hash (scrypt)
 - Google sign-ins: provider account id, with OAuth tokens encrypted at rest
 - sessions: token and expiry only (IP address and user agent are not stored)
-- linked devices: iroh node id, device name, first and last link time
+- linked devices: iroh node id, first and last link time (no device or
+  computer name; apps no longer send one and older names are dropped at startup)
 - invite links: the code, the sealed invite (unreadable without the link),
   creator account if the app was signed in, expiry
 - each account's sealed server list (`vaultItem`): bytes sealed with a key

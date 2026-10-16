@@ -616,12 +616,12 @@ async fn link_device(app: &App, server: &str, doc: &Discovery, token: &str) -> R
         return Err("The account server asked to sign an unexpected message".into());
     }
     let (_, signature) = sign_with_node_key(&secret, challenge.message.as_bytes());
-    let name = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "Commy desktop".into());
+    // No device name: the account server keeps nothing that describes this computer.
     let res = app
         .http
         .post(&doc.endpoints.register_device)
         .bearer_auth(token)
-        .json(&serde_json::json!({ "nodeId": node_id, "name": name, "challenge": challenge.challenge, "signature": signature }))
+        .json(&serde_json::json!({ "nodeId": node_id, "challenge": challenge.challenge, "signature": signature }))
         .send()
         .await
         .map_err(|_| "Could not link this device".to_string())?;

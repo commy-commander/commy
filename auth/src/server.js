@@ -3,6 +3,7 @@ import { getMigrations } from "better-auth/db/migration";
 import { toNodeHandler } from "better-auth/node";
 import { createAuth } from "./auth.js";
 import { discoveryDocument, featureSummary, loadConfig } from "./config.js";
+import { dropDeviceNames } from "./devices.js";
 
 const config = loadConfig();
 const { auth, options, pool } = createAuth(config);
@@ -15,6 +16,7 @@ async function migrate(attempts = 30) {
         console.log(`[auth] applying schema: ${toBeCreated.length} new tables, ${toBeAdded.length} altered`);
         await runMigrations();
       }
+      await dropDeviceNames(pool);
       return;
     } catch (err) {
       if (i >= attempts) throw err;
