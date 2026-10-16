@@ -55,6 +55,10 @@ pub struct UserProfile {
     /// IGDB cover image id for the activity, when it is a known game.
     #[serde(default)]
     pub activity_cover: Option<String>,
+    /// When the current activity began, unix seconds, so others can see
+    /// how long you have been in a game.
+    #[serde(default)]
+    pub activity_since: Option<i64>,
     /// Short "About Me" shown on profiles.
     #[serde(default)]
     pub about: Option<String>,
@@ -121,6 +125,7 @@ impl UserProfile {
             status_emoji: None,
             activity: None,
             activity_cover: None,
+            activity_since: None,
             about: None,
             identity: None,
             presence_until: None,
@@ -141,6 +146,7 @@ impl UserProfile {
             shared.presence = Presence::Offline;
             shared.activity = None;
             shared.activity_cover = None;
+            shared.activity_since = None;
             // How long you chose to look offline is yours to know.
             shared.presence_until = None;
         }

@@ -1983,6 +1983,11 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .avatar.avatar-lg.emoji-avatar, .avatar.avatar-xl.emoji-avatar { font-size: 72px; }
 .msg .avatar.emoji-avatar { font-size: 40px; }
 .user-sub.activity { color: var(--green); font-weight: 500; }
+.user-sub.voice { display: flex; align-items: center; gap: 4px; color: var(--text-normal); }
+.user-sub.voice .vs-icon { color: var(--text-faint); }
+.user-sub.voice .vs-icon.off { color: var(--red); }
+.elapsed { font-variant-numeric: tabular-nums; }
+.voice-user-time { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; margin-right: 2px; }
 
 /* ---------- Own profile popover ---------- */
 .profile-pop {

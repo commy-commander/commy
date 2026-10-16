@@ -34,6 +34,10 @@ pub enum WirePayload {
         members: Vec<SyncMember>,
         profiles: Vec<commy_core::UserProfile>,
         recent_messages: Vec<commy_core::Message>,
+        /// Who is in voice right now, so a newcomer sees the call too.
+        /// Older snapshots leave it out.
+        #[serde(default)]
+        voice: Vec<SyncVoice>,
     },
     /// Voice signaling: ask a peer to open a direct media connection.
     VoiceDial {
@@ -51,6 +55,30 @@ pub struct SyncMember {
     pub nickname: Option<String>,
     pub roles: Vec<commy_core::RoleId>,
     pub joined_ms: i64,
+}
+
+/// A member in a voice channel, as a snapshot carries them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncVoice {
+    pub user: UserId,
+    pub channel: commy_core::ChannelId,
+    pub muted: bool,
+    pub deafened: bool,
+    /// When they joined, unix seconds.
+    pub since: Option<i64>,
+}
+
+impl SyncVoice {
+    /// The event that puts this member back in voice.
+    pub fn into_event(self) -> ServerEvent {
+        ServerEvent::VoiceState {
+            user: self.user,
+            channel: Some(self.channel),
+            muted: self.muted,
+            deafened: self.deafened,
+            since: self.since,
+        }
+    }
 }
 
 impl From<&commy_core::Member> for SyncMember {
@@ -177,6 +205,15 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePaylo
     let mut profiles: Vec<commy_core::UserProfile> =
         order.iter().filter_map(|u| state.profiles.get(u)).cloned().collect();
     let mut members: Vec<SyncMember> = std::mem::take(&mut server.members).iter().map(SyncMember::from).collect();
+    let mut voice: Vec<SyncVoice> = state
+        .voice_states
+        .iter()
+        .map(|(user, channel)| {
+            let (muted, deafened) = state.voice_flags(*user);
+            SyncVoice { user: *user, channel: *channel, muted, deafened, since: state.voice_since(*user) }
+        })
+        .collect();
+    voice.sort_by_key(|v| v.user);
     let build = |server: &commy_core::Server,
                  members: &[SyncMember],
                  profiles: &[commy_core::UserProfile],
@@ -186,6 +223,7 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePaylo
         profiles: profiles.to_vec(),
         // Oldest first, as they are applied.
         recent_messages: messages.iter().rev().cloned().collect(),
+        voice: voice.clone(),
     };
     // An upper bound kept as items go: a list's length prefix only shrinks.
     let mut size = gossip_size(&build(&server, &members, &profiles, &messages));
@@ -504,7 +542,7 @@ mod tests {
 
     /// The parts of a snapshot.
     fn parts(payload: WirePayload) -> (Server, Vec<SyncMember>, Vec<commy_core::UserProfile>, Vec<Message>) {
-        let WirePayload::SyncResponse { server, members, profiles, recent_messages } = payload else {
+        let WirePayload::SyncResponse { server, members, profiles, recent_messages, .. } = payload else {
             panic!("not a snapshot")
         };
         (server, members, profiles, recent_messages)
@@ -556,6 +594,7 @@ mod tests {
             members: vec![],
             profiles: state.profiles.values().cloned().collect(),
             recent_messages: vec![],
+            voice: vec![],
         });
         assert!(all > MAX_GOSSIP_BYTES, "its profiles alone are too many");
         let (server, members, profiles, recent) = parts(build_sync_response(&state, 50));
