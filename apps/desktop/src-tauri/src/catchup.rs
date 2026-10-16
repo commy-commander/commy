@@ -955,7 +955,7 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         let Some(old) = servers.remove(&server) else { return false };
         let pinned: HashMap<UserId, IdentityKey> = old.profiles.values().filter_map(|p| Some((p.id, p.identity?))).collect();
         let mut state = ServerState::new(remote_server);
-        // Snapshots carry no emojis or sounds; keep any announced already.
+        // Snapshots carry no emojis, sounds or pins; keep any announced already.
         if old.server.rules.is_some() {
             let _ = state.apply(ServerEvent::RulesSet { server, rules: old.server.rules.clone() });
         }
@@ -972,6 +972,11 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         }
         for sound in old.server.soundboard.iter().cloned() {
             let _ = state.apply(ServerEvent::SoundAdd { server, sound });
+        }
+        // Nor pins; keep those announced already.
+        for pin in old.server.pins.iter().cloned() {
+            let event = ServerEvent::MessagePin { server, channel: pin.channel, message: pin.message, by: pin.by, at: pin.at, pinned: true };
+            let _ = state.apply(event);
         }
         // Older apps may still name someone appearing offline; keep presence
         // as others see it, like every other way a profile arrives.
@@ -2185,6 +2190,36 @@ mod tests {
             assert!(state.server.is_member(friend.id()) && state.server.is_member(me.id()), "{join_first}");
             assert_eq!(state.identity_of(friend.id()), Some(friend.identity.public()), "{join_first}");
         }
+    }
+
+    #[test]
+    fn pins_announced_before_a_snapshot_survive_it_and_stay_out_of_ours() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut state, channel) = server(&owner);
+        join(&mut state, &me);
+        let sid = state.server.id;
+        let post = owner.post(&state, channel, "pinned early");
+        state.apply(ServerEvent::MessageCreate { message: post.clone() }).unwrap();
+        let pin = ServerEvent::MessagePin { server: sid, channel, message: post.id, by: owner.id(), at: chrono::Utc::now(), pinned: true };
+        state.apply(pin.clone()).unwrap();
+        let snapshot = snapshot_for(&app_with(&owner, state), sid).unwrap();
+        // Pins are left to members who may pin to re-announce.
+        let WirePayload::SyncResponse { server, .. } = &snapshot else { panic!("not a snapshot") };
+        assert!(server.pins.is_empty());
+        // A pin heard before the snapshot landed is kept once it does.
+        let app = app_with(&me, placeholder(&me, sid));
+        app.set_awaiting_snapshot(sid, true);
+        let early = app.servers.lock().unwrap().get_mut(&sid).unwrap().apply(ServerEvent::ChannelCreate {
+            server: sid,
+            channel: commy_core::Channel { id: channel, ..commy_core::Channel::new("general", commy_core::ChannelKind::Text, 0) },
+        });
+        assert!(early.is_ok());
+        app.servers.lock().unwrap().get_mut(&sid).unwrap().apply(pin).unwrap();
+        assert!(apply_snapshot(&TestHandle::new(app.clone()), sid, snapshot));
+        let state = app.servers.lock().unwrap()[&sid].clone();
+        assert!(state.server.is_pinned(post.id));
+        assert!(state.has_message(post.id));
     }
 
     #[test]
