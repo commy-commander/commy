@@ -12,13 +12,42 @@
     <!-- Server rail -->
     <nav class="rail" id="rail">
       <button class="rail-btn rail-home" id="home-btn" title="Direct Messages">
-        <img src="images/commy_v2.png" alt="Commy" width="48" height="48" draggable="false" />
+        <img src="images/commy_v2.png" alt="" width="36" height="36" draggable="false" />
+        <span class="rail-brand">Commy</span>
       </button>
       <div class="rail-divider"></div>
       <div id="server-list" class="server-list"></div>
       <button class="rail-btn rail-add" id="add-server-btn" title="Add a Server">
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
       </button>
+      <div class="rail-spacer"></div>
+      <!-- Account chip -->
+      <footer class="user-panel">
+      <button class="user-chip" id="user-chip" title="Set status">
+        <span class="avatar" id="me-avatar">?</span>
+        <span class="user-meta">
+          <span class="user-name" id="me-name">Not set</span>
+          <span class="user-sub" id="me-status">offline</span>
+        </span>
+      </button>
+      <div class="user-actions">
+        <div class="split-btn">
+        <button class="icon-btn" id="mute-btn" title="Mute">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z"/></svg>
+        </button>
+        <button class="caret-btn" id="mute-caret" title="Input Options"></button>
+        </div>
+        <div class="split-btn">
+        <button class="icon-btn" id="deafen-btn" title="Deafen">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h3a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z"/></svg>
+        </button>
+        <button class="caret-btn" id="deafen-caret" title="Output Options"></button>
+        </div>
+        <button class="icon-btn" id="settings-btn" title="Settings">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19.4 13a7.9 7.9 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.9 7.9 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.9 7.9 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.9 7.9 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.9 7.9 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.9 7.9 0 0 0 1.7-1l2.4 1 2-3.4zM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5z"/></svg>
+        </button>
+      </div>
+    </footer>
     </nav>
 
     <!-- Channel sidebar -->
@@ -77,33 +106,6 @@
         </div>
       </section>
 
-      <!-- User panel -->
-      <footer class="user-panel">
-        <button class="user-chip" id="user-chip" title="Set status">
-          <span class="avatar" id="me-avatar">?</span>
-          <span class="user-meta">
-            <span class="user-name" id="me-name">Not set</span>
-            <span class="user-sub" id="me-status">offline</span>
-          </span>
-        </button>
-        <div class="user-actions">
-          <div class="split-btn">
-          <button class="icon-btn" id="mute-btn" title="Mute">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z"/></svg>
-          </button>
-          <button class="caret-btn" id="mute-caret" title="Input Options"></button>
-          </div>
-          <div class="split-btn">
-          <button class="icon-btn" id="deafen-btn" title="Deafen">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h3a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z"/></svg>
-          </button>
-          <button class="caret-btn" id="deafen-caret" title="Output Options"></button>
-          </div>
-          <button class="icon-btn" id="settings-btn" title="Settings">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19.4 13a7.9 7.9 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.9 7.9 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.9 7.9 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.9 7.9 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.9 7.9 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.9 7.9 0 0 0 1.7-1l2.4 1 2-3.4zM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5z"/></svg>
-          </button>
-        </div>
-      </footer>
     </aside>
 
     <!-- Main chat -->
