@@ -856,12 +856,7 @@ function paintAvatar(node, userId, name) {
   return node;
 }
 
-// The line under a name: what they are playing, else emoji plus status.
-function statusLine(person) {
-  if (!person) return "";
-  if (person.activity) return person.activity;
-  return [person.status_emoji, person.custom_status].filter(Boolean).join(" ");
-}
+// statusLine, backLine, subLine and presenceLabel live in presence.js, shared with its tests.
 
 function makeAvatar(userId, name, className = "avatar") {
   return paintAvatar(el("div", className), userId, name);
@@ -2503,9 +2498,10 @@ function renderMembers() {
         nameRow.appendChild(live);
       }
       meta.appendChild(nameRow);
-      const sub = statusLine(member) || backLine(member);
+      const sub = subLine(member);
       if (sub) {
-        const line = el("div", "user-sub" + (member.activity ? " activity" : ""), sub);
+        // The activity colour only when the line is the activity alone.
+        const line = el("div", "user-sub" + (member.activity && !backLine(member) ? " activity" : ""), sub);
         const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
         if (cover) {
           const img = el("img", "activity-cover");
@@ -4303,7 +4299,7 @@ function openFullProfile(member) {
   $("fp-name").parentElement.querySelector(".role-tag")?.remove();
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = person.username ? `@${person.username}` : "";
-  $("fp-status").textContent = statusLine(person) || presenceLabel(person);
+  $("fp-status").textContent = subLine(person) || presenceLabel(person);
   $("fp-about-wrap").classList.toggle("hidden", !person.about);
   $("fp-about").textContent = person.about || "";
   const servers = (state.people.get(person.id) || {}).servers || [];
@@ -4357,7 +4353,7 @@ function openMemberCard(member, anchor) {
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
   const status = $("mc-status");
   status.replaceChildren();
-  const line = statusLine(member);
+  const line = subLine(member);
   const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
   if (cover) {
     const img = el("img", "activity-cover");
@@ -6031,7 +6027,7 @@ function renderUserPanel() {
   if (state.voice.muted) bits.push("muted");
   if (state.voice.deafened) bits.push("deafened");
   const label = presence === "invisible" ? "Appearing offline" : presenceLabel(state.user);
-  $("me-status").textContent = bits.length ? `${label}, ${bits.join(", ")}` : (statusLine(state.user) || label);
+  $("me-status").textContent = bits.length ? `${label}, ${bits.join(", ")}` : (subLine(state.user) || label);
   $("mute-btn").classList.toggle("danger", state.voice.muted);
   $("deafen-btn").classList.toggle("danger", state.voice.deafened);
   setIcon($("mute-btn"), state.voice.muted ? "micOff" : "mic");
@@ -6129,26 +6125,6 @@ function personPresence(userId) {
   const person = state.people.get(userId);
   if (!person || person.presence === "invisible") return "offline";
   return person.presence;
-}
-
-const PRESENCE_LABELS = { online: "Online", idle: "Idle", do_not_disturb: "Do Not Disturb", offline: "Offline" };
-
-// "back at 3:40 PM" (or "back Thu at 9:00 AM") while a timed Do Not
-// Disturb still runs; empty once it has passed or when there is no time.
-function backLine(person) {
-  const until = Number(person && person.presence_until);
-  if (!person || person.presence !== "do_not_disturb" || !until || until * 1000 <= Date.now()) return "";
-  const d = new Date(until * 1000);
-  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const sameDay = d.toDateString() === new Date().toDateString();
-  return sameDay ? `Back at ${time}` : `Back ${d.toLocaleDateString([], { weekday: "short" })} at ${time}`;
-}
-
-// The presence as a line of text: "Do Not Disturb · back at 3:40 PM".
-function presenceLabel(person) {
-  const base = PRESENCE_LABELS[(person && person.presence) || "offline"] || "Offline";
-  const back = backLine(person);
-  return back ? `${base} · ${back[0].toLowerCase()}${back.slice(1)}` : base;
 }
 
 function avatarWithPresence(name, userId, className = "avatar") {
@@ -6367,7 +6343,7 @@ async function selectDm(userId, name) {
   $("chat-presence").className = `presence-dot inline ${presence}`;
   const person = state.people.get(userId);
   $("chat-presence").title = presenceLabel({ ...(person || {}), presence });
-  $("channel-topic").textContent = (person && (statusLine(person) || backLine(person))) || "";
+  $("channel-topic").textContent = (person && subLine(person)) || "";
   $("message-input").placeholder = `Message @${name}`;
   $("dm-profile-btn").classList.remove("hidden");
   renderDmProfile(userId, name);
@@ -6387,7 +6363,7 @@ function renderDmProfile(userId, name) {
   $("dm-profile-presence").className = `presence-dot ${presence}`;
   $("dm-profile-banner").style.background = bannerColor(userId);
   $("dm-profile-name").textContent = name;
-  $("dm-profile-status").textContent = (person && statusLine(person)) || presenceLabel({ ...(person || {}), presence });
+  $("dm-profile-status").textContent = (person && subLine(person)) || presenceLabel({ ...(person || {}), presence });
   const servers = person ? person.servers : [];
   $("dm-profile-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
   const list = $("dm-profile-servers");
