@@ -1926,6 +1926,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             soundboard_open: state.server.soundboard_open,
         });
     }
+    if state.server.public && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::PublicSet { server: sid, public: true });
+    }
     // Only an explicit choice is announced; the name fallback needs none.
     let explicit = state.server.afk_disabled || state.server.afk_channel_id.is_some();
     if explicit && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER) {
@@ -3470,6 +3473,26 @@ async fn set_expression_settings(
     Ok(())
 }
 
+/// Marks a server public (invite links to it may never expire) or private.
+#[tauri::command]
+async fn set_server_public(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    public: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "make this server public")?;
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::PublicSet { server: sid, public }).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
 /// What the webview needs to play a soundboard clip.
 #[derive(Clone, serde::Serialize)]
 struct SoundboardPlayView {
@@ -4971,6 +4994,7 @@ pub fn run() {
             add_sound,
             remove_sound,
             set_expression_settings,
+            set_server_public,
             play_soundboard,
             fetch_expression,
             pick_sound,

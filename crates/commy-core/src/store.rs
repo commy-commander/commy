@@ -635,6 +635,16 @@ impl ServerState {
                 self.server.soundboard_open = soundboard_open;
                 Ok(true)
             }
+            ServerEvent::PublicSet { server, public } => {
+                if server != self.server.id {
+                    return Err(StoreError::WrongServer);
+                }
+                if self.server.public == public {
+                    return Ok(false);
+                }
+                self.server.public = public;
+                Ok(true)
+            }
             // Played live by whoever is in the channel; nothing to store.
             ServerEvent::SoundboardPlay { .. } => Ok(false),
             ServerEvent::GameTagsSet { server, tags, meta } => {

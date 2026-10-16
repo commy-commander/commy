@@ -150,6 +150,10 @@ pub struct Server {
     /// Server-wide voice idle limit in minutes; None leaves it to each member.
     #[serde(default)]
     pub afk_timeout_minutes: Option<u32>,
+    /// Marked public by someone who manages it: anyone may join, so
+    /// invite links to it may be made that never expire.
+    #[serde(default)]
+    pub public: bool,
 }
 
 impl Server {
@@ -205,6 +209,7 @@ impl Server {
             server_deafened: vec![],
             banned: vec![],
             afk_timeout_minutes: None,
+            public: false,
         }
     }
 

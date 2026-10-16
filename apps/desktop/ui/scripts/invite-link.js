@@ -27,9 +27,9 @@ async function openInviteLink(link) {
     pendingInvite = invite;
     $("invite-link-name").textContent = invite.server_name;
     $("invite-link-icon").textContent = initials(invite.server_name);
-    const expires = new Date(invite.expires_at);
+    const expires = invite.expires_at ? new Date(invite.expires_at) : null;
     $("invite-link-host").textContent = `Invite from ${invite.host}` +
-      (isNaN(expires) ? "" : `, expires ${expires.toLocaleDateString(undefined, { month: "long", day: "numeric" })}`);
+      (!expires ? ", never expires" : isNaN(expires) ? "" : `, expires ${expires.toLocaleDateString(undefined, { month: "long", day: "numeric" })}`);
     const warning = $("invite-link-warning");
     warning.classList.toggle("hidden", invite.trusted);
     if (!invite.trusted) {
@@ -82,13 +82,61 @@ function inviteLinkCard(link) {
   return card;
 }
 
+// How long the next invite link lasts. "never" is only offered for a server
+// marked public; the app checks that again before making one.
+const INVITE_EXPIRY_NAMES = { "1h": "1 hour", "1d": "1 day", "7d": "7 days", "30d": "30 days" };
+let inviteExpiry = "7d";
+let inviteLinkShown = false;
+
+function inviteExpiryText(expiresAt) {
+  if (!expiresAt) return "This link never expires.";
+  const at = new Date(expiresAt);
+  if (isNaN(at)) return "";
+  const soon = at - Date.now() < 36 * 3600e3;
+  const when = soon
+    ? at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : at.toLocaleDateString(undefined, { month: "long", day: "numeric" });
+  return soon && at.getDate() !== new Date().getDate()
+    ? `This link expires tomorrow at ${when}.`
+    : `This link expires ${soon ? "at" : "on"} ${when}.`;
+}
+
+function renderInviteExpiry() {
+  const isPublic = Boolean(state.currentServer?.public);
+  if (inviteExpiry === "never" && !isPublic) inviteExpiry = "7d";
+  $("invite-expiry-never").classList.toggle("hidden", !isPublic);
+  for (const btn of $("invite-expiry").querySelectorAll("button")) {
+    const on = btn.dataset.expires === inviteExpiry;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-checked", String(on));
+  }
+  if (!inviteLinkShown) {
+    $("invite-expiry-note").textContent = inviteExpiry === "never"
+      ? "Copy Invite Link for a link that never expires."
+      : `Copy Invite Link for a link that lasts ${INVITE_EXPIRY_NAMES[inviteExpiry]}.`;
+  }
+}
+
+// Called when the invite dialog opens with a fresh code in the field.
+function resetInviteDialog() {
+  inviteLinkShown = false;
+  renderInviteExpiry();
+}
+
+async function makeInviteLink() {
+  const invite = await invoke("create_invite_link", { serverId: state.currentServer.id, expires: inviteExpiry });
+  $("invite-text").value = invite.url;
+  $("invite-expiry-note").textContent = inviteExpiryText(invite.expires_at);
+  inviteLinkShown = true;
+  return invite.url;
+}
+
 async function copyInviteLink() {
   if (!state.currentServer) return;
   const button = $("invite-link-copy");
   button.disabled = true;
   try {
-    const url = await invoke("create_invite_link", { serverId: state.currentServer.id });
-    $("invite-text").value = url;
+    const url = await makeInviteLink();
     await navigator.clipboard.writeText(url);
     toast("Invite link copied");
   } catch (e) {
@@ -96,6 +144,22 @@ async function copyInviteLink() {
   } finally {
     button.disabled = false;
   }
+}
+
+for (const btn of $("invite-expiry").querySelectorAll("button")) {
+  btn.onclick = async () => {
+    if (btn.dataset.expires === inviteExpiry) return;
+    inviteExpiry = btn.dataset.expires;
+    renderInviteExpiry();
+    // A link already on screen is swapped for one with the new expiry.
+    if (inviteLinkShown && state.currentServer) {
+      try {
+        await makeInviteLink();
+      } catch (e) {
+        toast(String(e));
+      }
+    }
+  };
 }
 
 // A link the app was launched with waits until first run setup is done.

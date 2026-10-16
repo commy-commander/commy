@@ -8,7 +8,7 @@
 
 use crate::catchup::{self, AppAccess, AppStore, TestHandle};
 use crate::doorbell;
-use crate::invite_link;
+use crate::invite_link::{self, Expiry};
 use crate::outbox::{self, Outbox};
 use crate::state::App;
 use commy_core::doorbell as bell;
@@ -434,7 +434,7 @@ async fn private_invite_links_join_and_reveal_nothing() {
     stranger.online().await;
     let server = owner.create_server("Moonbase Book Club").await;
 
-    let link = invite_link::create(owner.app(), &server.to_string()).await.unwrap();
+    let link = invite_link::create(owner.app(), &server.to_string(), Expiry::Week).await.unwrap().url;
     let parsed = invite_link::parse(&link).unwrap();
     assert_eq!(parsed.origin, origin);
     let key = parsed.key.clone().expect("the link carries its key");
@@ -487,8 +487,40 @@ async fn private_invite_links_join_and_reveal_nothing() {
     let err = invite_link::resolve(stranger.app(), &link).await.unwrap_err();
     assert_eq!(err, "This invite is invalid or has expired");
     let other = joiner.create_server("Second Server").await;
-    invite_link::create(joiner.app(), &other.to_string()).await.unwrap();
+    invite_link::create(joiner.app(), &other.to_string(), Expiry::Week).await.unwrap();
     assert_eq!(sql(&format!("select count(*) from invite where code = '{}'", parsed.code)), "0");
+
+    // The expiry sealed in the link caps a row the server kept longer
+    let hour = invite_link::create(owner.app(), &server.to_string(), Expiry::Hour).await.unwrap();
+    let hour_code = invite_link::parse(&hour.url).unwrap().code;
+    sql(&format!("update invite set \"expiresAt\" = now() + interval '1 year' where code = '{hour_code}'"));
+    let resolved = invite_link::resolve(stranger.app(), &hour.url).await.unwrap();
+    let until = chrono::DateTime::parse_from_rfc3339(resolved.expires_at.as_deref().unwrap()).unwrap();
+    let left = until.with_timezone(&chrono::Utc) - chrono::Utc::now();
+    assert!(left <= chrono::Duration::hours(1) && left > chrono::Duration::minutes(55), "{left}");
+
+    // Links that never expire: only for a server marked public
+    let err = invite_link::create(owner.app(), &server.to_string(), Expiry::Never).await.unwrap_err();
+    assert_eq!(err, "Only links to a public server can last forever");
+    owner.app().servers.lock().unwrap().get_mut(&server).unwrap()
+        .apply(commy_core::ServerEvent::PublicSet { server, public: true })
+        .unwrap();
+    let forever = invite_link::create(owner.app(), &server.to_string(), Expiry::Never).await.unwrap();
+    assert_eq!(forever.expires_at, None);
+    let forever_code = invite_link::parse(&forever.url).unwrap().code;
+    let row = sql(&format!(
+        "select extract(year from \"expiresAt\"), \"serverName\", coalesce(\"createdBy\", '<null>'), ticket from invite where code = '{forever_code}'"
+    ));
+    let fields: Vec<&str> = row.split('|').collect();
+    eprintln!("never-expiring row: year={} serverName={:?} createdBy={}", fields[0], fields[1], fields[2]);
+    assert!(fields[0].starts_with("9999"), "stored as never expiring");
+    assert_eq!((fields[1], fields[2]), ("", "<null>"), "no name and no account");
+    for secret in secrets_of(owner.app(), server) {
+        assert!(!fields[3].contains(&secret), "the stored invite reveals {secret:?}");
+    }
+    let resolved = invite_link::resolve(stranger.app(), &forever.url).await.unwrap();
+    assert_eq!(resolved.expires_at, None);
+    assert_eq!(resolved.server_name, "Moonbase Book Club");
 
     // A plain ticket, which names the server, is never accepted
     let raw = owner.app().invites.lock().unwrap()[&server].clone();
