@@ -486,6 +486,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_status_expiry":
       mock.voice.presence_until = args.presenceUntil;
       mock.voice.status_until = args.statusUntil;
+      if (mock.user) mock.user.presence_until = args.presenceUntil;
       return mock.voice;
     case "set_unread": mock.unread = args.count; return null;
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
@@ -963,7 +964,8 @@ function railServerButton(server, folderId) {
   btn.classList.toggle("muted", isServerMuted(server.id));
   const wrap = el("div", "rail-item");
   wrap.appendChild(btn);
-  if (count) wrap.appendChild(countBadge(count));
+  // A muted server keeps its count for the channel list but stays quiet here.
+  if (count && !isServerMuted(server.id)) wrap.appendChild(countBadge(count));
   btn.onclick = () => selectServer(server.id);
   btn.oncontextmenu = e => {
     e.preventDefault();
@@ -988,7 +990,7 @@ function renderServerRail() {
   if (dmCount) {
     const badge = countBadge(dmCount);
     badge.id = "home-badge";
-    $("home-btn").after(badge);
+    $("home-btn").appendChild(badge);
   }
   const byId = new Map(state.servers.map(s => [s.id, s]));
   const layout = normalizeRailLayout(loadRailLayout(), state.servers.map(s => s.id));
@@ -1502,9 +1504,9 @@ const NOTIFY_KEY = "commy.notify";
 
 function notifyPrefs() {
   try {
-    return { level: "mentions", servers: {}, ...JSON.parse(localStorage.getItem(NOTIFY_KEY) || "{}") };
+    return { level: DEFAULT_NOTIFY_LEVEL, servers: {}, ...JSON.parse(localStorage.getItem(NOTIFY_KEY) || "{}") };
   } catch {
-    return { level: "mentions", servers: {} };
+    return { level: DEFAULT_NOTIFY_LEVEL, servers: {} };
   }
 }
 
@@ -1519,22 +1521,10 @@ function appFocused() {
   return document.visibilityState === "visible" && document.hasFocus();
 }
 
+// The rules themselves live in notify.js, shared with its tests.
 function mentionsMe(content) {
-  if (!state.user || !content) return false;
-  // Whole names only, so "@Sam" does not ping "Samantha" and vice versa.
-  const names = [state.user.username, state.user.display_name, "everyone", "here"].filter(Boolean)
-    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return new RegExp(`@(${names.join("|")})(?![\\p{L}\\p{N}_])`, "iu").test(content);
-}
-
-// Pure decision so the rules are easy to reason about: returns true
-// when a message should raise a desktop notification.
-function shouldNotify({ level, presence, focusedOnIt, isDm, mentioned }) {
-  if (presence === "do_not_disturb" || level === "none" || focusedOnIt) return false;
-  if (isDm || level === "all") return true;
-  // "online": everything, but only while your status is Online.
-  if (level === "online") return presence === "online" || !presence;
-  return level === "mentions" && mentioned;
+  if (!state.user) return false;
+  return mentionsName(content, [state.user.username, state.user.display_name]);
 }
 
 function totalUnread() {
@@ -1575,8 +1565,7 @@ function onMessageCreated(msg) {
     syncUnreadBadge();
     if (state.currentServer && state.currentServer.id === msg.server) renderChannels();
   }
-  const prefs = notifyPrefs();
-  const level = isServerMuted(msg.server) ? "none" : (prefs.servers[msg.server] && prefs.servers[msg.server] !== "default") ? prefs.servers[msg.server] : prefs.level;
+  const level = levelForServer(notifyPrefs(), msg.server);
   const body = plainText(msg.content) || (msg.has_attachments ? "Sent an attachment" : "");
   if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned: mentionsMe(msg.content) })) {
     invoke("notify", { title: `${msg.author_name} (#${msg.channel_name}, ${msg.server_name})`, body, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
@@ -1584,22 +1573,40 @@ function onMessageCreated(msg) {
   }
 }
 
-// Messages that arrived in a catch-up with a peer only bump unread counts:
-// no toast, no sound, no overlay line. Payload: { server, channels: { id: count } }.
+// Messages that arrived in a catch-up with a peer: unread counts per
+// channel, and for recent ones (a wake-up, a reconnect) one notification
+// per channel and a single sound, under the same rules as live messages.
+// Payload: { server, server_name, channels: { id: { count, channel_name,
+// author_name, content, has_attachments, at, mentioned } } }. An older
+// build sends a bare count per channel; that only bumps the badge.
 function onMessagesCaughtUp(payload) {
   const server = payload && payload.server;
   const channels = payload && payload.channels;
   if (!server || !channels || typeof channels !== "object") return;
   let changed = false;
+  const notices = [];
+  const now = Math.floor(Date.now() / 1000);
+  const level = levelForServer(notifyPrefs(), server);
   for (const [channel, value] of Object.entries(channels)) {
-    const count = Number(value);
+    const info = typeof value === "object" && value ? value : { count: Number(value) };
+    const count = Number(info.count);
     if (!Number.isInteger(count) || count <= 0) continue;
     const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === channel;
-    if (viewing && appFocused()) continue;
-    unread.channels.set(channel, (unread.channels.get(channel) || 0) + count);
-    unread.channelServer.set(channel, server);
-    changed = true;
+    const focusedOnIt = viewing && appFocused();
+    if (!focusedOnIt) {
+      unread.channels.set(channel, (unread.channels.get(channel) || 0) + count);
+      unread.channelServer.set(channel, server);
+      changed = true;
+    }
+    if (info.channel_name === undefined || isBlocked(info.author) || !isRecent(Number(info.at), now)) continue;
+    const mentioned = Boolean(info.mentioned) || mentionsMe(info.content);
+    if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned })) {
+      const notice = caughtUpNotice({ ...info, count, server_name: payload.server_name }, plainText);
+      notices.push({ ...notice, target: `channel:${server}:${channel}` });
+    }
   }
+  for (const notice of notices) invoke("notify", notice).catch(() => {});
+  if (notices.length) playSound("message");
   if (!changed) return;
   syncUnreadBadge();
   if (state.currentServer && state.currentServer.id === server) renderChannels();
@@ -2304,7 +2311,7 @@ function renderMembers() {
         nameRow.appendChild(live);
       }
       meta.appendChild(nameRow);
-      const sub = statusLine(member);
+      const sub = statusLine(member) || backLine(member);
       if (sub) {
         const line = el("div", "user-sub" + (member.activity ? " activity" : ""), sub);
         const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
@@ -4097,7 +4104,7 @@ function openFullProfile(member) {
   $("fp-name").parentElement.querySelector(".role-tag")?.remove();
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = person.username ? `@${person.username}` : "";
-  $("fp-status").textContent = statusLine(person) || PRESENCE_LABELS[person.presence] || "";
+  $("fp-status").textContent = statusLine(person) || presenceLabel(person);
   $("fp-about-wrap").classList.toggle("hidden", !person.about);
   $("fp-about").textContent = person.about || "";
   const servers = (state.people.get(person.id) || {}).servers || [];
@@ -4158,7 +4165,7 @@ function openMemberCard(member, anchor) {
     img.src = cover;
     status.appendChild(img);
   }
-  status.appendChild(document.createTextNode(line || PRESENCE_LABELS[member.presence] || ""));
+  status.appendChild(document.createTextNode(line || presenceLabel(member)));
   const roles = $("mc-roles");
   roles.replaceChildren();
   const held = (server.roles || []).filter(r => (member.roles || []).includes(r.id));
@@ -4827,6 +4834,11 @@ function openDurations(mode, anchor) {
   $("pp-durations-title").textContent = mode.kind === "presence"
     ? `${({ invisible: "Appear Offline", ...PRESENCE_LABELS })[mode.presence] || "Status"} for how long?`
     : "Clear custom status after";
+  $("pp-durations-never").textContent = mode.kind === "presence" ? "Until I turn it off" : "Don't clear";
+  $("pp-durations-note").textContent = mode.kind === "presence" && mode.presence === "do_not_disturb"
+    ? "Others see when you are back."
+    : "";
+  $("pp-durations-note").classList.toggle("hidden", !$("pp-durations-note").textContent);
   const pad = n => String(n).padStart(2, "0");
   const later = new Date(Date.now() + 2 * 3600e3);
   $("pp-custom-time").value = `${later.getFullYear()}-${pad(later.getMonth() + 1)}-${pad(later.getDate())}T${pad(later.getHours())}:${pad(later.getMinutes())}`;
@@ -4865,6 +4877,8 @@ function renderStatusExpiry() {
     const active = btn.dataset.presence === (user.presence || "online");
     if (active && v.presence_until && btn.dataset.presence !== "online") {
       btn.querySelector("span:last-child").appendChild(el("small", "pp-until", `Until ${formatUntil(v.presence_until)}`));
+    } else if (active && btn.dataset.presence === "do_not_disturb") {
+      btn.querySelector("span:last-child").appendChild(el("small", "pp-until", "Until you turn it off"));
     }
   }
   const hasStatus = Boolean(user.custom_status || user.status_emoji);
@@ -5817,7 +5831,7 @@ function renderUserPanel() {
   const bits = [];
   if (state.voice.muted) bits.push("muted");
   if (state.voice.deafened) bits.push("deafened");
-  const label = presence === "idle" ? "Idle" : PRESENCE_LABELS[presence] || "Appearing offline";
+  const label = presence === "invisible" ? "Appearing offline" : presenceLabel(state.user);
   $("me-status").textContent = bits.length ? `${label}, ${bits.join(", ")}` : (statusLine(state.user) || label);
   $("mute-btn").classList.toggle("danger", state.voice.muted);
   $("deafen-btn").classList.toggle("danger", state.voice.deafened);
@@ -5896,11 +5910,12 @@ async function refreshPeople() {
     for (const member of server.members) {
       if (state.user && member.id === state.user.id) continue;
       const person = people.get(member.id) || {
-        id: member.id, name: member.name, presence: member.presence,
+        id: member.id, name: member.name, presence: member.presence, presence_until: member.presence_until ?? null,
         custom_status: member.custom_status, status_emoji: member.status_emoji, activity: member.activity, servers: [],
       };
       // Prefer the liveliest presence seen across servers.
       if (person.presence === "offline" && member.presence !== "offline") person.presence = member.presence;
+      person.presence_until ||= member.presence_until ?? null;
       person.custom_status ||= member.custom_status;
       person.status_emoji ||= member.status_emoji;
       person.activity ||= member.activity;
@@ -5918,6 +5933,24 @@ function personPresence(userId) {
 }
 
 const PRESENCE_LABELS = { online: "Online", idle: "Idle", do_not_disturb: "Do Not Disturb", offline: "Offline" };
+
+// "back at 3:40 PM" (or "back Thu at 9:00 AM") while a timed Do Not
+// Disturb still runs; empty once it has passed or when there is no time.
+function backLine(person) {
+  const until = Number(person && person.presence_until);
+  if (!person || person.presence !== "do_not_disturb" || !until || until * 1000 <= Date.now()) return "";
+  const d = new Date(until * 1000);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay ? `Back at ${time}` : `Back ${d.toLocaleDateString([], { weekday: "short" })} at ${time}`;
+}
+
+// The presence as a line of text: "Do Not Disturb · back at 3:40 PM".
+function presenceLabel(person) {
+  const base = PRESENCE_LABELS[(person && person.presence) || "offline"] || "Offline";
+  const back = backLine(person);
+  return back ? `${base} · ${back[0].toLowerCase()}${back.slice(1)}` : base;
+}
 
 function avatarWithPresence(name, userId, className = "avatar") {
   const avatar = makeAvatar(userId, name, className);
@@ -6133,9 +6166,9 @@ async function selectDm(userId, name) {
   $("chat-hash").textContent = "@";
   $("channel-name").textContent = name;
   $("chat-presence").className = `presence-dot inline ${presence}`;
-  $("chat-presence").title = PRESENCE_LABELS[presence] || "Offline";
   const person = state.people.get(userId);
-  $("channel-topic").textContent = (person && statusLine(person)) || "";
+  $("chat-presence").title = presenceLabel({ ...(person || {}), presence });
+  $("channel-topic").textContent = (person && (statusLine(person) || backLine(person))) || "";
   $("message-input").placeholder = `Message @${name}`;
   $("dm-profile-btn").classList.remove("hidden");
   renderDmProfile(userId, name);
@@ -6155,7 +6188,7 @@ function renderDmProfile(userId, name) {
   $("dm-profile-presence").className = `presence-dot ${presence}`;
   $("dm-profile-banner").style.background = bannerColor(userId);
   $("dm-profile-name").textContent = name;
-  $("dm-profile-status").textContent = (person && statusLine(person)) || PRESENCE_LABELS[presence];
+  $("dm-profile-status").textContent = (person && statusLine(person)) || presenceLabel({ ...(person || {}), presence });
   const servers = person ? person.servers : [];
   $("dm-profile-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
   const list = $("dm-profile-servers");

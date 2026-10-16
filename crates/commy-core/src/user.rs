@@ -62,6 +62,10 @@ pub struct UserProfile {
     /// the first one they see.
     #[serde(default)]
     pub identity: Option<IdentityKey>,
+    /// When a timed presence (Do Not Disturb, Idle) ends, in unix
+    /// seconds, so others can see when this user is back.
+    #[serde(default)]
+    pub presence_until: Option<i64>,
 }
 
 /// Longest About Me, in characters.
@@ -119,6 +123,7 @@ impl UserProfile {
             activity_cover: None,
             about: None,
             identity: None,
+            presence_until: None,
         }
     }
 
@@ -136,6 +141,8 @@ impl UserProfile {
             shared.presence = Presence::Offline;
             shared.activity = None;
             shared.activity_cover = None;
+            // How long you chose to look offline is yours to know.
+            shared.presence_until = None;
         }
         shared
     }
@@ -160,6 +167,12 @@ mod tests {
         assert!(!Presence::Invisible.is_visible_online());
         assert_eq!(Presence::Invisible.as_seen_by_others(), Presence::Offline);
         assert_eq!(Presence::DoNotDisturb.as_seen_by_others(), Presence::DoNotDisturb);
+        let mut profile = UserProfile::new("busy");
+        profile.presence = Presence::DoNotDisturb;
+        profile.presence_until = Some(1_800_000_000);
+        assert_eq!(profile.as_seen_by_others().presence_until, Some(1_800_000_000), "others see when you are back");
+        profile.presence = Presence::Invisible;
+        assert_eq!(profile.as_seen_by_others().presence_until, None, "but not how long you look offline");
         assert!(!Presence::Offline.is_visible_online());
     }
 

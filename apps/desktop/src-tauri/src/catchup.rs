@@ -58,7 +58,7 @@ pub struct Catchup {
     /// their size (see [`held_size`]).
     held: HashMap<ServerId, VecDeque<(Held, usize)>>,
     /// New messages from others per channel, not yet told to the webview.
-    fresh: HashMap<ServerId, HashMap<ChannelId, u32>>,
+    fresh: HashMap<ServerId, HashMap<ChannelId, FreshChannel>>,
     /// Servers changed since the webview was last told.
     dirty: HashSet<ServerId>,
     /// Servers changed in memory and not saved yet.
@@ -71,7 +71,64 @@ pub struct Catchup {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Changes {
     pub changed: bool,
-    pub fresh: HashMap<ChannelId, u32>,
+    pub fresh: HashMap<ChannelId, FreshChannel>,
+}
+
+/// A new message from someone else that a catch-up brought in, as much
+/// of it as the webview needs to count it and to notify about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fresh {
+    pub channel: ChannelId,
+    pub author: UserId,
+    pub content: String,
+    pub has_attachments: bool,
+    /// Unix seconds; the webview only notifies about recent messages.
+    pub at: i64,
+    /// Whether the message mentions us (see [`mentions`]).
+    pub mentioned: bool,
+}
+
+impl Fresh {
+    /// What `message` would mean to the member named by `names`.
+    pub fn of(message: &Message, names: &[&str]) -> Self {
+        Self {
+            channel: message.channel,
+            author: message.author,
+            content: message.content.clone(),
+            has_attachments: !message.attachments.is_empty(),
+            at: message.created_at.timestamp(),
+            mentioned: mentions(&message.content, names),
+        }
+    }
+}
+
+/// The new messages of one channel: how many, the newest one, and
+/// whether any of them mentioned us.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FreshChannel {
+    pub count: u32,
+    pub latest: Fresh,
+    pub mentioned: bool,
+}
+
+/// Whether `content` mentions one of `names` (or everyone) as a whole
+/// word, the same rule the webview applies to live messages: "@Sam"
+/// does not ping "Samantha".
+pub fn mentions(content: &str, names: &[&str]) -> bool {
+    let lower = content.to_lowercase();
+    let targets = names.iter().map(|n| n.to_lowercase()).chain(["everyone".into(), "here".into()]);
+    for name in targets.filter(|n| !n.is_empty()) {
+        let mut from = 0;
+        while let Some(pos) = lower[from..].find(&format!("@{name}")) {
+            let end = from + pos + 1 + name.len();
+            let boundary = lower[end..].chars().next().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+            if boundary {
+                return true;
+            }
+            from = end;
+        }
+    }
+    false
 }
 
 impl Catchup {
@@ -170,15 +227,27 @@ impl Catchup {
         self.held.retain(|_, queue| !queue.is_empty());
     }
 
-    /// Notes that a server changed, with the channels of new messages.
-    pub fn note_applied(&mut self, server: ServerId, fresh: impl IntoIterator<Item = ChannelId>) {
+    /// Notes that a server changed, with its new messages.
+    pub fn note_applied(&mut self, server: ServerId, fresh: impl IntoIterator<Item = Fresh>) {
         self.dirty.insert(server);
         self.unsaved.insert(server);
-        let counts = self.fresh.entry(server).or_default();
-        for channel in fresh {
-            *counts.entry(channel).or_default() += 1;
+        let channels = self.fresh.entry(server).or_default();
+        for message in fresh {
+            match channels.get_mut(&message.channel) {
+                Some(channel) => {
+                    channel.count += 1;
+                    channel.mentioned |= message.mentioned;
+                    if message.at >= channel.latest.at {
+                        channel.latest = message;
+                    }
+                }
+                None => {
+                    let mentioned = message.mentioned;
+                    channels.insert(message.channel, FreshChannel { count: 1, latest: message, mentioned });
+                }
+            }
         }
-        if counts.is_empty() {
+        if channels.is_empty() {
             self.fresh.remove(&server);
         }
     }
@@ -279,6 +348,8 @@ pub fn holdable(event: &ServerEvent) -> bool {
 #[derive(Debug, Default)]
 pub struct Unread {
     me: Option<UserId>,
+    /// Our username and display name, for mention detection.
+    names: Vec<String>,
     blocked: HashSet<UserId>,
     /// Nothing counts: history a newly joined server receives before its
     /// first snapshot.
@@ -288,11 +359,23 @@ pub struct Unread {
 impl Unread {
     /// Read from the app before its servers are locked.
     pub fn of(app: &App, server: ServerId) -> Self {
+        let profile = app.profile.lock().unwrap().clone();
         Self {
-            me: app.profile.lock().unwrap().as_ref().map(|p| p.id),
+            me: profile.as_ref().map(|p| p.id),
+            names: profile
+                .iter()
+                .flat_map(|p| [Some(p.username.clone()), p.display_name.clone()])
+                .flatten()
+                .collect(),
             blocked: app.safety.lock().unwrap().blocked.iter().copied().collect(),
             silent: app.awaits_snapshot(server),
         }
+    }
+
+    /// `message` as the webview will hear of it.
+    fn fresh(&self, message: &Message) -> Fresh {
+        let names: Vec<&str> = self.names.iter().map(String::as_str).collect();
+        Fresh::of(message, &names)
     }
 
     /// Whether a message not in `state` yet is unread once applied: someone
@@ -314,18 +397,17 @@ impl Unread {
 }
 
 /// Applies one catch-up page. Returns the report, the events to hold
-/// with their signer, and the channels of new messages that count as
-/// unread.
+/// with their signer, and the new messages that count as unread.
 pub fn apply_page(
     state: &mut ServerState,
     unread: &Unread,
     messages: Vec<Message>,
     tombstones: Vec<TombstoneProof>,
-) -> (ApplyReport, Vec<(UserId, ServerEvent)>, Vec<ChannelId>) {
-    let new: HashMap<MessageId, ChannelId> = messages
+) -> (ApplyReport, Vec<(UserId, ServerEvent)>, Vec<Fresh>) {
+    let new: HashMap<MessageId, Fresh> = messages
         .iter()
         .filter(|m| unread.counts(state, m))
-        .map(|m| (m.id, m.channel))
+        .map(|m| (m.id, unread.fresh(m)))
         .collect();
     let (report, held) = apply_items(state, messages, tombstones);
     let held = held.into_iter().filter_map(|event| Some((item_signer(&event)?, event))).collect();
@@ -333,7 +415,7 @@ pub fn apply_page(
         .applied
         .iter()
         .filter(|id| state.has_message(**id))
-        .filter_map(|id| new.get(id).copied())
+        .filter_map(|id| new.get(id).cloned())
         .collect();
     (report, held, fresh)
 }
@@ -351,7 +433,7 @@ fn item_signer(event: &ServerEvent) -> Option<UserId> {
 #[derive(Debug, Default)]
 pub struct Retried {
     pub changed: bool,
-    pub fresh: Vec<ChannelId>,
+    pub fresh: Vec<Fresh>,
     /// Events whose signer is still unknown.
     pub still: Vec<Held>,
 }
@@ -361,15 +443,15 @@ pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<Held>) -
     let mut out = Retried::default();
     for (at, _, event) in events {
         let new_message = match &event {
-            ServerEvent::MessageCreate { message } if unread.counts(state, message) => Some((message.id, message.channel)),
+            ServerEvent::MessageCreate { message } if unread.counts(state, message) => Some((message.id, unread.fresh(message))),
             _ => None,
         };
         match state.apply(event.clone()) {
             Ok(true) => {
                 out.changed = true;
-                if let Some((id, channel)) = new_message {
+                if let Some((id, fresh)) = new_message {
                     if state.has_message(id) {
-                        out.fresh.push(channel);
+                        out.fresh.push(fresh);
                     }
                 }
             }
@@ -407,12 +489,36 @@ pub fn apply_live(
     (applied, created, pinned)
 }
 
-/// Payload of `messages-caught-up`: new messages per channel, so the
-/// webview can bump unread counts without a toast per message.
-pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, u32>) -> serde_json::Value {
-    let channels: serde_json::Map<String, serde_json::Value> =
-        fresh.iter().map(|(channel, count)| (channel.to_string(), (*count).into())).collect();
-    serde_json::json!({ "server": server.to_string(), "channels": channels })
+/// Payload of `messages-caught-up`: new messages per channel with the
+/// newest one, so the webview can bump unread counts and show one
+/// notification per channel instead of one per message. `state` names
+/// the server, channels and authors; without it ids stand in.
+pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChannel>, state: Option<&ServerState>) -> serde_json::Value {
+    let channels: serde_json::Map<String, serde_json::Value> = fresh
+        .iter()
+        .map(|(channel, fresh)| {
+            let latest = &fresh.latest;
+            let value = serde_json::json!({
+                "count": fresh.count,
+                "mentioned": fresh.mentioned,
+                "channel_name": state.and_then(|s| s.server.channel(*channel)).map(|c| c.name.clone()).unwrap_or_default(),
+                "author": latest.author.to_string(),
+                "author_name": state
+                    .and_then(|s| s.profiles.get(&latest.author))
+                    .map(|p| p.visible_name().to_string())
+                    .unwrap_or_else(|| "Someone".into()),
+                "content": latest.content,
+                "has_attachments": latest.has_attachments,
+                "at": latest.at,
+            });
+            (channel.to_string(), value)
+        })
+        .collect();
+    serde_json::json!({
+        "server": server.to_string(),
+        "server_name": state.map(|s| s.server.name.clone()).unwrap_or_default(),
+        "channels": channels,
+    })
 }
 
 /// One neighbor picked by `seed`, for the periodic session.
@@ -727,7 +833,8 @@ fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
         access.emit("server-event", server.to_string().into());
     }
     if !changes.fresh.is_empty() {
-        access.emit("messages-caught-up", caught_up_payload(server, &changes.fresh));
+        let servers = app.servers.lock().unwrap();
+        access.emit("messages-caught-up", caught_up_payload(server, &changes.fresh, servers.get(&server)));
     }
 }
 
@@ -1172,17 +1279,43 @@ mod tests {
         let sid = ServerId::new();
         let (a, b) = (ChannelId::new(), ChannelId::new());
         assert_eq!(catchup.take_changes(sid), Changes::default());
-        catchup.note_applied(sid, [a, b, a]);
+        let author = UserId::new();
+        let fresh = |channel: ChannelId, content: &str, at: i64| Fresh {
+            channel,
+            author,
+            content: content.into(),
+            has_attachments: false,
+            at,
+            mentioned: mentions(content, &["me"]),
+        };
+        // The newest message is kept even when it is applied first.
+        catchup.note_applied(sid, [fresh(a, "@me later", 20), fresh(b, "other", 5), fresh(a, "earlier", 10)]);
         catchup.note_applied(sid, []);
         let changes = catchup.take_changes(sid);
         assert!(changes.changed);
-        assert_eq!(changes.fresh, HashMap::from([(a, 2), (b, 1)]));
+        assert_eq!(changes.fresh[&a], FreshChannel { count: 2, latest: fresh(a, "@me later", 20), mentioned: true });
+        assert_eq!(changes.fresh[&b], FreshChannel { count: 1, latest: fresh(b, "other", 5), mentioned: false });
         assert_eq!(catchup.take_changes(sid), Changes::default());
 
-        let payload = caught_up_payload(sid, &changes.fresh);
+        let payload = caught_up_payload(sid, &changes.fresh, None);
         assert_eq!(payload["server"], sid.to_string());
-        assert_eq!(payload["channels"][a.to_string()], 2);
-        assert_eq!(payload["channels"][b.to_string()], 1);
+        let in_a = &payload["channels"][a.to_string()];
+        assert_eq!((in_a["count"].as_u64(), in_a["mentioned"].as_bool()), (Some(2), Some(true)));
+        assert_eq!((in_a["content"].as_str(), in_a["at"].as_i64()), (Some("@me later"), Some(20)));
+        assert_eq!(in_a["author_name"], "Someone", "no state to name the author");
+        assert_eq!(payload["channels"][b.to_string()]["count"], 1);
+    }
+
+    #[test]
+    fn mentions_match_whole_names_only() {
+        assert!(mentions("hey @sam, lunch?", &["sam"]));
+        assert!(mentions("HEY @Sam", &["sam"]));
+        assert!(!mentions("hey @samantha", &["sam"]));
+        assert!(mentions("@everyone look", &[]));
+        assert!(mentions("ping @here", &["x"]));
+        assert!(!mentions("mail sam@example.org", &["sam"]));
+        assert!(!mentions("@", &[""]));
+        assert!(mentions("@Sam Smith is here", &["Sam Smith"]));
     }
 
     #[test]
@@ -1227,7 +1360,11 @@ mod tests {
         catchup.hold(sid, newcomer.id(), edit, t0);
         let retried = retry_held(&mut state, &unread_for(&owner), catchup.take_all_held(sid, t0));
         assert!(retried.changed && retried.still.is_empty());
-        assert_eq!(retried.fresh, vec![channel, channel], "the edit is not a new message");
+        assert_eq!(
+            retried.fresh.iter().map(|f| f.content.as_str()).collect::<Vec<_>>(),
+            ["first", "second"],
+            "the edit is not a new message"
+        );
         assert_eq!(state.message(first.id).unwrap().content, "first, edited");
         assert!(state.has_message(second.id));
 
@@ -1260,7 +1397,7 @@ mod tests {
         );
         assert!(report.applied.contains(&new.id) && report.applied.contains(&mine.id));
         assert!(!report.applied.contains(&known.id));
-        assert_eq!(fresh, vec![channel], "only the friend's new message is unread");
+        assert_eq!(fresh, vec![Fresh::of(&new, &[])], "only the friend's new message is unread");
         assert_eq!(report.held, vec![theirs.id]);
         assert_eq!(held, vec![(stranger.id(), ServerEvent::MessageCreate { message: theirs })]);
         assert!(!state.has_message(deleted.id));
@@ -1357,7 +1494,12 @@ mod tests {
         let report = store.apply(sid, vec![theirs.clone()], vec![]);
         assert_eq!(report.applied, vec![theirs.id]);
         assert!(app.servers.lock().unwrap()[&sid].has_message(theirs.id));
-        let caught_up = caught_up_payload(sid, &HashMap::from([(channel, 1)]));
+        let caught_up = {
+            let servers = app.servers.lock().unwrap();
+            let fresh = FreshChannel { count: 1, latest: Fresh::of(&theirs, &[]), mentioned: false };
+            caught_up_payload(sid, &HashMap::from([(channel, fresh)]), servers.get(&sid))
+        };
+        assert_eq!(caught_up["channels"][channel.to_string()]["author_name"], friend.profile.visible_name());
         assert_eq!(
             handle.take_events(),
             vec![("server-event".into(), sid.to_string().into()), ("messages-caught-up".into(), caught_up)]
@@ -1375,7 +1517,7 @@ mod tests {
         join(app.servers.lock().unwrap().get_mut(&sid).unwrap(), &late);
         let held = app.catchup.lock().unwrap().take_all_held(sid, Instant::now());
         let retried = retry_held(app.servers.lock().unwrap().get_mut(&sid).unwrap(), &unread_for(&owner), held);
-        assert_eq!(retried.fresh, vec![channel]);
+        assert_eq!(retried.fresh, vec![Fresh::of(&early, &[])]);
         assert!(app.servers.lock().unwrap()[&sid].has_message(early.id));
     }
 
@@ -1484,7 +1626,8 @@ mod tests {
         assert!(state.has_message(message.id));
         assert_eq!(state.identity_of(absent.id()), Some(absent.identity.public()));
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 0);
-        let caught_up = caught_up_payload(sid, &HashMap::from([(channel, 1)]));
+        let fresh = FreshChannel { count: 1, latest: Fresh::of(&message, &[]), mentioned: false };
+        let caught_up = caught_up_payload(sid, &HashMap::from([(channel, fresh)]), Some(&state));
         assert!(handle.take_events().contains(&("messages-caught-up".into(), caught_up)));
 
         // Only profiles with a key are taken, and only members' passed on.
@@ -1538,7 +1681,11 @@ mod tests {
         assert_eq!(live(ServerEvent::ProfileUpdate { profile: a.profile.clone() }), Some(a.id()));
         assert!(has(&by_a) && !has(&by_b));
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 1);
-        let caught_up = caught_up_payload(sid, &HashMap::from([(channel, 1)]));
+        let caught_up = {
+            let servers = app.servers.lock().unwrap();
+            let fresh = FreshChannel { count: 1, latest: Fresh::of(&by_a, &[]), mentioned: false };
+            caught_up_payload(sid, &HashMap::from([(channel, fresh)]), servers.get(&sid))
+        };
         assert!(handle.take_events().contains(&("messages-caught-up".into(), caught_up)));
 
         // A Profiles frame that pins nothing new releases nothing either.
@@ -1596,7 +1743,7 @@ mod tests {
         let pest = Member::new("pest");
         let (mut state, channel) = server(&owner);
         join(&mut state, &pest);
-        let unread = Unread { me: Some(owner.id()), blocked: HashSet::from([pest.id()]), silent: false };
+        let unread = Unread { me: Some(owner.id()), blocked: HashSet::from([pest.id()]), ..Default::default() };
 
         let page = pest.post(&state, channel, "caught up");
         let (report, _, fresh) = apply_page(&mut state, &unread, vec![page.clone()], vec![]);
@@ -1634,7 +1781,7 @@ mod tests {
         let new = friend.post(&state, channel, "welcome");
         let (report, _, fresh) = apply_page(&mut state, &unread_for(&newcomer), vec![older.clone(), new.clone()], vec![]);
         assert_eq!(report.applied.len(), 2);
-        assert_eq!(fresh, vec![channel], "only the message after our join");
+        assert_eq!(fresh, vec![Fresh::of(&new, &[])], "only the message after our join");
     }
 
     #[test]
