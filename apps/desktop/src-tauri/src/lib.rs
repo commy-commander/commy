@@ -11,6 +11,7 @@ mod doorbell;
 mod expressions;
 mod media_engine;
 mod igdb;
+mod instance;
 mod invite_link;
 mod outbox;
 mod overlay;
@@ -4623,6 +4624,8 @@ pub fn run() {
         }
     }
 
+    instance::apply_webview_data_dir();
+
     tauri::Builder::default()
         .manage(App::default())
         // GIFs and game covers, loaded through the account server
@@ -4660,9 +4663,10 @@ pub fn run() {
         .setup(|tauri_app| {
             let handle = tauri_app.handle().clone();
             // Test builds (pre-release tags) use only the staging servers; say so
-            if option_env!("COMMY_TEST_BUILD").is_some() {
+            let label = std::env::var("COMMY_INSTANCE_LABEL").ok();
+            if let Some(title) = instance::window_title(option_env!("COMMY_TEST_BUILD").is_some(), label.as_deref()) {
                 if let Some(window) = tauri_app.get_webview_window("main") {
-                    let _ = window.set_title("Commy (test build)");
+                    let _ = window.set_title(&title);
                 }
             }
             {

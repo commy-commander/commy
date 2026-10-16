@@ -1,0 +1,68 @@
+# Local test bench for the account server: Postgres, the auth server, a mail
+# catcher and a live view of the database. Nothing here leaves the machine.
+#   docker compose -f auth/docker-compose.dev.yml up -d --build
+# Auth server  http://localhost:3001   (desktop: COMMY_AUTH_URL=http://localhost:3001)
+# Mail         http://localhost:8025   (verification and sign-in links land here)
+# Database     http://localhost:5555   (Prisma Studio, read the tables live)
+
+name: commy-bench
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: commy
+      POSTGRES_PASSWORD: commy-dev
+      POSTGRES_DB: commy_auth
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - bench_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U commy -d commy_auth"]
+      interval: 3s
+      retries: 20
+
+  mail:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  auth:
+    build: .
+    environment:
+      DATABASE_URL: postgres://commy:commy-dev@postgres:5432/commy_auth
+      # Dev only secret, never reuse it on a real server
+      BETTER_AUTH_SECRET: local-test-bench-secret-not-for-production
+      BETTER_AUTH_URL: http://localhost:3001
+      SMTP_HOST: mail
+      SMTP_PORT: "1025"
+      SMTP_REQUIRE_TLS: "false"
+      EMAIL_FROM: Commy <no-reply@localhost>
+    ports:
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  studio:
+    image: node:22-bookworm
+    environment:
+      DATABASE_URL: postgres://commy:commy-dev@postgres:5432/commy_auth
+    # Reads the tables the auth server created, then serves them
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /studio && cd /studio
+        printf 'datasource db {\n  provider = "postgresql"\n  url = env("DATABASE_URL")\n}\n' > schema.prisma
+        until npx -y prisma@6.16.2 db pull --schema schema.prisma; do sleep 3; done
+        exec npx -y prisma@6.16.2 studio --schema schema.prisma --port 5555 --hostname 0.0.0.0 --browser none
+    ports:
+      - "127.0.0.1:5555:5555"
+    depends_on:
+      auth:
+        condition: service_healthy
+
+volumes:
+  bench_pg:
