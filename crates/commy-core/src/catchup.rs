@@ -5,21 +5,27 @@
 
 use crate::ids::{ChannelId, MessageId};
 use crate::message::{Message, TombstoneProof};
-use crate::store::ServerState;
+use crate::store::{ServerState, TOMBSTONE_KEEP_DAYS};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::RangeInclusive;
 
-/// UTC days of history covered, counting today.
+/// UTC days of messages covered, counting today.
 pub const CATCHUP_DAYS: u32 = 30;
+/// UTC days of delete proofs covered, counting today: as long as they are
+/// kept, so a late copy of a message deleted before the days of messages
+/// covered stays out too.
+pub const TOMBSTONE_DAYS: u32 = TOMBSTONE_KEEP_DAYS as u32;
 /// Most items sent each way in one session.
 pub const CATCHUP_MAX_ITEMS: usize = 5000;
 
 const DAY_MS: i64 = 86_400_000;
 const DOMAIN: &[u8] = b"commy-catchup/v1";
 const PROOF_DOMAIN: &[u8] = b"commy-catchup/v1/proof";
+/// Low bits of a message's version taken from its signature.
+const SIG_BITS: u32 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum BucketKey {
@@ -46,9 +52,9 @@ pub struct BucketDigest {
     pub hash: [u8; 16],
 }
 
-/// A bucket's items as (id, version) pairs: a message's edit time, see
-/// [`message_version`], or a delete proof's signer, channel and time, see
-/// [`proof_version`].
+/// A bucket's items as (id, version) pairs: a message's edit time and
+/// signature, see [`message_version`], or a delete proof's signer,
+/// channel and time, see [`proof_version`].
 pub type BucketItems = (BucketKey, Vec<(MessageId, i64)>);
 
 /// Days since the epoch, UTC. Times before the epoch count as day 0.
@@ -56,9 +62,14 @@ pub fn day_number(t: DateTime<Utc>) -> u32 {
     t.timestamp_millis().div_euclid(DAY_MS).clamp(0, u32::MAX as i64) as u32
 }
 
-/// First day inside the window that ends today.
+/// First day of messages inside the window that ends today.
 pub fn first_day(now: DateTime<Utc>) -> u32 {
     day_number(now).saturating_sub(CATCHUP_DAYS - 1)
+}
+
+/// First day of delete proofs inside the window that ends today.
+pub fn first_tombstone_day(now: DateTime<Utc>) -> u32 {
+    day_number(now).saturating_sub(TOMBSTONE_DAYS - 1)
 }
 
 /// Last day inside the window: tomorrow, for a peer whose clock is
@@ -67,28 +78,53 @@ pub fn last_day(now: DateTime<Utc>) -> u32 {
     day_number(now).saturating_add(1)
 }
 
-/// Days of the window at `now`, from [`first_day`] to [`last_day`].
-pub fn window(now: DateTime<Utc>) -> RangeInclusive<u32> {
-    first_day(now)..=last_day(now)
+/// Days catch-up covers at one time, for messages and for delete proofs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Window {
+    pub messages: RangeInclusive<u32>,
+    pub tombstones: RangeInclusive<u32>,
+}
+
+impl Window {
+    /// Whether bucket `key` lies in the window.
+    pub fn contains(&self, key: &BucketKey) -> bool {
+        match key {
+            BucketKey::Messages { day, .. } => self.messages.contains(day),
+            BucketKey::Tombstones { day } => self.tombstones.contains(day),
+        }
+    }
+}
+
+/// The window at `now`: messages from [`first_day`], delete proofs from
+/// [`first_tombstone_day`], both to [`last_day`].
+pub fn window(now: DateTime<Utc>) -> Window {
+    Window { messages: first_day(now)..=last_day(now), tombstones: first_tombstone_day(now)..=last_day(now) }
 }
 
 /// The window as of now, by this device's clock.
-pub fn current_window() -> RangeInclusive<u32> {
+pub fn current_window() -> Window {
     window(Utc::now())
 }
 
-/// Whether `day` lies in the window at `now`.
-pub fn in_window(day: u32, now: DateTime<Utc>) -> bool {
-    window(now).contains(&day)
+/// Whether bucket `key` lies in the window at `now`.
+pub fn in_window(key: &BucketKey, now: DateTime<Utc>) -> bool {
+    window(now).contains(key)
 }
 
 fn day_start(day: u32) -> DateTime<Utc> {
     DateTime::from_timestamp_millis(day as i64 * DAY_MS).unwrap_or(DateTime::<Utc>::MIN_UTC)
 }
 
-/// Edit time in ms, or 0 for a message never edited.
+/// A message's edit time in ms (0 when never edited) with the first
+/// [`SIG_BITS`] bits of its signature, inverted, below it. A later edit
+/// orders higher, and for one edit time the lower signature, as the
+/// store picks between two copies; so replicas holding different copies
+/// signed for one time see them differ.
 pub fn message_version(message: &Message) -> i64 {
-    message.edited_at.map_or(0, |t| t.timestamp_millis())
+    let edited = message.edited_at.map_or(0, |t| t.timestamp_millis()).clamp(0, i64::MAX >> SIG_BITS);
+    let first = message.sig.as_ref().map_or(0, |s| u32::from_be_bytes([0, s.0[0], s.0[1], s.0[2]]) >> (24 - SIG_BITS));
+    let mask = (1u32 << SIG_BITS) - 1;
+    (edited << SIG_BITS) | i64::from(!first & mask)
 }
 
 /// A delete proof's signer, channel and time folded into 64 bits, so
@@ -143,13 +179,13 @@ fn covered(state: &ServerState, channel: ChannelId, now: DateTime<Utc>) -> impl 
     })
 }
 
-/// Delete proofs that catch-up carries: valid here (see
+/// Delete proofs that catch-up carries: listed here (see
 /// [`ServerState::tombstones_since`]), made inside the window, for a
 /// channel that still exists.
 fn covered_tombstones(state: &ServerState, now: DateTime<Utc>) -> impl Iterator<Item = &TombstoneProof> {
     let until = day_start(last_day(now).saturating_add(1));
     state
-        .tombstones_since(day_start(first_day(now)))
+        .tombstones_since(day_start(first_tombstone_day(now)))
         .filter(move |p| p.at < until && state.server.channel(p.channel).is_some())
 }
 
@@ -196,7 +232,8 @@ pub fn items(state: &ServerState, keys: &[BucketKey], now: DateTime<Utc>) -> Vec
     let mut out: BTreeMap<BucketKey, Vec<(MessageId, i64)>> = BTreeMap::new();
     let mut channel_days: HashMap<ChannelId, HashSet<u32>> = HashMap::new();
     let mut tombstone_days: HashSet<u32> = HashSet::new();
-    for key in keys.iter().filter(|k| in_window(k.day(), now)) {
+    let window = window(now);
+    for key in keys.iter().filter(|k| window.contains(k)) {
         out.entry(*key).or_default();
         match *key {
             BucketKey::Messages { channel, day } => {
@@ -346,9 +383,15 @@ mod tests {
         assert_eq!(first_day(at(20_000, 123)), 20_000 - 29);
         assert_eq!(first_day(at(3, 0)), 0);
         assert_eq!(last_day(at(20_000, 123)), 20_001);
+        assert_eq!(first_tombstone_day(at(20_000, 123)), 20_000 - 59);
         let now = at(20_000, 5);
-        assert!(in_window(20_000 - 29, now) && in_window(20_001, now));
-        assert!(!in_window(20_000 - 30, now) && !in_window(20_002, now));
+        let messages = |day| BucketKey::Messages { channel: ChannelId::new(), day };
+        assert!(in_window(&messages(20_000 - 29), now) && in_window(&messages(20_001), now));
+        assert!(!in_window(&messages(20_000 - 30), now) && !in_window(&messages(20_002), now));
+        // Delete proofs reach back as long as they are kept.
+        let tombstones = |day| BucketKey::Tombstones { day };
+        assert!(in_window(&tombstones(20_000 - 59), now) && in_window(&tombstones(20_001), now));
+        assert!(!in_window(&tombstones(20_000 - 60), now) && !in_window(&tombstones(20_002), now));
     }
 
     #[test]
@@ -379,7 +422,7 @@ mod tests {
             let mut m = Message::new(channel, owner, text);
             m.created_at = now - Duration::days(age);
             let m = signed(&state, m);
-            ids.push((m.id, age));
+            ids.push((m.id, message_version(&m), age));
             state.apply(ServerEvent::MessageCreate { message: m }).unwrap();
         }
         let list = digests(&state, now);
@@ -387,8 +430,8 @@ mod tests {
         let today_bucket = list.iter().find(|d| d.key == BucketKey::Messages { channel, day: today }).unwrap();
         assert_eq!(today_bucket.count, 2);
         let mut expected = [0u8; 16];
-        for (id, _) in ids.iter().filter(|(_, age)| *age == 0) {
-            for (e, b) in expected.iter_mut().zip(item_hash(*id, 0)) {
+        for (id, version, _) in ids.iter().filter(|(_, _, age)| *age == 0) {
+            for (e, b) in expected.iter_mut().zip(item_hash(*id, *version)) {
                 *e ^= b;
             }
         }
@@ -479,7 +522,7 @@ mod tests {
         let other = BucketKey::Messages { channel: ChannelId::new(), day: day_number(now) };
         let out = items(&state, &[today, other, today], now);
         assert_eq!(out.len(), 2, "duplicates collapse");
-        assert!(out.contains(&(today, vec![(m.id, 0)])));
+        assert!(out.contains(&(today, vec![(m.id, message_version(&m))])));
         assert!(out.contains(&(other, vec![])));
 
         // Days outside our window get no entry, even when we hold items there.
@@ -524,7 +567,7 @@ mod tests {
         let beyond = [BucketKey::Messages { channel, day: next + 2 }, BucketKey::Tombstones { day: next + 2 }];
         assert!(items(&state, &beyond, now).is_empty());
         let key = BucketKey::Messages { channel, day: next };
-        assert_eq!(items(&state, &[key], now), vec![(key, vec![(tomorrow.id, 0)])]);
+        assert_eq!(items(&state, &[key], now), vec![(key, vec![(tomorrow.id, message_version(&tomorrow))])]);
     }
 
     #[test]
@@ -845,10 +888,9 @@ mod tests {
             assert!(!holding.has_message(spam.id), "{how}");
             assert_eq!(digests(&a, now), digests(&holding, now), "{how}");
             assert_eq!(reconcile(&mut a, &mut holding, now), (vec![], vec![]), "{how}");
-            // Without the message only a member's delete is kept. Someone
-            // who left is honored once the message reaches the replica.
+            // Without the message the delete is kept, whoever signed it.
             if how == "leave" {
-                assert_eq!(lacking.apply(removal.clone()), Err(crate::store::StoreError::NotAllowed));
+                assert_eq!(lacking.apply(removal.clone()), Ok(true));
                 lacking.apply(ServerEvent::MessageCreate { message: spam.clone() }).unwrap();
             }
             reconcile(&mut a, &mut lacking, now);
@@ -952,5 +994,67 @@ mod tests {
     fn dedup_keys(keys: impl IntoIterator<Item = BucketKey>) -> Vec<BucketKey> {
         let set: BTreeSet<BucketKey> = keys.into_iter().collect();
         set.into_iter().collect()
+    }
+
+    #[test]
+    fn a_delete_made_before_the_days_of_messages_reaches_a_newcomer() {
+        let (mut old, channel, _) = fixture();
+        let author = join(&mut old, "author");
+        let mut newcomer = old.clone();
+        let now = Utc::now();
+        let m = post_at(&old, channel, author, "regretted", now - Duration::days(45));
+        old.apply(ServerEvent::MessageCreate { message: m.clone() }).unwrap();
+        old.apply(proof(&old, &m, author, now - Duration::days(40)).into_event()).unwrap();
+        reconcile(&mut old, &mut newcomer, now);
+        assert!(newcomer.tombstone(m.id).is_some());
+        assert_eq!(digests(&old, now), digests(&newcomer, now));
+        // A copy handed over later, by a stale peer or a snapshot, stays out.
+        newcomer.apply(ServerEvent::MessageCreate { message: m.clone() }).unwrap();
+        assert!(!newcomer.has_message(m.id));
+    }
+
+    #[test]
+    fn replicas_holding_two_copies_signed_for_one_time_converge() {
+        for edited in [false, true] {
+            let (mut a, channel, _) = fixture();
+            let author = join(&mut a, "author");
+            let mut b = a.clone();
+            let now = Utc::now();
+            let base = post(&a, channel, author, "base");
+            let edited_at = edited.then_some(now);
+            let one = signed(&a, Message { content: "one".into(), edited_at, ..base.clone() });
+            let two = signed(&a, Message { content: "two".into(), edited_at, ..base.clone() });
+            a.apply(ServerEvent::MessageCreate { message: one.clone() }).unwrap();
+            b.apply(ServerEvent::MessageCreate { message: two.clone() }).unwrap();
+            assert_ne!(digests(&a, now), digests(&b, now), "edited: {edited}");
+            reconcile(&mut a, &mut b, now);
+            let winner = if one.sig.unwrap().0 < two.sig.unwrap().0 { &one } else { &two };
+            for state in [&a, &b] {
+                assert_eq!(state.message(base.id).unwrap().content, winner.content, "edited: {edited}");
+            }
+            assert_eq!(digests(&a, now), digests(&b, now), "edited: {edited}");
+            assert_eq!(reconcile(&mut a, &mut b, now), (vec![], vec![]));
+        }
+    }
+
+    #[test]
+    fn versions_order_edits_by_time_then_by_lower_signature() {
+        let (state, channel, owner) = fixture();
+        let base = post(&state, channel, owner, "base");
+        let now = Utc::now();
+        let at = |content: &str, t| signed(&state, Message { content: content.into(), edited_at: t, ..base.clone() });
+        let later = at("later", Some(now + Duration::milliseconds(1)));
+        for content in ["one", "two", "three"] {
+            let copy = at(content, Some(now));
+            assert!(message_version(&later) > message_version(&copy));
+            assert!(message_version(&copy) > message_version(&base));
+        }
+        let (one, two) = (at("one", Some(now)), at("two", Some(now)));
+        assert_ne!(message_version(&one), message_version(&two), "copies for one time differ");
+        let lower_first = (one.sig.unwrap().0 < two.sig.unwrap().0) == (message_version(&one) > message_version(&two));
+        assert!(lower_first, "the lower signature has the higher version");
+        // Dates no clock reaches do not wrap around.
+        let far = at("far", Some(DateTime::<Utc>::MAX_UTC));
+        assert!(message_version(&far) > message_version(&later));
     }
 }

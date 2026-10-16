@@ -795,14 +795,25 @@ pub fn sync_replies(app: &App, server: ServerId) -> Vec<WirePayload> {
     snapshot_for(app, server).into_iter().chain([WirePayload::Event(join)]).collect()
 }
 
+/// Marks a server whose placeholder was just placed from a ticket as
+/// waiting for its first snapshot, and returns what to send there: our
+/// join, then a request for a snapshot. Joining asked for one already,
+/// but an answer that came before the wait was marked was dropped.
+pub fn await_snapshot(app: &App, server: ServerId, me: UserProfile) -> Vec<WirePayload> {
+    app.set_awaiting_snapshot(server, true);
+    let join = ServerEvent::MemberJoin { server, profile: app.announced(me) };
+    vec![WirePayload::Event(join), WirePayload::SyncRequest]
+}
+
 /// Takes a `SyncResponse` that arrived on `server`'s topic. Only a server
 /// joined from a ticket that still waits for its first snapshot takes
 /// one (see `App::awaiting_snapshot`), and only a snapshot of that same
-/// server that keeps every key pinned here meanwhile: it replaces the
-/// provisional state, trusting the other keys it carries, and keeps the
-/// members and keys learned meanwhile. Every other state keeps its pinned
-/// keys and delete proofs; catch-up brings what it lacks. Returns true
-/// when the snapshot was taken.
+/// server. It replaces the provisional state and trusts the keys it
+/// carries: keys pinned meanwhile are provisional, so only those it
+/// leaves out stay, and our own. What came meanwhile is kept: members,
+/// messages with their edits, and deletes. Every other state keeps its
+/// pinned keys and delete proofs; catch-up brings what it lacks. Returns
+/// true when the snapshot was taken.
 pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WirePayload) -> bool {
     let app = access.app();
     let WirePayload::SyncResponse { server: mut remote_server, members, profiles, recent_messages } = payload else {
@@ -813,38 +824,20 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
     }
     remote_server.members = members.into_iter().map(member_of).collect();
     let me = app.profile.lock().unwrap().clone();
+    let me_id = me.as_ref().map(|p| p.id);
     let mut held = Vec::new();
     let learned: Vec<UserId>;
     {
         let mut servers = app.servers.lock().unwrap();
-        // Snapshots carry no emojis or sounds; keep any announced already.
         // A server left meanwhile stays gone.
-        let Some((emojis, sounds, rules, scheduled, pinned, heard)) = servers.get(&server).map(|s| {
-            let pinned: HashMap<UserId, UserProfile> =
-                s.profiles.values().filter(|p| p.identity.is_some()).map(|p| (p.id, p.clone())).collect();
-            let heard: Vec<UserProfile> = s.server.members.iter().filter_map(|m| s.profiles.get(&m.user).cloned()).collect();
-            let s = &s.server;
-            (s.emojis.clone(), s.soundboard.clone(), s.rules.clone(), s.events.clone(), pinned, heard)
-        }) else {
-            return false;
-        };
-        // Our own key stays ours whatever it says; any other pinned here
-        // must stay, so a member cannot swap keys under us later.
-        let me_id = me.as_ref().map(|p| p.id);
-        let swaps = profiles.iter().filter(|p| Some(p.id) != me_id).any(|p| {
-            let ours = pinned.get(&p.id).and_then(|q| q.identity);
-            matches!((ours, p.identity), (Some(a), Some(b)) if a != b)
-        });
-        if swaps {
-            tracing::warn!("refused a snapshot of {server} that changes a pinned key");
-            return false;
-        }
-        let known: HashSet<UserId> = pinned.keys().copied().collect();
+        let Some(old) = servers.remove(&server) else { return false };
+        let pinned: HashMap<UserId, IdentityKey> = old.profiles.values().filter_map(|p| Some((p.id, p.identity?))).collect();
         let mut state = ServerState::new(remote_server);
-        if rules.is_some() {
-            let _ = state.apply(ServerEvent::RulesSet { server, rules });
+        // Snapshots carry no emojis or sounds; keep any announced already.
+        if old.server.rules.is_some() {
+            let _ = state.apply(ServerEvent::RulesSet { server, rules: old.server.rules.clone() });
         }
-        for event in scheduled {
+        for event in old.server.events.iter().cloned() {
             let rsvps = event.rsvps.clone();
             let id = event.id.clone();
             let _ = state.apply(ServerEvent::EventUpsert { server, event });
@@ -852,24 +845,25 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
                 let _ = state.apply(ServerEvent::EventRsvp { server, event: id.clone(), user, rsvp: Some(rsvp) });
             }
         }
-        for emoji in emojis {
+        for emoji in old.server.emojis.iter().cloned() {
             let _ = state.apply(ServerEvent::EmojiAdd { server, emoji });
         }
-        for sound in sounds {
+        for sound in old.server.soundboard.iter().cloned() {
             let _ = state.apply(ServerEvent::SoundAdd { server, sound });
         }
         for profile in profiles {
             state.profiles.insert(profile.id, profile);
         }
-        // A pinned key the snapshot left out stays too.
-        for (id, profile) in pinned {
-            let entry = state.profiles.entry(id).or_insert_with(|| profile.clone());
-            entry.identity = profile.identity;
+        // A key pinned here that the snapshot left out stays.
+        for profile in old.profiles.values().filter(|p| p.identity.is_some()) {
+            let entry = state.profiles.entry(profile.id).or_insert_with(|| profile.clone());
+            entry.identity = entry.identity.or(profile.identity);
         }
         // So do members whose joins came first: a snapshot too large to
         // name every member leaves some out.
-        for profile in heard.into_iter().filter(|p| Some(p.id) != me_id) {
-            let profile = state.profiles.get(&profile.id).cloned().unwrap_or(profile);
+        let heard = old.server.members.iter().filter_map(|m| old.profiles.get(&m.user));
+        for profile in heard.filter(|p| Some(p.id) != me_id) {
+            let profile = state.profiles.get(&profile.id).cloned().unwrap_or_else(|| profile.clone());
             let _ = state.apply(ServerEvent::MemberJoin { server, profile });
         }
         // Keep our own profile visible, with the key we sign with, and
@@ -888,7 +882,21 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
                 held.push((signer, event));
             }
         }
-        learned = state.profiles.values().filter(|p| p.identity.is_some() && !known.contains(&p.id)).map(|p| p.id).collect();
+        // Then what came while we waited, our pending messages among it,
+        // wherever its channel and signer's key hold.
+        let waited = old.snapshot();
+        for message in waited.messages.into_iter().flat_map(|(_, list)| list) {
+            let _ = state.apply(ServerEvent::MessageCreate { message });
+        }
+        for proof in waited.tombstone_proofs {
+            let _ = state.apply(proof.into_event());
+        }
+        learned = state
+            .profiles
+            .values()
+            .filter(|p| p.identity.is_some() && p.identity != pinned.get(&p.id).copied())
+            .map(|p| p.id)
+            .collect();
         servers.insert(server, state);
     }
     for (signer, event) in held {
@@ -1824,40 +1832,116 @@ mod tests {
     }
 
     #[test]
-    fn a_snapshot_that_changes_a_pinned_key_is_refused() {
+    fn a_key_pinned_while_waiting_gives_way_to_the_snapshot() {
         let owner = Member::new("owner");
         let friend = Member::new("friend");
         let me = Member::new("me");
-        let (mut real, _) = server(&owner);
+        let (mut real, channel) = server(&owner);
         join(&mut real, &friend);
         join(&mut real, &me);
         let sid = real.server.id;
-        // The owner's and the friend's joins pinned their keys here.
+        let hello = owner.post(&real, channel, "hello");
+        real.apply(ServerEvent::MessageCreate { message: hello.clone() }).unwrap();
+        // A relayed profile planted a key for the owner here before the
+        // snapshot, so the owner's own join is refused; the friend's
+        // join pinned their real key.
         let mut ours = placeholder(&me, sid);
-        join(&mut ours, &owner);
+        let planted = UserProfile { identity: Some(Identity::generate().public()), ..owner.profile.clone() };
+        ours.apply(ServerEvent::MemberJoin { server: sid, profile: planted }).unwrap();
+        let owner_join = ServerEvent::MemberJoin { server: sid, profile: owner.profile.clone() };
+        assert_eq!(ours.apply(owner_join), Err(StoreError::IdentityMismatch));
         join(&mut ours, &friend);
         let app = app_with(&me, ours);
         app.set_awaiting_snapshot(sid, true);
         let handle = TestHandle::new(app.clone());
 
-        // A member's crafted snapshot claims another key for the owner.
+        // The snapshot's keys win, except for us; one it leaves out stays.
+        let mut sent = real.clone();
+        sent.profiles.get_mut(&friend.id()).unwrap().identity = None;
+        sent.profiles.get_mut(&me.id()).unwrap().identity = Some(Identity::generate().public());
+        assert!(apply_snapshot(&handle, sid, snapshot_of(&sent)));
+        let state = app.servers.lock().unwrap()[&sid].clone();
+        assert_eq!(state.server.owner, owner.id());
+        assert_eq!(state.identity_of(owner.id()), Some(owner.identity.public()));
+        assert_eq!(state.identity_of(friend.id()), Some(friend.identity.public()));
+        assert_eq!(state.identity_of(me.id()), Some(me.identity.public()));
+        assert!(state.has_message(hello.id));
+
+        // Once one is taken, a snapshot that changes a key is refused.
         let mut forged = real.clone();
         forged.profiles.get_mut(&owner.id()).unwrap().identity = Some(Identity::generate().public());
         assert!(!apply_snapshot(&handle, sid, snapshot_of(&forged)));
-        let state = app.servers.lock().unwrap()[&sid].clone();
-        assert_eq!(state.server.owner, me.id(), "nothing replaced");
-        assert_eq!(state.identity_of(owner.id()), Some(owner.identity.public()));
-        assert!(app.awaits_snapshot(sid), "a real one may still come");
-        assert!(handle.take_events().is_empty());
+        assert_eq!(app.servers.lock().unwrap()[&sid].identity_of(owner.id()), Some(owner.identity.public()));
+    }
 
-        // One that holds no key for the friend is taken; their key stays.
-        let mut keyless = real.clone();
-        keyless.profiles.get_mut(&friend.id()).unwrap().identity = None;
-        assert!(apply_snapshot(&handle, sid, snapshot_of(&keyless)));
+    #[test]
+    fn what_came_while_waiting_outlives_the_snapshot() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, channel) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let edited = owner.post(&real, channel, "first");
+        let deleted = owner.post(&real, channel, "gone");
+        for message in [&edited, &deleted] {
+            real.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
+        }
+        // While we wait the channel is announced, the owner joins, edits
+        // one message and deletes another, and we post one nobody has yet.
+        let mut ours = placeholder(&me, sid);
+        let announced = real.server.channel(channel).unwrap().clone();
+        ours.apply(ServerEvent::ChannelCreate { server: sid, channel: announced }).unwrap();
+        join(&mut ours, &owner);
+        ours.apply(ServerEvent::MessageCreate { message: edited.clone() }).unwrap();
+        ours.apply(edited.edit_event(sid, "second", Utc::now(), &owner.identity)).unwrap();
+        let delete = TombstoneProof::sign(sid, channel, deleted.id, owner.id(), Utc::now(), &owner.identity);
+        ours.apply(delete.into_event()).unwrap();
+        let mine = me.post(&ours, channel, "while waiting");
+        let create = ServerEvent::MessageCreate { message: mine.clone() };
+        ours.apply(create.clone()).unwrap();
+        let app = app_with(&me, ours);
+        app.outbox.lock().unwrap().note_local(sid, &create, false);
+        app.set_awaiting_snapshot(sid, true);
+        let handle = TestHandle::new(app.clone());
+
+        assert!(apply_snapshot(&handle, sid, snapshot_of(&real)));
+        // What runs after any session drops pending ids we no longer hold.
+        after_session(&handle, sid, None);
         let state = app.servers.lock().unwrap()[&sid].clone();
         assert_eq!(state.server.owner, owner.id());
-        assert_eq!(state.identity_of(friend.id()), Some(friend.identity.public()));
-        assert_eq!(state.identity_of(owner.id()), Some(owner.identity.public()));
+        assert!(state.has_message(mine.id));
+        assert!(app.outbox.lock().unwrap().is_pending(sid, mine.id), "still pending");
+        assert_eq!(state.message(edited.id).map(|m| m.content.as_str()), Some("second"));
+        assert!(!state.has_message(deleted.id));
+        assert!(state.tombstone(deleted.id).is_some());
+    }
+
+    #[test]
+    fn a_snapshot_answered_while_joining_is_asked_for_again() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let app = app_with(&me, placeholder(&me, sid));
+        let handle = TestHandle::new(app.clone());
+        let theirs = app_with(&owner, real);
+        // What we send reaches the owner, whose snapshot reaches us.
+        let deliver = |sent: Vec<WirePayload>| {
+            for _ in sent.iter().filter(|p| matches!(p, WirePayload::SyncRequest)) {
+                for reply in sync_replies(&theirs, sid) {
+                    if matches!(reply, WirePayload::SyncResponse { .. }) {
+                        apply_snapshot(&handle, sid, reply);
+                    }
+                }
+            }
+        };
+        // Joining asks first, and that answer beats the wait being marked.
+        deliver(vec![WirePayload::SyncRequest]);
+        assert_eq!(app.servers.lock().unwrap()[&sid].server.owner, me.id(), "dropped");
+        deliver(await_snapshot(&app, sid, me.profile.clone()));
+        assert!(!app.awaits_snapshot(sid), "taken");
+        assert_eq!(app.servers.lock().unwrap()[&sid].server.owner, owner.id());
     }
 
     #[test]

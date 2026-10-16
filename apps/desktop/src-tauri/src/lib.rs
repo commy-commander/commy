@@ -211,18 +211,10 @@ pub(crate) async fn join_ticket(app: &App, handle: &tauri::AppHandle, ticket: Se
     let summary = ServerSummary::from_state(&state);
     app.servers.lock().unwrap().insert(ticket.server_id, state);
     // Only this state takes a snapshot, once (see `catchup::apply_snapshot`).
-    app.set_awaiting_snapshot(ticket.server_id, true);
-
-    // Announce ourselves to the topic.
-    broadcast(
-        app,
-        ticket.server_id,
-        WirePayload::Event(ServerEvent::MemberJoin {
-            server: ticket.server_id,
-            profile: app.announced(profile),
-        }),
-    )
-    .await;
+    // Announce ourselves to the topic, and ask for it again.
+    for payload in catchup::await_snapshot(app, ticket.server_id, profile) {
+        broadcast(app, ticket.server_id, payload).await;
+    }
     drop(signing);
 
     app.persist_server(ticket.server_id);
@@ -490,12 +482,19 @@ async fn delete_message(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        if message_author(state, cid, mid)? != me.id {
-            require_permission(state, me.id, Permissions::MANAGE_MESSAGES, "delete other people's messages")?;
-        }
+        may_delete(&app, state, cid, mid, me.id)?;
     }
     let proof = TombstoneProof::sign(sid, cid, mid, me.id, chrono::Utc::now(), &identity);
     apply_and_broadcast(&app, &handle, sid, proof.into_event()).await?;
+    Ok(())
+}
+
+/// Whether we may delete a message: our own, or anyone's with Manage
+/// Messages. Peers take any delete we sign, so this is the only check.
+fn may_delete(app: &App, state: &ServerState, channel: ChannelId, message: MessageId, me: UserId) -> CmdResult<()> {
+    if message_author(state, channel, message)? != me {
+        require_permission(app, state, me, Permissions::MANAGE_MESSAGES, "delete other people's messages")?;
+    }
     Ok(())
 }
 
@@ -695,7 +694,7 @@ async fn set_voice_channel(
 
     match cid {
         Some(channel) => {
-            let full = app.servers.lock().unwrap().get(&sid).is_some_and(|s| voice_channel_full(s, channel, profile.id));
+            let full = app.servers.lock().unwrap().get(&sid).is_some_and(|s| voice_channel_full(&app, s, channel, profile.id));
             if full {
                 return Err("that voice channel is full".into());
             }
@@ -1739,13 +1738,26 @@ async fn send_dm(
 
 // ---------- Server management ----------
 
+/// What we may do in a server. One joined from a ticket names us owner
+/// until its first snapshot replaces that placeholder, so until then we
+/// may only do what any member may.
+fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
+    let perms = state.server.permissions_for(me);
+    if app.awaits_snapshot(state.server.id) {
+        perms & Permissions::default_member()
+    } else {
+        perms
+    }
+}
+
 fn require_permission(
+    app: &App,
     state: &ServerState,
-    user: UserId,
+    me: UserId,
     needed: Permissions,
     action: &str,
 ) -> CmdResult<()> {
-    if state.server.permissions_for(user).allows(needed) {
+    if our_permissions(app, state, me).allows(needed) {
         Ok(())
     } else {
         Err(format!("you do not have permission to {action}"))
@@ -1785,7 +1797,7 @@ async fn rename_server(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_SERVER, "rename the server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "rename the server")?;
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ServerRename { server: sid, name })
         .await?;
@@ -1795,11 +1807,11 @@ async fn rename_server(
 
 /// Channel and AFK events a reconnecting peer may have missed. Only
 /// members allowed to make those changes re-announce them.
-fn structure_announcements(app: &tauri::State<'_, App>, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
+fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
     let mut events = Vec::new();
-    if state.server.permissions_for(me).allows(Permissions::MANAGE_CHANNELS) {
+    if our_permissions(app, state, me).allows(Permissions::MANAGE_CHANNELS) {
         for channel in &state.server.channels {
             events.push(ServerEvent::ChannelCreate { server: sid, channel: channel.clone() });
             // Create is ignored by peers that already have the channel,
@@ -1816,7 +1828,7 @@ fn structure_announcements(app: &tauri::State<'_, App>, sid: ServerId, me: UserI
         }
     }
     if (state.server.icon.is_some() || state.server.banner.is_some())
-        && state.server.permissions_for(me).allows(Permissions::MANAGE_SERVER)
+        && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER)
     {
         events.push(ServerEvent::ServerImages {
             server: sid,
@@ -1832,7 +1844,7 @@ fn structure_announcements(app: &tauri::State<'_, App>, sid: ServerId, me: UserI
     for sound in &state.server.soundboard {
         events.push(ServerEvent::SoundAdd { server: sid, sound: sound.clone() });
     }
-    let perms = state.server.permissions_for(me);
+    let perms = our_permissions(app, state, me);
     if perms.allows(Permissions::MANAGE_SERVER) {
         if !state.server.game_tags.is_empty() {
             events.push(ServerEvent::GameTagsSet {
@@ -1901,7 +1913,7 @@ fn structure_announcements(app: &tauri::State<'_, App>, sid: ServerId, me: UserI
         }
     }
     let custom = state.server.emojis_shareable || state.server.soundboard_open;
-    if custom && state.server.permissions_for(me).allows(Permissions::MANAGE_SERVER) {
+    if custom && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ExpressionSettings {
             server: sid,
             emojis_shareable: state.server.emojis_shareable,
@@ -1910,7 +1922,7 @@ fn structure_announcements(app: &tauri::State<'_, App>, sid: ServerId, me: UserI
     }
     // Only an explicit choice is announced; the name fallback needs none.
     let explicit = state.server.afk_disabled || state.server.afk_channel_id.is_some();
-    if explicit && state.server.permissions_for(me).allows(Permissions::MANAGE_SERVER) {
+    if explicit && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::AfkChannelSet {
             server: sid,
             channel: state.server.afk_channel(),
@@ -1937,7 +1949,7 @@ async fn update_channel(
     let kind = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
         state.server.channel(cid).ok_or("unknown channel")?.kind
     };
     // Text channel names are lowercase with dashes.
@@ -2042,7 +2054,7 @@ async fn set_afk_channel(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_SERVER, "change the AFK channel")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "change the AFK channel")?;
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::AfkChannelSet { server: sid, channel })
         .await?;
@@ -2072,7 +2084,7 @@ async fn create_channel(
     let channel = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_CHANNELS, "create channels")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "create channels")?;
         if state.server.channels.iter().any(|c| c.name == name && c.kind == kind) {
             return Err("a channel with that name already exists".into());
         }
@@ -2106,7 +2118,7 @@ async fn delete_channel(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_CHANNELS, "delete channels")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "delete channels")?;
         let remaining_text = state
             .server
             .channels
@@ -2141,7 +2153,7 @@ async fn kick_member(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::KICK_MEMBERS, "kick members")?;
+        require_permission(&app, state, me.id, Permissions::KICK_MEMBERS, "kick members")?;
         if target == state.server.owner {
             return Err("the owner cannot be kicked".into());
         }
@@ -2420,6 +2432,72 @@ mod own_server_tests {
 }
 
 #[cfg(test)]
+mod placeholder_tests {
+    use super::*;
+
+    #[test]
+    fn a_placeholder_naming_us_owner_grants_nothing_over_others() {
+        let member = |name: &str| {
+            let identity = Identity::generate();
+            let mut profile = UserProfile::new(name);
+            profile.identity = Some(identity.public());
+            (profile, identity)
+        };
+        let ((me, my_key), (other, other_key)) = (member("me"), member("other"));
+        // Joined from a ticket: the placeholder names us owner.
+        let server = commy_core::Server::new("s", me.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = ServerState::new(server);
+        state.profiles.insert(me.id, me.clone());
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: other.clone() }).unwrap();
+        let post = |author: &UserProfile, key: &Identity| {
+            let mut message = Message::new(channel, author.id, "hi");
+            message.sign(sid, key);
+            message
+        };
+        let (ours, theirs) = (post(&me, &my_key), post(&other, &other_key));
+        for message in [&ours, &theirs] {
+            state.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
+        }
+        let app = App::default();
+        app.servers.lock().unwrap().insert(sid, state.clone());
+        app.set_awaiting_snapshot(sid, true);
+
+        assert_eq!(may_delete(&app, &state, channel, ours.id, me.id), Ok(()));
+        let refused = Err("you do not have permission to delete other people's messages".to_string());
+        assert_eq!(may_delete(&app, &state, channel, theirs.id, me.id), refused);
+        let moderation = [
+            Permissions::MANAGE_SERVER,
+            Permissions::MANAGE_CHANNELS,
+            Permissions::KICK_MEMBERS,
+            Permissions::BAN_MEMBERS,
+            Permissions::MUTE_MEMBERS,
+            Permissions::MANAGE_ROLES,
+            Permissions::MANAGE_EXPRESSIONS,
+            Permissions::MANAGE_EVENTS,
+        ];
+        for needed in moderation {
+            assert!(require_permission(&app, &state, me.id, needed, "moderate").is_err(), "{needed:?}");
+        }
+        assert!(require_permission(&app, &state, me.id, Permissions::USE_SOUNDBOARD, "play").is_ok());
+        assert!(!can_upload_sounds(&app, &state, me.id));
+        // Nor is the placeholder's own structure announced as the server's.
+        let structural = |events: Vec<ServerEvent>| {
+            events.iter().any(|e| matches!(e, ServerEvent::ChannelCreate { .. } | ServerEvent::AfkChannelSet { .. }))
+        };
+        assert!(!structural(structure_announcements(&app, sid, me.id)));
+
+        // A server that is ours after all, once the wait is over.
+        app.set_awaiting_snapshot(sid, false);
+        assert_eq!(may_delete(&app, &state, channel, theirs.id, me.id), Ok(()));
+        for needed in moderation {
+            assert!(require_permission(&app, &state, me.id, needed, "moderate").is_ok(), "{needed:?}");
+        }
+        assert!(structural(structure_announcements(&app, sid, me.id)));
+    }
+}
+
+#[cfg(test)]
 mod status_expiry_tests {
     use super::*;
 
@@ -2559,7 +2637,7 @@ async fn set_server_image(
     let (icon, banner) = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_SERVER, "change the server's images")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "change the server's images")?;
         (state.server.icon.clone(), state.server.banner.clone())
     };
     let image = match data {
@@ -2631,7 +2709,7 @@ async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdRes
 fn manage_check(app: &tauri::State<'_, App>, sid: ServerId, user: UserId, needed: Permissions, action: &str) -> CmdResult<()> {
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
-    require_permission(state, user, needed, action)
+    require_permission(app, state, user, needed, action)
 }
 
 #[tauri::command]
@@ -2727,7 +2805,7 @@ async fn save_event(
     let creator = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        let can_manage = state.server.permissions_for(me.id).allows(Permissions::MANAGE_EVENTS);
+        let can_manage = our_permissions(&app, state, me.id).allows(Permissions::MANAGE_EVENTS);
         let existing = event_id.as_ref().and_then(|id| state.server.events.iter().find(|e| &e.id == id));
         match existing {
             Some(e) if e.creator == me.id || can_manage => e.creator,
@@ -2761,7 +2839,7 @@ async fn delete_event(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
         let state = servers.get(&sid).ok_or("unknown server")?;
         let mine = state.server.events.iter().any(|e| e.id == event_id && e.creator == me.id);
         if !mine {
-            require_permission(state, me.id, Permissions::MANAGE_EVENTS, "delete events")?;
+            require_permission(&app, state, me.id, Permissions::MANAGE_EVENTS, "delete events")?;
         }
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::EventDelete { server: sid, event: event_id }).await
@@ -2817,7 +2895,7 @@ async fn create_category(app: tauri::State<'_, App>, handle: tauri::AppHandle, s
     let channel = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_CHANNELS, "create categories")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "create categories")?;
         let position = state.server.channels.iter().map(|c| c.position).max().unwrap_or(0) + 1;
         Channel::new(name, ChannelKind::Category, position)
     };
@@ -2837,9 +2915,9 @@ async fn set_channel_limit(app: tauri::State<'_, App>, handle: tauri::AppHandle,
 }
 
 /// True when a voice channel is at its cap for someone without Manage Channels.
-fn voice_channel_full(state: &ServerState, channel: ChannelId, user: UserId) -> bool {
+fn voice_channel_full(app: &App, state: &ServerState, channel: ChannelId, user: UserId) -> bool {
     let Some(c) = state.server.channel(channel) else { return false };
-    if c.user_limit == 0 || state.server.permissions_for(user).allows(Permissions::MANAGE_CHANNELS) {
+    if c.user_limit == 0 || our_permissions(app, state, user).allows(Permissions::MANAGE_CHANNELS) {
         return false;
     }
     let inside = state.voice_states.iter().filter(|(u, ch)| **ch == channel && **u != user).count();
@@ -2872,7 +2950,7 @@ async fn update_role(
     let role = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_ROLES, "edit roles")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "edit roles")?;
         let existing = state.server.roles.iter().find(|r| r.id == rid).ok_or("unknown role")?;
         let name = name.trim().to_string();
         if name.is_empty() || name.chars().count() > 50 {
@@ -2899,7 +2977,7 @@ async fn set_role_banner(
     let existing = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_ROLES, "edit roles")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "edit roles")?;
         state.server.roles.iter().find(|r| r.id == rid).cloned().ok_or("unknown role")?
     };
     let banner = match data {
@@ -3005,7 +3083,7 @@ async fn moderate_voice(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MUTE_MEMBERS, "server mute or deafen")?;
+        require_permission(&app, state, me.id, Permissions::MUTE_MEMBERS, "server mute or deafen")?;
         if user == state.server.owner {
             return Err("the server owner cannot be muted or deafened".into());
         }
@@ -3023,7 +3101,7 @@ async fn ban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::BAN_MEMBERS, "ban members")?;
+        require_permission(&app, state, me.id, Permissions::BAN_MEMBERS, "ban members")?;
         if user == state.server.owner || user == me.id {
             return Err("you cannot ban that member".into());
         }
@@ -3270,7 +3348,7 @@ async fn add_emoji(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_EXPRESSIONS, "manage emojis")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_EXPRESSIONS, "manage emojis")?;
         let replacing = state.server.emojis.iter().any(|e| e.name == name);
         if !replacing && state.server.emojis.len() >= commy_core::server::MAX_EMOJIS {
             return Err(format!("servers can have up to {} emojis", commy_core::server::MAX_EMOJIS));
@@ -3297,15 +3375,15 @@ async fn remove_emoji(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_EXPRESSIONS, "manage emojis")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_EXPRESSIONS, "manage emojis")?;
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::EmojiRemove { server: sid, name }).await
 }
 
 /// Who may upload sounds: managers, or everyone when the server opens
 /// its soundboard. Removing someone else's clip still needs the permission.
-fn can_upload_sounds(state: &ServerState, user: UserId) -> bool {
-    state.server.permissions_for(user).allows(Permissions::MANAGE_EXPRESSIONS)
+fn can_upload_sounds(app: &App, state: &ServerState, user: UserId) -> bool {
+    our_permissions(app, state, user).allows(Permissions::MANAGE_EXPRESSIONS)
         || (state.server.soundboard_open && state.server.members.iter().any(|m| m.user == user))
 }
 
@@ -3324,11 +3402,11 @@ async fn add_sound(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        if !can_upload_sounds(state, me.id) {
+        if !can_upload_sounds(&app, state, me.id) {
             return Err("you do not have permission to add sounds".into());
         }
         let existing = state.server.soundboard.iter().any(|s| s.name == name);
-        if existing && !state.server.permissions_for(me.id).allows(Permissions::MANAGE_EXPRESSIONS) {
+        if existing && !our_permissions(&app, state, me.id).allows(Permissions::MANAGE_EXPRESSIONS) {
             return Err("a sound with that name already exists".into());
         }
         if !existing && state.server.soundboard.len() >= commy_core::server::MAX_SOUNDS {
@@ -3360,7 +3438,7 @@ async fn remove_sound(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_EXPRESSIONS, "remove sounds")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_EXPRESSIONS, "remove sounds")?;
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundRemove { server: sid, name }).await
 }
@@ -3378,7 +3456,7 @@ async fn set_expression_settings(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_SERVER, "change expression settings")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "change expression settings")?;
     }
     let event = ServerEvent::ExpressionSettings { server: sid, emojis_shareable, soundboard_open };
     apply_and_broadcast(&app, &handle, sid, event).await?;
@@ -3441,7 +3519,7 @@ async fn play_soundboard(
     let view = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
+        require_permission(&app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
         soundboard_play_view(state, channel, me.id, &name).ok_or("that sound no longer exists")?
     };
     broadcast(
@@ -4010,7 +4088,7 @@ async fn create_role(
     let role = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
         let position = state
             .server
             .roles
@@ -4047,7 +4125,7 @@ async fn delete_role(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleDelete { server: sid, role: rid })
         .await
@@ -4069,7 +4147,7 @@ async fn set_member_role(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
     }
     let event = if grant {
         ServerEvent::RoleAssign { server: sid, user: uid, role: rid }

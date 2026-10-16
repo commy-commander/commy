@@ -39,8 +39,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const CATCHUP_ALPN: &[u8] = b"commy/catchup/1";
 
-/// Most items (messages plus delete proofs) in one `Push` frame, and
-/// most profiles in one `Profiles` frame.
+/// Most items (messages plus delete proofs) in one `Push` frame, most
+/// profiles in one `Profiles` frame, and most entries in one `Items`
+/// frame, each bucket counting one more than its items. A peer sending
+/// a larger page ends the session.
 pub const PAGE_SIZE: usize = 200;
 
 /// Largest clock difference a `Hello` may show, in ms.
@@ -91,10 +93,6 @@ const MAX_HELLO_BYTES: u32 = 4096;
 
 /// Bytes a frame may fill, leaving room for its own framing.
 const FRAME_BUDGET: usize = MAX_MEDIA_FRAME as usize - 1024;
-
-/// Upper bounds of a bucket key and of one item in an `Items` frame.
-const KEY_BOUND: usize = 32;
-const ITEM_BOUND: usize = 32;
 
 /// Frames of a catch-up session, postcard encoded. Variants are only
 /// ever appended.
@@ -309,6 +307,8 @@ pub enum CatchupError {
     Timeout,
     #[error("peer sent more than one session allows")]
     TooMuch,
+    #[error("peer sent a page larger than the protocol allows")]
+    PageTooLarge,
     #[error(transparent)]
     Frame(#[from] MediaError),
 }
@@ -369,7 +369,7 @@ pub fn check_peer(state: &ServerState, user: UserId, key: &IdentityKey) -> PeerC
 }
 
 /// [`CatchupStore::get`] over one server's state, in the order of `ids`,
-/// with every delete proof valid here for each id (see
+/// with every delete proof listed here for each id (see
 /// `ServerState::tombstones_since`). Proofs for channels that no longer
 /// exist are left out.
 pub fn collect(state: &ServerState, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>) {
@@ -518,7 +518,7 @@ where
     let answered: HashSet<BucketKey> = theirs.iter().map(|(key, _)| *key).collect();
     let theirs: Vec<BucketItems> = theirs
         .into_iter()
-        .filter(|(key, _)| window.contains(&key.day()))
+        .filter(|(key, _)| window.contains(key))
         .collect();
     let listed: HashSet<BucketKey> = theirs.iter().map(|(key, _)| *key).collect();
     let matched = sent
@@ -662,7 +662,7 @@ where
     let window = current_window();
     let (theirs, outside): (Vec<BucketDigest>, Vec<BucketDigest>) = theirs
         .into_iter()
-        .partition(|d| window.contains(&d.key.day()));
+        .partition(|d| window.contains(&d.key));
     let their_keys: HashSet<BucketKey> = theirs.iter().map(|d| d.key).collect();
     let ours = store.digests(server);
     let differ: HashSet<BucketKey> = mismatched(&ours, &theirs).into_iter().collect();
@@ -883,9 +883,18 @@ where
     let mut signers: HashSet<UserId> = HashSet::new();
     let mut out = Received::default();
     let window = current_window();
-    let fits = |id: MessageId, key: BucketKey| window.contains(&key.day()) && accept(id, key);
+    let fits = |id: MessageId, key: BucketKey| window.contains(&key) && accept(id, key);
     loop {
         match read(io).await? {
+            CatchupFrame::Profiles(list) if list.len() > PAGE_SIZE => {
+                return Err(CatchupError::PageTooLarge)
+            }
+            CatchupFrame::Push {
+                messages,
+                tombstones,
+            } if messages.len() + tombstones.len() > PAGE_SIZE => {
+                return Err(CatchupError::PageTooLarge)
+            }
             CatchupFrame::Profiles(list) => {
                 profiles_sent += list.len().max(1);
                 if profiles_sent > signers.len() + PROFILE_MARGIN {
@@ -1004,6 +1013,9 @@ async fn read_items<R: AsyncRead + Unpin>(
     let mut listed: BTreeMap<BucketKey, Vec<(MessageId, i64)>> = BTreeMap::new();
     loop {
         match read(io).await? {
+            CatchupFrame::Items(page) if listed_len(&page) > PAGE_SIZE => {
+                return Err(CatchupError::PageTooLarge)
+            }
             CatchupFrame::Items(page) => {
                 let mut cost = 0;
                 for (key, list) in page {
@@ -1236,27 +1248,32 @@ fn fit_listing(mut list: Vec<BucketItems>, max: usize) -> (Vec<BucketItems>, Vec
     (kept, dropped)
 }
 
-/// Splits a listing into `Items` pages that each fit in a frame. A
-/// bucket too large for one page continues on the next.
+/// Entries of an `Items` page, each bucket counting one more than its
+/// items.
+fn listed_len(page: &[BucketItems]) -> usize {
+    page.iter().map(|(_, list)| 1 + list.len()).sum()
+}
+
+/// Splits a listing into `Items` pages of at most [`PAGE_SIZE`] entries
+/// (see [`listed_len`]). A bucket too large for one page continues on
+/// the next.
 fn item_pages(list: Vec<BucketItems>) -> Vec<Vec<BucketItems>> {
     let mut out = Vec::new();
-    let (mut page, mut bytes): (Vec<BucketItems>, usize) = (Vec::new(), 0);
+    let (mut page, mut used): (Vec<BucketItems>, usize) = (Vec::new(), 0);
     for (key, list) in list {
         let mut rest = list.into_iter().peekable();
         loop {
-            if !page.is_empty() && bytes + KEY_BOUND + ITEM_BOUND > FRAME_BUDGET {
+            // Room for the key and an item, or the page is full.
+            if used + 2 > PAGE_SIZE {
                 out.push(std::mem::take(&mut page));
-                bytes = 0;
+                used = 0;
             }
-            let room = (FRAME_BUDGET - bytes - KEY_BOUND) / ITEM_BOUND;
-            let part: Vec<(MessageId, i64)> = rest.by_ref().take(room).collect();
-            bytes += KEY_BOUND + part.len() * ITEM_BOUND;
+            let part: Vec<(MessageId, i64)> = rest.by_ref().take(PAGE_SIZE - used - 1).collect();
+            used += 1 + part.len();
             page.push((key, part));
             if rest.peek().is_none() {
                 break;
             }
-            out.push(std::mem::take(&mut page));
-            bytes = 0;
         }
     }
     if !page.is_empty() {
@@ -2596,7 +2613,12 @@ mod tests {
     async fn responder_leaves_out_buckets_outside_its_window() {
         let (a, b, channel) = pair();
         let today = day_number(Utc::now());
-        let old = BucketKey::Tombstones { day: today - 40 };
+        // Delete proofs reach back further than messages.
+        let old = BucketKey::Tombstones { day: today - 70 };
+        let old_messages = BucketKey::Messages {
+            channel,
+            day: today - 40,
+        };
         let ahead = BucketKey::Messages {
             channel,
             day: today + 5,
@@ -2613,7 +2635,7 @@ mod tests {
                 read(&mut x).await.unwrap(),
                 CatchupFrame::Hello { .. }
             ));
-            let list = vec![digest(old), digest(ahead)];
+            let list = vec![digest(old), digest(old_messages), digest(ahead)];
             send(&mut x, &CatchupFrame::Digests(list)).await.unwrap();
             read(&mut x).await.unwrap()
         };
@@ -2621,7 +2643,7 @@ mod tests {
         assert_eq!(
             first,
             CatchupFrame::ItemsEnd {
-                omitted: vec![old, ahead]
+                omitted: vec![old, old_messages, ahead]
             }
         );
     }
@@ -2933,8 +2955,8 @@ mod tests {
         for state in [&mut a_state, &mut c_state, &mut d_state] {
             assert_eq!(state.apply(ban.clone()), Ok(true));
         }
-        // Nobody lacking that message would take that delete now.
-        assert!(a_state.tombstone(unseen.id).is_none());
+        // The ban keeps it, as replicas hearing of the ban later would.
+        assert!(a_state.tombstone(unseen.id).is_some());
         let a = MemStore::new(a_state, owner);
         let c = MemStore::new(c_state, c_user);
         let d = MemStore::new(d_state, d_user);
@@ -2948,7 +2970,7 @@ mod tests {
             assert!(store.has(kept.id), "{name}");
             assert!(!store.has(own.id) && !store.has(theirs.id), "{name}");
             store.with(|s| {
-                assert!(s.tombstone(unseen.id).is_none(), "{name}");
+                assert!(s.tombstone(unseen.id).is_some(), "{name}");
                 assert!(!s.server.is_member(banned), "{name}");
             });
         }
@@ -3029,14 +3051,13 @@ mod tests {
         ];
         let got = receive(&b, named).await.unwrap();
         assert_eq!(got.applied.len(), PROFILE_MARGIN);
-        let past = vec![
-            CatchupFrame::Push {
-                messages: page,
-                tombstones: vec![],
-            },
-            CatchupFrame::Profiles(profiles(2 * PROFILE_MARGIN + 1)),
-            CatchupFrame::Done,
-        ];
+        let mut past = vec![CatchupFrame::Push {
+            messages: page,
+            tombstones: vec![],
+        }];
+        let beyond = profiles(2 * PROFILE_MARGIN + 1);
+        past.extend(beyond.chunks(PAGE_SIZE).map(|c| CatchupFrame::Profiles(c.to_vec())));
+        past.push(CatchupFrame::Done);
         assert!(matches!(receive(&b, past).await.unwrap_err(), CatchupError::TooMuch));
     }
 
@@ -3081,12 +3102,13 @@ mod tests {
     async fn profiles_past_the_byte_limit_end_the_session() {
         let (a, b, channel) = pair();
         let base = a.with(|s| s.clone());
-        let flood = |n: usize| {
-            CatchupFrame::Profiles(
-                (0..n)
-                    .map(|_| profile_of_size("large", MAX_RELAYED_PROFILE_BYTES))
-                    .collect(),
-            )
+        let flood = |n: usize| -> Vec<CatchupFrame> {
+            let list: Vec<UserProfile> = (0..n)
+                .map(|_| profile_of_size("large", MAX_RELAYED_PROFILE_BYTES))
+                .collect();
+            list.chunks(PAGE_SIZE)
+                .map(|c| CatchupFrame::Profiles(c.to_vec()))
+                .collect()
         };
         // The most that may wait at once. Pages naming enough signers come
         // first, so the count of profiles is no limit.
@@ -3111,9 +3133,9 @@ mod tests {
             frames.push(CatchupFrame::Done);
             frames
         };
-        assert!(receive(&b, session(vec![flood(most)])).await.is_ok());
+        assert!(receive(&b, session(flood(most))).await.is_ok());
         assert!(matches!(
-            receive(&b, session(vec![flood(most + 1)])).await.unwrap_err(),
+            receive(&b, session(flood(most + 1))).await.unwrap_err(),
             CatchupError::TooMuch
         ));
         // Profiles a page did not use do not add up across pages.
@@ -3122,7 +3144,10 @@ mod tests {
             tombstones: vec![],
         };
         let half = most / 2 + 1;
-        let spread = vec![flood(half), empty.clone(), flood(half), empty];
+        let mut spread = flood(half);
+        spread.push(empty.clone());
+        spread.extend(flood(half));
+        spread.push(empty);
         assert!(receive(&b, session(spread)).await.is_ok());
     }
 
@@ -3300,6 +3325,173 @@ mod tests {
         let accept_all = |_: MessageId, _: BucketKey| true;
         let (_, result) = tokio::join!(flood, receive_pages(&mut y, &b, b.server(), accept_all));
         assert!(matches!(result.unwrap_err(), CatchupError::TooMuch));
+    }
+
+    #[tokio::test]
+    async fn a_delete_older_than_the_days_of_messages_reaches_a_newcomer() {
+        for a_dials in [true, false] {
+            let (a, b, channel) = pair();
+            let base = a.with(|s| s.clone());
+            let old = post_at(&base, channel, a.me, "regretted", day_ago(45));
+            a.add(&old);
+            a.with(|s| {
+                let p = proof_at(s, &old, a.me, day_ago(40));
+                s.apply(p.into_event()).unwrap()
+            });
+            let (_, rb) = either_way(&a, &b, a_dials).await;
+            let case = format!("a dials {a_dials}");
+            assert_eq!(rb.received, vec![old.id], "{case}");
+            assert_eq!(a.digests(), b.digests(), "{case}");
+            // A copy handed over later, by a stale peer or a snapshot.
+            b.add(&old);
+            assert!(!b.has(old.id), "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_page_past_the_page_size_ends_the_session() {
+        let (a, b, channel) = pair();
+        let base = a.with(|s| s.clone());
+        let fresh = b.with(|s| s.clone());
+        let messages: Vec<Message> = (0..=PAGE_SIZE)
+            .map(|i| post(&base, channel, a.me, &format!("m{i}")))
+            .collect();
+        let profiles: Vec<UserProfile> = (0..=PAGE_SIZE)
+            .map(|i| keyed_profile(&format!("p{i}")))
+            .collect();
+        let push = |messages: Vec<Message>| CatchupFrame::Push {
+            messages,
+            tombstones: vec![],
+        };
+        // A full page is taken.
+        let full = vec![
+            push(messages[..PAGE_SIZE].to_vec()),
+            CatchupFrame::Profiles(profiles[..PAGE_SIZE].to_vec()),
+            CatchupFrame::Done,
+        ];
+        assert_eq!(receive(&b, full).await.unwrap().applied.len(), PAGE_SIZE);
+        for frames in [
+            vec![push(messages.clone()), CatchupFrame::Done],
+            vec![CatchupFrame::Profiles(profiles), CatchupFrame::Done],
+        ] {
+            let c = MemStore::new(fresh.clone(), b.me);
+            let got = receive(&c, frames).await;
+            assert!(matches!(got.unwrap_err(), CatchupError::PageTooLarge));
+            assert!(c.with(|s| messages.iter().all(|m| !s.has_message(m.id))));
+        }
+
+        // Each bucket counts one more than its items.
+        let key = BucketKey::Messages {
+            channel,
+            day: day_number(Utc::now()),
+        };
+        let listing = |n: usize| {
+            vec![(
+                key,
+                (0..n).map(|_| (MessageId::new(), 0)).collect::<Vec<_>>(),
+            )]
+        };
+        for (n, ok) in [(PAGE_SIZE - 1, true), (PAGE_SIZE, false)] {
+            let (mut x, mut y) = tokio::io::duplex(64 * 1024);
+            let feed = async {
+                write_frame(&mut x, &CatchupFrame::Items(listing(n)))
+                    .await
+                    .unwrap();
+                let _ = send(&mut x, &CatchupFrame::ItemsEnd { omitted: vec![] }).await;
+            };
+            let ((), got) = tokio::join!(feed, read_items(&mut y));
+            match got {
+                Ok((list, _)) => assert!(ok && list[0].1.len() == n),
+                Err(e) => assert!(!ok && matches!(e, CatchupError::PageTooLarge)),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_delete_by_someone_who_left_or_was_banned_converges() {
+        for how in ["leave", "ban"] {
+            for a_dials in [true, false] {
+                let (mut state, channel, owner) = fixture();
+                let server = state.server.id;
+                let author = join(&mut state, "author");
+                let signer = join(&mut state, "signer");
+                let friend = join(&mut state, "friend");
+                let holder = MemStore::new(state.clone(), owner);
+                let lacking = MemStore::new(state, friend);
+                let spam = holder.post_as(author, channel, "spam");
+                let unseen = holder.with(|s| post(s, channel, author, "never sent"));
+                let (removal, early) = holder.with(|s| {
+                    let removal = proof_at(s, &spam, signer, Utc::now());
+                    (removal, proof_at(s, &unseen, signer, Utc::now()))
+                });
+                holder.with(|s| {
+                    s.apply(removal.into_event()).unwrap();
+                    s.apply(early.clone().into_event()).unwrap();
+                });
+                // The replica lacking the message took the other delete
+                // before the signer went.
+                lacking.with(|s| s.apply(early.into_event()).unwrap());
+                let out = match how {
+                    "ban" => ServerEvent::MemberBan {
+                        server,
+                        user: signer,
+                    },
+                    _ => ServerEvent::MemberLeave {
+                        server,
+                        user: signer,
+                    },
+                };
+                for store in [&holder, &lacking] {
+                    store.with(|s| s.apply(out.clone()).unwrap());
+                }
+                let case = format!("{how}, a dials {a_dials}");
+                for _ in 0..2 {
+                    either_way(&holder, &lacking, a_dials).await;
+                }
+                assert_eq!(holder.digests(), lacking.digests(), "{case}");
+                // A late copy stays out where the message never was.
+                lacking.add(&spam);
+                assert!(!lacking.has(spam.id), "{case}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_moderators_purge_past_the_cap_converges() {
+        use commy_core::store::MAX_UNAPPLIED_PROOFS;
+        let purged = MAX_UNAPPLIED_PROOFS + 50;
+        for a_dials in [true, false] {
+            let (mut state, channel, owner) = fixture();
+            let author = join(&mut state, "author");
+            let moderator = join_moderator(&mut state, "moderator");
+            let friend = join(&mut state, "friend");
+            let holder = MemStore::new(state.clone(), owner);
+            let lacking = MemStore::new(state, friend);
+            let base = Utc::now() - chrono::Duration::hours(1);
+            holder.with(|s| {
+                for i in 0..purged {
+                    let m = post_at(s, channel, author, "spam", base);
+                    s.apply(ServerEvent::MessageCreate { message: m.clone() })
+                        .unwrap();
+                    let at = base + chrono::Duration::milliseconds(i as i64);
+                    assert_eq!(s.apply(proof_at(s, &m, moderator, at).into_event()), Ok(true));
+                }
+            });
+            let case = format!("a dials {a_dials}");
+            for _ in 0..2 {
+                either_way(&holder, &lacking, a_dials).await;
+            }
+            assert_eq!(holder.digests(), lacking.digests(), "{case}");
+            // Each lists the earliest; the rest keep their messages out
+            // where they were applied.
+            let listed = |store: &MemStore| {
+                store.with(|s| s.tombstones_since(DateTime::<Utc>::MIN_UTC).count())
+            };
+            assert_eq!(listed(&holder), MAX_UNAPPLIED_PROOFS, "{case}");
+            assert_eq!(listed(&lacking), MAX_UNAPPLIED_PROOFS, "{case}");
+            let stored = holder.with(|s| s.snapshot().tombstone_proofs.len());
+            assert_eq!(stored, purged, "{case}");
+        }
     }
 
     #[tokio::test]
@@ -3575,15 +3767,16 @@ mod tests {
     #[tokio::test]
     async fn large_listings_span_pages_and_arrive_whole() {
         let channel = ChannelId::new();
-        let per_page = (FRAME_BUDGET - KEY_BOUND) / ITEM_BOUND;
         let list = vec![
             bucket(channel, 1, 2),
-            bucket(channel, 2, per_page + 10),
+            bucket(channel, 2, PAGE_SIZE + 10),
             bucket(channel, 3, 0),
         ];
         let out = item_pages(list.clone());
         assert_eq!(out.len(), 2);
         assert_eq!(out[1][0].0, list[1].0, "the large bucket goes on");
+        assert!(out.iter().all(|page| listed_len(page) <= PAGE_SIZE));
+        assert_eq!(out[0].iter().map(|(_, l)| l.len()).sum::<usize>(), PAGE_SIZE - 2);
         let (mut x, mut y) = tokio::io::duplex(64 * 1024);
         let writer = async {
             for page in out {
@@ -3687,7 +3880,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_items_rejects_deletes_of_unseen_messages_by_non_members() {
+    fn apply_items_takes_deletes_of_unseen_messages_from_any_pinned_key() {
         let (mut state, channel, _) = fixture();
         let server = state.server.id;
         let author = join(&mut state, "author");
@@ -3709,8 +3902,8 @@ mod tests {
             proof_at(&state, &other, former, now),
         ];
         let (report, held) = apply_items(&mut state, vec![], proofs);
-        assert_eq!(report.rejected, vec![other.id]);
-        assert_eq!(report.applied, vec![theirs.id]);
+        assert!(report.rejected.is_empty());
+        assert_eq!(report.applied, vec![theirs.id, other.id]);
         assert!(held.is_empty());
     }
 

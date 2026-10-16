@@ -141,11 +141,14 @@ fn encoded<T: Serialize>(item: &T) -> usize {
 /// 1. profiles, but the owner's and those of the carried messages'
 ///    authors; role holders' go last;
 /// 2. structure members announce anyway: images, game tags, rule
-///    acceptances, voice moderation, deleted channels, bans;
+///    acceptances, voice moderation;
 /// 3. messages, the oldest first, each author's profile with their last
 ///    message;
 /// 4. members, the latest to join first and role holders last, then the
 ///    owner's profile.
+///
+/// Bans and deleted channels always stay: they are small, and keep the
+/// banned out and deleted channels from coming back.
 ///
 /// Members left out are learned from their own join, which each member
 /// announces to new neighbors and with its answer to a sync request; what
@@ -202,13 +205,11 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePaylo
     }
     // 2. Structure announced anyway.
     type Step = fn(&mut commy_core::Server);
-    let steps: [Step; 6] = [
+    let steps: [Step; 4] = [
         |s| (s.icon, s.banner) = (None, None),
         |s| (s.game_tags, s.game_tag_meta) = (Vec::new(), Vec::new()),
         |s| s.rules_accepted.clear(),
         |s| (s.server_muted, s.server_deafened) = (Vec::new(), Vec::new()),
-        |s| s.deleted_channels.clear(),
-        |s| s.banned.clear(),
     ];
     for step in steps {
         if fits(size) {
@@ -564,7 +565,7 @@ mod tests {
         let authors: std::collections::HashSet<UserId> = recent.iter().map(|m| m.author).collect();
         assert!(profiles.iter().all(|p| p.id == state.server.owner || authors.contains(&p.id)));
         assert!(server.icon.is_none() && server.banner.is_none() && server.game_tags.is_empty());
-        assert!(server.banned.is_empty(), "bans are announced again");
+        assert_eq!(server.banned, state.server.banned, "bans always stay");
         assert!(!recent.is_empty() && recent.len() < 40, "messages last, the newest kept");
         let newest = state.server.channels.iter().flat_map(|c| state.messages(c.id)).max_by_key(|m| m.created_at).unwrap();
         assert_eq!(recent.last().map(|m| m.id), Some(newest.id));
@@ -580,6 +581,26 @@ mod tests {
         assert_eq!((members.len(), profiles.len(), recent.len()), (2, 2, 1));
         assert_eq!((server.icon.as_deref(), server.banned.len()), (Some("icon"), 1));
         assert_eq!(profiles[0].id, owner);
+    }
+
+    #[test]
+    fn a_snapshot_never_trims_bans_or_deleted_channels() {
+        let mut state = realistic(200);
+        let sid = state.server.id;
+        for _ in 0..4 {
+            let channel = commy_core::Channel::new("gone", commy_core::ChannelKind::Text, 50);
+            let id = channel.id;
+            state.apply(ServerEvent::ChannelCreate { server: sid, channel }).unwrap();
+            state.apply(ServerEvent::ChannelDelete { server: sid, channel: id }).unwrap();
+        }
+        let payload = build_sync_response(&state, 50);
+        assert!(gossip_size(&payload) <= MAX_GOSSIP_BYTES);
+        let (server, members, _, recent) = parts(payload);
+        // Messages and members went first.
+        assert!(recent.is_empty() && members.len() < state.server.members.len());
+        assert_eq!(server.banned, state.server.banned);
+        assert_eq!(server.deleted_channels, state.server.deleted_channels);
+        assert_eq!(server.deleted_channels.len(), 4);
     }
 
     #[test]
