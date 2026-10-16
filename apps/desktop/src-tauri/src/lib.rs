@@ -1907,6 +1907,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             if channel.banner.is_some() {
                 events.push(ServerEvent::ChannelBanner { server: sid, channel: channel.id, banner: channel.banner.clone() });
             }
+            if channel.color.is_some() {
+                events.push(ServerEvent::ChannelColor { server: sid, channel: channel.id, color: channel.color.clone() });
+            }
         }
     }
     if perms.allows(Permissions::MUTE_MEMBERS) {
@@ -3059,6 +3062,32 @@ async fn set_channel_banner(
         }
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelBanner { server: sid, channel: cid, banner }).await
+}
+
+/// Sets or clears the colour band drawn behind a channel's name in the
+/// channel list. `color` is RGB hex without the hash.
+#[tauri::command]
+async fn set_channel_color(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    color: Option<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
+        state.server.channel(cid).ok_or("unknown channel")?;
+    }
+    let color = color.map(|c| c.trim().trim_start_matches('#').to_ascii_lowercase());
+    if color.as_deref().is_some_and(|c| c.len() != 6 || !c.chars().all(|ch| ch.is_ascii_hexdigit())) {
+        return Err("channel colour must be six hex digits".into());
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelColor { server: sid, channel: cid, color }).await
 }
 
 // ---------- Voice connection details ----------
@@ -5093,6 +5122,7 @@ pub fn run() {
             set_share_activity,
             update_channel,
             set_channel_banner,
+            set_channel_color,
             edit_message,
             delete_message,
             list_audio_devices,

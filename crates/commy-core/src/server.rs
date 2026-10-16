@@ -31,6 +31,10 @@ pub struct Channel {
     /// Optional banner image ref shown at the top of the channel.
     #[serde(default)]
     pub banner: Option<String>,
+    /// Optional colour (RGB hex without hash) drawn as a gradient band
+    /// behind the name in the channel list, like role banners.
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 impl Channel {
@@ -45,6 +49,7 @@ impl Channel {
             retention_days: None,
             user_limit: 0,
             banner: None,
+            color: None,
         }
     }
 }

@@ -45,6 +45,8 @@ pub struct ChannelView {
     pub user_limit: u32,
     /// Banner image ref, if the channel has one.
     pub banner: Option<String>,
+    /// Name-band colour (RGB hex), if set.
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -199,6 +201,7 @@ impl ServerView {
                 position: c.position,
                 user_limit: c.user_limit,
                 banner: c.banner.clone(),
+                color: c.color.clone(),
                 voice_user_ids: state
                     .voice_members(c.id)
                     .iter()

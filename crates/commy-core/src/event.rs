@@ -185,6 +185,12 @@ pub enum ServerEvent {
         channel: ChannelId,
         banner: Option<String>,
     },
+    /// A channel's name-band colour changed; None clears it.
+    ChannelColor {
+        server: ServerId,
+        channel: ChannelId,
+        color: Option<String>,
+    },
 }
 
 #[cfg(test)]
