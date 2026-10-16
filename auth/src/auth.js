@@ -3,6 +3,7 @@ import { bearer, captcha, deviceAuthorization, magicLink } from "better-auth/plu
 import pg from "pg";
 import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
+import { commyDoorbell } from "./doorbell.js";
 import { commyInvites } from "./invites.js";
 import { commyMedia } from "./media.js";
 import { commyVault } from "./vault.js";
@@ -33,6 +34,9 @@ export function buildAuthOptions(config, { pool, send, fetch }) {
     commyMedia({ secret: config.secret, klipyKey: config.klipyKey, igdb: config.igdb, fetch }),
     commyVault(),
   ];
+
+  // Content-free wake-ups for messages sent while their recipient was offline
+  if (config.doorbell) plugins.push(commyDoorbell());
 
   if (config.turnstile) {
     plugins.push(
@@ -143,6 +147,8 @@ export function buildAuthOptions(config, { pool, send, fetch }) {
         "/commy/invites/resolve": { window: 60, max: 60 },
         "/commy/gifs/search": { window: 60, max: 60 },
         "/commy/games/search": { window: 60, max: 60 },
+        "/commy/doorbell/ring": { window: 60, max: 300 },
+        "/commy/doorbell/take": { window: 60, max: 120 },
       },
     },
     telemetry: { enabled: false },

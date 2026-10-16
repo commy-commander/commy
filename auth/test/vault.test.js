@@ -12,7 +12,7 @@ const SEALED = (n) => "sealed1." + `Ab-_${n}`.padEnd(60, "x");
 
 function makeAuth() {
   const options = buildAuthOptions(loadConfig(ENV), { pool: null, send: async () => {} });
-  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], vaultItem: [] };
+  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], vaultItem: [], doorbellRing: [] };
   options.database = memoryAdapter(db);
   options.rateLimit = { enabled: false };
   const auth = betterAuth(options);

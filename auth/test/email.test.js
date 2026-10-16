@@ -32,6 +32,7 @@ beforeEach(() => {
     linkedDevice: [],
     deviceRequest: [],
     invite: [],
+    doorbellRing: [],
   });
   options.rateLimit = { enabled: false };
   auth = betterAuth(options);

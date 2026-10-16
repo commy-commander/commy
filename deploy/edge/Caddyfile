@@ -26,6 +26,11 @@
 	@invites path /i/* /api/auth/commy/invites/*
 	log_skip @invites
 
+	# Doorbell tokens next to addresses could link the apps that ring a token
+	# to the app that takes it, so doorbell calls are never logged either
+	@doorbell path /api/auth/commy/doorbell/*
+	log_skip @doorbell
+
 	encode zstd gzip
 
 	header {

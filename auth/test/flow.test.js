@@ -25,7 +25,7 @@ before(() => {
     BETTER_AUTH_URL: ORIGIN,
   });
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
-  db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [] };
+  db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], doorbellRing: [] };
   options.database = memoryAdapter(db);
   options.rateLimit = { enabled: false };
   auth = betterAuth(options);

@@ -51,7 +51,7 @@ const GIF_BYTES = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
 function makeAuth(extraEnv = {}) {
   const log = [];
   const options = buildAuthOptions(loadConfig({ ...ENV, ...extraEnv }), { pool: null, send: async () => {}, fetch: fakeFetch(log) });
-  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [] };
+  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], doorbellRing: [] };
   options.database = memoryAdapter(db);
   options.rateLimit = { enabled: false };
   const auth = betterAuth(options);
@@ -115,9 +115,9 @@ test("customer ids are stable and do not reveal the account id", () => {
 
 test("discovery advertises only the searches with keys", () => {
   const none = discoveryDocument(loadConfig(ENV));
-  assert.deepEqual(none.features, { gifs: false, games: false, media: true, vault: true });
+  assert.deepEqual(none.features, { gifs: false, games: false, media: true, vault: true, doorbell: true });
   const both = discoveryDocument(loadConfig({ ...ENV, KLIPY_API_KEY: KLIPY_KEY, TWITCH_CLIENT_ID: "id", TWITCH_CLIENT_SECRET: "s" }));
-  assert.deepEqual(both.features, { gifs: true, games: true, media: true, vault: true });
+  assert.deepEqual(both.features, { gifs: true, games: true, media: true, vault: true, doorbell: true });
   assert.equal(both.endpoints.gifSearch, `${ORIGIN}/api/auth/commy/gifs/search`);
   assert.equal(both.endpoints.gameSearch, `${ORIGIN}/api/auth/commy/games/search`);
   assert.ok(!JSON.stringify(both).includes(KLIPY_KEY), "the key never appears in discovery");

@@ -129,7 +129,7 @@ under `features`, and the app hides a search your server does not offer
    example to offer game search without Twitch sign-in.
 4. Run `docker compose up -d`, then check the start of the auth log with
    `docker compose logs auth | head`. It prints one line such as
-   `[auth] google=off twitch=on email=on turnstile=on gifs=on games=on (twitch app) signup=on`
+   `[auth] google=off twitch=on email=on turnstile=on gifs=on games=on (twitch app) doorbell=on signup=on`
    and a warning naming any half-filled pair, such as a client id without its
    secret. `https://<DOMAIN>/.well-known/commy-auth.json` should show
    `"features":{"gifs":true,"games":true}`.
@@ -186,6 +186,46 @@ accepts new ones.
   and the network addresses of the member who created it. Only people with the
   link can read it.
 
+## Message doorbell
+
+Commy messages travel only between members' devices, so a message sent while
+its recipient is offline waits on the sender's device until both are online
+at the same time. The doorbell closes that gap without carrying any message:
+the sender's app rings the recipient's doorbell on the recipient's account
+server, and the recipient's app hears it, comes online and fetches the
+messages from its peers directly.
+
+Each app picks a random key for every Commy server it is in and shares it only
+with that server's members, peer to peer. From the key both sides derive a
+token that changes every day and a blinded id for each message, so the account
+server only ever sees random values:
+
+- `POST /api/auth/commy/doorbell/ring` with `{ token, ids }` stores up to 50
+  blinded ids for one token. An empty list is a hello: it wakes an app that is
+  listening right now and is never stored.
+- `POST /api/auth/commy/doorbell/take` with `{ token, wait }` returns and
+  deletes the ids stored for one token, waiting up to 25 seconds for a ring.
+  Apps keep one take open per Commy server.
+
+Neither needs a session, and every request carries exactly one token, so no
+request ties two tokens together.
+
+- **What it stores:** random tokens and blinded ids with the time they
+  arrived, at most 1000 per token. A take deletes what it returns, and an
+  hourly sweep deletes anything older than 14 days.
+- **What it never sees:** Commy server ids, accounts or sessions, message
+  content, who sent or receives a message, or who is in which server. It
+  stores no IP address or user agent; addresses are used in memory for rate
+  limits only (300 rings and 120 takes per minute per IP), and the edge proxy
+  never logs doorbell calls.
+- **Turning it off:** set `DOORBELL=false` in `.env` and run
+  `docker compose up -d`. The startup log then shows `doorbell=off`, the
+  discovery document shows `"doorbell":false` under `features`, the endpoints
+  answer 404, and messages for apps signed in to this server arrive only when
+  sender and recipient are online together. Rows already stored stay until you
+  delete them:
+  `docker compose exec postgres psql -U commy commy_auth -c 'delete from "doorbellRing"'`
+
 ## iroh relay
 
 The stack runs its own [iroh](https://iroh.computer) relay at
@@ -227,6 +267,8 @@ never reach this stack. The auth database holds:
 - each account's sealed server list (`vaultItem`): bytes sealed with a key
   only that account's devices hold, plus a version and the last change time.
   The operator can see its size, not which servers are in it
+- the message doorbell: random tokens and blinded message ids with the time
+  they arrived, deleted when an app takes them or after 14 days
 - the relay: IP addresses and node ids of connected apps while they are
   connected, and monthly byte totals; relayed traffic is encrypted end to end
 - short-lived rows for verification, device sign-in codes, and a keyed hash
@@ -234,14 +276,15 @@ never reach this stack. The auth database holds:
 
 IP addresses are used in memory for rate limiting only. The single server
 Caddyfile writes no access logs. The shared edge proxy (`edge/`) writes JSON
-access logs to `/var/log/commy-caddy`, except for invite pages and invite
-lookups, which are never logged. The auth server logs no emails, links or
-tokens.
+access logs to `/var/log/commy-caddy`, except for invite pages, invite
+lookups and doorbell calls, which are never logged. The auth server logs no
+emails, links or tokens.
 
 ## Abuse controls
 
 - Rate limits per IP: sign-up 5 per 10 minutes, sign-in 10 per minute, magic
-  links and password resets 5 per 10 minutes, device codes 10 per minute.
+  links and password resets 5 per 10 minutes, device codes 10 per minute,
+  doorbell rings 300 and takes 120 per minute.
 - Optional Turnstile bot check and `ALLOW_SIGNUP=false` (see above).
 - Device codes expire after 10 minutes and must be approved by a signed-in user.
 - Behind another proxy or CDN (for example Cloudflare), rate limits only see
