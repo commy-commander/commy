@@ -499,6 +499,15 @@ fn adopt_identity(handle: &AppHandle, app: &App, dir: &Path, shared: &EntryList)
     let adopted = UserProfile { node, ..profile };
     *app.profile.lock().unwrap() = Some(adopted.clone());
     app.persist_profile();
+    // Sign with the adopted key from now on.
+    let adopted = match app.reload_identity() {
+        Ok(Some(profile)) => profile,
+        Ok(None) => adopted,
+        Err(e) => {
+            tracing::warn!("could not load the adopted identity: {e}");
+            adopted
+        }
+    };
     let _ = handle.emit("profile-changed", &adopted);
 }
 

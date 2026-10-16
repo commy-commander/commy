@@ -1,7 +1,8 @@
 //! Serializable view models sent to the webview. Kept separate from
 //! core types so the UI contract can evolve without touching the model.
 
-use commy_core::{ChannelKind, DmMessage, DmStore, Message, Permissions, ServerState, UserId};
+use commy_core::{ChannelId, ChannelKind, DmMessage, DmStore, Message, MessageId, Permissions, ServerState, UserId};
+use std::collections::HashSet;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -264,7 +265,7 @@ impl ServerView {
                 banner: r.banner.clone(),
             })
             .collect();
-        roles.sort_by(|a, b| b.position.cmp(&a.position));
+        roles.sort_by_key(|r| std::cmp::Reverse(r.position));
 
         let screen_shares = state
             .screen_shares
@@ -421,9 +422,11 @@ pub struct DmMessageView {
     pub content: String,
     pub created_at: String,
     pub outgoing: bool,
+    /// Ours and not delivered yet; it goes out when they come online.
+    pub pending: bool,
 }
 
-pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore) -> DmMessageView {
+pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore, pending: bool) -> DmMessageView {
     let from_name = if msg.from == me {
         "You".to_string()
     } else {
@@ -439,6 +442,7 @@ pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore) -> DmMessageV
         content: msg.content.clone(),
         created_at: msg.created_at.to_rfc3339(),
         outgoing: msg.from == me,
+        pending,
     }
 }
 
@@ -484,6 +488,8 @@ pub struct MessageView {
     pub reply_preview: Option<ReplyPreview>,
     pub reactions: Vec<ReactionView>,
     pub attachments: Vec<AttachmentView>,
+    /// Ours and no member has received it yet.
+    pub pending: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -554,8 +560,23 @@ impl MessageView {
                     provider: a.provider.clone(),
                 })
                 .collect(),
+            pending: false,
         }
     }
+
+    pub fn with_pending(mut self, pending: bool) -> Self {
+        self.pending = pending;
+        self
+    }
+}
+
+/// The latest messages of a channel, marking those still pending.
+pub fn message_views(state: &ServerState, channel: ChannelId, limit: usize, pending: &HashSet<MessageId>) -> Vec<MessageView> {
+    state
+        .page(channel, None, limit)
+        .iter()
+        .map(|m| MessageView::build(m, state).with_pending(pending.contains(&m.id)))
+        .collect()
 }
 
 pub fn display_name(state: &ServerState, user: commy_core::UserId) -> String {
@@ -576,4 +597,46 @@ pub fn member_tag(state: &ServerState, user: UserId) -> Option<(String, Option<S
         .filter(|r| member.roles.contains(&r.id) && r.tag.is_some())
         .max_by_key(|r| r.position)
         .map(|r| (r.tag.clone().unwrap_or_default(), r.color.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use commy_core::{Identity, Server, ServerEvent, UserProfile};
+
+    #[test]
+    fn pending_messages_are_marked_in_views() {
+        let identity = Identity::generate();
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(identity.public());
+        let server = Server::new("s", owner.id);
+        let channel = server.channels[0].id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let mut ids = Vec::new();
+        for text in ["sent", "waiting"] {
+            let mut message = Message::new(channel, owner.id, text);
+            message.sign(state.server.id, &identity);
+            ids.push(message.id);
+            state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        }
+        let pending = HashSet::from([ids[1]]);
+        let views = message_views(&state, channel, 100, &pending);
+        let flags: Vec<(&str, bool)> = views.iter().map(|v| (v.content.as_str(), v.pending)).collect();
+        assert_eq!(flags, vec![("sent", false), ("waiting", true)]);
+        assert!(!MessageView::build(state.message(ids[1]).unwrap(), &state).pending);
+        let json = serde_json::to_value(&views[1]).unwrap();
+        assert_eq!(json["pending"], true);
+    }
+
+    #[test]
+    fn pending_dms_are_marked_in_views() {
+        let (me, them) = (UserId::new(), UserId::new());
+        let dms = DmStore::new();
+        let message = DmMessage::new(me, them, "later");
+        let waiting = dm_message_view(&message, me, &dms, true);
+        assert!(waiting.pending && waiting.outgoing);
+        assert_eq!(serde_json::to_value(&waiting).unwrap()["pending"], true);
+        assert!(!dm_message_view(&message, me, &dms, false).pending);
+    }
 }

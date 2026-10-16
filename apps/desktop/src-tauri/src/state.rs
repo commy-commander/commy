@@ -1,6 +1,6 @@
 use crate::media_engine::{CameraSession, MicTest, ScreenShareSession, ScreenWatch, VoiceSession};
 use commy_audio::VoiceProcessor;
-use commy_core::{DmStore, ServerId, ServerState, UserId, UserProfile};
+use commy_core::{DmStore, Identity, ServerId, ServerState, UserId, UserProfile};
 use commy_net::CommyNode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -58,6 +58,18 @@ pub struct VoiceSettings {
 
 fn default_true() -> bool {
     true
+}
+
+/// Puts our current key on our own entry of a server. Returns true when
+/// it changed.
+fn set_own_key(state: &mut ServerState, me: UserId, key: commy_core::IdentityKey) -> bool {
+    match state.profiles.get_mut(&me) {
+        Some(profile) if profile.identity != Some(key) => {
+            profile.identity = Some(key);
+            true
+        }
+        _ => false,
+    }
 }
 
 impl Default for VoiceSettings {
@@ -127,6 +139,15 @@ pub struct App {
     pub igdb_creds: Mutex<crate::igdb::IgdbCredentials>,
     pub igdb: tokio::sync::Mutex<crate::igdb::IgdbClient>,
     pub http: reqwest::Client,
+    /// Our identity key; read it with [`App::identity`].
+    pub identity: Mutex<Option<Identity>>,
+    /// Sends waiting for someone to come online.
+    pub outbox: Mutex<crate::outbox::Outbox>,
+    pub dm_backoff: Mutex<crate::outbox::DmBackoff>,
+    /// Wakes the DM outbox task early, e.g. when a partner comes online.
+    pub dm_wake: tokio::sync::Notify,
+    /// Catch-up sessions, and events held for an unknown author key.
+    pub catchup: Mutex<crate::catchup::Catchup>,
 }
 
 impl Default for App {
@@ -168,6 +189,11 @@ impl Default for App {
                 .user_agent("Commy")
                 .build()
                 .unwrap_or_default(),
+            identity: Mutex::new(None),
+            outbox: Mutex::new(crate::outbox::Outbox::default()),
+            dm_backoff: Mutex::new(crate::outbox::DmBackoff::default()),
+            dm_wake: tokio::sync::Notify::new(),
+            catchup: Mutex::new(crate::catchup::Catchup::default()),
         }
     }
 }
@@ -175,6 +201,47 @@ impl Default for App {
 impl App {
     pub fn data_dir(&self) -> Option<&PathBuf> {
         self.data_dir.get()
+    }
+
+    /// The identity key we sign with, once loaded.
+    pub fn identity(&self) -> Option<Identity> {
+        self.identity.lock().unwrap().clone()
+    }
+
+    /// Re-reads `identity.key` (another module may have replaced it),
+    /// swaps the key in and puts it on our profile, here and in our own
+    /// entry of every server. Returns the updated profile, or None before
+    /// a username exists. Peers learn the key when the profile is announced.
+    pub fn reload_identity(&self) -> std::io::Result<Option<UserProfile>> {
+        let identity = match self.data_dir() {
+            Some(dir) => commy_core::identity::load_or_create(dir)?,
+            None => self.identity().unwrap_or_else(Identity::generate),
+        };
+        let key = identity.public();
+        *self.identity.lock().unwrap() = Some(identity);
+        let (profile, changed) = {
+            let mut guard = self.profile.lock().unwrap();
+            let Some(profile) = guard.as_mut() else { return Ok(None) };
+            let changed = profile.identity != Some(key);
+            profile.identity = Some(key);
+            (profile.clone(), changed)
+        };
+        if changed {
+            self.persist_profile();
+        }
+        // Locally we are the authority on our own key, so this bypasses
+        // the pinning that guards other members' entries.
+        let updated: Vec<ServerId> = {
+            let mut servers = self.servers.lock().unwrap();
+            servers
+                .values_mut()
+                .filter_map(|state| set_own_key(state, profile.id, key).then_some(state.server.id))
+                .collect()
+        };
+        for id in updated {
+            self.persist_server(id);
+        }
+        Ok(Some(profile))
     }
 
     /// Persists one server if a data dir is configured.
@@ -213,11 +280,87 @@ impl App {
         }
     }
 
+    pub fn persist_outbox(&self) {
+        let Some(dir) = self.data_dir() else { return };
+        let outbox = self.outbox.lock().unwrap().clone();
+        if let Err(e) = outbox.save(dir) {
+            tracing::warn!("failed to persist outbox: {e}");
+        }
+    }
+
     pub fn persist_dms(&self) {
         let Some(dir) = self.data_dir() else { return };
         let dms = self.dms.lock().unwrap().clone();
         if let Err(e) = crate::persist::save_dms(dir, &dms) {
             tracing::warn!("failed to persist dms: {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let nanos = std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos();
+        let dir = std::env::temp_dir().join("commy-state-tests").join(format!("{tag}-{nanos:x}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn reload_identity_puts_the_key_everywhere_we_sign() {
+        let dir = temp_dir("identity");
+        let app = App::default();
+        app.data_dir.set(dir.clone()).unwrap();
+        // Before a username exists only the key is loaded.
+        assert_eq!(app.reload_identity().unwrap(), None);
+        let first = app.identity().unwrap().public();
+
+        let profile = UserProfile::new("me");
+        let me = profile.id;
+        *app.profile.lock().unwrap() = Some(profile.clone());
+        let server = commy_core::Server::new("ours", me);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        // A stale key on our own entry is replaced, not refused.
+        let mut stale = profile.clone();
+        stale.identity = Some(Identity::generate().public());
+        state.profiles.insert(me, stale);
+        app.servers.lock().unwrap().insert(sid, state);
+
+        let reloaded = app.reload_identity().unwrap().unwrap();
+        assert_eq!(reloaded.identity, Some(first), "the file is stable across loads");
+        assert_eq!(app.servers.lock().unwrap()[&sid].identity_of(me), Some(first));
+        assert_eq!(crate::persist::load_profile(&dir).unwrap().identity, Some(first));
+
+        // Another module rewrites the file: the next reload swaps the key.
+        let adopted = Identity::generate();
+        std::fs::write(
+            dir.join(commy_core::identity::IDENTITY_FILE),
+            data_encoding::HEXLOWER.encode(&adopted.to_bytes()),
+        )
+        .unwrap();
+        let swapped = app.reload_identity().unwrap().unwrap().identity;
+        assert_eq!(swapped, Some(adopted.public()));
+        assert_eq!(app.identity().unwrap().public(), adopted.public());
+        assert_eq!(app.servers.lock().unwrap()[&sid].identity_of(me), Some(adopted.public()));
+        assert_eq!(crate::persist::load_profile(&dir).unwrap().identity, Some(adopted.public()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn own_key_changes_only_our_entry() {
+        let me = UserProfile::new("me");
+        let other = UserProfile::new("other");
+        let mut state = ServerState::new(commy_core::Server::new("s", me.id));
+        state.profiles.insert(me.id, me.clone());
+        state.profiles.insert(other.id, other.clone());
+        let key = Identity::generate().public();
+        assert!(set_own_key(&mut state, me.id, key));
+        assert!(!set_own_key(&mut state, me.id, key), "no change the second time");
+        assert_eq!(state.identity_of(me.id), Some(key));
+        assert_eq!(state.identity_of(other.id), None);
+        assert!(!set_own_key(&mut state, UserId::new(), key), "not a member here");
     }
 }

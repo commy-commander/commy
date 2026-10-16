@@ -1,3 +1,4 @@
+use crate::identity::IdentityKey;
 use crate::ids::UserId;
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +47,10 @@ pub struct UserProfile {
     /// Short "About Me" shown on profiles.
     #[serde(default)]
     pub about: Option<String>,
+    /// Public identity key that signs this user's messages. Peers pin
+    /// the first one they see.
+    #[serde(default)]
+    pub identity: Option<IdentityKey>,
 }
 
 /// Longest About Me, in characters.
@@ -102,6 +107,7 @@ impl UserProfile {
             activity: None,
             activity_cover: None,
             about: None,
+            identity: None,
         }
     }
 
@@ -171,5 +177,21 @@ mod tests {
         json.as_object_mut().unwrap().remove("status_emoji");
         let profile: UserProfile = serde_json::from_value(json).unwrap();
         assert_eq!(profile.status_emoji, None);
+    }
+
+    #[test]
+    fn identity_key_is_optional_and_stored_as_hex() {
+        let mut json: serde_json::Value = serde_json::to_value(UserProfile::new("x")).unwrap();
+        json.as_object_mut().unwrap().remove("identity");
+        let mut profile: UserProfile = serde_json::from_value(json).unwrap();
+        assert_eq!(profile.identity, None);
+        let key = crate::identity::Identity::generate().public();
+        profile.identity = Some(key);
+        let json = serde_json::to_value(&profile).unwrap();
+        assert_eq!(json["identity"], serde_json::Value::String(key.to_hex()));
+        let back: UserProfile = serde_json::from_value(json).unwrap();
+        assert_eq!(back.identity, Some(key));
+        let bytes = postcard::to_stdvec(&profile).unwrap();
+        assert_eq!(postcard::from_bytes::<UserProfile>(&bytes).unwrap(), profile);
     }
 }

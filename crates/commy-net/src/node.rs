@@ -1,3 +1,6 @@
+use crate::catchup::{
+    run_initiator, run_responder, CatchupStore, Refusal, SessionReport, CATCHUP_ALPN,
+};
 use crate::dm::{DmAck, DmEnvelope, DM_ALPN};
 use crate::media::{read_frame, write_frame, MediaHello, MediaPacket, MEDIA_ALPN};
 use crate::protocol::{Envelope, WirePayload};
@@ -11,9 +14,11 @@ use iroh::net::{NodeAddr, NodeId};
 use iroh::router::ProtocolHandler;
 use iroh_gossip::net::{Command as GossipCommand, Event as GossipNetEvent, GossipEvent};
 use iroh_gossip::proto::TopicId;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// Events surfaced to the application layer from the gossip plane.
@@ -38,8 +43,15 @@ pub enum NetEvent {
         payload: WirePayload,
     },
     /// A new gossip neighbor connected on a server topic. Peers use
-    /// this to re-announce themselves and request missed state.
-    NeighborUp { server: ServerId },
+    /// this to re-announce themselves, request missed state and catch
+    /// up with `peer`.
+    NeighborUp { server: ServerId, peer: [u8; 32] },
+    /// A peer finished a catch-up session it started with us.
+    CaughtUp {
+        server: ServerId,
+        peer: [u8; 32],
+        report: SessionReport,
+    },
 }
 
 /// A peer QUIC connection, re-exported for link statistics.
@@ -235,12 +247,105 @@ impl ProtocolHandler for DmAcceptor {
     }
 }
 
+/// The app's catch-up store, shared with the acceptor.
+pub type SharedCatchupStore = Arc<dyn CatchupStore + Send + Sync>;
+
+/// Holds the store once the app provides it after spawn.
+type StoreSlot = Arc<RwLock<Option<SharedCatchupStore>>>;
+
+/// Catch-up sessions served at once; further peers are asked to retry.
+const MAX_CATCHUP_SESSIONS: usize = 4;
+
+/// Longest a whole catch-up session may run.
+const CATCHUP_SESSION_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How long a responder waits for the initiator to hang up after its
+/// last frame, so that frame is not cut off.
+const CATCHUP_LINGER: Duration = Duration::from_secs(10);
+
+/// Accepts inbound catch-up sessions and reports each one that completes.
+struct CatchupAcceptor {
+    store: StoreSlot,
+    events: mpsc::UnboundedSender<NetEvent>,
+    local: [u8; 32],
+    sessions: Arc<tokio::sync::Semaphore>,
+}
+
+impl std::fmt::Debug for CatchupAcceptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CatchupAcceptor").finish_non_exhaustive()
+    }
+}
+
+// iroh 0.28 marks its whole networking layer deprecated in favour of a
+// renamed crate; this is the same API the other acceptors use.
+#[allow(deprecated)]
+impl ProtocolHandler for CatchupAcceptor {
+    fn accept(
+        self: Arc<Self>,
+        connecting: Connecting,
+    ) -> futures_lite::future::Boxed<Result<()>> {
+        Box::pin(async move {
+            let connection = connecting.await?;
+            let peer = *iroh::net::endpoint::get_remote_node_id(&connection)?.as_bytes();
+            let (send, recv) = connection.accept_bi().await?;
+            let mut io = tokio::io::join(recv, send);
+            let store = self.store.read().unwrap_or_else(|e| e.into_inner()).clone();
+            let permit = self.sessions.clone().try_acquire_owned().ok();
+            match (store, permit) {
+                (Some(store), Some(_permit)) => {
+                    let session = run_responder(&mut io, &*store, self.local, peer);
+                    match tokio::time::timeout(CATCHUP_SESSION_TIMEOUT, session).await {
+                        Ok(Ok((server, report))) => {
+                            let _ = self.events.send(NetEvent::CaughtUp {
+                                server,
+                                peer,
+                                report,
+                            });
+                        }
+                        Ok(Err(e)) => tracing::debug!("catch-up from peer ended: {e}"),
+                        Err(_) => tracing::debug!("catch-up from peer timed out"),
+                    }
+                }
+                _ => {
+                    let _ = write_frame(&mut io, &Refusal::Busy.frame()).await;
+                }
+            }
+            let (_, mut send) = io.into_inner();
+            send.finish().ok();
+            let _ = tokio::time::timeout(CATCHUP_LINGER, connection.closed()).await;
+            Ok(())
+        })
+    }
+}
+
 type TopicSink = Pin<Box<dyn Sink<GossipCommand, Error = anyhow::Error> + Send>>;
 
 struct TopicHandle {
     sender: tokio::sync::Mutex<TopicSink>,
-    /// Live count of direct gossip neighbors on this topic.
-    neighbors: tokio::sync::watch::Receiver<usize>,
+    /// Live set of direct gossip neighbors on this topic.
+    neighbors: tokio::sync::watch::Receiver<BTreeSet<[u8; 32]>>,
+}
+
+/// Applies a gossip membership event to the neighbor set and returns
+/// the peers it brought up.
+fn track_neighbors(neighbors: &mut BTreeSet<[u8; 32]>, event: &GossipEvent) -> Vec<[u8; 32]> {
+    match event {
+        GossipEvent::Joined(peers) => {
+            let up: Vec<[u8; 32]> = peers.iter().map(|p| *p.as_bytes()).collect();
+            neighbors.extend(up.iter().copied());
+            up
+        }
+        GossipEvent::NeighborUp(peer) => {
+            neighbors.insert(*peer.as_bytes());
+            vec![*peer.as_bytes()]
+        }
+        GossipEvent::NeighborDown(peer) => {
+            neighbors.remove(peer.as_bytes());
+            vec![]
+        }
+        GossipEvent::Received(_) => vec![],
+    }
 }
 
 /// Stable topic id derived from the server id, so invites keep working
@@ -262,6 +367,7 @@ pub struct CommyNode {
     events_tx: mpsc::UnboundedSender<NetEvent>,
     /// Entry key requests from the account's other devices, until taken.
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
+    catchup_store: StoreSlot,
 }
 
 impl CommyNode {
@@ -297,6 +403,16 @@ impl CommyNode {
         }
         let protocols = builder.build().await.context("failed to build iroh node")?;
         let endpoint = protocols.endpoint().clone();
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let catchup_store = StoreSlot::default();
+        #[allow(deprecated)] // iroh 0.28 networking layer, as elsewhere here
+        let local = *endpoint.node_id().as_bytes();
+        let catchup = CatchupAcceptor {
+            store: catchup_store.clone(),
+            events: events_tx.clone(),
+            local,
+            sessions: Arc::new(tokio::sync::Semaphore::new(MAX_CATCHUP_SESSIONS)),
+        };
         let node = protocols
             .accept(MEDIA_ALPN.to_vec(), Arc::new(MediaAcceptor { tx: media_tx, endpoint }))
             .accept(DM_ALPN.to_vec(), Arc::new(DmAcceptor { tx: dm_tx }))
@@ -304,16 +420,17 @@ impl CommyNode {
                 crate::entry_key::ENTRY_KEY_ALPN.to_vec(),
                 Arc::new(crate::entry_key::EntryKeyAcceptor { tx: entry_key_tx }),
             )
+            .accept(CATCHUP_ALPN.to_vec(), Arc::new(catchup))
             .spawn()
             .await
             .context("failed to start iroh node")?;
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
         Ok((
             Self {
                 node,
                 topics: HashMap::new(),
                 events_tx,
                 entry_key_requests: Some(entry_key_rx),
+                catchup_store,
             },
             events_rx,
             media_rx,
@@ -333,32 +450,82 @@ impl CommyNode {
     }
 
     /// Delivers one DM to a peer, waiting for its ack. Fails when the
-    /// peer is offline or unreachable.
-    pub async fn send_dm(&self, node_hex: &str, envelope: &DmEnvelope) -> Result<()> {
-        let node_id = parse_node_hex(node_hex)?;
-        let connection = self
-            .node
-            .endpoint()
-            .connect(NodeAddr::new(node_id), DM_ALPN)
+    /// peer is offline or unreachable. The future does not borrow the
+    /// node, so a caller can release a lock on it before awaiting.
+    pub fn send_dm(
+        &self,
+        node_hex: &str,
+        envelope: &DmEnvelope,
+    ) -> impl Future<Output = Result<()>> + Send + 'static {
+        let endpoint = self.node.endpoint().clone();
+        let node_id = parse_node_hex(node_hex);
+        let envelope = envelope.clone();
+        async move {
+            let connection = endpoint
+                .connect(NodeAddr::new(node_id?), DM_ALPN)
+                .await
+                .context("peer is unreachable")?;
+            let (mut send, mut recv) = connection.open_bi().await?;
+            write_frame(&mut send, &envelope)
+                .await
+                .map_err(|e| anyhow::anyhow!("dm send failed: {e}"))?;
+            let ack = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                read_frame::<_, DmAck>(&mut recv),
+            )
             .await
-            .context("peer is unreachable")?;
-        let (mut send, mut recv) = connection.open_bi().await?;
-        write_frame(&mut send, envelope)
-            .await
-            .map_err(|e| anyhow::anyhow!("dm send failed: {e}"))?;
-        let ack = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            read_frame::<_, DmAck>(&mut recv),
-        )
-        .await
-        .context("peer did not confirm delivery in time")?
-        .map_err(|e| anyhow::anyhow!("dm ack failed: {e}"))?
-        .context("peer closed before confirming")?;
-        if !ack.accepted {
-            anyhow::bail!("peer rejected the message");
+            .context("peer did not confirm delivery in time")?
+            .map_err(|e| anyhow::anyhow!("dm ack failed: {e}"))?
+            .context("peer closed before confirming")?;
+            if !ack.accepted {
+                anyhow::bail!("peer rejected the message");
+            }
+            connection.close(0u32.into(), b"done");
+            Ok(())
         }
-        connection.close(0u32.into(), b"done");
-        Ok(())
+    }
+
+    /// Gives the catch-up acceptor access to the app's servers. Until
+    /// this is called, peers that dial us for catch-up are asked to retry.
+    pub fn set_catchup_store(&self, store: SharedCatchupStore) {
+        *self
+            .catchup_store
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(store);
+    }
+
+    /// Catches up on `server` with `peer`: dials it on the catch-up ALPN
+    /// and runs the initiator side, signing as `store.local_identity`.
+    /// The future does not borrow the node, so a caller holding the node
+    /// behind a lock can release it before awaiting. A refusal arrives as
+    /// a [`crate::CatchupError`] inside the error, see
+    /// [`crate::CatchupError::retry_after_ms`].
+    #[allow(deprecated)] // iroh 0.28 networking layer, as elsewhere here
+    pub fn catch_up(
+        &self,
+        server: ServerId,
+        peer: [u8; 32],
+        store: SharedCatchupStore,
+    ) -> impl Future<Output = Result<SessionReport>> + Send + 'static {
+        let endpoint = self.node.endpoint().clone();
+        let local = self.node_id_bytes();
+        async move {
+            let (me, identity) = store
+                .local_identity(server)
+                .context("not a member of that server")?;
+            let node_id = NodeId::from_bytes(&peer).context("invalid node key")?;
+            let connection = endpoint
+                .connect(NodeAddr::new(node_id), CATCHUP_ALPN)
+                .await
+                .context("peer is unreachable")?;
+            let (send, recv) = connection.open_bi().await?;
+            let mut io = tokio::io::join(recv, send);
+            let session = run_initiator(&mut io, &*store, &identity, server, me, local, peer);
+            let result = tokio::time::timeout(CATCHUP_SESSION_TIMEOUT, session).await;
+            connection.close(0u32.into(), b"done");
+            let report = result.context("catch-up timed out")??;
+            Ok(report)
+        }
     }
 
     /// This peer's public identity.
@@ -439,7 +606,7 @@ impl CommyNode {
         let mut neighbors = handle.neighbors.clone();
         tokio::time::timeout(timeout, async {
             loop {
-                if *neighbors.borrow() > 0 {
+                if !neighbors.borrow().is_empty() {
                     return;
                 }
                 if neighbors.changed().await.is_err() {
@@ -449,15 +616,23 @@ impl CommyNode {
         })
         .await
         .is_ok()
-            && *handle.neighbors.borrow() > 0
+            && !handle.neighbors.borrow().is_empty()
     }
 
     /// Current neighbor count for a joined server topic.
     pub fn neighbor_count(&self, server_id: ServerId) -> usize {
         self.topics
             .get(&server_id)
-            .map(|h| *h.neighbors.borrow())
+            .map(|h| h.neighbors.borrow().len())
             .unwrap_or(0)
+    }
+
+    /// Node ids of the current gossip neighbors on a server topic.
+    pub fn neighbors(&self, server_id: ServerId) -> Vec<[u8; 32]> {
+        self.topics
+            .get(&server_id)
+            .map(|h| h.neighbors.borrow().iter().copied().collect())
+            .unwrap_or_default()
     }
 
     async fn join_topic(
@@ -476,31 +651,24 @@ impl CommyNode {
 
         let events_tx = self.events_tx.clone();
         let our_id = self.node_id_bytes();
-        let (neighbors_tx, neighbors_rx) = tokio::sync::watch::channel(0usize);
+        let (neighbors_tx, neighbors_rx) = tokio::sync::watch::channel(BTreeSet::new());
         tokio::spawn(async move {
             let mut stream = Box::pin(stream);
-            let mut count: usize = 0;
             while let Some(item) = stream.next().await {
                 let Ok(GossipNetEvent::Gossip(event)) = item else {
                     continue;
                 };
                 let msg = match event {
                     GossipEvent::Received(msg) => msg,
-                    GossipEvent::Joined(peers) => {
-                        count = peers.len();
-                        let _ = neighbors_tx.send(count);
-                        let _ = events_tx.send(NetEvent::NeighborUp { server: server_id });
-                        continue;
-                    }
-                    GossipEvent::NeighborUp(_) => {
-                        count += 1;
-                        let _ = neighbors_tx.send(count);
-                        let _ = events_tx.send(NetEvent::NeighborUp { server: server_id });
-                        continue;
-                    }
-                    GossipEvent::NeighborDown(_) => {
-                        count = count.saturating_sub(1);
-                        let _ = neighbors_tx.send(count);
+                    membership => {
+                        let mut up = Vec::new();
+                        neighbors_tx.send_modify(|set| up = track_neighbors(set, &membership));
+                        for peer in up {
+                            let _ = events_tx.send(NetEvent::NeighborUp {
+                                server: server_id,
+                                peer,
+                            });
+                        }
                         continue;
                     }
                 };
@@ -717,6 +885,107 @@ mod tests {
     fn bad_node_hex_is_rejected() {
         assert!(parse_node_hex("zz").is_err());
         assert!(parse_node_hex("abcd").is_err());
+    }
+
+    fn peer() -> NodeId {
+        iroh::net::key::SecretKey::generate().public()
+    }
+
+    #[test]
+    fn neighbor_set_follows_gossip_membership() {
+        let (a, b, c) = (peer(), peer(), peer());
+        let mut set = BTreeSet::new();
+        let up = track_neighbors(&mut set, &GossipEvent::Joined(vec![a, b]));
+        assert_eq!(
+            up,
+            vec![*a.as_bytes(), *b.as_bytes()],
+            "each joined peer is announced"
+        );
+        assert_eq!(set.len(), 2);
+        assert_eq!(
+            track_neighbors(&mut set, &GossipEvent::NeighborUp(c)),
+            vec![*c.as_bytes()]
+        );
+        assert_eq!(set.len(), 3);
+        // A repeated up is announced again but counted once.
+        assert_eq!(
+            track_neighbors(&mut set, &GossipEvent::NeighborUp(c)),
+            vec![*c.as_bytes()]
+        );
+        assert_eq!(set.len(), 3);
+        assert!(track_neighbors(&mut set, &GossipEvent::NeighborDown(a)).is_empty());
+        assert_eq!(set, BTreeSet::from([*b.as_bytes(), *c.as_bytes()]));
+        // Down for a peer we never saw changes nothing.
+        assert!(track_neighbors(&mut set, &GossipEvent::NeighborDown(a)).is_empty());
+        assert_eq!(set.len(), 2);
+    }
+
+    /// Two real nodes on this machine run a session over QUIC, which
+    /// checks the acceptor wiring and that no frame is cut off at close.
+    #[tokio::test]
+    async fn catch_up_runs_over_quic() {
+        use crate::catchup::{CatchupError, RETRY_AFTER_MS};
+        use crate::test_support::{fixture, join, MemStore};
+        let within = Duration::from_secs;
+        let (a, _a_events, _, _) = CommyNode::spawn(None).await.unwrap();
+        let (b, mut b_events, _, _) = CommyNode::spawn(None).await.unwrap();
+        let addr = tokio::time::timeout(within(30), b.node_addr())
+            .await
+            .unwrap()
+            .unwrap();
+        a.node.net().add_node_addr(addr).await.unwrap();
+
+        let (mut state, channel, owner) = fixture();
+        let friend = join(&mut state, "friend");
+        let store_a = Arc::new(MemStore::new(state.clone(), owner));
+        let store_b = Arc::new(MemStore::new(state, friend));
+        let from_a = store_a.post(channel, "from a");
+        let from_b = store_b.post(channel, "from b");
+        let server = store_a.server();
+
+        // Until the app hands over its store, peers are asked to retry.
+        let early = tokio::time::timeout(
+            within(30),
+            a.catch_up(server, b.node_id_bytes(), store_a.clone()),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        let early = early
+            .downcast_ref::<CatchupError>()
+            .expect("a catch-up refusal");
+        assert_eq!(early.retry_after_ms(), Some(RETRY_AFTER_MS));
+        assert!(!store_b.has(from_a.id));
+
+        b.set_catchup_store(store_b.clone());
+        let report = tokio::time::timeout(
+            within(30),
+            a.catch_up(server, b.node_id_bytes(), store_a.clone()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(report.pushed, vec![from_a.id]);
+        assert_eq!(report.received, vec![from_b.id]);
+        assert!(store_a.has(from_b.id) && store_b.has(from_a.id));
+
+        let event = tokio::time::timeout(within(10), b_events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let NetEvent::CaughtUp {
+            server: got,
+            peer,
+            report,
+        } = event
+        else {
+            panic!("unexpected event {event:?}");
+        };
+        assert_eq!((got, peer), (server, a.node_id_bytes()));
+        assert_eq!(report.pushed, vec![from_b.id]);
+        assert_eq!(report.received, vec![from_a.id]);
+        a.shutdown().await.ok();
+        b.shutdown().await.ok();
     }
 
     #[test]

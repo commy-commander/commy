@@ -4,6 +4,7 @@
 //! <data>/profile.json          our identity
 //! <data>/voice.json            voice settings
 //! <data>/servers/<id>.json     one Snapshot per joined server
+//! <data>/outbox.json           sends waiting for someone to come online
 //! ```
 //!
 //! Writes go to a temp file first and are renamed into place so a
@@ -18,7 +19,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -33,7 +34,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     Ok(())
 }
 
-fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
+pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     let bytes = fs::read(path).ok()?;
     match serde_json::from_slice(&bytes) {
         Ok(value) => Some(value),
@@ -177,15 +178,19 @@ mod tests {
     #[test]
     fn server_roundtrip_with_messages() {
         let dir = temp_dir("server");
-        let owner = UserId::new();
+        let identity = commy_core::Identity::generate();
+        let mut profile = UserProfile::new("owner");
+        profile.identity = Some(identity.public());
+        let owner = profile.id;
         let server = Server::new("persisted", owner);
         let channel = server.channels[0].id;
         let mut state = ServerState::new(server);
+        state.profiles.insert(owner, profile);
         for i in 0..3 {
+            let mut message = Message::new(channel, owner, format!("m{i}"));
+            message.sign(state.server.id, &identity);
             state
-                .apply(ServerEvent::MessageCreate {
-                    message: Message::new(channel, owner, format!("m{i}")),
-                })
+                .apply(ServerEvent::MessageCreate { message })
                 .unwrap();
         }
         save_server(&dir, &state).unwrap();

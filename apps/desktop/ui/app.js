@@ -103,7 +103,11 @@ function mockSeed() {
       content: "Welcome to Commy, a private P2P chat app.", created_at: new Date(Date.now() - 3600e3).toISOString(), edited: false, attachments: [] },
     { id: "x2", channel: c0, author_id: "m2", author_name: "iroh-fan",
       content: "No central servers, no paywall. Everything over iroh.", created_at: new Date(Date.now() - 1800e3).toISOString(), edited: false, attachments: [] },
+    { id: "x3", channel: c0, author_id: "me", author_name: mock.user ? mock.user.username : "you",
+      content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
   ];
+  // Doorbell: messages other members sent us that are still on their way.
+  server.awaited = 2;
 }
 
 // Fake screen capture for the browser preview: a labeled gradient with a clock.
@@ -206,11 +210,14 @@ async function mockInvoke(cmd, args = {}) {
     case "send_dm": {
       const dm = mock.dms[args.userId];
       if (!dm) throw "no such conversation";
-      dm.messages.push({
+      // Offline partners get the message once they are back.
+      const partner = Object.values(mock.servers).flatMap(s => s.members).find(m => m.id === args.userId);
+      const sent = {
         id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: args.content,
-        created_at: new Date().toISOString(), outgoing: true,
-      });
-      return null;
+        created_at: new Date().toISOString(), outgoing: true, pending: !partner || partner.presence === "offline",
+      };
+      dm.messages.push(sent);
+      return sent;
     }
     case "update_profile":
       Object.assign(mock.user, {
@@ -461,6 +468,7 @@ async function mockInvoke(cmd, args = {}) {
       mock.voice.status_until = args.statusUntil;
       return mock.voice;
     case "set_unread": mock.unread = args.count; return null;
+    case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
     case "stop_camera": mock.cameraOn = false; return null;
     case "push_camera_frame": return 1;
@@ -567,6 +575,7 @@ const ICONS = {
   check: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z",
   close: "M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z",
   eye: "M12 5C7 5 2.7 8.1 1 12.5 2.7 16.9 7 20 12 20s9.3-3.1 11-7.5C21.3 8.1 17 5 12 5zm0 12.5a5 5 0 1 1 5-5 5 5 0 0 1-5 5zm0-8a3 3 0 1 0 3 3 3 3 0 0 0-3-3z",
+  clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
 };
 
 function svgIcon(name, size = 20) {
@@ -1537,6 +1546,27 @@ function onMessageCreated(msg) {
   }
 }
 
+// Messages that arrived in a catch-up with a peer only bump unread counts:
+// no toast, no sound, no overlay line. Payload: { server, channels: { id: count } }.
+function onMessagesCaughtUp(payload) {
+  const server = payload && payload.server;
+  const channels = payload && payload.channels;
+  if (!server || !channels || typeof channels !== "object") return;
+  let changed = false;
+  for (const [channel, value] of Object.entries(channels)) {
+    const count = Number(value);
+    if (!Number.isInteger(count) || count <= 0) continue;
+    const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === channel;
+    if (viewing && appFocused()) continue;
+    unread.channels.set(channel, (unread.channels.get(channel) || 0) + count);
+    unread.channelServer.set(channel, server);
+    changed = true;
+  }
+  if (!changed) return;
+  syncUnreadBadge();
+  if (state.currentServer && state.currentServer.id === server) renderChannels();
+}
+
 // A clicked notification opens the conversation it was about.
 async function openNotificationTarget(target) {
   const [kind, a, b] = String(target || "").split(":");
@@ -2320,8 +2350,21 @@ function isBareImageLink(content) {
   return /^https?:\/\/\S+$/i.test(text) && extractImageUrls(text).length === 1;
 }
 
+const PENDING_TIP = "Waiting for someone to come online";
+
+// Clock shown on a message that has not reached anyone yet.
+function pendingMark() {
+  const mark = el("span", "msg-pending");
+  mark.title = PENDING_TIP;
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", PENDING_TIP);
+  mark.appendChild(svgIcon("clock", 14));
+  return mark;
+}
+
 function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {}) {
-  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : ""));
+  const pending = Boolean(message.pending);
+  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : ""));
   row.dataset.id = message.id;
   row.appendChild(messageActions(message, inThread));
   if (message.reply_to) row.appendChild(replyReference(message));
@@ -2336,12 +2379,17 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     head.appendChild(author);
     decorateAuthor(author, message.author_id);
     head.appendChild(el("span", "msg-time", formatTime(message.created_at)));
+    if (pending) head.appendChild(pendingMark());
     body.appendChild(head);
   }
+  // Grouped rows have no header, so the clock follows the text instead.
+  let inlineMark = pending && grouped;
   if (message.content) {
     if (!isBareImageLink(message.content)) {
       const content = buildMessageContent(message.content);
       if (message.edited) content.appendChild(el("span", "edited", " (edited)"));
+      if (inlineMark) content.appendChild(pendingMark());
+      inlineMark = false;
       body.appendChild(content);
     }
     // Auto-embed pasted image and gif links.
@@ -2349,6 +2397,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
       body.appendChild(renderImageEmbed(url));
     }
   }
+  if (inlineMark) body.prepend(pendingMark());
   for (const att of message.attachments || []) {
     body.appendChild(renderAttachment(att));
     if (att.is_image) body.appendChild(renderInlineImage(att));
@@ -3345,6 +3394,34 @@ function syncRulesGate() {
   if (!gated) maybePromptRoles();
 }
 
+// Doorbell: messages someone sent us that are still on their way.
+function awaitedText(count) {
+  const n = Number(count);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  return n === 1
+    ? "1 message is on its way. It arrives when the sender's device is online."
+    : `${n} messages are on their way. They arrive when the sender's device is online.`;
+}
+
+let awaitedSeq = 0;
+
+async function syncAwaitedBar() {
+  const seq = ++awaitedSeq;
+  const serverId = state.view === "server" && state.currentServer ? state.currentServer.id : null;
+  let text = null;
+  if (serverId) {
+    try {
+      text = awaitedText(await invoke("get_awaited", { serverId }));
+    } catch {
+      // Older backends lack the command; keep the bar hidden.
+    }
+  }
+  // A newer call or a server switch wins over this answer.
+  if (seq !== awaitedSeq) return;
+  $("awaited-text").textContent = text || "";
+  $("awaited-bar").classList.toggle("hidden", !text);
+}
+
 function renderRulesSettings(server) {
   $("rules-input").value = server.rules || "";
   $("rules-remove").classList.toggle("hidden", !server.rules);
@@ -3874,8 +3951,8 @@ function openInviteMenu(person, anchor) {
       try {
         const ticket = await invoke("get_invite", { serverId: server.id });
         await invoke("open_dm", { userId: person.id });
-        await invoke("send_dm", { userId: person.id, content: `Come join me in ${server.name}! ${ticket}` });
-        toast(`Invited ${person.name} to ${server.name}`);
+        const sent = await invoke("send_dm", { userId: person.id, content: `Come join me in ${server.name}! ${ticket}` });
+        dmSentToast(sent, person.name, `Invited ${person.name} to ${server.name}`);
       } catch (e) {
         toast(String(e));
       }
@@ -5675,6 +5752,7 @@ function setViewMode(mode) {
   $("home-btn").classList.toggle("active", dm);
   $("app").classList.toggle("dm-mode", dm);
   if (dm) $("cam-grid").classList.add("hidden");
+  if (dm) syncAwaitedBar();
   if (!dm) {
     $("chat-hash").textContent = "#";
     $("chat-presence").classList.add("hidden");
@@ -6038,7 +6116,14 @@ function dmToRenderable(m) {
     created_at: m.created_at,
     edited: false,
     attachments: [],
+    pending: Boolean(m.pending),
   };
+}
+
+// Toast for a DM sent from outside the conversation. A pending DM is kept
+// on this device and goes out once the other person is reachable.
+function dmSentToast(sent, name, done) {
+  toast(sent && sent.pending ? `Will send to ${name} when they come online` : done);
 }
 
 async function messageUser(userId, name) {
@@ -6070,6 +6155,7 @@ async function selectChannel(channel) {
   state.currentChannel = channel;
   renderDmRequestBar(null);
   syncRulesGate();
+  syncAwaitedBar();
   if (channel) clearChannelUnread(channel.id);
   renderChannels();
   $("channel-name").textContent = channel ? channel.name : "no channel";
@@ -6286,11 +6372,11 @@ async function sendGif(url) {
   if (dmTarget) {
     try {
       await invoke("open_dm", { userId: dmTarget.user });
-      await invoke("send_dm", { userId: dmTarget.user, content: url });
+      const sent = await invoke("send_dm", { userId: dmTarget.user, content: url });
       if (state.view === "dm" && state.currentDm && state.currentDm.user === dmTarget.user) {
         await selectDm(dmTarget.user, dmTarget.name);
       } else {
-        toast(`GIF sent to ${dmTarget.name}`);
+        dmSentToast(sent, dmTarget.name, `GIF sent to ${dmTarget.name}`);
       }
     } catch (e) {
       toast(String(e));
@@ -7195,8 +7281,8 @@ function wireEvents() {
     input.value = "";
     try {
       await invoke("open_dm", { userId });
-      await invoke("send_dm", { userId, content: encodeCustomEmojis(text) });
-      toast(`Sent to ${name}`);
+      const sent = await invoke("send_dm", { userId, content: encodeCustomEmojis(text) });
+      dmSentToast(sent, name, `Sent to ${name}`);
     } catch (err) {
       input.value = text;
       toast(String(err));
@@ -7306,6 +7392,7 @@ function wireEvents() {
   // Replies and threads
   setIcon($("reply-bar-cancel"), "close", 16);
   $("reply-bar-cancel").onclick = cancelReply;
+  $("awaited-icon").replaceChildren(svgIcon("clock", 16));
   setIcon($("thread-close"), "close", 20);
   $("thread-head-icon").appendChild(svgIcon("thread", 20));
   $("thread-close").onclick = closeThread;
@@ -7853,6 +7940,7 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("camera-frame", event => showCameraFrame(event.payload));
     window.__TAURI__.event.listen("message-created", event => onMessageCreated(event.payload));
+    window.__TAURI__.event.listen("messages-caught-up", event => onMessagesCaughtUp(event.payload));
     window.__TAURI__.event.listen("dm-received", event => onDmReceived(event.payload));
     window.__TAURI__.event.listen("notification-clicked", event => openNotificationTarget(event.payload));
     window.__TAURI__.event.listen("tray-toggle-mute", () => $("mute-btn").click());
@@ -8171,6 +8259,7 @@ async function refreshCurrentServer() {
   renderMembers();
   renderChannels();
   syncRulesGate();
+  syncAwaitedBar();
   renderEvents();
   if (keepChannel) {
     const still = state.currentServer.channels.find(c => c.id === keepChannel.id);

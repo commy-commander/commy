@@ -6,10 +6,12 @@ mod account;
 mod activity;
 mod afk;
 mod entry_list;
+mod catchup;
 mod expressions;
 mod media_engine;
 mod igdb;
 mod invite_link;
+mod outbox;
 mod overlay;
 mod persist;
 mod safety;
@@ -28,8 +30,8 @@ use view::{
 
 use base64::Engine as _;
 use commy_core::{
-    Attachment, Channel, ChannelId, ChannelKind, DmMessage, Message, MessageId, Permissions, Presence,
-    RoleId, ServerEvent, ServerId, ServerState, UserId, UserProfile,
+    Attachment, Channel, ChannelId, ChannelKind, DmMessage, Identity, Message, MessageId, Permissions,
+    Presence, RoleId, ServerEvent, ServerId, ServerState, StoreError, TombstoneProof, UserId, UserProfile,
 };
 use commy_core::server::Role;
 use commy_media::screen::{SourceKind, StreamQuality};
@@ -60,6 +62,7 @@ fn init_user(app: tauri::State<App>, username: String) -> CmdResult<UserProfile>
     }
     let mut profile = UserProfile::new(username);
     profile.node = app.node_hex.lock().unwrap().clone();
+    profile.identity = app.identity().map(|i| i.public());
     *app.profile.lock().unwrap() = Some(profile.clone());
     app.persist_profile();
     Ok(profile)
@@ -70,7 +73,7 @@ fn get_user(app: tauri::State<App>) -> Option<UserProfile> {
     app.profile.lock().unwrap().clone()
 }
 
-fn current_profile(app: &App) -> CmdResult<UserProfile> {
+pub(crate) fn current_profile(app: &App) -> CmdResult<UserProfile> {
     let mut profile = app
         .profile
         .lock()
@@ -80,7 +83,26 @@ fn current_profile(app: &App) -> CmdResult<UserProfile> {
     if profile.node.is_none() {
         profile.node = app.node_hex.lock().unwrap().clone();
     }
+    if profile.identity.is_none() {
+        profile.identity = app.identity().map(|i| i.public());
+    }
     Ok(profile)
+}
+
+/// The key our messages are signed with.
+fn signing_key(app: &App) -> CmdResult<Identity> {
+    app.identity().ok_or_else(|| "your identity key is not ready yet".to_string())
+}
+
+/// Re-reads the identity key file, which another module may have
+/// replaced, and announces the key to every server we are in.
+pub async fn reload_identity(handle: &tauri::AppHandle) -> std::io::Result<()> {
+    let app = handle.state::<App>();
+    if let Some(profile) = app.reload_identity()? {
+        announce_profile(&app, handle, &profile).await;
+        let _ = handle.emit("profile-changed", &profile);
+    }
+    Ok(())
 }
 
 // ---------- Servers ----------
@@ -229,13 +251,10 @@ fn get_messages(
 ) -> CmdResult<Vec<MessageView>> {
     let sid = server_id.parse().map_err(err_to_string)?;
     let cid = channel_id.parse().map_err(err_to_string)?;
+    let pending = app.outbox.lock().unwrap().pending_ids(sid);
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
-    Ok(state
-        .page(cid, None, 100)
-        .iter()
-        .map(|m| MessageView::build(m, state))
-        .collect())
+    Ok(view::message_views(state, cid, 100, &pending))
 }
 
 async fn commit_message(
@@ -254,10 +273,17 @@ async fn commit_message(
         state.apply(event.clone()).map_err(err_to_string)?;
         MessageView::build(&message, state)
     };
-    broadcast(app, sid, WirePayload::Event(event)).await;
+    // Nobody connected: it waits as pending for the next catch-up.
+    let delivered = outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
     let _ = handle.emit("server-event", &sid.to_string());
-    Ok(view)
+    Ok(view.with_pending(!delivered))
+}
+
+/// Signs a message of ours for a server; peers reject unsigned ones.
+fn sign_message(app: &App, sid: ServerId, message: &mut Message) -> CmdResult<()> {
+    message.sign(sid, &signing_key(app)?);
+    Ok(())
 }
 
 #[tauri::command]
@@ -291,6 +317,8 @@ async fn send_message(
         }
         message.reply_to = Some(target);
     }
+    // Signed first: the signature counts toward the size limit.
+    sign_message(&app, sid, &mut message)?;
     // Peers drop the connection on oversized frames, so refuse up front.
     let wire = WirePayload::Event(ServerEvent::MessageCreate { message: message.clone() });
     if commy_net::protocol::gossip_size(&wire) > commy_net::protocol::MAX_GOSSIP_BYTES {
@@ -356,14 +384,17 @@ async fn edit_message(
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
+    let identity = signing_key(&app)?;
+    let edit = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         if message_author(state, cid, mid)? != me.id {
             return Err("you can only edit your own messages".into());
         }
-    }
-    let edit = ServerEvent::MessageEdit { channel: cid, message: mid, content };
+        let original = state.messages(cid).iter().find(|m| m.id == mid).ok_or("that message no longer exists")?;
+        // Signed over the whole edited message, with our edit time.
+        original.edit_event(sid, content, chrono::Utc::now(), &identity)
+    };
     if commy_net::protocol::gossip_size(&WirePayload::Event(edit.clone())) > commy_net::protocol::MAX_GOSSIP_BYTES {
         return Err("that edit is too long to send".into());
     }
@@ -385,6 +416,7 @@ async fn delete_message(
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
+    let identity = signing_key(&app)?;
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
@@ -392,8 +424,8 @@ async fn delete_message(
             require_permission(state, me.id, Permissions::MANAGE_MESSAGES, "delete other people's messages")?;
         }
     }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::MessageDelete { channel: cid, message: mid })
-        .await?;
+    let proof = TombstoneProof::sign(sid, cid, mid, me.id, chrono::Utc::now(), &identity);
+    apply_and_broadcast(&app, &handle, sid, proof.into_event()).await?;
     Ok(())
 }
 
@@ -434,6 +466,7 @@ async fn send_attachment(
         mime_type,
         provider,
     });
+    sign_message(app, sid, &mut message)?;
     commit_message(app, handle, sid, message).await
 }
 
@@ -1181,7 +1214,7 @@ fn stop_watching(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
 
 /// Best known node id for a user: DM contact cache first, then any
 /// shared server's profile.
-fn node_hex_for_user(app: &tauri::State<'_, App>, user: UserId) -> Option<String> {
+pub(crate) fn node_hex_for_user(app: &App, user: UserId) -> Option<String> {
     if let Some(hex) = app
         .dms
         .lock()
@@ -1226,12 +1259,14 @@ fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
 async fn send_friend_signal(app: &tauri::State<'_, App>, to: UserId, signal: safety::FriendSignal) -> CmdResult<()> {
     let me = current_profile(app)?;
     let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
-    let envelope = DmEnvelope { message: DmMessage::new(me.id, to, signal.encode()), sender: me };
-    let net = app.net.lock().await;
-    let node = net.as_ref().ok_or("network is not ready yet")?;
-    node.send_dm(&hex, &envelope)
-        .await
-        .map_err(|_| "they are offline right now; try again later".to_string())
+    let mut message = DmMessage::new(me.id, to, signal.encode());
+    message.sign(&signing_key(app)?);
+    let envelope = DmEnvelope { message, sender: me };
+    let send = {
+        let net = app.net.lock().await;
+        net.as_ref().ok_or("network is not ready yet")?.send_dm(&hex, &envelope)
+    };
+    send.await.map_err(|_| "they are offline right now; try again later".to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -1460,11 +1495,14 @@ async fn report_user(
     };
     let owner_hex = node_hex_for_user(&app, owner)
         .ok_or("the server owner's device is unknown; try again once they have been online")?;
-    let envelope = DmEnvelope { message: DmMessage::new(me.id, owner, report.encode()), sender: me.clone() };
-    let net = app.net.lock().await;
-    let node = net.as_ref().ok_or("network is not ready yet")?;
-    node.send_dm(&owner_hex, &envelope)
-        .await
+    let mut message = DmMessage::new(me.id, owner, report.encode());
+    message.sign(&signing_key(&app)?);
+    let envelope = DmEnvelope { message, sender: me.clone() };
+    let send = {
+        let net = app.net.lock().await;
+        net.as_ref().ok_or("network is not ready yet")?.send_dm(&owner_hex, &envelope)
+    };
+    send.await
         .map_err(|_| "the server owner is offline right now; try again later".to_string())?;
     Ok(())
 }
@@ -1528,11 +1566,12 @@ fn get_dm_messages(app: tauri::State<App>, user_id: String) -> CmdResult<Vec<DmM
         .as_ref()
         .map(|p| p.id)
         .ok_or("set a username first")?;
+    let pending = app.outbox.lock().unwrap().pending_dms(partner);
     let dms = app.dms.lock().unwrap();
     Ok(dms
         .conversation(partner)
         .iter()
-        .map(|m| dm_message_view(m, me, &dms))
+        .map(|m| dm_message_view(m, me, &dms, pending.contains(&m.id)))
         .collect())
 }
 
@@ -1584,28 +1623,36 @@ async fn send_dm(
     }
     let partner: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
+    if partner == me.id {
+        return Err("you cannot message yourself".into());
+    }
     if app.safety.lock().unwrap().is_blocked(partner) {
         return Err("you blocked this person; unblock them to send a message".into());
     }
-    let their_hex =
-        node_hex_for_user(&app, partner).ok_or("no known address for that user")?;
 
-    let message = DmMessage::new(me.id, partner, content);
+    let mut message = DmMessage::new(me.id, partner, content);
+    message.sign(&signing_key(&app)?);
     let envelope = DmEnvelope {
         message: message.clone(),
         sender: me.clone(),
     };
-    {
-        let net = app.net.lock().await;
-        let node = net.as_ref().ok_or("network is not ready yet")?;
-        node.send_dm(&their_hex, &envelope).await.map_err(err_to_string)?;
-    }
+    // Earlier messages still waiting go first, so this one queues behind them.
+    let waiting = app.outbox.lock().unwrap().has_dms(partner);
+    let delivered = !waiting && outbox::try_send_dm(&app, partner, &envelope).await;
 
     let view = {
         let mut dms = app.dms.lock().unwrap();
         dms.insert(partner, message.clone());
-        dm_message_view(&message, me.id, &dms)
+        dm_message_view(&message, me.id, &dms, !delivered)
     };
+    if !delivered {
+        // Kept and retried until they come online.
+        outbox::queue_dm(&app, partner, message.id);
+        if waiting {
+            // A new message tries the waiting ones again, in order.
+            outbox::wake_dm(&app, partner);
+        }
+    }
     // Writing to someone accepts their messages too.
     if app.safety.lock().unwrap().accepted.insert(partner) {
         app.persist_safety();
@@ -1641,7 +1688,7 @@ async fn apply_and_broadcast(
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         state.apply(event.clone()).map_err(err_to_string)?;
     }
-    broadcast(app, sid, WirePayload::Event(event)).await;
+    outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
@@ -2057,6 +2104,7 @@ async fn leave_server(
     }
     app.servers.lock().unwrap().remove(&sid);
     app.invites.lock().unwrap().remove(&sid);
+    forget_server_outbox(&app, sid);
     if let Some(dir) = app.data_dir() {
         let _ = persist::delete_server(dir, sid);
     }
@@ -2064,6 +2112,14 @@ async fn leave_server(
     entry_list::schedule(&handle);
     let _ = handle.emit("servers-changed", ());
     Ok(())
+}
+
+/// Drops queued sends and catch-up state for a server we are no longer in.
+fn forget_server_outbox(app: &App, sid: ServerId) {
+    app.catchup.lock().unwrap().forget_server(sid);
+    if app.outbox.lock().unwrap().forget_server(sid) {
+        app.persist_outbox();
+    }
 }
 
 // ---------- Account management ----------
@@ -2803,6 +2859,7 @@ async fn on_banned(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: 
         *app.screen_share.lock().unwrap() = None;
     }
     app.invites.lock().unwrap().remove(&sid);
+    forget_server_outbox(app, sid);
     if let Some(dir) = app.data_dir() {
         let _ = persist::delete_server(dir, sid);
     }
@@ -3429,12 +3486,7 @@ async fn announce_profile(app: &tauri::State<'_, App>, handle: &tauri::AppHandle
         servers.keys().copied().collect()
     };
     for sid in server_ids {
-        broadcast(
-            app,
-            sid,
-            WirePayload::Event(ServerEvent::ProfileUpdate { profile: profile.clone() }),
-        )
-        .await;
+        outbox::broadcast_local(app, sid, ServerEvent::ProfileUpdate { profile: profile.clone() }).await;
         app.persist_server(sid);
         let _ = handle.emit("server-event", &sid.to_string());
     }
@@ -4020,13 +4072,33 @@ async fn run_net_loop(
                     ServerEvent::MessageCreate { message } => Some(message.clone()),
                     _ => None,
                 };
-                let applied = {
+                // Message events whose author key is not known yet wait for it.
+                let holdable = catchup::holdable(&event).then(|| event.clone());
+                let key_source = matches!(event, ServerEvent::MemberJoin { .. } | ServerEvent::ProfileUpdate { .. });
+                let presence = outbox::online_user(&event);
+                let (applied, was_online) = {
                     let mut servers = app.servers.lock().unwrap();
                     match servers.get_mut(&server) {
-                        Some(state) => state.apply(event),
+                        Some(state) => {
+                            let was_online = presence.map(|(user, _)| {
+                                state.profiles.get(&user).is_some_and(|p| p.presence.is_visible_online())
+                            });
+                            (state.apply(event), was_online)
+                        }
                         None => continue,
                     }
                 };
+                if applied.is_ok() {
+                    if key_source {
+                        catchup::release_held(&handle, server);
+                    }
+                    // A partner turning online gets their waiting DMs now.
+                    if let (Some((user, now)), Some(false)) = (presence, was_online) {
+                        if now.is_visible_online() {
+                            outbox::wake_dm(&app, user);
+                        }
+                    }
+                }
                 match applied {
                     Ok(true) => {
                         if banned_me {
@@ -4046,7 +4118,10 @@ async fn run_net_loop(
                         let _ = handle.emit("server-event", &server.to_string());
                     }
                     Ok(false) => {}
-                    Err(e) => tracing::warn!("rejected remote event: {e}"),
+                    Err(e) => match (e, holdable) {
+                        (StoreError::UnknownAuthorKey(_), Some(event)) => catchup::hold(&app, server, event),
+                        (e, _) => tracing::warn!("rejected remote event: {e}"),
+                    },
                 }
             }
             NetEvent::SyncRequested { server, .. } => {
@@ -4119,22 +4194,28 @@ async fn run_net_loop(
                         for profile in profiles {
                             state.profiles.insert(profile.id, profile);
                         }
-                        // Keep our own profile visible.
+                        // Keep our own profile visible, with the key we sign with.
                         if let Some(me) = app.profile.lock().unwrap().clone() {
-                            state.profiles.entry(me.id).or_insert(me);
+                            let key = me.identity;
+                            let entry = state.profiles.entry(me.id).or_insert(me);
+                            entry.identity = key.or(entry.identity);
                         }
                         for message in recent_messages {
-                            let _ = state.apply(ServerEvent::MessageCreate { message });
+                            let event = ServerEvent::MessageCreate { message };
+                            if let Err(StoreError::UnknownAuthorKey(_)) = state.apply(event.clone()) {
+                                catchup::hold(&app, server, event);
+                            }
                         }
                         servers.insert(server, state);
                     }
                     app.persist_server(server);
+                    catchup::release_held(&handle, server);
                     let _ = handle.emit("server-event", &server.to_string());
                     let _ = handle.emit("servers-changed", ());
                 }
             }
             NetEvent::VoiceDial { .. } => {}
-            NetEvent::NeighborUp { server } => {
+            NetEvent::NeighborUp { server, peer } => {
                 // A peer connected on the topic: make sure they know us,
                 // and pull state if ours still looks empty.
                 let me = app.profile.lock().unwrap().clone();
@@ -4171,6 +4252,14 @@ async fn run_net_loop(
                 for event in structure_announcements(&app, server, my_id) {
                     broadcast(&app, server, WirePayload::Event(event)).await;
                 }
+                // What we did while nobody was connected goes out now; our
+                // pending messages follow in the catch-up with this peer.
+                outbox::flush_queued(&app, server).await;
+                outbox::wake_dms_for_node(&app, peer);
+                catchup::on_neighbor_up(&handle, server, peer);
+            }
+            NetEvent::CaughtUp { server, peer, report } => {
+                catchup::on_caught_up(&handle, server, peer, &report);
             }
         }
     }
@@ -4285,6 +4374,11 @@ async fn run_dm_loop(
     while let Some(envelope) = envelopes.recv().await {
         let app = handle.state::<App>();
         let partner = envelope.sender.id;
+        // Signed by the sender, with the key we pinned for them if any.
+        if !outbox::dm_sender_trusted(&app, &envelope) {
+            tracing::warn!("dropped a DM whose signature or key does not match its sender");
+            continue;
+        }
         if envelope.message.content.starts_with(safety::REPORT_PREFIX) {
             receive_report(&app, &handle, partner, &envelope.message.content);
             continue;
@@ -4525,6 +4619,17 @@ pub fn run() {
                 for state in persist::load_servers(&dir) {
                     app.servers.lock().unwrap().insert(state.server.id, state);
                 }
+                let mut queue = outbox::Outbox::load(&dir);
+                let now = chrono::Utc::now();
+                let pruned = app.servers.lock().unwrap().values().fold(false, |acc, s| queue.prune(s, now) | acc);
+                *app.outbox.lock().unwrap() = queue;
+                if pruned {
+                    app.persist_outbox();
+                }
+            }
+            // Our identity key signs messages; peers learn it from our profile.
+            if let Err(e) = app.reload_identity() {
+                tracing::error!("identity key unavailable: {e}");
             }
 
             let node_key = app
@@ -4641,6 +4746,7 @@ pub fn run() {
                                 });
                             }
                         }
+                        node.set_catchup_store(catchup::store(&handle));
                         *app.net.lock().await = Some(node);
                         tracing::info!("iroh node online");
 
@@ -4661,6 +4767,8 @@ pub fn run() {
                         tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
                         tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
                         tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
+                        tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
+                        tauri::async_runtime::spawn(outbox::run_dm_outbox(handle.clone()));
                         run_net_loop(handle.clone(), events).await;
                     }
                     Err(e) => tracing::error!("P2P stack failed to start: {e}"),

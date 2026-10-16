@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Bump on breaking wire changes; peers drop mismatched envelopes.
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// Hard cap for a single gossip frame. Large payloads (files, images,
 /// soundboard clips) must go through iroh-blobs instead.
@@ -143,7 +143,8 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePaylo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commy_core::{Message, Server, ServerState, UserId, UserProfile};
+    use crate::test_support::{fixture, join, post};
+    use commy_core::{Message, Server, ServerState, UserId};
 
     #[test]
     fn identical_events_encode_differently() {
@@ -204,17 +205,10 @@ mod tests {
 
     #[test]
     fn sync_response_caps_messages() {
-        let owner = UserId::new();
-        let server = Server::new("s", owner);
-        let channel = server.channels[0].id;
-        let mut state = ServerState::new(server);
-        state.profiles.insert(owner, UserProfile::new("owner"));
+        let (mut state, channel, owner) = fixture();
         for i in 0..100 {
-            state
-                .apply(ServerEvent::MessageCreate {
-                    message: Message::new(channel, owner, format!("m{i}")),
-                })
-                .unwrap();
+            let message = post(&state, channel, owner, &format!("m{i}"));
+            state.apply(ServerEvent::MessageCreate { message }).unwrap();
         }
         let WirePayload::SyncResponse {
             recent_messages, ..
@@ -229,22 +223,74 @@ mod tests {
 
     #[test]
     fn sync_response_fits_one_gossip_frame() {
-        let owner = UserId::new();
-        let server = Server::new("busy", owner);
-        let channel = server.channels[0].id;
-        let mut state = ServerState::new(server);
-        let mut profile = UserProfile::new("owner");
-        profile.id = owner;
-        state.profiles.insert(owner, profile);
+        let (mut state, channel, owner) = fixture();
         for i in 0..200 {
-            let msg = Message::new(channel, owner, format!("message number {i} with some padding text"));
-            state.apply(ServerEvent::MessageCreate { message: msg }).unwrap();
+            let msg = post(
+                &state,
+                channel,
+                owner,
+                &format!("message number {i} with some padding text"),
+            );
+            state
+                .apply(ServerEvent::MessageCreate { message: msg })
+                .unwrap();
         }
         let payload = build_sync_response(&state, 50);
         assert!(gossip_size(&payload) <= MAX_GOSSIP_BYTES);
         let WirePayload::SyncResponse { recent_messages, .. } = payload else { panic!("wrong payload") };
         assert!(!recent_messages.is_empty(), "keeps as many recent messages as fit");
         assert!(recent_messages.last().unwrap().content.contains("199"), "newest message survives");
+    }
+
+    #[test]
+    fn sync_response_messages_verify_on_receive() {
+        let (mut state, channel, owner) = fixture();
+        let friend = join(&mut state, "friend");
+        for (i, author) in [owner, friend, owner].into_iter().enumerate() {
+            let message = post(&state, channel, author, &format!("hello {i}"));
+            state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        }
+        let WirePayload::SyncResponse {
+            server,
+            profiles,
+            recent_messages,
+        } = build_sync_response(&state, 50)
+        else {
+            panic!("wrong payload kind");
+        };
+        assert_eq!(recent_messages.len(), 3);
+        assert!(recent_messages.iter().all(|m| m.sig.is_some()));
+
+        // A newcomer inserts profiles first, then applies the messages.
+        let mut fresh = ServerState::new(server.clone());
+        for profile in profiles.clone() {
+            fresh.profiles.insert(profile.id, profile);
+        }
+        for message in recent_messages.clone() {
+            assert_eq!(
+                fresh.apply(ServerEvent::MessageCreate { message }),
+                Ok(true)
+            );
+        }
+        assert_eq!(fresh.messages(channel).len(), 3);
+
+        // Without the author's key a message is not taken.
+        let mut keyless = ServerState::new(server);
+        for mut profile in profiles {
+            profile.identity = None;
+            keyless.profiles.insert(profile.id, profile);
+        }
+        let first = recent_messages[0].clone();
+        let author = first.author;
+        assert_eq!(
+            keyless.apply(ServerEvent::MessageCreate { message: first }),
+            Err(commy_core::StoreError::UnknownAuthorKey(author))
+        );
+    }
+
+    #[test]
+    fn protocol_version_is_bumped_for_signed_events() {
+        assert_eq!(PROTOCOL_VERSION, 3);
     }
 
     #[test]
