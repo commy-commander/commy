@@ -192,8 +192,9 @@ Commy messages travel only between members' devices, so a message sent while
 its recipient is offline waits on the sender's device until both are online
 at the same time. The doorbell closes that gap without carrying any message:
 the sender's app rings the recipient's doorbell on the recipient's account
-server, and the recipient's app hears it, comes online and fetches the
-messages from its peers directly.
+server. When the recipient's app is running it hears the ring, shows the
+messages as on their way and fetches them from its peers directly once one of
+them has the messages.
 
 Each app picks a random key for every Commy server it is in and shares it only
 with that server's members, peer to peer. From the key both sides derive a
@@ -211,8 +212,14 @@ Neither needs a session, and every request carries exactly one token, so no
 request ties two tokens together.
 
 - **What it stores:** random tokens and blinded ids with the time they
-  arrived, at most 1000 per token. A take deletes what it returns, and an
-  hourly sweep deletes anything older than 14 days.
+  arrived, at most 1000 per token and 200,000 in all (rings beyond that are
+  refused until there is room). A take deletes what it returns, and an hourly
+  sweep deletes anything older than 14 days.
+- **Setting it up:** nothing to do. It is on by default, the auth server
+  creates its `doorbellRing` table when it starts, and `deploy/Caddyfile`
+  keeps no access log. If you put your own proxy in front, leave
+  `/api/auth/commy/doorbell/*` out of its access log, as `deploy/edge/Caddyfile`
+  does.
 - **What it never sees:** Commy server ids, accounts or sessions, message
   content, who sent or receives a message, or who is in which server. It
   stores no IP address or user agent; addresses are used in memory for rate
