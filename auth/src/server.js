@@ -4,9 +4,11 @@ import { toNodeHandler } from "better-auth/node";
 import { createAuth } from "./auth.js";
 import { discoveryDocument, featureSummary, loadConfig } from "./config.js";
 import { dropDeviceNames } from "./devices.js";
+import { connectRedis } from "./redis.js";
 
 const config = loadConfig();
-const { auth, options, pool } = createAuth(config);
+const redis = config.redisUrl ? await connectRedis(config.redisUrl) : null;
+const { auth, options, pool } = createAuth(config, { redis });
 
 async function migrate(attempts = 30) {
   for (let i = 1; ; i++) {
@@ -44,10 +46,13 @@ const server = http.createServer(async (req, res) => {
   if (path === "/healthz") {
     try {
       await pool.query("select 1");
-      return sendJson(res, 200, '{"ok":true}');
     } catch {
       return sendJson(res, 503, '{"ok":false}');
     }
+    // Redis being away degrades the doorbell and rate limits, not sign-in, so
+    // it is reported rather than failing the check and restarting the server
+    const redisOk = redis ? await redis.ping().catch(() => false) : null;
+    return sendJson(res, 200, JSON.stringify(redisOk === null ? { ok: true } : { ok: true, redis: redisOk }));
   }
   if (path === "/.well-known/commy-auth.json") {
     return sendJson(res, 200, discovery);
@@ -68,6 +73,6 @@ server.listen(config.port, "0.0.0.0", () => {
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     server.close();
-    pool.end().finally(() => process.exit(0));
+    Promise.allSettled([pool.end(), redis?.close()]).then(() => process.exit(0));
   });
 }

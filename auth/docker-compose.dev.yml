@@ -1,9 +1,11 @@
-# Local test bench for the account server: Postgres, the auth server, a mail
-# catcher and a live view of the database. Nothing here leaves the machine.
+# Local test bench for the account server: Postgres, Redis, the auth server,
+# a mail catcher and a live view of the database. Nothing here leaves the
+# machine.
 #   docker compose -f auth/docker-compose.dev.yml up -d --build
 # Auth server  http://localhost:3001   (desktop: COMMY_AUTH_URL=http://localhost:3001)
 # Mail         http://localhost:8025   (verification and sign-in links land here)
 # Database     http://localhost:5555   (Prisma Studio, read the tables live)
+# Redis        localhost:6380          (redis-cli -p 6380 keys 'doorbell:*')
 
 name: commy-bench
 
@@ -23,6 +25,16 @@ services:
       interval: 3s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+
   mail:
     image: axllent/mailpit:v1.27
     ports:
@@ -32,6 +44,7 @@ services:
     build: .
     environment:
       DATABASE_URL: postgres://commy:commy-dev@postgres:5432/commy_auth
+      REDIS_URL: redis://redis:6379
       # Dev only secret, never reuse it on a real server
       BETTER_AUTH_SECRET: local-test-bench-secret-not-for-production
       BETTER_AUTH_URL: http://localhost:3001
@@ -43,6 +56,8 @@ services:
       - "127.0.0.1:3001:3001"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   studio:

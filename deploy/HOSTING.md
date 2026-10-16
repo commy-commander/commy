@@ -129,7 +129,7 @@ under `features`, and the app hides a search your server does not offer
    example to offer game search without Twitch sign-in.
 4. Run `docker compose up -d`, then check the start of the auth log with
    `docker compose logs auth | head`. It prints one line such as
-   `[auth] google=off twitch=on email=on turnstile=on gifs=on games=on (twitch app) doorbell=on signup=on`
+   `[auth] google=off twitch=on email=on turnstile=on gifs=on games=on (twitch app) doorbell=on redis=on signup=on`
    and a warning naming any half-filled pair, such as a client id without its
    secret. `https://<DOMAIN>/.well-known/commy-auth.json` should show
    `"features":{"gifs":true,"games":true}`.
@@ -219,8 +219,13 @@ request ties two tokens together.
   arrived, at most 1000 per token and 200,000 in all (rings beyond that are
   refused until there is room). A take deletes what it returns, and an hourly
   sweep deletes anything older than 14 days.
-- **Setting it up:** nothing to do. It is on by default, the auth server
-  creates its `doorbellRing` table when it starts, and `deploy/Caddyfile`
+- **Where:** in the stack's Redis (`REDIS_URL`, set by `docker-compose.yml`),
+  as one sorted set per token. Rings are taken in one atomic step and fanned
+  out over Redis pub/sub, so a take waiting on one auth instance wakes from a
+  ring on another. Without `REDIS_URL` the auth server keeps rings in its
+  `doorbellRing` table instead, which it creates when it starts; see
+  [Redis](#redis) below.
+- **Setting it up:** nothing to do. It is on by default and `deploy/Caddyfile`
   keeps no access log. If you put your own proxy in front, leave
   `/api/auth/commy/doorbell/*` out of its access log, as `deploy/edge/Caddyfile`
   does.
@@ -233,9 +238,38 @@ request ties two tokens together.
   `docker compose up -d`. The startup log then shows `doorbell=off`, the
   discovery document shows `"doorbell":false` under `features`, the endpoints
   answer 404, and messages for apps signed in to this server arrive only when
-  sender and recipient are online together. Rows already stored stay until you
-  delete them:
-  `docker compose exec postgres psql -U commy commy_auth -c 'delete from "doorbellRing"'`
+  sender and recipient are online together. Rings already stored stay until
+  you delete them:
+  `docker compose exec redis redis-cli --scan --pattern 'doorbell:*' | xargs docker compose exec -T redis redis-cli del`
+  (or, without Redis,
+  `docker compose exec postgres psql -U commy commy_auth -c 'delete from "doorbellRing"'`).
+
+## Redis
+
+The stack runs a small Redis (`redis:7-alpine`, 128 MB cap, reachable only
+from the auth server) for the two kinds of state that are short-lived and hot:
+
+- **Doorbell rings:** random tokens and blinded ids with their arrival time,
+  as described above. Expiry: taken by an app or swept after 14 days.
+- **Rate-limit counters:** one counter per caller and endpoint. Before a
+  counter is written its key (IP address and path) is hashed with
+  `BETTER_AUTH_SECRET`, so Redis holds a keyed hash and a number, never an
+  address, and the counter expires with its window (at most one hour).
+  Counters are shared by every auth instance and survive a restart.
+
+Everything durable (accounts, sessions, linked devices, invite links, the
+sealed server lists) stays in Postgres. Redis snapshots to its `redisdata`
+volume once a minute, so rings survive a restart; losing the volume loses at
+most undelivered rings, which the apps send again when both sides are online.
+
+**Redis is optional.** To run without it, set `REDIS_URL=` (empty) in `.env`
+and remove the `redis` service and the auth service's `depends_on: redis`
+entry from `docker-compose.yml`. Rings then go to the `doorbellRing` table and
+rate limits are counted in each auth process's memory, as before. The startup
+log says which: `redis=on` or `redis=off`. If Redis is configured but
+unreachable, sign-in keeps working; doorbell calls fail until it is back,
+rate limits are off meanwhile (the edge proxy keeps its own), and `/healthz`
+reports `"redis":false`.
 
 ## iroh relay
 
@@ -279,14 +313,16 @@ never reach this stack. The auth database holds:
 - each account's sealed server list (`vaultItem`): bytes sealed with a key
   only that account's devices hold, plus a version and the last change time.
   The operator can see its size, not which servers are in it
-- the message doorbell: random tokens and blinded message ids with the time
-  they arrived, deleted when an app takes them or after 14 days
 - the relay: IP addresses and node ids of connected apps while they are
   connected, and monthly byte totals; relayed traffic is encrypted end to end
 - short-lived rows for verification, device sign-in codes, and a keyed hash
   of the requesting network (deleted after 15 minutes, never the raw IP)
 
-IP addresses are used in memory for rate limiting only. The single server
+Redis holds the message doorbell (random tokens and blinded message ids with
+the time they arrived, deleted when an app takes them or after 14 days) and
+rate-limit counters under keyed hashes of IP address and path, which expire
+with their window. Without Redis the doorbell lives in the database and the
+counters in memory. No IP address is written anywhere. The single server
 Caddyfile writes no access logs. The shared edge proxy (`edge/`) writes JSON
 access logs to `/var/log/commy-caddy`, except for invite pages, invite
 lookups and doorbell calls, which are never logged. The auth server logs no
@@ -296,7 +332,8 @@ emails, links or tokens.
 
 - Rate limits per IP: sign-up 5 per 10 minutes, sign-in 10 per minute, magic
   links and password resets 5 per 10 minutes, device codes 10 per minute,
-  doorbell rings 300 and takes 600 per minute.
+  doorbell rings 300 and takes 600 per minute. Counted in Redis when the
+  stack has one, so they hold across restarts and auth instances.
 - Optional Turnstile bot check and `ALLOW_SIGNUP=false` (see above).
 - Device codes expire after 10 minutes and must be approved by a signed-in user.
 - Behind another proxy or CDN (for example Cloudflare), rate limits only see
