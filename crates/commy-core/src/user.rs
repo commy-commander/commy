@@ -19,6 +19,17 @@ impl Presence {
     pub fn is_visible_online(self) -> bool {
         matches!(self, Presence::Online | Presence::Idle | Presence::DoNotDisturb)
     }
+
+    /// The presence other members get to see. Appearing offline
+    /// (`Invisible`) never leaves this device as such: everyone else sees
+    /// plain `Offline`, so nothing on the wire tells it apart from a user
+    /// who really is offline.
+    pub fn as_seen_by_others(self) -> Presence {
+        match self {
+            Presence::Invisible => Presence::Offline,
+            other => other,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +126,19 @@ impl UserProfile {
     pub fn visible_name(&self) -> &str {
         self.display_name.as_deref().unwrap_or(&self.username)
     }
+
+    /// This profile as other members see it. While appearing offline it
+    /// shows as `Offline` and shares no activity, like a user who is not
+    /// running the app.
+    pub fn as_seen_by_others(&self) -> UserProfile {
+        let mut shared = self.clone();
+        if self.presence == Presence::Invisible {
+            shared.presence = Presence::Offline;
+            shared.activity = None;
+            shared.activity_cover = None;
+        }
+        shared
+    }
 }
 
 #[cfg(test)]
@@ -134,6 +158,8 @@ mod tests {
         assert!(Presence::Online.is_visible_online());
         assert!(Presence::DoNotDisturb.is_visible_online());
         assert!(!Presence::Invisible.is_visible_online());
+        assert_eq!(Presence::Invisible.as_seen_by_others(), Presence::Offline);
+        assert_eq!(Presence::DoNotDisturb.as_seen_by_others(), Presence::DoNotDisturb);
         assert!(!Presence::Offline.is_visible_online());
     }
 

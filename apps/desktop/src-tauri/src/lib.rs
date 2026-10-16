@@ -1339,7 +1339,7 @@ async fn send_friend_signal(app: &tauri::State<'_, App>, to: UserId, signal: saf
     let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
     let mut message = DmMessage::new(me.id, to, signal.encode());
     sign_dm(app, &mut message)?;
-    let envelope = DmEnvelope { message, sender: me };
+    let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
     let send = {
         let net = app.net.lock().await;
         net.as_ref().ok_or("network is not ready yet")?.send_dm(&hex, &envelope)
@@ -1578,7 +1578,7 @@ async fn report_user(
         .ok_or("the server owner's device is unknown; try again once they have been online")?;
     let mut message = DmMessage::new(me.id, owner, report.encode());
     sign_dm(&app, &mut message)?;
-    let envelope = DmEnvelope { message, sender: me.clone() };
+    let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
     let send = {
         let net = app.net.lock().await;
         net.as_ref().ok_or("network is not ready yet")?.send_dm(&owner_hex, &envelope)
@@ -1714,7 +1714,7 @@ async fn send_dm(
     sign_dm(&app, &mut message)?;
     let envelope = DmEnvelope {
         message: message.clone(),
-        sender: me.clone(),
+        sender: me.as_seen_by_others(),
     };
     // Earlier messages still waiting go first, so this one queues behind them.
     let waiting = app.outbox.lock().unwrap().has_dms(partner);
@@ -3825,7 +3825,11 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
             profile.activity_cover = cover;
             profile.clone()
         };
-        announce_profile(&app, &handle, &profile).await;
+        // Appearing offline shares no activity, so there is nothing to
+        // announce; a profile update from an offline user would give it away.
+        if profile.presence != Presence::Invisible {
+            announce_profile(&app, &handle, &profile).await;
+        }
         let _ = handle.emit("profile-changed", &profile);
     }
 }

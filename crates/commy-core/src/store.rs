@@ -408,6 +408,7 @@ impl ServerState {
                     return Ok(false);
                 }
                 self.pin_identity(&mut profile)?;
+                profile = profile.as_seen_by_others();
                 if self.server.is_member(profile.id) {
                     self.profiles.insert(profile.id, profile);
                     return Ok(false);
@@ -431,6 +432,7 @@ impl ServerState {
                 Ok(self.server.members.len() != before)
             }
             ServerEvent::PresenceUpdate { user, presence } => {
+                let presence = presence.as_seen_by_others();
                 if let Some(profile) = self.profiles.get_mut(&user) {
                     if profile.presence == presence {
                         return Ok(false);
@@ -860,6 +862,9 @@ impl ServerState {
                     return Ok(false);
                 }
                 self.pin_identity(&mut profile)?;
+                // State holds presence as others see it, so a snapshot or
+                // catch-up served from it never says who appears offline.
+                profile = profile.as_seen_by_others();
                 match self.profiles.get(&profile.id) {
                     Some(existing) if *existing == profile => Ok(false),
                     _ => {
@@ -1660,6 +1665,25 @@ mod tests {
             }),
             Ok(false)
         );
+    }
+
+    #[test]
+    fn appearing_offline_is_stored_as_offline() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let mut profile = UserProfile::new("quiet");
+        profile.presence = Presence::Invisible;
+        profile.activity = Some("Playing Chess".into());
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: profile.clone() }).unwrap();
+        let stored = &state.profiles[&profile.id];
+        assert_eq!(stored.presence, Presence::Offline);
+        assert_eq!(stored.activity, None);
+        profile.custom_status = Some("away".into());
+        state.apply(ServerEvent::ProfileUpdate { profile: profile.clone() }).unwrap();
+        assert_eq!(state.profiles[&profile.id].presence, Presence::Offline);
+        state.apply(ServerEvent::PresenceUpdate { user: profile.id, presence: Presence::Online }).unwrap();
+        state.apply(ServerEvent::PresenceUpdate { user: profile.id, presence: Presence::Invisible }).unwrap();
+        assert_eq!(state.profiles[&profile.id].presence, Presence::Offline);
     }
 
     #[test]
