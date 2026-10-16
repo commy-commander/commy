@@ -789,10 +789,20 @@ function initials(name) {
 
 function formatTime(iso) {
   const date = new Date(iso);
-  const today = new Date();
-  const sameDay = date.toDateString() === today.toDateString();
   const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return sameDay ? `Today at ${time}` : `${date.toLocaleDateString()} ${time}`;
+  const day = dayLabel(date);
+  return day === "Today" ? time : `${day} at ${time}`;
+}
+
+// "Today", "Yesterday", or the date, for day dividers and timestamps.
+function dayLabel(date) {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  const sameYear = date.getFullYear() === today.getFullYear();
+  return date.toLocaleDateString([], sameYear ? { month: "long", day: "numeric" } : { year: "numeric", month: "long", day: "numeric" });
 }
 
 // ---------- Rendering ----------
@@ -2313,20 +2323,22 @@ function renderMessages(messages) {
   box.dataset.view = viewKey;
   box.innerHTML = "";
   if (state.view === "dm" && state.currentDm) box.appendChild(buildDmIntro());
-  else if (!messages.length) {
-    const empty = el("div", "empty-state");
-    empty.appendChild(el("h3", null, state.currentChannel ? `Welcome to #${state.currentChannel.name}` : "Welcome to Commy"));
-    empty.appendChild(el("p", null, "This is the start of the channel. Say something."));
-    box.appendChild(empty);
-    return;
-  }
+  else if (state.currentChannel) box.appendChild(buildChannelIntro(state.currentChannel));
+  if (!messages.length) return;
   state.renderedMessages = messages;
   const replyCounts = threadReplyCounts(messages);
   let lastAuthor = null;
   let lastTime = 0;
+  let lastDay = null;
   let blockedRun = null;
   for (const message of messages) {
     const time = new Date(message.created_at).getTime();
+    const day = new Date(message.created_at).toDateString();
+    if (day !== lastDay) {
+      box.appendChild(dayDivider(new Date(message.created_at)));
+      lastDay = day;
+      lastAuthor = null;
+    }
     if (state.view === "server" && isBlocked(message.author_id) && !revealedBlocked.has(message.id)) {
       if (!blockedRun) {
         blockedRun = [];
@@ -2352,6 +2364,24 @@ function renderMessages(messages) {
   // Stay put when re-rendering the same view while scrolled up.
   box.scrollTop = sameView && !atBottom ? prevScroll : box.scrollHeight;
   if (state.threadRoot) renderThread();
+}
+
+// The top of every channel: where you are and what it is for.
+function buildChannelIntro(channel) {
+  const intro = el("div", "channel-intro");
+  const mark = el("div", "channel-intro-mark");
+  if (channel.kind === "voice") mark.appendChild(svgIcon("speaker", 32));
+  else mark.appendChild(el("span", "channel-intro-hash", "#"));
+  intro.appendChild(mark);
+  intro.appendChild(el("h2", null, `Welcome to #${channel.name}`));
+  intro.appendChild(el("p", null, channel.topic || "This is the start of the channel. Say something."));
+  return intro;
+}
+
+function dayDivider(date) {
+  const row = el("div", "day-divider");
+  row.appendChild(el("span", "day-divider-label", dayLabel(date)));
+  return row;
 }
 
 // A lone GIF or image link renders as just the picture.

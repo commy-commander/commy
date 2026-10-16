@@ -440,7 +440,7 @@ body {
 .msg-body { min-width: 0; flex: 1; user-select: text; }
 .msg-head { display: flex; align-items: baseline; gap: 8px; }
 .msg-author { font-weight: 600; color: var(--header-primary); }
-.msg-time { font-size: 11px; color: var(--text-faint); }
+.msg-time { font-size: 12px; color: var(--text-muted); }
 .msg-content { color: var(--text-normal); line-height: 1.4; word-wrap: break-word; }
 .msg-content .edited { font-size: 10px; color: var(--text-faint); }
 
@@ -451,6 +451,35 @@ body {
   max-width: 440px;
 }
 .empty-state h3 { color: var(--header-primary); margin-bottom: 8px; font-size: 24px; font-family: var(--font-display); letter-spacing: -.01em; }
+
+/* Top of a channel */
+.channel-intro { margin-top: auto; padding: 24px 8px 8px; }
+.channel-intro-mark {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  background: var(--bg-raised);
+  color: var(--header-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.channel-intro-hash { font-family: var(--font-display); font-size: 34px; font-weight: 700; line-height: 1; }
+.channel-intro h2 { font-family: var(--font-display); font-size: 26px; font-weight: 700; letter-spacing: -.01em; color: var(--header-primary); margin-bottom: 6px; }
+.channel-intro p { color: var(--text-muted); font-size: 15px; line-height: 1.5; max-width: 60ch; }
+
+/* Day dividers */
+.day-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 8px 6px;
+  color: var(--text-faint);
+}
+.day-divider::before, .day-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.day-divider-label { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.day-divider + .msg.first { margin-top: 4px; }
 
 /* Composer */
 .composer {
@@ -2073,15 +2102,15 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .msg { position: relative; }
 .msg-actions {
   position: absolute;
-  top: -14px;
+  top: -16px;
   right: 16px;
   display: none;
   gap: 2px;
-  background: var(--bg-mid);
-  border: 1px solid var(--bg-darkest);
-  border-radius: 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: 10px;
   padding: 2px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .3);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .35);
   z-index: 2;
 }
 .msg:hover .msg-actions { display: flex; }
@@ -2530,16 +2559,16 @@ button svg, .vp-action-icon svg, .channel-icon svg, .vs-icon svg { display: bloc
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 16px 8px;
-  padding: 6px 14px;
-  background: var(--bg-dark);
-  border: 1px solid var(--bg-active);
+  margin: 0 12px 8px;
+  padding: 7px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   font-size: 13px;
   line-height: 1.35;
   color: var(--text-muted);
 }
-.awaited-icon { display: inline-flex; flex-shrink: 0; color: var(--text-faint); }
+.awaited-icon { display: inline-flex; flex-shrink: 0; color: var(--accent); }
 
 /* ---------- Reactions ---------- */
 .reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
