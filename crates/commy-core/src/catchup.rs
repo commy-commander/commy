@@ -808,19 +808,17 @@ mod tests {
         reconcile(&mut n, &mut q, now);
         assert!(n.tombstones_for(x.id).iter().any(|p| p.by == author));
         assert!(q.tombstones_for(x.id).iter().any(|p| p.by == moderator));
-        // Even once the moderator's own no longer counts, a stale replica's
-        // late copy stays out on n.
-        let role = n.server.member(moderator).unwrap().roles[0];
-        n.apply(n.role_change(moderator, role, false, now)).unwrap();
+        assert_eq!(digests(&n, now), digests(&q, now));
         n.apply(ServerEvent::MessageCreate { message: x.clone() }).unwrap();
         assert!(!n.has_message(x.id));
     }
 
-    /// Demotes `user` from `role` at `at`, or has them leave then.
-    fn step_down(state: &ServerState, how: &str, user: crate::ids::UserId, role: crate::ids::RoleId, at: DateTime<Utc>) -> ServerEvent {
+    /// Demotes `user` from `role`, or has them leave.
+    fn step_down(state: &ServerState, how: &str, user: crate::ids::UserId, role: crate::ids::RoleId) -> ServerEvent {
+        let server = state.server.id;
         match how {
-            "demote" => state.role_change(user, role, false, at),
-            _ => ServerEvent::MemberLeave { server: state.server.id, user, at: at.timestamp_millis() },
+            "demote" => ServerEvent::RoleUnassign { server, user, role },
+            _ => ServerEvent::MemberLeave { server, user },
         }
     }
 
@@ -835,120 +833,124 @@ mod tests {
             let spam = post(&a, channel, author, "spam");
             a.apply(ServerEvent::MessageCreate { message: spam.clone() }).unwrap();
             let mut holding = a.clone();
-            assert_eq!(a.apply(delete(&a, &spam, moderator)), Ok(true));
+            let removal = delete(&a, &spam, moderator);
+            assert_eq!(a.apply(removal.clone()), Ok(true));
             // The stale replicas hear of the demotion or leave first.
-            let later = Utc::now() + Duration::seconds(1);
-            let out = step_down(&a, how, moderator, role, later);
+            let out = step_down(&a, how, moderator, role);
             for state in [&mut a, &mut holding, &mut lacking] {
                 assert_eq!(state.apply(out.clone()), Ok(true), "{how}");
             }
             let now = Utc::now();
-            for stale in [&mut holding, &mut lacking] {
-                assert_eq!(reconcile(&mut a, stale, now).0, vec![spam.id], "{how}");
-                assert!(!stale.has_message(spam.id), "{how}");
-                assert_eq!(digests(&a, now), digests(stale, now), "{how}");
-                assert_eq!(reconcile(&mut a, stale, now), (vec![], vec![]), "{how}");
+            assert_eq!(reconcile(&mut a, &mut holding, now).0, vec![spam.id], "{how}");
+            assert!(!holding.has_message(spam.id), "{how}");
+            assert_eq!(digests(&a, now), digests(&holding, now), "{how}");
+            assert_eq!(reconcile(&mut a, &mut holding, now), (vec![], vec![]), "{how}");
+            // Without the message only a member's delete is kept. Someone
+            // who left is honored once the message reaches the replica.
+            if how == "leave" {
+                assert_eq!(lacking.apply(removal.clone()), Err(crate::store::StoreError::NotAllowed));
+                lacking.apply(ServerEvent::MessageCreate { message: spam.clone() }).unwrap();
             }
+            reconcile(&mut a, &mut lacking, now);
+            assert!(!lacking.has_message(spam.id), "{how}");
+            assert_eq!(digests(&a, now), digests(&lacking, now), "{how}");
         }
     }
 
     #[test]
-    fn a_removal_tells_a_replica_that_missed_the_grant_when_it_was_made() {
-        for how in ["demote", "leave"] {
-            let (mut a, channel, _) = fixture();
-            let sid = a.server.id;
-            let author = join(&mut a, "author");
-            let moderator = join(&mut a, "moderator");
-            let mods = crate::server::Role {
-                id: crate::ids::RoleId::new(),
-                name: "mods".into(),
-                color: None,
-                permissions: crate::permissions::Permissions::MANAGE_MESSAGES,
-                position: 1,
-                hoist: false,
-                self_assignable: false,
-                tag: None,
-                banner: None,
-                updated_at: 1,
-            };
-            a.apply(ServerEvent::RoleCreate { server: sid, role: mods.clone() }).unwrap();
-            let spam = post(&a, channel, author, "spam");
-            a.apply(ServerEvent::MessageCreate { message: spam.clone() }).unwrap();
-            // This replica misses the grant.
-            let mut unaware = a.clone();
-            a.apply(a.role_change(moderator, mods.id, true, Utc::now())).unwrap();
-            assert_eq!(a.apply(delete(&a, &spam, moderator)), Ok(true));
-            let out = step_down(&a, how, moderator, mods.id, Utc::now() + Duration::seconds(1));
-            a.apply(out.clone()).unwrap();
-            unaware.apply(out).unwrap();
-            // What the removal tells comes with it, or with the marks
-            // announced again once the moderator is gone.
-            for (_, event) in a.changes_since(0, None) {
-                let _ = unaware.apply(event);
-            }
-            let now = Utc::now();
-            reconcile(&mut a, &mut unaware, now);
-            assert!(!unaware.has_message(spam.id), "{how}");
-            assert_eq!(digests(&a, now), digests(&unaware, now), "{how}");
-        }
-    }
-
-    #[test]
-    fn a_delete_dated_before_its_message_is_refused() {
-        let (mut state, channel, _) = fixture();
-        let author = join(&mut state, "author");
-        let moderator = join_moderator(&mut state, "moderator");
-        let role = state.server.member(moderator).unwrap().roles[0];
-        let now = Utc::now();
-        state.apply(state.role_change(moderator, role, false, now - Duration::minutes(30))).unwrap();
-        let mut lacking = state.clone();
-        // Written after the demotion, deleted by a proof dated in the
-        // moderator's time.
-        let msg = post(&state, channel, author, "after");
-        state.apply(ServerEvent::MessageCreate { message: msg.clone() }).unwrap();
-        let backdated = proof(&state, &msg, moderator, now - Duration::hours(1));
-        assert_eq!(state.apply(backdated.clone().into_event()), Err(crate::store::StoreError::NotAllowed));
-        assert!(state.has_message(msg.id) && state.tombstone(msg.id).is_none());
-        // Without the message it is kept, and goes once the message arrives.
-        assert_eq!(lacking.apply(backdated.into_event()), Ok(true));
-        reconcile(&mut state, &mut lacking, now);
-        assert!(lacking.has_message(msg.id) && lacking.tombstone(msg.id).is_none());
-        assert_eq!(digests(&state, now), digests(&lacking, now));
-    }
-
-    #[test]
-    fn messages_and_deletes_saved_by_older_versions_stay_out() {
+    fn deletes_from_a_demoted_and_a_regranted_moderator_converge_everywhere() {
         let (mut base, channel, _) = fixture();
+        let sid = base.server.id;
         let author = join(&mut base, "author");
         let moderator = join_moderator(&mut base, "moderator");
-        let mut other = base.clone();
+        let role = base.server.member(moderator).unwrap().roles[0];
+        let [first, second] = ["first", "second"].map(|text| post(&base, channel, author, text));
+        for m in [&first, &second] {
+            base.apply(ServerEvent::MessageCreate { message: m.clone() }).unwrap();
+        }
+        let demote = ServerEvent::RoleUnassign { server: sid, user: moderator, role };
+        let regrant = ServerEvent::RoleAssign { server: sid, user: moderator, role };
+        // The first delete is made before the demotion, the second after
+        // the role is granted again.
+        let before = delete(&base, &first, moderator);
+        let after = delete(&base, &second, moderator);
+        // Each replica heard a different part of it, in its own order.
+        let mut saw_all = base.clone();
+        for event in [&before, &demote, &regrant, &after] {
+            assert_eq!(saw_all.apply(event.clone()), Ok(true));
+        }
+        let mut demoted_only = base.clone();
+        for event in [&demote, &before] {
+            assert_eq!(demoted_only.apply(event.clone()), Ok(true));
+        }
+        let mut late_regrant = base.clone();
+        for event in [&after, &demote, &regrant] {
+            assert_eq!(late_regrant.apply(event.clone()), Ok(true));
+        }
+        let mut no_roles = base.clone();
+        no_roles.apply(demote.clone()).unwrap();
+        no_roles.apply(regrant.clone()).unwrap();
+        let mut replicas = [saw_all, demoted_only, late_regrant, no_roles, base];
+        let now = Utc::now();
+        for _ in 0..2 {
+            for i in 0..replicas.len() {
+                for j in i + 1..replicas.len() {
+                    let (left, right) = replicas.split_at_mut(j);
+                    reconcile(&mut left[i], &mut right[0], now);
+                }
+            }
+        }
+        let expected = digests(&replicas[0], now);
+        for (i, state) in replicas.iter().enumerate() {
+            assert!(!state.has_message(first.id) && !state.has_message(second.id), "replica {i}");
+            assert_eq!(digests(state, now), expected, "replica {i}");
+        }
+    }
+
+    #[test]
+    fn legacy_messages_stay_out_but_their_deletes_reach_replicas_holding_them() {
+        let (mut base, channel, _) = fixture();
+        let author = join(&mut base, "author");
+        let member = join(&mut base, "member");
+        let mut lacking = base.clone();
         // Older versions made ids at random and signed nothing.
         let legacy = |text: &str| Message { id: MessageId::new(), ..Message::new(channel, author, text) };
-        let (edited, own, moderated) = (legacy("edited"), legacy("own"), legacy("moderated"));
+        let (edited, own, others) = (legacy("edited"), legacy("own"), legacy("others"));
         let mut snapshot = base.snapshot();
         for (c, list) in snapshot.messages.iter_mut() {
             if *c == channel {
-                list.extend([edited.clone(), own.clone(), moderated.clone()]);
+                list.extend([edited.clone(), own.clone(), others.clone()]);
             }
         }
-        let mut state = ServerState::from_snapshot(snapshot);
+        let mut state = ServerState::from_snapshot(snapshot.clone());
+        let mut holding = ServerState::from_snapshot(snapshot);
         let now = Utc::now();
         assert!(digests(&state, now).is_empty());
         // Once edited it is signed, but its id would still be refused.
         state.apply(edit(&state, &edited, "new", Utc::now())).unwrap();
         assert!(state.message(edited.id).unwrap().sig.is_some());
-        // So would its author's delete where the message is missing; a
-        // moderator's would not.
-        let by_moderator = proof(&state, &moderated, moderator, Utc::now());
-        assert_eq!(state.apply(delete(&state, &own, author)), Ok(true));
-        assert_eq!(state.apply(by_moderator.clone().into_event()), Ok(true));
-        assert!(!state.has_message(own.id) && !state.has_message(moderated.id));
-        let key = BucketKey::Tombstones { day: day_number(by_moderator.at) };
+        assert!(digests(&state, now).is_empty());
+        // Deletes are signed, whoever made them, so they travel.
+        let by_author = proof(&state, &own, author, Utc::now());
+        let by_member = proof(&state, &others, member, Utc::now());
+        for p in [&by_author, &by_member] {
+            assert_eq!(state.apply(p.clone().into_event()), Ok(true));
+        }
+        assert!(!state.has_message(own.id) && !state.has_message(others.id));
+        let day = |p: &TombstoneProof| BucketKey::Tombstones { day: day_number(p.at) };
         let keys: Vec<BucketKey> = digests(&state, now).iter().map(|d| d.key).collect();
-        assert_eq!(keys, vec![key]);
-        assert_eq!(items(&state, &[key], now), vec![(key, vec![(moderated.id, proof_version(&by_moderator))])]);
-        reconcile(&mut state, &mut other, now);
-        assert_eq!(digests(&state, now), digests(&other, now));
-        assert_eq!(reconcile(&mut state, &mut other, now), (vec![], vec![]));
+        assert_eq!(keys, dedup_keys([day(&by_author), day(&by_member)]));
+        for other in [&mut holding, &mut lacking] {
+            reconcile(&mut state, other, now);
+            assert!(!other.has_message(own.id) && !other.has_message(others.id));
+            assert_eq!(digests(&state, now), digests(other, now));
+            assert_eq!(reconcile(&mut state, other, now), (vec![], vec![]));
+        }
+        assert!(holding.has_message(edited.id), "the legacy message itself stays where it is");
+    }
+
+    fn dedup_keys(keys: impl IntoIterator<Item = BucketKey>) -> Vec<BucketKey> {
+        let set: BTreeSet<BucketKey> = keys.into_iter().collect();
+        set.into_iter().collect()
     }
 }

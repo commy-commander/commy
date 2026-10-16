@@ -1104,7 +1104,7 @@ mod tests {
             Some((profile.id, Presence::Online))
         );
         assert_eq!(
-            online_user(&ServerEvent::MemberJoin { server: sid, profile: profile.clone(), at: 0 }),
+            online_user(&ServerEvent::MemberJoin { server: sid, profile: profile.clone() }),
             Some((profile.id, Presence::Online))
         );
         assert_eq!(
@@ -1594,15 +1594,15 @@ mod tests {
             ServerEvent::MessageCreate { message: message.clone() },
             message.edit_event(sid, "edited", chrono::Utc::now(), identity),
             TombstoneProof::sign(sid, channel, message.id, me.id, chrono::Utc::now(), identity).into_event(),
-            ServerEvent::MemberJoin { server: sid, profile: me.clone(), at: 0 },
+            ServerEvent::MemberJoin { server: sid, profile: me.clone() },
             ServerEvent::ProfileUpdate { profile: me.clone() },
         ];
         let unsigned = vec![
             rename(sid, "renamed"),
-            ServerEvent::MemberLeave { server: sid, user: other, at: 1 },
-            ServerEvent::MemberBan { server: sid, user: other, at: 1 },
-            ServerEvent::MemberUnban { server: sid, user: other, at: 1 },
-            ServerEvent::RoleAssign { server: sid, user: other, role, at: 1 },
+            ServerEvent::MemberLeave { server: sid, user: other },
+            ServerEvent::MemberBan { server: sid, user: other },
+            ServerEvent::MemberUnban { server: sid, user: other },
+            ServerEvent::RoleAssign { server: sid, user: other, role },
             ServerEvent::RoleDelete { server: sid, role },
             ServerEvent::ChannelCreate { server: sid, channel: commy_core::Channel::new("new", commy_core::ChannelKind::Text, 3) },
             ServerEvent::ChannelDelete { server: sid, channel },
@@ -1713,7 +1713,7 @@ mod tests {
         let (sid, channel) = (server.id, server.channels[0].id);
         let mut state = ServerState::new(server);
         state.profiles.insert(me.id, me.clone());
-        state.apply(ServerEvent::MemberJoin { server: sid, profile: other.clone(), at: 0 }).unwrap();
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: other.clone() }).unwrap();
         let post = |author: UserId, identity: &Identity, content: &str| {
             let mut message = Message::new(channel, author, content);
             message.sign(sid, identity);

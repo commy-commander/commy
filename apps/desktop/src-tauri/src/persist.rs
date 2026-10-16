@@ -5,7 +5,7 @@
 //! <data>/voice.json            voice settings
 //! <data>/servers/<id>.json     one Snapshot per joined server
 //! <data>/outbox.json           sends waiting for someone to come online
-//! <data>/awaiting-snapshot.json servers joined without a snapshot yet
+//! <data>/awaiting-snapshot.json servers joined that wait for a snapshot
 //! ```
 //!
 //! Writes go to a temp file first and are renamed into place so a
@@ -105,25 +105,23 @@ pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
     Some(key)
 }
 
-/// Servers joined without a snapshot yet, with until when they may take
-/// one (see `App::awaiting_snapshot`).
-pub fn save_awaiting(dir: &Path, servers: &HashMap<ServerId, i64>) -> Result<()> {
+/// Servers joined that wait for their first snapshot.
+pub fn save_awaiting(dir: &Path, servers: &HashSet<ServerId>) -> Result<()> {
     write_json(&dir.join("awaiting-snapshot.json"), servers)
 }
 
-/// Earlier versions saved a list without times; each of those may take
-/// one until `listed_until`.
-pub fn load_awaiting(dir: &Path, listed_until: i64) -> HashMap<ServerId, i64> {
+/// Earlier builds saved each with a time, which no longer counts.
+pub fn load_awaiting(dir: &Path) -> HashSet<ServerId> {
     #[derive(serde::Deserialize)]
     #[serde(untagged)]
     enum Saved {
-        Until(HashMap<ServerId, i64>),
         Listed(HashSet<ServerId>),
+        Timed(HashMap<ServerId, i64>),
     }
     match read_json(&dir.join("awaiting-snapshot.json")) {
-        Some(Saved::Until(map)) => map,
-        Some(Saved::Listed(set)) => set.into_iter().map(|id| (id, listed_until)).collect(),
-        None => HashMap::new(),
+        Some(Saved::Listed(set)) => set,
+        Some(Saved::Timed(map)) => map.into_keys().collect(),
+        None => HashSet::new(),
     }
 }
 

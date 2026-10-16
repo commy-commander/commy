@@ -141,15 +141,15 @@ fn encoded<T: Serialize>(item: &T) -> usize {
 /// 1. profiles, but the owner's and those of the carried messages'
 ///    authors; role holders' go last;
 /// 2. structure members announce anyway: images, game tags, rule
-///    acceptances, voice moderation, deleted channels and roles, bans;
+///    acceptances, voice moderation, deleted channels, bans;
 /// 3. messages, the oldest first, each author's profile with their last
 ///    message;
 /// 4. members, the latest to join first and role holders last, then the
 ///    owner's profile.
 ///
 /// Members left out are learned from their own join, which each member
-/// announces to new neighbors, or from those who may kick or ban, who
-/// announce the joins of the last 30 days.
+/// announces to new neighbors and with its answer to a sync request; what
+/// they wrote verifies meanwhile, as catch-up relays their keys.
 pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePayload {
     let mut server = state.server.clone();
     server.emojis.clear();
@@ -202,13 +202,12 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePaylo
     }
     // 2. Structure announced anyway.
     type Step = fn(&mut commy_core::Server);
-    let steps: [Step; 7] = [
+    let steps: [Step; 6] = [
         |s| (s.icon, s.banner) = (None, None),
         |s| (s.game_tags, s.game_tag_meta) = (Vec::new(), Vec::new()),
         |s| s.rules_accepted.clear(),
         |s| (s.server_muted, s.server_deafened) = (Vec::new(), Vec::new()),
         |s| s.deleted_channels.clear(),
-        |s| s.deleted_roles.clear(),
         |s| s.banned.clear(),
     ];
     for step in steps {
@@ -231,7 +230,7 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePaylo
     }
     // 4. Members, the latest to join first and role holders last.
     if !fits(size) {
-        members.sort_by_key(|m| (m.user != owner, m.roles.is_empty(), state.joined_at(m.user).unwrap_or(0)));
+        members.sort_by_key(|m| (m.user != owner, m.roles.is_empty(), m.joined_ms));
         while !fits(size) && members.len() > 1 {
             size -= members.pop().map_or(0, |m| encoded(&m));
         }
@@ -471,7 +470,6 @@ mod tests {
                     self_assignable: i >= 3,
                     tag: None,
                     banner: None,
-                    updated_at: 1,
                 };
                 let id = role.id;
                 state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
@@ -482,15 +480,18 @@ mod tests {
         for i in 1..members {
             let profile = filled(crate::test_support::keyed_profile(&format!("player_{i:03}")), i);
             let user = profile.id;
-            state.apply(ServerEvent::MemberJoin { server: sid, profile, at: 1_000 + i as i64 }).unwrap();
+            state.apply(ServerEvent::MemberJoin { server: sid, profile }).unwrap();
+            // Joined one after another, a millisecond apart.
+            let joined = chrono::DateTime::from_timestamp_millis(1_000 + i as i64).unwrap();
+            state.server.members.last_mut().unwrap().joined_at = joined;
             if i.is_multiple_of(7) {
                 let role = roles[i % roles.len()];
-                state.apply(ServerEvent::RoleAssign { server: sid, user, role, at: 2_000 + i as i64 }).unwrap();
+                state.apply(ServerEvent::RoleAssign { server: sid, user, role }).unwrap();
             }
             users.push(user);
         }
         for _ in 0..3 {
-            state.apply(ServerEvent::MemberBan { server: sid, user: UserId::new(), at: 3_000 }).unwrap();
+            state.apply(ServerEvent::MemberBan { server: sid, user: UserId::new() }).unwrap();
         }
         for i in 0..40 {
             let author = users[(i * 3) % users.len()];
@@ -531,10 +532,11 @@ mod tests {
             // The role holders stay, then the earliest to join.
             let kept_ids: std::collections::HashSet<UserId> = kept.iter().map(|m| m.user).collect();
             assert!(state.server.members.iter().filter(|m| !m.roles.is_empty()).all(|m| kept_ids.contains(&m.user)));
-            let joined = |user: UserId| state.joined_at(user).unwrap_or(0);
+            let joined = |user: UserId| state.server.member(user).map_or(0, |m| m.joined_at.timestamp_millis());
             let dropped = state.server.members.iter().filter(|m| !kept_ids.contains(&m.user));
             let first_dropped = dropped.map(|m| joined(m.user)).min().unwrap();
-            assert!(kept.iter().filter(|m| m.roles.is_empty()).all(|m| joined(m.user) < first_dropped));
+            let others = kept.iter().filter(|m| m.roles.is_empty() && m.user != state.server.owner);
+            assert!(others.map(|m| joined(m.user)).all(|t| t < first_dropped));
             assert!(recent.is_empty() && profiles.len() == 1, "members go last");
         }
         // With 50 members there is room for keys and talk as well; up to
@@ -571,7 +573,7 @@ mod tests {
         let (mut small, channel, owner) = fixture();
         let friend = join(&mut small, "friend");
         small.server.icon = Some("icon".into());
-        small.apply(ServerEvent::MemberBan { server: small.server.id, user: UserId::new(), at: 1 }).unwrap();
+        small.apply(ServerEvent::MemberBan { server: small.server.id, user: UserId::new() }).unwrap();
         let message = post(&small, channel, friend, "hi");
         small.apply(ServerEvent::MessageCreate { message }).unwrap();
         let (server, members, profiles, recent) = parts(build_sync_response(&small, 50));

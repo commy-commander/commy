@@ -3,7 +3,7 @@ use commy_audio::VoiceProcessor;
 use commy_core::{DmStore, Identity, ServerId, ServerState, UserId, UserProfile};
 use commy_net::CommyNode;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -65,11 +65,6 @@ fn default_true() -> bool {
 /// account's, from before the key is made until it settles. A restart
 /// in between holds the key back again.
 pub const UNSETTLED_FILE: &str = "identity.unsettled";
-
-/// How long after joining a server its first snapshot may still be
-/// taken, in ms. Past it, or once a catch-up session with a member of it
-/// completed, no snapshot replaces its state.
-pub const SNAPSHOT_WINDOW_MS: i64 = 10 * 60 * 1000;
 
 /// Puts our current key on our own entry of a server. Returns None when
 /// nothing changed, else the key the entry held before, if any.
@@ -160,15 +155,10 @@ pub struct App {
     pub dm_wake: tokio::sync::Notify,
     /// Catch-up sessions, and events held for an unknown author key.
     pub catchup: Mutex<crate::catchup::Catchup>,
-    /// Servers joined from a ticket that have not taken their first
-    /// snapshot, with until when (ms since the epoch) they may take one
-    /// (see `catchup::apply_snapshot`). An entry outlives its window, so
-    /// the window never opens again and the server still rejoins from
-    /// its invite; it goes once a snapshot is taken or the server is left.
-    pub awaiting_snapshot: Mutex<HashMap<ServerId, i64>>,
-    /// Where each server's next round of role and membership
-    /// announcements goes on from.
-    pub announcing: Mutex<crate::roles::Cursors>,
+    /// Servers joined from a ticket that still wait for their first
+    /// snapshot. Only these take one (see `catchup::apply_snapshot`); an
+    /// entry goes once a snapshot is taken or the server is left.
+    pub awaiting_snapshot: Mutex<HashSet<ServerId>>,
     /// While set, our key was made in this run and may still give way to
     /// the account's key, so it is not announced before that time.
     pub key_hold: Mutex<Option<Instant>>,
@@ -223,8 +213,7 @@ impl Default for App {
             dm_backoff: Mutex::new(crate::outbox::DmBackoff::default()),
             dm_wake: tokio::sync::Notify::new(),
             catchup: Mutex::new(crate::catchup::Catchup::default()),
-            awaiting_snapshot: Mutex::new(HashMap::new()),
-            announcing: Mutex::new(crate::roles::Cursors::default()),
+            awaiting_snapshot: Mutex::new(HashSet::new()),
             key_hold: Mutex::new(None),
             signing: tokio::sync::RwLock::new(()),
         }
@@ -308,29 +297,21 @@ impl App {
         profile
     }
 
-    /// Whether a server was joined from a ticket and never took its first
-    /// snapshot, whether or not it still may.
-    pub fn lacks_snapshot(&self, server: ServerId) -> bool {
-        self.awaiting_snapshot.lock().unwrap().contains_key(&server)
-    }
-
-    /// Whether a server may still take its first snapshot.
+    /// Whether a server was joined from a ticket and still waits for its
+    /// first snapshot.
     pub fn awaits_snapshot(&self, server: ServerId) -> bool {
-        let now = chrono::Utc::now().timestamp_millis();
-        self.awaiting_snapshot.lock().unwrap().get(&server).is_some_and(|until| now < *until)
+        self.awaiting_snapshot.lock().unwrap().contains(&server)
     }
 
-    /// Opens a server's window for its first snapshot, for
-    /// [`SNAPSHOT_WINDOW_MS`] from now, or forgets it: a snapshot was
-    /// taken or the server left.
+    /// Marks a server as waiting for its first snapshot, or not any more:
+    /// a snapshot was taken or the server left.
     pub fn set_awaiting_snapshot(&self, server: ServerId, awaiting: bool) {
         let changed = {
-            let mut map = self.awaiting_snapshot.lock().unwrap();
+            let mut set = self.awaiting_snapshot.lock().unwrap();
             if awaiting {
-                let until = chrono::Utc::now().timestamp_millis() + SNAPSHOT_WINDOW_MS;
-                map.insert(server, until) != Some(until)
+                set.insert(server)
             } else {
-                map.remove(&server).is_some()
+                set.remove(&server)
             }
         };
         if changed {
@@ -338,25 +319,10 @@ impl App {
         }
     }
 
-    /// Closes a server's window for its first snapshot for good, as a
-    /// catch-up session with one of its members completed.
-    pub fn close_snapshot_window(&self, server: ServerId) {
-        let closed = match self.awaiting_snapshot.lock().unwrap().get_mut(&server) {
-            Some(until) if *until > 0 => {
-                *until = 0;
-                true
-            }
-            _ => false,
-        };
-        if closed {
-            self.persist_awaiting();
-        }
-    }
-
     pub fn persist_awaiting(&self) {
         let Some(dir) = self.data_dir() else { return };
-        let map = self.awaiting_snapshot.lock().unwrap();
-        if let Err(e) = crate::persist::save_awaiting(dir, &map) {
+        let set = self.awaiting_snapshot.lock().unwrap();
+        if let Err(e) = crate::persist::save_awaiting(dir, &set) {
             tracing::warn!("failed to persist servers awaiting a snapshot: {e}");
         }
     }
@@ -468,7 +434,6 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
     fn temp_dir(tag: &str) -> PathBuf {
         let nanos = std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos();
@@ -572,26 +537,17 @@ mod tests {
         let dir = temp_dir("awaiting");
         let app = App::default();
         app.data_dir.set(dir.clone()).unwrap();
-        let (a, b, c) = (ServerId::new(), ServerId::new(), ServerId::new());
-        let now = chrono::Utc::now().timestamp_millis();
-        for server in [a, b, c] {
-            app.set_awaiting_snapshot(server, true);
-        }
+        let (a, b) = (ServerId::new(), ServerId::new());
+        app.set_awaiting_snapshot(a, true);
+        app.set_awaiting_snapshot(b, true);
         app.set_awaiting_snapshot(b, false);
-        app.close_snapshot_window(c);
-        assert!(app.awaits_snapshot(a) && !app.awaits_snapshot(b) && !app.awaits_snapshot(c));
-        let saved = crate::persist::load_awaiting(&dir, 0);
-        assert_eq!(saved.keys().copied().collect::<HashSet<_>>(), HashSet::from([a, c]));
-        assert!((now + SNAPSHOT_WINDOW_MS..now + SNAPSHOT_WINDOW_MS + 60_000).contains(&saved[&a]));
-        assert_eq!(saved[&c], 0, "closed for good");
-        // A window whose time passed is closed too.
-        app.awaiting_snapshot.lock().unwrap().insert(a, now - 1);
-        assert!(!app.awaits_snapshot(a));
+        assert!(app.awaits_snapshot(a) && !app.awaits_snapshot(b));
+        assert_eq!(crate::persist::load_awaiting(&dir), HashSet::from([a]));
 
-        // Saved by earlier versions as a list: each may take one until the
-        // time given.
-        crate::persist::write_json(&dir.join("awaiting-snapshot.json"), &HashSet::from([a])).unwrap();
-        assert_eq!(crate::persist::load_awaiting(&dir, 42), HashMap::from([(a, 42)]));
+        // Saved with times by earlier builds: each still waits.
+        let timed = HashMap::from([(a, 0i64), (b, chrono::Utc::now().timestamp_millis())]);
+        crate::persist::write_json(&dir.join("awaiting-snapshot.json"), &timed).unwrap();
+        assert_eq!(crate::persist::load_awaiting(&dir), HashSet::from([a, b]));
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -64,16 +64,6 @@ pub struct Role {
     /// Banner image ref shown on holders' profile cards.
     #[serde(default)]
     pub banner: Option<String>,
-    /// When this definition was made, in ms since the epoch; the newest
-    /// wins. 0 for roles saved before it was recorded.
-    #[serde(default)]
-    pub updated_at: i64,
-}
-
-/// The time, in ms, for a change made at `now` that replaces one made at
-/// `last`: after it, so it wins even when our clock is behind.
-pub fn change_time(last: i64, now: DateTime<Utc>) -> i64 {
-    now.timestamp_millis().max(last.saturating_add(1))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,10 +150,6 @@ pub struct Server {
     /// Server-wide voice idle limit in minutes; None leaves it to each member.
     #[serde(default)]
     pub afk_timeout_minutes: Option<u32>,
-    /// Ids of deleted roles, so a late create or re-announce of one
-    /// cannot bring it back.
-    #[serde(default)]
-    pub deleted_roles: Vec<RoleId>,
 }
 
 impl Server {
@@ -180,7 +166,6 @@ impl Server {
             self_assignable: false,
             tag: None,
             banner: None,
-            updated_at: 0,
         };
         let afk = Channel::new("AFK", ChannelKind::Voice, 2);
         let afk_id = afk.id;
@@ -220,7 +205,6 @@ impl Server {
             server_deafened: vec![],
             banned: vec![],
             afk_timeout_minutes: None,
-            deleted_roles: vec![],
         }
     }
 
@@ -322,7 +306,6 @@ mod tests {
             self_assignable: false,
             tag: None,
             banner: None,
-            updated_at: 0,
         };
         let high_colorless = Role {
             id: RoleId::new(),
@@ -334,7 +317,6 @@ mod tests {
             self_assignable: false,
             tag: None,
             banner: None,
-            updated_at: 0,
         };
         server.members[0].roles = vec![low.id, high_colorless.id];
         server.roles.push(low);
@@ -387,7 +369,6 @@ mod tests {
             self_assignable: false,
             tag: None,
             banner: None,
-            updated_at: 0,
         };
         server.members.push(Member {
             user,
@@ -417,7 +398,6 @@ mod tests {
             self_assignable: false,
             tag: None,
             banner: None,
-            updated_at: 0,
         };
         server.members.push(Member {
             user,

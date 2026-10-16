@@ -156,7 +156,7 @@ mod tests {
             let other = Identity::generate();
             let mut member = UserProfile::new("member");
             member.identity = Some(other.public());
-            state.apply(ServerEvent::MemberJoin { server: sid, profile: member, at: 0 }).unwrap();
+            state.apply(ServerEvent::MemberJoin { server: sid, profile: member }).unwrap();
             app.servers.lock().unwrap().insert(sid, state);
             app.reload_identity().unwrap();
             app.mark_key_unsettled();

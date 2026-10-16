@@ -36,16 +36,16 @@ pub fn fixture() -> (ServerState, ChannelId, UserId) {
     (state, channel, owner_id)
 }
 
-/// Adds a keyed member, joined since ever, and returns their id.
+/// Adds a keyed member and returns their id.
 pub fn join(state: &mut ServerState, username: &str) -> UserId {
     let profile = keyed_profile(username);
     let id = profile.id;
     let server = state.server.id;
-    state.apply(ServerEvent::MemberJoin { server, profile, at: 0 }).unwrap();
+    state.apply(ServerEvent::MemberJoin { server, profile }).unwrap();
     id
 }
 
-/// Adds a keyed member holding a role with Manage Messages since ever.
+/// Adds a keyed member holding a role with Manage Messages.
 pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
     let server = state.server.id;
     let user = join(state, username);
@@ -59,11 +59,10 @@ pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
         self_assignable: false,
         tag: None,
         banner: None,
-        updated_at: 0,
     };
     let id = role.id;
     state.apply(ServerEvent::RoleCreate { server, role }).unwrap();
-    state.apply(ServerEvent::RoleAssign { server, user, role: id, at: 0 }).unwrap();
+    state.apply(ServerEvent::RoleAssign { server, user, role: id }).unwrap();
     user
 }
 
