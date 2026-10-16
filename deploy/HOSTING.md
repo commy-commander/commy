@@ -216,7 +216,7 @@ request ties two tokens together.
 - **What it never sees:** Commy server ids, accounts or sessions, message
   content, who sent or receives a message, or who is in which server. It
   stores no IP address or user agent; addresses are used in memory for rate
-  limits only (300 rings and 120 takes per minute per IP), and the edge proxy
+  limits only (300 rings and 600 takes per minute per IP), and the edge proxy
   never logs doorbell calls.
 - **Turning it off:** set `DOORBELL=false` in `.env` and run
   `docker compose up -d`. The startup log then shows `doorbell=off`, the
@@ -284,7 +284,7 @@ emails, links or tokens.
 
 - Rate limits per IP: sign-up 5 per 10 minutes, sign-in 10 per minute, magic
   links and password resets 5 per 10 minutes, device codes 10 per minute,
-  doorbell rings 300 and takes 120 per minute.
+  doorbell rings 300 and takes 600 per minute.
 - Optional Turnstile bot check and `ALLOW_SIGNUP=false` (see above).
 - Device codes expire after 10 minutes and must be approved by a signed-in user.
 - Behind another proxy or CDN (for example Cloudflare), rate limits only see

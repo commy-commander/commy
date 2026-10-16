@@ -17,6 +17,8 @@ const MAX_WAIT_SECONDS = 25;
 export const MAX_PER_TOKEN = 1000;
 export const MAX_AGE_MS = 14 * DAY_MS;
 export const MAX_BODY_BYTES = 8 * 1024;
+// Waiting takes per token; a newer one replaces the oldest
+export const MAX_WAITERS_PER_TOKEN = 4;
 const PATHS = ["/commy/doorbell/ring", "/commy/doorbell/take"];
 
 // Deletes rows older than MAX_AGE_MS.
@@ -54,8 +56,11 @@ function createBell(maxWaiters) {
   let total = 0;
   return {
     arm(token) {
-      if (total >= maxWaiters) return null;
       let set = waiting.get(token);
+      // A device that reconnects replaces its own stale wait
+      if (set && set.size >= MAX_WAITERS_PER_TOKEN) set.values().next().value.settle("replaced");
+      if (total >= maxWaiters) return null;
+      set = waiting.get(token);
       if (!set) waiting.set(token, (set = new Set()));
       let resolve;
       const waiter = { promise: new Promise((r) => (resolve = r)) };
@@ -90,6 +95,9 @@ export const commyDoorbell = ({
   sweepEveryMs = 60 * 60 * 1000,
   firstSweepMs = 5 * 60 * 1000,
   maxWaiters = 10_000,
+  // Rings stored across all tokens; past it rings are refused until takes or
+  // the sweep make room, so arbitrary tokens cannot fill the disk
+  maxRows = 200_000,
 } = {}) => {
   const bell = createBell(maxWaiters);
   // One read or write per token at a time, so two takes never return the same ids
@@ -224,7 +232,11 @@ export const commyDoorbell = ({
           const { token } = ctx.body;
           const ids = [...new Set(ctx.body.ids)];
           // An empty ring is a hello: it wakes a listening device and is never stored
-          if (ids.length > 0) await locked(token, () => store(ctx.context.adapter, token, ids));
+          if (ids.length > 0) {
+            const total = await ctx.context.adapter.count({ model: MODEL });
+            if (total >= maxRows) throw new APIError("SERVICE_UNAVAILABLE", { message: "The doorbell is full, try again later" });
+            await locked(token, () => store(ctx.context.adapter, token, ids));
+          }
           bell.ring(token, ids.length === 0);
           return ctx.json({ ok: true });
         },

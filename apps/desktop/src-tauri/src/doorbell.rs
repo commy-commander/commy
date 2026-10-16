@@ -28,8 +28,19 @@ const ORIGIN_TTL: Duration = Duration::from_secs(60 * 60);
 const TAKE_WAIT_SECS: u64 = 25;
 /// Hellos to one server's members at most this often.
 const HELLO_EVERY: Duration = Duration::from_secs(30 * 60);
-/// While messages are on their way, peers are asked again this often.
+/// While messages are on their way, peers are asked again this often,
+/// and after the first hour only every [`NUDGE_SLOW`].
 const NUDGE_EVERY: Duration = Duration::from_secs(60);
+const NUDGE_SLOW: Duration = Duration::from_secs(10 * 60);
+/// Repeat rings to one device are spaced at least this far apart.
+const RING_SPACING: Duration = Duration::from_secs(30);
+/// Rings sent to one account server per minute, under its limit of 300.
+const RINGS_PER_MINUTE: usize = 250;
+/// Just after midnight, yesterday's token is taken again for rings
+/// from senders whose clocks run behind.
+const DAY_GRACE_SECS: i64 = 60 * 60;
+/// Devices kept per member in a server.
+const MAX_PEERS_PER_USER: usize = 8;
 /// Awaited ids that never arrive are dropped after the server would
 /// have deleted the ring anyway.
 const AWAIT_SECS: i64 = bell::KEEP_DAYS as i64 * 86_400;
@@ -76,6 +87,10 @@ pub struct Doorbell {
     ringing: HashMap<(String, String), Vec<String>>,
     /// Account servers checked for the doorbell, with when.
     origins: HashMap<String, (Instant, Option<Endpoints>)>,
+    /// When each device was last rung, by (origin, token).
+    rung_at: HashMap<(String, String), Instant>,
+    /// Rings sent per account server in the current minute.
+    budget: HashMap<String, (Instant, usize)>,
     hello_at: HashMap<ServerId, Instant>,
     nudged_at: HashMap<ServerId, Instant>,
     listening: HashSet<ServerId>,
@@ -111,13 +126,57 @@ impl Doorbell {
         (key, true)
     }
 
-    /// Records a member's announcement. True when it changed anything.
-    fn set_peer(&mut self, server: ServerId, node: &str, peer: Option<Peer>) -> bool {
+    /// Records `user`'s announcement for one of their devices. A device
+    /// another member announced first stays theirs, and each member keeps
+    /// at most [`MAX_PEERS_PER_USER`] devices. True when it changed anything.
+    fn set_peer(&mut self, server: ServerId, user: UserId, node: &str, peer: Option<Peer>) -> bool {
         let peers = self.saved.peers.entry(server).or_default();
+        if peers.get(node).is_some_and(|p| p.user != user) {
+            return false;
+        }
         match peer {
-            Some(peer) => peers.insert(node.to_string(), peer.clone()) != Some(peer),
+            Some(peer) => {
+                if !peers.contains_key(node) {
+                    let theirs: Vec<String> = peers.iter().filter(|(_, p)| p.user == user).map(|(n, _)| n.clone()).collect();
+                    if theirs.len() >= MAX_PEERS_PER_USER {
+                        // Their lowest node id goes, so every device drops the same one.
+                        if let Some(drop) = theirs.iter().min() {
+                            peers.remove(drop);
+                        }
+                    }
+                }
+                peers.insert(node.to_string(), peer.clone()) != Some(peer)
+            }
             None => peers.remove(node).is_some(),
         }
+    }
+
+    /// Forgets devices of people no longer in a server.
+    fn retain_members(&mut self, server: ServerId, keep: impl Fn(UserId) -> bool) -> bool {
+        let Some(peers) = self.saved.peers.get_mut(&server) else { return false };
+        let before = peers.len();
+        peers.retain(|_, p| keep(p.user));
+        before != peers.len()
+    }
+
+    /// Counts one ring to an account server against its per-minute
+    /// budget, or says how long to wait when the minute's budget is spent.
+    fn spend(&mut self, origin: &str, now: Instant) -> Option<Duration> {
+        let minute = Duration::from_secs(60);
+        let (start, used) = self.budget.entry(origin.to_string()).or_insert((now, 0));
+        if now.duration_since(*start) >= minute {
+            (*start, *used) = (now, 0);
+        }
+        if *used >= RINGS_PER_MINUTE {
+            return Some(minute - now.duration_since(*start));
+        }
+        *used += 1;
+        None
+    }
+
+    /// When the newest awaited id in a server arrived.
+    fn newest_awaited(&self, server: ServerId) -> Option<i64> {
+        self.saved.awaited.get(&server)?.values().copied().max()
     }
 
     /// Adds ids we were rung for, minus those we hold. True when the
@@ -239,14 +298,17 @@ fn now_secs() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
-/// Blinded ids of every message we hold in a server, under our key.
+/// Blinded ids, under our key, of every message we hold in a server or
+/// know was deleted: neither is worth waiting for.
 fn held_ids(state: &ServerState, key: &DoorbellKey) -> HashSet<String> {
     state
         .server
         .channels
         .iter()
         .flat_map(|c| state.messages(c.id))
-        .map(|m| bell::blinded_id(key, m.id))
+        .map(|m| m.id)
+        .chain(state.deleted_ids())
+        .map(|id| bell::blinded_id(key, id))
         .collect()
 }
 
@@ -321,7 +383,13 @@ pub fn on_announce(app: &App, server: ServerId, event: &ServerEvent) {
     }
     let own_origin = crate::account::effective_server();
     let peer = key.filter(|_| peer_origin_ok(url, &own_origin)).map(|key| Peer { user: *user, url: url.clone(), key });
-    let changed = app.doorbell.lock().unwrap().set_peer(server, &node.to_lowercase(), peer);
+    let changed = {
+        let servers = app.servers.lock().unwrap();
+        let Some(state) = servers.get(&server) else { return };
+        let mut doorbell = app.doorbell.lock().unwrap();
+        let pruned = doorbell.retain_members(server, |u| member_ok(state, u));
+        doorbell.set_peer(server, *user, &node.to_lowercase(), peer) | pruned
+    };
     if changed {
         persist(app);
     }
@@ -371,9 +439,19 @@ fn queue_ring(handle: &tauri::AppHandle, url: String, token: String, id: Option<
     }
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(RING_DEBOUNCE).await;
         let app = handle.state::<App>();
-        let Some(ids) = app.doorbell.lock().unwrap().ringing.remove(&key) else { return };
+        // A device rung moments ago waits for the spacing, gathering ids.
+        let wait = app.doorbell.lock().unwrap().rung_at.get(&key).map_or(RING_DEBOUNCE, |at| {
+            RING_SPACING.saturating_sub(at.elapsed()).max(RING_DEBOUNCE)
+        });
+        tokio::time::sleep(wait).await;
+        let ids = {
+            let mut doorbell = app.doorbell.lock().unwrap();
+            doorbell.rung_at.retain(|_, at| at.elapsed() < RING_SPACING);
+            doorbell.rung_at.insert(key.clone(), Instant::now());
+            doorbell.ringing.remove(&key)
+        };
+        let Some(ids) = ids else { return };
         let (origin, token) = key;
         let Some(endpoints) = endpoints(&app, &origin).await else {
             tracing::debug!("a member's account server does not offer the doorbell");
@@ -383,12 +461,30 @@ fn queue_ring(handle: &tauri::AppHandle, url: String, token: String, id: Option<
         if chunks.is_empty() {
             chunks.push(&[]);
         }
-        for chunk in chunks {
+        let mut retried = false;
+        let mut chunks = chunks.into_iter().peekable();
+        while let Some(chunk) = chunks.peek() {
+            let over = app.doorbell.lock().unwrap().spend(&origin, Instant::now());
+            if let Some(wait) = over {
+                tokio::time::sleep(wait).await;
+                continue;
+            }
             let body = serde_json::json!({ "token": token, "ids": chunk });
             let sent = app.http.post(&endpoints.ring).json(&body).timeout(Duration::from_secs(15)).send().await;
-            if let Err(e) = sent.and_then(|r| r.error_for_status()) {
-                tracing::debug!("doorbell ring failed: {e}");
-                return;
+            match sent.and_then(|r| r.error_for_status()) {
+                Ok(_) => {
+                    chunks.next();
+                }
+                // One more try a minute later, e.g. after a rate limit.
+                Err(e) if !retried => {
+                    tracing::debug!("doorbell ring failed, trying again: {e}");
+                    retried = true;
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+                Err(e) => {
+                    tracing::debug!("doorbell ring failed: {e}");
+                    return;
+                }
             }
         }
     });
@@ -496,6 +592,11 @@ async fn listen(handle: tauri::AppHandle, server: ServerId) {
         let today = bell::day_of(chrono::Utc::now());
         let first = app.doorbell.lock().unwrap().saved.last_take.get(&server).copied().unwrap_or(today);
         let first = first.max(today.saturating_sub(bell::KEEP_DAYS - 1));
+        let first = if chrono::Utc::now().timestamp().rem_euclid(86_400) < DAY_GRACE_SECS {
+            first.min(today.saturating_sub(1))
+        } else {
+            first
+        };
         let mut result = Ok(());
         for day in first..=today {
             let wait = if day == today { TAKE_WAIT_SECS } else { 0 };
@@ -568,7 +669,10 @@ async fn nudge(handle: &tauri::AppHandle, server: ServerId) {
     let app = handle.state::<App>();
     {
         let mut doorbell = app.doorbell.lock().unwrap();
-        if doorbell.nudged_at.get(&server).is_some_and(|at| at.elapsed() < NUDGE_EVERY) {
+        // Ids that stay away past their first hour are asked for less often.
+        let fresh = doorbell.newest_awaited(server).is_some_and(|at| now_secs() - at < 3600);
+        let every = if fresh { NUDGE_EVERY } else { NUDGE_SLOW };
+        if doorbell.nudged_at.get(&server).is_some_and(|at| at.elapsed() < every) {
             return;
         }
         doorbell.nudged_at.insert(server, Instant::now());
@@ -635,11 +739,20 @@ pub fn arrived(app: &App, handle: &tauri::AppHandle, server: ServerId, message: 
 #[tauri::command]
 pub fn get_awaited(app: tauri::State<'_, App>, server_id: String) -> Result<u32, String> {
     let server: ServerId = server_id.parse().map_err(|e| format!("{e}"))?;
-    let mut doorbell = app.doorbell.lock().unwrap();
-    let expired = doorbell.settle_awaited(server, &HashSet::new(), now_secs());
-    let count = doorbell.awaited_count(server) as u32;
-    drop(doorbell);
-    if expired {
+    // Messages can arrive by any path (live, catch-up, held, snapshot), so
+    // what we now hold is checked here, when the count is shown.
+    let (changed, count) = {
+        let servers = app.servers.lock().unwrap();
+        let mut doorbell = app.doorbell.lock().unwrap();
+        let key = doorbell.saved.own.get(&server).copied();
+        let held = match (key, servers.get(&server)) {
+            (Some(key), Some(state)) if doorbell.awaited_count(server) > 0 => held_ids(state, &key),
+            _ => HashSet::new(),
+        };
+        let changed = doorbell.settle_awaited(server, &held, now_secs());
+        (changed, doorbell.awaited_count(server) as u32)
+    };
+    if changed {
         persist(&app);
     }
     Ok(count)
@@ -706,12 +819,44 @@ mod tests {
     fn peers_change_only_when_their_announcement_does() {
         let mut d = Doorbell::default();
         let server = ServerId::new();
-        let peer = Peer { user: UserId::new(), url: "https://commy.chat".into(), key: [1; 32] };
-        assert!(d.set_peer(server, "ab", Some(peer.clone())));
-        assert!(!d.set_peer(server, "ab", Some(peer.clone())));
-        assert!(d.set_peer(server, "ab", Some(Peer { key: [2; 32], ..peer })));
-        assert!(d.set_peer(server, "ab", None));
-        assert!(!d.set_peer(server, "ab", None));
+        let user = UserId::new();
+        let peer = Peer { user, url: "https://commy.chat".into(), key: [1; 32] };
+        assert!(d.set_peer(server, user, "ab", Some(peer.clone())));
+        assert!(!d.set_peer(server, user, "ab", Some(peer.clone())));
+        assert!(d.set_peer(server, user, "ab", Some(Peer { key: [2; 32], ..peer.clone() })));
+        assert!(d.set_peer(server, user, "ab", None));
+        assert!(!d.set_peer(server, user, "ab", None));
+    }
+
+    #[test]
+    fn members_cannot_take_over_or_flood_device_entries() {
+        let mut d = Doorbell::default();
+        let server = ServerId::new();
+        let (alice, mallory) = (UserId::new(), UserId::new());
+        let entry = |user| Peer { user, url: "https://commy.chat".into(), key: [1; 32] };
+        assert!(d.set_peer(server, alice, "a1", Some(entry(alice))));
+        assert!(!d.set_peer(server, mallory, "a1", Some(entry(mallory))), "another member's device stays theirs");
+        assert!(!d.set_peer(server, mallory, "a1", None));
+        assert_eq!(d.saved.peers[&server]["a1"].user, alice);
+        for i in 0..100 {
+            d.set_peer(server, mallory, &format!("m{i:03}"), Some(entry(mallory)));
+        }
+        let theirs = d.saved.peers[&server].values().filter(|p| p.user == mallory).count();
+        assert_eq!(theirs, MAX_PEERS_PER_USER);
+        assert!(d.retain_members(server, |u| u == alice));
+        assert_eq!(d.saved.peers[&server].len(), 1, "departed members' devices go");
+    }
+
+    #[test]
+    fn ring_budget_per_account_server() {
+        let mut d = Doorbell::default();
+        let now = Instant::now();
+        for _ in 0..RINGS_PER_MINUTE {
+            assert_eq!(d.spend("https://commy.chat", now), None);
+        }
+        assert!(d.spend("https://commy.chat", now).is_some());
+        assert_eq!(d.spend("https://other.example", now), None, "each server has its own budget");
+        assert_eq!(d.spend("https://commy.chat", now + Duration::from_secs(61)), None, "a new minute starts fresh");
     }
 
     #[test]

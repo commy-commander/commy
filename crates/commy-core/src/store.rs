@@ -262,6 +262,11 @@ impl ServerState {
 
     /// Best delete proof stored for a message id, if any. See
     /// [`Self::tombstones_for`] for the order.
+    /// Ids of messages deleted here, with or without a proof still held.
+    pub fn deleted_ids(&self) -> impl Iterator<Item = MessageId> + '_ {
+        self.deleted_messages.iter().chain(self.tombstones.keys()).copied()
+    }
+
     pub fn tombstone(&self, id: MessageId) -> Option<&TombstoneProof> {
         let list = self.tombstones.get(&id)?;
         list.iter().min_by_key(|s| proof_rank(s)).map(|s| &s.proof)

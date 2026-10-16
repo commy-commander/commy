@@ -332,6 +332,33 @@ test("too many waiting takes answer 503 so apps back off", async () => {
   assert.deepEqual((await take(b, 0.05)).json, { ids: [], hello: false }, "the slot is free again");
 });
 
+test("a token holds at most 4 waiting takes; a newer one replaces the oldest", async () => {
+  const { ring, take } = makeAuth();
+  const token = newToken();
+  const first = take(token, 5);
+  await delay(20);
+  const rest = [take(token, 5), take(token, 5), take(token, 5)];
+  await delay(20);
+  const fifth = take(token, 5);
+  await delay(50);
+  assert.deepEqual((await first).json, { ids: [], hello: false }, "the oldest wait ends empty");
+  const id = newId();
+  await ring(token, [id]);
+  const got = (await Promise.all([...rest, fifth])).flatMap((r) => r.json.ids);
+  assert.deepEqual(got, [id]);
+});
+
+test("rings are refused once the table is full", async () => {
+  const { db, ring, take } = makeAuth({ doorbell: { maxRows: 2 } });
+  const a = newToken();
+  assert.equal((await ring(a, [newId(), newId()])).status, 200);
+  assert.equal((await ring(newToken(), [newId()])).status, 503);
+  assert.equal((await ring(newToken(), [])).status, 200, "hellos store nothing and still go through");
+  assert.equal(db.doorbellRing.length, 2);
+  await take(a, 0);
+  assert.equal((await ring(newToken(), [newId()])).status, 200, "takes make room");
+});
+
 test("an aborted take stops waiting", async () => {
   const { take } = makeAuth();
   const controller = new AbortController();
@@ -346,12 +373,12 @@ test("an aborted take stops waiting", async () => {
 test("ring and take have their own rate limits per IP", async () => {
   const options = buildAuthOptions(loadConfig(ENV), { pool: null, send: async () => {} });
   assert.deepEqual(options.rateLimit.customRules["/commy/doorbell/ring"], { window: 60, max: 300 });
-  assert.deepEqual(options.rateLimit.customRules["/commy/doorbell/take"], { window: 60, max: 120 });
+  assert.deepEqual(options.rateLimit.customRules["/commy/doorbell/take"], { window: 60, max: 600 });
 
   const { ring, take } = makeAuth({ rateLimit: true });
   const headers = { "x-forwarded-for": "198.51.100.41" };
   const token = newToken();
-  for (let i = 0; i < 120; i++) assert.equal((await take(token, 0, { headers })).status, 200, `take ${i}`);
+  for (let i = 0; i < 600; i++) assert.equal((await take(token, 0, { headers })).status, 200, `take ${i}`);
   assert.equal((await take(token, 0, { headers })).status, 429);
   assert.equal((await take(token, 0, { headers: { "x-forwarded-for": "198.51.100.42" } })).status, 200, "other IPs are not limited");
 
