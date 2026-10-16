@@ -937,7 +937,7 @@ pub fn await_snapshot(app: &App, server: ServerId, me: UserProfile) -> Vec<WireP
 /// true when the snapshot was taken.
 pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WirePayload) -> bool {
     let app = access.app();
-    let WirePayload::SyncResponse { server: mut remote_server, members, profiles, recent_messages } = payload else {
+    let WirePayload::SyncResponse { server: mut remote_server, members, profiles, recent_messages, voice } = payload else {
         return false;
     };
     if !app.awaits_snapshot(server) || remote_server.id != server {
@@ -1004,6 +1004,10 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
             if let Err(StoreError::UnknownAuthorKey(signer)) = state.apply(event.clone()) {
                 held.push((signer, event));
             }
+        }
+        // The call in progress, as the peer saw it.
+        for entry in voice.into_iter().filter(|v| Some(v.user) != me_id) {
+            let _ = state.apply(entry.into_event());
         }
         // Then what came while we waited, our pending messages among it,
         // wherever its channel and signer's key hold.

@@ -107,7 +107,8 @@ function mockSeed() {
       ch("General", "voice"),
     ],
     members: [
-      { id: "m1", name: "ferris", presence: "online", custom_status: "heads down" },
+      { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
+        activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
       { id: "m2", name: "nova", presence: "idle", custom_status: null },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
     ],
@@ -125,6 +126,16 @@ function mockSeed() {
   server.channels[1].color = "9b7bff";
   server.rules = "# Welcome\n1. Be kind to each other\n2. **No spam** or self promotion\n3. Keep it on topic, see https://commy.chat";
   server.needs_rules = true;
+  // ferris is in the General voice channel, muted, for a while now.
+  const general = server.channels[3];
+  general.voice_users = ["ferris"];
+  general.voice_user_ids = ["m1"];
+  general.voice_since = [Math.floor(Date.now() / 1000) - 754];
+  general.voice_muted = [true];
+  general.voice_deafened = [false];
+  server.members[0].voice_channel = general.id;
+  server.members[0].voice_since = general.voice_since[0];
+  server.members[0].voice_muted = true;
   server.members[0].tag = "RAID";
   server.members[0].tag_color = "9b7bff";
   server.members[0].color = "9b7bff";
@@ -259,7 +270,23 @@ async function mockInvoke(cmd, args = {}) {
       mock.voice.deafened = args.deafened;
       if (args.deafened) mock.voice.muted = true;
       return mock.voice;
-    case "set_voice_channel": return null;
+    case "set_voice_channel": {
+      const s = mock.servers[args.serverId];
+      if (!s) return null;
+      for (const c of s.channels) {
+        if (c.kind !== "voice") continue;
+        const at = (c.voice_user_ids || []).indexOf("me");
+        if (at >= 0) for (const k of ["voice_users", "voice_user_ids", "voice_since", "voice_muted", "voice_deafened"]) (c[k] || []).splice(at, 1);
+        if (c.id === args.channelId) {
+          (c.voice_user_ids ||= []).push("me");
+          (c.voice_since ||= []).push(Math.floor(Date.now() / 1000));
+          (c.voice_muted ||= []).push(mock.voice.muted);
+          (c.voice_deafened ||= []).push(mock.voice.deafened);
+          c.voice_users.push(mock.user.display_name || mock.user.username);
+        }
+      }
+      return null;
+    }
     case "list_dm_threads":
       return Object.entries(mock.dms)
         .map(([user, d]) => {
@@ -857,6 +884,43 @@ function paintAvatar(node, userId, name) {
   return node;
 }
 
+// A span that shows how long since `sinceSecs` and keeps counting; the
+// ticker below refreshes every one of them once a second.
+function liveElapsed(sinceSecs, fmt = "clock", cls = "") {
+  const node = el("span", "elapsed" + (cls ? ` ${cls}` : ""));
+  node.dataset.since = String(sinceSecs || 0);
+  node.dataset.fmt = fmt;
+  node.textContent = fmt === "words" ? elapsedWords(sinceSecs) : elapsedClock(sinceSecs);
+  return node;
+}
+
+setInterval(() => {
+  for (const node of document.querySelectorAll(".elapsed[data-since]")) {
+    const since = Number(node.dataset.since);
+    const text = node.dataset.fmt === "words" ? elapsedWords(since) : elapsedClock(since);
+    if (node.textContent !== text) node.textContent = text;
+  }
+}, 1000);
+
+// "Playing Chess for 1h 12m": the activity with how long it has run.
+function activityWithTime(person) {
+  if (!person || !person.activity) return "";
+  return person.activity_since ? `${person.activity} for ${elapsedWords(person.activity_since)}` : person.activity;
+}
+
+// "In voice · General · 12:34" with its icons, for a member in a call.
+function voiceLine(member, server) {
+  const channel = member.voice_channel && server && (server.channels || []).find(c => c.id === member.voice_channel);
+  if (!channel) return null;
+  const line = el("div", "user-sub voice");
+  line.appendChild(svgIcon("speaker", 12));
+  line.appendChild(el("span", "voice-line-text", `In voice · ${channelPlainName(channel)} · `));
+  line.appendChild(liveElapsed(member.voice_since, "clock"));
+  if (member.voice_muted) line.appendChild(el("span", "vs-icon off")).appendChild(svgIcon("micOff", 12));
+  if (member.voice_deafened) line.appendChild(el("span", "vs-icon off")).appendChild(svgIcon("headsetOff", 12));
+  return line;
+}
+
 // statusLine, backLine, subLine and presenceLabel live in presence.js, shared with its tests.
 
 function makeAvatar(userId, name, className = "avatar") {
@@ -1363,7 +1427,17 @@ function appendVoiceUsers(list, channel) {
     }
     vu.appendChild(makeAvatar(userId, user, "avatar avatar-sm"));
     vu.appendChild(el("span", "voice-user-name", user));
+    const since = (channel.voice_since || [])[i];
+    if (since) vu.appendChild(liveElapsed(since, "clock", "voice-user-time"));
     vu.appendChild(el("span", "vs-icon")).appendChild(svgIcon("mic", 14));
+    // What they announced: their own mute and deafen state.
+    const muted = (channel.voice_muted || [])[i];
+    const deafened = (channel.voice_deafened || [])[i];
+    if (!isMe && muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
+    if (!isMe && deafened) {
+      vu.appendChild(el("span", "vs-icon"));
+      setVoiceStatus(vu.lastChild, "headsetOff", "Deafened");
+    }
     const server = state.currentServer;
     if (userId && server && (server.server_muted || []).includes(userId)) {
       vu.appendChild(el("span", "vs-icon forced"));
@@ -1382,7 +1456,7 @@ function appendVoiceUsers(list, channel) {
         openMemberMenu(member || { id: userId, name: user }, e.clientX, e.clientY);
       };
     }
-    // Only our own mic state is known locally; peers do not broadcast theirs yet.
+    // Our own state is drawn from our settings, so a toggle shows at once.
     if (isMe && channel.id === state.voiceChannelId) {
       if (state.voice.muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
       if (state.voice.deafened) {
@@ -2494,7 +2568,11 @@ function renderMembers() {
         nameRow.appendChild(live);
       }
       meta.appendChild(nameRow);
-      const sub = subLine(member);
+      const inVoice = voiceLine(member, state.currentServer);
+      if (inVoice) meta.appendChild(inVoice);
+      const game = activityWithTime(member);
+      if (game) row.title = game;
+      const sub = inVoice ? "" : subLine(member);
       if (sub) {
         // The activity colour only when the line is the activity alone.
         const line = el("div", "user-sub" + (member.activity && !backLine(member) ? " activity" : ""), sub);
@@ -4413,6 +4491,10 @@ function openMemberCard(member, anchor) {
     status.appendChild(img);
   }
   status.appendChild(document.createTextNode(line || presenceLabel(member)));
+  if (member.activity && member.activity_since) {
+    status.appendChild(document.createTextNode(" · "));
+    status.appendChild(liveElapsed(member.activity_since, "words"));
+  }
   const roles = $("mc-roles");
   roles.replaceChildren();
   const held = (server.roles || []).filter(r => (member.roles || []).includes(r.id));

@@ -743,6 +743,7 @@ async fn set_voice_channel(
         channel: cid,
         muted: voice.muted,
         deafened: voice.deafened,
+        since: cid.map(|_| chrono::Utc::now().timestamp()),
     };
     {
         let mut servers = app.servers.lock().unwrap();
@@ -3964,6 +3965,10 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
         let profile = {
             let mut guard = app.profile.lock().unwrap();
             let Some(profile) = guard.as_mut() else { continue };
+            // The clock keeps running while only the cover changes.
+            if profile.activity != stable {
+                profile.activity_since = stable.as_ref().map(|_| chrono::Utc::now().timestamp());
+            }
             profile.activity = stable;
             profile.activity_cover = cover;
             profile.clone()
@@ -4117,6 +4122,8 @@ async fn set_share_activity(
             let mut guard = app.profile.lock().unwrap();
             guard.as_mut().filter(|p| p.activity.is_some()).map(|p| {
                 p.activity = None;
+                p.activity_cover = None;
+                p.activity_since = None;
                 p.clone()
             })
         };
@@ -4395,7 +4402,7 @@ fn set_noise_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSetting
 }
 
 #[tauri::command]
-fn set_muted(app: tauri::State<App>, muted: bool) -> VoiceSettings {
+async fn set_muted(app: tauri::State<'_, App>, handle: tauri::AppHandle, muted: bool) -> CmdResult<VoiceSettings> {
     let snapshot = {
         let mut voice = app.voice.lock().unwrap();
         voice.muted = muted;
@@ -4403,7 +4410,34 @@ fn set_muted(app: tauri::State<App>, muted: bool) -> VoiceSettings {
     };
     apply_voice_gates(&app);
     app.persist_voice();
-    snapshot
+    announce_voice_state(&app, &handle).await;
+    Ok(snapshot)
+}
+
+/// Tells the server we are in voice on where we are and whether we are
+/// muted or deafened, with the time we joined so clocks agree. Sent on
+/// every mute or deafen change and whenever a peer connects, so late
+/// arrivals see the call as it is.
+async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHandle) {
+    let Some((sid, channel)) = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel)) else { return };
+    let Ok(profile) = current_profile(app) else { return };
+    let voice = app.voice.lock().unwrap().clone();
+    let event = {
+        let mut servers = app.servers.lock().unwrap();
+        let Some(state) = servers.get_mut(&sid) else { return };
+        let since = state.voice_since(profile.id).unwrap_or_else(|| chrono::Utc::now().timestamp());
+        let event = ServerEvent::VoiceState {
+            user: profile.id,
+            channel: Some(channel),
+            muted: voice.muted,
+            deafened: voice.deafened,
+            since: Some(since),
+        };
+        let _ = state.apply(event.clone());
+        event
+    };
+    broadcast(app, sid, WirePayload::Event(event)).await;
+    let _ = handle.emit("server-event", &sid.to_string());
 }
 
 /// Mic and speaker gates from our own choices plus any moderator override.
@@ -4440,7 +4474,7 @@ fn refresh_forced_voice(app: &tauri::State<'_, App>, handle: &tauri::AppHandle) 
 }
 
 #[tauri::command]
-fn set_deafened(app: tauri::State<App>, deafened: bool) -> VoiceSettings {
+async fn set_deafened(app: tauri::State<'_, App>, handle: tauri::AppHandle, deafened: bool) -> CmdResult<VoiceSettings> {
     let snapshot = {
         let mut voice = app.voice.lock().unwrap();
         voice.deafened = deafened;
@@ -4451,7 +4485,8 @@ fn set_deafened(app: tauri::State<App>, deafened: bool) -> VoiceSettings {
     };
     apply_voice_gates(&app);
     app.persist_voice();
-    snapshot
+    announce_voice_state(&app, &handle).await;
+    Ok(snapshot)
 }
 
 // ---------- Event plumbing ----------
@@ -4583,6 +4618,11 @@ async fn run_net_loop(
                 // event here is idempotent and deletions are tombstoned.
                 for event in structure_announcements(&app, server, my_id) {
                     broadcast(&app, server, WirePayload::Event(event)).await;
+                }
+                // Voice is live state no snapshot or catch-up replays
+                // for a peer that was away: say again where we are.
+                if app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == server) {
+                    announce_voice_state(&app, &handle).await;
                 }
                 // What we did while nobody was connected goes out now; our
                 // pending messages follow in the catch-up with this peer.
@@ -4859,6 +4899,8 @@ pub fn run() {
                 if let Some(mut profile) = persist::load_profile(&dir) {
                     // Activity is live state; never resume a stale one.
                     profile.activity = None;
+                    profile.activity_cover = None;
+                    profile.activity_since = None;
                     *app.profile.lock().unwrap() = Some(profile);
                 }
                 if let Some(dms) = persist::load_dms(&dir) {

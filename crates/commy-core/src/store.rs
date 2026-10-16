@@ -77,6 +77,10 @@ pub struct ServerState {
     index: HashMap<MessageId, ChannelId>,
     /// user -> voice channel they are connected to.
     pub voice_states: HashMap<UserId, ChannelId>,
+    /// user -> when they joined their current voice channel, unix seconds.
+    pub voice_since: HashMap<UserId, i64>,
+    /// user -> (muted, deafened) as they last announced it.
+    pub voice_flags: HashMap<UserId, (bool, bool)>,
     /// user -> voice channel they are sharing their screen in.
     pub screen_shares: HashMap<UserId, ChannelId>,
     /// user -> voice channel they have their camera on in.
@@ -125,6 +129,8 @@ impl ServerState {
             messages,
             index: HashMap::new(),
             voice_states: HashMap::new(),
+            voice_since: HashMap::new(),
+            voice_flags: HashMap::new(),
             screen_shares: HashMap::new(),
             cameras: HashMap::new(),
             deleted_messages: Default::default(),
@@ -429,6 +435,8 @@ impl ServerState {
                 let before = self.server.members.len();
                 self.server.members.retain(|m| m.user != user);
                 self.voice_states.remove(&user);
+                self.voice_since.remove(&user);
+                self.voice_flags.remove(&user);
                 Ok(self.server.members.len() != before)
             }
             ServerEvent::PresenceUpdate { user, presence } => {
@@ -521,17 +529,27 @@ impl ServerState {
                 self.server.afk_disabled = disabled;
                 Ok(true)
             }
-            ServerEvent::VoiceState { user, channel, .. } => match channel {
+            ServerEvent::VoiceState { user, channel, since, muted, deafened } => match channel {
                 Some(ch) => {
                     if self.server.channel(ch).is_none() {
                         return Err(StoreError::UnknownChannel);
                     }
-                    Ok(self.voice_states.insert(user, ch) != Some(ch))
+                    let moved = self.voice_states.insert(user, ch) != Some(ch);
+                    let flagged = self.voice_flags.insert(user, (muted, deafened)) != Some((muted, deafened));
+                    if moved || !self.voice_since.contains_key(&user) {
+                        // Their own join time, unless it is missing or ahead
+                        // of our clock; then the moment we heard.
+                        let now = Utc::now().timestamp();
+                        self.voice_since.insert(user, since.filter(|s| *s <= now).unwrap_or(now));
+                    }
+                    Ok(moved || flagged)
                 }
                 None => {
                     // Leaving voice also ends any screen share or camera.
                     self.screen_shares.remove(&user);
                     self.cameras.remove(&user);
+                    self.voice_since.remove(&user);
+                    self.voice_flags.remove(&user);
                     Ok(self.voice_states.remove(&user).is_some())
                 }
             },
@@ -799,6 +817,8 @@ impl ServerState {
                 self.server.banned.push(user);
                 self.server.members.retain(|m| m.user != user);
                 self.voice_states.remove(&user);
+                self.voice_since.remove(&user);
+                self.voice_flags.remove(&user);
                 self.screen_shares.remove(&user);
                 Ok(true)
             }
@@ -1289,6 +1309,16 @@ impl ServerState {
             .ok_or(StoreError::UnknownMessage)
     }
 
+    /// Whether a member in voice is (muted, deafened), as they announced.
+    pub fn voice_flags(&self, user: UserId) -> (bool, bool) {
+        self.voice_flags.get(&user).copied().unwrap_or((false, false))
+    }
+
+    /// When a member joined the voice channel they are in, unix seconds.
+    pub fn voice_since(&self, user: UserId) -> Option<i64> {
+        self.voice_since.get(&user).copied()
+    }
+
     /// Members currently in a given voice channel.
     pub fn voice_members(&self, channel: ChannelId) -> Vec<UserId> {
         self.voice_states
@@ -1518,7 +1548,7 @@ mod tests {
                 user: owner,
                 channel: Some(voice),
                 muted: false,
-                deafened: false
+                deafened: false, since: None
             }),
             Ok(true)
         );
@@ -1528,11 +1558,55 @@ mod tests {
                 user: owner,
                 channel: None,
                 muted: false,
-                deafened: false
+                deafened: false, since: None
             }),
             Ok(true)
         );
         assert!(state.voice_members(voice).is_empty());
+    }
+
+    #[test]
+    fn voice_since_follows_joins_and_moves() {
+        let (mut state, _, owner) = fixture();
+        let voice = state.server.channels[1].id;
+        let join = |ch, since| ServerEvent::VoiceState { user: owner, channel: ch, muted: false, deafened: false, since };
+        let now = Utc::now().timestamp();
+        // The sender's own join time is kept.
+        state.apply(join(Some(voice), Some(now - 90))).unwrap();
+        assert_eq!(state.voice_since(owner), Some(now - 90));
+        // A repeat for the same channel does not restart the clock.
+        state.apply(join(Some(voice), Some(now - 5))).unwrap();
+        assert_eq!(state.voice_since(owner), Some(now - 90));
+        // Moving channels does.
+        let lobby = crate::server::Channel::new("Lobby", ChannelKind::Voice, 9);
+        let other = lobby.id;
+        state.apply(ServerEvent::ChannelCreate { server: state.server.id, channel: lobby }).unwrap();
+        state.apply(join(Some(other), Some(now - 5))).unwrap();
+        assert_eq!(state.voice_since(owner), Some(now - 5));
+        // A time from the future, or none at all, becomes "now".
+        state.apply(join(Some(voice), Some(now + 3600))).unwrap();
+        assert!(state.voice_since(owner).is_some_and(|s| s >= now && s <= now + 2));
+        state.apply(join(None, None)).unwrap();
+        assert_eq!(state.voice_since(owner), None);
+    }
+
+    #[test]
+    fn voice_flags_follow_announcements() {
+        let (mut state, _, owner) = fixture();
+        let voice = state.server.channels[1].id;
+        let set = |muted, deafened| ServerEvent::VoiceState { user: owner, channel: Some(voice), muted, deafened, since: None };
+        assert_eq!(state.apply(set(false, false)), Ok(true));
+        assert_eq!(state.voice_flags(owner), (false, false));
+        // A change of flags alone is news.
+        assert_eq!(state.apply(set(true, false)), Ok(true));
+        assert_eq!(state.apply(set(true, false)), Ok(false));
+        assert_eq!(state.voice_flags(owner), (true, false));
+        assert_eq!(state.apply(set(true, true)), Ok(true));
+        assert_eq!(state.voice_flags(owner), (true, true));
+        state
+            .apply(ServerEvent::VoiceState { user: owner, channel: None, muted: true, deafened: true, since: None })
+            .unwrap();
+        assert_eq!(state.voice_flags(owner), (false, false));
     }
 
     #[test]
@@ -1544,7 +1618,7 @@ mod tests {
                 user: owner,
                 channel: Some(voice),
                 muted: false,
-                deafened: false,
+                deafened: false, since: None
             })
             .unwrap();
         assert_eq!(
@@ -1562,7 +1636,7 @@ mod tests {
                 user: owner,
                 channel: None,
                 muted: false,
-                deafened: false,
+                deafened: false, since: None
             })
             .unwrap();
         assert!(state.screen_shares.is_empty());
@@ -2038,7 +2112,7 @@ mod tests {
     fn camera_tracks_and_clears_on_voice_leave() {
         let (mut state, _, owner) = fixture();
         let voice = state.server.channels[1].id;
-        let join = |ch| ServerEvent::VoiceState { user: owner, channel: ch, muted: false, deafened: false };
+        let join = |ch| ServerEvent::VoiceState { user: owner, channel: ch, muted: false, deafened: false, since: None };
         state.apply(join(Some(voice))).unwrap();
         let cam = |active| ServerEvent::CameraState { user: owner, channel: voice, active };
         assert_eq!(state.apply(cam(true)), Ok(true));

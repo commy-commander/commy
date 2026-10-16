@@ -626,6 +626,7 @@ pub fn resign_ours(state: &mut ServerState, me: UserId, identity: &Identity) -> 
         let mut fresh = ServerState::from_snapshot(snapshot);
         fresh.profiles = std::mem::take(&mut state.profiles);
         fresh.voice_states = std::mem::take(&mut state.voice_states);
+        fresh.voice_since = std::mem::take(&mut state.voice_since);
         fresh.screen_shares = std::mem::take(&mut state.screen_shares);
         fresh.cameras = std::mem::take(&mut state.cameras);
         *state = fresh;
@@ -904,7 +905,7 @@ mod tests {
         let mut outbox = Outbox::default();
         let transient = [
             ServerEvent::TypingStart { channel, user },
-            ServerEvent::VoiceState { user, channel: Some(channel), muted: false, deafened: false },
+            ServerEvent::VoiceState { user, channel: Some(channel), muted: false, deafened: false, since: None },
             ServerEvent::ScreenShare { user, channel, active: true },
             ServerEvent::CameraState { user, channel, active: true },
             ServerEvent::SoundboardPlay { server: sid, channel, user, name: "boop".into() },

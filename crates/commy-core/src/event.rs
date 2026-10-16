@@ -62,11 +62,15 @@ pub enum ServerEvent {
         channel: ChannelId,
     },
     /// A user joined or left a voice channel. `channel: None` means left.
+    /// `since` is when they joined that channel (unix seconds, by their
+    /// clock), so everyone shows the same time in channel.
     VoiceState {
         user: UserId,
         channel: Option<ChannelId>,
         muted: bool,
         deafened: bool,
+        #[serde(default)]
+        since: Option<i64>,
     },
     TypingStart {
         channel: ChannelId,

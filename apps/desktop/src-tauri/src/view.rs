@@ -37,6 +37,11 @@ pub struct ChannelView {
     pub voice_users: Vec<String>,
     /// User ids parallel to `voice_users`, for speaking indicators.
     pub voice_user_ids: Vec<String>,
+    /// Join times (unix seconds) parallel to `voice_users`.
+    pub voice_since: Vec<Option<i64>>,
+    /// Muted and deafened flags, parallel to `voice_users`.
+    pub voice_muted: Vec<bool>,
+    pub voice_deafened: Vec<bool>,
     pub retention_days: Option<u32>,
     /// Category id this channel sits under.
     pub parent: Option<String>,
@@ -69,6 +74,13 @@ pub struct MemberView {
     pub about: Option<String>,
     /// IGDB cover image id for their game, when known.
     pub activity_cover: Option<String>,
+    /// When their activity began (unix seconds), for "for 1h 12m".
+    pub activity_since: Option<i64>,
+    /// Voice channel they are connected to, and since when (unix seconds).
+    pub voice_channel: Option<String>,
+    pub voice_since: Option<i64>,
+    pub voice_muted: bool,
+    pub voice_deafened: bool,
     /// Tag of their highest tagged role, shown next to their name.
     pub tag: Option<String>,
     pub tag_color: Option<String>,
@@ -209,6 +221,13 @@ impl ServerView {
                     .iter()
                     .map(|u| u.to_string())
                     .collect(),
+                voice_since: state
+                    .voice_members(c.id)
+                    .iter()
+                    .map(|u| state.voice_since(*u))
+                    .collect(),
+                voice_muted: state.voice_members(c.id).iter().map(|u| state.voice_flags(*u).0).collect(),
+                voice_deafened: state.voice_members(c.id).iter().map(|u| state.voice_flags(*u).1).collect(),
             })
             .collect();
 
@@ -250,6 +269,11 @@ impl ServerView {
                     .activity_cover
                     .clone()
                     .filter(|c| p.activity.is_some() && crate::igdb::valid_image_id(c)),
+                activity_since: p.activity_since.filter(|_| p.activity.is_some() && p.presence.is_visible_online()),
+                voice_channel: state.voice_states.get(&p.id).map(|c| c.to_string()),
+                voice_since: state.voice_since(p.id),
+                voice_muted: state.voice_flags(p.id).0,
+                voice_deafened: state.voice_flags(p.id).1,
                 tag: member_tag(state, p.id).map(|(t, _)| t),
                 tag_color: member_tag(state, p.id).and_then(|(_, c)| c),
                 role_banner: state.server.member(p.id).and_then(|m| {
