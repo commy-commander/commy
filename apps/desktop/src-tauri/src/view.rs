@@ -43,6 +43,8 @@ pub struct ChannelView {
     pub position: u32,
     /// Voice member cap; 0 is unlimited.
     pub user_limit: u32,
+    /// Banner image ref, if the channel has one.
+    pub banner: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -196,6 +198,7 @@ impl ServerView {
                 parent: c.parent.map(|p| p.to_string()),
                 position: c.position,
                 user_limit: c.user_limit,
+                banner: c.banner.clone(),
                 voice_user_ids: state
                     .voice_members(c.id)
                     .iter()

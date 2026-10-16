@@ -28,6 +28,9 @@ pub struct Channel {
     /// Voice channels: most people allowed in at once; 0 is unlimited.
     #[serde(default)]
     pub user_limit: u32,
+    /// Optional banner image ref shown at the top of the channel.
+    #[serde(default)]
+    pub banner: Option<String>,
 }
 
 impl Channel {
@@ -41,6 +44,7 @@ impl Channel {
             position,
             retention_days: None,
             user_limit: 0,
+            banner: None,
         }
     }
 }
