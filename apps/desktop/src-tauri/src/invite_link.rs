@@ -409,6 +409,7 @@ pub async fn create_invite_link(
 /// server marked public.
 pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result<CreatedInvite, String> {
     let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
+    crate::require_invite_permission(app, id)?;
     if expiry == Expiry::Never && !app.servers.lock().unwrap().get(&id).is_some_and(|s| s.server.public) {
         return Err("Only links to a public server can last forever".into());
     }

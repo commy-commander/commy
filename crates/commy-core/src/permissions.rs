@@ -24,6 +24,8 @@ impl Permissions {
     pub const ADD_REACTIONS: Permissions = Permissions(1 << 13);
     pub const USE_SOUNDBOARD: Permissions = Permissions(1 << 14);
     pub const USE_EXTERNAL_EMOJIS: Permissions = Permissions(1 << 15);
+    /// Invite people to the server. Never part of the everyone role: a
+    /// member needs a role that grants it (see `Server::permissions_for`).
     pub const CREATE_INVITES: Permissions = Permissions(1 << 16);
     pub const MANAGE_ROLES: Permissions = Permissions(1 << 17);
     pub const ADMINISTRATOR: Permissions = Permissions(1 << 18);
@@ -42,7 +44,6 @@ impl Permissions {
             | Self::ADD_REACTIONS
             | Self::USE_SOUNDBOARD
             | Self::USE_EXTERNAL_EMOJIS
-            | Self::CREATE_INVITES
     }
 
     pub fn all() -> Permissions {
@@ -123,5 +124,6 @@ mod tests {
         assert!(p.allows(Permissions::SEND_MESSAGES));
         assert!(!p.allows(Permissions::KICK_MEMBERS));
         assert!(!p.allows(Permissions::MANAGE_SERVER));
+        assert!(!p.allows(Permissions::CREATE_INVITES));
     }
 }

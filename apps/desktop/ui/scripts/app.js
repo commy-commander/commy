@@ -139,7 +139,7 @@ async function mockInvoke(cmd, args = {}) {
       if (Object.keys(mock.servers).length === 0) mockSeed();
       return mock.user;
     case "list_servers":
-      return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null }));
+      return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null, can_invite: !mock.plainMember }));
     case "get_server": {
       const s = mock.servers[args.serverId];
       if (!s) throw "unknown server";
@@ -157,7 +157,7 @@ async function mockInvoke(cmd, args = {}) {
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
-        can_mute: !mock.plainMember, can_ban: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
       };
     }
     case "create_server": {
@@ -1080,7 +1080,9 @@ function openServerMenu(server, x, y, folderId) {
   $("sm-rules").classList.add("hidden");
   $("sm-roles").classList.add("hidden");
   $("sm-settings").textContent = "Server Settings";
+  $("sm-invite").classList.add("hidden");
   invoke("get_server", { serverId: server.id }).then(full => {
+    $("sm-invite").classList.toggle("hidden", !full.can_invite);
     $("sm-rules").classList.toggle("hidden", !full.rules);
     $("sm-roles").classList.toggle("hidden", !selfAssignableRoles(full).length);
     $("sm-settings").textContent = canOpenServerSettings(full) ? "Server Settings" : "Server Info";
@@ -1316,6 +1318,8 @@ function paintSidebarBanner() {
   const header = $("server-name-header");
   if (state.view === "server" && state.currentServer) {
     $("server-settings-btn").title = canOpenServerSettings(state.currentServer) ? "Server Settings" : "Server Info";
+    // Inviting needs a role that grants it; the button follows the server.
+    $("invite-btn").classList.toggle("hidden", !state.currentServer.can_invite);
   }
   const banner = $("sidebar-banner");
   const ref = state.view === "server" && state.currentServer ? state.currentServer.banner : null;
@@ -4033,7 +4037,7 @@ function friendButton(person, onDone) {
 function invitableServers(userId) {
   const person = state.people.get(userId);
   const shared = new Set((person ? person.servers : []).map(s => s.id));
-  return state.servers.filter(s => !shared.has(s.id));
+  return state.servers.filter(s => s.can_invite && !shared.has(s.id));
 }
 
 function openInviteMenu(person, anchor) {
@@ -7038,7 +7042,7 @@ function wireEvents() {
   };
 
   $("invite-btn").onclick = async () => {
-    if (!state.currentServer) return;
+    if (!state.currentServer || !state.currentServer.can_invite) return;
     try {
       const invite = await invoke("get_invite", { serverId: state.currentServer.id });
       $("invite-text").value = invite;
@@ -8174,6 +8178,7 @@ const PERMISSION_LABELS = [
   ["manage_events", "Manage Events"],
   ["manage_roles", "Manage Roles"],
   ["kick_members", "Kick Members"],
+  ["create_invites", "Create Invites"],
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
   ["administrator", "Administrator"],
