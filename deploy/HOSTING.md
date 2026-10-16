@@ -177,8 +177,12 @@ visitor's browser to show the server name. Links made by older app versions
 have no key; they keep working until they expire, and the server no longer
 accepts new ones.
 
-- Anonymous links expire after 7 days, links from signed in apps after up to
-  30. Creating links is limited to 30 per hour per IP; set
+- Whoever creates a link picks when it expires: in 1 hour, 1 day, 7 days or
+  30 days. On a server its owner marked public, the app also offers links
+  that never expire; the account server keeps those,
+  up to `INVITES_MAX_PERMANENT` of them (20000 by default). The app seals the
+  expiry inside the invite as well, so a row kept past its expiry still will
+  not open. Creating links is limited to 30 per hour per IP; set
   `INVITES_REQUIRE_ACCOUNT=true` to only allow signed in apps.
 - The app warns before joining from a link whose server is not the account
   server it is set to, since anyone can run a Commy server.
@@ -268,7 +272,8 @@ never reach this stack. The auth database holds:
 - accounts: email, display name, avatar URL, password hash (scrypt)
 - Google sign-ins: provider account id, with OAuth tokens encrypted at rest
 - sessions: token and expiry only (IP address and user agent are not stored)
-- linked devices: iroh node id, device name, first and last link time
+- linked devices: iroh node id, first and last link time (no device or
+  computer name; apps no longer send one and older names are dropped at startup)
 - invite links: the code, the sealed invite (unreadable without the link),
   creator account if the app was signed in, expiry
 - each account's sealed server list (`vaultItem`): bytes sealed with a key

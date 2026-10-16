@@ -157,12 +157,16 @@ test("desktop sign in, prove key, link, list, transfer and remove", { timeout: 3
   assert.equal(reg.status, 200, JSON.stringify(reg.json));
   assert.equal(reg.json.device.nodeId, key.nodeId);
 
-  const again = await link({ token }, key, "Renamed");
-  assert.equal(again.json.device.name, "Renamed");
+  const again = await link({ token }, key, "DESKTOP-ABC123");
+  assert.equal(again.status, 200, JSON.stringify(again.json));
+  assert.equal(again.json.device.name, "Commy desktop", "the name an app sends is not kept");
+  for (const row of db.linkedDevice) {
+    assert.deepEqual(Object.keys(row).sort(), ["createdAt", "id", "lastSeenAt", "nodeId", "userId"]);
+  }
 
   const list = await call("GET", "/commy/devices", { cookie });
   assert.equal(list.json.devices.length, 1);
-  assert.equal(list.json.devices[0].name, "Renamed");
+  assert.equal(list.json.devices[0].name, "Commy desktop");
 
   await call("POST", "/commy/devices/remove", { cookie: bob, body: { id: list.json.devices[0].id } });
   assert.equal((await call("GET", "/commy/devices", { token })).json.devices.length, 1, "bob cannot remove another user's device");

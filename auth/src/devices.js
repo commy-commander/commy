@@ -1,5 +1,7 @@
 // Better Auth plugin linking accounts to Commy desktop installs. A device is
-// identified by its iroh node id: a public key, never a secret.
+// identified by its iroh node id: a public key, never a secret. Nothing that
+// describes the device (such as its computer name) is stored: the server keeps
+// which devices are yours and when they were linked and last seen, no more.
 import * as z from "zod";
 import { APIError, createAuthEndpoint, sessionMiddleware } from "better-auth/api";
 import { checkChallenge, linkMessage, makeChallenge, verifyNodeSignature } from "./proof.js";
@@ -12,22 +14,24 @@ export function normalizeNodeId(value) {
   return NODE_ID.test(id) ? id : null;
 }
 
-export function normalizeDeviceName(value) {
-  const name = String(value ?? "")
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim()
-    .slice(0, 64);
-  return name || "Commy desktop";
-}
+// Every device shows under this label: the name an app sends is not kept.
+export const DEVICE_LABEL = "Commy desktop";
 
 export function toPublicDevice(row) {
   return {
     id: row.id,
     nodeId: row.nodeId,
-    name: row.name,
+    name: DEVICE_LABEL,
     createdAt: row.createdAt,
     lastSeenAt: row.lastSeenAt,
   };
+}
+
+// Servers from before device names were dropped kept each computer's name in
+// the clear. This removes that column; it runs at startup and is a no-op once
+// the column is gone.
+export async function dropDeviceNames(pool) {
+  await pool.query('ALTER TABLE IF EXISTS "linkedDevice" DROP COLUMN IF EXISTS "name"');
 }
 
 const MODEL = "linkedDevice";
@@ -38,7 +42,6 @@ export const commyDevices = ({ secret, serverUrl }) => ({
     [MODEL]: {
       fields: {
         nodeId: { type: "string", required: true, unique: true },
-        name: { type: "string", required: true },
         userId: {
           type: "string",
           required: true,
@@ -88,6 +91,7 @@ export const commyDevices = ({ secret, serverUrl }) => ({
         use: [sessionMiddleware],
         body: z.object({
           nodeId: z.string(),
+          // Sent by older apps; ignored
           name: z.string().optional(),
           challenge: z.string(),
           signature: z.string(),
@@ -106,7 +110,6 @@ export const commyDevices = ({ secret, serverUrl }) => ({
         ) {
           throw new APIError("FORBIDDEN", { message: "Could not verify that this app holds the node key" });
         }
-        const name = normalizeDeviceName(ctx.body.name);
         const now = new Date();
         const adapter = ctx.context.adapter;
 
@@ -123,14 +126,14 @@ export const commyDevices = ({ secret, serverUrl }) => ({
           const updated = await adapter.update({
             model: MODEL,
             where: [{ field: "id", value: existing.id }],
-            update: { name, userId, lastSeenAt: now },
+            update: { userId, lastSeenAt: now },
           });
-          return ctx.json({ device: toPublicDevice(updated ?? { ...existing, name, userId, lastSeenAt: now }) });
+          return ctx.json({ device: toPublicDevice(updated ?? { ...existing, userId, lastSeenAt: now }) });
         }
 
         const created = await adapter.create({
           model: MODEL,
-          data: { nodeId, name, userId, createdAt: now, lastSeenAt: now },
+          data: { nodeId, userId, createdAt: now, lastSeenAt: now },
         });
         return ctx.json({ device: toPublicDevice(created) });
       },

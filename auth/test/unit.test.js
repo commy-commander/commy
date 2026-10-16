@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { socialProviders } from "../src/auth.js";
 import { discoveryDocument, loadConfig } from "../src/config.js";
-import { normalizeDeviceName, normalizeNodeId, toPublicDevice } from "../src/devices.js";
+import { DEVICE_LABEL, dropDeviceNames, normalizeNodeId, toPublicDevice } from "../src/devices.js";
 import { createMailer, escapeHtml, renderEmail } from "../src/mailer.js";
 
 const base = {
@@ -75,15 +75,16 @@ test("normalizeNodeId accepts only 32 byte hex keys", () => {
   assert.equal(normalizeNodeId(undefined), null);
 });
 
-test("normalizeDeviceName strips control characters and caps length", () => {
-  assert.equal(normalizeDeviceName("  Gaming\u0007 PC\n"), "Gaming PC");
-  assert.equal(normalizeDeviceName(""), "Commy desktop");
-  assert.equal(normalizeDeviceName("a".repeat(100)).length, 64);
+test("toPublicDevice drops the owning user id and any stored name", () => {
+  const out = toPublicDevice({ id: "1", nodeId: "n", name: "DESKTOP-ABC123", userId: "secret", createdAt: 1, lastSeenAt: 2 });
+  assert.equal("userId" in out, false);
+  assert.equal(out.name, DEVICE_LABEL);
 });
 
-test("toPublicDevice drops the owning user id", () => {
-  const out = toPublicDevice({ id: "1", nodeId: "n", name: "x", userId: "secret", createdAt: 1, lastSeenAt: 2 });
-  assert.equal("userId" in out, false);
+test("dropDeviceNames removes the old name column", async () => {
+  const queries = [];
+  await dropDeviceNames({ query: async (q) => queries.push(q) });
+  assert.deepEqual(queries, ['ALTER TABLE IF EXISTS "linkedDevice" DROP COLUMN IF EXISTS "name"']);
 });
 
 test("emails escape user controlled values", () => {

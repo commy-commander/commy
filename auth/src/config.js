@@ -121,6 +121,7 @@ export function loadConfig(env = process.env) {
     desktopClientIds: list(env.DEVICE_CLIENT_IDS).length > 0 ? list(env.DEVICE_CLIENT_IDS) : ["commy-desktop"],
     allowSignup: env.ALLOW_SIGNUP !== "false",
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
+    invitesMaxPermanent: Number(env.INVITES_MAX_PERMANENT) > 0 ? Math.floor(Number(env.INVITES_MAX_PERMANENT)) : undefined,
     doorbell: env.DOORBELL !== "false",
     google,
     twitch,

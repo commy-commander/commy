@@ -431,6 +431,8 @@ pub trait AppAccess: Send + Sync + 'static {
     /// Saves the servers changed meanwhile after [`SAVE_DELAY`], in the
     /// background (see [`save_unsaved`]).
     fn save_later(&self);
+    /// Starts a catch-up session with a neighbor.
+    fn catch_up(&self, server: ServerId, peer: [u8; 32]);
 }
 
 impl AppAccess for tauri::AppHandle {
@@ -448,6 +450,10 @@ impl AppAccess for tauri::AppHandle {
             tokio::time::sleep(SAVE_DELAY).await;
             save_unsaved(handle.app());
         });
+    }
+
+    fn catch_up(&self, server: ServerId, peer: [u8; 32]) {
+        spawn_session(self.clone(), server, peer, None, false);
     }
 }
 
@@ -499,6 +505,9 @@ impl AppAccess for TestHandle {
             save_unsaved(&app);
         });
     }
+
+    /// The harness starts its sessions on NeighborUp, as the app also does.
+    fn catch_up(&self, _server: ServerId, _peer: [u8; 32]) {}
 }
 
 /// [`CatchupStore`] over `App.servers`. Every call locks briefly.
@@ -852,8 +861,10 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         for sound in old.server.soundboard.iter().cloned() {
             let _ = state.apply(ServerEvent::SoundAdd { server, sound });
         }
+        // Older apps may still name someone appearing offline; keep presence
+        // as others see it, like every other way a profile arrives.
         for profile in profiles {
-            state.profiles.insert(profile.id, profile);
+            state.profiles.insert(profile.id, profile.as_seen_by_others());
         }
         // A key pinned here that the snapshot left out stays.
         for profile in old.profiles.values().filter(|p| p.identity.is_some()) {

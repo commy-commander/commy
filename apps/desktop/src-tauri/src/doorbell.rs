@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tauri::Manager;
 
 pub const DOORBELL_FILE: &str = "doorbell.json";
 /// Ids for one device are gathered this long into one ring.
@@ -32,6 +31,10 @@ const HELLO_EVERY: Duration = Duration::from_secs(30 * 60);
 /// and after the first hour only every [`NUDGE_SLOW`].
 const NUDGE_EVERY: Duration = Duration::from_secs(60);
 const NUDGE_SLOW: Duration = Duration::from_secs(10 * 60);
+/// After launch, hellos wait this long so peers can connect first.
+const HELLO_AFTER_START: Duration = Duration::from_secs(30);
+/// How often the listener looks for servers it does not listen in yet.
+const LISTEN_CHECK_EVERY: Duration = Duration::from_secs(5);
 /// Repeat rings to one device are spaced at least this far apart.
 const RING_SPACING: Duration = Duration::from_secs(30);
 /// Rings sent to one account server per minute, under its limit of 300.
@@ -350,11 +353,11 @@ pub(crate) async fn announcement(app: &App, server: ServerId) -> Option<ServerEv
 
 /// Tells a server's members where we listen. Runs apart from the caller
 /// since it may ask the account server first.
-pub fn announce(handle: &tauri::AppHandle, server: ServerId) {
-    let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
-        let app = handle.state::<App>();
-        if let Some(event) = announcement(&app, server).await {
+pub fn announce<A: AppAccess + Clone>(access: &A, server: ServerId) {
+    let access = access.clone();
+    spawn(async move {
+        let app = access.app();
+        if let Some(event) = announcement(app, server).await {
             let net = app.net.lock().await;
             if let Some(node) = net.as_ref() {
                 if let Err(e) = node.broadcast(server, commy_net::WirePayload::Event(event)).await {
@@ -405,10 +408,10 @@ pub fn on_announce(app: &App, server: ServerId, event: &ServerEvent) {
 /// Rings members' devices for a message of ours. With `everyone`, the
 /// message reached nobody, so every device is rung; otherwise only those
 /// of members who do not look online.
-pub fn ring(handle: &tauri::AppHandle, server: ServerId, message: MessageId, everyone: bool) {
-    let targets = ring_targets(&handle.state::<App>(), server, message, everyone);
+pub fn ring<A: AppAccess + Clone>(access: &A, server: ServerId, message: MessageId, everyone: bool) {
+    let targets = ring_targets(access.app(), server, message, everyone);
     for (url, token, id) in targets {
-        queue_ring(handle, url, token, Some(id));
+        queue_ring(access, url, token, Some(id));
     }
 }
 
@@ -432,8 +435,8 @@ pub(crate) fn ring_targets(app: &App, server: ServerId, message: MessageId, ever
 
 /// Adds an id (or, with None, a hello) to a device's next ring, starting
 /// the debounce for that device when none is running.
-fn queue_ring(handle: &tauri::AppHandle, url: String, token: String, id: Option<String>) {
-    let app = handle.state::<App>();
+fn queue_ring<A: AppAccess + Clone>(access: &A, url: String, token: String, id: Option<String>) {
+    let app = access.app();
     let key = (url, token);
     let start = {
         let mut doorbell = app.doorbell.lock().unwrap();
@@ -445,9 +448,9 @@ fn queue_ring(handle: &tauri::AppHandle, url: String, token: String, id: Option<
     if !start {
         return;
     }
-    let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
-        let app = handle.state::<App>();
+    let access = access.clone();
+    spawn(async move {
+        let app = access.app();
         // A device rung moments ago waits for the spacing, gathering ids.
         let wait = app.doorbell.lock().unwrap().rung_at.get(&key).map_or(RING_DEBOUNCE, |at| {
             RING_SPACING.saturating_sub(at.elapsed()).max(RING_DEBOUNCE)
@@ -461,7 +464,7 @@ fn queue_ring(handle: &tauri::AppHandle, url: String, token: String, id: Option<
         };
         let Some(ids) = ids else { return };
         let (origin, token) = key;
-        let Some(endpoints) = endpoints(&app, &origin).await else {
+        let Some(endpoints) = endpoints(app, &origin).await else {
             tracing::debug!("a member's account server does not offer the doorbell");
             return;
         };
@@ -477,7 +480,7 @@ fn queue_ring(handle: &tauri::AppHandle, url: String, token: String, id: Option<
                 tokio::time::sleep(wait).await;
                 continue;
             }
-            match send_ring(&app, &endpoints.ring, &token, chunk).await {
+            match send_ring(app, &endpoints.ring, &token, chunk).await {
                 Ok(_) => {
                     chunks.next();
                 }
@@ -523,8 +526,8 @@ pub(crate) async fn send_ring(app: &App, ring: &str, token: &str, ids: &[String]
 
 /// Wakes every member device of a server we know, once per
 /// [`HELLO_EVERY`]: they then reach out to us.
-fn hello(handle: &tauri::AppHandle, server: ServerId) {
-    let app = handle.state::<App>();
+fn hello<A: AppAccess + Clone>(access: &A, server: ServerId) {
+    let app = access.app();
     let our_node = app.node_hex.lock().unwrap().clone();
     let day = bell::day_of(chrono::Utc::now());
     let targets: Vec<(String, String)> = {
@@ -543,39 +546,60 @@ fn hello(handle: &tauri::AppHandle, server: ServerId) {
             .collect()
     };
     for (url, token) in targets {
-        queue_ring(handle, url, token, None);
+        queue_ring(access, url, token, None);
     }
 }
 
 // ---------- Listening ----------
 
-/// Starts listening in every server we are in, and says hello where we
+/// Starts listening in every server we are in right away, so rings
+/// waiting for us show before any peer is back, and says hello where we
 /// have messages waiting and nobody to give them to. Runs for the life
 /// of the app.
-pub async fn run(handle: tauri::AppHandle) {
-    tokio::time::sleep(Duration::from_secs(30)).await;
+pub async fn run<A: AppAccess + Clone>(access: A) {
+    let started = Instant::now();
+    let mut hello_at: Option<Instant> = None;
     loop {
-        let app = handle.state::<App>();
+        let app = access.app();
         let servers: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
         for server in &servers {
             let start = app.doorbell.lock().unwrap().listening.insert(*server);
             if start {
-                tauri::async_runtime::spawn(listen(handle.clone(), *server));
+                spawn(listen(access.clone(), *server));
             }
         }
-        let lonely: Vec<ServerId> = {
-            let net = app.net.lock().await;
-            match net.as_ref() {
-                Some(node) => servers.iter().copied().filter(|s| node.neighbor_count(*s) == 0).collect(),
-                None => vec![],
-            }
-        };
-        for server in lonely {
-            if app.outbox.lock().unwrap().has_pending(server) {
-                hello(&handle, server);
+        let hello_due = started.elapsed() >= HELLO_AFTER_START && hello_at.is_none_or(|at| at.elapsed() >= HELLO_AFTER_START);
+        if hello_due {
+            hello_at = Some(Instant::now());
+            let lonely: Vec<ServerId> = {
+                let net = app.net.lock().await;
+                match net.as_ref() {
+                    Some(node) => servers.iter().copied().filter(|s| node.neighbor_count(*s) == 0).collect(),
+                    None => vec![],
+                }
+            };
+            for server in lonely {
+                if app.outbox.lock().unwrap().has_pending(server) {
+                    hello(&access, server);
+                }
             }
         }
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        tokio::time::sleep(LISTEN_CHECK_EVERY).await;
+    }
+}
+
+/// Spawns on the runtime we are on, or the app's outside one.
+fn spawn<F>(future: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => {
+            runtime.spawn(future);
+        }
+        Err(_) => {
+            tauri::async_runtime::spawn(future);
+        }
     }
 }
 
@@ -602,23 +626,23 @@ pub(crate) async fn take(app: &App, endpoints: &Endpoints, token: &str, wait: u6
 
 /// Takes rings for one server from our account server: days missed since
 /// the last take, then today's token in a long poll, until we leave it.
-async fn listen(handle: tauri::AppHandle, server: ServerId) {
+async fn listen<A: AppAccess + Clone>(access: A, server: ServerId) {
     let mut failures: u32 = 0;
     loop {
-        let app = handle.state::<App>();
+        let app = access.app();
         if !app.servers.lock().unwrap().contains_key(&server) {
             app.doorbell.lock().unwrap().listening.remove(&server);
             return;
         }
         let origin = crate::account::effective_server();
-        let Some(endpoints) = endpoints(&app, &origin).await else {
+        let Some(endpoints) = endpoints(app, &origin).await else {
             tokio::time::sleep(Duration::from_secs(5 * 60)).await;
             continue;
         };
         let (key, new) = app.doorbell.lock().unwrap().own_key(server);
         if new {
-            persist(&app);
-            announce(&handle, server);
+            persist(app);
+            announce(&access, server);
         }
         let today = bell::day_of(chrono::Utc::now());
         let first = app.doorbell.lock().unwrap().saved.last_take.get(&server).copied().unwrap_or(today);
@@ -631,13 +655,13 @@ async fn listen(handle: tauri::AppHandle, server: ServerId) {
         let mut result = Ok(());
         for day in first..=today {
             let wait = if day == today { TAKE_WAIT_SECS } else { 0 };
-            match take(&app, &endpoints, &bell::token(&key, day), wait).await {
+            match take(app, &endpoints, &bell::token(&key, day), wait).await {
                 Ok(taken) => {
                     let changed = app.doorbell.lock().unwrap().saved.last_take.insert(server, day) != Some(day);
                     if changed {
-                        persist(&app);
+                        persist(app);
                     }
-                    on_taken(&handle, server, &key, taken);
+                    on_taken(&access, server, &key, taken);
                 }
                 Err(e) => {
                     result = Err(e);
@@ -646,7 +670,7 @@ async fn listen(handle: tauri::AppHandle, server: ServerId) {
             }
         }
         if app.doorbell.lock().unwrap().awaited_count(server) > 0 {
-            nudge(&handle, server).await;
+            nudge(&access, server).await;
         }
         match result {
             Ok(()) => failures = 0,
@@ -668,19 +692,19 @@ fn rand_jitter(base: u64) -> u64 {
 
 /// Rings we took: ids we lack are awaited and we reach out to peers; a
 /// hello means someone is back, so we reach out too.
-fn on_taken(handle: &tauri::AppHandle, server: ServerId, key: &DoorbellKey, taken: Taken) {
-    let app = handle.state::<App>();
+fn on_taken<A: AppAccess + Clone>(access: &A, server: ServerId, key: &DoorbellKey, taken: Taken) {
+    let app = access.app();
     if !app.servers.lock().unwrap().contains_key(&server) {
         return;
     }
-    let changed = note_taken(&app, server, key, taken.ids);
+    let changed = note_taken(app, server, key, taken.ids);
     if changed {
-        let _ = tauri::Emitter::emit(handle, "server-event", &server.to_string());
+        access.emit("server-event", serde_json::json!(server.to_string()));
     }
     if changed || taken.hello {
         app.doorbell.lock().unwrap().nudged_at.remove(&server);
-        let handle = handle.clone();
-        tauri::async_runtime::spawn(async move { nudge(&handle, server).await });
+        let access = access.clone();
+        spawn(async move { nudge(&access, server).await });
     }
 }
 
@@ -705,8 +729,8 @@ pub(crate) fn note_taken(app: &App, server: ServerId, key: &DoorbellKey, ids: Ve
 
 /// Re-dials a server's members and catches up with current neighbors, at
 /// most once per [`NUDGE_EVERY`].
-async fn nudge(handle: &tauri::AppHandle, server: ServerId) {
-    let app = handle.state::<App>();
+async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
+    let app = access.app();
     {
         let mut doorbell = app.doorbell.lock().unwrap();
         // Ids that stay away past their first hour are asked for less often.
@@ -737,7 +761,7 @@ async fn nudge(handle: &tauri::AppHandle, server: ServerId) {
         node.neighbors(server)
     };
     for peer in neighbors {
-        crate::catchup::spawn_session(handle.clone(), server, peer, None, false);
+        access.catch_up(server, peer);
     }
 }
 

@@ -1342,7 +1342,7 @@ async fn send_friend_signal(app: &tauri::State<'_, App>, to: UserId, signal: saf
     let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
     let mut message = DmMessage::new(me.id, to, signal.encode());
     sign_dm(app, &mut message)?;
-    let envelope = DmEnvelope { message, sender: me };
+    let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
     let send = {
         let net = app.net.lock().await;
         net.as_ref().ok_or("network is not ready yet")?.send_dm(&hex, &envelope)
@@ -1581,7 +1581,7 @@ async fn report_user(
         .ok_or("the server owner's device is unknown; try again once they have been online")?;
     let mut message = DmMessage::new(me.id, owner, report.encode());
     sign_dm(&app, &mut message)?;
-    let envelope = DmEnvelope { message, sender: me.clone() };
+    let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
     let send = {
         let net = app.net.lock().await;
         net.as_ref().ok_or("network is not ready yet")?.send_dm(&owner_hex, &envelope)
@@ -1717,7 +1717,7 @@ async fn send_dm(
     sign_dm(&app, &mut message)?;
     let envelope = DmEnvelope {
         message: message.clone(),
-        sender: me.clone(),
+        sender: me.as_seen_by_others(),
     };
     // Earlier messages still waiting go first, so this one queues behind them.
     let waiting = app.outbox.lock().unwrap().has_dms(partner);
@@ -1928,6 +1928,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             emojis_shareable: state.server.emojis_shareable,
             soundboard_open: state.server.soundboard_open,
         });
+    }
+    if state.server.public && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::PublicSet { server: sid, public: true });
     }
     // Only an explicit choice is announced; the name fallback needs none.
     let explicit = state.server.afk_disabled || state.server.afk_channel_id.is_some();
@@ -3478,6 +3481,26 @@ async fn set_expression_settings(
     Ok(())
 }
 
+/// Marks a server public (invite links to it may never expire) or private.
+#[tauri::command]
+async fn set_server_public(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    public: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "make this server public")?;
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::PublicSet { server: sid, public }).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
 /// What the webview needs to play a soundboard clip.
 #[derive(Clone, serde::Serialize)]
 struct SoundboardPlayView {
@@ -3833,7 +3856,11 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
             profile.activity_cover = cover;
             profile.clone()
         };
-        announce_profile(&app, &handle, &profile).await;
+        // Appearing offline shares no activity, so there is nothing to
+        // announce; a profile update from an offline user would give it away.
+        if profile.presence != Presence::Invisible {
+            announce_profile(&app, &handle, &profile).await;
+        }
         let _ = handle.emit("profile-changed", &profile);
     }
 }
@@ -4981,6 +5008,7 @@ pub fn run() {
             add_sound,
             remove_sound,
             set_expression_settings,
+            set_server_public,
             play_soundboard,
             fetch_expression,
             pick_sound,

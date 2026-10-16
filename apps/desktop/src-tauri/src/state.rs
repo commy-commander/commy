@@ -295,9 +295,11 @@ impl App {
         true
     }
 
-    /// Our profile as we announce it: without the key while it may still
-    /// be replaced, so nobody pins one we are about to drop.
-    pub fn announced(&self, mut profile: UserProfile) -> UserProfile {
+    /// Our profile as we announce it: as others may see it (appearing
+    /// offline goes out as plain Offline), and without the key while it
+    /// may still be replaced, so nobody pins one we are about to drop.
+    pub fn announced(&self, profile: UserProfile) -> UserProfile {
+        let mut profile = profile.as_seen_by_others();
         if !self.key_settled() {
             profile.identity = None;
         }
@@ -488,6 +490,18 @@ mod tests {
         assert_eq!(app.servers.lock().unwrap()[&sid].identity_of(me), Some(adopted.public()));
         assert_eq!(crate::persist::load_profile(&dir).unwrap().identity, Some(adopted.public()));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn appearing_offline_is_announced_as_offline() {
+        let app = App::default();
+        let mut me = UserProfile::new("me");
+        me.presence = commy_core::Presence::Invisible;
+        me.activity = Some("Playing Chess".into());
+        let announced = app.announced(me);
+        assert_eq!(announced.presence, commy_core::Presence::Offline);
+        assert_eq!(announced.activity, None);
+        assert!(!serde_json::to_string(&announced).unwrap().contains("invisible"));
     }
 
     #[test]

@@ -284,7 +284,18 @@
     <div class="modal hidden" id="modal-invite">
       <h2>Invite People</h2>
       <p>Anyone with this invite can join while you are online.</p>
+      <div class="invite-expiry">
+        <div class="share-quality-label" id="invite-expiry-label">Invite link expires after</div>
+        <div class="segmented" id="invite-expiry" role="radiogroup" aria-labelledby="invite-expiry-label">
+          <button data-expires="1h" role="radio"><strong>1 hour</strong></button>
+          <button data-expires="1d" role="radio"><strong>1 day</strong></button>
+          <button data-expires="7d" role="radio"><strong>7 days</strong></button>
+          <button data-expires="30d" role="radio"><strong>30 days</strong></button>
+          <button data-expires="never" role="radio" id="invite-expiry-never"><strong>Never</strong></button>
+        </div>
+      </div>
       <textarea id="invite-text" class="invite-field" readonly rows="3" aria-label="Invite"></textarea>
+      <div class="setting-sub invite-expiry-note" id="invite-expiry-note"></div>
       <div class="invite-actions">
         <button class="btn-primary" id="invite-link-copy">Copy Invite Link</button>
         <button class="btn-secondary" id="invite-copy">Copy Invite Code</button>
@@ -590,7 +601,7 @@
                   <option value="online">Online</option>
                   <option value="idle">Idle</option>
                   <option value="do_not_disturb">Do Not Disturb</option>
-                  <option value="invisible">Invisible</option>
+                  <option value="invisible">Appear Offline</option>
                 </select>
               </label>
               <label class="field-label">About Me
@@ -1036,6 +1047,13 @@
               <div class="setting-sub" id="overview-readonly">Only members with Manage Server can change these settings.</div>
             </div>
           </div>
+          <label class="settings-card setting-row" id="server-public-row">
+            <div>
+              <div class="setting-title">Public server</div>
+              <div class="setting-sub">Anyone with an invite is welcome. Invite links to this server can be set to never expire.</div>
+            </div>
+            <input type="checkbox" id="server-public-toggle" class="switch" />
+          </label>
           <h2 class="settings-subhead">Games</h2>
           <div class="settings-card">
             <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name and will power server discovery later.</div>
@@ -1208,7 +1226,7 @@
         <button data-presence="online"><span class="presence-dot inline online"></span><span>Online</span></button>
         <button data-presence="idle"><span class="presence-dot inline idle"></span><span>Idle</span></button>
         <button data-presence="do_not_disturb"><span class="presence-dot inline do_not_disturb"></span><span>Do Not Disturb<small>You will not get notifications</small></span></button>
-        <button data-presence="invisible"><span class="presence-dot inline invisible"></span><span>Invisible<small>You appear offline but can still chat</small></span></button>
+        <button data-presence="invisible"><span class="presence-dot inline invisible"></span><span>Appear Offline<small>Look offline, still get every message</small></span></button>
       </div>
       <div class="pp-durations hidden" id="pp-durations">
         <div class="pp-durations-title" id="pp-durations-title">Clear after</div>
