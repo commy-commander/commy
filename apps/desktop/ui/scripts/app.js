@@ -69,15 +69,15 @@ function mockSeed() {
     ],
   };
   server.roles = [
-    { id: "r1", name: "Raider", color: "f0b232", position: 2, permissions: [], self_assignable: true, tag: "RAID" },
+    { id: "r1", name: "Raider", color: "9b7bff", position: 2, permissions: [], self_assignable: true, tag: "RAID" },
     { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages"], self_assignable: false, tag: null },
   ];
   server.game_tags = ["Rust", "Valorant"];
   server.rules = "# Welcome\n1. Be kind to each other\n2. **No spam** or self promotion\n3. Keep it on topic, see https://commy.chat";
   server.needs_rules = true;
   server.members[0].tag = "RAID";
-  server.members[0].tag_color = "f0b232";
-  server.members[0].color = "f0b232";
+  server.members[0].tag_color = "9b7bff";
+  server.members[0].color = "9b7bff";
   mock.servers[server.id] = server;
   mock.dms.m2 = {
     name: "nova",
@@ -4066,7 +4066,7 @@ function inviteCard(text) {
 function openFullProfile(member) {
   closeFloating();
   const person = { ...(state.people.get(member.id) || {}), ...member };
-  paintBanner($("fp-banner"), person.role_banner, person.color ? `#${person.color}` : bannerColor(person.id));
+  paintBanner($("fp-banner"), person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
   const av = $("fp-avatar");
   av.replaceChildren();
   paintAvatar(av, person.id, person.name);
@@ -4118,7 +4118,7 @@ function openMemberCard(member, anchor) {
   const server = state.currentServer || { roles: [] };
   closeFloating();
   const card = $("member-card");
-  paintBanner($("mc-banner"), member.role_banner, member.color ? `#${member.color}` : bannerColor(member.id));
+  paintBanner($("mc-banner"), member.role_banner, member.color ? roleGradient(member.color) : bannerColor(member.id));
   const av = $("mc-avatar");
   av.replaceChildren();
   paintAvatar(av, member.id, member.name);
@@ -6150,6 +6150,24 @@ function bannerColor(userId) {
   for (const ch of String(userId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
   const hue = Math.abs(hash) % 360;
   return `linear-gradient(135deg, hsl(${hue} 42% 40%), hsl(${(hue + 40) % 360} 45% 26%))`;
+}
+
+// A role colour as a soft gradient, so a profile banner never reads as a flat block.
+function roleGradient(hex) {
+  const n = parseInt(String(hex).replace(/^#/, ""), 16);
+  if (Number.isNaN(n)) return bannerColor(hex);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const max = Math.max(r, g, b) / 255, min = Math.min(r, g, b) / 255;
+  const l = (max + min) / 2;
+  const d = max - min;
+  let h = 0;
+  if (d) {
+    const rr = r / 255, gg = g / 255, bb = b / 255;
+    h = max === rr ? (gg - bb) / d + (gg < bb ? 6 : 0) : max === gg ? (bb - rr) / d + 2 : (rr - gg) / d + 4;
+    h *= 60;
+  }
+  const sat = d ? Math.round((d / (1 - Math.abs(2 * l - 1))) * 100) : 0;
+  return `linear-gradient(135deg, hsl(${Math.round(h)} ${Math.min(sat, 70)}% ${Math.round(l * 100)}%), hsl(${Math.round((h + 35) % 360)} ${Math.min(sat, 60)}% ${Math.max(18, Math.round(l * 100) - 24)}%))`;
 }
 
 // The start-of-history block at the top of every DM.
