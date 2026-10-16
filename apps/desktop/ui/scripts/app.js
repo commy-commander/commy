@@ -963,16 +963,6 @@ function voiceChannelOf(member, server) {
 // Small glyphs at the end of a member's name line: a speaker while they
 // are in voice, plus mic or headset struck through when they muted or
 // deafened themselves. The clock stays on the voice channel rows.
-function voiceGlyphs(member, channel) {
-  if (!channel) return null;
-  const cluster = el("span", "member-voice");
-  cluster.appendChild(svgIcon("speaker", 14));
-  if (member.voice_muted) cluster.appendChild(el("span", "off")).appendChild(svgIcon("micOff", 14));
-  if (member.voice_deafened) cluster.appendChild(el("span", "off")).appendChild(svgIcon("headsetOff", 14));
-  return cluster;
-}
-
-// What a hover tells about a member: the call and the game, in full.
 function memberHover(member, channel) {
   const lines = [];
   if (channel) lines.push(`In voice · ${channelPlainName(channel)} · ${elapsedClock(member.voice_since)}`);
@@ -2665,26 +2655,28 @@ function renderMembers() {
         nameRow.appendChild(live);
       }
       const channel = voiceChannelOf(member, state.currentServer);
-      const glyphs = voiceGlyphs(member, channel);
-      if (glyphs) nameRow.appendChild(glyphs);
       meta.appendChild(nameRow);
       const hover = memberHover(member, channel);
       if (hover) row.title = hover;
-      // The line under the name is always there, so rows keep one height.
-      const sub = subLine(member);
-      if (!sub) meta.appendChild(el("div", "user-sub empty"));
-      if (sub) {
-        // The activity colour only when the line is the activity alone.
-        const line = el("div", "user-sub" + (member.activity && !backLine(member) ? " activity" : ""), sub);
-        const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
-        if (cover) {
-          const img = el("img", "activity-cover");
-          img.src = cover;
-          img.alt = "";
-          line.prepend(img);
-        }
-        meta.appendChild(line);
+      // The line under the name is always there, so rows keep one height:
+      // the in-voice icon first, then the game, or when they are back if
+      // they are on Do Not Disturb with a return time.
+      const text = backLine(member) || statusLine(member);
+      const line = el("div", "user-sub" + (member.activity && !backLine(member) ? " activity" : "") + (text || channel ? "" : " empty"));
+      if (channel) {
+        const icon = el("span", "sub-voice");
+        icon.appendChild(svgIcon("speaker", 14));
+        line.appendChild(icon);
       }
+      const cover = member.activity && !backLine(member) && igdbCover(member.activity_cover, "t_thumb");
+      if (cover) {
+        const img = el("img", "activity-cover");
+        img.src = cover;
+        img.alt = "";
+        line.appendChild(img);
+      }
+      if (text) line.appendChild(el("span", "sub-text", text));
+      meta.appendChild(line);
       row.appendChild(meta);
       row.onclick = e => {
         e.stopPropagation();
@@ -6128,7 +6120,7 @@ async function toggleSoundboardPop() {
   }
   $("sb-muted").classList.toggle("hidden", soundboardPrefs().enabled);
   pop.classList.remove("hidden");
-  placePopup(pop, $("vp-soundboard"), "above");
+  placePopup(pop, $("vp-soundboard"), "below");
 }
 
 // ---------- Mentions ----------
@@ -6445,6 +6437,9 @@ function renderShareButton() {
   btn.classList.toggle("hidden", !inVoice);
   btn.classList.toggle("active", state.sharing);
   btn.title = state.sharing ? "Stop Sharing" : "Share Your Screen";
+  // Noise cancellation and the soundboard sit beside Share while connected.
+  $("vp-nc").classList.toggle("hidden", !inVoice);
+  $("vp-soundboard").classList.toggle("hidden", !inVoice);
   renderVoicePanel();
 }
 
@@ -6472,15 +6467,10 @@ function renderVoicePanel() {
   $("vp-nc").classList.toggle("on", state.voice.noise_cancellation);
   $("vp-nc").title = `Noise Cancellation: ${state.voice.noise_cancellation ? "on" : "off"}`;
 
-  $("vp-share-icon").replaceChildren(svgIcon(state.sharing ? "screenOff" : "screen", 18));
   $("vp-camera-icon").replaceChildren(svgIcon(state.cameraOn ? "camera" : "cameraOff", 18));
-  $("vp-camera-label").textContent = state.cameraOn ? "Camera On" : "Camera";
   $("vp-camera").classList.toggle("active", Boolean(state.cameraOn));
   $("vp-camera").title = state.cameraOn ? "Turn Off Camera" : "Turn On Camera";
   renderCamGrid();
-  $("vp-share-label").textContent = state.sharing ? "Stop Sharing" : "Share Screen";
-  $("vp-share").title = state.sharing ? "Stop Sharing" : "Share Your Screen";
-  $("vp-share").classList.toggle("active", state.sharing);
 
   $("vp-live").classList.toggle("hidden", !state.sharing);
   $("vp-live-source").textContent = state.shareSource ? `Streaming ${state.shareSource}` : "";
@@ -8640,7 +8630,6 @@ function wireEvents() {
   $("create-channel-cancel").onclick = hideModals;
 
   // Voice panel
-  $("vp-share").onclick = toggleShare;
   $("vp-stop-share").onclick = toggleShare;
   $("vp-change-source").onclick = openSharePicker;
   $("vp-stop-watch").onclick = stopWatching;
