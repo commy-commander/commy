@@ -164,6 +164,19 @@ pub enum ServerEvent {
     MemberUnban { server: ServerId, user: UserId },
     /// Server-wide voice idle limit; None turns it off.
     AfkTimeoutSet { server: ServerId, minutes: Option<u32> },
+    /// A member's device announces where it listens for missed-message
+    /// wake-ups and the key that addresses them (see [`crate::doorbell`]);
+    /// None turns it off. Signed by `user` over
+    /// [`crate::doorbell::set_signing_bytes`]. Devices keep these outside
+    /// the replicated state.
+    DoorbellSet {
+        server: ServerId,
+        user: UserId,
+        node: String,
+        url: String,
+        key: Option<crate::doorbell::DoorbellKey>,
+        sig: Signature,
+    },
 }
 
 #[cfg(test)]

@@ -698,6 +698,7 @@ pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<
     if app.catchup.lock().unwrap().take_unsaved_server(server) {
         app.persist_server(server);
     }
+    crate::doorbell::settle(access, server);
     flush(access, server, outbox_changed);
 }
 

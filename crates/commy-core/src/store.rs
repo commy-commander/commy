@@ -795,6 +795,8 @@ impl ServerState {
                 self.server.afk_timeout_minutes = minutes;
                 Ok(true)
             }
+            // Devices keep doorbells outside the replicated state.
+            ServerEvent::DoorbellSet { .. } => Ok(false),
             ServerEvent::MemberUnban { server, user } => {
                 if server != self.server.id {
                     return Err(StoreError::WrongServer);
