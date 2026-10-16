@@ -122,6 +122,7 @@ function mockSeed() {
   mock.expressions = { ...(mock.expressions || {}), "ferris@mock": mockCrabImage() };
   mock.serverImages = { ...(mock.serverImages || {}), "welcome-banner@mock": mockBannerImage() };
   server.channels[0].banner = "welcome-banner@mock";
+  server.channels[1].color = "9b7bff";
   server.rules = "# Welcome\n1. Be kind to each other\n2. **No spam** or self promotion\n3. Keep it on topic, see https://commy.chat";
   server.needs_rules = true;
   server.members[0].tag = "RAID";
@@ -327,6 +328,11 @@ async function mockInvoke(cmd, args = {}) {
       const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
       c.name = args.name;
       c.retention_days = args.retentionDays || null;
+      return null;
+    }
+    case "set_channel_color": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      c.color = args.color || null;
       return null;
     }
     case "delete_channel": {
@@ -1236,6 +1242,20 @@ function channelNameParts(name) {
   return parts;
 }
 
+// A channel's banner picture or colour becomes a band behind its name
+// in the list; the picture wins when both are set.
+function paintChannelBand(row, channel) {
+  if (channel.banner) {
+    row.classList.add("has-banner");
+    loadServerImage(channel.banner).then(url => {
+      if (url) row.style.setProperty("--channel-banner", `url("${url}")`);
+    });
+  } else if (channel.color) {
+    row.classList.add("has-band");
+    row.style.setProperty("--channel-band", roleGradient(channel.color));
+  }
+}
+
 function channelNameNode(channel, cls = null) {
   const span = el("span", cls);
   for (const part of channelNameParts(channel.name)) {
@@ -1289,12 +1309,7 @@ function textChannelRow(channel, canCreate) {
   const row = el("div", "channel");
   row.appendChild(el("span", "hash", "#"));
   row.appendChild(channelNameNode(channel, "channel-label"));
-  if (channel.banner) {
-    row.classList.add("has-banner");
-    loadServerImage(channel.banner).then(url => {
-      if (url) row.style.setProperty("--channel-banner", `url("${url}")`);
-    });
-  }
+  paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
   if (unread.channels.get(channel.id)) row.classList.add("unread");
   row.onclick = () => selectChannel(channel);
@@ -1308,6 +1323,7 @@ function voiceChannelRow(channel, canCreate) {
   icon.appendChild(svgIcon("speaker", 18));
   row.appendChild(icon);
   row.appendChild(channelNameNode(channel, "channel-label"));
+  paintChannelBand(row, channel);
   const full = voiceFull(channel);
   if (channel.id === state.voiceChannelId) {
     row.classList.add("active", "connected");
@@ -2231,9 +2247,24 @@ function openChannelSettings(channelId) {
   $("channel-limit-row").classList.toggle("hidden", !voice);
   $("channel-limit").value = String(channel.user_limit || 0);
   syncLimitLabel();
+  channelColorDraft = channel.color || null;
+  $("channel-edit-color").value = `#${channel.color || "9b7bff"}`;
+  paintChannelBandPreview();
   syncChannelDirty();
   paintChannelBannerCard(channel);
   openSettingsLayer("channel-settings", "overview");
+}
+
+// The colour band draft in channel settings; null means no band.
+let channelColorDraft = null;
+
+function paintChannelBandPreview() {
+  const preview = $("channel-band-preview");
+  const channel = editingChannel();
+  $("channel-band-sample").replaceChildren(channel ? channelNameNode(channel) : document.createTextNode("channel"));
+  preview.classList.toggle("has-band", Boolean(channelColorDraft));
+  preview.style.setProperty("--channel-band", channelColorDraft ? roleGradient(channelColorDraft) : "none");
+  $("channel-edit-color-clear").classList.toggle("hidden", !channelColorDraft);
 }
 
 function paintChannelBannerCard(channel) {
@@ -2280,8 +2311,10 @@ function channelEdits() {
   if (channel.kind === "text" || channel.kind === "announcement") name = name.toLowerCase().replace(/\s+/g, "-");
   const retention = Number($("channel-edit-retention").value) || 0;
   const limit = channel.kind === "voice" ? Number($("channel-limit").value) || 0 : 0;
-  const dirty = name !== channel.name || retention !== (channel.retention_days || 0) || limit !== (channel.user_limit || 0);
-  return { channel, name, retention, limit, dirty };
+  const color = channelColorDraft;
+  const dirty = name !== channel.name || retention !== (channel.retention_days || 0) || limit !== (channel.user_limit || 0)
+    || color !== (channel.color || null);
+  return { channel, name, retention, limit, color, dirty };
 }
 
 function syncChannelDirty() {
@@ -2302,6 +2335,9 @@ async function saveChannelEdits() {
     });
     if (edits.limit !== (edits.channel.user_limit || 0)) {
       await invoke("set_channel_limit", { serverId: state.currentServer.id, channelId: edits.channel.id, limit: edits.limit });
+    }
+    if (edits.color !== (edits.channel.color || null)) {
+      await invoke("set_channel_color", { serverId: state.currentServer.id, channelId: edits.channel.id, color: edits.color });
     }
     toast("Channel updated");
     await refreshCurrentServer();
@@ -7994,6 +8030,16 @@ function wireEvents() {
 
   // Channel settings
   $("channel-edit-name").addEventListener("input", syncChannelDirty);
+  $("channel-edit-color").addEventListener("input", e => {
+    channelColorDraft = e.target.value.replace(/^#/, "").toLowerCase();
+    paintChannelBandPreview();
+    syncChannelDirty();
+  });
+  $("channel-edit-color-clear").onclick = () => {
+    channelColorDraft = null;
+    paintChannelBandPreview();
+    syncChannelDirty();
+  };
   $("channel-edit-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("channel-edit-name"), picked), { custom: "local" });
   $("channel-banner-upload").onclick = async () => {
     try {

@@ -858,6 +858,22 @@ impl ServerState {
                 target.banner = banner;
                 Ok(true)
             }
+            ServerEvent::ChannelColor { server, channel, color } => {
+                if server != self.server.id {
+                    return Err(StoreError::WrongServer);
+                }
+                let color = color
+                    .map(|c| c.to_ascii_lowercase())
+                    .filter(|c| c.len() == 6 && c.chars().all(|ch| ch.is_ascii_hexdigit()));
+                let Some(target) = self.server.channels.iter_mut().find(|c| c.id == channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                if target.color == color {
+                    return Ok(false);
+                }
+                target.color = color;
+                Ok(true)
+            }
             ServerEvent::ServerImages { server, icon, banner } => {
                 if server != self.server.id {
                     return Err(StoreError::WrongServer);
@@ -1950,6 +1966,24 @@ mod tests {
         assert_eq!(state.apply(set(None)), Ok(false));
         assert_eq!(
             state.apply(ServerEvent::ChannelBanner { server: sid, channel: ChannelId::new(), banner: None }),
+            Err(StoreError::UnknownChannel)
+        );
+    }
+
+    #[test]
+    fn channel_color_sets_and_clears() {
+        let (mut state, channel, _) = fixture();
+        let sid = state.server.id;
+        let set = |color: Option<&str>| ServerEvent::ChannelColor { server: sid, channel, color: color.map(String::from) };
+        assert_eq!(state.apply(set(Some("9B7BFF"))), Ok(true));
+        assert_eq!(state.server.channel(channel).unwrap().color.as_deref(), Some("9b7bff"));
+        assert_eq!(state.apply(set(Some("9b7bff"))), Ok(false));
+        // Anything but six hex digits clears rather than stores garbage.
+        assert_eq!(state.apply(set(Some("#9b7bff"))), Ok(true));
+        assert_eq!(state.server.channel(channel).unwrap().color, None);
+        assert_eq!(state.apply(set(None)), Ok(false));
+        assert_eq!(
+            state.apply(ServerEvent::ChannelColor { server: sid, channel: ChannelId::new(), color: None }),
             Err(StoreError::UnknownChannel)
         );
     }
