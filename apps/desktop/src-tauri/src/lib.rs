@@ -3050,6 +3050,7 @@ async fn update_role(
     color: Option<String>,
     self_assignable: bool,
     tag: Option<String>,
+    permissions: Option<Vec<String>>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
@@ -3071,7 +3072,10 @@ async fn update_role(
         if name.is_empty() || name.chars().count() > 50 {
             return Err("role names must be 1 to 50 characters".into());
         }
-        commy_core::server::Role { name, color, self_assignable, tag, ..existing.clone() }
+        let permissions = permissions
+            .map(|names| permissions_from_names(&names))
+            .unwrap_or(existing.permissions);
+        commy_core::server::Role { name, color, self_assignable, tag, permissions, ..existing.clone() }
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
