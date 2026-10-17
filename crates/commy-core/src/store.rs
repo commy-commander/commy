@@ -2414,7 +2414,6 @@ mod tests {
         };
         assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: clip(Some("🥁")) }), Ok(true));
         assert_eq!(state.server.soundboard[0].emoji.as_deref(), Some("🥁"));
-        // The same clip with another emoji replaces it; an identical one changes nothing.
         assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: clip(Some("🎺")) }), Ok(true));
         assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: clip(Some("🎺")) }), Ok(false));
         assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: clip(None) }), Ok(true));

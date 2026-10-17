@@ -4629,7 +4629,6 @@ function isEmojiTag(tag) {
   return !/[A-Za-z0-9]/.test(tag) && [...tag].length <= 4;
 }
 
-// The emoji on a soundboard clip: a custom emoji token or a Unicode emoji.
 function soundEmojiNode(value) {
   const custom = parseEmojiToken(value);
   if (custom) return customEmojiImg(custom.name, custom.image, "custom-emoji");

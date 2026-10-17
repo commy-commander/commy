@@ -3681,7 +3681,6 @@ async fn add_sound(
     apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundAdd { server: sid, sound }).await
 }
 
-/// Normalizes an optional sound emoji: blank means none.
 fn check_sound_emoji(emoji: Option<String>) -> CmdResult<Option<String>> {
     match emoji.map(|e| e.trim().to_string()).filter(|e| !e.is_empty()) {
         None => Ok(None),
@@ -3690,7 +3689,6 @@ fn check_sound_emoji(emoji: Option<String>) -> CmdResult<Option<String>> {
     }
 }
 
-/// Changes the emoji on an existing clip, or clears it.
 #[tauri::command]
 async fn set_sound_emoji(
     app: tauri::State<'_, App>,

@@ -102,7 +102,6 @@ pub struct SoundboardSound {
     /// "blob@provider" of the audio clip.
     pub blob: String,
     pub volume: f32,
-    /// Emoji on the clip's button: a Unicode emoji or a custom emoji token.
     #[serde(default)]
     pub emoji: Option<String>,
 }
@@ -726,7 +725,6 @@ pub const MAX_EVENTS: usize = 50;
 pub const MAX_EVENT_TITLE_CHARS: usize = 100;
 pub const MAX_EVENT_DESCRIPTION_BYTES: usize = 1500;
 pub const MAX_ROLE_TAG_CHARS: usize = 12;
-/// Longest Unicode emoji a sound can carry, with room for joined sequences.
 pub const MAX_SOUND_EMOJI_CHARS: usize = 12;
 pub const MAX_USER_LIMIT: u32 = 99;
 
@@ -763,8 +761,6 @@ pub fn valid_event(event: &ScheduledEvent) -> bool {
         && event.end.map_or(true, |end| end > event.start)
 }
 
-/// A soundboard clip's emoji: a custom emoji token, or a short run of
-/// characters with no letters, digits, spaces or control characters.
 pub fn valid_sound_emoji(emoji: &str) -> bool {
     if parse_emoji_token(emoji).is_some() {
         return true;
