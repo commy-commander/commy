@@ -103,7 +103,12 @@ jobs:
         working-directory: apps/desktop/src-tauri
         env:
           TEST_BUILD: ${{ steps.version.outputs.test_build }}
+          FULL_VERSION: ${{ steps.version.outputs.full }}
         run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            export COMMY_VERSION="$FULL_VERSION"
+          fi
+          echo "Self-updating version: ${COMMY_VERSION:-none}"
           if [ -n "$TEST_BUILD" ]; then
             export COMMY_TEST_BUILD=1
             export COMMY_DEFAULT_ACCOUNT_SERVER=https://staging.commy.chat
@@ -213,7 +218,7 @@ jobs:
           scheme="$(/usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes:0:CFBundleURLSchemes:0" "$bundle/macos/Commy.app/Contents/Info.plist")"
           [ "$scheme" = commy ] || { echo "Info.plist does not declare commy://"; exit 1; }
           cp "$bundle"/dmg/*.dmg "$out/Commy_${VERSION}_universal.dmg"
-          tar -czf "$out/Commy_${VERSION}_universal.app.tar.gz" -C "$bundle/macos" Commy.app
+          COPYFILE_DISABLE=1 tar -czf "$out/Commy_${VERSION}_universal.app.tar.gz" -C "$bundle/macos" Commy.app
           ls -la "$out"
 
       - uses: actions/upload-artifact@v4
@@ -240,6 +245,44 @@ jobs:
       - name: Write checksums
         working-directory: dist
         run: sha256sum * | tee SHA256SUMS.txt
+
+      - name: Sign the self-update files
+        working-directory: dist
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::warning::The TAURI_SIGNING_PRIVATE_KEY secret is not set: no latest.json, so installed apps will not update to $TAG"
+            exit 0
+          fi
+          version="${TAG#v}"
+          sign() {
+            npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" signer sign "$1" >/dev/null
+            cat "$1.sig"
+            rm "$1.sig"
+          }
+          windows="$(sign "Commy_${version}_x64-setup.exe")"
+          macos="$(sign "Commy_${version}_universal.app.tar.gz")"
+          appimage="$(sign "Commy_${version}_amd64.AppImage")"
+          jq -n \
+            --arg version "$version" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg base "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG" \
+            --arg windows "$windows" --arg macos "$macos" --arg appimage "$appimage" \
+            '{
+              version: $version,
+              notes: "Commy \($version)",
+              pub_date: $date,
+              platforms: {
+                "windows-x86_64": { url: "\($base)/Commy_\($version)_x64-setup.exe", signature: $windows },
+                "darwin-aarch64": { url: "\($base)/Commy_\($version)_universal.app.tar.gz", signature: $macos },
+                "darwin-x86_64": { url: "\($base)/Commy_\($version)_universal.app.tar.gz", signature: $macos },
+                "linux-x86_64-appimage": { url: "\($base)/Commy_\($version)_amd64.AppImage", signature: $appimage }
+              }
+            }' > latest.json
+          jq . latest.json
 
       - name: Create release
         env:
