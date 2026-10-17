@@ -3575,6 +3575,9 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .role-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .role-card .role-editor { margin: 0; border-radius: 0; border-top: 1px solid var(--bg-active); background: var(--bg-darkest); }
 .role-editor .form-actions { justify-content: space-between; }
+.role-editor .role-perms-title { margin-top: 4px; }
+.role-editor .perm-grid { gap: 8px 16px; font-size: 14px; }
+.role-editor .perm-grid input { accent-color: var(--accent); width: 16px; height: 16px; }
 .role-banner-row { display: flex; gap: 12px; align-items: center; }
 .role-banner-preview {
   flex: none;

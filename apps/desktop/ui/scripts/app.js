@@ -539,6 +539,7 @@ async function mockInvoke(cmd, args = {}) {
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
       Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, tag: args.tag });
+      if (args.permissions) r.permissions = args.permissions;
       return null;
     }
     case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] };
@@ -5085,6 +5086,18 @@ function roleEditor(server, role) {
   paintTag();
   row1.append(color, name, tagBtn, clearTag);
   box.appendChild(row1);
+  box.appendChild(el("div", "setting-title role-perms-title", "Permissions"));
+  const permGrid = el("div", "perm-grid");
+  for (const [value, label] of PERMISSION_LABELS) {
+    const wrap = el("label");
+    const input = el("input");
+    input.type = "checkbox";
+    input.value = value;
+    input.checked = role.permissions.includes(value);
+    wrap.append(input, document.createTextNode(label));
+    permGrid.appendChild(wrap);
+  }
+  box.appendChild(permGrid);
   const pick = el("label", "role-self");
   const check = el("input");
   check.type = "checkbox";
@@ -5102,6 +5115,7 @@ function roleEditor(server, role) {
         color: color.value.replace("#", ""),
         selfAssignable: check.checked,
         tag: tagValue,
+        permissions: Array.from(permGrid.querySelectorAll("input:checked")).map(input => input.value),
       });
       await refreshCurrentServer();
       openServerSettings();
