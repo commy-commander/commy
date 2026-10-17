@@ -954,12 +954,7 @@ impl CommyNode {
     /// peer was reached; false means we joined the topic but nobody
     /// was online yet (we announce again on NeighborUp).
     pub async fn join_server(&mut self, ticket: &ServerTicket) -> Result<bool> {
-        let bootstrap: Vec<NodeId> = ticket.bootstrap.iter().map(|a| a.node_id).collect();
-        for addr in &ticket.bootstrap {
-            self.node.net().add_node_addr(addr.clone()).await.ok();
-        }
-        self.join_topic(ticket.server_id, ticket.topic, bootstrap)
-            .await?;
+        self.rejoin_server(ticket).await?;
         let connected = self
             .wait_for_peers(ticket.server_id, std::time::Duration::from_secs(20))
             .await;
@@ -968,6 +963,16 @@ impl CommyNode {
                 .await?;
         }
         Ok(connected)
+    }
+
+    /// Joins the topic of a server we are already in without waiting for
+    /// anyone, so starting up with every member offline is not held up.
+    pub async fn rejoin_server(&mut self, ticket: &ServerTicket) -> Result<()> {
+        let bootstrap: Vec<NodeId> = ticket.bootstrap.iter().map(|a| a.node_id).collect();
+        for addr in &ticket.bootstrap {
+            self.node.net().add_node_addr(addr.clone()).await.ok();
+        }
+        self.join_topic(ticket.server_id, ticket.topic, bootstrap).await
     }
 
     /// Waits until at least one gossip neighbor is up on the topic.

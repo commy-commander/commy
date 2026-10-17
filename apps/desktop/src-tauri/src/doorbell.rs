@@ -621,7 +621,7 @@ pub async fn run<A: AppAccess + Clone>(access: A) {
 }
 
 /// Spawns on the runtime we are on, or the app's outside one.
-fn spawn<F>(future: F)
+pub(crate) fn spawn<F>(future: F)
 where
     F: std::future::Future<Output = ()> + Send + 'static,
 {

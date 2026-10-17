@@ -125,6 +125,7 @@ pub struct ServerState {
     unapplied: Option<HashMap<UserId, BTreeSet<UnappliedKey>>>,
     action_times: HashMap<String, i64>,
     action_floor: i64,
+    signed_actions: HashMap<String, SignedEvent>,
 }
 
 /// Durable image of a server, written to disk between sessions.
@@ -146,6 +147,8 @@ pub struct Snapshot {
     pub action_times: Vec<(String, i64)>,
     #[serde(default)]
     pub action_floor: i64,
+    #[serde(default)]
+    pub signed_actions: Vec<SignedEvent>,
 }
 
 impl ServerState {
@@ -170,6 +173,7 @@ impl ServerState {
             unapplied: None,
             action_times: HashMap::new(),
             action_floor: 0,
+            signed_actions: HashMap::new(),
         }
     }
 
@@ -193,6 +197,7 @@ impl ServerState {
                 .collect(),
             action_times: self.action_times.iter().map(|(s, t)| (s.clone(), *t)).collect(),
             action_floor: self.action_floor,
+            signed_actions: self.signed_actions.values().cloned().collect(),
         }
     }
 
@@ -235,6 +240,13 @@ impl ServerState {
         }
         state.action_times = snapshot.action_times.into_iter().collect();
         state.action_floor = snapshot.action_floor;
+        for signed in snapshot.signed_actions {
+            if let Some(subject) = action::subject(&signed.event) {
+                if state.action_times.get(&subject) == Some(&signed.action.at) {
+                    state.signed_actions.insert(subject, signed);
+                }
+            }
+        }
         state
     }
 
@@ -430,6 +442,7 @@ impl ServerState {
         let applied = self.apply(signed.event.clone())?;
         if applied || self.target_known(&signed.event) {
             self.note_action(action::subject(&signed.event), signed.action.at);
+            self.keep_signed(signed);
         }
         Ok(applied)
     }
@@ -446,6 +459,7 @@ impl ServerState {
         let applied = self.apply(signed.event.clone())?;
         if applied || self.target_known(&signed.event) {
             self.note_action(action::subject(&signed.event), signed.action.at);
+            self.keep_signed(signed);
         }
         Ok(applied)
     }
@@ -490,7 +504,11 @@ impl ServerState {
         let Some(subject) = subject else { return true };
         match self.action_times.get(subject) {
             Some(prev) => at > *prev,
-            None => !action::settles_authority(subject) || at + MAX_ACTION_FLOOR_MS >= self.action_floor,
+            None => {
+                !action::settles_authority(subject)
+                    || action::snapshot_omits(subject)
+                    || at + MAX_ACTION_FLOOR_MS >= self.action_floor
+            }
         }
     }
 
@@ -520,7 +538,30 @@ impl ServerState {
             };
             let Some(evicted) = oldest(false).or_else(|| oldest(true)) else { break };
             self.action_times.remove(&evicted);
+            self.signed_actions.remove(&evicted);
         }
+    }
+
+    fn keep_signed(&mut self, signed: &SignedEvent) {
+        let Some(subject) = action::subject(&signed.event) else { return };
+        if !self.action_times.contains_key(&subject) {
+            return;
+        }
+        if action::relayable(&signed.event) {
+            self.signed_actions.insert(subject, signed.clone());
+        } else {
+            self.signed_actions.remove(&subject);
+        }
+    }
+
+    pub fn signed_actions(&self) -> Vec<&SignedEvent> {
+        let mut list: Vec<&SignedEvent> = self.signed_actions.values().collect();
+        list.sort_by_key(|s| s.action.at);
+        list
+    }
+
+    pub fn holds_signed_action(&self, subject: &str) -> bool {
+        self.signed_actions.contains_key(subject)
     }
 
     /// Applies an event to local state. Returns Ok(false) when the event

@@ -4184,8 +4184,8 @@ function awaitedText(count) {
   const n = Number(count);
   if (!Number.isInteger(n) || n <= 0) return null;
   return n === 1
-    ? "1 message is on its way. It arrives when the sender's device is online."
-    : `${n} messages are on their way. They arrive when the sender's device is online.`;
+    ? "1 message is waiting for you. It arrives when someone who has it comes online."
+    : `${n} messages are waiting for you. They arrive when someone who has them comes online.`;
 }
 
 let awaitedSeq = 0;

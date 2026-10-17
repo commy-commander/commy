@@ -1047,6 +1047,97 @@ fn dial_voice_peer(
     });
 }
 
+fn servers_using_image(app: &App, image: &str) -> Vec<ServerId> {
+    let servers = app.servers.lock().unwrap();
+    servers
+        .values()
+        .filter(|state| {
+            let server = &state.server;
+            server.emojis.iter().any(|e| e.blob == image)
+                || server.soundboard.iter().any(|s| s.blob == image)
+                || server.icon.as_deref() == Some(image)
+                || server.banner.as_deref() == Some(image)
+        })
+        .map(|state| state.server.id)
+        .collect()
+}
+
+fn image_sources(provider: &str, neighbors: Vec<[u8; 32]>) -> Vec<String> {
+    let mut sources: Vec<String> = Vec::new();
+    for node in neighbors.iter().map(|n| data_encoding::HEXLOWER.encode(n)) {
+        if !sources.contains(&node) {
+            sources.push(node);
+        }
+    }
+    match sources.iter().position(|n| n == provider) {
+        Some(at) => sources.swap(0, at),
+        None => sources.push(provider.to_string()),
+    }
+    sources
+}
+
+async fn fetch_shared_image(app: &App, image: &commy_core::server::ImageRef, max: u64) -> CmdResult<Vec<u8>> {
+    let (fetcher, sources) = {
+        let net = app.net.lock().await;
+        let node = net.as_ref().ok_or("network is not ready yet")?;
+        let neighbors = servers_using_image(app, &image.encode()).into_iter().flat_map(|s| node.neighbors(s)).collect();
+        (node.blob_fetcher(), image_sources(&image.provider, neighbors))
+    };
+    let mut failure = String::from("nobody who has it is online");
+    for source in sources {
+        match fetcher.fetch(&image.blob, Some(&source), max).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => failure = err_to_string(e),
+        }
+    }
+    Err(failure)
+}
+
+fn cache_shared_image(app: &App, blob: &str, bytes: &[u8]) {
+    if let Some(path) = server_image_path(app, blob) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, bytes);
+    }
+}
+
+async fn expression_bytes(app: &App, blob: &str) -> CmdResult<Vec<u8>> {
+    let image = commy_core::server::ImageRef::parse(blob).ok_or("bad reference")?;
+    if let Some(bytes) = server_image_path(app, &image.blob).and_then(|p| std::fs::read(p).ok()) {
+        return Ok(bytes);
+    }
+    let bytes = fetch_shared_image(app, &image, expressions::MAX_SOUND_BYTES as u64).await?;
+    if expressions::expression_mime(&bytes).is_none() {
+        return Err("not a valid emoji or sound".into());
+    }
+    cache_shared_image(app, &image.blob, &bytes);
+    Ok(bytes)
+}
+
+fn prefetch_emoji<A: catchup::AppAccess + Clone>(access: &A, event: &ServerEvent) {
+    let ServerEvent::EmojiAdd { emoji, .. } = event else { return };
+    let (access, blob) = (access.clone(), emoji.blob.clone());
+    doorbell::spawn(async move {
+        if let Err(e) = expression_bytes(access.app(), &blob).await {
+            tracing::debug!("emoji image not fetched yet: {e}");
+        }
+    });
+}
+
+fn neighbor_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<WirePayload> {
+    let relayed: Vec<SignedEvent> = {
+        let servers = app.servers.lock().unwrap();
+        servers.get(&sid).map(|s| s.signed_actions().into_iter().cloned().collect()).unwrap_or_default()
+    };
+    let held: std::collections::HashSet<String> = relayed.iter().filter_map(|s| commy_core::action::subject(&s.event)).collect();
+    let ours = structure_announcements(app, sid, me)
+        .into_iter()
+        .filter(|event| commy_core::action::subject(event).is_none_or(|subject| !held.contains(&subject)))
+        .map(|event| app.wire_for(sid, event));
+    relayed.into_iter().map(WirePayload::Signed).chain(ours).collect()
+}
+
 async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
     let fetcher = {
         let net = app.net.lock().await;
@@ -2699,6 +2790,59 @@ mod placeholder_tests {
 }
 
 #[cfg(test)]
+mod shared_image_tests {
+    use super::*;
+
+    #[test]
+    fn images_come_from_the_uploader_first_then_from_members_online() {
+        let (a, b) = ([1u8; 32], [2u8; 32]);
+        let hex = |n: [u8; 32]| data_encoding::HEXLOWER.encode(&n);
+        assert_eq!(image_sources(&hex(b), vec![a, b, a]), vec![hex(b), hex(a)]);
+        assert_eq!(image_sources("away", vec![a]), vec![hex(a), "away".to_string()], "an absent uploader is tried last");
+        assert_eq!(image_sources("away", vec![]), vec!["away".to_string()]);
+    }
+
+    #[test]
+    fn members_pass_on_signed_changes_as_their_authors_signed_them() {
+        let owner_key = Identity::generate();
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(owner_key.public());
+        let member_key = Identity::generate();
+        let mut member = UserProfile::new("member");
+        member.identity = Some(member_key.public());
+        let server = commy_core::Server::new("s", owner.id);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: member.clone() }).unwrap();
+        let emoji = commy_core::server::CustomEmoji { name: "wave".into(), blob: format!("{}@{}", "b".repeat(52), "0".repeat(64)) };
+        let add = SignedEvent::sign(sid, owner.id, 1_000, ServerEvent::EmojiAdd { server: sid, emoji }, &owner_key);
+        state.apply_signed(&add).unwrap();
+
+        let app = App::default();
+        app.servers.lock().unwrap().insert(sid, state);
+        *app.profile.lock().unwrap() = Some(member.clone());
+        *app.identity.lock().unwrap() = Some(member_key);
+        let relayed: Vec<SignedEvent> = neighbor_announcements(&app, sid, member.id)
+            .into_iter()
+            .filter_map(|p| match p {
+                WirePayload::Signed(signed) if matches!(signed.event, ServerEvent::EmojiAdd { .. }) => Some(signed),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(relayed, vec![add.clone()], "the owner's own signature, once");
+
+        *app.profile.lock().unwrap() = Some(owner.clone());
+        *app.identity.lock().unwrap() = Some(owner_key);
+        let emojis = neighbor_announcements(&app, sid, owner.id)
+            .into_iter()
+            .filter(|p| matches!(p, WirePayload::Signed(s) if matches!(s.event, ServerEvent::EmojiAdd { .. })))
+            .count();
+        assert_eq!(emojis, 1, "what we hold signed is not signed again");
+    }
+}
+
+#[cfg(test)]
 mod status_expiry_tests {
     use super::*;
 
@@ -2818,7 +2962,7 @@ async fn set_about(app: tauri::State<'_, App>, handle: tauri::AppHandle, about: 
 const SERVER_IMAGE_DIR: &str = "server-images";
 const MAX_SERVER_IMAGE_BYTES: usize = 1024 * 1024;
 
-fn server_image_path(app: &tauri::State<'_, App>, blob: &str) -> Option<std::path::PathBuf> {
+fn server_image_path(app: &App, blob: &str) -> Option<std::path::PathBuf> {
     // The blob name was validated by ImageRef::parse (alphanumeric only).
     app.data_dir().map(|d| d.join(SERVER_IMAGE_DIR).join(format!("{blob}.img")))
 }
@@ -2884,16 +3028,11 @@ async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdRes
     let bytes = match cached {
         Some(bytes) => bytes,
         None => {
-            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider), MAX_SERVER_IMAGE_BYTES as u64).await?;
+            let bytes = fetch_shared_image(&app, &image, MAX_SERVER_IMAGE_BYTES as u64).await?;
             if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
                 return Err("server image is not a valid picture".into());
             }
-            if let Some(path) = server_image_path(&app, &image.blob) {
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&path, &bytes);
-            }
+            cache_shared_image(&app, &image.blob, &bytes);
             bytes
         }
     };
@@ -3979,24 +4118,7 @@ fn list_shareable_emojis(app: tauri::State<'_, App>) -> Vec<SharedEmojiView> {
 /// An emoji image or sound clip as a data URL, cached like server images.
 #[tauri::command]
 async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult<String> {
-    let image = commy_core::server::ImageRef::parse(&blob).ok_or("bad reference")?;
-    let cached = server_image_path(&app, &image.blob).and_then(|p| std::fs::read(p).ok());
-    let bytes = match cached {
-        Some(bytes) => bytes,
-        None => {
-            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider), expressions::MAX_SOUND_BYTES as u64).await?;
-            if expressions::expression_mime(&bytes).is_none() {
-                return Err("not a valid emoji or sound".into());
-            }
-            if let Some(path) = server_image_path(&app, &image.blob) {
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&path, &bytes);
-            }
-            bytes
-        }
-    };
+    let bytes = expression_bytes(&app, &blob).await?;
     let mime = expressions::expression_mime(&bytes).ok_or("not a valid emoji or sound")?;
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }
@@ -4843,6 +4965,7 @@ async fn run_net_loop(
                 // Message events whose author key is not known yet wait for it.
                 let holdable = catchup::holdable(&event).then(|| event.clone());
                 let held_action = action.map(|action| SignedEvent { action, event: event.clone() });
+                let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
                 let presence = outbox::online_user(&event);
                 let (applied, was_online, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
@@ -4877,6 +5000,9 @@ async fn run_net_loop(
                             continue;
                         }
                         app.persist_server(server);
+                        if let Some(event) = &new_emoji {
+                            prefetch_emoji(&handle, event);
+                        }
                         if moderation {
                             refresh_forced_voice(&app, &handle);
                         }
@@ -4925,8 +5051,8 @@ async fn run_net_loop(
                 // Gossip has no backfill, so a peer that was offline
                 // misses structural changes. Re-announce them; every
                 // event here is idempotent and deletions are tombstoned.
-                for event in structure_announcements(&app, server, my_id) {
-                    broadcast_event(&app, server, event).await;
+                for payload in neighbor_announcements(&app, server, my_id) {
+                    broadcast(&app, server, payload).await;
                 }
                 // Voice is live state no snapshot or catch-up replays
                 // for a peer that was away: say again where we are.
@@ -5316,6 +5442,7 @@ pub fn run() {
                 .data_dir()
                 .and_then(|dir| persist::load_or_create_node_key(dir));
 
+            tauri::async_runtime::spawn(doorbell::run(handle.clone()));
             tauri::async_runtime::spawn(async move {
                 match CommyNode::spawn(node_key).await {
                     Ok((mut node, events, media, dms)) => {
@@ -5359,7 +5486,7 @@ pub fn run() {
                             } else if let Some(raw) = stored_invites.get(&id) {
                                 match ServerTicket::decode(raw) {
                                     Ok(ticket) => {
-                                        if let Err(e) = node.join_server(&ticket).await {
+                                        if let Err(e) = node.rejoin_server(&ticket).await {
                                             tracing::warn!("rejoin failed for {name}: {e}");
                                         }
                                         app.invites.lock().unwrap().insert(id, raw.clone());
@@ -5454,7 +5581,6 @@ pub fn run() {
                         tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
                         tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
                         tauri::async_runtime::spawn(outbox::run_dm_outbox(handle.clone()));
-                        tauri::async_runtime::spawn(doorbell::run(handle.clone()));
                         run_net_loop(handle.clone(), events).await;
                     }
                     Err(e) => tracing::error!("P2P stack failed to start: {e}"),

@@ -175,8 +175,7 @@ impl Device {
                 app.invites.lock().unwrap().insert(id, ticket.encode());
             } else {
                 let raw = app.invites.lock().unwrap()[&id].clone();
-                // Fine when nobody is online yet: NeighborUp follows later.
-                node.join_server(&ServerTicket::decode(&raw).unwrap()).await.unwrap();
+                node.rejoin_server(&ServerTicket::decode(&raw).unwrap()).await.unwrap();
             }
         }
         for state in app.servers.lock().unwrap().values_mut() {
@@ -330,6 +329,39 @@ impl Device {
         net.as_ref()?.home_relay()
     }
 
+    async fn add_emoji(&self, server: ServerId, name: &str) -> (String, Vec<u8>) {
+        let app = self.app();
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(&CommyNode::generate_secret());
+        let (blob, provider) = {
+            let net = app.net.lock().await;
+            let node = net.as_ref().unwrap();
+            (node.add_blob(bytes.clone()).await.unwrap(), node.node_id_hex())
+        };
+        crate::cache_shared_image(app, &blob, &bytes);
+        let image = commy_core::server::ImageRef { blob, provider }.encode();
+        let event = ServerEvent::EmojiAdd { server, emoji: commy_core::server::CustomEmoji { name: name.into(), blob: image.clone() } };
+        let signed = app.sign_event(server, event.clone()).unwrap();
+        assert_eq!(app.servers.lock().unwrap().get_mut(&server).unwrap().apply_own(&signed), Ok(true));
+        outbox::broadcast_local(app, server, event).await;
+        (image, bytes)
+    }
+
+    fn emoji_image(&self, server: ServerId, name: &str) -> Option<String> {
+        let servers = self.app().servers.lock().unwrap();
+        servers[&server].server.emojis.iter().find(|e| e.name == name).map(|e| e.blob.clone())
+    }
+
+    async fn dial_members(&self, server: ServerId) {
+        let me = self.me().id;
+        let members: Vec<String> = {
+            let servers = self.app().servers.lock().unwrap();
+            servers[&server].profiles.values().filter(|p| p.id != me).filter_map(|p| p.node.clone()).collect()
+        };
+        let net = self.app().net.lock().await;
+        let _ = tokio::time::timeout(Duration::from_secs(5), net.as_ref().unwrap().join_peers(server, &members)).await;
+    }
+
     fn node_bytes(&self) -> [u8; 32] {
         data_encoding::HEXLOWER.decode(self.node_hex().as_bytes()).unwrap().try_into().unwrap()
     }
@@ -386,6 +418,7 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
                 }
                 let holdable = catchup::holdable(&event).then(|| event.clone());
                 let held_action = action.map(|action| commy_core::SignedEvent { action, event: event.clone() });
+                let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
                 let (applied, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
                     let Some(state) = servers.get_mut(&server) else { continue };
@@ -401,6 +434,9 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
                         app.persist_server(server);
                         if let Some(message) = new_message {
                             doorbell::arrived(&access, server, message.id);
+                        }
+                        if let Some(event) = &new_emoji {
+                            crate::prefetch_emoji(&access, event);
                         }
                     }
                     Ok(false) => {}
@@ -424,10 +460,14 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
             NetEvent::VoiceDial { .. } => {}
             NetEvent::NeighborUp { server, peer } => {
                 let Some(me) = app.profile.lock().unwrap().clone() else { continue };
+                let my_id = me.id;
                 let join = ServerEvent::MemberJoin { server, profile: app.announced(me) };
                 broadcast(app, server, app.wire_for(server, join)).await;
                 if app.awaits_snapshot(server) {
                     broadcast(app, server, WirePayload::SyncRequest).await;
+                }
+                for payload in crate::neighbor_announcements(app, server, my_id) {
+                    broadcast(app, server, payload).await;
                 }
                 outbox::flush_queued(app, server).await;
                 let ours: [u8; 32] = data_encoding::HEXLOWER
@@ -975,4 +1015,98 @@ async fn a_wake_through_the_relay_brings_a_resting_device_back() {
         d.offline().await;
     }
     relay.stop().await;
+}
+
+// ---------- 5. Small groups while the author is away ----------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_member_starts_at_once_when_nobody_else_is_online() {
+    init_logs();
+    let (mut devices, server) = community(&["ada", "grace"]).await;
+    let [owner, member] = &mut devices[..] else { unreachable!() };
+    member.offline().await;
+    owner.offline().await;
+
+    let started = Instant::now();
+    member.online().await;
+    let took = started.elapsed();
+    eprintln!("the member's network was up {took:?} after launch");
+    assert!(took < Duration::from_secs(10), "starting does not wait for an absent peer ({took:?})");
+    assert_eq!(member.neighbors(server), Some(0));
+
+    member.offline().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_author_alone_has_it_so_the_member_is_told_it_waits() {
+    init_logs();
+    let (mut devices, server) = community(&["ada", "grace", "linus"]).await;
+    let [author, reader, other] = &mut devices[..] else { unreachable!() };
+    reader.offline().await;
+    other.offline().await;
+    wait_until("the author to have no neighbors", || author.neighbors(server) == Some(0)).await;
+
+    let (image, _) = author.add_emoji(server, "partyblob").await;
+    let (message, delivered, rings) = author.send(server, "look :partyblob:").await;
+    assert!(!delivered && rings.len() == 2, "both offline members are rung");
+    author.offline().await;
+
+    reader.online().await;
+    let listener = tokio::spawn(doorbell::run(reader.access.clone()));
+    wait_until("the reader to be told a message waits", || reader.awaited(server) == 1).await;
+    other.online().await;
+    reader.dial_members(server).await;
+    wait_until("the two members to meet", || reader.neighbors(server) == Some(1)).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert!(reader.message(server, message.id).is_none(), "nobody online has it");
+    assert!(reader.emoji_image(server, "partyblob").is_none());
+    assert_eq!(reader.awaited(server), 1, "it still shows as waiting");
+    eprintln!("with only the author holding it, the reader waits and is told so");
+
+    author.online().await;
+    author.dial_members(server).await;
+    wait_until("the message to arrive once its author is back", || reader.message(server, message.id).is_some()).await;
+    wait_until("the emoji to arrive once its author is back", || reader.emoji_image(server, "partyblob").is_some()).await;
+    assert_eq!(reader.emoji_image(server, "partyblob").unwrap(), image);
+    assert_eq!(reader.awaited(server), 0);
+
+    listener.abort();
+    for d in devices.iter_mut() {
+        d.offline().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_member_who_was_there_passes_on_the_message_and_the_emoji() {
+    init_logs();
+    let (mut devices, server) = community(&["ada", "grace", "linus"]).await;
+    let [author, reader, witness] = &mut devices[..] else { unreachable!() };
+    let author_key = author.key();
+    reader.offline().await;
+    wait_until("the author to have one neighbor", || author.neighbors(server) == Some(1)).await;
+
+    let (image, bytes) = author.add_emoji(server, "partyblob").await;
+    let (message, delivered, _) = author.send(server, "look :partyblob:").await;
+    assert!(delivered, "the witness is online");
+    wait_until("the witness to get the message", || witness.message(server, message.id).is_some()).await;
+    wait_until("the witness to get the emoji", || witness.emoji_image(server, "partyblob").is_some()).await;
+    let cached = |d: &Device| crate::server_image_path(d.app(), &commy_core::server::ImageRef::parse(&image).unwrap().blob).is_some_and(|p| p.exists());
+    wait_until("the witness to keep the emoji's image", || cached(witness)).await;
+    author.offline().await;
+    wait_until("the witness to have no neighbors", || witness.neighbors(server) == Some(0)).await;
+
+    reader.online().await;
+    reader.dial_members(server).await;
+    wait_until("the reader and the witness to meet", || reader.neighbors(server) == Some(1)).await;
+    wait_until("the message to arrive from the witness", || reader.message(server, message.id).is_some()).await;
+    assert!(reader.message(server, message.id).unwrap().verify(server, &author_key), "still signed by its author");
+    wait_until("the emoji to arrive from the witness", || reader.emoji_image(server, "partyblob").is_some()).await;
+    assert_eq!(reader.emoji_image(server, "partyblob").unwrap(), image);
+    let fetched = tokio::time::timeout(WAIT, crate::expression_bytes(reader.app(), &image)).await.unwrap();
+    assert_eq!(fetched.unwrap(), bytes, "the image comes from the witness while its uploader is away");
+    eprintln!("with the author away, the witness passed on the message, the emoji and its image");
+
+    for d in devices.iter_mut() {
+        d.offline().await;
+    }
 }

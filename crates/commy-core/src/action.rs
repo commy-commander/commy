@@ -146,6 +146,15 @@ pub fn settles_authority(subject: &str) -> bool {
     !LIVE.iter().any(|p| subject.starts_with(p))
 }
 
+pub fn snapshot_omits(subject: &str) -> bool {
+    const OMITTED: [&str; 4] = ["emoji:", "sound:", "event:", "pin:"];
+    subject == "rules" || OMITTED.iter().any(|p| subject.starts_with(p))
+}
+
+pub fn relayable(event: &ServerEvent) -> bool {
+    !matches!(event, ServerEvent::MemberJoin { .. }) && subject(event).is_some_and(|s| settles_authority(&s))
+}
+
 pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
     use ServerEvent as E;
     let perms = server.permissions_for(by);
@@ -555,6 +564,65 @@ mod tests {
         assert_eq!(state.apply_signed(&presence), Ok(true), "live state is not held to the floor");
         let restored = crate::store::ServerState::from_snapshot(state.snapshot());
         assert_eq!(restored.action_floor(), now);
+    }
+
+    fn emoji(sid: ServerId, name: &str) -> ServerEvent {
+        ServerEvent::EmojiAdd { server: sid, emoji: crate::server::CustomEmoji { name: name.into(), blob: format!("{}@{}", "b".repeat(52), "0".repeat(64)) } }
+    }
+
+    #[test]
+    fn the_latest_signed_change_is_kept_for_others_to_relay() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let add = SignedEvent::sign(sid, owner, 1_000, emoji(sid, "wave"), &identity_for(owner));
+        assert_eq!(state.apply_signed(&add), Ok(true));
+        assert_eq!(state.signed_actions(), vec![&add]);
+        assert!(state.holds_signed_action("emoji:wave"));
+        let restored = crate::store::ServerState::from_snapshot(state.snapshot());
+        assert_eq!(restored.signed_actions(), vec![&add], "kept across restarts");
+
+        let remove = SignedEvent::sign(sid, owner, 2_000, ServerEvent::EmojiRemove { server: sid, name: "wave".into() }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&remove), Ok(true));
+        assert_eq!(state.signed_actions(), vec![&remove], "a later change replaces it");
+        assert_eq!(state.apply_signed(&add), Ok(false), "the old one relayed again loses");
+        assert!(state.server.emojis.is_empty());
+
+        let presence = SignedEvent::sign(sid, owner, 3_000, ServerEvent::PresenceUpdate { user: owner, presence: Presence::Idle }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&presence), Ok(true));
+        let mut profile = state.profiles[&owner].clone();
+        profile.custom_status = Some("here".into());
+        let join = SignedEvent::sign(sid, owner, 3_000, ServerEvent::MemberJoin { server: sid, profile }, &identity_for(owner));
+        state.apply_signed(&join).unwrap();
+        assert_eq!(state.signed_actions(), vec![&remove], "live state and joins are not relayed");
+    }
+
+    #[test]
+    fn a_relayed_change_counts_as_its_author_made_it() {
+        let (mut author, _, owner) = fixture();
+        let sid = author.server.id;
+        let relayer = join(&mut author, "relayer");
+        let mut other = author.clone();
+        let add = SignedEvent::sign(sid, owner, 1_000, emoji(sid, "wave"), &identity_for(owner));
+        assert_eq!(author.apply_signed(&add), Ok(true));
+        let relayed = author.signed_actions()[0].clone();
+        assert_eq!(other.apply_signed(&relayed), Ok(true));
+        assert_eq!(other.server.emojis.len(), 1);
+        let own = SignedEvent::sign(sid, relayer, 2_000, emoji(sid, "fake"), &identity_for(relayer));
+        assert_eq!(other.apply_signed(&own), Err(StoreError::NotAllowed), "relaying gives no right to change it");
+    }
+
+    #[test]
+    fn what_snapshots_leave_out_is_not_held_to_the_floor() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let now = chrono::Utc::now().timestamp_millis();
+        state.set_action_floor(now);
+        let old = now - 10 * crate::store::MAX_ACTION_FLOOR_MS;
+        let add = SignedEvent::sign(sid, owner, old, emoji(sid, "wave"), &identity_for(owner));
+        assert_eq!(state.apply_signed(&add), Ok(true), "a joiner learns emojis made long ago");
+        let rename = SignedEvent::sign(sid, owner, old, ServerEvent::ChannelUpdate { server: sid, channel, name: "old".into(), retention_days: None }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&rename), Ok(false), "what the snapshot carries stays as it said");
+        assert!(snapshot_omits("rules") && snapshot_omits("pin:x") && !snapshot_omits("rules_accept:x"));
     }
 
     #[test]
