@@ -9,6 +9,17 @@ const OVERLAY_CHAT_LINES = 4;
 // Someone who stops talking stays lit a moment so the list does not flicker.
 const OVERLAY_LINGER_MS = 1200;
 
+// How long the "overlay is here" note and the Test overlay sample stay.
+const OVERLAY_NOTICE_MS = 3500;
+const OVERLAY_TEST_MS = 6000;
+
+const OVERLAY_CORNER_LABELS = { "top-left": "Top left", "top-right": "Top right", "bottom-left": "Bottom left", "bottom-right": "Bottom right" };
+
+// "Top left" for the note the overlay shows when it appears or moves.
+function overlayCornerLabel(corner) {
+  return OVERLAY_CORNER_LABELS[overlayCorner(corner).name];
+}
+
 // Which way the overlay hugs the screen: bottom corners sit on the
 // bottom edge, right corners on the right edge. Unknown names mean top-left.
 function overlayCorner(corner) {
@@ -31,5 +42,5 @@ function overlayPushLine(lines, line, max = OVERLAY_CHAT_LINES) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { OVERLAY_CORNERS, OVERLAY_CHAT_MS, OVERLAY_CHAT_LINES, OVERLAY_LINGER_MS, overlayCorner, overlayVisibleMembers, overlayPushLine };
+  module.exports = { OVERLAY_NOTICE_MS, OVERLAY_TEST_MS, overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_MS, OVERLAY_CHAT_LINES, OVERLAY_LINGER_MS, overlayCorner, overlayVisibleMembers, overlayPushLine };
 }

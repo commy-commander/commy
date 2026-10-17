@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { OVERLAY_CORNERS, OVERLAY_CHAT_LINES, overlayCorner, overlayVisibleMembers, overlayPushLine } = require("../scripts/overlay-view.js");
+const { overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_LINES, overlayCorner, overlayVisibleMembers, overlayPushLine } = require("../scripts/overlay-view.js");
 
 const members = [{ id: "a" }, { id: "b" }, { id: "c" }];
 
@@ -30,4 +30,10 @@ test("chat keeps only the newest few lines", () => {
   for (let i = 1; i <= OVERLAY_CHAT_LINES + 3; i++) lines = overlayPushLine(lines, i);
   assert.deepEqual(lines, [4, 5, 6, 7]);
   assert.deepEqual(overlayPushLine(undefined, "x"), ["x"]);
+});
+
+test("the note names the corner in words, and unknown corners read as top left", () => {
+  assert.equal(overlayCornerLabel("bottom-right"), "Bottom right");
+  assert.equal(overlayCornerLabel("top-left"), "Top left");
+  assert.equal(overlayCornerLabel("nowhere"), "Top left");
 });

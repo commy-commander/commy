@@ -8,7 +8,9 @@
 const tauri = window.__TAURI__;
 const $ = id => document.getElementById(id);
 
-const overlay = { members: [], speaking: new Set(), lingering: new Map(), showChat: true, showEveryone: false, lines: [] };
+const overlay = { members: [], speaking: new Set(), lingering: new Map(), showChat: true, showEveryone: false, lines: [], testing: false };
+const TEST_MEMBERS = [{ id: "overlay-test", name: "You, talking" }];
+let noticeTimer = null;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -28,6 +30,8 @@ function applyConfig(config) {
   document.body.classList.toggle("right", corner.right);
   overlay.showChat = config.show_chat !== false;
   overlay.showEveryone = Boolean(config.show_everyone);
+  // Shows whenever the overlay appears or moves, so it is clear it is on and where.
+  showNotice(`Overlay on · ${overlayCornerLabel(config.corner)}`);
   if (!overlay.showChat) {
     overlay.lines = [];
     $("chat").replaceChildren();
@@ -40,12 +44,34 @@ function renderRoster(roster) {
   renderMembers();
 }
 
+function showNotice(text, ms = OVERLAY_NOTICE_MS) {
+  const notice = $("notice");
+  notice.textContent = text;
+  notice.classList.remove("hidden");
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => notice.classList.add("hidden"), ms);
+}
+
+// The Test overlay button: a sample speaker and message, then it clears.
+function runTest() {
+  overlay.testing = true;
+  showNotice("Overlay test", OVERLAY_TEST_MS);
+  renderMembers();
+  addChatLine({ author: "Commy", text: "Messages show for a few seconds, then go away.", force: true });
+  setTimeout(() => {
+    overlay.testing = false;
+    renderMembers();
+  }, OVERLAY_TEST_MS);
+}
+
 function renderMembers() {
   const list = $("members");
   list.replaceChildren();
   const lingering = new Set(overlay.lingering.keys());
-  for (const member of overlayVisibleMembers({ members: overlay.members, speaking: overlay.speaking, lingering, showEveryone: overlay.showEveryone })) {
-    const row = el("div", "member" + (overlay.speaking.has(member.id) ? " speaking" : ""));
+  const speaking = overlay.testing ? new Set([...overlay.speaking, "overlay-test"]) : overlay.speaking;
+  const members = overlay.testing ? [...TEST_MEMBERS, ...overlay.members] : overlay.members;
+  for (const member of overlayVisibleMembers({ members, speaking, lingering, showEveryone: overlay.showEveryone })) {
+    const row = el("div", "member" + (speaking.has(member.id) ? " speaking" : ""));
     row.dataset.user = member.id;
     const avatar = el("div", "avatar");
     avatar.style.setProperty("--tint", personTint(member.id));
@@ -84,7 +110,7 @@ function setSpeaking(user, speaking) {
 }
 
 function addChatLine(line) {
-  if (!overlay.showChat) return;
+  if (!overlay.showChat && !line.force) return;
   const chat = $("chat");
   const node = el("div", "line");
   const who = el("b", null, `${line.author}: `);
@@ -109,6 +135,7 @@ async function start() {
   await tauri.event.listen("overlay-config", e => applyConfig(e.payload));
   await tauri.event.listen("overlay-roster", e => renderRoster(e.payload));
   await tauri.event.listen("overlay-chat", e => addChatLine(e.payload));
+  await tauri.event.listen("overlay-test", () => runTest());
   await tauri.event.listen("voice-speaking", e => setSpeaking(e.payload.user, e.payload.speaking));
   try {
     applyConfig(await tauri.core.invoke("get_overlay_settings"));

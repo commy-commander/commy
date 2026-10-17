@@ -8235,6 +8235,11 @@ function wireEvents() {
     const opt = e.target.closest(".corner-opt");
     if (opt) saveOverlaySettings({ corner: opt.dataset.corner });
   });
+  $("overlay-test").addEventListener("click", async () => {
+    // Saving again also brings the overlay back if the hotkey had hidden it.
+    await saveOverlaySettings({});
+    setTimeout(() => emitToOverlay("overlay-test", null), 500);
+  });
   $("overlay-everyone").addEventListener("change", e => saveOverlaySettings({ show_everyone: e.target.checked }));
   $("overlay-opacity").addEventListener("input", e => {
     $("overlay-opacity-label").textContent = `${e.target.value}%`;

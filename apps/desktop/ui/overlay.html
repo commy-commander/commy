@@ -42,6 +42,24 @@
       box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
       animation: pop .14s ease-out;
     }
+    /* A short "the overlay is here" note when it appears, moves or is tested. */
+    .notice {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 30px;
+      padding: 0 12px;
+      box-sizing: border-box;
+      border-radius: 999px;
+      background: var(--panel);
+      border: 1px solid var(--edge);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+      font-family: var(--display);
+      font-size: 13px;
+      font-weight: 600;
+      animation: pop .14s ease-out;
+    }
+    .notice::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
     .member:not(.speaking) { opacity: .62; }
     .avatar {
       width: 24px;
@@ -85,6 +103,7 @@
   </style>
 </head>
 <body>
+  <div class="stack"><div class="notice hidden" id="notice"></div></div>
   <div class="stack" id="members"></div>
   <div class="stack" id="chat"></div>
   <script src="scripts/tint.js"></script>
