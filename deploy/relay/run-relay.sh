@@ -1,6 +1,4 @@
 #!/bin/sh
-# Runs iroh-relay unless relay-meter has paused it for the month. A paused
-# relay is fully stopped (STUN included) so clients pick a fallback relay.
 FLAG=/flags/relay-paused
 while :; do
   if [ -e "$FLAG" ]; then

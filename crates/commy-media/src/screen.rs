@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use image::codecs::jpeg::JpegEncoder;
 use image::RgbaImage;
 
-/// A captured, encoded screen frame ready for the wire.
 #[derive(Debug, Clone)]
 pub struct ScreenFrame {
     pub width: u32,
@@ -10,8 +9,6 @@ pub struct ScreenFrame {
     pub jpeg: Vec<u8>,
 }
 
-/// Encodes RGBA pixels as JPEG, downscaling to at most `max_width`.
-/// Pure function so it can be tested without a display.
 pub fn encode_frame(image: RgbaImage, max_width: u32, quality: u8) -> Result<ScreenFrame> {
     let image = downscale(image, max_width);
     let (width, height) = (image.width(), image.height());
@@ -27,9 +24,6 @@ pub fn encode_frame(image: RgbaImage, max_width: u32, quality: u8) -> Result<Scr
     })
 }
 
-/// Shrinks to at most `max_width`. Halving with a 2x2 box average is
-/// several times cheaper than a filtered resize of a full 1440p or 4K
-/// frame, so it runs first; a filtered resize finishes any remainder.
 pub fn downscale(mut image: RgbaImage, max_width: u32) -> RgbaImage {
     let max_width = max_width.max(1);
     while image.width() >= max_width * 2 && image.height() >= 2 {
@@ -42,7 +36,6 @@ pub fn downscale(mut image: RgbaImage, max_width: u32) -> RgbaImage {
     image
 }
 
-/// Averages each 2x2 block into one pixel.
 fn halve(src: &RgbaImage) -> RgbaImage {
     let (w, h) = (src.width() / 2, src.height() / 2);
     let stride = src.width() as usize * 4;
@@ -63,15 +56,6 @@ fn halve(src: &RgbaImage) -> RgbaImage {
     RgbaImage::from_raw(w, h, out).expect("buffer sized for the image")
 }
 
-/// Grabs raw frames from one monitor or window, keeping the handle
-/// between frames instead of re-enumerating every time.
-///
-/// On Windows a share runs on Windows Graphics Capture, which composes
-/// the source's own surface: other windows over a game, the task
-/// switcher and notifications stay out of the stream, and hardware
-/// rendered games come through. The GDI capturers remain the fallback
-/// there (older Windows, or a window the system refuses) and the only
-/// path on the other platforms.
 pub enum Capturer {
     Monitor(xcap::Monitor),
     Window(xcap::Window),
@@ -80,7 +64,6 @@ pub enum Capturer {
 }
 
 impl Capturer {
-    /// The chosen source, or the primary monitor when None.
     pub fn open(source: Option<(SourceKind, u32)>) -> Result<Self> {
         #[cfg(windows)]
         {
@@ -140,7 +123,6 @@ impl Capturer {
     }
 }
 
-/// Captures the primary monitor as one encoded frame.
 pub fn capture_primary(max_width: u32, quality: u8) -> Result<ScreenFrame> {
     let monitors = xcap::Monitor::all().context("cannot enumerate monitors")?;
     let monitor = monitors
@@ -152,20 +134,15 @@ pub fn capture_primary(max_width: u32, quality: u8) -> Result<ScreenFrame> {
     encode_frame(image, max_width, quality)
 }
 
-/// Stream presets offered in the share picker. MJPEG bandwidth grows
-/// with both width and frame rate, so sharper presets trade away fps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StreamQuality {
-    /// Text-friendly: full 1080p width at 15 fps.
     Sharp,
     #[default]
     Balanced,
-    /// Motion-friendly: 720p at 60 fps (games, video).
     Smooth,
 }
 
 impl StreamQuality {
-    /// Parses a preset name from the UI; unknown names fall back to Balanced.
     pub fn from_name(name: &str) -> Self {
         match name.trim().to_ascii_lowercase().as_str() {
             "sharp" => Self::Sharp,
@@ -197,19 +174,15 @@ pub enum SourceKind {
     Window,
 }
 
-/// Something that can be streamed: a whole monitor or one window.
 #[derive(Debug, Clone)]
 pub struct ShareSource {
     pub kind: SourceKind,
     pub id: u32,
     pub name: String,
     pub is_primary: bool,
-    /// Owning process, for windows.
     pub pid: Option<u32>,
 }
 
-/// Everything currently shareable: monitors first, then visible,
-/// titled windows.
 pub fn list_sources() -> Result<Vec<ShareSource>> {
     let mut sources = Vec::new();
     for monitor in xcap::Monitor::all().context("cannot enumerate monitors")? {
@@ -244,7 +217,6 @@ pub fn list_sources() -> Result<Vec<ShareSource>> {
     Ok(sources)
 }
 
-/// Captures one frame of the chosen source.
 pub fn capture_source(
     kind: SourceKind,
     id: u32,
@@ -277,7 +249,6 @@ pub fn capture_source(
 mod tests {
     use super::*;
 
-    /// Manual timing check: cargo test -p commy-media --release capture_speed -- --ignored --nocapture
     #[test]
     #[ignore]
     fn capture_speed() {
@@ -329,7 +300,6 @@ mod tests {
         let frame = encode_frame(gradient(320, 200), 1280, 70).unwrap();
         assert_eq!(frame.width, 320);
         assert_eq!(frame.height, 200);
-        // JPEG magic bytes.
         assert_eq!(&frame.jpeg[..2], &[0xff, 0xd8]);
         assert!(!frame.jpeg.is_empty());
     }
@@ -362,7 +332,6 @@ mod tests {
             assert!(pair[0].max_width() < pair[1].max_width());
             assert!(pair[0].fps() > pair[1].fps());
         }
-        // Balanced keeps the original stream settings.
         assert_eq!((StreamQuality::Balanced.fps(), StreamQuality::Balanced.max_width()), (30, 1600));
     }
 

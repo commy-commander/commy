@@ -1,9 +1,3 @@
-//! Core domain model for Commy: users, servers, channels, messages,
-//! permissions, and the in-memory state that every peer replicates.
-//!
-//! This crate is transport-agnostic. Networking lives in `commy-net`,
-//! audio in `commy-audio`, and the UI in `apps/desktop`.
-
 pub mod action;
 pub mod catchup;
 pub mod dm;

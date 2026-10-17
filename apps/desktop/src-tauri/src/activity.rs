@@ -1,7 +1,3 @@
-//! Activity presence: what game or app is in the foreground, shown to
-//! peers as "Playing X" or "Using X" unless the user turns it off.
-
-/// Processes that are part of the desktop itself, never an activity.
 const IGNORED_EXES: &[&str] = &[
     "commy-desktop.exe",
     "commy.exe",
@@ -19,7 +15,6 @@ const IGNORED_EXES: &[&str] = &[
     "consent.exe",
 ];
 
-/// Install folders that mean the foreground app is a game.
 const GAME_PATH_MARKERS: &[&str] = &[
     "\\steamapps\\common\\",
     "\\epic games\\",
@@ -33,19 +28,14 @@ const GAME_PATH_MARKERS: &[&str] = &[
     "\\minecraft launcher\\",
 ];
 
-/// Longest activity text sent to peers.
 const MAX_LEN: usize = 64;
 
-/// Whether `exe_path` is this very program, whatever it was named: the
-/// app is never its own activity ("Using Commy").
 pub fn is_own_exe(exe_path: &str) -> bool {
     let Ok(own) = std::env::current_exe() else { return false };
     let normalize = |p: &str| p.to_ascii_lowercase().replace('/', "\\");
     normalize(exe_path) == normalize(&own.to_string_lossy())
 }
 
-/// Turns a foreground process into activity text. `description` is the
-/// exe's FileDescription (its friendly name) when available.
 pub fn describe(exe_path: &str, description: Option<&str>) -> Option<String> {
     let lower = exe_path.to_ascii_lowercase().replace('/', "\\");
     let exe = lower.rsplit('\\').next().unwrap_or(&lower);
@@ -76,7 +66,6 @@ pub fn describe(exe_path: &str, description: Option<&str>) -> Option<String> {
     Some(text)
 }
 
-/// "C:\\Games\\hollow_knight.exe" becomes "Hollow Knight".
 fn title_from_exe(exe_path: &str) -> String {
     let file = exe_path.rsplit(['\\', '/']).next().unwrap_or(exe_path);
     let stem = file.rsplit_once('.').map_or(file, |(s, _)| s);
@@ -93,7 +82,6 @@ fn title_from_exe(exe_path: &str) -> String {
         .join(" ")
 }
 
-/// Process id of the foreground window.
 #[cfg(windows)]
 pub fn foreground_pid() -> Option<u32> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
@@ -113,7 +101,6 @@ pub fn foreground_pid() -> Option<u32> {
     None
 }
 
-/// The foreground window's process, as (exe path, friendly name).
 #[cfg(windows)]
 pub fn foreground_app() -> Option<(String, Option<String>)> {
     use windows_sys::Win32::Foundation::CloseHandle;
@@ -155,7 +142,6 @@ pub fn foreground_app() -> Option<(String, Option<String>)> {
     None
 }
 
-/// Reads the FileDescription string from an exe's version resource.
 #[cfg(windows)]
 fn file_description(path_utf16: &[u16]) -> Option<String> {
     use windows_sys::Win32::Storage::FileSystem::{
@@ -173,7 +159,6 @@ fn file_description(path_utf16: &[u16]) -> Option<String> {
         if GetFileVersionInfoW(path.as_ptr(), 0, size, data.as_mut_ptr().cast()) == 0 {
             return None;
         }
-        // First language and code page listed by the resource.
         let mut ptr: *mut core::ffi::c_void = std::ptr::null_mut();
         let mut len = 0u32;
         let query = wide("\\VarFileInfo\\Translation");
@@ -222,7 +207,6 @@ mod tests {
         assert_eq!(describe("C:\\Windows\\explorer.exe", Some("Windows Explorer")), None);
         assert_eq!(describe("C:\\dev\\commy\\target\\debug\\commy-desktop.exe", None), None);
         assert_eq!(describe("C:\\Users\\x\\CommyBench\\B\\Commy.exe", Some("Commy")), None);
-        // Whatever the binary is called, this process is never an activity.
         let own = std::env::current_exe().unwrap().to_string_lossy().to_string();
         assert!(is_own_exe(&own));
         assert!(is_own_exe(&own.to_ascii_uppercase()));

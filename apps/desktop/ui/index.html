@@ -9,7 +9,6 @@
 </head>
 <body>
   <div id="app" class="app">
-    <!-- Server rail -->
     <nav class="rail" id="rail">
       <button class="rail-btn rail-home" id="home-btn" title="Direct Messages">
         <img src="images/commy_v2.png" alt="" width="38" height="38" draggable="false" />
@@ -21,7 +20,6 @@
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
       </button>
       <div class="rail-spacer"></div>
-      <!-- Account chip -->
       <footer class="user-panel">
       <button class="user-chip" id="user-chip" title="Set status">
         <span class="avatar" id="me-avatar">?</span>
@@ -38,7 +36,6 @@
     </footer>
     </nav>
 
-    <!-- Channel sidebar -->
     <aside class="sidebar">
       <header class="sidebar-header" id="server-name-header">
         <div class="sidebar-banner" id="sidebar-banner"></div>
@@ -55,7 +52,6 @@
       </header>
       <div class="channel-scroll" id="channel-list"></div>
 
-      <!-- Voice connection and screen share panel -->
       <section class="voice-panel hidden" id="voice-panel">
         <div class="vp-live hidden" id="vp-live">
           <div class="vp-live-head">
@@ -101,7 +97,6 @@
 
     </aside>
 
-    <!-- Main chat -->
     <main class="main">
       <header class="chat-header">
         <span class="hash" id="chat-hash">#</span>
@@ -210,10 +205,8 @@
       </div>
     </main>
 
-    <!-- Member list -->
     <aside class="members" id="member-list"></aside>
 
-    <!-- Thread: a message and its replies -->
     <aside class="thread-panel hidden" id="thread-panel">
       <header class="thread-head">
         <span class="thread-head-icon" id="thread-head-icon"></span>
@@ -226,7 +219,6 @@
       </div>
     </aside>
 
-    <!-- DM partner profile -->
     <aside class="dm-profile hidden" id="dm-profile">
       <div class="dm-profile-banner" id="dm-profile-banner"></div>
       <div class="dm-profile-head">
@@ -244,7 +236,6 @@
     </aside>
   </div>
 
-  <!-- Modals -->
   <div class="modal-backdrop hidden" id="modal-backdrop">
     <div class="modal modal-signin hidden" id="modal-signin">
       <img class="signin-logo" src="images/commy_v2.png" alt="" />
@@ -329,7 +320,6 @@
         <button class="btn-primary" id="invite-link-join">Join Server</button>
       </div>
     </div>
-
 
     <div class="modal hidden" id="modal-entry-key">
       <h2>Allow <span id="entry-key-device"></span>?</h2>
@@ -619,7 +609,6 @@
     </div>
   </div>
 
-  <!-- User settings (full screen) -->
   <div class="settings-layer hidden" id="user-settings" role="dialog" aria-label="User Settings">
     <nav class="settings-nav">
       <div class="settings-nav-inner">
@@ -1077,7 +1066,6 @@
     </div>
   </div>
 
-  <!-- Channel settings (full screen) -->
   <div class="settings-layer hidden" id="channel-settings" role="dialog" aria-label="Channel Settings">
     <nav class="settings-nav">
       <div class="settings-nav-inner">
@@ -1178,7 +1166,6 @@
     </div>
   </div>
 
-  <!-- Server settings (full screen) -->
   <div class="settings-layer hidden" id="server-settings" role="dialog" aria-label="Server Settings">
     <nav class="settings-nav">
       <div class="settings-nav-inner">
@@ -1378,7 +1365,6 @@
     <a id="lightbox-source" class="lightbox-source hidden" href="#"></a>
   </div>
 
-  <!-- Own profile popover, opened from the user panel -->
   <div class="profile-pop hidden" id="profile-pop" role="dialog" aria-label="Your profile">
     <div class="pp-banner" id="pp-banner"></div>
     <div class="pp-head">
@@ -1419,7 +1405,6 @@
     </div>
   </div>
 
-  <!-- Avatar source menu and shared emoji picker -->
   <div class="events-layer hidden" id="events-layer" role="dialog" aria-label="Events">
     <div class="events-panel">
       <header class="events-head">
@@ -1435,7 +1420,6 @@
     </div>
   </div>
 
-  <!-- Profile card for a member, opened from the member list -->
   <div class="member-card hidden" id="member-card" role="dialog" aria-label="Member profile">
     <div class="mc-banner" id="mc-banner"></div>
     <div class="mc-head"><div class="avatar avatar-lg" id="mc-avatar"></div></div>
@@ -1457,7 +1441,6 @@
   <div class="pop-menu ctx-menu hidden" id="invite-menu" role="menu"></div>
   <div class="pop-menu ctx-menu fp-menu hidden" id="fp-menu" role="menu"></div>
 
-  <!-- Voice connection details -->
   <div class="conn-pop hidden" id="conn-pop">
     <div class="conn-head">
       <span class="conn-title">Voice Connection</span>
@@ -1467,7 +1450,6 @@
     <div class="conn-foot" id="conn-foot"></div>
   </div>
 
-  <!-- Quick input or output device and volume, from the profile bar -->
   <div class="audio-pop hidden" id="audio-pop">
     <div class="ap-title" id="ap-title">Input Device</div>
     <select id="ap-device" class="compact-select"></select>
@@ -1476,7 +1458,6 @@
     <button class="pp-link" id="ap-settings">Voice Settings</button>
   </div>
 
-  <!-- Right-click menu for a member -->
   <div class="pop-menu ctx-menu hidden" id="member-menu" role="menu">
     <div class="ctx-title" id="member-menu-title"></div>
     <button id="mm-message">Message</button>
@@ -1491,7 +1472,6 @@
     <button id="cm-gif" role="menuitem">GIF</button>
   </div>
 
-  <!-- Right-click menu for a server in the rail -->
   <div class="pop-menu ctx-menu hidden" id="server-menu" role="menu">
     <div class="ctx-title" id="server-menu-title"></div>
     <button id="sm-read">Mark As Read</button>

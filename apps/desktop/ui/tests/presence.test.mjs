@@ -1,4 +1,3 @@
-// Run with: node --test "apps/desktop/ui/tests/**/*.test.mjs"
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -18,7 +17,6 @@ test("the back line shows only for a running Do Not Disturb", () => {
 });
 
 test("when you are back outranks what you are doing", () => {
-  // The bench: Commy reported itself as the activity, which hid the back line.
   const busy = { presence: "do_not_disturb", presence_until: inAnHour, activity: "Playing Hollow Knight" };
   assert.match(subLine(busy, now), /^Back at .* · Playing Hollow Knight$/);
   const status = { presence: "do_not_disturb", presence_until: inAnHour, custom_status: "in a meeting", status_emoji: "📚" };

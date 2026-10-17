@@ -30,6 +30,14 @@ Use [Conventional Commits](https://www.conventionalcommits.org):
 `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, with an optional
 scope such as `feat(ui):` or `fix(net):`.
 
+## Code style
+
+No code comments. Say it in the code instead: clear names, named constants,
+small functions, and tests for the behaviour that matters. Rust doc comments
+count as comments. The only exceptions are license or SPDX headers,
+`// SAFETY:` notes on unsafe blocks, and tool directives such as `#[allow]`,
+`eslint-disable` or `# shellcheck disable`.
+
 ## Before opening a PR
 
 ```sh

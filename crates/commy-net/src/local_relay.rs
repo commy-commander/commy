@@ -1,7 +1,4 @@
-#![allow(deprecated)] // iroh 0.28 networking layer, as elsewhere here
-//! A relay on localhost for end-to-end tests (feature `test-relay`): plain
-//! HTTP with STUN on a free port, so nodes in one process can reach each
-//! other through it the way devices reach each other through Commy's relay.
+#![allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
 
 use anyhow::{Context, Result};
 use iroh::net::relay::server::{Limits, RelayConfig, Server, ServerConfig, StunConfig};
@@ -33,7 +30,6 @@ impl LocalRelay {
         Ok(Self { server, url, stun_port })
     }
 
-    /// A relay map with only this relay, for [`crate::CommyNode::spawn_with`].
     pub fn map(&self) -> RelayMap {
         RelayMap::from_nodes([RelayNode { url: self.url.clone(), stun_only: false, stun_port: self.stun_port }])
             .expect("one relay node is a valid map")

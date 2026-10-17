@@ -1,6 +1,3 @@
-# Shared by the "Desktop release" jobs: works out the version from the tag and writes
-# the release-only Tauri config, icons and macOS Info.plist into apps/desktop/src-tauri.
-
 name: Release config
 description: Resolve the release version and write the release Tauri config
 outputs:
@@ -25,11 +22,8 @@ runs:
         else
           full="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"
         fi
-        # Installers (NSIS, deb) only accept numeric versions, so drop any pre-release suffix
         echo "full=$full" >> "$GITHUB_OUTPUT"
         echo "app=${full%%-*}" >> "$GITHUB_OUTPUT"
-        # Pre-release tags (v0.2.0-rc.1) are test builds: they use only the staging
-        # account server and staging relay, and say "test build" in the title
         if [[ "$GITHUB_REF_TYPE" == "tag" && "$full" == *-* ]]; then
           echo "test_build=1" >> "$GITHUB_OUTPUT"
         fi
@@ -55,8 +49,6 @@ runs:
           "plugins": { "deep-link": { "desktop": { "schemes": ["commy"] } } }
         }
         EOF
-        # Invite links open the app through commy:// (src/invite_link.rs). The deep-link
-        # entry above registers it in the Windows installer and .deb; macOS reads Info.plist.
         cat > Info.plist <<'EOF'
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

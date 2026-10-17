@@ -1,20 +1,16 @@
-// Better Auth plugin linking accounts to Commy desktop installs. A device is
-// identified by its iroh node id: a public key, never a secret. Nothing that
-// describes the device (such as its computer name) is stored: the server keeps
-// which devices are yours and when they were linked and last seen, no more.
 import * as z from "zod";
 import { APIError, createAuthEndpoint, sessionMiddleware } from "better-auth/api";
 import { checkChallenge, linkMessage, makeChallenge, verifyNodeSignature } from "./proof.js";
 
 export const MAX_DEVICES_PER_USER = 25;
 const NODE_ID = /^[0-9a-f]{64}$/;
+const nameOlderAppsSendAndWeIgnore = z.string().optional();
 
 export function normalizeNodeId(value) {
   const id = String(value ?? "").trim().toLowerCase();
   return NODE_ID.test(id) ? id : null;
 }
 
-// Every device shows under this label: the name an app sends is not kept.
 export const DEVICE_LABEL = "Commy desktop";
 
 export function toPublicDevice(row) {
@@ -27,9 +23,6 @@ export function toPublicDevice(row) {
   };
 }
 
-// Servers from before device names were dropped kept each computer's name in
-// the clear. This removes that column; it runs at startup and is a no-op once
-// the column is gone.
 export async function dropDeviceNames(pool) {
   await pool.query('ALTER TABLE IF EXISTS "linkedDevice" DROP COLUMN IF EXISTS "name"');
 }
@@ -91,8 +84,7 @@ export const commyDevices = ({ secret, serverUrl }) => ({
         use: [sessionMiddleware],
         body: z.object({
           nodeId: z.string(),
-          // Sent by older apps; ignored
-          name: z.string().optional(),
+          name: nameOlderAppsSendAndWeIgnore,
           challenge: z.string(),
           signature: z.string(),
         }),
@@ -121,8 +113,6 @@ export const commyDevices = ({ secret, serverUrl }) => ({
           }
         }
         if (existing) {
-          // The signature proves key possession, so a device signing in to a new
-          // account moves over rather than staying with the old one
           const updated = await adapter.update({
             model: MODEL,
             where: [{ field: "id", value: existing.id }],

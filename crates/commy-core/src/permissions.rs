@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::ops::{BitAnd, BitOr, BitOrAssign, Not};
 
-/// Permission bitset, one bit per capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub struct Permissions(pub u64);
@@ -24,22 +23,14 @@ impl Permissions {
     pub const ADD_REACTIONS: Permissions = Permissions(1 << 13);
     pub const USE_SOUNDBOARD: Permissions = Permissions(1 << 14);
     pub const USE_EXTERNAL_EMOJIS: Permissions = Permissions(1 << 15);
-    /// Invite people to the server. Never part of the everyone role: a
-    /// member needs a role that grants it (see `Server::permissions_for`).
     pub const CREATE_INVITES: Permissions = Permissions(1 << 16);
     pub const MANAGE_ROLES: Permissions = Permissions(1 << 17);
     pub const ADMINISTRATOR: Permissions = Permissions(1 << 18);
-    /// Add and remove custom emojis and soundboard sounds.
     pub const MANAGE_EXPRESSIONS: Permissions = Permissions(1 << 19);
     pub const MANAGE_EVENTS: Permissions = Permissions(1 << 20);
-    /// Pin and unpin messages in text channels. Manage Messages counts
-    /// too, see [`Permissions::can_pin`].
     pub const PIN_MESSAGES: Permissions = Permissions(1 << 21);
-    /// Post in announcement channels. Manage Channels counts too, see
-    /// [`Permissions::can_announce`].
     pub const POST_ANNOUNCEMENTS: Permissions = Permissions(1 << 22);
 
-    /// Sensible defaults for the implicit everyone role.
     pub fn default_member() -> Permissions {
         Self::VIEW_CHANNELS
             | Self::SEND_MESSAGES
@@ -68,17 +59,14 @@ impl Permissions {
         self.0 &= !other.0;
     }
 
-    /// Administrator implies every permission.
     pub fn allows(self, other: Permissions) -> bool {
         self.contains(Self::ADMINISTRATOR) || self.contains(other)
     }
 
-    /// Whether these permissions let someone pin messages.
     pub fn can_pin(self) -> bool {
         self.allows(Self::PIN_MESSAGES) || self.allows(Self::MANAGE_MESSAGES)
     }
 
-    /// Whether these permissions let someone post in announcement channels.
     pub fn can_announce(self) -> bool {
         self.allows(Self::POST_ANNOUNCEMENTS) || self.allows(Self::MANAGE_CHANNELS)
     }
