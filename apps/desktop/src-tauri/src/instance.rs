@@ -20,6 +20,26 @@ pub fn apply_webview_data_dir_before_any_window() {
     }
 }
 
+pub const TEST_BUILD_DIR: &str = "test-build";
+
+pub fn test_build_data_dir(test_build: bool, data_dir: Option<&str>, default: Option<PathBuf>) -> Option<PathBuf> {
+    if !test_build || data_dir.is_some_and(|s| !s.trim().is_empty()) {
+        return None;
+    }
+    default.map(|dir| dir.join(TEST_BUILD_DIR))
+}
+
+pub fn apply_test_build_data_dir() {
+    let target = test_build_data_dir(
+        option_env!("COMMY_TEST_BUILD").is_some(),
+        std::env::var("COMMY_DATA_DIR").ok().as_deref(),
+        crate::invite_link::default_data_dir(),
+    );
+    if let Some(dir) = target {
+        std::env::set_var("COMMY_DATA_DIR", dir);
+    }
+}
+
 pub fn window_title(test_build: bool, label: Option<&str>) -> Option<String> {
     let label = label.map(str::trim).filter(|s| !s.is_empty());
     match (test_build, label) {
@@ -33,6 +53,22 @@ pub fn window_title(test_build: bool, label: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_builds_get_their_own_data_dir() {
+        let home = Some(PathBuf::from("appdata/chat.commy.desktop"));
+        assert_eq!(test_build_data_dir(false, None, home.clone()), None);
+        assert_eq!(
+            test_build_data_dir(true, None, home.clone()),
+            Some(PathBuf::from("appdata/chat.commy.desktop").join("test-build"))
+        );
+        assert_eq!(test_build_data_dir(true, Some("bench/A"), home.clone()), None);
+        assert_eq!(
+            test_build_data_dir(true, Some(" "), home),
+            Some(PathBuf::from("appdata/chat.commy.desktop").join("test-build"))
+        );
+        assert_eq!(test_build_data_dir(true, None, None), None);
+    }
 
     #[test]
     fn webview_moves_only_with_a_custom_data_dir() {

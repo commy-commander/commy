@@ -457,6 +457,64 @@ pub fn topic_for(server_id: ServerId) -> [u8; 32] {
     topic
 }
 
+pub const MEDIA_DIAL_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Clone)]
+pub struct MediaDialer {
+    endpoint: iroh::net::Endpoint,
+}
+
+impl MediaDialer {
+    pub async fn connect(&self, node_hex: &str, hello: MediaHello) -> Result<MediaChannel> {
+        let node_id = parse_node_hex(node_hex)?;
+        let dial = async {
+            let connection = self
+                .endpoint
+                .connect(NodeAddr::new(node_id), MEDIA_ALPN)
+                .await
+                .context("media dial failed")?;
+            let (mut send, recv) = connection.open_bi().await?;
+            write_frame(&mut send, &hello)
+                .await
+                .map_err(|e| anyhow::anyhow!("sending hello failed: {e}"))?;
+            Ok(MediaChannel::spawn(
+                self.endpoint.clone(),
+                *node_id.as_bytes(),
+                hello,
+                connection,
+                send,
+                recv,
+            ))
+        };
+        tokio::time::timeout(MEDIA_DIAL_TIMEOUT, dial)
+            .await
+            .map_err(|_| anyhow::anyhow!("that person could not be reached"))?
+    }
+}
+
+#[derive(Clone)]
+pub struct BlobFetcher {
+    blobs: iroh::client::blobs::Client,
+}
+
+impl BlobFetcher {
+    pub async fn fetch(&self, hash: &str, provider_hex: Option<&str>) -> Result<Vec<u8>> {
+        let hash: iroh_blobs::Hash = hash.parse().context("invalid blob hash")?;
+        if let Ok(bytes) = self.blobs.read_to_bytes(hash).await {
+            return Ok(bytes.to_vec());
+        }
+        let provider = provider_hex.context("blob not local and no provider known")?;
+        let node_id = parse_node_hex(provider)?;
+        self.blobs
+            .download(hash, NodeAddr::new(node_id))
+            .await?
+            .await
+            .context("blob download failed")?;
+        let bytes = self.blobs.read_to_bytes(hash).await?;
+        Ok(bytes.to_vec())
+    }
+}
+
 pub struct CommyNode {
     node: iroh::node::MemNode,
     topics: HashMap<ServerId, TopicHandle>,
@@ -854,25 +912,11 @@ impl CommyNode {
     }
 
     pub async fn connect_media(&self, node_hex: &str, hello: MediaHello) -> Result<MediaChannel> {
-        let node_id = parse_node_hex(node_hex)?;
-        let connection = self
-            .node
-            .endpoint()
-            .connect(NodeAddr::new(node_id), MEDIA_ALPN)
-            .await
-            .context("media dial failed")?;
-        let (mut send, recv) = connection.open_bi().await?;
-        write_frame(&mut send, &hello)
-            .await
-            .map_err(|e| anyhow::anyhow!("sending hello failed: {e}"))?;
-        Ok(MediaChannel::spawn(
-            self.node.endpoint().clone(),
-            *node_id.as_bytes(),
-            hello,
-            connection,
-            send,
-            recv,
-        ))
+        self.media_dialer().connect(node_hex, hello).await
+    }
+
+    pub fn media_dialer(&self) -> MediaDialer {
+        MediaDialer { endpoint: self.node.endpoint().clone() }
     }
 
     pub async fn add_blob(&self, bytes: Vec<u8>) -> Result<String> {
@@ -904,20 +948,11 @@ impl CommyNode {
     }
 
     pub async fn fetch_blob(&self, hash: &str, provider_hex: Option<&str>) -> Result<Vec<u8>> {
-        let hash: iroh_blobs::Hash = hash.parse().context("invalid blob hash")?;
-        if let Ok(bytes) = self.node.blobs().read_to_bytes(hash).await {
-            return Ok(bytes.to_vec());
-        }
-        let provider = provider_hex.context("blob not local and no provider known")?;
-        let node_id = parse_node_hex(provider)?;
-        self.node
-            .blobs()
-            .download(hash, NodeAddr::new(node_id))
-            .await?
-            .await
-            .context("blob download failed")?;
-        let bytes = self.node.blobs().read_to_bytes(hash).await?;
-        Ok(bytes.to_vec())
+        self.blob_fetcher().fetch(hash, provider_hex).await
+    }
+
+    pub fn blob_fetcher(&self) -> BlobFetcher {
+        BlobFetcher { blobs: self.node.blobs().clone() }
     }
 
     pub fn leave_server(&mut self, server_id: ServerId) {

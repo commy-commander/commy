@@ -1333,12 +1333,12 @@ function renderChannels() {
   const collapsed = collapsedSections();
   for (const section of channelSections(server, canCreate)) {
     const isCollapsed = collapsed.has(section.key);
-    list.appendChild(sectionHeader(section, isCollapsed, canCreate));
+    list.appendChild(sectionHeader(section, isCollapsed, canCreate && !section.fixed));
     for (const channel of section.channels) {
       const active = (state.currentChannel && channel.id === state.currentChannel.id) || channel.id === state.voiceChannelId;
       if (isCollapsed && !active) continue;
       const row = channel.kind === "voice" ? voiceChannelRow(channel, canCreate) : textChannelRow(channel, canCreate);
-      if (canCreate) {
+      if (canCreate && !section.fixed) {
         row.draggable = true;
         row.addEventListener("dragstart", e => {
           dragChannel = channel;
@@ -4253,9 +4253,11 @@ function toggleSection(key) {
 
 function channelSections(server, canCreate) {
   const byPos = (a, b) => (a.kind === "voice") - (b.kind === "voice") || a.position - b.position;
-  const categories = server.channels.filter(c => c.kind === "category").sort((a, b) => a.position - b.position);
+  const afk = server.channels.find(c => c.id === server.afk_channel && c.kind === "voice");
+  const channels = server.channels.filter(c => c !== afk);
+  const categories = channels.filter(c => c.kind === "category").sort((a, b) => a.position - b.position);
   const catIds = new Set(categories.map(c => c.id));
-  const loose = server.channels.filter(c => c.kind !== "category" && !(c.parent && catIds.has(c.parent)));
+  const loose = channels.filter(c => c.kind !== "category" && !(c.parent && catIds.has(c.parent)));
   const isText = c => c.kind === "text" || c.kind === "announcement";
   const sections = [];
   const looseText = loose.filter(isText).sort(byPos);
@@ -4269,9 +4271,10 @@ function channelSections(server, canCreate) {
       kind: "text",
       parent: category.id,
       category,
-      channels: server.channels.filter(c => c.parent === category.id && c.kind !== "category").sort(byPos),
+      channels: channels.filter(c => c.parent === category.id && c.kind !== "category").sort(byPos),
     });
   }
+  if (afk) sections.push({ key: `${server.id}:afk`, title: "AFK", kind: "voice", parent: null, fixed: true, channels: [afk] });
   return sections;
 }
 

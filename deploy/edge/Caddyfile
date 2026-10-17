@@ -15,11 +15,11 @@
 		format json
 	}
 
-	@never_logged_invites path /i/* /api/auth/commy/invites/*
-	log_skip @never_logged_invites
+	@invites path /i/* /api/auth/commy/invites/*
+	log_skip @invites
 
-	@never_logged_doorbell path /api/auth/commy/doorbell/*
-	log_skip @never_logged_doorbell
+	@doorbell path /api/auth/commy/doorbell/*
+	log_skip @doorbell
 
 	encode zstd gzip
 

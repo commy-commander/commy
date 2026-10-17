@@ -607,13 +607,7 @@ async fn download_attachment(
     filename: String,
     provider: Option<String>,
 ) -> CmdResult<Option<String>> {
-    let bytes = {
-        let net = app.net.lock().await;
-        let node = net.as_ref().ok_or("network is not ready yet")?;
-        node.fetch_blob(&blob, provider.as_deref())
-            .await
-            .map_err(err_to_string)?
-    };
+    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
     let Some(target) = rfd::AsyncFileDialog::new()
         .set_file_name(&filename)
         .save_file()
@@ -647,45 +641,73 @@ async fn set_voice_channel(
             if full {
                 return Err("that voice channel is full".into());
             }
+            let previous = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != sid);
+            if let Some(previous) = previous {
+                leave_voice(&app, &handle, previous, &profile, &voice).await;
+            }
             start_voice_session(&app, &handle, sid, channel, &voice, profile.id)?;
             apply_personal_volumes(&app);
             refresh_forced_voice(&app, &handle);
-            dial_voice_members(&app, sid, channel, &profile).await;
+            dial_voice_members(&app, &handle, sid, channel, &profile);
+            set_own_voice_state(&app, &handle, sid, &profile, &voice, Some(channel)).await
         }
         None => {
-            *app.voice_session.lock().unwrap() = None;
-            *app.camera.lock().unwrap() = None;
-            app.camera_watches.lock().unwrap().clear();
-            app.own_preview.lock().unwrap().take();
-            let share = app.screen_share.lock().unwrap().take();
-            if let Some(share) = share {
-                broadcast(
-                    &app,
-                    sid,
-                    WirePayload::Event(ServerEvent::ScreenShare {
-                        user: profile.id,
-                        channel: share.channel,
-                        active: false,
-                    }),
-                )
-                .await;
-            }
+            leave_voice(&app, &handle, sid, &profile, &voice).await;
+            Ok(())
         }
     }
+}
 
+async fn leave_voice(
+    app: &tauri::State<'_, App>,
+    handle: &tauri::AppHandle,
+    sid: ServerId,
+    profile: &UserProfile,
+    voice: &VoiceSettings,
+) {
+    *app.voice_session.lock().unwrap() = None;
+    *app.camera.lock().unwrap() = None;
+    app.camera_watches.lock().unwrap().clear();
+    app.own_preview.lock().unwrap().take();
+    let share = app.screen_share.lock().unwrap().take();
+    if let Some(share) = share {
+        broadcast(
+            app,
+            sid,
+            WirePayload::Event(ServerEvent::ScreenShare {
+                user: profile.id,
+                channel: share.channel,
+                active: false,
+            }),
+        )
+        .await;
+    }
+    if let Err(e) = set_own_voice_state(app, handle, sid, profile, voice, None).await {
+        tracing::warn!("leaving voice: {e}");
+    }
+}
+
+async fn set_own_voice_state(
+    app: &tauri::State<'_, App>,
+    handle: &tauri::AppHandle,
+    sid: ServerId,
+    profile: &UserProfile,
+    voice: &VoiceSettings,
+    channel: Option<ChannelId>,
+) -> CmdResult<()> {
     let event = ServerEvent::VoiceState {
         user: profile.id,
-        channel: cid,
+        channel,
         muted: voice.muted,
         deafened: voice.deafened,
-        since: cid.map(|_| chrono::Utc::now().timestamp()),
+        since: channel.map(|_| chrono::Utc::now().timestamp()),
     };
     {
         let mut servers = app.servers.lock().unwrap();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         state.apply(event.clone()).map_err(err_to_string)?;
     }
-    broadcast(&app, sid, WirePayload::Event(event)).await;
+    broadcast(app, sid, WirePayload::Event(event)).await;
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
 }
@@ -823,8 +845,9 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
     }
 }
 
-async fn dial_voice_members(
+fn dial_voice_members(
     app: &tauri::State<'_, App>,
+    handle: &tauri::AppHandle,
     sid: ServerId,
     channel: ChannelId,
     me: &UserProfile,
@@ -851,41 +874,53 @@ async fn dial_voice_members(
     };
     for (user, their_hex) in targets {
         if should_dial(&our_hex, &their_hex) {
-            dial_voice_peer(app, user, their_hex, channel, me.id).await;
+            dial_voice_peer(handle, user, their_hex, channel, me.id);
         }
     }
 }
 
-async fn dial_voice_peer(
-    app: &tauri::State<'_, App>,
+fn dial_voice_peer(
+    handle: &tauri::AppHandle,
     user: UserId,
     their_hex: String,
     channel: ChannelId,
     our_user: UserId,
 ) {
-    let media = {
-        let net = app.net.lock().await;
-        let Some(node) = net.as_ref() else { return };
-        node.connect_media(
-            &their_hex,
-            MediaHello::Voice {
-                user: our_user,
-                channel,
-            },
-        )
-        .await
-    };
-    match media {
-        Ok(media) => {
-            let mut session = app.voice_session.lock().unwrap();
-            if let Some(session) = session.as_mut() {
-                if session.channel == channel {
-                    session.attach_peer(user, media);
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let app = handle.state::<App>();
+        let hello = MediaHello::Voice {
+            user: our_user,
+            channel,
+        };
+        match dial_media(&app, &their_hex, hello).await {
+            Ok(media) => {
+                let mut session = app.voice_session.lock().unwrap();
+                if let Some(session) = session.as_mut() {
+                    if session.channel == channel {
+                        session.attach_peer(user, media);
+                    }
                 }
             }
+            Err(e) => tracing::warn!("voice dial failed: {e}"),
         }
-        Err(e) => tracing::warn!("voice dial failed: {e}"),
-    }
+    });
+}
+
+async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>) -> CmdResult<Vec<u8>> {
+    let fetcher = {
+        let net = app.net.lock().await;
+        net.as_ref().ok_or("network is not ready yet")?.blob_fetcher()
+    };
+    fetcher.fetch(blob, provider).await.map_err(err_to_string)
+}
+
+async fn dial_media(app: &App, their_hex: &str, hello: MediaHello) -> CmdResult<MediaChannel> {
+    let dialer = {
+        let net = app.net.lock().await;
+        net.as_ref().ok_or("network is not ready yet")?.media_dialer()
+    };
+    dialer.connect(their_hex, hello).await.map_err(err_to_string)
 }
 
 #[derive(serde::Serialize)]
@@ -1064,19 +1099,15 @@ async fn watch_screen(
         (hex, channel)
     };
 
-    let media = {
-        let net = app.net.lock().await;
-        let node = net.as_ref().ok_or("network is not ready yet")?;
-        node.connect_media(
-            &their_hex,
-            MediaHello::ScreenSubscribe {
-                user: profile.id,
-                channel,
-            },
-        )
-        .await
-        .map_err(err_to_string)?
-    };
+    let media = dial_media(
+        &app,
+        &their_hex,
+        MediaHello::ScreenSubscribe {
+            user: profile.id,
+            channel,
+        },
+    )
+    .await?;
 
     let emitter = handle.clone();
     let watch = ScreenWatch::start(user, media, move |user, seq, width, height, jpeg| {
@@ -1179,13 +1210,7 @@ async fn watch_camera(
             .ok_or("that member has no reachable identity")?;
         (hex, channel)
     };
-    let media = {
-        let net = app.net.lock().await;
-        let node = net.as_ref().ok_or("network is not ready yet")?;
-        node.connect_media(&their_hex, MediaHello::CameraSubscribe { user: profile.id, channel })
-            .await
-            .map_err(err_to_string)?
-    };
+    let media = dial_media(&app, &their_hex, MediaHello::CameraSubscribe { user: profile.id, channel }).await?;
     let emitter = handle.clone();
     let watch = ScreenWatch::start(user, media, move |user, _seq, width, height, jpeg| {
         let _ = emitter.emit("camera-frame", video_frame_payload(user, None, width, height, &jpeg));
@@ -2589,11 +2614,7 @@ async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdRes
     let bytes = match cached {
         Some(bytes) => bytes,
         None => {
-            let bytes = {
-                let net = app.net.lock().await;
-                let node = net.as_ref().ok_or("network is not ready yet")?;
-                node.fetch_blob(&image.blob, Some(&image.provider)).await.map_err(err_to_string)?
-            };
+            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider)).await?;
             if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
                 return Err("server image is not a valid picture".into());
             }
@@ -3615,11 +3636,7 @@ async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult
     let bytes = match cached {
         Some(bytes) => bytes,
         None => {
-            let bytes = {
-                let net = app.net.lock().await;
-                let node = net.as_ref().ok_or("network is not ready yet")?;
-                node.fetch_blob(&image.blob, Some(&image.provider)).await.map_err(err_to_string)?
-            };
+            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider)).await?;
             if expressions::expression_mime(&bytes).is_none() {
                 return Err("not a valid emoji or sound".into());
             }
@@ -4191,13 +4208,7 @@ async fn get_attachment_preview(
     if !is_data_url_safe_image_mime(&mime) {
         return Err("not an image".into());
     }
-    let bytes = {
-        let net = app.net.lock().await;
-        let node = net.as_ref().ok_or("network is not ready yet")?;
-        node.fetch_blob(&blob, provider.as_deref())
-            .await
-            .map_err(err_to_string)?
-    };
+    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
     if bytes.len() > MAX_RESPONSIVE_PREVIEW_BYTES {
         return Err("image too large to preview".into());
     }
@@ -4381,7 +4392,7 @@ async fn run_net_loop(
                             refresh_forced_voice(&app, &handle);
                         }
                         if let Some((user, channel)) = voice_update {
-                            react_to_voice_change(&app, server, user, channel).await;
+                            react_to_voice_change(&app, &handle, server, user, channel);
                         }
                         if let Some(message) = new_message {
                             doorbell::arrived(&handle, server, message.id);
@@ -4438,8 +4449,9 @@ async fn run_net_loop(
     }
 }
 
-async fn react_to_voice_change(
+fn react_to_voice_change(
     app: &tauri::State<'_, App>,
+    handle: &tauri::AppHandle,
     server: ServerId,
     user: UserId,
     channel: Option<ChannelId>,
@@ -4479,7 +4491,7 @@ async fn react_to_voice_change(
                 .map(|s| s.has_peer(user))
                 .unwrap_or(false);
             if !already && should_dial(&our_hex, &their_hex) {
-                dial_voice_peer(app, user, their_hex, our_channel, me.id).await;
+                dial_voice_peer(handle, user, their_hex, our_channel, me.id);
             }
         }
         _ => {
@@ -4624,6 +4636,8 @@ pub fn run() {
                 .unwrap_or_else(|_| "info,iroh=warn,iroh_net=warn".into()),
         )
         .init();
+
+    instance::apply_test_build_data_dir();
 
     let launch_link = invite_link::link_from_args();
     if let (Some(link), Some(dir)) = (&launch_link, invite_link::default_data_dir()) {

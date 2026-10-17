@@ -213,6 +213,15 @@ other update. To pause automatic updates, `docker compose stop agent`.
   and mount `/root/.docker/config.json` into the agent.
 - **Environments.** Settings > Environments needs `production` with a required
   reviewer, which gates promotion to prod, and `staging` without one.
+- **Desktop update signing.** Installed desktop apps update themselves from the
+  releases on their channel (pre-releases for test builds, finals for the rest),
+  and install only files signed with the key whose public half is
+  `plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json`. Make the key
+  once with `npx @tauri-apps/cli@2 signer generate -w commy-updater.key`, put the
+  private key and its password in the repository secrets `TAURI_SIGNING_PRIVATE_KEY`
+  and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and keep a backup: copies already
+  installed can never update again if it is lost. Without the secrets, releases
+  publish without `latest.json` and installed apps do not see them.
 
 ## Testing these scripts
 
