@@ -2882,6 +2882,29 @@ async function setPinned(message, pinned) {
 
 // The pin button in the chat header: shown in text and announcement
 // channels, with the channel's pin count on it.
+// The red badge counts pins this device has not looked at yet, so it
+// clears when the panel is opened; the tooltip keeps the total.
+const PINS_SEEN_KEY = "commy.pins.seen";
+let pinSyncToken = 0;
+
+function pinsSeen(channelId) {
+  try {
+    const all = JSON.parse(localStorage.getItem(PINS_SEEN_KEY) || "{}");
+    return Array.isArray(all[channelId]) ? all[channelId] : [];
+  } catch {
+    return [];
+  }
+}
+
+// Remember these pins as looked at in this channel (only ids still pinned are kept).
+function markPinsSeen(channelId, pins) {
+  try {
+    const all = JSON.parse(localStorage.getItem(PINS_SEEN_KEY) || "{}");
+    all[channelId] = (pins || []).map(p => p.message.id);
+    localStorage.setItem(PINS_SEEN_KEY, JSON.stringify(all));
+  } catch { /* session only */ }
+}
+
 function syncPinButton() {
   const btn = $("pins-btn");
   const channel = state.view === "server" ? state.currentChannel : null;
@@ -2890,9 +2913,17 @@ function syncPinButton() {
   btn.title = title;
   btn.classList.toggle("has-pins", count > 0);
   const badge = $("pins-count");
-  badge.textContent = count > 99 ? "99+" : String(count);
-  badge.classList.toggle("hidden", count === 0);
-  if (!visible) closePinsPanel();
+  badge.classList.add("hidden");
+  const token = ++pinSyncToken;
+  if (!visible) return closePinsPanel();
+  if (count === 0) return;
+  invoke("get_pins", { serverId: state.currentServer.id, channelId: channel.id }).then(pins => {
+    if (token !== pinSyncToken) return;
+    const unseen = unseenPinIds(pins, pinsSeen(channel.id)).length;
+    badge.textContent = pinBadgeText(unseen);
+    badge.classList.toggle("hidden", unseen === 0);
+    btn.title = pinTitleWithNew(title, unseen);
+  }).catch(() => {});
 }
 
 function closePinsPanel() {
@@ -2919,6 +2950,10 @@ async function renderPinsPanel() {
     toast(String(e));
   }
   list.innerHTML = "";
+  // Looking at the panel is what clears the badge.
+  markPinsSeen(state.currentChannel.id, pins);
+  $("pins-count").classList.add("hidden");
+  $("pins-btn").title = pinButtonState({ view: state.view, channel: state.currentChannel, count: pins.length }).title;
   if (!pins.length) {
     list.appendChild(pinsEmptyState());
     return;
@@ -3035,6 +3070,7 @@ async function renderServerPins() {
     ? `${pins.length} pinned ${pins.length === 1 ? "message" : "messages"} across this server, newest first.`
     : "Nothing is pinned in this server yet.";
   for (const group of groupPinsByChannel(pins)) {
+    markPinsSeen(group.channel, group.pins);
     const head = el("div", "pins-group-head");
     const channel = state.currentServer.channels.find(c => c.id === group.channel);
     head.appendChild(channelMark(channel || { kind: "text" }, 16));

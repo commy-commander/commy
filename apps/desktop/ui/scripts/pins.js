@@ -38,6 +38,27 @@ function pinButtonState({ view, channel, count }) {
   };
 }
 
+// Pins this device has not looked at yet: ids in `pins` that are not in
+// `seen`. The badge on the pin button counts these, so it clears once
+// the panel has been opened.
+function unseenPinIds(pins, seen) {
+  const known = new Set(seen || []);
+  return (pins || []).map(p => p && p.message && p.message.id).filter(id => id && !known.has(id));
+}
+
+// The badge text for that many new pins; empty means no badge.
+function pinBadgeText(unseen) {
+  const n = Number(unseen) || 0;
+  if (n <= 0) return "";
+  return n > 99 ? "99+" : String(n);
+}
+
+// "3 pinned messages" with "(2 new)" appended while some are unseen.
+function pinTitleWithNew(title, unseen) {
+  const n = Number(unseen) || 0;
+  return n > 0 && title !== "Pinned Messages" ? `${title} (${n} new)` : title;
+}
+
 // Whether the viewer may pin here: the server grants it and the channel
 // holds messages.
 function canPinIn(server, channel) {
@@ -71,5 +92,5 @@ function pinExcerpt(message, plain) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { MAX_PINS_PER_CHANNEL, holdsMessages, sortPins, groupPinsByChannel, pinButtonState, canPinIn, pinRoomLeft, composerLock, pinExcerpt };
+  module.exports = { MAX_PINS_PER_CHANNEL, holdsMessages, sortPins, groupPinsByChannel, pinButtonState, unseenPinIds, pinBadgeText, pinTitleWithNew, canPinIn, pinRoomLeft, composerLock, pinExcerpt };
 }

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { MAX_PINS_PER_CHANNEL, holdsMessages, sortPins, groupPinsByChannel, pinButtonState, canPinIn, pinRoomLeft, composerLock, pinExcerpt } =
+const { MAX_PINS_PER_CHANNEL, holdsMessages, sortPins, groupPinsByChannel, pinButtonState, unseenPinIds, pinBadgeText, pinTitleWithNew, canPinIn, pinRoomLeft, composerLock, pinExcerpt } =
   require("../scripts/pins.js");
 
 const plain = s => s;
@@ -63,4 +63,18 @@ test("a pin's excerpt is its text, else what it attached", () => {
   assert.equal(pinExcerpt({ content: "  ", attachments: [{ is_image: false }] }, plain), "Sent an attachment");
   assert.equal(pinExcerpt({ content: "" }, plain), "");
   assert.equal(pinExcerpt(null, plain), "");
+});
+
+test("the badge counts pins not seen yet and clears once they are", () => {
+  const pins = [{ message: { id: "1" } }, { message: { id: "2" } }, { message: { id: "3" } }];
+  assert.deepEqual(unseenPinIds(pins, undefined), ["1", "2", "3"]);
+  assert.deepEqual(unseenPinIds(pins, ["1", "3"]), ["2"]);
+  assert.deepEqual(unseenPinIds(pins, ["1", "2", "3", "gone"]), []);
+  assert.deepEqual(unseenPinIds(undefined, ["1"]), []);
+  assert.equal(pinBadgeText(0), "");
+  assert.equal(pinBadgeText(4), "4");
+  assert.equal(pinBadgeText(120), "99+");
+  assert.equal(pinTitleWithNew("3 pinned messages", 2), "3 pinned messages (2 new)");
+  assert.equal(pinTitleWithNew("3 pinned messages", 0), "3 pinned messages");
+  assert.equal(pinTitleWithNew("Pinned Messages", 0), "Pinned Messages");
 });
