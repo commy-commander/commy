@@ -43,7 +43,6 @@ pub(crate) fn write_secret(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let written = (|| {
         let mut file = options.open(&tmp)?;
         file.write_all(bytes)?;
-        file.sync_all()?;
         drop(file);
         if path.exists() {
             fs::remove_file(path)?;

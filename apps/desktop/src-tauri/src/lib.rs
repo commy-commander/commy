@@ -1967,6 +1967,7 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             channel: state.server.afk_channel(),
         });
     }
+    events.retain(|event| commy_core::action::authorized(&state.server, me, event));
     events
 }
 
@@ -2530,6 +2531,43 @@ mod placeholder_tests {
             assert!(require_permission(&app, &state, me.id, needed, "moderate").is_ok(), "{needed:?}");
         }
         assert!(structural(structure_announcements(&app, sid, me.id)));
+    }
+
+    #[test]
+    fn a_plain_member_re_announces_only_what_it_may_change() {
+        let owner = UserProfile::new("owner");
+        let mut server = commy_core::Server::new("s", owner.id);
+        server.emojis.push(commy_core::server::CustomEmoji { name: "wave".into(), blob: format!("{}@{}", "a1".repeat(32), "b2".repeat(32)) });
+        server.events.push(commy_core::server::ScheduledEvent {
+            id: "night".into(),
+            title: "Game night".into(),
+            description: String::new(),
+            start: chrono::Utc::now(),
+            end: None,
+            channel: None,
+            creator: owner.id,
+            rsvps: vec![(owner.id, commy_core::server::Rsvp::Going)],
+        });
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let me = UserProfile::new("me");
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: me.clone() }).unwrap();
+        state.apply(ServerEvent::EventRsvp { server: sid, event: "night".into(), user: me.id, rsvp: Some(commy_core::server::Rsvp::Interested) }).unwrap();
+        let app = App::default();
+        app.servers.lock().unwrap().insert(sid, state.clone());
+        app.set_awaiting_snapshot(sid, false);
+
+        let mine = structure_announcements(&app, sid, me.id);
+        assert!(mine.iter().all(|e| commy_core::action::authorized(&state.server, me.id, e)), "{mine:?}");
+        assert!(mine.iter().any(|e| matches!(e, ServerEvent::EventRsvp { user, .. } if *user == me.id)));
+        assert!(!mine.iter().any(|e| matches!(e, ServerEvent::EmojiAdd { .. } | ServerEvent::EventUpsert { .. })));
+        assert!(!mine.iter().any(|e| matches!(e, ServerEvent::EventRsvp { user, .. } if *user == owner.id)));
+
+        let theirs = structure_announcements(&app, sid, owner.id);
+        assert!(theirs.iter().all(|e| commy_core::action::authorized(&state.server, owner.id, e)), "{theirs:?}");
+        assert!(theirs.iter().any(|e| matches!(e, ServerEvent::EmojiAdd { .. })));
+        assert!(theirs.iter().any(|e| matches!(e, ServerEvent::EventUpsert { .. })));
     }
 }
 
