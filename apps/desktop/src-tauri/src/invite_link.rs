@@ -318,6 +318,7 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
     // The server name comes from the ticket itself, not from the web server
     let (raw, sealed_expiry) = open_ticket(&body.ticket, parsed.key.as_deref())?;
     let ticket = ServerTicket::decode(&raw).map_err(|_| "The invite server sent an invalid invite".to_string())?;
+    app.doorbell.lock().unwrap().note_invite_origin(ticket.server_id, parsed.origin.clone());
     let server_expiry = body.expires_at.as_deref().and_then(parse_time);
     let expires_at = effective_expiry(server_expiry, sealed_expiry, Utc::now())?;
     let account = account_server();

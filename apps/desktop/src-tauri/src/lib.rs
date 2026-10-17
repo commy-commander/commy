@@ -225,6 +225,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     drop(signing);
 
     app.persist_server(ticket.server_id);
+    doorbell::record_join(app, ticket.server_id);
     handle.emit("servers-changed", serde_json::Value::Null);
     Ok(summary)
 }

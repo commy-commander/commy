@@ -74,6 +74,8 @@ struct Saved {
     /// Last day whose token we took from, per server.
     #[serde(default)]
     last_take: HashMap<ServerId, u32>,
+    #[serde(default)]
+    origins: HashMap<ServerId, String>,
 }
 
 /// Doorbell endpoints an account server offers.
@@ -97,6 +99,7 @@ pub struct Doorbell {
     hello_at: HashMap<ServerId, Instant>,
     nudged_at: HashMap<ServerId, Instant>,
     listening: HashSet<ServerId>,
+    invite_origins: HashMap<ServerId, String>,
 }
 
 impl Doorbell {
@@ -109,14 +112,32 @@ impl Doorbell {
         crate::persist::write_secret_json(&dir.join(DOORBELL_FILE), &self.saved)
     }
 
+    fn saved_entries(&self) -> usize {
+        self.saved.own.len() + self.saved.peers.len() + self.saved.awaited.len() + self.saved.last_take.len() + self.saved.origins.len()
+    }
+
     /// Forgets servers we are no longer in.
     pub fn retain_servers(&mut self, keep: impl Fn(&ServerId) -> bool) -> bool {
-        let before = self.saved.own.len() + self.saved.peers.len() + self.saved.awaited.len() + self.saved.last_take.len();
+        let before = self.saved_entries();
         self.saved.own.retain(|s, _| keep(s));
         self.saved.peers.retain(|s, _| keep(s));
         self.saved.awaited.retain(|s, _| keep(s));
         self.saved.last_take.retain(|s, _| keep(s));
-        before != self.saved.own.len() + self.saved.peers.len() + self.saved.awaited.len() + self.saved.last_take.len()
+        self.saved.origins.retain(|s, _| keep(s));
+        before != self.saved_entries()
+    }
+
+    pub(crate) fn note_invite_origin(&mut self, server: ServerId, origin: String) {
+        self.invite_origins.insert(server, origin);
+    }
+
+    pub(crate) fn adopt_invite_origin(&mut self, server: ServerId) -> bool {
+        let Some(origin) = self.invite_origins.remove(&server) else { return false };
+        self.saved.origins.insert(server, origin.clone()) != Some(origin)
+    }
+
+    pub(crate) fn origin_allowed(&self, server: ServerId, url: &str, own_origin: &str) -> bool {
+        url == own_origin || self.saved.origins.get(&server).is_some_and(|origin| origin == url)
     }
 
     /// Our key in a server, made on first use. True when it is new.
@@ -294,6 +315,12 @@ pub(crate) async fn endpoints(app: &App, origin: &str) -> Option<Endpoints> {
     found
 }
 
+pub(crate) fn record_join(app: &App, server: ServerId) {
+    if app.doorbell.lock().unwrap().adopt_invite_origin(server) {
+        persist(app);
+    }
+}
+
 fn persist(app: &App) {
     let Some(dir) = app.data_dir() else { return };
     let doorbell = app.doorbell.lock().unwrap();
@@ -390,11 +417,12 @@ pub fn on_announce(app: &App, server: ServerId, event: &ServerEvent) {
         return;
     }
     let own_origin = crate::account::effective_server();
-    let peer = key.filter(|_| peer_origin_ok(url, &own_origin)).map(|key| Peer { user: *user, url: url.clone(), key });
     let changed = {
         let servers = app.servers.lock().unwrap();
         let Some(state) = servers.get(&server) else { return };
         let mut doorbell = app.doorbell.lock().unwrap();
+        let known = peer_origin_ok(url, &own_origin) && doorbell.origin_allowed(server, url, &own_origin);
+        let peer = key.filter(|_| known).map(|key| Peer { user: *user, url: url.clone(), key });
         let pruned = doorbell.retain_members(server, |u| member_ok(state, u));
         doorbell.set_peer(server, *user, &node.to_lowercase(), peer) | pruned
     };
@@ -419,6 +447,7 @@ pub fn ring<A: AppAccess + Clone>(access: &A, server: ServerId, message: Message
 /// today's token, blinded id) for each.
 pub(crate) fn ring_targets(app: &App, server: ServerId, message: MessageId, everyone: bool) -> Vec<(String, String, String)> {
     let our_node = app.node_hex.lock().unwrap().clone();
+    let own_origin = crate::account::effective_server();
     let day = bell::day_of(chrono::Utc::now());
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&server) else { return Vec::new() };
@@ -427,7 +456,7 @@ pub(crate) fn ring_targets(app: &App, server: ServerId, message: MessageId, ever
     peers
         .iter()
         .filter(|(node, _)| Some(node.as_str()) != our_node.as_deref())
-        .filter(|(_, p)| member_ok(state, p.user))
+        .filter(|(_, p)| member_ok(state, p.user) && doorbell.origin_allowed(server, &p.url, &own_origin))
         .filter(|(_, p)| everyone || !state.profiles.get(&p.user).is_some_and(|u| u.presence.is_visible_online()))
         .map(|(_, p)| (p.url.clone(), bell::token(&p.key, day), bell::blinded_id(&p.key, message)))
         .collect()
@@ -503,11 +532,12 @@ fn queue_ring<A: AppAccess + Clone>(access: &A, url: String, token: String, id: 
 pub fn ring_device<A: AppAccess + Clone>(access: &A, server: ServerId, node: &str, message: MessageId) {
     let target = {
         let app = access.app();
+        let own_origin = crate::account::effective_server();
         let servers = app.servers.lock().unwrap();
         let Some(state) = servers.get(&server) else { return };
         let doorbell = app.doorbell.lock().unwrap();
         let Some(peer) = doorbell.saved.peers.get(&server).and_then(|p| p.get(node)) else { return };
-        if !member_ok(state, peer.user) {
+        if !member_ok(state, peer.user) || !doorbell.origin_allowed(server, &peer.url, &own_origin) {
             return;
         }
         let day = bell::day_of(chrono::Utc::now());
@@ -529,6 +559,7 @@ pub(crate) async fn send_ring(app: &App, ring: &str, token: &str, ids: &[String]
 fn hello<A: AppAccess + Clone>(access: &A, server: ServerId) {
     let app = access.app();
     let our_node = app.node_hex.lock().unwrap().clone();
+    let own_origin = crate::account::effective_server();
     let day = bell::day_of(chrono::Utc::now());
     let targets: Vec<(String, String)> = {
         let servers = app.servers.lock().unwrap();
@@ -542,6 +573,7 @@ fn hello<A: AppAccess + Clone>(access: &A, server: ServerId) {
         peers
             .iter()
             .filter(|(node, p)| Some(node.as_str()) != our_node.as_deref() && member_ok(state, p.user))
+            .filter(|(_, p)| doorbell.origin_allowed(server, &p.url, &own_origin))
             .map(|(_, p)| (p.url.clone(), bell::token(&p.key, day)))
             .collect()
     };
@@ -942,10 +974,32 @@ mod tests {
         assert!(new);
         assert_eq!(d.own_key(server), (key, false));
         d.add_awaited(server, vec!["dd".repeat(12)], &HashSet::new(), 5);
+        d.note_invite_origin(server, "https://invites.example".into());
+        assert!(d.adopt_invite_origin(server));
         d.save(&dir).unwrap();
         let loaded = Doorbell::load(&dir);
         assert_eq!(loaded.saved.own.get(&server), Some(&key));
         assert_eq!(loaded.awaited_count(server), 1);
+        assert!(loaded.origin_allowed(server, "https://invites.example", "https://commy.chat"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rings_go_only_to_our_account_server_or_the_one_that_invited_us() {
+        let mut d = Doorbell::default();
+        let (server, other) = (ServerId::new(), ServerId::new());
+        let own = "https://commy.chat";
+        assert!(d.origin_allowed(server, own, own));
+        assert!(!d.origin_allowed(server, "https://elsewhere.example", own));
+        assert!(!d.adopt_invite_origin(server), "nothing noted yet");
+        d.note_invite_origin(server, "https://elsewhere.example".into());
+        assert!(!d.origin_allowed(server, "https://elsewhere.example", own), "noted is not joined");
+        assert!(d.adopt_invite_origin(server));
+        assert!(!d.adopt_invite_origin(server), "taken once");
+        assert!(d.origin_allowed(server, "https://elsewhere.example", own));
+        assert!(!d.origin_allowed(other, "https://elsewhere.example", own), "per server");
+        assert!(!d.origin_allowed(server, "https://elsewhere.example.evil", own));
+        assert!(d.retain_servers(|s| *s != server));
+        assert!(!d.origin_allowed(server, "https://elsewhere.example", own));
     }
 }
