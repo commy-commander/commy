@@ -217,6 +217,7 @@ jobs:
           bundle="target/$TARGET/release/bundle"
           scheme="$(/usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes:0:CFBundleURLSchemes:0" "$bundle/macos/Commy.app/Contents/Info.plist")"
           [ "$scheme" = commy ] || { echo "Info.plist does not declare commy://"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$bundle/macos/Commy.app"
           cp "$bundle"/dmg/*.dmg "$out/Commy_${VERSION}_universal.dmg"
           COPYFILE_DISABLE=1 tar -czf "$out/Commy_${VERSION}_universal.app.tar.gz" -C "$bundle/macos" Commy.app
           ls -la "$out"
