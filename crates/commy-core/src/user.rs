@@ -50,6 +50,8 @@ pub struct UserProfile {
     pub identity: Option<IdentityKey>,
     #[serde(default)]
     pub presence_until: Option<i64>,
+    #[serde(default)]
+    pub banner: Option<String>,
 }
 
 pub const MAX_ABOUT_CHARS: usize = 190;
@@ -80,6 +82,10 @@ impl Avatar {
     }
 }
 
+pub fn valid_banner(raw: &str) -> bool {
+    matches!(Avatar::parse(raw), Some(Avatar::Image { .. }))
+}
+
 pub fn is_emoji_like(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= MAX_EMOJI_BYTES
@@ -101,6 +107,7 @@ impl UserProfile {
             activity_cover: None,
             activity_since: None,
             about: None,
+            banner: None,
             identity: None,
             presence_until: None,
         }
@@ -133,6 +140,14 @@ mod tests {
         assert_eq!(user.visible_name(), "commy");
         user.display_name = Some("Commy C".to_string());
         assert_eq!(user.visible_name(), "Commy C");
+    }
+
+    #[test]
+    fn banners_are_image_blobs_only() {
+        assert!(valid_banner("blob:abc123"));
+        assert!(!valid_banner("emoji:\u{1f600}"));
+        assert!(!valid_banner("blob:"));
+        assert!(!valid_banner("blob:../x"));
     }
 
     #[test]

@@ -3788,30 +3788,82 @@ async fn set_avatar(
 }
 
 const AVATAR_FILE: &str = "avatar.img";
+const BANNER_FILE: &str = "profile-banner.img";
+const MAX_BANNER_BYTES: usize = 512 * 1024;
+
+#[tauri::command]
+async fn set_profile_banner(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    data: Option<String>,
+) -> CmdResult<UserProfile> {
+    let banner = match data {
+        None => None,
+        Some(data) => {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .map_err(|_| "image data is not valid base64".to_string())?;
+            if bytes.len() > MAX_BANNER_BYTES {
+                return Err("banner image is too large".into());
+            }
+            if !is_jpeg_or_png(&bytes) {
+                return Err("banner must be a JPEG or PNG image".into());
+            }
+            if let Some(dir) = app.data_dir() {
+                std::fs::write(dir.join(BANNER_FILE), &bytes).map_err(err_to_string)?;
+            }
+            let blob = {
+                let net = app.net.lock().await;
+                let node = net.as_ref().ok_or("network is not ready yet")?;
+                node.add_blob(bytes).await.map_err(err_to_string)?
+            };
+            Some(commy_core::Avatar::Image { blob }.encode())
+        }
+    };
+    if banner.is_none() {
+        if let Some(dir) = app.data_dir() {
+            let _ = std::fs::remove_file(dir.join(BANNER_FILE));
+        }
+    }
+    let profile = {
+        let mut guard = app.profile.lock().unwrap();
+        let profile = guard.as_mut().ok_or("set a username first")?;
+        profile.banner = banner;
+        profile.clone()
+    };
+    app.persist_profile();
+    announce_profile(&app, &handle, &profile).await;
+    let _ = handle.emit("profile-changed", &profile);
+    Ok(profile)
+}
 
 fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0xd8, 0xff]) || bytes.starts_with(&[0x89, b'P', b'N', b'G'])
 }
 
 async fn restore_avatar_blob(app: &tauri::State<'_, App>, node: &CommyNode) {
-    let wants_image = app
-        .profile
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|p| p.avatar.as_deref().and_then(commy_core::Avatar::parse))
-        .is_some_and(|a| matches!(a, commy_core::Avatar::Image { .. }));
-    if !wants_image {
-        return;
-    }
-    let Some(path) = app.data_dir().map(|d| d.join(AVATAR_FILE)) else { return };
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            if let Err(e) = node.add_blob(bytes).await {
-                tracing::warn!("could not restore avatar blob: {e}");
-            }
+    let (wants_avatar, wants_banner) = {
+        let guard = app.profile.lock().unwrap();
+        let profile = guard.as_ref();
+        let avatar = profile
+            .and_then(|p| p.avatar.as_deref().and_then(commy_core::Avatar::parse))
+            .is_some_and(|a| matches!(a, commy_core::Avatar::Image { .. }));
+        let banner = profile.is_some_and(|p| p.banner.as_deref().is_some_and(commy_core::user::valid_banner));
+        (avatar, banner)
+    };
+    for (wanted, file, what) in [(wants_avatar, AVATAR_FILE, "avatar"), (wants_banner, BANNER_FILE, "banner")] {
+        if !wanted {
+            continue;
         }
-        Err(e) => tracing::warn!("avatar image missing: {e}"),
+        let Some(path) = app.data_dir().map(|d| d.join(file)) else { continue };
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                if let Err(e) = node.add_blob(bytes).await {
+                    tracing::warn!("could not restore {what} blob: {e}");
+                }
+            }
+            Err(e) => tracing::warn!("{what} image missing: {e}"),
+        }
     }
 }
 
@@ -5045,6 +5097,7 @@ pub fn run() {
             set_afk_timeout,
             set_afk_channel,
             set_avatar,
+            set_profile_banner,
             set_share_activity,
             update_channel,
             set_channel_banner,

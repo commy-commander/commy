@@ -4,7 +4,7 @@ import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { buildAuthOptions } from "../src/auth.js";
 import { discoveryDocument, featureSummary, loadConfig } from "../src/config.js";
-import { apicalypseString, cleanQuery, customerId, igdbResults, klipyResults, mediaUrl } from "../src/media.js";
+import { apicalypseString, cleanQuery, customerId, igdbResults, klipyResults, mediaHost, mediaUrl } from "../src/media.js";
 
 const ORIGIN = "http://localhost:3001";
 const ENV = { BETTER_AUTH_SECRET: "test-secret-".repeat(4), DATABASE_URL: "postgres://unused", BETTER_AUTH_URL: ORIGIN };
@@ -41,6 +41,7 @@ function fakeFetch(log) {
     }
     if (u.startsWith("https://static.klipy.com/")) return new Response("<html>", { headers: { "content-type": "text/html" } });
     if (u.startsWith("https://images.igdb.com/")) return new Response(GIF_BYTES, { headers: { "content-type": "image/jpeg" } });
+    if (/^https:\/\/[a-z0-9]+\.giphy\.com\//.test(u)) return new Response(GIF_BYTES, { headers: { "content-type": "image/gif" } });
     return new Response("not found", { status: 404 });
   };
 }
@@ -193,7 +194,18 @@ test("game search reuses the Twitch app token", async () => {
 test("only GIF and cover image URLs are accepted for loading", () => {
   assert.ok(mediaUrl("https://static.klipy.com/ii/4e7b/fd/3b/5wGhb3j5.gif"));
   assert.ok(mediaUrl("https://images.igdb.com/igdb/image/upload/t_thumb/co1rs4.jpg"));
+  assert.ok(mediaUrl("https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYWJjZGVm/200w.gif?cid=790b7611abcdef&ep=v1_gifs_search&rid=200w.gif&ct=g"));
+  assert.ok(mediaUrl("https://media.giphy.com/media/3o7aD2saalBwwftBIY/giphy-downsized-medium.gif"));
+  assert.ok(mediaUrl("https://media0.giphy.com/media/3o7aD2saalBwwftBIY/giphy.webp"));
+  assert.ok(mediaUrl("https://i.giphy.com/3o7aD2saalBwwftBIY.gif"));
   for (const bad of [
+    "https://media10.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif",
+    "https://api.giphy.com/v1/gifs/search",
+    "https://giphy.com/gifs/3o7aD2saalBwwftBIY",
+    "https://media1.giphy.com/media/3o7aD2saalBwwftBIY/giphy.mp4",
+    "https://media1.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif?" + "x".repeat(300),
+    "https://media1.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif#frag",
+    "https://user:pw@media1.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif",
     "http://static.klipy.com/a.gif",
     "https://api.klipy.com/api/v1/key/gifs/search",
     "https://static.klipy.com.evil.example/a.gif",
@@ -207,6 +219,14 @@ test("only GIF and cover image URLs are accepted for loading", () => {
     "not a url",
   ]) {
     assert.equal(mediaUrl(bad), null, bad);
+  }
+});
+
+test("media hosts match exactly, with one pattern for the numbered GIPHY hosts", () => {
+  assert.equal(mediaHost("static.klipy.com").host, "static.klipy.com");
+  for (const host of ["media.giphy.com", "media0.giphy.com", "media4.giphy.com", "i.giphy.com"]) assert.ok(mediaHost(host), host);
+  for (const host of ["klipy.com", "static.klipy.com.evil.example", "xstatic.klipy.com", "media00.giphy.com", "giphy.com", ""]) {
+    assert.equal(mediaHost(host), null, host);
   }
 });
 
@@ -229,6 +249,9 @@ test("images load through the server for signed in apps only", async () => {
 
   const cover = await call("GET", "/commy/media", { cookie, query: { u: "https://images.igdb.com/igdb/image/upload/t_thumb/co1rs4.jpg" } });
   assert.equal(cover.type, "image/jpeg");
+  const giphy = await call("GET", "/commy/media", { cookie, query: { u: "https://media3.giphy.com/media/3o7aD2saalBwwftBIY/200w.gif?cid=790b7611abcdef&rid=200w.gif&ct=g" } });
+  assert.equal(giphy.status, 200);
+  assert.equal(giphy.type, "image/gif");
 
   assert.equal((await call("GET", "/commy/media", { cookie, query: { u: "https://example.org/a.gif" } })).status, 400);
   const before = log.length;
