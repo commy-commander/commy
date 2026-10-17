@@ -802,6 +802,23 @@ body {
 }
 .embed-source:hover { color: var(--text-normal); text-decoration: underline; }
 
+.image-gate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 400px;
+  margin-top: 2px;
+  padding: 10px 12px;
+  background: var(--bg-dark);
+  border: 1px solid var(--bg-darkest);
+  border-radius: var(--radius);
+}
+.image-gate-text { flex: 1; min-width: 0; }
+.image-gate-title { font-weight: 600; color: var(--header-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.image-gate-hint { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.image-gate-load { flex-shrink: 0; min-width: 92px; }
+.image-gate-load:disabled { opacity: .6; cursor: default; background: var(--bg-active); color: var(--header-primary); }
+
 /* Click-to-expand image overlay */
 .lightbox {
   position: fixed;
