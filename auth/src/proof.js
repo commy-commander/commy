@@ -1,10 +1,6 @@
-// Proof that a desktop app holds the private key behind an iroh node id.
-// The server hands out a stateless HMAC challenge bound to the user and node,
-// and the app signs a fixed message with its node key (ed25519).
 import { createHmac, createPublicKey, timingSafeEqual, verify } from "node:crypto";
 
 export const CHALLENGE_TTL_MS = 5 * 60 * 1000;
-// DER prefix for an ed25519 SubjectPublicKeyInfo holding a raw 32 byte key
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 function mac(secret, userId, nodeId, expires) {
@@ -25,8 +21,6 @@ export function checkChallenge(secret, userId, nodeId, challenge, now = Date.now
   return expected.length === given.length && timingSafeEqual(expected, given);
 }
 
-// The exact bytes the app signs. Binding the server URL stops a signature made
-// for one account server from being replayed against another.
 export function linkMessage(serverUrl, nodeId, challenge) {
   return `commy-device-link:v1\n${serverUrl}\n${nodeId}\n${challenge}`;
 }

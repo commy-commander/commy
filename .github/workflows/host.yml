@@ -1,5 +1,3 @@
-# Tests the VPS hardening scripts in deploy/host on a real Ubuntu machine.
-
 name: Host hardening
 
 on:
@@ -25,8 +23,6 @@ jobs:
       - name: Unit tests
         run: sh deploy/host/commy-firewall.test.sh
 
-      # A network namespace stands in for the internet: it reaches the host over a
-      # veth pair, so its traffic to published ports goes through DOCKER-USER.
       - name: Simulated outside client
         run: |
           sudo ip netns add outside
@@ -76,7 +72,6 @@ jobs:
           expect 80 200
           sudo systemctl is-enabled commy-firewall.timer
           sudo ufw status | grep -q 'commy-cf'
-          # Docker restarts rebuild its chains; the drop-in re-applies ours
           sudo systemctl restart docker
           docker start https >/dev/null; sleep 2
           expect 443 000

@@ -1,24 +1,3 @@
-//! Catch-up sessions over a direct stream (ALPN `commy/catchup/1`).
-//!
-//! A member that was offline dials a gossip neighbor and the two swap
-//! the recent history one of them lacks: signed messages, edits and
-//! delete proofs, with the signers' profiles. The reconciliation itself
-//! is `commy_core::catchup`; this module carries it over the wire and is
-//! generic over the stream, so it runs the same over QUIC and over an
-//! in-memory pipe in tests.
-//!
-//! A session, initiator first:
-//! 1. `Hello` both ways, each signed over both node ids and its role.
-//! 2. The initiator sends `Digests`; the responder answers `Items` pages
-//!    for the buckets that differ, then `ItemsEnd` naming any bucket of
-//!    the initiator's it left out.
-//! 3. The initiator sends `Want`, then `Push` pages of what the
-//!    responder lacks, each after a `Profiles` frame with the signers it
-//!    names first, then `Done`.
-//! 4. The responder applies them and answers `Applied`, then sends what
-//!    was wanted the same way, then `Done`.
-//! 5. The initiator applies them and answers `Applied`.
-
 use crate::media::{read_frame, write_frame, MediaError, MAX_MEDIA_FRAME};
 use commy_core::catchup::{
     bucket_digest, cap, current_window, day_number, diff, mismatched, BucketItems, Listing,
@@ -39,66 +18,40 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const CATCHUP_ALPN: &[u8] = b"commy/catchup/1";
 
-/// Most items (messages plus delete proofs) in one `Push` frame, most
-/// profiles in one `Profiles` frame, and most entries in one `Items`
-/// frame, each bucket counting one more than its items. A peer sending
-/// a larger page ends the session.
 pub const PAGE_SIZE: usize = 200;
 
-/// Largest clock difference a `Hello` may show, in ms.
 pub const MAX_CLOCK_SKEW_MS: u64 = 10 * 60 * 1000;
 
-/// Delay suggested to a peer that may succeed soon, in ms.
 pub const RETRY_AFTER_MS: u64 = 3000;
 
-/// Longest wait for the peer's next frame.
 pub const FRAME_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Longest a responder waits for the initiator's `Hello`.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Longest a responder waits for the initiator's `Applied` after its
-/// own `Done`. Without it, nothing it sent counts as delivered. The
-/// initiator may still be applying pages sent earlier, so no less than
-/// [`FRAME_TIMEOUT`].
 pub const APPLIED_TIMEOUT: Duration = FRAME_TIMEOUT;
 
-/// Most bytes of profiles a peer may have waiting for the page they
-/// precede.
 pub const MAX_PROFILE_BYTES: usize = 2 * 1024 * 1024;
 
-/// Profiles a peer may send beyond the signers of the pages it sent so
-/// far: those of the one page they precede.
 pub const PROFILE_MARGIN: usize = PAGE_SIZE;
 
-/// Most items (messages plus delete proofs) one side takes in a session,
-/// each page counting at least one. A sender stops adding ids before
-/// its items pass this; the rest wait for a later session.
 pub const MAX_PUSHED_ITEMS: usize = 2 * CATCHUP_MAX_ITEMS;
 
-/// Largest profile sent along or taken: what one gossip `ProfileUpdate`
-/// carries, the same as for a message (see the protocol tests). A full
-/// page of signers so stays well within [`MAX_PROFILE_BYTES`].
 pub const MAX_RELAYED_PROFILE_BYTES: usize = commy_core::MAX_MESSAGE_BYTES;
 
-/// Most bucket digests a peer may send.
 pub const MAX_DIGESTS: usize = 50_000;
 
-/// Most entries the responder's `Items` may list in all, each bucket
-/// counting as one more than its items.
 pub const MAX_LISTED: usize = 500_000;
 
-/// Largest `Hello` read from a peer not checked yet.
 const MAX_HELLO_BYTES: u32 = 4096;
 
-/// Bytes a frame may fill, leaving room for its own framing.
-const FRAME_BUDGET: usize = MAX_MEDIA_FRAME as usize - 1024;
+const FRAMING_HEADROOM_BYTES: usize = 1024;
 
-/// Frames of a catch-up session, postcard encoded. Variants are only
-/// ever appended.
+const FRAME_BUDGET: usize = MAX_MEDIA_FRAME as usize - FRAMING_HEADROOM_BYTES;
+
+const ENTRIES_PER_BUCKET_KEY: usize = 1;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CatchupFrame {
-    /// Who is speaking. `sig` covers [`hello_bytes`].
     Hello {
         server: ServerId,
         user: UserId,
@@ -106,43 +59,26 @@ pub enum CatchupFrame {
         ts_ms: i64,
         sig: Signature,
     },
-    /// The session is turned down. A retry delay is given when trying
-    /// again later may work.
     Refused {
         reason: String,
         retry_after_ms: Option<u64>,
     },
-    /// The initiator's bucket digests.
     Digests(Vec<BucketDigest>),
-    /// One page of the responder's items of the buckets that differ. A
-    /// large bucket continues on the next page.
     Items(Vec<BucketItems>),
-    /// Ids the initiator lacks, newest first.
     Want(Vec<MessageId>),
-    /// One page of messages and delete proofs.
     Push {
         messages: Vec<Message>,
         tombstones: Vec<TombstoneProof>,
     },
-    /// No more pages from this side.
     Done,
-    /// End of the responder's `Items`. `omitted` names buckets of the
-    /// initiator's digests it did not compare, which so prove nothing.
     ItemsEnd { omitted: Vec<BucketKey> },
-    /// Profiles of signers named by the next `Push` page and by no
-    /// earlier one, so a peer that has not met them yet can check it.
     Profiles(Vec<UserProfile>),
-    /// What became of the other side's pages: ids set aside until their
-    /// signer's key is known, and ids refused or ignored. The peer holds
-    /// the rest now.
     Applied {
         held: Vec<MessageId>,
         rejected: Vec<MessageId>,
     },
 }
 
-/// Which side of a session a `Hello` speaks for. It is signed too, so a
-/// Hello sent back to the side that made it does not pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelloRole {
     Initiator,
@@ -158,8 +94,6 @@ impl HelloRole {
     }
 }
 
-/// Bytes a `Hello` signs. Both sides list the initiator's node first,
-/// so a Hello only counts between those two nodes and in its role.
 pub fn hello_bytes(
     role: HelloRole,
     server: ServerId,
@@ -173,7 +107,6 @@ pub fn hello_bytes(
 }
 
 impl CatchupFrame {
-    /// A `Hello` from `user` in `role` for a session between two nodes.
     pub fn hello(
         identity: &Identity,
         role: HelloRole,
@@ -196,56 +129,35 @@ impl CatchupFrame {
     }
 }
 
-/// Whether a peer may catch up with us, judged from our copy of the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerCheck {
-    /// A member in good standing whose pinned key matches.
     Allowed,
-    /// Not known yet, e.g. their join has not reached us. Worth a retry.
     Unknown,
-    /// Banned, or holding a different key than the pinned one.
     Denied,
 }
 
-/// Outcome of applying one page.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApplyReport {
-    /// Ids whose message or delete changed our state.
     pub applied: Vec<MessageId>,
-    /// Ids set aside until their signer's key is known.
     pub held: Vec<MessageId>,
-    /// Ids refused, e.g. for a bad signature or an unknown channel.
     pub rejected: Vec<MessageId>,
 }
 
-/// What a session moved, from one side's point of view.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionReport {
-    /// Ids of ours the peer now holds: what it confirmed taking from us
-    /// in this session, plus `peer_had`. Pending sends among them are done.
     pub delivered: Vec<MessageId>,
-    /// Ids of ours the peer already held at the same or a newer version.
     pub peer_had: Vec<MessageId>,
-    /// Ids the peer sent that changed our state.
     pub received: Vec<MessageId>,
-    /// Items from the peer set aside until their signer's key is known.
     pub held: usize,
 }
 
-/// Why a peer was turned down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
-    /// Not a member we know yet.
     UnknownMember,
-    /// Banned, or the key does not match the pinned one.
     Denied,
-    /// We are not in that server.
     NotInServer,
-    /// The signature is invalid or was made for other node ids or role.
     BadSignature,
-    /// The timestamp is too far from our clock.
     ClockSkew,
-    /// Too many sessions at once, or not ready yet.
     Busy,
 }
 
@@ -257,20 +169,18 @@ impl Refusal {
         }
     }
 
-    /// The `Refused` frame telling a peer about this refusal. Every
-    /// reason that depends on who the peer is or which servers we are in
-    /// reads as an unknown member, so a refusal tells a stranger nothing.
-    /// The precise reason stays in our own logs.
     pub fn frame(self) -> CatchupFrame {
-        let shown = match self {
-            Refusal::NotInServer | Refusal::Denied | Refusal::BadSignature => {
-                Refusal::UnknownMember
-            }
-            other => other,
-        };
+        let shown = self.revealing_nothing_about_membership();
         CatchupFrame::Refused {
             reason: shown.to_string(),
             retry_after_ms: shown.retry_after_ms(),
+        }
+    }
+
+    fn revealing_nothing_about_membership(self) -> Refusal {
+        match self {
+            Refusal::NotInServer | Refusal::Denied | Refusal::BadSignature => Refusal::UnknownMember,
+            other => other,
         }
     }
 }
@@ -290,13 +200,11 @@ impl fmt::Display for Refusal {
 
 #[derive(Debug, Error)]
 pub enum CatchupError {
-    /// The peer turned us down.
     #[error("peer refused catch-up: {reason}")]
     Refused {
         reason: String,
         retry_after_ms: Option<u64>,
     },
-    /// We turned the peer down.
     #[error("refused peer: {0}")]
     Rejected(Refusal),
     #[error("unexpected catch-up frame")]
@@ -314,7 +222,6 @@ pub enum CatchupError {
 }
 
 impl CatchupError {
-    /// Delay after which the peer suggested trying again, if any.
     pub fn retry_after_ms(&self) -> Option<u64> {
         match self {
             CatchupError::Refused { retry_after_ms, .. } => *retry_after_ms,
@@ -323,28 +230,14 @@ impl CatchupError {
     }
 }
 
-/// The app's side of a session. Calls are short and synchronous;
-/// implementations lock their state briefly inside each one.
 pub trait CatchupStore {
-    /// Our user id and identity for `server`, or None when we are not a
-    /// member. Asked at the start of every session, so a swapped
-    /// identity applies from the next one.
     fn local_identity(&self, server: ServerId) -> Option<(UserId, Identity)>;
-    /// Whether `user` holding `key` may catch up with us, see [`check_peer`].
     fn verify_peer(&self, server: ServerId, user: UserId, key: &IdentityKey) -> PeerCheck;
-    /// Our bucket digests, see `commy_core::catchup::digests`.
     fn digests(&self, server: ServerId) -> Vec<BucketDigest>;
-    /// Our items of these buckets, see `commy_core::catchup::items`.
     fn items(&self, server: ServerId, keys: &[BucketKey]) -> Vec<BucketItems>;
-    /// The messages and delete proofs we hold among `ids`, see [`collect`].
     fn get(&self, server: ServerId, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>);
-    /// Keyed profiles of `users`, see [`profiles_of`].
     fn profiles(&self, server: ServerId, users: &[UserId]) -> Vec<UserProfile>;
-    /// Takes the profiles a peer sent along with a page, before that
-    /// page is applied, see [`apply_profiles`]. Held items whose signer
-    /// became known may be retried afterwards.
     fn apply_profiles(&self, server: ServerId, profiles: Vec<UserProfile>);
-    /// Applies one page from the peer, delete proofs first, see [`apply_items`].
     fn apply(
         &self,
         server: ServerId,
@@ -353,7 +246,6 @@ pub trait CatchupStore {
     ) -> ApplyReport;
 }
 
-/// [`CatchupStore::verify_peer`] over one server's state.
 pub fn check_peer(state: &ServerState, user: UserId, key: &IdentityKey) -> PeerCheck {
     if state.server.banned.contains(&user) {
         return PeerCheck::Denied;
@@ -368,10 +260,6 @@ pub fn check_peer(state: &ServerState, user: UserId, key: &IdentityKey) -> PeerC
     }
 }
 
-/// [`CatchupStore::get`] over one server's state, in the order of `ids`,
-/// with every delete proof listed here for each id (see
-/// `ServerState::tombstones_since`). Proofs for channels that no longer
-/// exist are left out.
 pub fn collect(state: &ServerState, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>) {
     let ids = dedup(ids.iter().copied());
     let order: HashMap<MessageId, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
@@ -392,10 +280,6 @@ pub fn collect(state: &ServerState, ids: &[MessageId]) -> (Vec<Message>, Vec<Tom
     (messages.into_iter().cloned().collect(), tombstones)
 }
 
-/// [`CatchupStore::profiles`] over one server's state: the profiles of
-/// `users` that carry a key, members or not, once each, in the order
-/// asked. So what someone who left wrote, or someone whose join the peer
-/// missed, verifies there.
 pub fn profiles_of(state: &ServerState, users: &[UserId]) -> Vec<UserProfile> {
     dedup(users.iter().copied())
         .into_iter()
@@ -405,12 +289,6 @@ pub fn profiles_of(state: &ServerState, users: &[UserId]) -> Vec<UserProfile> {
         .collect()
 }
 
-/// [`CatchupStore::apply_profiles`] over one server's state. Each keyed
-/// profile of someone without a key here pins that key, whether they are
-/// a member, left, were banned or joined unseen. The profile itself is
-/// stored only when we hold none for them, so a relayed copy never
-/// replaces one we have; presence stays as we know it, and nobody is
-/// made a member. Returns the users whose key we learned.
 pub fn apply_profiles(state: &mut ServerState, profiles: Vec<UserProfile>) -> Vec<UserId> {
     let mut learned = Vec::new();
     for mut profile in profiles {
@@ -422,7 +300,6 @@ pub fn apply_profiles(state: &mut ServerState, profiles: Vec<UserProfile>) -> Ve
         match state.profiles.get_mut(&user) {
             Some(known) => known.identity = Some(key),
             None => {
-                // Presence comes live from the user, not from a relayed copy.
                 profile.presence = Presence::Offline;
                 state.profiles.insert(user, profile);
             }
@@ -432,9 +309,6 @@ pub fn apply_profiles(state: &mut ServerState, profiles: Vec<UserProfile>) -> Ve
     learned
 }
 
-/// [`CatchupStore::apply`] over one server's state. Items whose signer
-/// has no known key yet are returned as events for the app to hold and
-/// retry once their key arrives.
 pub fn apply_items(
     state: &mut ServerState,
     messages: Vec<Message>,
@@ -442,8 +316,7 @@ pub fn apply_items(
 ) -> (ApplyReport, Vec<ServerEvent>) {
     let mut report = ApplyReport::default();
     let mut held = Vec::new();
-    // Proofs first, so a message deleted elsewhere is never taken in.
-    let events = tombstones
+    let proofs_then_messages = tombstones
         .into_iter()
         .map(|p| (p.message, p.by, p.into_event()))
         .chain(
@@ -451,7 +324,7 @@ pub fn apply_items(
                 .into_iter()
                 .map(|m| (m.id, m.author, ServerEvent::MessageCreate { message: m })),
         );
-    for (id, signer, event) in events {
+    for (id, signer, event) in proofs_then_messages {
         if state.identity_of(signer).is_none() {
             report.held.push(id);
             held.push(event);
@@ -469,8 +342,6 @@ pub fn apply_items(
     (report, held)
 }
 
-/// Runs a session as the side that dialed. `local_node` and
-/// `remote_node` are the two ends' node ids as the transport sees them.
 pub async fn run_initiator<IO, S>(
     mut io: IO,
     store: &S,
@@ -512,8 +383,6 @@ where
     send(&mut io, &CatchupFrame::Digests(ours)).await?;
     let (theirs, omitted) = read_items(&mut io).await?;
 
-    // A bucket of ours matched only if the responder neither listed it
-    // nor left it out.
     let window = current_window();
     let answered: HashSet<BucketKey> = theirs.iter().map(|(key, _)| *key).collect();
     let theirs: Vec<BucketItems> = theirs
@@ -536,13 +405,11 @@ where
     log_capped("fetch", cap(&mut we_want));
 
     send(&mut io, &CatchupFrame::Want(we_want.clone())).await?;
-    // The responder takes only items of the buckets it listed.
     let pushed = send_items(&mut io, store, server, &they_lack, |key| listed.contains(&key)).await?;
     let verdict = read_applied(&mut io).await?;
 
     let wanted: HashSet<MessageId> = we_want.into_iter().collect();
     let got = receive_pages(&mut io, store, server, |id, _| wanted.contains(&id)).await?;
-    // Our pages are in; the peer hanging up first loses only its count.
     if let Err(e) = send(&mut io, &got.verdict()).await {
         tracing::debug!("catch-up peer left before our Applied: {e}");
     }
@@ -560,9 +427,6 @@ where
     })
 }
 
-/// Runs a session as the side that was dialed: [`admit`] within
-/// [`HANDSHAKE_TIMEOUT`], then [`respond`]. The server comes from the
-/// initiator's Hello and is returned with the report.
 pub async fn run_responder<IO, S>(
     mut io: IO,
     store: &S,
@@ -580,18 +444,12 @@ where
     respond(io, store, admitted, local_node, remote_node).await
 }
 
-/// An initiator whose Hello passed [`admit`].
 pub struct Admitted {
-    /// The server the session is about.
     pub server: ServerId,
     me: UserId,
     identity: Identity,
 }
 
-/// Reads the initiator's Hello and checks it: the signature and the
-/// clock first, which need nothing but the Hello, then our place in that
-/// server and theirs. A Hello that does not pass is refused. Not timed;
-/// callers bound it, see [`HANDSHAKE_TIMEOUT`].
 pub async fn admit<IO, S>(
     io: &mut IO,
     store: &S,
@@ -623,8 +481,6 @@ where
     }
 }
 
-/// Runs the rest of a responder session for an initiator that
-/// [`admit`] let in.
 pub async fn respond<IO, S>(
     mut io: IO,
     store: &S,
@@ -685,8 +541,6 @@ where
         .collect();
     let answered: HashSet<BucketKey> = answer.iter().map(|(key, _)| *key).collect();
     let offered: HashSet<MessageId> = ids_of(&answer).collect();
-    // Not wanting an item proves holding it only in a bucket the
-    // initiator has a digest for, so it surely compared that bucket.
     let shown: Vec<MessageId> = answer
         .iter()
         .filter(|(key, _)| their_keys.contains(key))
@@ -701,7 +555,6 @@ where
         CatchupFrame::Want(ids) => ids,
         other => return Err(unexpected(other)),
     };
-    // A full list may have been cut short, so it says nothing about the rest.
     let want_complete = want.len() < CATCHUP_MAX_ITEMS;
     let want_all: HashSet<MessageId> = want.iter().copied().collect();
     let mut want: Vec<MessageId> = want.into_iter().filter(|id| offered.contains(id)).collect();
@@ -743,8 +596,6 @@ where
     ))
 }
 
-/// Checks what a Hello proves on its own: a signature in `role` over
-/// this session's node ids, made recently. Returns who it claims to be.
 fn check_signed(
     hello: &CatchupFrame,
     role: HelloRole,
@@ -771,7 +622,6 @@ fn check_signed(
     Ok((*server, *user, *identity))
 }
 
-/// Checks a peer's standing in our copy of the server.
 fn check_standing<S: CatchupStore + ?Sized>(
     store: &S,
     server: ServerId,
@@ -785,8 +635,6 @@ fn check_standing<S: CatchupStore + ?Sized>(
     }
 }
 
-/// Ids of buckets whose items, read after the digests were made, still
-/// match those digests. A bucket that changed in between proves nothing.
 fn verified(settled: &[BucketItems], digests: &HashMap<BucketKey, BucketDigest>) -> Vec<MessageId> {
     settled
         .iter()
@@ -795,9 +643,6 @@ fn verified(settled: &[BucketItems], digests: &HashMap<BucketKey, BucketDigest>)
         .collect()
 }
 
-/// Ids of ours the responder holds at no lower version: the buckets that
-/// matched, and whatever its item lists show for the rest. An id with a
-/// delete proof the responder lacks does not count.
 fn initiator_peer_had(
     settled: &[BucketItems],
     sent: &HashMap<BucketKey, BucketDigest>,
@@ -823,9 +668,6 @@ fn initiator_peer_had(
     )
 }
 
-/// What the peer holds of ours: what we pushed minus what its `Applied`
-/// says it held back or refused, plus what it had already. Nothing
-/// pushed counts without an `Applied`.
 fn delivered(
     pushed: &[MessageId],
     verdict: Option<&(Vec<MessageId>, Vec<MessageId>)>,
@@ -838,7 +680,6 @@ fn delivered(
     dedup(taken.into_iter().flatten().chain(peer_had).copied())
 }
 
-/// What became of the peer's pages.
 #[derive(Debug, Default)]
 struct Received {
     applied: Vec<MessageId>,
@@ -847,7 +688,6 @@ struct Received {
 }
 
 impl Received {
-    /// The `Applied` frame telling the peer what became of its pages.
     fn verdict(&self) -> CatchupFrame {
         CatchupFrame::Applied {
             held: self.held.clone(),
@@ -856,15 +696,6 @@ impl Received {
     }
 }
 
-/// Reads `Profiles` and `Push` pages until `Done`, applying the items
-/// inside the window that `accept` lets through, each page after the
-/// profiles of its signers. Items left out count as rejected.
-///
-/// Profiles apply to the page right after them and are dropped once it
-/// is in; one larger than [`MAX_RELAYED_PROFILE_BYTES`] is ignored. A
-/// peer that sends more than [`PROFILE_MARGIN`] profiles beyond the
-/// signers its pages named so far, or has more than [`MAX_PROFILE_BYTES`]
-/// of them waiting, ends the session.
 async fn receive_pages<IO, S>(
     io: &mut IO,
     store: &S,
@@ -875,7 +706,6 @@ where
     IO: AsyncRead + Unpin,
     S: CatchupStore + ?Sized,
 {
-    // Empty pages count too.
     let mut budget = MAX_PUSHED_ITEMS;
     let mut waiting: HashMap<UserId, (UserProfile, usize)> = HashMap::new();
     let mut waiting_bytes = 0usize;
@@ -946,7 +776,6 @@ where
                 .into_iter()
                 .filter_map(|user| waiting.remove(&user).map(|(p, _)| p))
                 .collect();
-                // What this page did not use goes.
                 waiting.clear();
                 waiting_bytes = 0;
                 if messages.is_empty() && tombstones.is_empty() {
@@ -994,7 +823,6 @@ fn tombstone_key(p: &TombstoneProof) -> BucketKey {
     }
 }
 
-/// Reads the peer's `Applied` as (held, rejected).
 async fn read_applied<R: AsyncRead + Unpin>(
     io: &mut R,
 ) -> Result<(Vec<MessageId>, Vec<MessageId>), CatchupError> {
@@ -1004,8 +832,6 @@ async fn read_applied<R: AsyncRead + Unpin>(
     }
 }
 
-/// Reads the responder's `Items` pages up to `ItemsEnd`. Returns its
-/// listing, one entry per bucket, and the buckets it left out.
 async fn read_items<R: AsyncRead + Unpin>(
     io: &mut R,
 ) -> Result<(Vec<BucketItems>, HashSet<BucketKey>), CatchupError> {
@@ -1037,10 +863,6 @@ async fn read_items<R: AsyncRead + Unpin>(
     }
 }
 
-/// Sends what we hold among `ids` in the buckets `keep` lets through as
-/// `Push` pages, each after a `Profiles` frame with the keyed profiles
-/// of the signers it names first, then `Done`. Stays within
-/// [`MAX_PUSHED_ITEMS`], see [`fit_items`]. Returns the ids sent.
 async fn send_items<IO, S>(
     io: &mut IO,
     store: &S,
@@ -1112,9 +934,6 @@ where
     Ok(dedup(sent))
 }
 
-/// Keeps whole ids, in the order of `ids` (newest first), while their
-/// messages and delete proofs together stay within `max`. The first id
-/// that does not fit and all after it wait for a later session.
 fn fit_items(
     ids: &[MessageId],
     mut messages: Vec<Message>,
@@ -1147,9 +966,6 @@ fn fit_items(
     (messages, tombstones)
 }
 
-/// Splits items into `Push` frames of at most [`PAGE_SIZE`] items that
-/// each fit in a frame, delete proofs first. An item too large for any
-/// frame is left out.
 fn pages(messages: Vec<Message>, tombstones: Vec<TombstoneProof>) -> Vec<CatchupFrame> {
     #[derive(Serialize)]
     enum Item {
@@ -1178,8 +994,6 @@ fn pages(messages: Vec<Message>, tombstones: Vec<TombstoneProof>) -> Vec<Catchup
         .collect()
 }
 
-/// Splits values into runs of at most [`PAGE_SIZE`] that each fit in a
-/// frame. A value too large for any frame is left out.
 fn chunks<T: Serialize>(values: impl IntoIterator<Item = T>) -> Vec<Vec<T>> {
     let mut out = Vec::new();
     let (mut run, mut bytes) = (Vec::new(), 0usize);
@@ -1202,8 +1016,6 @@ fn chunks<T: Serialize>(values: impl IntoIterator<Item = T>) -> Vec<Vec<T>> {
     out
 }
 
-/// Keeps at most [`MAX_DIGESTS`] digests, the newest days first. The
-/// rest wait for a later session.
 fn fit_digests(mut list: Vec<BucketDigest>) -> Vec<BucketDigest> {
     if list.len() <= MAX_DIGESTS {
         return list;
@@ -1218,13 +1030,8 @@ fn fit_digests(mut list: Vec<BucketDigest>) -> Vec<BucketDigest> {
     list
 }
 
-/// Keeps a listing within `max` entries, each bucket counting one more
-/// than its items. Takes the newest buckets first and leaves out only
-/// those that no longer fit, so one oversized bucket holds back no other.
-/// Returns what is kept and the keys left out, which wait for a later
-/// session.
 fn fit_listing(mut list: Vec<BucketItems>, max: usize) -> (Vec<BucketItems>, Vec<BucketKey>) {
-    let cost = |entry: &BucketItems| 1 + entry.1.len();
+    let cost = |entry: &BucketItems| bucket_entries(&entry.1);
     if list.iter().map(cost).sum::<usize>() <= max {
         return (list, Vec::new());
     }
@@ -1248,28 +1055,27 @@ fn fit_listing(mut list: Vec<BucketItems>, max: usize) -> (Vec<BucketItems>, Vec
     (kept, dropped)
 }
 
-/// Entries of an `Items` page, each bucket counting one more than its
-/// items.
 fn listed_len(page: &[BucketItems]) -> usize {
-    page.iter().map(|(_, list)| 1 + list.len()).sum()
+    page.iter().map(|(_, list)| bucket_entries(list)).sum()
 }
 
-/// Splits a listing into `Items` pages of at most [`PAGE_SIZE`] entries
-/// (see [`listed_len`]). A bucket too large for one page continues on
-/// the next.
+fn bucket_entries(items: &[(MessageId, i64)]) -> usize {
+    ENTRIES_PER_BUCKET_KEY + items.len()
+}
+
 fn item_pages(list: Vec<BucketItems>) -> Vec<Vec<BucketItems>> {
     let mut out = Vec::new();
     let (mut page, mut used): (Vec<BucketItems>, usize) = (Vec::new(), 0);
     for (key, list) in list {
         let mut rest = list.into_iter().peekable();
         loop {
-            // Room for the key and an item, or the page is full.
-            if used + 2 > PAGE_SIZE {
+            let room_for_key_and_one_item = used + ENTRIES_PER_BUCKET_KEY + 1 <= PAGE_SIZE;
+            if !room_for_key_and_one_item {
                 out.push(std::mem::take(&mut page));
                 used = 0;
             }
-            let part: Vec<(MessageId, i64)> = rest.by_ref().take(PAGE_SIZE - used - 1).collect();
-            used += 1 + part.len();
+            let part: Vec<(MessageId, i64)> = rest.by_ref().take(PAGE_SIZE - used - ENTRIES_PER_BUCKET_KEY).collect();
+            used += bucket_entries(&part);
             page.push((key, part));
             if rest.peek().is_none() {
                 break;
@@ -1308,8 +1114,6 @@ async fn read<R: AsyncRead + Unpin>(io: &mut R) -> Result<CatchupFrame, CatchupE
     }
 }
 
-/// Reads the first frame of a session, from a peer not checked yet, so
-/// at most [`MAX_HELLO_BYTES`]. Not timed.
 async fn read_hello<R: AsyncRead + Unpin>(io: &mut R) -> Result<CatchupFrame, CatchupError> {
     let mut len = [0u8; 4];
     match io.read_exact(&mut len).await {
@@ -1328,7 +1132,6 @@ async fn read_hello<R: AsyncRead + Unpin>(io: &mut R) -> Result<CatchupFrame, Ca
     postcard::from_bytes(&buf).map_err(|_| MediaError::Malformed.into())
 }
 
-/// Tells the peer why we stop. Best effort: it may be gone already.
 pub(crate) async fn refuse<W: AsyncWrite + Unpin>(io: &mut W, refusal: Refusal) -> CatchupError {
     tracing::debug!("catch-up peer refused: {refusal}");
     let _ = send(io, &refusal.frame()).await;
@@ -1374,7 +1177,6 @@ mod tests {
     const NODE_B: [u8; 32] = [0xb; 32];
     const MINUTE_MS: i64 = 60_000;
 
-    /// Two replicas of one server: `a` is the owner's device, `b` a friend's.
     fn pair() -> (MemStore, MemStore, ChannelId) {
         let (mut state, channel, owner) = fixture();
         let friend = join(&mut state, "friend");
@@ -1390,7 +1192,6 @@ mod tests {
         Result<(ServerId, SessionReport), CatchupError>,
     );
 
-    /// Runs one session with `a` dialing `b` over an in-memory pipe.
     async fn session(a: &MemStore, b: &MemStore) -> Outcome {
         let (x, y) = tokio::io::duplex(8 * 1024);
         tokio::join!(
@@ -1406,7 +1207,6 @@ mod tests {
         (ra.expect("initiator"), rb)
     }
 
-    /// One session dialed by `a` or by `b`. Returns (a's report, b's).
     async fn either_way(
         a: &MemStore,
         b: &MemStore,
@@ -1500,7 +1300,6 @@ mod tests {
 
         let (ra, rb) = ok_session(&a, &b).await;
         assert!(ra.received.is_empty() && rb.received.is_empty());
-        // Both sides know the other holds everything, without listing items.
         for report in [ra, rb] {
             assert_eq!(
                 sorted(report.peer_had.clone()),
@@ -1552,8 +1351,6 @@ mod tests {
         assert_eq!(a.digests(), b.digests());
         assert_eq!(ra.received, vec![theirs.id]);
         assert_eq!(rb.received, vec![mine.id]);
-        // Each side's older copy was superseded by the peer's newer one,
-        // so the peer counts as holding it; nothing else was shared.
         assert_eq!(ra.peer_had, vec![theirs.id]);
         assert_eq!(rb.peer_had, vec![mine.id]);
         assert_eq!(sorted(ra.delivered), sorted(vec![mine.id, theirs.id]));
@@ -1566,8 +1363,6 @@ mod tests {
         let by_friend = b.post(channel, "friend crosses a line");
         a.add(&by_friend);
         b.add(&by_owner);
-        // The owner deletes their own message on a; on b the owner, a
-        // moderator, deletes the friend's message from that device.
         a.with(|s| {
             let proof = TombstoneProof::sign(
                 s.server.id,
@@ -1609,7 +1404,6 @@ mod tests {
             let (a, b, channel) = pair();
             let doomed = b.post(channel, "gone soon");
             a.add(&doomed);
-            // b deletes it; a still holds the message.
             b.with(|s| {
                 let proof = TombstoneProof::sign(
                     s.server.id,
@@ -1655,7 +1449,6 @@ mod tests {
                 s.apply(p1.clone().into_event()).unwrap();
                 s.apply(p2.clone().into_event()).unwrap();
             });
-            // c missed the second moderator's delete.
             c.with(|s| s.apply(p1.clone().into_event()).unwrap());
             assert_ne!(a.digests(), c.digests());
 
@@ -1676,15 +1469,12 @@ mod tests {
             assert_eq!(held(&c), both, "{case}");
             assert_eq!(held(&a), both, "{case}");
             assert_eq!(a.digests(), c.digests(), "{case}");
-            // Nothing is left to move.
             let (ra, rc) = ok_session(&a, &c).await;
             assert!(ra.received.is_empty() && rc.received.is_empty(), "{case}");
             assert!(!a.has(spam.id) && !c.has(spam.id));
         }
     }
 
-    /// A newcomer who posted on `a` and whose key `a` no longer holds, so
-    /// nobody can vouch for their messages.
     fn unvouched(a: &MemStore, channel: ChannelId) -> (UserId, Message) {
         let newcomer = a.with(|s| join(s, "newcomer"));
         let early = a.post_as(newcomer, channel, "hi all");
@@ -1710,7 +1500,6 @@ mod tests {
             }]
         );
 
-        // Once the join arrives, the held event applies.
         let mut profile = a.with(|s| s.profiles[&newcomer].clone());
         profile.identity = Some(identity_for(newcomer).public());
         b.with(|s| {
@@ -1730,7 +1519,6 @@ mod tests {
     async fn only_what_the_peer_took_counts_as_delivered() {
         let (a, b, channel) = pair();
         let taken = a.post(channel, "taken");
-        // A channel whose create has not reached b yet.
         let plans = Channel::new("plans", ChannelKind::Text, 1);
         let plans_id = plans.id;
         a.with(|s| {
@@ -1779,8 +1567,6 @@ mod tests {
             );
             assert!(!b.has(real.id), "{case}");
 
-            // The intruder's own replica, holding it as if saved, cannot
-            // pass it on either.
             let c = MemStore::new(with_messages(&state, channel, vec![fake]), intruder);
             let (rc, rb) = ok_session(&c, &b).await;
             assert!(rc.delivered.is_empty() && rb.received.is_empty(), "{case}");
@@ -1832,7 +1618,6 @@ mod tests {
                     .await
                     .unwrap();
                 assert_eq!(got.applied, vec![only_b.id]);
-                // Without an answer, this end just hangs up.
                 if let Some(answer) = answer {
                     send(&mut x, &answer(only_b.id)).await.unwrap();
                 }
@@ -1872,8 +1657,6 @@ mod tests {
         assert_eq!(a.digests(), b.digests());
     }
 
-    /// `state` with its channel's messages replaced, loaded the way a
-    /// saved server is (fast, no per-message checks).
     fn with_messages(state: &ServerState, channel: ChannelId, list: Vec<Message>) -> ServerState {
         let mut snapshot: Snapshot = state.snapshot();
         snapshot.messages.retain(|(c, _)| *c != channel);
@@ -1881,8 +1664,6 @@ mod tests {
         ServerState::from_snapshot(snapshot)
     }
 
-    /// A store holding `recent` signed messages from today plus `old`
-    /// ones from three weeks ago, and an empty peer.
     fn overfull(recent: usize, old: usize) -> (MemStore, MemStore, Vec<Message>, Vec<Message>) {
         let (a, b, channel) = pair();
         let base = a.with(|s| s.clone());
@@ -1917,7 +1698,6 @@ mod tests {
             old.iter().all(|m| !b.has(m.id)),
             "the oldest wait for the next session"
         );
-        // The next session moves the rest.
         let (ra, rb) = ok_session(&a, &b).await;
         assert_eq!(
             sorted(rb.received),
@@ -1930,13 +1710,11 @@ mod tests {
     #[tokio::test]
     async fn wants_are_capped_newest_first() {
         let (a, b, recent, old) = overfull(CATCHUP_MAX_ITEMS, 3);
-        // The empty side dials and pulls.
         let (rb, ra) = ok_session(&b, &a).await;
         assert_eq!(rb.received.len(), CATCHUP_MAX_ITEMS);
         assert_eq!(ra.delivered.len(), CATCHUP_MAX_ITEMS);
         assert!(recent.iter().all(|m| b.has(m.id)));
         assert!(old.iter().all(|m| !b.has(m.id)));
-        // A cut-short want list proves nothing about what the peer holds.
         assert!(ra.peer_had.is_empty());
     }
 
@@ -1946,7 +1724,6 @@ mod tests {
             let (mut state, channel, owner) = fixture();
             let author = join(&mut state, "author");
             let moderator = join(&mut state, "moderator");
-            // b never got the role that lets the moderator delete.
             let missed = state.clone();
             let server = state.server.id;
             let role = commy_core::Role {
@@ -1976,7 +1753,6 @@ mod tests {
             a.with(|s| s.apply(proof.clone().into_event()).unwrap());
             let case = format!("a dials {a_dials}");
 
-            // Who may delete what was checked where the delete was made.
             let (ra, _) = either_way(&a, &b, a_dials).await;
             assert!(!b.has(spam.id), "{case}");
             let kept: Vec<TombstoneProof> =
@@ -1989,10 +1765,6 @@ mod tests {
         }
     }
 
-    /// A store holding `recent` ids deleted today and `old` ids deleted
-    /// yesterday, each with `per_id` proofs from the owner and
-    /// moderators, and an empty peer. The proofs are spread over enough
-    /// signers that none passes `MAX_UNAPPLIED_PROOFS` on either side.
     fn many_proofs(
         recent: usize,
         old: usize,
@@ -2030,7 +1802,6 @@ mod tests {
     #[tokio::test]
     async fn ids_with_several_proofs_stay_within_what_the_peer_takes() {
         const PROOFS: usize = 3;
-        // About 3,400 ids, one more page of items than a peer takes.
         let recent = MAX_PUSHED_ITEMS / PROOFS;
         let old = 67;
         assert!((recent + old) * PROOFS > MAX_PUSHED_ITEMS);
@@ -2038,7 +1809,6 @@ mod tests {
             let (a, b, recent_ids, old_ids) = many_proofs(recent, old, PROOFS);
             let (ra, rb) = either_way(&a, &b, a_dials).await;
             let case = format!("a dials {a_dials}");
-            // The newest ids, each whole, and the report says so.
             assert_eq!(
                 sorted(rb.received.clone()),
                 sorted(recent_ids.clone()),
@@ -2054,7 +1824,6 @@ mod tests {
             assert_eq!(proofs_at_b, recent * PROOFS, "{case}");
             assert!(b.with(|s| old_ids.iter().all(|id| s.tombstone(*id).is_none())));
 
-            // The next session sends the rest.
             let (_, rb) = either_way(&a, &b, a_dials).await;
             assert_eq!(sorted(rb.received), sorted(old_ids), "{case}");
             assert_eq!(a.digests(), b.digests(), "{case}");
@@ -2074,7 +1843,6 @@ mod tests {
                     message: shared.clone(),
                 })
                 .unwrap();
-            // Left by an older version that kept deletes it did not apply.
             let mut saved = state.snapshot();
             saved
                 .tombstone_proofs
@@ -2105,8 +1873,6 @@ mod tests {
         let b = MemStore::new(state, friend);
         let server = a.server();
         let base = Utc::now() - chrono::Duration::hours(2);
-        // Each side holds every other one of a signer's earliest 2 * MAX
-        // deletes of messages never seen, a full set each.
         let mut best = Vec::new();
         for by in &signers {
             let proofs: Vec<TombstoneProof> = (0..2 * MAX_UNAPPLIED_PROOFS)
@@ -2178,7 +1944,6 @@ mod tests {
     #[tokio::test]
     async fn unknown_member_is_asked_to_retry() {
         let (a, b, _) = pair();
-        // Someone who joined through a, before b heard of them.
         let newcomer = a.with(|s| join(s, "newcomer"));
         let c = MemStore::new(a.with(|s| s.clone()), newcomer);
         let (rc, rb) = session(&c, &b).await;
@@ -2230,7 +1995,6 @@ mod tests {
         let stranger_id = other.server.owner;
         let stranger = MemStore::new(other, stranger_id);
         let (ra, rb) = session(&a, &stranger).await;
-        // Told apart only locally; the peer hears what a stranger would.
         let err = ra.unwrap_err();
         assert_eq!(err.to_string(), "peer refused catch-up: unknown member");
         assert_eq!(err.retry_after_ms(), Some(RETRY_AFTER_MS));
@@ -2287,12 +2051,10 @@ mod tests {
         ];
         for (store, hello, why) in cases {
             let (reply, result) = hello_to(store, hello).await;
-            // The precise reason stays local.
             assert!(matches!(result, Err(CatchupError::Rejected(r)) if r == why));
             assert_eq!(reply, Refusal::UnknownMember.frame(), "{why}");
         }
 
-        // A clock too far off is told apart, the same in and out of the server.
         let stale = hello(&a.identity, a.me, now_ms() - 11 * MINUTE_MS);
         let (inside, _) = hello_to(&b, stale.clone()).await;
         let (outside, _) = hello_to(&outsider, stale).await;
@@ -2320,7 +2082,6 @@ mod tests {
     #[tokio::test]
     async fn hello_made_for_other_nodes_is_refused() {
         let (a, b, _) = pair();
-        // A Hello signed for a session with some other node, replayed to b.
         let (x, y) = tokio::io::duplex(8 * 1024);
         let (ra, rb) = tokio::join!(
             run_initiator(x, &a, &a.identity, a.server(), a.me, NODE_A, [0xc; 32]),
@@ -2335,7 +2096,6 @@ mod tests {
             CatchupError::Rejected(Refusal::BadSignature)
         ));
 
-        // Same Hello, but b sees it arrive from a different node.
         let (x, y) = tokio::io::duplex(8 * 1024);
         let (_, rb) = tokio::join!(
             run_initiator(x, &a, &a.identity, a.server(), a.me, NODE_A, NODE_B),
@@ -2354,7 +2114,6 @@ mod tests {
         let server = a.server();
         let fake_responder = async {
             let _hello = read(&mut y).await.unwrap();
-            // Signed as if a third node had dialed b.
             let reply = CatchupFrame::hello(
                 &b.identity,
                 HelloRole::Responder,
@@ -2384,7 +2143,6 @@ mod tests {
         a.post(channel, "members only");
         let server = a.server();
         let (x, mut y) = tokio::io::duplex(8 * 1024);
-        // A peer that knows only the server id sends our own Hello back.
         let reflector = async {
             let hello = read(&mut y).await.unwrap();
             send(&mut y, &hello).await.unwrap();
@@ -2420,7 +2178,6 @@ mod tests {
         ));
     }
 
-    /// Sends a hand-made Hello to a responder for `b` and returns both outcomes.
     async fn hello_to(
         b: &MemStore,
         hello: CatchupFrame,
@@ -2429,7 +2186,6 @@ mod tests {
         Result<(ServerId, SessionReport), CatchupError>,
     ) {
         let (mut x, y) = tokio::io::duplex(8 * 1024);
-        // Owns its end, so hanging up after the reply ends the responder too.
         let initiator = async move {
             send(&mut x, &hello).await.unwrap();
             read(&mut x).await.unwrap()
@@ -2565,7 +2321,6 @@ mod tests {
         assert!(ra.received.is_empty());
         assert!(!a.has(unasked.id));
         assert!(a.with(|s| !s.profiles.contains_key(&stranger.id)));
-        // The peer hears that its item was not taken.
         assert_eq!(
             last,
             CatchupFrame::Applied {
@@ -2573,7 +2328,6 @@ mod tests {
                 rejected: vec![unasked.id]
             }
         );
-        // Nothing was listed or left out, so every bucket matched.
         assert_eq!(ra.peer_had, vec![shared.id]);
     }
 
@@ -2613,7 +2367,6 @@ mod tests {
     async fn responder_leaves_out_buckets_outside_its_window() {
         let (a, b, channel) = pair();
         let today = day_number(Utc::now());
-        // Delete proofs reach back further than messages.
         let old = BucketKey::Tombstones { day: today - 70 };
         let old_messages = BucketKey::Messages {
             channel,
@@ -2648,8 +2401,6 @@ mod tests {
         );
     }
 
-    /// A store whose bucket gains a message the first time its items are
-    /// read, as when one arrives while a session runs.
     struct Racing {
         inner: MemStore,
         late: Mutex<Option<Message>>,
@@ -2732,7 +2483,6 @@ mod tests {
         let (mut base, channel, owner) = fixture();
         let server = base.server.id;
         let c_user = join(&mut base, "c");
-        // d is a member c knows only from a profile without a key.
         let d = keyed_profile("d");
         let mut d_without_key = d.clone();
         d_without_key.identity = None;
@@ -2743,7 +2493,6 @@ mod tests {
                 profile: d_without_key,
             })
             .unwrap();
-        // b joined while c was away, so c has never seen them at all.
         let mut a_state = base;
         let b_user = join(&mut a_state, "b");
         a_state
@@ -2758,7 +2507,6 @@ mod tests {
         let from_d = a.post_as(d.id, channel, "me too");
 
         let (rc, ra) = ok_session(&c, &a).await;
-        // Both keys come along, so both messages show.
         let both = sorted(vec![from_b.id, from_d.id]);
         assert_eq!((sorted(rc.received), rc.held), (both.clone(), 0));
         assert!(c.has(from_b.id) && c.has(from_d.id));
@@ -2830,13 +2578,10 @@ mod tests {
         for user in [&newcomer, &banned, &keyless, &former] {
             assert_eq!(state.identity_of(user.id), user.identity, "{}", user.username);
         }
-        // A profile held already only takes the key.
         assert_eq!(state.profiles[&keyless.id].username, "keyless");
         assert_eq!(state.profiles[&keyless.id].presence, Presence::Idle);
-        // A new one takes no presence from the copy.
         assert_eq!(state.profiles[&newcomer.id].presence, Presence::Offline);
         assert!(!state.profiles.contains_key(&no_key.id));
-        // A known key is never replaced, nor the profile around it.
         assert_eq!(
             state.identity_of(friend),
             Some(identity_for(friend).public())
@@ -2881,8 +2626,6 @@ mod tests {
             server,
             user: kicked.id,
         };
-        // c knows the member only from a profile without a key, and
-        // applied the kick.
         let mut c_state = base.clone();
         c_state
             .apply(ServerEvent::MemberJoin {
@@ -2892,8 +2635,6 @@ mod tests {
             .unwrap();
         c_state.apply(kick).unwrap();
         let c = MemStore::new(c_state, viewer);
-        // a has the member's key and has not heard of the kick yet, so it
-        // sends the profile along.
         let mut a_state = base;
         a_state
             .apply(ServerEvent::MemberJoin {
@@ -2922,7 +2663,6 @@ mod tests {
         let author = join(&mut base, "author");
         let c_user = join(&mut base, "c");
         let d_user = join(&mut base, "d");
-        // c missed the join of the user banned later; a and d saw it.
         let mut c_state = base.clone();
         let banned = join(&mut base, "banned");
         let mut a_state = base.clone();
@@ -2942,8 +2682,6 @@ mod tests {
                 message: theirs.clone(),
             })
             .unwrap();
-        // Before the ban, a takes their deletes of their own message, of
-        // someone else's and of one a never held; d hears of none.
         for m in [&own, &theirs, &unseen] {
             let p = proof_at(&a_state, m, banned, Utc::now());
             assert_eq!(a_state.apply(p.into_event()), Ok(true));
@@ -2955,13 +2693,11 @@ mod tests {
         for state in [&mut a_state, &mut c_state, &mut d_state] {
             assert_eq!(state.apply(ban.clone()), Ok(true));
         }
-        // The ban keeps it, as replicas hearing of the ban later would.
         assert!(a_state.tombstone(unseen.id).is_some());
         let a = MemStore::new(a_state, owner);
         let c = MemStore::new(c_state, c_user);
         let d = MemStore::new(d_state, d_user);
 
-        // c takes their messages from d, with their key.
         ok_session(&c, &d).await;
         assert!(c.has(kept.id) && c.has(own.id));
         ok_session(&a, &c).await;
@@ -2982,8 +2718,6 @@ mod tests {
         }
     }
 
-    /// Makes `profile`'s user a member of `store` known without a key, as
-    /// one who joined through an older version.
     fn join_without_key(store: &MemStore, profile: &UserProfile) {
         let profile = UserProfile {
             identity: None,
@@ -2996,8 +2730,6 @@ mod tests {
         });
     }
 
-    /// Feeds `frames` to the receiving side of a session and returns how
-    /// it ended.
     async fn receive(store: &MemStore, frames: Vec<CatchupFrame>) -> Result<Received, CatchupError> {
         let (mut x, mut y) = tokio::io::duplex(64 * 1024);
         let feed = async move {
@@ -3010,7 +2742,6 @@ mod tests {
         let take = async move {
             let accept_all = |_: MessageId, _: BucketKey| true;
             let result = receive_pages(&mut y, store, store.server(), accept_all).await;
-            // Hanging up lets a feed cut short finish.
             drop(y);
             result
         };
@@ -3024,7 +2755,6 @@ mod tests {
         let profiles = |n: usize| -> Vec<UserProfile> {
             (0..n).map(|i| keyed_profile(&format!("p{i}"))).collect()
         };
-        // A page's worth may come before the page that names them.
         let ahead = profiles(PROFILE_MARGIN);
         for p in &ahead {
             join_without_key(&b, p);
@@ -3037,7 +2767,6 @@ mod tests {
             CatchupFrame::Done,
         ];
         assert!(matches!(receive(&b, one_more).await.unwrap_err(), CatchupError::TooMuch));
-        // Signers of pages already sent count on top.
         let base = a.with(|s| s.clone());
         let page: Vec<Message> = ahead.iter().map(|p| post(&base, channel, p.id, "hi")).collect();
         let named = vec![
@@ -3061,7 +2790,6 @@ mod tests {
         assert!(matches!(receive(&b, past).await.unwrap_err(), CatchupError::TooMuch));
     }
 
-    /// A keyed profile that encodes to `size` bytes.
     fn profile_of_size(name: &str, size: usize) -> UserProfile {
         let mut p = keyed_profile(name);
         p.about = Some("x".repeat(200));
@@ -3110,8 +2838,6 @@ mod tests {
                 .map(|c| CatchupFrame::Profiles(c.to_vec()))
                 .collect()
         };
-        // The most that may wait at once. Pages naming enough signers come
-        // first, so the count of profiles is no limit.
         let most = MAX_PROFILE_BYTES / MAX_RELAYED_PROFILE_BYTES;
         let named: Vec<UserProfile> = (0..2 * PAGE_SIZE)
             .map(|i| keyed_profile(&format!("n{i}")))
@@ -3138,7 +2864,6 @@ mod tests {
             receive(&b, session(flood(most + 1))).await.unwrap_err(),
             CatchupError::TooMuch
         ));
-        // Profiles a page did not use do not add up across pages.
         let empty = CatchupFrame::Push {
             messages: vec![],
             tombstones: vec![],
@@ -3195,8 +2920,6 @@ mod tests {
                 .unwrap();
             send(&mut y, &got.verdict()).await.unwrap();
             send_items(&mut y, &b, server, &want, |_| true).await.unwrap();
-            // Gone before the initiator's `Applied`, as when the peer
-            // stopped waiting for it.
             drop(y);
             b
         };
@@ -3231,7 +2954,6 @@ mod tests {
         let tomorrow = ahead(1, "tomorrow");
         let later = ahead(3, "in three days");
         a.add(&tomorrow);
-        // Refused when it arrives now, but data saved before may hold it.
         a.with(|s| {
             let mut list = s.messages(channel).to_vec();
             list.push(later.clone());
@@ -3342,7 +3064,6 @@ mod tests {
             let case = format!("a dials {a_dials}");
             assert_eq!(rb.received, vec![old.id], "{case}");
             assert_eq!(a.digests(), b.digests(), "{case}");
-            // A copy handed over later, by a stale peer or a snapshot.
             b.add(&old);
             assert!(!b.has(old.id), "{case}");
         }
@@ -3363,7 +3084,6 @@ mod tests {
             messages,
             tombstones: vec![],
         };
-        // A full page is taken.
         let full = vec![
             push(messages[..PAGE_SIZE].to_vec()),
             CatchupFrame::Profiles(profiles[..PAGE_SIZE].to_vec()),
@@ -3380,7 +3100,6 @@ mod tests {
             assert!(c.with(|s| messages.iter().all(|m| !s.has_message(m.id))));
         }
 
-        // Each bucket counts one more than its items.
         let key = BucketKey::Messages {
             channel,
             day: day_number(Utc::now()),
@@ -3428,8 +3147,6 @@ mod tests {
                     s.apply(removal.into_event()).unwrap();
                     s.apply(early.clone().into_event()).unwrap();
                 });
-                // The replica lacking the message took the other delete
-                // before the signer went.
                 lacking.with(|s| s.apply(early.into_event()).unwrap());
                 let out = match how {
                     "ban" => ServerEvent::MemberBan {
@@ -3449,7 +3166,6 @@ mod tests {
                     either_way(&holder, &lacking, a_dials).await;
                 }
                 assert_eq!(holder.digests(), lacking.digests(), "{case}");
-                // A late copy stays out where the message never was.
                 lacking.add(&spam);
                 assert!(!lacking.has(spam.id), "{case}");
             }
@@ -3482,8 +3198,6 @@ mod tests {
                 either_way(&holder, &lacking, a_dials).await;
             }
             assert_eq!(holder.digests(), lacking.digests(), "{case}");
-            // Each lists the earliest; the rest keep their messages out
-            // where they were applied.
             let listed = |store: &MemStore| {
                 store.with(|s| s.tombstones_since(DateTime::<Utc>::MIN_UTC).count())
             };
@@ -3626,7 +3340,6 @@ mod tests {
             })
             .collect();
         assert_eq!(sizes, vec![(PAGE_SIZE - 5, 5), (PAGE_SIZE, 0), (15, 0)]);
-        // Order is kept: proofs first, then messages as given.
         let flat: Vec<MessageId> = out
             .iter()
             .flat_map(|p| match p {
@@ -3716,7 +3429,6 @@ mod tests {
         let fit = |max| fit_items(&ids, messages.clone(), proofs.clone(), max);
         assert_eq!(fit(4), (messages.clone(), proofs.clone()));
         assert_eq!(fit(3), (vec![first.clone()], proofs.clone()));
-        // An id that does not fit stops the rest, even ones that would.
         assert_eq!(fit(2), (vec![first], vec![]));
         assert_eq!(fit(0), (vec![], vec![]));
     }
@@ -3830,7 +3542,6 @@ mod tests {
             PeerCheck::Unknown
         );
 
-        // A member whose profile has no key yet.
         let keyless = UserId::new();
         state.server.members.push(commy_core::Member {
             user: keyless,
@@ -3874,7 +3585,6 @@ mod tests {
         assert_eq!(ids, vec![second.id, first.id]);
         assert_eq!(tombstones, vec![proof]);
 
-        // Nothing of a channel that is gone, proofs included.
         state.server.channels.retain(|c| c.id != channel);
         assert_eq!(collect(&state, &[first.id, gone.id]), (vec![], vec![]));
     }
@@ -3941,7 +3651,6 @@ mod tests {
             ],
             vec![proof],
         );
-        // The proof removes `dup` first, so its late copy is a no-op.
         assert_eq!(report.applied, vec![dup.id, fresh.id]);
         assert_eq!(report.held, vec![from_stranger.id]);
         assert_eq!(report.rejected, vec![forged.id]);

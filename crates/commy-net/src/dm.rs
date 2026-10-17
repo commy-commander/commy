@@ -1,18 +1,8 @@
-//! Direct message transport. DMs bypass server gossip entirely: the
-//! sender opens a QUIC connection with the `commy/dm/2` ALPN, writes
-//! message envelopes, and waits for a per-message ack so delivery is
-//! confirmed. Both peers must be online; offline inboxes would need
-//! hosted infrastructure, which Commy does not have by design. Each
-//! message is signed with the sender's identity key, along with the node
-//! it is sent from; receivers take it only from that node.
-
 use commy_core::{DmMessage, UserProfile};
 use serde::{Deserialize, Serialize};
 
 pub const DM_ALPN: &[u8] = b"commy/dm/2";
 
-/// One message plus the sender's profile, so the receiver can render
-/// the conversation even without a shared server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DmEnvelope {
     pub message: DmMessage,
@@ -20,9 +10,6 @@ pub struct DmEnvelope {
 }
 
 impl DmEnvelope {
-    /// True when the message comes from the enclosed profile and is
-    /// signed by that profile's identity key. Receivers should also
-    /// check the key against the one they pinned for this contact.
     pub fn signed_by_sender(&self) -> bool {
         self.message.from == self.sender.id
             && self
@@ -31,8 +18,6 @@ impl DmEnvelope {
                 .is_some_and(|key| self.message.verify(&key))
     }
 
-    /// True when the message says it is sent from `node`. Only meaningful
-    /// once the signature is checked, which covers that field.
     pub fn sent_from(&self, node: &[u8; 32]) -> bool {
         data_encoding::HEXLOWER_PERMISSIVE
             .decode(self.message.from_node.trim().as_bytes())
@@ -40,7 +25,6 @@ impl DmEnvelope {
     }
 }
 
-/// Receiver's reply on the same stream confirming the message landed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DmAck {
     pub accepted: bool,
@@ -55,7 +39,6 @@ mod tests {
 
     const NODE: [u8; 32] = [3; 32];
 
-    /// Envelope from a keyed sender on [`NODE`], signed by them.
     fn signed_envelope(content: &str) -> (DmEnvelope, Identity) {
         let sender = keyed_profile("sender");
         let identity = crate::test_support::identity_for(sender.id);
@@ -76,7 +59,6 @@ mod tests {
         unnamed.message.from_node.clear();
         assert!(!unnamed.sent_from(&NODE));
 
-        // Naming another node takes a new signature.
         let mut moved = envelope.clone();
         moved.message.from_node = data_encoding::HEXLOWER.encode(&[4; 32]);
         assert!(moved.sent_from(&[4; 32]));
@@ -117,7 +99,6 @@ mod tests {
         other_key.sender.identity = Some(Identity::generate().public());
         assert!(!other_key.signed_by_sender());
 
-        // Someone else's profile around a correctly signed message.
         let mut impostor = envelope.clone();
         impostor.sender = keyed_profile("impostor");
         impostor.sender.identity = Some(identity.public());

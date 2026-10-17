@@ -1,5 +1,3 @@
-// Email verification and password reset against an in-memory database, with
-// SMTP configured and outgoing mail captured instead of sent.
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { betterAuth } from "better-auth";
@@ -69,7 +67,6 @@ test("sign-up sends a verification email and blocks sign-in until verified", asy
   const blocked = await signIn("new@example.test");
   assert.equal(blocked.status, 403);
   assert.equal(blocked.json.code, "EMAIL_NOT_VERIFIED");
-  // The failed attempt sends a fresh link
   assert.equal(outbox.length, 2);
 
   const resend = await call("POST", "/send-verification-email", {

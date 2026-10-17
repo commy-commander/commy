@@ -1,16 +1,10 @@
-// Sealed per-account storage. Each account keeps a few named items, such as
-// "servers" (the list of Commy servers it is in). The apps seal every item with
-// a key that only the account's own devices hold, so this server stores bytes
-// it cannot read: it never learns which servers someone is in. Writes carry the
-// version they replace, so two devices cannot silently overwrite each other.
 import * as z from "zod";
 import { APIError, createAuthEndpoint, sessionMiddleware } from "better-auth/api";
 
 const MODEL = "vaultItem";
 export const MAX_VAULT_BYTES = 256 * 1024;
 const NAME = /^[a-z0-9-]{1,32}$/;
-// Same format as commy-net's sealed.rs: sealed1.<base64url(nonce || ciphertext)>
-const SEALED = /^sealed1\.[A-Za-z0-9_-]{40,}$/;
+const COMMY_NET_SEALED_FORMAT = /^sealed1\.[A-Za-z0-9_-]{40,}$/;
 
 export function normalizeVaultName(value) {
   const name = String(value ?? "").trim();
@@ -19,7 +13,7 @@ export function normalizeVaultName(value) {
 
 export function validSealed(value) {
   const data = String(value ?? "");
-  return data.length <= MAX_VAULT_BYTES && SEALED.test(data) ? data : null;
+  return data.length <= MAX_VAULT_BYTES && COMMY_NET_SEALED_FORMAT.test(data) ? data : null;
 }
 
 function publicItem(name, row) {
@@ -93,7 +87,6 @@ export const commyVault = () => ({
         const existing = await findItem(adapter, userId, name);
         const current = existing?.version ?? 0;
         if (ctx.body.version !== current) {
-          // The caller merges the newer item and tries again
           throw conflict(name, existing);
         }
         if (existing) {

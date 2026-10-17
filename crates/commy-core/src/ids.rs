@@ -47,9 +47,6 @@ id_type!(RoleId);
 const MESSAGE_ID_DOMAIN: &[u8] = b"commy-message-id/v1";
 
 impl MessageId {
-    /// Id of a server message by `author`. The first 8 bytes are
-    /// sha256(domain, author, last 8 bytes) cut to 8 and the last 8 are
-    /// random, so a member cannot take over an id another member made.
     pub fn for_author(author: UserId) -> Self {
         let tail: [u8; 8] = rand::random();
         let mut bytes = [0u8; 16];
@@ -58,7 +55,6 @@ impl MessageId {
         Self(Uuid::from_bytes(bytes))
     }
 
-    /// Whether this id was made by [`MessageId::for_author`] for `author`.
     pub fn is_bound_to(&self, author: UserId) -> bool {
         let bytes = self.0.as_bytes();
         bytes[..8] == author_tag(author, &bytes[8..])

@@ -1,11 +1,3 @@
-//! Commy account sign-in. An account on the account server (commy.chat by
-//! default) is required to create or join servers, which keeps throwaway
-//! spam installs out. Sign-in uses the OAuth device flow (RFC 8628): the
-//! app shows a code, the browser approves it, and the app receives a
-//! bearer token. The app then links its iroh node id to the account by
-//! signing the server's challenge with its node key, so only the holder of
-//! a node key can claim that node id.
-
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -19,14 +11,10 @@ use crate::state::App;
 
 const FILE: &str = "account.json";
 
-/// Saved sign-in. The token is a bearer secret, kept only in this
-/// install's data folder.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AccountState {
-    /// Account server chosen in Settings; None means the default.
     #[serde(default)]
     pub server: Option<String>,
-    /// Server the token below belongs to.
     #[serde(default)]
     pub signed_in_server: Option<String>,
     #[serde(default)]
@@ -35,31 +23,23 @@ pub struct AccountState {
     pub user: Option<AccountUser>,
     #[serde(default)]
     pub device_linked: bool,
-    /// Searches the signed in server runs with its own keys, from its
-    /// discovery document. None for servers that predate the list.
     #[serde(default)]
     pub features: Option<ServerFeatures>,
 }
 
-/// Which keyed searches an account server has set up (`features` in
-/// /.well-known/commy-auth.json). The keys stay on the server.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServerFeatures {
     #[serde(default)]
     pub gifs: bool,
     #[serde(default)]
     pub games: bool,
-    /// GIF files and game covers load through the server's /commy/media.
     #[serde(default)]
     pub media: bool,
-    /// Sealed per-account items such as your server list (/commy/vault).
     #[serde(default)]
     pub vault: bool,
 }
 
 impl AccountState {
-    /// Whether the signed in server offers a search. Servers that do not
-    /// list their features are asked anyway and answer 404 when it is off.
     pub fn server_offers(&self, kind: &str) -> bool {
         is_signed_in(self)
             && match (self.features, kind) {
@@ -82,7 +62,6 @@ pub struct AccountUser {
 
 static CHOSEN_SERVER: Mutex<Option<String>> = Mutex::new(None);
 
-/// The account server: `COMMY_AUTH_URL`, else the Settings choice, else commy.chat.
 pub fn effective_server() -> String {
     if let Some(env) = std::env::var("COMMY_AUTH_URL").ok().and_then(|s| normalize_origin(&s)) {
         return env;
@@ -109,8 +88,6 @@ fn save(dir: &Path, state: &AccountState) {
     }
 }
 
-/// Signed in to the server currently in use. A token for a different
-/// server (the setting or COMMY_AUTH_URL changed) does not count.
 pub fn is_signed_in(state: &AccountState) -> bool {
     state.token.is_some() && state.user.is_some() && state.signed_in_server.as_deref() == Some(effective_server().as_str())
 }
@@ -127,22 +104,16 @@ pub fn host_of(origin: &str) -> String {
     origin.split("://").nth(1).unwrap_or(origin).to_string()
 }
 
-/// The exact message the account server asks us to sign is fetched from
-/// it, but it must have this shape: it names the server, so a signature
-/// for one account server cannot be replayed on another.
 pub fn link_message_ok(message: &str, server: &str, node_id: &str, challenge: &str) -> bool {
     message == format!("commy-device-link:v1\n{server}\n{node_id}\n{challenge}")
 }
 
-/// Node id (hex public key) and a signature over `message`, from the node secret.
 pub fn sign_with_node_key(secret: &[u8; 32], message: &[u8]) -> (String, String) {
     let key = SigningKey::from_bytes(secret);
     let node_id = data_encoding::HEXLOWER.encode(key.verifying_key().as_bytes());
     let signature = data_encoding::HEXLOWER.encode(&key.sign(message).to_bytes());
     (node_id, signature)
 }
-
-// ---------- Discovery ----------
 
 #[derive(Debug, Clone, Deserialize)]
 struct Discovery {
@@ -176,8 +147,6 @@ struct Endpoints {
 }
 
 impl Discovery {
-    /// Every endpoint must live on the configured server, so a tampered
-    /// discovery document cannot send the token somewhere else.
     fn same_origin(&self, server: &str) -> bool {
         let ok = |url: &str| url == server || url.starts_with(&format!("{server}/"));
         ok(&self.issuer)
@@ -211,16 +180,11 @@ async fn discover(http: &reqwest::Client, server: &str) -> Result<Discovery, Str
     Ok(doc)
 }
 
-// ---------- Searches run by the account server ----------
-
 #[derive(Deserialize)]
 struct SearchResponse<T> {
     results: Vec<T>,
 }
 
-/// Runs a GIF or game search on the account server, which holds the
-/// service keys so the app never carries them. `Ok(None)` when nobody is
-/// signed in or the server has that search turned off.
 pub async fn server_search<T: serde::de::DeserializeOwned>(app: &App, kind: &str, query: &str) -> Result<Option<Vec<T>>, String> {
     let (server, token) = {
         let state = app.account.lock().unwrap();
@@ -244,7 +208,6 @@ pub async fn server_search<T: serde::de::DeserializeOwned>(app: &App, kind: &str
         .map_err(|_| format!("Could not reach {host}"))?;
     match res.status().as_u16() {
         200 => {}
-        // Older account servers and servers without the key
         404 => return Ok(None),
         401 => return Err(format!("Sign in to {host} again to search")),
         429 => return Err("Too many searches, try again in a minute".into()),
@@ -254,9 +217,6 @@ pub async fn server_search<T: serde::de::DeserializeOwned>(app: &App, kind: &str
     Ok(Some(body.results))
 }
 
-// ---------- Images loaded through the account server ----------
-
-/// Largest image passed on to the page; the server caps at the same size.
 const MAX_MEDIA_BYTES: usize = 15 * 1024 * 1024;
 
 fn media_response(status: u16, content_type: &str, body: Vec<u8>) -> tauri::http::Response<Vec<u8>> {
@@ -269,17 +229,12 @@ fn media_response(status: u16, content_type: &str, body: Vec<u8>) -> tauri::http
         .unwrap_or_default()
 }
 
-/// The image a `commy-media:` request asks for: its `u` query parameter.
 pub fn media_target(request_uri: &str) -> Option<String> {
     let uri = reqwest::Url::parse(request_uri).ok()?;
     let target = uri.query_pairs().find(|(k, _)| k == "u")?.1.into_owned();
     target.starts_with("https://").then_some(target)
 }
 
-/// Serves `commy-media:` requests from the page: GIF files and game covers
-/// fetched through the signed in account server with this app's token, so
-/// the image hosts never see the user's address. The server decides which
-/// URLs it will load.
 pub async fn media_image(app: &App, request_uri: &str) -> tauri::http::Response<Vec<u8>> {
     let Some(target) = media_target(request_uri) else {
         return media_response(400, "text/plain", Vec::new());
@@ -321,8 +276,6 @@ pub async fn media_image(app: &App, request_uri: &str) -> tauri::http::Response<
     }
 }
 
-// ---------- Commands ----------
-
 #[derive(Serialize)]
 pub struct AccountView {
     signed_in: bool,
@@ -330,16 +283,12 @@ pub struct AccountView {
     server: String,
     server_host: String,
     is_default_server: bool,
-    /// Host of the server this build uses when none is chosen.
     default_server_host: String,
-    /// Set by COMMY_AUTH_URL, so the setting cannot change it.
     server_from_env: bool,
     device_linked: bool,
     pending_code: Option<String>,
-    /// The signed in server searches GIFs or games for this app.
     server_gifs: bool,
     server_games: bool,
-    /// GIF and cover images load through the signed in server.
     server_media: bool,
 }
 
@@ -367,7 +316,6 @@ pub fn account_status(app: tauri::State<'_, App>) -> AccountView {
     view(&app)
 }
 
-/// Changes the account server (Settings). Signing out is required first.
 #[tauri::command]
 pub fn set_account_server(app: tauri::State<'_, App>, server: Option<String>) -> Result<AccountView, String> {
     if is_signed_in(&app.account.lock().unwrap()) {
@@ -392,7 +340,6 @@ pub fn set_account_server(app: tauri::State<'_, App>, server: Option<String>) ->
     Ok(view(&app))
 }
 
-/// A device-flow sign-in in progress.
 pub struct PendingSignIn {
     pub user_code: String,
     cancel: tokio::sync::watch::Sender<bool>,
@@ -425,9 +372,6 @@ fn default_interval() -> u64 {
     5
 }
 
-/// Starts sign-in: gets a code, opens the approval page, and polls for
-/// the token in the background. Emits "account-changed" when done and
-/// "sign-in-failed" with a message if it fails.
 #[tauri::command]
 pub async fn account_begin_sign_in(app: tauri::State<'_, App>, handle: AppHandle) -> Result<SignInStart, String> {
     let server = effective_server();
@@ -444,7 +388,6 @@ pub async fn account_begin_sign_in(app: tauri::State<'_, App>, handle: AppHandle
     }
     let code: DeviceCodeResponse = res.json().await.map_err(|_| "Unexpected reply from the account server".to_string())?;
     let verification_url = code.verification_uri_complete.clone().unwrap_or_else(|| code.verification_uri.clone());
-    // Only ever open a page on the account server itself.
     if !(verification_url.starts_with(&format!("{server}/"))) {
         return Err("The account server sent an unexpected approval address".into());
     }
@@ -573,7 +516,6 @@ async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -
         name: crate::safety::truncate(&session.user.name, 64),
         email: crate::safety::truncate(&session.user.email, 120),
     };
-    // Game lookups cached under the previous account may now resolve differently
     app.igdb.lock().await.resolved.clear();
     let device_linked = link_device(app, server, doc, token).await.map_err(|e| {
         tracing::warn!("device link failed: {e}");
@@ -593,7 +535,6 @@ async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -
     device_linked.map(|_| ())
 }
 
-/// Proves this install holds its node key and links the node id.
 async fn link_device(app: &App, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
     let secret = app
         .data_dir()
@@ -613,7 +554,6 @@ async fn link_device(app: &App, server: &str, doc: &Discovery, token: &str) -> R
         return Err("The account server asked to sign an unexpected message".into());
     }
     let (_, signature) = sign_with_node_key(&secret, challenge.message.as_bytes());
-    // No device name: the account server keeps nothing that describes this computer.
     let res = app
         .http
         .post(&doc.endpoints.register_device)
@@ -635,7 +575,6 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
         let state = app.account.lock().unwrap();
         (state.token.clone(), state.signed_in_server.clone())
     };
-    // Best effort: end the session on the server too.
     if let (Some(token), Some(server)) = (token, server) {
         if let Ok(doc) = discover(&app.http, &server).await {
             let _ = app.http.post(&doc.endpoints.sign_out).bearer_auth(token).send().await;
@@ -656,7 +595,6 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
     Ok(view(&app))
 }
 
-/// Checks a saved token is still valid; clears it if the server says no.
 pub async fn verify_saved_session(handle: AppHandle) {
     let app = handle.state::<App>();
     let (token, server) = {
@@ -669,10 +607,8 @@ pub async fn verify_saved_session(handle: AppHandle) {
     let (Some(token), Some(server)) = (token, server) else { return };
     let Ok(doc) = discover(&app.http, &server).await else { return };
     let Ok(res) = app.http.get(&doc.endpoints.session).bearer_auth(&token).send().await else { return };
-    // A null session (revoked or expired) signs us out; network trouble does not.
     let valid = res.status().is_success() && res.json::<Option<SessionResponse>>().await.ok().flatten().is_some();
     if valid {
-        // The operator may have added or removed a search key since sign-in
         let changed = {
             let mut state = app.account.lock().unwrap();
             let changed = state.features != doc.features;
@@ -780,9 +716,7 @@ mod tests {
             signed_in_server: Some(effective_server()),
             ..Default::default()
         };
-        // Servers that do not list features are asked anyway
         assert!(state.server_offers("gifs") && state.server_offers("games"));
-        // Only servers that say so load images
         assert!(!state.server_offers("media"));
         state.features = Some(ServerFeatures { gifs: true, games: false, media: true, vault: false });
         assert!(state.server_offers("gifs"));

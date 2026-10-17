@@ -1,14 +1,7 @@
-//! Running more than one copy on a machine for testing. `COMMY_DATA_DIR`
-//! gives a copy its own identity; with it set, the webview storage moves
-//! into that folder too, and `COMMY_INSTANCE_LABEL` names the window.
-
 use std::path::PathBuf;
 
-/// Folder inside the data dir that holds the webview's storage.
 pub const WEBVIEW_DIR: &str = "webview";
 
-/// Where the webview should keep its storage, when it should move: only
-/// for a custom data dir, and never over an explicit WebView2 setting.
 pub fn webview_data_dir(data_dir: Option<&str>, existing: Option<&str>) -> Option<PathBuf> {
     if existing.is_some_and(|s| !s.trim().is_empty()) {
         return None;
@@ -17,9 +10,7 @@ pub fn webview_data_dir(data_dir: Option<&str>, existing: Option<&str>) -> Optio
     Some(PathBuf::from(dir).join(WEBVIEW_DIR))
 }
 
-/// Points WebView2 at the data dir, so two copies do not share one
-/// browser profile. Must run before any window is created.
-pub fn apply_webview_data_dir() {
+pub fn apply_webview_data_dir_before_any_window() {
     let target = webview_data_dir(
         std::env::var("COMMY_DATA_DIR").ok().as_deref(),
         std::env::var("WEBVIEW2_USER_DATA_FOLDER").ok().as_deref(),
@@ -49,7 +40,6 @@ pub fn apply_test_build_data_dir() {
     }
 }
 
-/// The main window title, or None to keep the default.
 pub fn window_title(test_build: bool, label: Option<&str>) -> Option<String> {
     let label = label.map(str::trim).filter(|s| !s.is_empty());
     match (test_build, label) {

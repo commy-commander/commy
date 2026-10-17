@@ -1,11 +1,3 @@
-//! Hands an account's entry key from one of its devices to another.
-//!
-//! The entry key seals the account's server list on the account server (see
-//! `sealed`). It only ever lives on the account's own devices: a new device
-//! asks an existing one for it over a direct, end to end encrypted connection
-//! with the `commy/entry-key/1` ALPN, and the existing device only answers
-//! after its user clicks Allow.
-
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -19,28 +11,24 @@ use iroh::net::NodeAddr;
 
 pub const ENTRY_KEY_ALPN: &[u8] = b"commy/entry-key/1";
 
-/// How long the asking device waits for someone to click Allow.
 pub const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+const REPLY_DELIVERY_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntryKeyRequest {
-    /// Account server origin and account id the key is for.
     pub server: String,
     pub account: String,
-    /// Shown to the person approving, e.g. the computer's name.
     pub device_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EntryKeyReply {
-    /// The key as unpadded base64url.
     Key(String),
     Denied,
-    /// This device has no key for that account.
     Unknown,
 }
 
-/// A request from another device, with the node id it proved by connecting.
 #[derive(Debug)]
 pub struct EntryKeyAsk {
     pub peer: [u8; 32],
@@ -85,16 +73,12 @@ impl ProtocolHandler for EntryKeyAcceptor {
                 .await
                 .map_err(|e| anyhow::anyhow!("entry key reply failed: {e}"))?;
             send.finish()?;
-            // Let the reply reach the peer before the connection drops
-            let _ =
-                tokio::time::timeout(std::time::Duration::from_secs(5), connection.closed()).await;
+            let _ = tokio::time::timeout(REPLY_DELIVERY_GRACE, connection.closed()).await;
             Ok(())
         })
     }
 }
 
-/// Asks another of the account's devices for the entry key. Waits while its
-/// user decides, so this can take minutes.
 pub async fn request(
     endpoint: iroh::net::Endpoint,
     node_hex: &str,

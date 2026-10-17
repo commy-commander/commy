@@ -1,10 +1,3 @@
-//! Voice and screen-share orchestration.
-//!
-//! Voice is a full mesh: every pair of members in a voice channel has
-//! one direct QUIC media connection. The peer with the smaller node id
-//! dials, the other accepts, so exactly one connection exists per pair.
-//! Screen share is one-to-many: viewers subscribe to the sharer.
-
 use commy_core::{ChannelId, ServerId, UserId};
 use commy_media::{Mixer, OutputHandle, StreamGuards};
 use commy_net::media::{MediaHello, MediaPacket};
@@ -15,12 +8,10 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
-/// Deterministic rule: the lexicographically smaller node id dials.
 pub fn should_dial(our_node: &str, their_node: &str) -> bool {
     our_node < their_node
 }
 
-/// Stable mixer key for a user.
 pub fn mixer_key(user: UserId) -> u64 {
     let bytes = user.0.as_bytes();
     u64::from_le_bytes(bytes[..8].try_into().unwrap())
@@ -31,22 +22,16 @@ pub struct VoiceSession {
     pub channel: ChannelId,
     pub mixer: Arc<Mutex<Mixer>>,
     pub deafened: Arc<AtomicBool>,
-    /// Sequenced microphone frames, fanned out to every peer task.
     pub mic_broadcast: broadcast::Sender<(u32, Arc<Vec<u8>>)>,
-    /// Unix seconds of the last transmitted mic frame, for AFK moves.
     pub last_activity: Arc<std::sync::atomic::AtomicI64>,
     peers: HashMap<UserId, JoinHandle<()>>,
-    /// Each peer's connection and measured voice jitter, for the stats view.
     links: HashMap<UserId, (commy_net::node::Connection, Arc<Mutex<JitterMeter>>)>,
-    /// Keeps cpal streams alive; dropped on leave.
     devices: StreamGuards,
     on_speaking: SpeakingSink,
-    /// Sender the microphone feeds, kept to restart capture on a new device.
     mic_tx: mpsc::UnboundedSender<Vec<i16>>,
     _seq_task: JoinHandle<()>,
 }
 
-/// One peer link's numbers for the connection details view.
 #[derive(Debug, Clone)]
 pub struct LinkStats {
     pub user: UserId,
@@ -57,8 +42,6 @@ pub struct LinkStats {
     pub rx_bytes: u64,
 }
 
-/// Interarrival jitter of voice frames (RFC 3550 style). Frames carry a
-/// sequence number and are 10 ms apart, so any spread beyond that is jitter.
 #[derive(Debug, Default)]
 pub struct JitterMeter {
     last: Option<(u32, std::time::Instant)>,
@@ -66,15 +49,15 @@ pub struct JitterMeter {
 }
 
 impl JitterMeter {
-    const FRAME_MS: f32 = 10.0;
+    const RFC3550_SMOOTHING_DIVISOR: f32 = 16.0;
 
     pub fn arrived(&mut self, seq: u32, at: std::time::Instant) {
         if let Some((last_seq, last_at)) = self.last {
             if seq > last_seq {
-                let expected = (seq - last_seq) as f32 * Self::FRAME_MS;
+                let expected = (seq - last_seq) as f32 * VOICE_FRAME_MS as f32;
                 let actual = at.duration_since(last_at).as_secs_f32() * 1000.0;
                 let d = (actual - expected).abs();
-                self.jitter_ms += (d - self.jitter_ms) / 16.0;
+                self.jitter_ms += (d - self.jitter_ms) / Self::RFC3550_SMOOTHING_DIVISOR;
             }
         }
         if self.last.map_or(true, |(s, _)| seq > s) {
@@ -87,20 +70,17 @@ impl JitterMeter {
     }
 }
 
-/// Receives (user, speaking) transitions for the UI.
 pub type SpeakingSink = Arc<dyn Fn(UserId, bool) + Send + Sync>;
 
-/// How often speaking state is re-checked when no audio arrives, since
-/// a muted mic or a gated peer simply stops sending frames.
 const SPEAKING_TICK: std::time::Duration = std::time::Duration::from_millis(50);
 
-/// Silent 10 ms frames credited per tick without audio.
-const FRAMES_PER_TICK: u32 = 5;
+const VOICE_FRAME_MS: u32 = 10;
 
-/// Feeds one tick of missing audio into a detector as silence.
+const SILENT_FRAMES_PER_TICK: u32 = (SPEAKING_TICK.as_millis() / VOICE_FRAME_MS as u128) as u32;
+
 fn credit_silence(detector: &mut commy_media::SpeakingDetector) -> Option<bool> {
     let mut change = None;
-    for _ in 0..FRAMES_PER_TICK {
+    for _ in 0..SILENT_FRAMES_PER_TICK {
         if let Some(c) = detector.push_voiced(false) {
             change = Some(c);
         }
@@ -109,8 +89,6 @@ fn credit_silence(detector: &mut commy_media::SpeakingDetector) -> Option<bool> 
 }
 
 impl VoiceSession {
-    /// Builds the local half of a voice session: mic capture, playback,
-    /// and the sequencer that stamps packet numbers on mic frames.
     pub fn start(
         server: ServerId,
         channel: ChannelId,
@@ -131,7 +109,6 @@ impl VoiceSession {
             tokio::spawn(async move {
                 let mut mic_rx = mic_rx;
                 let mut seq: u32 = 0;
-                // Encoded once here, then fanned out to every peer.
                 let mut encoder = commy_audio::codec::VoiceEncoder::new();
                 let mut detector = commy_media::SpeakingDetector::default();
                 let mut tick = tokio::time::interval(SPEAKING_TICK);
@@ -141,8 +118,6 @@ impl VoiceSession {
                         pcm = mic_rx.recv() => {
                             let Some(pcm) = pcm else { break };
                             heard_since_tick = true;
-                            // Only audible frames count as activity; otherwise an
-                            // open mic in a silent room never goes AFK.
                             if commy_media::frame_has_signal(&pcm) {
                                 last_activity.store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
                             }
@@ -184,14 +159,10 @@ impl VoiceSession {
         }
     }
 
-    /// Playback is created after the session because it needs the
-    /// session's mixer.
     pub fn set_speaker(&mut self, speaker: Option<OutputHandle>) {
         self.devices.speaker = speaker;
     }
 
-    /// Moves capture and playback to other devices mid-call. Old streams
-    /// are dropped first so exclusive-mode devices are free to reopen.
     pub fn switch_devices(
         &mut self,
         processor: Arc<Mutex<commy_audio::VoiceProcessor>>,
@@ -220,8 +191,6 @@ impl VoiceSession {
         self.peers.contains_key(&user)
     }
 
-    /// Wires one peer's media channel into the session: their packets
-    /// feed the mixer, our mic frames feed their connection.
     pub fn attach_peer(&mut self, user: UserId, media: MediaChannel) {
         let mixer = self.mixer.clone();
         let deafened = self.deafened.clone();
@@ -255,8 +224,6 @@ impl VoiceSession {
                         Some(MediaPacket::Opus { seq, data }) => {
                             heard_since_tick = true;
                             meter.lock().unwrap().arrived(seq, std::time::Instant::now());
-                            // Conceal a short gap so the decoder state stays smooth;
-                            // the jitter buffer handles longer silences.
                             if let Some(last) = last_seq {
                                 let gap = seq.wrapping_sub(last);
                                 if (2..=3).contains(&gap) {
@@ -287,7 +254,7 @@ impl VoiceSession {
                                 mixer.lock().unwrap().push(key, seq, pcm);
                             }
                         }
-                        Some(_) => {} // video on a voice stream: ignore
+                        Some(_) => {}
                         None => break,
                     },
                     frame = mic_rx.recv() => match frame {
@@ -312,7 +279,6 @@ impl VoiceSession {
         }
     }
 
-    /// Per peer: round trip, network loss, jitter and bytes moved.
     pub fn link_stats(&self) -> Vec<LinkStats> {
         self.links
             .iter()
@@ -337,7 +303,6 @@ impl VoiceSession {
             task.abort();
         }
         self.mixer.lock().unwrap().remove_peer(mixer_key(user));
-        // An aborted task cannot report its own reset.
         (self.on_speaking)(user, false);
     }
 }
@@ -351,28 +316,19 @@ impl Drop for VoiceSession {
     }
 }
 
-/// Our outgoing screen share: capture task plus subscriber fan-out.
 pub struct ScreenShareSession {
     pub server: ServerId,
     pub channel: ChannelId,
     pub subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<MediaPacket>>>>,
-    /// Most recent captured JPEG, for the sharer's own preview.
     latest: Arc<Mutex<Option<commy_media::screen::ScreenFrame>>>,
-    /// Tells the capture thread to stop; encoders end when it does.
     stop: Arc<AtomicBool>,
-    /// Frames encoded so far, for a live fps readout.
     encoded: Arc<std::sync::atomic::AtomicU64>,
 }
 
-/// Encoder threads per share. Two keep up with 60 fps at 720p.
 const ENCODERS: usize = 2;
 const JPEG_QUALITY: u8 = 60;
 
-/// Produces raw frames on demand: a monitor or window capturer, or a
-/// synthetic source in tests. Opened and used on the capture thread
-/// alone, since platform capture handles are not sendable.
 pub type FrameSource = Box<dyn FnMut() -> anyhow::Result<image::RgbaImage>>;
-/// Opens a [`FrameSource`]; called again whenever grabbing fails.
 pub type FrameOpener = Box<dyn FnMut() -> anyhow::Result<FrameSource> + Send>;
 
 impl ScreenShareSession {
@@ -390,17 +346,12 @@ impl ScreenShareSession {
         Self::start_with(server, channel, fps, max_width, opener)
     }
 
-    /// [`ScreenShareSession::start`] with any frame source, so the
-    /// capture-encode-fan-out pipeline runs without a display.
     pub fn start_with(server: ServerId, channel: ChannelId, fps: u32, max_width: u32, mut open: FrameOpener) -> Self {
         let subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<MediaPacket>>>> =
             Arc::new(Mutex::new(Vec::new()));
         let latest = Arc::new(Mutex::new(None));
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let encoded = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        // Capture and encoding run on their own threads so a slow encode
-        // never delays the next grab. Frames that arrive while every
-        // encoder is busy are dropped rather than queued.
         let (raw_tx, raw_rx) = std::sync::mpsc::sync_channel::<(u64, image::RgbaImage)>(ENCODERS);
         let raw_rx = Arc::new(Mutex::new(raw_rx));
         {
@@ -430,7 +381,6 @@ impl ScreenShareSession {
                             seq += 1;
                         }
                         Some(Err(e)) => {
-                            // The window may have closed or the monitor changed; reopen.
                             tracing::warn!("screen capture failed: {e}");
                             capturer = None;
                             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -499,12 +449,8 @@ impl Drop for ScreenShareSession {
     }
 }
 
-/// A screen we are watching: pump frames to the webview. The frames come
-/// from a peer's media channel, or from our own share for the sharer's
-/// preview, which must move at the stream's rate rather than a timer's.
 pub struct ScreenWatch {
     pub task: JoinHandle<()>,
-    /// Keeps a peer's media channel open for as long as we watch.
     _channel: Option<mpsc::UnboundedSender<MediaPacket>>,
 }
 
@@ -518,8 +464,6 @@ impl ScreenWatch {
         Self::from_frames(user, incoming, Some(outgoing), emit)
     }
 
-    /// Watches a stream of packets; `emit` runs for every video frame
-    /// that is still the newest when it is picked up.
     pub fn from_frames(
         user: UserId,
         mut incoming: mpsc::UnboundedReceiver<MediaPacket>,
@@ -529,13 +473,10 @@ impl ScreenWatch {
         let task = tokio::spawn(async move {
             let mut last_seq: Option<u64> = None;
             while let Some(mut packet) = incoming.recv().await {
-                // Show only the newest frame; anything that queued up
-                // while the webview was busy is already stale.
                 while let Ok(newer) = incoming.try_recv() {
                     packet = newer;
                 }
                 if let MediaPacket::Video { seq, width, height, jpeg } = packet {
-                    // Encoders can finish out of order; never step backwards.
                     if last_seq.is_some_and(|last| seq <= last) {
                         continue;
                     }
@@ -554,9 +495,6 @@ impl Drop for ScreenWatch {
     }
 }
 
-/// Our outgoing camera. Frames are captured and JPEG-encoded by the
-/// webview (getUserMedia), then fanned out to every subscribed viewer
-/// over the same MJPEG packets screen share uses.
 pub struct CameraSession {
     pub server: ServerId,
     pub channel: ChannelId,
@@ -573,8 +511,6 @@ impl CameraSession {
         self.subscribers.push(tx);
     }
 
-    /// Sends one frame to every viewer, dropping viewers that left.
-    /// Returns how many are still watching.
     pub fn push(&mut self, width: u32, height: u32, jpeg: Vec<u8>) -> usize {
         let packet = MediaPacket::Video { seq: self.seq, width, height, jpeg };
         self.seq += 1;
@@ -583,14 +519,10 @@ impl CameraSession {
     }
 }
 
-/// Convenience: the hello we send when dialing a voice peer.
 pub fn voice_hello(user: UserId, channel: ChannelId) -> MediaHello {
     MediaHello::Voice { user, channel }
 }
 
-/// Mic test: loops your own microphone through the entire voice
-/// pipeline (capture, noise cancellation, sequencing, jitter buffer,
-/// mixer, playback) so voice can be exercised on a single machine.
 pub struct MicTest {
     _devices: StreamGuards,
     task: JoinHandle<()>,
@@ -607,7 +539,6 @@ impl MicTest {
         let mixer = Arc::new(Mutex::new(Mixer::new()));
         let speaker = commy_media::start_playback(mixer.clone(), output)?;
         let task = tokio::spawn(async move {
-            // Through the same codec as calls, so the test sounds like you do to others.
             let mut encoder = commy_audio::codec::VoiceEncoder::new();
             let mut decoder = commy_audio::codec::VoiceDecoder::new();
             let mut seq: u32 = 0;
@@ -689,9 +620,6 @@ mod share_tests {
         })
     }
 
-    /// The sharer's own preview and every viewer get frames at the
-    /// stream's rate. A preview that polled on a one-second timer showed
-    /// about 1 fps; this fails for anything under a quarter of 30 fps.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn own_preview_and_viewers_see_frames_at_stream_rate() {
         let session = ScreenShareSession::start_with(ServerId::new(), ChannelId::new(), 30, 64, synthetic());

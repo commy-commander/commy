@@ -1,7 +1,3 @@
-// Sits between Caddy and iroh-relay. Plain requests (captive portal checks)
-// pass straight through; relay upgrades get their 101 response fixed so
-// Caddy will switch protocols, and are refused while the meter has paused
-// the relay for the month.
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
