@@ -1,0 +1,495 @@
+
+use crate::event::ServerEvent;
+use crate::identity::{Identity, IdentityKey, Signature};
+use crate::ids::{ServerId, UserId};
+use crate::permissions::Permissions;
+use crate::server::Server;
+use serde::{Deserialize, Serialize};
+
+const ACTION_DOMAIN: &str = "commy-action/v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Action {
+    pub by: UserId,
+    pub at: i64,
+    pub sig: Signature,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SignedEvent {
+    pub action: Action,
+    pub event: ServerEvent,
+}
+
+#[derive(Serialize)]
+struct SignedBytes<'a> {
+    domain: &'static str,
+    server: ServerId,
+    by: UserId,
+    at: i64,
+    event: &'a ServerEvent,
+}
+
+pub fn signing_bytes(server: ServerId, by: UserId, at: i64, event: &ServerEvent) -> Vec<u8> {
+    postcard::to_stdvec(&SignedBytes { domain: ACTION_DOMAIN, server, by, at, event })
+        .expect("action serialization cannot fail")
+}
+
+impl SignedEvent {
+    pub fn sign(server: ServerId, by: UserId, at: i64, event: ServerEvent, identity: &Identity) -> Self {
+        let sig = identity.sign(&signing_bytes(server, by, at, &event));
+        Self { action: Action { by, at, sig }, event }
+    }
+
+    pub fn verify(&self, server: ServerId, key: &IdentityKey) -> bool {
+        let Action { by, at, sig } = self.action;
+        key.verify(&signing_bytes(server, by, at, &self.event), &sig)
+    }
+}
+
+pub fn self_signed(event: &ServerEvent) -> bool {
+    matches!(
+        event,
+        ServerEvent::MessageCreate { .. }
+            | ServerEvent::MessageEdit { .. }
+            | ServerEvent::MessageDelete { .. }
+            | ServerEvent::DoorbellSet { .. }
+    )
+}
+
+pub fn actor(event: &ServerEvent) -> Option<UserId> {
+    use ServerEvent as E;
+    match event {
+        E::MemberJoin { profile, .. } | E::ProfileUpdate { profile } => Some(profile.id),
+        E::PresenceUpdate { user, .. }
+        | E::VoiceState { user, .. }
+        | E::TypingStart { user, .. }
+        | E::ScreenShare { user, .. }
+        | E::CameraState { user, .. }
+        | E::ReactionToggle { user, .. }
+        | E::ReactionSet { user, .. }
+        | E::SoundboardPlay { user, .. }
+        | E::RulesAccept { user, .. }
+        | E::EventRsvp { user, .. }
+        | E::DoorbellSet { user, .. } => Some(*user),
+        E::MessagePin { by, .. } => Some(*by),
+        _ => None,
+    }
+}
+
+pub fn may_go_unsigned(event: &ServerEvent) -> bool {
+    use ServerEvent as E;
+    match event {
+        E::MemberJoin { profile, .. } | E::ProfileUpdate { profile } => profile.identity.is_none(),
+        E::PresenceUpdate { .. }
+        | E::VoiceState { .. }
+        | E::TypingStart { .. }
+        | E::ScreenShare { .. }
+        | E::CameraState { .. }
+        | E::ReactionToggle { .. }
+        | E::ReactionSet { .. }
+        | E::SoundboardPlay { .. } => true,
+        _ => false,
+    }
+}
+
+pub fn subject(event: &ServerEvent) -> Option<String> {
+    use ServerEvent as E;
+    let s = match event {
+        E::MemberJoin { profile, .. } => format!("member:{}", profile.id),
+        E::MemberLeave { user, .. } => format!("member:{user}"),
+        E::MemberBan { user, .. } | E::MemberUnban { user, .. } => format!("ban:{user}"),
+        E::ProfileUpdate { profile } => format!("profile:{}", profile.id),
+        E::ChannelCreate { channel, .. } => format!("channel:{}", channel.id),
+        E::ChannelDelete { channel, .. } => format!("channel:{channel}"),
+        E::ChannelUpdate { channel, .. } => format!("channel.name:{channel}"),
+        E::ChannelLayout { channel, .. } => format!("channel.layout:{channel}"),
+        E::ChannelLimit { channel, .. } => format!("channel.limit:{channel}"),
+        E::ChannelBanner { channel, .. } => format!("channel.banner:{channel}"),
+        E::ChannelColor { channel, .. } => format!("channel.color:{channel}"),
+        E::ChannelKindSet { channel, .. } => format!("channel.kind:{channel}"),
+        E::AfkChannelSet { .. } => "afk_channel".into(),
+        E::AfkTimeoutSet { .. } => "afk_timeout".into(),
+        E::ServerRename { .. } => "name".into(),
+        E::ServerImages { .. } => "images".into(),
+        E::PublicSet { .. } => "public".into(),
+        E::GameTagsSet { .. } => "game_tags".into(),
+        E::RulesSet { .. } => "rules".into(),
+        E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
+        E::ExpressionSettings { .. } => "expressions".into(),
+        E::EmojiAdd { emoji, .. } => format!("emoji:{}", emoji.name),
+        E::EmojiRemove { name, .. } => format!("emoji:{name}"),
+        E::SoundAdd { sound, .. } => format!("sound:{}", sound.name),
+        E::SoundRemove { name, .. } => format!("sound:{name}"),
+        E::EventUpsert { event, .. } => format!("event:{}", event.id),
+        E::EventDelete { event, .. } => format!("event:{event}"),
+        E::EventRsvp { event, user, .. } => format!("rsvp:{event}:{user}"),
+        E::RoleCreate { role, .. } | E::RoleUpdate { role, .. } => format!("role:{}", role.id),
+        E::RoleDelete { role, .. } => format!("role:{role}"),
+        E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => format!("role:{role}:{user}"),
+        E::VoiceModerate { user, .. } => format!("voice_moderate:{user}"),
+        E::MessagePin { message, .. } => format!("pin:{message}"),
+        E::MessageCreate { .. }
+        | E::MessageEdit { .. }
+        | E::MessageDelete { .. }
+        | E::DoorbellSet { .. }
+        | E::PresenceUpdate { .. }
+        | E::VoiceState { .. }
+        | E::TypingStart { .. }
+        | E::ScreenShare { .. }
+        | E::CameraState { .. }
+        | E::ReactionToggle { .. }
+        | E::ReactionSet { .. }
+        | E::SoundboardPlay { .. } => return None,
+    };
+    Some(s)
+}
+
+pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
+    use ServerEvent as E;
+    let perms = server.permissions_for(by);
+    let allows = |p: Permissions| perms.allows(p);
+    let member = server.is_member(by);
+    match event {
+        E::MessageCreate { .. } | E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
+        E::MemberJoin { .. } => actor(event) == Some(by),
+        E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
+        E::ProfileUpdate { .. }
+        | E::PresenceUpdate { .. }
+        | E::VoiceState { .. }
+        | E::TypingStart { .. }
+        | E::ScreenShare { .. }
+        | E::CameraState { .. }
+        | E::ReactionToggle { .. }
+        | E::ReactionSet { .. }
+        | E::RulesAccept { .. }
+        | E::EventRsvp { .. } => actor(event) == Some(by),
+        E::SoundboardPlay { .. } => actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD),
+        E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin(),
+        E::ChannelCreate { .. }
+        | E::ChannelDelete { .. }
+        | E::ChannelUpdate { .. }
+        | E::ChannelLayout { .. }
+        | E::ChannelLimit { .. }
+        | E::ChannelBanner { .. }
+        | E::ChannelColor { .. }
+        | E::ChannelKindSet { .. } => allows(Permissions::MANAGE_CHANNELS),
+        E::ServerRename { .. }
+        | E::ServerImages { .. }
+        | E::PublicSet { .. }
+        | E::GameTagsSet { .. }
+        | E::RulesSet { .. }
+        | E::AfkChannelSet { .. }
+        | E::AfkTimeoutSet { .. }
+        | E::ExpressionSettings { .. } => allows(Permissions::MANAGE_SERVER),
+        E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
+        E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => {
+            allows(Permissions::MANAGE_ROLES)
+                || (*user == by && server.roles.iter().any(|r| r.id == *role && r.self_assignable))
+        }
+        E::EmojiAdd { .. } | E::EmojiRemove { .. } | E::SoundRemove { .. } => allows(Permissions::MANAGE_EXPRESSIONS),
+        E::SoundAdd { sound, .. } => {
+            allows(Permissions::MANAGE_EXPRESSIONS)
+                || (server.soundboard_open && member && !server.soundboard.iter().any(|s| s.name == sound.name))
+        }
+        E::EventUpsert { event, .. } => {
+            allows(Permissions::MANAGE_EVENTS)
+                || (event.creator == by && server.events.iter().any(|e| e.id == event.id && e.creator == by))
+        }
+        E::EventDelete { event, .. } => {
+            allows(Permissions::MANAGE_EVENTS) || server.events.iter().any(|e| e.id == *event && e.creator == by)
+        }
+        E::VoiceModerate { .. } => allows(Permissions::MUTE_MEMBERS) || allows(Permissions::DEAFEN_MEMBERS),
+        E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ids::ChannelId;
+    use crate::ids::RoleId;
+    use crate::server::{Channel, ChannelKind, Role};
+    use crate::test_support::{fixture, identity_for, join};
+    use crate::user::{Presence, UserProfile};
+
+    fn role(perms: Permissions, self_assignable: bool) -> Role {
+        Role {
+            id: RoleId::new(),
+            name: "r".into(),
+            color: None,
+            permissions: perms,
+            position: 1,
+            hoist: false,
+            self_assignable,
+            tag: None,
+            banner: None,
+        }
+    }
+
+    #[test]
+    fn signature_covers_server_actor_time_and_event() {
+        let server = ServerId::new();
+        let me = UserId::new();
+        let identity = identity_for(me);
+        let event = ServerEvent::ServerRename { server, name: "new".into() };
+        let signed = SignedEvent::sign(server, me, 1_000, event.clone(), &identity);
+        assert!(signed.verify(server, &identity.public()));
+        assert!(!signed.verify(ServerId::new(), &identity.public()), "another server");
+        assert!(!signed.verify(server, &Identity::generate().public()), "another key");
+        let mut other = signed.clone();
+        other.action.at += 1;
+        assert!(!other.verify(server, &identity.public()), "another time");
+        let mut other = signed.clone();
+        other.action.by = UserId::new();
+        assert!(!other.verify(server, &identity.public()), "another actor");
+        let mut other = signed;
+        other.event = ServerEvent::ServerRename { server, name: "evil".into() };
+        assert!(!other.verify(server, &identity.public()), "another event");
+    }
+
+    #[test]
+    fn signed_events_roundtrip_both_formats() {
+        let server = ServerId::new();
+        let me = UserId::new();
+        let event = ServerEvent::PublicSet { server, public: true };
+        let signed = SignedEvent::sign(server, me, 7, event, &identity_for(me));
+        let json = serde_json::to_string(&signed).unwrap();
+        assert_eq!(serde_json::from_str::<SignedEvent>(&json).unwrap(), signed);
+        let bytes = postcard::to_stdvec(&signed).unwrap();
+        assert_eq!(postcard::from_bytes::<SignedEvent>(&bytes).unwrap(), signed);
+    }
+
+    #[test]
+    fn bare_events_are_the_self_signed_and_the_keyless_live_ones() {
+        let server = ServerId::new();
+        let keyless = UserProfile::new("new");
+        let mut keyed = UserProfile::new("old");
+        keyed.identity = Some(Identity::generate().public());
+        assert!(may_go_unsigned(&ServerEvent::MemberJoin { server, profile: keyless.clone() }));
+        assert!(!may_go_unsigned(&ServerEvent::MemberJoin { server, profile: keyed.clone() }));
+        assert!(may_go_unsigned(&ServerEvent::ProfileUpdate { profile: keyless }));
+        assert!(!may_go_unsigned(&ServerEvent::ProfileUpdate { profile: keyed }));
+        assert!(may_go_unsigned(&ServerEvent::PresenceUpdate { user: UserId::new(), presence: Presence::Online }));
+        assert!(!may_go_unsigned(&ServerEvent::ServerRename { server, name: "x".into() }));
+        assert!(!may_go_unsigned(&ServerEvent::MemberBan { server, user: UserId::new() }));
+        let message = crate::message::Message::new(ChannelId::new(), UserId::new(), "hi");
+        assert!(self_signed(&ServerEvent::MessageCreate { message }));
+        assert!(!self_signed(&ServerEvent::ServerRename { server, name: "x".into() }));
+    }
+
+    #[test]
+    fn subjects_pair_the_changes_that_undo_each_other() {
+        let server = ServerId::new();
+        let user = UserId::new();
+        let role = RoleId::new();
+        let pair = |a: ServerEvent, b: ServerEvent| {
+            assert!(subject(&a).is_some());
+            assert_eq!(subject(&a), subject(&b));
+        };
+        pair(ServerEvent::MemberBan { server, user }, ServerEvent::MemberUnban { server, user });
+        pair(ServerEvent::RoleAssign { server, user, role }, ServerEvent::RoleUnassign { server, user, role });
+        let channel = Channel::new("c", ChannelKind::Text, 3);
+        pair(
+            ServerEvent::ChannelCreate { server, channel: channel.clone() },
+            ServerEvent::ChannelDelete { server, channel: channel.id },
+        );
+        assert_ne!(
+            subject(&ServerEvent::MemberBan { server, user }),
+            subject(&ServerEvent::MemberBan { server, user: UserId::new() })
+        );
+        assert_eq!(subject(&ServerEvent::VoiceState { user, channel: None, muted: false, deafened: false, since: None }), None);
+        assert_eq!(subject(&ServerEvent::TypingStart { channel: channel.id, user }), None);
+    }
+
+    #[test]
+    fn owner_and_administrators_may_do_anything() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let admin = join(&mut state, "admin");
+        let plain = join(&mut state, "plain");
+        let admin_role = role(Permissions::ADMINISTRATOR, false);
+        let rid = admin_role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: admin_role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: admin, role: rid }).unwrap();
+        let events = [
+            ServerEvent::ServerRename { server: sid, name: "n".into() },
+            ServerEvent::MemberBan { server: sid, user: plain },
+            ServerEvent::ChannelDelete { server: sid, channel: state.server.channels[0].id },
+            ServerEvent::RoleDelete { server: sid, role: rid },
+            ServerEvent::MemberLeave { server: sid, user: admin },
+            ServerEvent::VoiceModerate { server: sid, user: plain, muted: true, deafened: false },
+        ];
+        for event in &events {
+            assert!(authorized(&state.server, owner, event), "{event:?}");
+            assert!(authorized(&state.server, admin, event), "{event:?}");
+            assert!(!authorized(&state.server, plain, event), "{event:?}");
+            assert!(!authorized(&state.server, UserId::new(), event), "stranger {event:?}");
+        }
+    }
+
+    #[test]
+    fn members_act_only_for_themselves() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        let presence = |user| ServerEvent::PresenceUpdate { user, presence: Presence::Idle };
+        assert!(authorized(&state.server, a, &presence(a)));
+        assert!(!authorized(&state.server, a, &presence(b)));
+        assert!(!authorized(&state.server, owner, &presence(b)), "not even the owner speaks for others");
+        let leave = |user| ServerEvent::MemberLeave { server: sid, user };
+        assert!(authorized(&state.server, a, &leave(a)));
+        assert!(!authorized(&state.server, a, &leave(b)));
+        assert!(authorized(&state.server, owner, &leave(b)), "a kick");
+        let profile = state.profiles[&b].clone();
+        assert!(authorized(&state.server, b, &ServerEvent::ProfileUpdate { profile: profile.clone() }));
+        assert!(!authorized(&state.server, a, &ServerEvent::ProfileUpdate { profile }));
+        let voice = |user| ServerEvent::VoiceState { user, channel: Some(channel), muted: false, deafened: false, since: None };
+        assert!(authorized(&state.server, a, &voice(a)));
+        assert!(!authorized(&state.server, b, &voice(a)));
+        let pin = |by| ServerEvent::MessagePin { server: sid, channel, message: crate::ids::MessageId::new(), by, at: chrono::Utc::now(), pinned: true };
+        assert!(authorized(&state.server, owner, &pin(owner)));
+        assert!(!authorized(&state.server, a, &pin(a)), "no pin permission");
+        assert!(!authorized(&state.server, owner, &pin(a)), "pins name their pinner");
+    }
+
+    #[test]
+    fn roles_grant_what_they_say() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let mod_ = join(&mut state, "mod");
+        let user = join(&mut state, "user");
+        let mods = role(Permissions::BAN_MEMBERS | Permissions::MANAGE_CHANNELS, false);
+        let picks = role(Permissions::NONE, true);
+        let (mods_id, picks_id) = (mods.id, picks.id);
+        state.apply(ServerEvent::RoleCreate { server: sid, role: mods }).unwrap();
+        state.apply(ServerEvent::RoleCreate { server: sid, role: picks }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: mod_, role: mods_id }).unwrap();
+        let ban = ServerEvent::MemberBan { server: sid, user };
+        assert!(authorized(&state.server, mod_, &ban));
+        assert!(!authorized(&state.server, user, &ban));
+        let rename = ServerEvent::ServerRename { server: sid, name: "x".into() };
+        assert!(!authorized(&state.server, mod_, &rename), "manage channels is not manage server");
+        let grant = |who, role| ServerEvent::RoleAssign { server: sid, user: who, role };
+        assert!(!authorized(&state.server, mod_, &grant(user, mods_id)), "no manage roles");
+        assert!(authorized(&state.server, user, &grant(user, picks_id)), "self-assignable");
+        assert!(!authorized(&state.server, user, &grant(user, mods_id)), "not that one");
+        assert!(!authorized(&state.server, user, &grant(mod_, picks_id)), "only for oneself");
+        assert!(authorized(&state.server, user, &ServerEvent::RoleUnassign { server: sid, user, role: picks_id }));
+    }
+
+    #[test]
+    fn open_soundboards_and_own_events() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "user");
+        let sound = |name: &str| crate::server::SoundboardSound { name: name.into(), blob: format!("{}@{}", "a1".repeat(32), "b2".repeat(32)), volume: 1.0 };
+        let add = ServerEvent::SoundAdd { server: sid, sound: sound("boom") };
+        assert!(!authorized(&state.server, user, &add));
+        state.server.soundboard_open = true;
+        assert!(authorized(&state.server, user, &add));
+        assert!(!authorized(&state.server, UserId::new(), &add), "members only");
+        state.apply(add.clone()).unwrap();
+        assert!(!authorized(&state.server, user, &add), "replacing takes manage expressions");
+        assert!(!authorized(&state.server, user, &ServerEvent::SoundRemove { server: sid, name: "boom".into() }));
+        let event = crate::server::ScheduledEvent {
+            id: "e1".into(),
+            title: "night".into(),
+            description: String::new(),
+            start: chrono::Utc::now(),
+            end: None,
+            channel: Some(channel),
+            creator: user,
+            rsvps: Vec::new(),
+        };
+        let upsert = ServerEvent::EventUpsert { server: sid, event: event.clone() };
+        assert!(!authorized(&state.server, user, &upsert), "creating takes manage events");
+        assert!(authorized(&state.server, owner, &upsert));
+        state.apply(upsert.clone()).unwrap();
+        assert!(authorized(&state.server, user, &upsert), "editing one's own");
+        assert!(authorized(&state.server, user, &ServerEvent::EventDelete { server: sid, event: "e1".into() }));
+        let other = join(&mut state, "other");
+        assert!(!authorized(&state.server, other, &upsert));
+        assert!(authorized(&state.server, user, &ServerEvent::EventRsvp { server: sid, event: "e1".into(), user, rsvp: None }));
+        assert!(!authorized(&state.server, other, &ServerEvent::EventRsvp { server: sid, event: "e1".into(), user, rsvp: None }));
+    }
+
+    #[test]
+    fn the_store_takes_signed_actions_from_members_allowed_to_make_them() {
+        use crate::store::StoreError;
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "user");
+        let victim = join(&mut state, "victim");
+        let ban = ServerEvent::MemberBan { server: sid, user: victim };
+        let forged = SignedEvent::sign(sid, user, 1_000, ban.clone(), &identity_for(user));
+        assert_eq!(state.apply_signed(&forged), Err(StoreError::NotAllowed));
+        assert!(state.server.is_member(victim));
+        let as_owner = SignedEvent::sign(sid, owner, 1_000, ban.clone(), &identity_for(user));
+        assert_eq!(state.apply_signed(&as_owner), Err(StoreError::BadSignature));
+        let real = SignedEvent::sign(sid, owner, 1_000, ban, &identity_for(owner));
+        assert_eq!(state.apply_signed(&real), Ok(true));
+        assert!(!state.server.is_member(victim));
+        assert_eq!(state.apply_signed(&real), Ok(false), "a copy changes nothing");
+        let stranger = UserId::new();
+        let unknown = SignedEvent::sign(sid, stranger, 1_000, ServerEvent::ServerRename { server: sid, name: "x".into() }, &identity_for(stranger));
+        assert_eq!(state.apply_signed(&unknown), Err(StoreError::UnknownAuthorKey(stranger)));
+        let far = SignedEvent::sign(sid, owner, chrono::Utc::now().timestamp_millis() + 2 * crate::store::MAX_AHEAD_MS, ServerEvent::ServerRename { server: sid, name: "x".into() }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&far), Err(StoreError::TooFarAhead));
+    }
+
+    #[test]
+    fn an_older_change_to_the_same_thing_loses_wherever_it_arrives() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "user");
+        let ban = SignedEvent::sign(sid, owner, 1_000, ServerEvent::MemberBan { server: sid, user }, &identity_for(owner));
+        let unban = SignedEvent::sign(sid, owner, 2_000, ServerEvent::MemberUnban { server: sid, user }, &identity_for(owner));
+        let mut forward = state.clone();
+        assert_eq!(forward.apply_signed(&ban), Ok(true));
+        assert_eq!(forward.apply_signed(&unban), Ok(true));
+        assert_eq!(forward.apply_signed(&ban), Ok(false), "a replayed ban");
+        assert!(forward.server.banned.is_empty());
+        let mut backward = state.clone();
+        assert_eq!(backward.apply_signed(&unban), Ok(false));
+        assert_eq!(backward.apply_signed(&ban), Ok(false), "the unban came first");
+        assert!(backward.server.banned.is_empty());
+        let restored = crate::store::ServerState::from_snapshot(forward.snapshot());
+        let mut restored = restored;
+        assert_eq!(restored.apply_signed(&ban), Ok(false), "remembered across a restart");
+        let mine = SignedEvent::sign(sid, owner, 500, ServerEvent::ServerRename { server: sid, name: "mine".into() }, &identity_for(owner));
+        assert_eq!(state.apply_own(&mine), Ok(true));
+        let theirs = SignedEvent::sign(sid, owner, 400, ServerEvent::ServerRename { server: sid, name: "theirs".into() }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&theirs), Ok(false));
+        assert_eq!(state.server.name, "mine");
+    }
+
+    #[test]
+    fn bare_events_are_taken_only_from_members_without_a_key() {
+        use crate::store::StoreError;
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let keyed = join(&mut state, "keyed");
+        let presence = |user| ServerEvent::PresenceUpdate { user, presence: Presence::Idle };
+        assert_eq!(state.apply_unsigned(presence(keyed)), Err(StoreError::Unsigned));
+        let fresh = UserProfile::new("fresh");
+        let fresh_id = fresh.id;
+        assert_eq!(state.apply_unsigned(ServerEvent::MemberJoin { server: sid, profile: fresh }), Ok(true));
+        assert_eq!(state.apply_unsigned(presence(fresh_id)), Ok(true));
+        let mut carrying = state.profiles[&fresh_id].clone();
+        carrying.identity = Some(identity_for(fresh_id).public());
+        assert_eq!(state.apply_unsigned(ServerEvent::ProfileUpdate { profile: carrying.clone() }), Err(StoreError::Unsigned));
+        let signed = SignedEvent::sign(sid, fresh_id, 1, ServerEvent::ProfileUpdate { profile: carrying }, &identity_for(fresh_id));
+        assert_eq!(state.apply_signed(&signed), Ok(true), "a key proves itself");
+        assert_eq!(state.identity_of(fresh_id), Some(identity_for(fresh_id).public()));
+        assert_eq!(state.apply_unsigned(presence(fresh_id)), Err(StoreError::Unsigned));
+        assert_eq!(state.apply_unsigned(ServerEvent::MemberBan { server: sid, user: keyed }), Err(StoreError::Unsigned));
+        let message = crate::test_support::post(&state, channel, owner, "hi");
+        assert_eq!(state.apply_unsigned(ServerEvent::MessageCreate { message }), Ok(true));
+        let mut other_key = state.profiles[&keyed].clone();
+        other_key.identity = Some(Identity::generate().public());
+        let swap = SignedEvent::sign(sid, keyed, 1, ServerEvent::ProfileUpdate { profile: other_key }, &identity_for(keyed));
+        assert_eq!(state.apply_signed(&swap), Err(StoreError::IdentityMismatch));
+    }
+}

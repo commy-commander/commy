@@ -1,7 +1,8 @@
 use crate::media_engine::{CameraSession, MicTest, ScreenShareSession, ScreenWatch, VoiceSession};
 use commy_audio::VoiceProcessor;
-use commy_core::{DmStore, Identity, ServerId, ServerState, UserId, UserProfile};
-use commy_net::CommyNode;
+use commy_core::identity::IdentityKey;
+use commy_core::{action, DmStore, Identity, ServerEvent, ServerId, ServerState, SignedEvent, UserId, UserProfile};
+use commy_net::{CommyNode, ServerTicket, WirePayload};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -299,6 +300,55 @@ impl App {
         }
         self.hold_key(Instant::now() + max);
         true
+    }
+
+    pub fn sign_event(&self, server: ServerId, event: ServerEvent) -> Option<SignedEvent> {
+        let me = self.profile.lock().unwrap().as_ref().map(|p| p.id)?;
+        let identity = self.identity()?;
+        let at = chrono::Utc::now().timestamp_millis();
+        Some(SignedEvent::sign(server, me, at, event, &identity))
+    }
+
+    pub fn wire_for(&self, server: ServerId, event: ServerEvent) -> WirePayload {
+        if action::self_signed(&event) || (!self.key_settled() && action::may_go_unsigned(&event)) {
+            return WirePayload::Event(event);
+        }
+        match self.sign_event(server, event.clone()) {
+            Some(signed) => WirePayload::Signed(signed),
+            None => WirePayload::Event(event),
+        }
+    }
+
+    pub fn own_key_for_tickets(&self) -> Option<(UserId, IdentityKey)> {
+        if !self.key_settled() {
+            return None;
+        }
+        let me = self.profile.lock().unwrap().as_ref().map(|p| p.id)?;
+        Some((me, self.identity()?.public()))
+    }
+
+    pub fn ticket_owner(&self, server: ServerId) -> Option<(UserId, IdentityKey)> {
+        let raw = self.invites.lock().unwrap().get(&server).cloned()?;
+        ServerTicket::decode(&raw).ok()?.owner
+    }
+
+    pub fn vouched_ticket(&self, server: ServerId) -> Option<ServerTicket> {
+        let raw = self.invites.lock().unwrap().get(&server).cloned()?;
+        let mut ticket = ServerTicket::decode(&raw).ok()?;
+        if ticket.owner.is_none() {
+            let owns = self.servers.lock().unwrap().get(&server).map(|s| s.server.owner);
+            let me = self.own_key_for_tickets();
+            if let (Some(owner), Some((id, key))) = (owns, me) {
+                if owner == id {
+                    ticket.owner = Some((id, key));
+                    self.invites.lock().unwrap().insert(server, ticket.encode());
+                    if let Some(dir) = self.data_dir() {
+                        let _ = crate::persist::save_invites(dir, &self.invites.lock().unwrap().clone());
+                    }
+                }
+            }
+        }
+        Some(ticket)
     }
 
     /// Our profile as we announce it: as others may see it (appearing

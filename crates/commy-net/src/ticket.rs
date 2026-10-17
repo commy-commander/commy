@@ -1,4 +1,5 @@
-use commy_core::ServerId;
+use commy_core::identity::IdentityKey;
+use commy_core::{ServerId, UserId};
 use data_encoding::BASE32_NOPAD;
 use iroh::net::NodeAddr;
 use serde::{Deserialize, Serialize};
@@ -6,7 +7,8 @@ use thiserror::Error;
 
 /// Human-pasteable invite prefix.
 const PREFIX: &str = "commy";
-const TICKET_VERSION: u8 = 1;
+const TICKET_VERSION: u8 = 2;
+const FIRST_TICKET_VERSION: u8 = 1;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum TicketError {
@@ -28,6 +30,15 @@ pub struct ServerTicket {
     pub topic: [u8; 32],
     /// Addresses of members that can bootstrap the newcomer.
     pub bootstrap: Vec<NodeAddr>,
+    pub owner: Option<(UserId, IdentityKey)>,
+}
+
+#[derive(Deserialize)]
+struct FirstTicket {
+    server_id: ServerId,
+    server_name: String,
+    topic: [u8; 32],
+    bootstrap: Vec<NodeAddr>,
 }
 
 impl ServerTicket {
@@ -42,6 +53,7 @@ impl ServerTicket {
             server_name: server_name.into(),
             topic,
             bootstrap,
+            owner: None,
         }
     }
 
@@ -62,10 +74,14 @@ impl ServerTicket {
             .decode(encoded.to_ascii_uppercase().as_bytes())
             .map_err(|_| TicketError::Corrupt)?;
         let (&version, rest) = bytes.split_first().ok_or(TicketError::Corrupt)?;
-        if version != TICKET_VERSION {
-            return Err(TicketError::BadVersion(version));
+        match version {
+            TICKET_VERSION => postcard::from_bytes(rest).map_err(|_| TicketError::Corrupt),
+            FIRST_TICKET_VERSION => {
+                let first: FirstTicket = postcard::from_bytes(rest).map_err(|_| TicketError::Corrupt)?;
+                Ok(Self::new(first.server_id, first.server_name, first.topic, first.bootstrap))
+            }
+            other => Err(TicketError::BadVersion(other)),
         }
-        postcard::from_bytes(rest).map_err(|_| TicketError::Corrupt)
     }
 }
 
@@ -116,6 +132,36 @@ mod tests {
             ServerTicket::decode(&encoded),
             Err(TicketError::Corrupt)
         ));
+    }
+
+    #[test]
+    fn carries_the_owner_and_still_reads_first_version_tickets() {
+        let mut ticket = sample();
+        let owner = UserId::new();
+        let key = commy_core::Identity::generate().public();
+        ticket.owner = Some((owner, key));
+        let decoded = ServerTicket::decode(&ticket.encode()).unwrap();
+        assert_eq!(decoded.owner, Some((owner, key)));
+        assert_eq!(decoded, ticket);
+        let first = FirstTicketOut {
+            server_id: ticket.server_id,
+            server_name: ticket.server_name.clone(),
+            topic: ticket.topic,
+            bootstrap: ticket.bootstrap.clone(),
+        };
+        let mut bytes = vec![FIRST_TICKET_VERSION];
+        bytes.extend(postcard::to_stdvec(&first).unwrap());
+        let encoded = format!("commy{}", BASE32_NOPAD.encode(&bytes).to_ascii_lowercase());
+        let decoded = ServerTicket::decode(&encoded).unwrap();
+        assert_eq!(decoded, ServerTicket { owner: None, ..ticket });
+    }
+
+    #[derive(Serialize)]
+    struct FirstTicketOut {
+        server_id: ServerId,
+        server_name: String,
+        topic: [u8; 32],
+        bootstrap: Vec<NodeAddr>,
     }
 
     #[test]

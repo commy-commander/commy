@@ -7,7 +7,8 @@ use crate::media::{read_frame, write_frame, MediaHello, MediaPacket, MEDIA_ALPN}
 use crate::protocol::{Envelope, WirePayload};
 use crate::ticket::ServerTicket;
 use anyhow::{Context, Result};
-use commy_core::{ServerEvent, ServerId};
+use commy_core::identity::IdentityKey;
+use commy_core::{ServerEvent, ServerId, UserId};
 use futures_lite::StreamExt;
 use futures_util::{Sink, SinkExt};
 use iroh::net::endpoint::Connecting;
@@ -31,6 +32,7 @@ pub enum NetEvent {
         server: ServerId,
         sender: [u8; 32],
         event: ServerEvent,
+        action: Option<commy_core::Action>,
     },
     /// A newcomer asked for state; the app should reply with a snapshot.
     SyncRequested { server: ServerId, sender: [u8; 32] },
@@ -808,10 +810,12 @@ impl CommyNode {
         &mut self,
         server_id: ServerId,
         server_name: &str,
+        owner: Option<(UserId, IdentityKey)>,
     ) -> Result<ServerTicket> {
         let topic_bytes = topic_for(server_id);
         let addr = self.node_addr().await?;
-        let ticket = ServerTicket::new(server_id, server_name, topic_bytes, vec![addr]);
+        let mut ticket = ServerTicket::new(server_id, server_name, topic_bytes, vec![addr]);
+        ticket.owner = owner;
         self.join_topic(server_id, topic_bytes, vec![]).await?;
         Ok(ticket)
     }
@@ -939,6 +943,13 @@ impl CommyNode {
                         server: server_id,
                         sender: envelope.sender,
                         event,
+                        action: None,
+                    },
+                    WirePayload::Signed(signed) => NetEvent::Event {
+                        server: server_id,
+                        sender: envelope.sender,
+                        event: signed.event,
+                        action: Some(signed.action),
                     },
                     WirePayload::SyncRequest => NetEvent::SyncRequested {
                         server: server_id,

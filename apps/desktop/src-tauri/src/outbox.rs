@@ -13,7 +13,7 @@ use commy_core::{
     UserProfile,
 };
 use commy_net::node::IncomingDm;
-use commy_net::{DmEnvelope, WirePayload};
+use commy_net::DmEnvelope;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -464,52 +464,11 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
 /// messages, edits and deletes, and our own profile. Every kind is named
 /// so a new one has to be sorted here.
 pub fn needs_settled_key(event: &ServerEvent, me: Option<UserId>) -> bool {
-    use ServerEvent as E;
     match event {
-        E::MessageCreate { .. } | E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
-        E::MemberJoin { profile, .. } | E::ProfileUpdate { profile } => me.is_none_or(|me| me == profile.id),
-        E::ReactionToggle { .. }
-        | E::MemberLeave { .. }
-        | E::PresenceUpdate { .. }
-        | E::ChannelCreate { .. }
-        | E::ChannelDelete { .. }
-        | E::VoiceState { .. }
-        | E::TypingStart { .. }
-        | E::ScreenShare { .. }
-        | E::ServerRename { .. }
-        | E::RoleCreate { .. }
-        | E::RoleDelete { .. }
-        | E::RoleAssign { .. }
-        | E::RoleUnassign { .. }
-        | E::AfkChannelSet { .. }
-        | E::ChannelUpdate { .. }
-        | E::CameraState { .. }
-        | E::ServerImages { .. }
-        | E::ReactionSet { .. }
-        | E::EmojiAdd { .. }
-        | E::EmojiRemove { .. }
-        | E::SoundAdd { .. }
-        | E::SoundRemove { .. }
-        | E::ExpressionSettings { .. }
-        | E::PublicSet { .. }
-        | E::SoundboardPlay { .. }
-        | E::GameTagsSet { .. }
-        | E::RulesSet { .. }
-        | E::RulesAccept { .. }
-        | E::EventUpsert { .. }
-        | E::EventDelete { .. }
-        | E::EventRsvp { .. }
-        | E::ChannelLayout { .. }
-        | E::ChannelLimit { .. }
-        | E::ChannelBanner { .. }
-        | E::ChannelColor { .. }
-        | E::MessagePin { .. }
-        | E::ChannelKindSet { .. }
-        | E::RoleUpdate { .. }
-        | E::VoiceModerate { .. }
-        | E::MemberBan { .. }
-        | E::MemberUnban { .. }
-        | E::AfkTimeoutSet { .. } => false,
+        ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } => {
+            me.is_none_or(|me| me == profile.id)
+        }
+        event => !commy_core::action::may_go_unsigned(event),
     }
 }
 
@@ -542,7 +501,7 @@ pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) ->
         let net = app.net.lock().await;
         match net.as_ref() {
             Some(node) if may_send(app, node.neighbor_count(server), &event) => {
-                match node.broadcast(server, WirePayload::Event(event.clone())).await {
+                match node.broadcast(server, app.wire_for(server, event.clone())).await {
                     Ok(()) => true,
                     Err(e) => {
                         tracing::warn!("broadcast failed, keeping it for later: {e}");
@@ -583,7 +542,7 @@ pub async fn flush_queued(app: &App, server: ServerId) {
             match net.as_ref() {
                 // A neighbor may have left since the event that woke us.
                 Some(node) if may_send(app, node.neighbor_count(server), event) => {
-                    node.broadcast(server, WirePayload::Event(event.clone())).await
+                    node.broadcast(server, app.wire_for(server, event.clone())).await
                 }
                 Some(_) => Err(anyhow::anyhow!("no neighbor is connected")),
                 None => Err(anyhow::anyhow!("network is not ready")),
@@ -1433,7 +1392,7 @@ mod tests {
 
         // The network is up and we are on the topic, but nobody is connected.
         let (mut node, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(30), node.host_server(sid, "s")).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(30), node.host_server(sid, "s", None)).await.unwrap().unwrap();
         *app.net.lock().await = Some(node);
         flush_queued(&app, sid).await;
         assert_eq!(app.outbox.lock().unwrap().clone().take_queued(sid), vec![rename(sid, "offline")]);
@@ -1662,7 +1621,7 @@ mod tests {
         let within = Duration::from_secs;
         let (mut a, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
         let (mut b, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
-        let ticket = tokio::time::timeout(within(30), a.host_server(sid, "s")).await.unwrap().unwrap();
+        let ticket = tokio::time::timeout(within(30), a.host_server(sid, "s", None)).await.unwrap().unwrap();
         assert!(tokio::time::timeout(within(60), b.join_server(&ticket)).await.unwrap().unwrap());
         assert!(a.wait_for_peers(sid, within(30)).await);
         (a, b)
