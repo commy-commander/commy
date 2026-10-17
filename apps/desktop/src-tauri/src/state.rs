@@ -55,6 +55,8 @@ pub struct VoiceSettings {
     pub user_volumes: std::collections::HashMap<String, f32>,
     #[serde(default)]
     pub muted_users: Vec<String>,
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
 }
 
 fn default_true() -> bool {
@@ -97,6 +99,7 @@ impl Default for VoiceSettings {
             overlay: crate::overlay::OverlaySettings::default(),
             user_volumes: std::collections::HashMap::new(),
             muted_users: Vec::new(),
+            auto_update: true,
         }
     }
 }
