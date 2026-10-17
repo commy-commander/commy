@@ -198,8 +198,9 @@ accepts new ones.
 ## Message doorbell
 
 Commy messages travel only between members' devices, so a message sent while
-its recipient is offline waits on the sender's device until both are online
-at the same time. The doorbell closes that gap without carrying any message:
+its recipient is offline waits on the devices that hold it (the sender's, and
+those of members who were online when it was sent) until one of them and the
+recipient are online at the same time. The doorbell closes that gap without carrying any message:
 the sender's app rings the recipient's doorbell on the recipient's account
 server. When the recipient's app is running it hears the ring, shows the
 messages as on their way and fetches them from its peers directly once one of
