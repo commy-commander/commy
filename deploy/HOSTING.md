@@ -183,7 +183,8 @@ accepts new ones.
 
 - Whoever creates a link picks when it expires: in 1 hour, 1 day, 7 days or
   30 days. On a server its owner marked public, the app also offers links
-  that never expire; the account server keeps those,
+  that never expire; the account server keeps those, only for signed in
+  apps and with the account that made each one,
   up to `INVITES_MAX_PERMANENT` of them (20000 by default). The app seals the
   expiry inside the invite as well, so a row kept past its expiry still will
   not open. Creating links is limited to 30 per hour per IP; set
