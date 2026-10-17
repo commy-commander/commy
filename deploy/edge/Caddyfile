@@ -21,6 +21,9 @@
 	@doorbell path /api/auth/commy/doorbell/*
 	log_skip @doorbell
 
+	@secrets path /api/auth/verify-email* /api/auth/magic-link/* /api/auth/reset-password/* /api/auth/callback/* /account/reset-password* /device*
+	log_skip @secrets
+
 	encode zstd gzip
 
 	header {

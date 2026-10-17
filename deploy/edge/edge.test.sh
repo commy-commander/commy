@@ -70,9 +70,17 @@ check "a direct visitor cannot claim another address" \
 	"$(curl -fs -H "X-Forwarded-For: 6.6.6.6" "$url/api/auth/get-session")" "127.0.0.1"
 check "doorbell calls are named the same way" \
 	"$(via_proxy -X POST "$url/api/auth/commy/doorbell/ring")" "198.51.100.7"
+check "the website is told the visitor's own address" \
+	"$(via_proxy "$url/download")" "198.51.100.7"
+check "a chain the visitor started does not reach the website" \
+	"$(curl -fs --interface 127.0.0.2 -H "CF-Connecting-IP: 198.51.100.7" -H "X-Forwarded-For: 6.6.6.6, 198.51.100.7" "$url/download")" "198.51.100.7"
+check "a chain the visitor started does not reach the auth server" \
+	"$(curl -fs --interface 127.0.0.2 -H "CF-Connecting-IP: 198.51.100.7" -H "X-Forwarded-For: 6.6.6.6, 198.51.100.7" "$url/api/auth/get-session")" "198.51.100.7"
 
 for path in /i/K7QX2M9P "/api/auth/commy/invites/resolve?code=K7QX2M9P" /api/auth/commy/invites/create \
-	/api/auth/commy/doorbell/take /api/auth/commy/doorbell/ring /docs; do
+	/api/auth/commy/doorbell/take /api/auth/commy/doorbell/ring /docs \
+	"/api/auth/verify-email?token=t1" "/api/auth/magic-link/verify?token=t2" "/api/auth/reset-password/t3" \
+	"/api/auth/callback/google?code=c1&state=s1" "/account/reset-password?token=t4" "/device?user_code=ABCD1234"; do
 	curl -fs -o /dev/null "$url$path"
 done
 sleep 1
@@ -82,6 +90,9 @@ logged() {
 check "invite pages are not logged" "$(logged /i/)" 0
 check "invite lookups are not logged" "$(logged /api/auth/commy/invites/)" 0
 check "doorbell calls are not logged" "$(logged /api/auth/commy/doorbell/)" 0
+check "sign-in and reset links are not logged" "$(grep -c 'token=\|/reset-password/t3' "$work/access.log" || true)" 0
+check "provider callbacks are not logged" "$(logged /api/auth/callback/)" 0
+check "device codes are not logged" "$(logged /device)" 0
 check "other requests are logged" "$(logged /docs)" 1
 
 if [ "$failures" -gt 0 ]; then

@@ -658,23 +658,28 @@ fn ask_other_devices(handle: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let result = ask(&handle).await;
         ASKING.store(false, Ordering::SeqCst);
-        match result {
-            Ok(true) => schedule(&handle),
-            Ok(false) => set_status(
-                &handle,
-                "waiting",
-                "None of your other devices approved this one. Open Commy on one of them and try again, or enter your recovery code.",
-                0,
-                false,
-            ),
-            Err(e) => set_status(&handle, "waiting", e, 0, false),
+        let detail = match result {
+            Ok(Asked::Got) => return schedule(&handle),
+            Ok(Asked::NobodyHasKey) => "None of your devices has the key to your server list. Enter your recovery code, or start a new list from this device.".to_string(),
+            Ok(Asked::NotApproved) => "None of your other devices approved this one yet. Open Commy on one of them, or enter your recovery code.".to_string(),
+            Err(e) => e,
+        };
+        set_status(&handle, "waiting", detail, 0, false);
+        if KEY_WAIT.start() {
+            schedule_later(&handle, KEY_WAIT_RETRY);
         }
     });
 }
 
-async fn ask(handle: &AppHandle) -> Result<bool, String> {
+enum Asked {
+    Got,
+    NotApproved,
+    NobodyHasKey,
+}
+
+async fn ask(handle: &AppHandle) -> Result<Asked, String> {
     let app = handle.state::<App>();
-    let Some(dir) = app.data_dir().cloned() else { return Ok(false) };
+    let Some(dir) = app.data_dir().cloned() else { return Ok(Asked::NotApproved) };
     let s = session(&app).ok_or("Sign in first")?;
     let me = app.node_hex.lock().unwrap().clone().ok_or("Still connecting")?;
     let endpoint = app.net.lock().await.as_ref().map(|n| n.endpoint()).ok_or("Still connecting")?;
@@ -692,15 +697,20 @@ async fn ask(handle: &AppHandle) -> Result<bool, String> {
         });
     }
     drop(tx);
+    let mut keyless = true;
     while let Some(reply) = rx.recv().await {
-        if let Ok(EntryKeyReply::Key(text)) = reply {
-            if let Ok(key) = SealKey::from_text(&text) {
-                save_key(&dir, &s.server, &s.account, &key);
-                return Ok(true);
+        match reply {
+            Ok(EntryKeyReply::Key(text)) => {
+                if let Ok(key) = SealKey::from_text(&text) {
+                    save_key(&dir, &s.server, &s.account, &key);
+                    return Ok(Asked::Got);
+                }
             }
+            Ok(EntryKeyReply::Unknown) => {}
+            _ => keyless = false,
         }
     }
-    Ok(false)
+    Ok(if keyless { Asked::NobodyHasKey } else { Asked::NotApproved })
 }
 
 static NEXT_ASK: AtomicU64 = AtomicU64::new(1);
@@ -795,6 +805,29 @@ pub async fn entry_list_use_recovery_code(handle: AppHandle, code: String) -> Re
         EntryList::open(&key, &data)?;
     }
     save_key(&dir, &s.server, &s.account, &key);
+    sync(&handle).await?;
+    Ok(entry_list_status())
+}
+
+#[tauri::command]
+pub async fn entry_list_start_over(handle: AppHandle) -> Result<EntryStatus, String> {
+    {
+        let _guard = SYNC.lock().await;
+        let app = handle.state::<App>();
+        let dir = app.data_dir().cloned().ok_or("No data folder")?;
+        let s = session(&app).ok_or("Sign in first")?;
+        if load_key(&dir, &s.server, &s.account).is_some() {
+            return Err("This device already has the key to your server list".into());
+        }
+        let Fetched::Item(item) = fetch(&app, &s).await? else {
+            return Err("Your account server cannot keep a server list yet.".into());
+        };
+        let key = SealKey::generate();
+        match put(&app, &s, local_list(&app, &dir).seal(&key), item.version).await? {
+            Put::Done => save_key(&dir, &s.server, &s.account, &key),
+            Put::Conflict => return Err("Another device changed your server list just now. Try again.".into()),
+        }
+    }
     sync(&handle).await?;
     Ok(entry_list_status())
 }
