@@ -5006,7 +5006,31 @@ function renderRolePicker(server, list) {
   if (!list.childElementCount) list.appendChild(el("div", "manage-empty", "This server has no roles to pick yet"));
 }
 
-// Inline editor under a role row in Server Settings, Roles.
+async function uploadRoleBanner(server, role) {
+  try {
+    const src = await chooseImage("Choose a role banner", $("server-image-file"));
+    if (!src) return;
+    const data = await cropImageFile(src, 600, 240);
+    await invoke("set_role_banner", { serverId: server.id, roleId: role.id, data });
+    await refreshCurrentServer();
+    openServerSettings();
+    toast("Role banner saved");
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
+async function removeRoleBanner(server, role) {
+  try {
+    await invoke("set_role_banner", { serverId: server.id, roleId: role.id, data: null });
+    await refreshCurrentServer();
+    openServerSettings();
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
+// Inline editor under a role card in Server Settings, Roles.
 function roleEditor(server, role) {
   const box = el("div", "role-editor");
   const row1 = el("div", "inline-row");
@@ -5049,44 +5073,6 @@ function roleEditor(server, role) {
   paintTag();
   row1.append(color, name, tagBtn, clearTag);
   box.appendChild(row1);
-  const bannerRow = el("div", "role-banner-row");
-  const bannerPreview = el("div", "role-banner-preview");
-  paintBanner(bannerPreview, role.banner, role.color ? `#${role.color}` : "var(--bg-active)");
-  if (!role.banner) bannerPreview.appendChild(el("span", null, "No banner"));
-  const bannerActions = el("div", "role-banner-actions");
-  bannerActions.appendChild(el("div", "setting-sub", "Optional banner shown on profile cards of members whose highest role has one, and on the Choose Roles card."));
-  const upload = el("button", "btn-secondary btn-small", role.banner ? "Change Banner" : "Upload Banner");
-  upload.type = "button";
-  upload.onclick = async () => {
-    try {
-      const src = await chooseImage("Choose a role banner", $("server-image-file"));
-      if (!src) return;
-      const data = await cropImageFile(src, 600, 240);
-      await invoke("set_role_banner", { serverId: server.id, roleId: role.id, data });
-      await refreshCurrentServer();
-      openServerSettings();
-      toast("Role banner saved");
-    } catch (err) {
-      toast(String(err));
-    }
-  };
-  bannerActions.appendChild(upload);
-  if (role.banner) {
-    const remove = el("button", "btn-link danger", "Remove");
-    remove.type = "button";
-    remove.onclick = async () => {
-      try {
-        await invoke("set_role_banner", { serverId: server.id, roleId: role.id, data: null });
-        await refreshCurrentServer();
-        openServerSettings();
-      } catch (err) {
-        toast(String(err));
-      }
-    };
-    bannerActions.appendChild(remove);
-  }
-  bannerRow.append(bannerPreview, bannerActions);
-  box.appendChild(bannerRow);
   const pick = el("label", "role-self");
   const check = el("input");
   check.type = "checkbox";
@@ -5112,7 +5098,18 @@ function roleEditor(server, role) {
       toast(String(e));
     }
   };
-  actions.appendChild(save);
+  const del = el("button", "btn-danger btn-small", "Delete Role");
+  del.onclick = async () => {
+    if (!confirm(`Delete role ${role.name}?`)) return;
+    try {
+      await invoke("delete_role", { serverId: server.id, roleId: role.id });
+      await refreshCurrentServer();
+      openServerSettings();
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+  actions.append(del, save);
   box.appendChild(actions);
   return box;
 }
@@ -8032,6 +8029,11 @@ function wireEvents() {
       toast(String(e));
     }
   };
+  $("new-role-open").onclick = () => {
+    $("new-role-card").classList.toggle("hidden");
+    if (!$("new-role-card").classList.contains("hidden")) $("new-role-input").focus();
+  };
+  $("new-role-cancel").onclick = () => $("new-role-card").classList.add("hidden");
   $("new-role-save").onclick = async () => {
     if (!state.currentServer) return;
     const name = $("new-role-input").value.trim();
@@ -8046,6 +8048,7 @@ function wireEvents() {
         permissions,
       });
       $("new-role-input").value = "";
+      $("new-role-card").classList.add("hidden");
       for (const box of $("new-role-perms").querySelectorAll("input:checked")) box.checked = false;
       await refreshCurrentServer();
       openServerSettings();
@@ -9236,36 +9239,50 @@ function renderRoleSettings(server) {
   const list = $("manage-role-list");
   list.innerHTML = "";
   for (const role of server.roles) {
-    const row = el("div", "manage-row");
+    const card = el("div", "role-card");
+    const strip = el("div", "role-card-banner");
+    paintBanner(strip, role.banner, role.color ? `#${role.color}` : "var(--bg-active)");
+    const tools = el("div", "role-banner-tools");
+    const upload = el("button", "role-banner-btn");
+    upload.type = "button";
+    upload.appendChild(svgIcon("plus", 14));
+    upload.appendChild(el("span", null, role.banner ? "Change banner" : "Add banner"));
+    upload.onclick = () => uploadRoleBanner(server, role);
+    if (role.banner) {
+      const remove = el("button", "role-banner-btn icon", "");
+      remove.type = "button";
+      remove.title = "Remove banner";
+      remove.appendChild(svgIcon("close", 14));
+      remove.onclick = () => removeRoleBanner(server, role);
+      tools.appendChild(remove);
+    }
+    tools.appendChild(upload);
+    strip.appendChild(tools);
+    card.appendChild(strip);
+    const row = el("div", "role-card-row");
     const label = el("span", "manage-row-label");
     const dot = el("span", "role-dot");
     if (role.color) dot.style.background = `#${role.color}`;
     label.appendChild(dot);
-    label.appendChild(document.createTextNode(role.name));
+    const name = el("span", "role-card-name", role.name);
+    if (role.color) name.style.color = `#${role.color}`;
+    label.appendChild(name);
     if (role.tag) label.appendChild(roleTagChip(role.tag, role.color));
     if (role.self_assignable) label.appendChild(el("span", "kind pickable", "pickable"));
-    label.appendChild(el("span", "kind", role.permissions.join(", ") || "no permissions"));
+    const count = role.permissions.length;
+    const perms = el("span", "kind", count ? (count === 1 ? "1 permission" : `${count} permissions`) : "no permissions");
+    if (count) perms.title = role.permissions.map(p => (PERMISSION_LABELS.find(([v]) => v === p) || [p, p])[1]).join(", ");
+    label.appendChild(perms);
     row.appendChild(label);
     const edit = el("button", "btn-secondary btn-small", "Edit");
     edit.onclick = () => {
-      const open = row.nextElementSibling && row.nextElementSibling.classList.contains("role-editor");
-      if (open) row.nextElementSibling.remove();
-      else row.after(roleEditor(server, role));
+      const open = card.querySelector(".role-editor");
+      if (open) open.remove();
+      else card.appendChild(roleEditor(server, role));
     };
     row.appendChild(edit);
-    const del = el("button", "btn-danger btn-small", "Delete");
-    del.onclick = async () => {
-      if (!confirm(`Delete role ${role.name}?`)) return;
-      try {
-        await invoke("delete_role", { serverId: server.id, roleId: role.id });
-        await refreshCurrentServer();
-        openServerSettings();
-      } catch (e) {
-        toast(String(e));
-      }
-    };
-    row.appendChild(del);
-    list.appendChild(row);
+    card.appendChild(row);
+    list.appendChild(card);
   }
   if (!server.roles.length) list.appendChild(el("div", "manage-empty", "No roles yet"));
 
