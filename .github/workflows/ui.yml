@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths: &ui-paths
       - "apps/desktop/ui/**"
+      - "auth/src/media.js"
+      - "apps/desktop/src-tauri/src/expressions.rs"
       - ".github/workflows/ui.yml"
   pull_request:
     paths: *ui-paths

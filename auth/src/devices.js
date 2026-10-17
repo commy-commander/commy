@@ -4,6 +4,7 @@ import { checkChallenge, linkMessage, makeChallenge, verifyNodeSignature } from 
 
 export const MAX_DEVICES_PER_USER = 25;
 const NODE_ID = /^[0-9a-f]{64}$/;
+const nameOlderAppsSendAndWeIgnore = z.string().optional();
 
 export function normalizeNodeId(value) {
   const id = String(value ?? "").trim().toLowerCase();
@@ -83,7 +84,7 @@ export const commyDevices = ({ secret, serverUrl }) => ({
         use: [sessionMiddleware],
         body: z.object({
           nodeId: z.string(),
-          name: z.string().optional(),
+          name: nameOlderAppsSendAndWeIgnore,
           challenge: z.string(),
           signature: z.string(),
         }),

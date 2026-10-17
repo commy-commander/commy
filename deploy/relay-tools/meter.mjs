@@ -28,6 +28,10 @@ async function setPaused(paused) {
   }
 }
 
+function bodyMostWebhooksAccept(message) {
+  return JSON.stringify({ content: message, text: message });
+}
+
 async function alert(message) {
   console.log(`[meter] ${message}`);
   if (!cfg.webhookUrl) return;
@@ -35,7 +39,7 @@ async function alert(message) {
     await fetch(cfg.webhookUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: message, text: message }),
+      body: bodyMostWebhooksAccept(message),
       signal: AbortSignal.timeout(10000),
     });
   } catch (err) {
@@ -57,8 +61,9 @@ async function tick(state) {
   const next = step(state, await sample(), now);
   next.level = levelFor(next.total, cfg.limitBytes, cfg.warnPercent, cfg.pausePercent);
   next.updatedAt = now.toISOString();
+  const meterPausedItLastTick = state.level === "paused";
   if (next.level === "paused") await setPaused(true);
-  else if (state.level === "paused") await setPaused(false);
+  else if (meterPausedItLastTick) await setPaused(false);
   if (next.level !== state.level) await alert(describe(next, cfg.limitBytes));
   await writeState(next);
   return next;

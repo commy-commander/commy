@@ -4,11 +4,11 @@ use commy_core::{Presence, ServerId, UserId};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-const SEND_SPACING: Duration = Duration::from_secs(30);
+const WAKE_SPACING_PER_DEVICE: Duration = Duration::from_secs(30);
 
-const MAX_WAKES: usize = 64;
+const MAX_WAKES_PER_MESSAGE: usize = 64;
 
-const HANDLE_SPACING: Duration = Duration::from_secs(10);
+const WAKE_HANDLING_SPACING_PER_SERVER: Duration = Duration::from_secs(10);
 
 const AWAKE_AT_LEAST: Duration = Duration::from_secs(60);
 
@@ -62,7 +62,7 @@ pub(crate) fn targets(app: &App, server: ServerId) -> Vec<String> {
         .collect();
     nodes.sort();
     nodes.dedup();
-    nodes.truncate(MAX_WAKES);
+    nodes.truncate(MAX_WAKES_PER_MESSAGE);
     nodes
 }
 
@@ -73,7 +73,7 @@ pub(crate) async fn wake_members(app: &App, server: ServerId) -> Vec<(String, bo
         let now = Instant::now();
         let due: Vec<String> = {
             let mut rest = app.rest.lock().unwrap();
-            rest.woken_at.retain(|_, at| now.duration_since(*at) < SEND_SPACING);
+            rest.woken_at.retain(|_, at| now.duration_since(*at) < WAKE_SPACING_PER_DEVICE);
             targets(app, server)
                 .into_iter()
                 .filter(|n| rest.woken_at.insert(n.clone(), now).is_none())
@@ -144,7 +144,7 @@ pub(crate) fn on_wake(app: &App, from: [u8; 32]) -> Vec<ServerId> {
     let now = Instant::now();
     let mut rest = app.rest.lock().unwrap();
     shared.retain(|s| {
-        let due = rest.handled_at.get(s).is_none_or(|at| now.duration_since(*at) >= HANDLE_SPACING);
+        let due = rest.handled_at.get(s).is_none_or(|at| now.duration_since(*at) >= WAKE_HANDLING_SPACING_PER_SERVER);
         if due {
             rest.handled_at.insert(*s, now);
         }

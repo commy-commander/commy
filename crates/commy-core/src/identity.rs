@@ -101,11 +101,11 @@ pub fn load_or_create(dir: &Path) -> io::Result<Identity> {
         Err(e) => return Err(e),
     }
     let identity = Identity::generate();
-    write_secret(dir, &path, &to_hex(&identity.to_bytes()))?;
+    write_secret_atomically(dir, &path, &to_hex(&identity.to_bytes()))?;
     Ok(identity)
 }
 
-fn write_secret(dir: &Path, path: &Path, contents: &str) -> io::Result<()> {
+fn write_secret_atomically(dir: &Path, path: &Path, contents: &str) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join(format!("{IDENTITY_FILE}.{}.tmp", to_hex(&rand::random::<[u8; 6]>())));
     let result = (|| {

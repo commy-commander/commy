@@ -11,7 +11,10 @@ export const DEFAULT_MAX_PERMANENT = 20000;
 export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const CODE_LENGTH = 8;
 export const MAX_TICKET_LENGTH = 8192;
-const SEALED = /^sealed1\.[A-Za-z0-9_-]{40,}$/;
+const COMMY_NET_SEALED_FORMAT = /^sealed1\.[A-Za-z0-9_-]{40,}$/;
+const OLDER_APP_ANONYMOUS_MAX_DAYS = 7;
+const OLDER_APP_SIGNED_IN_MAX_DAYS = 30;
+const SEALED_INVITES_STORE_NO_SERVER_NAME = "";
 const CODE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LENGTH}}$`);
 
 export function generateCode() {
@@ -27,7 +30,7 @@ export function normalizeCode(value) {
 
 export function validTicket(value) {
   const ticket = String(value ?? "").trim();
-  return ticket.length <= MAX_TICKET_LENGTH && SEALED.test(ticket) ? ticket : null;
+  return ticket.length <= MAX_TICKET_LENGTH && COMMY_NET_SEALED_FORMAT.test(ticket) ? ticket : null;
 }
 
 export function isPlainTicket(value) {
@@ -35,8 +38,8 @@ export function isPlainTicket(value) {
 }
 
 export function clampDays(value, signedIn) {
-  const max = signedIn ? 30 : 7;
-  const days = Number.isFinite(value) ? Math.round(value) : 7;
+  const max = signedIn ? OLDER_APP_SIGNED_IN_MAX_DAYS : OLDER_APP_ANONYMOUS_MAX_DAYS;
+  const days = Number.isFinite(value) ? Math.round(value) : OLDER_APP_ANONYMOUS_MAX_DAYS;
   return Math.min(Math.max(days, 1), max);
 }
 
@@ -105,8 +108,6 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
             });
           }
         }
-        const serverName = "";
-
         const existing = await adapter.findOne({ model: MODEL, where: [{ field: "ticket", value: ticket }] });
         if (existing && (existing.createdBy ?? null) === createdBy) {
           const updated = await adapter.update({
@@ -123,7 +124,7 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
           if (clash) continue;
           const created = await adapter.create({
             model: MODEL,
-            data: { code, ticket, serverName, createdBy, createdAt: now, expiresAt },
+            data: { code, ticket, serverName: SEALED_INVITES_STORE_NO_SERVER_NAME, createdBy, createdAt: now, expiresAt },
           });
           return ctx.json(publicInvite(created, serverUrl));
         }
@@ -174,7 +175,7 @@ export function publicInvite(row, serverUrl) {
     code: row.code,
     url: `${serverUrl}/i/${row.code}`,
     serverName: row.serverName || null,
-    sealed: SEALED.test(row.ticket ?? ""),
+    sealed: COMMY_NET_SEALED_FORMAT.test(row.ticket ?? ""),
     expiresAt: permanent ? null : row.expiresAt,
     permanent,
   };

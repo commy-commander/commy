@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn event_postcard_roundtrip() {
+    fn externally_tagged_events_roundtrip_through_postcard() {
         let event = ServerEvent::TypingStart {
             channel: ChannelId::new(),
             user: UserId::new(),
@@ -189,6 +189,17 @@ mod tests {
         let bytes = postcard::to_stdvec(&event).unwrap();
         let back: ServerEvent = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(event, back);
+    }
+
+    #[test]
+    fn appended_variants_leave_earlier_wire_tags_unchanged() {
+        let wire_tag = |event: ServerEvent| postcard::to_stdvec(&event).unwrap()[0];
+        let (server, channel, user) = (ServerId::new(), ChannelId::new(), UserId::new());
+        assert_eq!(wire_tag(ServerEvent::TypingStart { channel, user }), 10);
+        assert_eq!(wire_tag(ServerEvent::ServerRename { server, name: "s".into() }), 12);
+        assert_eq!(wire_tag(ServerEvent::AfkChannelSet { server, channel: None }), 18);
+        let kind = crate::server::ChannelKind::Text;
+        assert_eq!(wire_tag(ServerEvent::ChannelKindSet { server, channel, kind }), 47);
     }
 
     #[test]

@@ -8,8 +8,10 @@ pub const DEFAULT_COMMY_RELAY: &str = match option_env!("COMMY_DEFAULT_RELAY") {
 
 pub const DEFAULT_COMMY_RELAY_STUN_PORT: u16 = match option_env!("COMMY_DEFAULT_RELAY_STUN_PORT") {
     Some(port) => parse_port(port),
-    None => 0,
+    None => USE_IROH_DEFAULT_STUN_PORT,
 };
+
+const USE_IROH_DEFAULT_STUN_PORT: u16 = 0;
 
 const fn parse_port(s: &str) -> u16 {
     let bytes = s.as_bytes();
@@ -46,7 +48,7 @@ pub fn relay_map(own: &[String]) -> Result<RelayMap> {
     for url in own {
         let url: RelayUrl = url.parse().with_context(|| format!("invalid relay url {url}"))?;
         let is_default = DEFAULT_COMMY_RELAY.parse::<RelayUrl>().is_ok_and(|d| d == url);
-        let stun_port = if is_default { DEFAULT_COMMY_RELAY_STUN_PORT } else { 0 };
+        let stun_port = if is_default { DEFAULT_COMMY_RELAY_STUN_PORT } else { USE_IROH_DEFAULT_STUN_PORT };
         nodes.push(RelayNode { url, stun_only: false, stun_port });
     }
     for node in iroh::net::defaults::prod::default_relay_map().nodes() {

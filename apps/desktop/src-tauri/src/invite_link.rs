@@ -67,7 +67,7 @@ impl Expiry {
     }
 }
 
-const REUSE_MIN_LEFT: f64 = 0.85;
+const REUSE_MIN_LIFE_LEFT: f64 = 0.85;
 
 static PENDING: Mutex<Option<String>> = Mutex::new(None);
 static CREATED: Mutex<Option<HashMap<String, (CreatedInvite, Instant)>>> = Mutex::new(None);
@@ -375,7 +375,7 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
     let cache_key = format!("{origin} {} {raw}", expiry.as_str());
     if let Some((created, at)) = CREATED.lock().unwrap().as_ref().and_then(|m| m.get(&cache_key)) {
         let fresh = match expiry.length() {
-            Some(length) => at.elapsed().as_secs_f64() < length.num_seconds() as f64 * (1.0 - REUSE_MIN_LEFT),
+            Some(length) => at.elapsed().as_secs_f64() < length.num_seconds() as f64 * (1.0 - REUSE_MIN_LIFE_LEFT),
             None => created.expires_at.is_none(),
         };
         if fresh {

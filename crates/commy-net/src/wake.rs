@@ -1,4 +1,4 @@
-#![allow(deprecated)]
+#![allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
 
 use crate::node::NetEvent;
 use anyhow::{Context, Result};
@@ -17,7 +17,7 @@ pub const WAKE_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub const WAKE_SPACING: Duration = Duration::from_secs(10);
 
-const MAX_RECENT: usize = 4096;
+const MAX_REMEMBERED_SENDERS: usize = 4096;
 
 #[derive(Debug)]
 pub(crate) struct WakeAcceptor {
@@ -35,9 +35,9 @@ impl WakeAcceptor {
         if recent.get(&node).is_some_and(|at| now.duration_since(*at) < WAKE_SPACING) {
             return false;
         }
-        if recent.len() >= MAX_RECENT {
+        if recent.len() >= MAX_REMEMBERED_SENDERS {
             recent.retain(|_, at| now.duration_since(*at) < WAKE_SPACING);
-            if recent.len() >= MAX_RECENT {
+            if recent.len() >= MAX_REMEMBERED_SENDERS {
                 return false;
             }
         }
@@ -46,7 +46,7 @@ impl WakeAcceptor {
     }
 }
 
-#[allow(deprecated)]
+#[allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
 impl ProtocolHandler for WakeAcceptor {
     fn accept(self: Arc<Self>, connecting: Connecting) -> futures_lite::future::Boxed<Result<()>> {
         Box::pin(async move {
@@ -71,7 +71,7 @@ impl ProtocolHandler for WakeAcceptor {
     }
 }
 
-#[allow(deprecated)]
+#[allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
 pub(crate) async fn send(
     endpoint: iroh::net::Endpoint,
     node: iroh::net::NodeId,
@@ -115,7 +115,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let acceptor = WakeAcceptor::new(tx);
         let now = Instant::now();
-        for i in 0..MAX_RECENT {
+        for i in 0..MAX_REMEMBERED_SENDERS {
             let mut node = [0u8; 32];
             node[..8].copy_from_slice(&(i as u64).to_be_bytes());
             assert!(acceptor.admit(node, now));

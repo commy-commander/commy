@@ -19,6 +19,12 @@ export function initialState(now) {
   return { month: monthKey(now), total: 0, last: null, level: "ok" };
 }
 
+function bytesSince(current, previous) {
+  if (previous === undefined || previous === null) return 0;
+  const relayRestartedAndResetItsCounter = current < previous;
+  return relayRestartedAndResetItsCounter ? current : current - previous;
+}
+
 export function step(state, sample, now) {
   const month = monthKey(now);
   const next = { ...state };
@@ -27,8 +33,7 @@ export function step(state, sample, now) {
     next.total = 0;
   }
   if (sample) {
-    const delta = (cur, prev) => (prev === undefined || prev === null ? 0 : cur >= prev ? cur - prev : cur);
-    next.total += delta(sample.sent, state.last?.sent) + delta(sample.recv, state.last?.recv);
+    next.total += bytesSince(sample.sent, state.last?.sent) + bytesSince(sample.recv, state.last?.recv);
     next.last = sample;
   }
   return next;

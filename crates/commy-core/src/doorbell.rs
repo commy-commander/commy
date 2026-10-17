@@ -14,8 +14,12 @@ pub const MAX_RING_IDS: usize = 50;
 
 pub const KEEP_DAYS: u32 = 14;
 
+const SECONDS_PER_DAY: i64 = 86_400;
+const TOKEN_BYTES: usize = 16;
+const BLINDED_ID_BYTES: usize = 12;
+
 pub fn day_of(time: DateTime<Utc>) -> u32 {
-    time.timestamp().div_euclid(86_400).max(0) as u32
+    time.timestamp().div_euclid(SECONDS_PER_DAY).max(0) as u32
 }
 
 fn keyed(key: &DoorbellKey, label: &[u8], data: &[u8]) -> [u8; 32] {
@@ -30,11 +34,11 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 pub fn token(key: &DoorbellKey, day: u32) -> String {
-    hex(&keyed(key, TOKEN_LABEL, &day.to_be_bytes())[..16])
+    hex(&keyed(key, TOKEN_LABEL, &day.to_be_bytes())[..TOKEN_BYTES])
 }
 
 pub fn blinded_id(key: &DoorbellKey, id: MessageId) -> String {
-    hex(&keyed(key, ID_LABEL, id.0.as_bytes())[..12])
+    hex(&keyed(key, ID_LABEL, id.0.as_bytes())[..BLINDED_ID_BYTES])
 }
 
 pub fn set_signing_bytes(server: ServerId, user: UserId, node: &str, url: &str, key: Option<&DoorbellKey>) -> Vec<u8> {

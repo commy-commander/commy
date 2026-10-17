@@ -776,7 +776,7 @@ impl ServerState {
                     return Ok(false);
                 }
                 let Some(existing) = self.server.roles.iter_mut().find(|r| r.id == role.id) else { return Ok(false) };
-                if existing.position == 0 && (role.name != existing.name || role.self_assignable) {
+                if existing.is_everyone() && (role.name != existing.name || role.self_assignable) {
                     return Ok(false);
                 }
                 if *existing == role {
@@ -907,7 +907,7 @@ impl ServerState {
                 if self.server.roles.iter().any(|r| r.id == role.id) {
                     return Ok(false);
                 }
-                if role.position == 0 {
+                if role.is_everyone() {
                     return Ok(false);
                 }
                 self.server.roles.push(role);
@@ -921,7 +921,7 @@ impl ServerState {
                     .server
                     .roles
                     .iter()
-                    .any(|r| r.id == role && r.position == 0);
+                    .any(|r| r.id == role && r.is_everyone());
                 if is_everyone {
                     return Ok(false);
                 }

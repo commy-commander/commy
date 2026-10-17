@@ -11,10 +11,14 @@ CADDY_LOGS="${CADDY_LOGS:-/var/log/commy-caddy}"
 echo "== Firewall"
 command -v ufw >/dev/null || { apt-get update -qq && apt-get install -y -qq ufw; }
 
-ssh_ports="$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2}' || true)"
-for port in ${ssh_ports:-22}; do
-	ufw limit "$port/tcp" comment "commy-ssh" >/dev/null
-done
+allow_ssh_before_ufw_is_enabled() {
+	ssh_ports="$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2}' || true)"
+	for port in ${ssh_ports:-22}; do
+		ufw limit "$port/tcp" comment "commy-ssh" >/dev/null
+	done
+}
+
+allow_ssh_before_ufw_is_enabled
 ufw allow 80/tcp comment "commy-http" >/dev/null
 for p in $PUBLIC_PORTS; do
 	ufw allow "$p" comment "commy-public" >/dev/null

@@ -27,18 +27,21 @@ impl JitterBuffer {
         if pcm.len() != FRAME_SIZE {
             return;
         }
-        if let Some(next) = self.next_seq {
-            if seq < next {
-                return;
-            }
+        let already_played_past = self.next_seq.is_some_and(|next| seq < next);
+        if already_played_past {
+            return;
         }
         self.frames.insert(seq, pcm);
         if self.frames.len() > self.max_depth {
-            let newest = *self.frames.keys().next_back().unwrap();
-            let cutoff = newest.saturating_sub(self.max_depth as u32 / 2);
-            self.frames.retain(|s, _| *s >= cutoff);
-            self.next_seq = Some(cutoff);
+            self.skip_ahead_past_hopeless_lag();
         }
+    }
+
+    fn skip_ahead_past_hopeless_lag(&mut self) {
+        let newest = *self.frames.keys().next_back().unwrap();
+        let cutoff = newest.saturating_sub(self.max_depth as u32 / 2);
+        self.frames.retain(|s, _| *s >= cutoff);
+        self.next_seq = Some(cutoff);
     }
 
     pub fn pop(&mut self) -> Vec<i16> {

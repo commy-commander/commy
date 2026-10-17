@@ -1,4 +1,6 @@
 const DEFAULT_PORT = 3001;
+const SMTP_SUBMISSION_PORT = 587;
+const SMTPS_IMPLICIT_TLS_PORT = 465;
 
 function list(value) {
   return (value ?? "")
@@ -36,14 +38,14 @@ function smtpConfig(env, errors) {
       errors.push("SMTP_URL must look like smtp://user:password@host:587 or smtps://...:465");
     }
   } else {
-    const port = Number(env.SMTP_PORT || 587);
+    const port = Number(env.SMTP_PORT || SMTP_SUBMISSION_PORT);
     if (!Number.isInteger(port) || port <= 0 || port > 65535) {
       errors.push("SMTP_PORT must be a valid TCP port");
     }
     user = (env.SMTP_USER ?? "").trim();
     const pass = env.SMTP_PASSWORD ?? "";
     if (user && !pass) errors.push("SMTP_PASSWORD is required when SMTP_USER is set");
-    const secure = env.SMTP_SECURE ? env.SMTP_SECURE === "true" : port === 465;
+    const secure = env.SMTP_SECURE ? env.SMTP_SECURE === "true" : port === SMTPS_IMPLICIT_TLS_PORT;
     transport = {
       host,
       port,

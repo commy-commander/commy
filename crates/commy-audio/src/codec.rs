@@ -3,7 +3,7 @@ use rusty_opus::{Application, OpusDecoder, OpusEncoder};
 use crate::{FRAME_SIZE, SAMPLE_RATE};
 
 pub const VOICE_BITRATE: i32 = 32_000;
-const MAX_PACKET: usize = 1275;
+const RFC6716_MAX_PACKET_BYTES: usize = 1275;
 
 pub struct VoiceEncoder {
     encoder: OpusEncoder,
@@ -22,7 +22,7 @@ impl VoiceEncoder {
         encoder.bitrate_bps = bitrate;
         encoder.complexity = 10;
         encoder.signal_type = Some(rusty_opus::SignalType::Voice);
-        Self { encoder, input: vec![0.0; FRAME_SIZE], output: vec![0; MAX_PACKET] }
+        Self { encoder, input: vec![0.0; FRAME_SIZE], output: vec![0; RFC6716_MAX_PACKET_BYTES] }
     }
 
     pub fn encode(&mut self, pcm: &[i16]) -> Option<Vec<u8>> {

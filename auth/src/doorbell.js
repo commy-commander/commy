@@ -79,42 +79,53 @@ const TOTAL_KEY = `${REDIS_PREFIX}total`;
 export const RING_CHANNEL = `${REDIS_PREFIX}ring`;
 const tokenKey = (token) => `${REDIS_PREFIX}t:${token}`;
 
+const RING_REFUSED_FULL = -1;
+
 const RING_SCRIPT = `
-local now, cap, maxRows = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3])
-if tonumber(redis.call('GET', KEYS[3]) or '0') >= maxRows then return -1 end
+local tokenSet, tokenIndex, total = KEYS[1], KEYS[2], KEYS[3]
+local now, perTokenCap, overallCap, token = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3]), ARGV[4]
+local firstIdArg = 5
+if tonumber(redis.call('GET', total) or '0') >= overallCap then return ${RING_REFUSED_FULL} end
 local added = 0
-for i = 5, #ARGV do added = added + redis.call('ZADD', KEYS[1], 'NX', now, ARGV[i]) end
-local size = redis.call('ZCARD', KEYS[1])
-if size > cap then
-  redis.call('ZREMRANGEBYRANK', KEYS[1], 0, size - cap - 1)
-  added = added - (size - cap)
+for i = firstIdArg, #ARGV do added = added + redis.call('ZADD', tokenSet, 'NX', now, ARGV[i]) end
+local size = redis.call('ZCARD', tokenSet)
+if size > perTokenCap then
+  redis.call('ZREMRANGEBYRANK', tokenSet, 0, size - perTokenCap - 1)
+  added = added - (size - perTokenCap)
 end
-if added ~= 0 then redis.call('INCRBY', KEYS[3], added) end
-redis.call('ZADD', KEYS[2], now, ARGV[4])
+if added ~= 0 then redis.call('INCRBY', total, added) end
+redis.call('ZADD', tokenIndex, now, token)
 return added
 `;
 
 const TAKE_SCRIPT = `
-local stale = redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', '(' .. ARGV[1])
-local ids = redis.call('ZRANGE', KEYS[1], 0, -1)
-redis.call('DEL', KEYS[1])
-redis.call('ZREM', KEYS[2], ARGV[2])
+local tokenSet, tokenIndex, total = KEYS[1], KEYS[2], KEYS[3]
+local cutoff, token = ARGV[1], ARGV[2]
+local stale = redis.call('ZREMRANGEBYSCORE', tokenSet, '-inf', '(' .. cutoff)
+local ids = redis.call('ZRANGE', tokenSet, 0, -1)
+redis.call('DEL', tokenSet)
+redis.call('ZREM', tokenIndex, token)
 local gone = stale + #ids
-if gone > 0 and redis.call('DECRBY', KEYS[3], gone) < 0 then redis.call('SET', KEYS[3], 0) end
+if gone > 0 and redis.call('DECRBY', total, gone) < 0 then redis.call('SET', total, 0) end
 return ids
 `;
 
 const SWEEP_SCRIPT = `
+local tokenIndex, total = KEYS[1], KEYS[2]
+local cutoff = tonumber(ARGV[1])
+local firstTokenSetKey = 3
 local gone = 0
-for i = 3, #KEYS do
-  local last = redis.call('ZSCORE', KEYS[1], ARGV[i - 1])
-  if not last or tonumber(last) < tonumber(ARGV[1]) then
-    gone = gone + redis.call('ZCARD', KEYS[i])
-    redis.call('DEL', KEYS[i])
-    redis.call('ZREM', KEYS[1], ARGV[i - 1])
+for i = firstTokenSetKey, #KEYS do
+  local tokenSet, token = KEYS[i], ARGV[i - 1]
+  local lastRing = redis.call('ZSCORE', tokenIndex, token)
+  local everyIdIsPastCutoff = not lastRing or tonumber(lastRing) < cutoff
+  if everyIdIsPastCutoff then
+    gone = gone + redis.call('ZCARD', tokenSet)
+    redis.call('DEL', tokenSet)
+    redis.call('ZREM', tokenIndex, token)
   end
 end
-if gone > 0 and redis.call('DECRBY', KEYS[2], gone) < 0 then redis.call('SET', KEYS[2], 0) end
+if gone > 0 and redis.call('DECRBY', total, gone) < 0 then redis.call('SET', total, 0) end
 return gone
 `;
 
@@ -127,7 +138,7 @@ export function redisStore(redis, { maxRows }) {
         keys: [tokenKey(token), TOKENS_KEY, TOTAL_KEY],
         arguments: [String(Date.now()), String(MAX_PER_TOKEN), String(maxRows), token, ...ids],
       });
-      return Number(added) >= 0;
+      return Number(added) > RING_REFUSED_FULL;
     },
     async take(token) {
       return client.eval(TAKE_SCRIPT, {
@@ -144,7 +155,7 @@ export function redisStore(redis, { maxRows }) {
         if (tokens.length < 500) return;
       }
     },
-    publish: (token, hello) => client.publish(RING_CHANNEL, `${hello ? "h" : "r"}${token}`),
+    ringEveryInstanceIncludingThisOne: (token, hello) => client.publish(RING_CHANNEL, `${hello ? "h" : "r"}${token}`),
     subscribe: (onRing) =>
       redis.ready.then(() =>
         redis.subscriber.subscribe(RING_CHANNEL, (message) => {
@@ -241,20 +252,20 @@ export const commyDoorbell = ({
     let hello = false;
     for (;;) {
       const remaining = hello ? 0 : deadline - Date.now();
-      const waiter = remaining > 0 ? bell.arm(token) : null;
+      const waiterArmedBeforeRead = remaining > 0 ? bell.arm(token) : null;
       let ids;
       try {
         ids = await locked(token, () => storeFor(adapter).take(token));
       } catch (err) {
-        waiter?.settle("error");
+        waiterArmedBeforeRead?.settle("error");
         throw err;
       }
       if (ids.length > 0 || remaining <= 0) {
-        waiter?.settle("done");
+        waiterArmedBeforeRead?.settle("done");
         return { ids, hello };
       }
-      if (!waiter) throw new APIError("SERVICE_UNAVAILABLE", { message: "The doorbell is busy, try again soon" });
-      const reason = await waitFor(waiter, remaining, signal);
+      if (!waiterArmedBeforeRead) throw new APIError("SERVICE_UNAVAILABLE", { message: "The doorbell is busy, try again soon" });
+      const reason = await waitFor(waiterArmedBeforeRead, remaining, signal);
       if (reason === "hello") hello = true;
       else if (reason !== "ring") return { ids: [], hello: false };
     }
@@ -312,13 +323,14 @@ export const commyDoorbell = ({
         async (ctx) => {
           const { token } = ctx.body;
           const ids = [...new Set(ctx.body.ids)];
+          const hello = ids.length === 0;
           const current = storeFor(ctx.context.adapter);
-          if (ids.length > 0) {
+          if (!hello) {
             const stored = await locked(token, () => current.ring(token, ids));
             if (!stored) throw new APIError("SERVICE_UNAVAILABLE", { message: "The doorbell is full, try again later" });
           }
-          if (current.publish) await current.publish(token, ids.length === 0);
-          else bell.ring(token, ids.length === 0);
+          if (current.ringEveryInstanceIncludingThisOne) await current.ringEveryInstanceIncludingThisOne(token, hello);
+          else bell.ring(token, hello);
           return ctx.json({ ok: true });
         },
       ),

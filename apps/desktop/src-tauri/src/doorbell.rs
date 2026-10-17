@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 
 pub const DOORBELL_FILE: &str = "doorbell.json";
 const RING_DEBOUNCE: Duration = Duration::from_secs(2);
-const ORIGIN_TTL: Duration = Duration::from_secs(60 * 60);
-const TAKE_WAIT_SECS: u64 = 25;
+const DOORBELL_SUPPORT_TTL: Duration = Duration::from_secs(60 * 60);
+const SERVER_MAX_TAKE_WAIT_SECS: u64 = 25;
 const HELLO_EVERY: Duration = Duration::from_secs(30 * 60);
 const NUDGE_EVERY: Duration = Duration::from_secs(60);
 const NUDGE_SLOW: Duration = Duration::from_secs(10 * 60);
@@ -18,7 +18,9 @@ const HELLO_AFTER_START: Duration = Duration::from_secs(30);
 const LISTEN_CHECK_EVERY: Duration = Duration::from_secs(5);
 const RING_SPACING: Duration = Duration::from_secs(30);
 const RINGS_PER_MINUTE: usize = 250;
-const DAY_GRACE_SECS: i64 = 60 * 60;
+const SERVER_RINGS_PER_MINUTE_LIMIT: usize = 300;
+const _: () = assert!(RINGS_PER_MINUTE < SERVER_RINGS_PER_MINUTE_LIMIT);
+const YESTERDAY_TOKEN_GRACE_SECS: i64 = 60 * 60;
 const MAX_PEERS_PER_USER: usize = 8;
 const AWAIT_SECS: i64 = bell::KEEP_DAYS as i64 * 86_400;
 const MAX_AWAITED: usize = 1000;
@@ -210,7 +212,7 @@ fn endpoints_of(doc: Discovery, origin: &str) -> Option<Endpoints> {
 
 pub(crate) async fn endpoints(app: &App, origin: &str) -> Option<Endpoints> {
     if let Some((at, found)) = app.doorbell.lock().unwrap().origins.get(origin) {
-        if at.elapsed() < ORIGIN_TTL {
+        if at.elapsed() < DOORBELL_SUPPORT_TTL {
             return found.clone();
         }
     }
@@ -552,14 +554,14 @@ async fn listen<A: AppAccess + Clone>(access: A, server: ServerId) {
         let today = bell::day_of(chrono::Utc::now());
         let first = app.doorbell.lock().unwrap().saved.last_take.get(&server).copied().unwrap_or(today);
         let first = first.max(today.saturating_sub(bell::KEEP_DAYS - 1));
-        let first = if chrono::Utc::now().timestamp().rem_euclid(86_400) < DAY_GRACE_SECS {
+        let first = if chrono::Utc::now().timestamp().rem_euclid(86_400) < YESTERDAY_TOKEN_GRACE_SECS {
             first.min(today.saturating_sub(1))
         } else {
             first
         };
         let mut result = Ok(());
         for day in first..=today {
-            let wait = if day == today { TAKE_WAIT_SECS } else { 0 };
+            let wait = if day == today { SERVER_MAX_TAKE_WAIT_SECS } else { 0 };
             match take(app, &endpoints, &bell::token(&key, day), wait).await {
                 Ok(taken) => {
                     let changed = app.doorbell.lock().unwrap().saved.last_take.insert(server, day) != Some(day);

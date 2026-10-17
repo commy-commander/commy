@@ -2,6 +2,8 @@ use commy_core::{ChannelId, ChannelKind, DmMessage, DmStore, Message, MessageId,
 use std::collections::HashSet;
 use serde::Serialize;
 
+const EVERYONE_ROLE_POSITION: u32 = 0;
+
 #[derive(Debug, Serialize)]
 pub struct ServerSummary {
     pub id: String,
@@ -268,7 +270,7 @@ impl ServerView {
             .server
             .roles
             .iter()
-            .filter(|r| r.position > 0)
+            .filter(|r| r.position != EVERYONE_ROLE_POSITION)
             .map(|r| RoleView {
                 id: r.id.to_string(),
                 name: r.name.clone(),

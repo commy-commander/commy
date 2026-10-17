@@ -28,16 +28,16 @@
 }
 
 {$RELAY_DOMAIN}:8443 {
-	@upgrade header Upgrade *
-	request_header @upgrade Connection Upgrade
+	@upgrade_without_connection_header header Upgrade *
+	request_header @upgrade_without_connection_header Connection Upgrade
 	reverse_proxy relay-proxy:3341
 }
 
 https://:8443 {
-	@relay header_regexp Host ^{$RELAY_DOMAIN}\.(:[0-9]+)?$
-	handle @relay {
-		@upgrade header Upgrade *
-		request_header @upgrade Connection Upgrade
+	@relay_name_with_trailing_dot header_regexp Host ^{$RELAY_DOMAIN}\.(:[0-9]+)?$
+	handle @relay_name_with_trailing_dot {
+		@upgrade_without_connection_header header Upgrade *
+		request_header @upgrade_without_connection_header Connection Upgrade
 		reverse_proxy relay-proxy:3341
 	}
 	handle {

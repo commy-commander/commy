@@ -10,7 +10,7 @@ pub fn webview_data_dir(data_dir: Option<&str>, existing: Option<&str>) -> Optio
     Some(PathBuf::from(dir).join(WEBVIEW_DIR))
 }
 
-pub fn apply_webview_data_dir() {
+pub fn apply_webview_data_dir_before_any_window() {
     let target = webview_data_dir(
         std::env::var("COMMY_DATA_DIR").ok().as_deref(),
         std::env::var("WEBVIEW2_USER_DATA_FOLDER").ok().as_deref(),

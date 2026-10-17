@@ -1,4 +1,4 @@
-#![allow(deprecated)]
+#![allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
 
 use anyhow::{Context, Result};
 use iroh::net::relay::server::{Limits, RelayConfig, Server, ServerConfig, StunConfig};

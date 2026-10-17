@@ -5,6 +5,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"
 db_port="${E2E_DB_PORT:-55433}"
 auth_port="${E2E_AUTH_PORT:-3911}"
+only_tests_named="${1:-}"
 
 cleanup() {
 	if [ -n "$auth_pid" ]; then kill "$auth_pid" 2>/dev/null || true; fi
@@ -37,9 +38,12 @@ as_db "$pg_bin/initdb" -D "$work/pg" -A trust -U commy >/dev/null
 as_db "$pg_bin/pg_ctl" -D "$work/pg" -l "$work/pg/log" -w \
 	-o "-p $db_port -k $work/pg -c listen_addresses=127.0.0.1" start >/dev/null
 database="postgres://commy@127.0.0.1:$db_port/postgres"
-psql "$database" -q -v ON_ERROR_STOP=1 -c 'create table "linkedDevice" (
+create_legacy_linked_device_table() {
+	psql "$database" -q -v ON_ERROR_STOP=1 -c 'create table "linkedDevice" (
 	"id" text primary key, "nodeId" text not null unique, "name" text not null,
 	"userId" text not null, "createdAt" timestamptz not null, "lastSeenAt" timestamptz not null)'
+}
+create_legacy_linked_device_table
 
 echo "starting the account server on $auth_port"
 [ -d "$root/auth/node_modules" ] || (cd "$root/auth" && npm ci --silent)
@@ -58,7 +62,7 @@ curl -fs "http://127.0.0.1:$auth_port/healthz" >/dev/null || { cat "$work/auth.l
 
 status=0
 COMMY_AUTH_URL="http://127.0.0.1:$auth_port" COMMY_E2E_DATABASE_URL="$database" \
-	cargo test --manifest-path "$root/Cargo.toml" -p commy-desktop --features e2e "e2e::${1:-}" -- --nocapture || status=$?
+	cargo test --manifest-path "$root/Cargo.toml" -p commy-desktop --features e2e "e2e::$only_tests_named" -- --nocapture || status=$?
 if [ "$status" != 0 ]; then
 	echo "--- account server log"
 	cat "$work/auth.log"

@@ -136,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn presence_visibility() {
+    fn presence_others_see_never_reveals_appearing_offline() {
         assert!(Presence::Online.is_visible_online());
         assert!(Presence::DoNotDisturb.is_visible_online());
         assert!(!Presence::Invisible.is_visible_online());

@@ -4,6 +4,8 @@ pub const DEFAULT_TIMEOUT_MINUTES: u32 = 10;
 
 pub const MAX_TIMEOUT_MINUTES: u32 = 240;
 
+const NO_TIMEOUT: i64 = 0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AfkAction {
     GoIdle,
@@ -16,7 +18,7 @@ pub fn clamp_timeout_minutes(minutes: u32) -> u32 {
 }
 
 pub fn decide(idle_secs: i64, timeout_secs: i64, presence: Presence, auto_idle: bool) -> AfkAction {
-    let timed_out = timeout_secs > 0 && idle_secs >= timeout_secs;
+    let timed_out = timeout_secs > NO_TIMEOUT && idle_secs >= timeout_secs;
     if timed_out {
         if presence == Presence::Online && !auto_idle {
             return AfkAction::GoIdle;
@@ -28,12 +30,12 @@ pub fn decide(idle_secs: i64, timeout_secs: i64, presence: Presence, auto_idle: 
 }
 
 pub fn voice_timeout_secs(personal_secs: i64, server_minutes: Option<u32>) -> i64 {
-    let server = server_minutes.map_or(0, |m| m as i64 * 60);
-    match (personal_secs > 0, server > 0) {
+    let server = server_minutes.map_or(NO_TIMEOUT, |m| m as i64 * 60);
+    match (personal_secs > NO_TIMEOUT, server > NO_TIMEOUT) {
         (true, true) => personal_secs.min(server),
         (true, false) => personal_secs,
         (false, true) => server,
-        (false, false) => 0,
+        (false, false) => NO_TIMEOUT,
     }
 }
 

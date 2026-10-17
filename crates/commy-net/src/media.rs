@@ -102,6 +102,16 @@ mod tests {
         assert!(end.is_none());
     }
 
+    #[test]
+    fn appended_variants_leave_earlier_wire_tags_unchanged() {
+        let wire_tag = |bytes: Vec<u8>| bytes[0];
+        let (user, channel) = (UserId::new(), ChannelId::new());
+        assert_eq!(wire_tag(postcard::to_stdvec(&MediaHello::Voice { user, channel }).unwrap()), 0);
+        assert_eq!(wire_tag(postcard::to_stdvec(&MediaHello::CameraSubscribe { user, channel }).unwrap()), 2);
+        assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::Voice { seq: 0, pcm: vec![] }).unwrap()), 0);
+        assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::Opus { seq: 0, data: vec![] }).unwrap()), 2);
+    }
+
     #[tokio::test]
     async fn opus_voice_roundtrip() {
         let (mut a, mut b) = tokio::io::duplex(4096);

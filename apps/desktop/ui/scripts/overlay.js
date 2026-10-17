@@ -131,8 +131,7 @@ async function start() {
   await tauri.event.listen("voice-speaking", e => setSpeaking(e.payload.user, e.payload.speaking));
   try {
     applyConfig(await tauri.core.invoke("get_overlay_settings"));
-  } catch {
-  }
+  } catch {}
   await tauri.event.emitTo("main", "overlay-hello", null);
 }
 

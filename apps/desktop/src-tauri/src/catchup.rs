@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
-pub const SECOND_START_DELAY: Duration = Duration::from_secs(15);
+pub const HIGHER_NODE_START_DELAY: Duration = Duration::from_secs(15);
 
 pub const RECENT_SESSION: Duration = Duration::from_secs(60);
 
@@ -271,7 +271,7 @@ fn newer_edit(new: &ServerEvent, old: &ServerEvent) -> bool {
 }
 
 pub fn start_delay(ours: [u8; 32], peer: [u8; 32], pending: bool) -> Option<Duration> {
-    (!pending && ours > peer).then_some(SECOND_START_DELAY)
+    (!pending && ours > peer).then_some(HIGHER_NODE_START_DELAY)
 }
 
 pub fn holdable(event: &ServerEvent) -> bool {
@@ -998,7 +998,7 @@ mod tests {
     fn lower_node_starts_unless_we_have_pending_sends() {
         let (low, high) = ([1u8; 32], [2u8; 32]);
         assert_eq!(start_delay(low, high, false), None);
-        assert_eq!(start_delay(high, low, false), Some(SECOND_START_DELAY));
+        assert_eq!(start_delay(high, low, false), Some(HIGHER_NODE_START_DELAY));
         assert_eq!(start_delay(high, low, true), None, "pending sends go at once");
     }
 

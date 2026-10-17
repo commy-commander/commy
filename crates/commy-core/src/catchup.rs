@@ -15,6 +15,7 @@ const DAY_MS: i64 = 86_400_000;
 const DOMAIN: &[u8] = b"commy-catchup/v1";
 const PROOF_DOMAIN: &[u8] = b"commy-catchup/v1/proof";
 const SIG_BITS: u32 = 20;
+const DAYS_AHEAD_FOR_PEERS_PAST_MIDNIGHT: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum BucketKey {
@@ -52,7 +53,7 @@ pub fn first_tombstone_day(now: DateTime<Utc>) -> u32 {
 }
 
 pub fn last_day(now: DateTime<Utc>) -> u32 {
-    day_number(now).saturating_add(1)
+    day_number(now).saturating_add(DAYS_AHEAD_FOR_PEERS_PAST_MIDNIGHT)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,9 +135,14 @@ fn covered(state: &ServerState, channel: ChannelId, now: DateTime<Utc>) -> impl 
     let from = day_start(first_day(now));
     let since = state.retention_cutoff(channel, now).map_or(from, |cutoff| cutoff.max(from));
     let until = day_start(last_day(now).saturating_add(1));
-    state.messages(channel).iter().filter(move |m| {
-        m.sig.is_some() && m.id.is_bound_to(m.author) && m.created_at >= since && m.created_at < until
-    })
+    state
+        .messages(channel)
+        .iter()
+        .filter(move |m| peers_would_accept(m) && m.created_at >= since && m.created_at < until)
+}
+
+fn peers_would_accept(message: &Message) -> bool {
+    message.sig.is_some() && message.id.is_bound_to(message.author)
 }
 
 fn covered_tombstones(state: &ServerState, now: DateTime<Utc>) -> impl Iterator<Item = &TombstoneProof> {
@@ -255,16 +261,19 @@ impl Listing {
 
 fn lacking(have: &[BucketItems], other: &[BucketItems]) -> Vec<MessageId> {
     let other = Listing::new(other);
-    let mut found: Vec<(bool, u32, i64, MessageId)> = Vec::new();
+    type IsMessageDayVersionId = (bool, u32, i64, MessageId);
+    let mut found: Vec<IsMessageDayVersionId> = Vec::new();
     for (key, list) in have {
-        let message = matches!(key, BucketKey::Messages { .. });
+        let is_message = matches!(key, BucketKey::Messages { .. });
         for &(id, version) in list {
             if !other.holds(*key, id, version) {
-                found.push((message, key.day(), if message { version } else { 0 }, id));
+                let ordering_version = if is_message { version } else { 0 };
+                found.push((is_message, key.day(), ordering_version, id));
             }
         }
     }
-    found.sort_unstable_by(|a, b| b.cmp(a));
+    let messages_before_proofs_newest_first = |a: &IsMessageDayVersionId, b: &IsMessageDayVersionId| b.cmp(a);
+    found.sort_unstable_by(messages_before_proofs_newest_first);
     let mut seen = HashSet::new();
     found
         .into_iter()

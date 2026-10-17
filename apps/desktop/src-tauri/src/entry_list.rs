@@ -191,7 +191,8 @@ fn write_identity(dir: &Path, encoded: &str) -> bool {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+            const READ_WRITE_BY_OWNER_ONLY: u32 = 0o600;
+            options.mode(READ_WRITE_BY_OWNER_ONLY);
         }
         let mut file = options.open(&tmp)?;
         file.write_all(&bytes)?;

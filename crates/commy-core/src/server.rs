@@ -63,6 +63,14 @@ pub struct Role {
     pub banner: Option<String>,
 }
 
+pub const EVERYONE_ROLE_POSITION: u32 = 0;
+
+impl Role {
+    pub fn is_everyone(&self) -> bool {
+        self.position == EVERYONE_ROLE_POSITION
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pin {
     pub channel: ChannelId,
@@ -151,7 +159,7 @@ impl Server {
             name: "everyone".to_string(),
             color: None,
             permissions: Permissions::default_member(),
-            position: 0,
+            position: EVERYONE_ROLE_POSITION,
             hoist: false,
             self_assignable: false,
             tag: None,
@@ -222,14 +230,8 @@ impl Server {
         let mut perms = self
             .roles
             .iter()
-            .filter(|r| r.position == 0 || member.roles.contains(&r.id))
-            .fold(Permissions::NONE, |acc, r| {
-                let mut p = r.permissions;
-                if r.position == 0 {
-                    p.remove(Permissions::CREATE_INVITES);
-                }
-                acc | p
-            });
+            .filter(|r| r.is_everyone() || member.roles.contains(&r.id))
+            .fold(Permissions::NONE, |acc, r| acc | permissions_granted_by(r));
         if perms.contains(Permissions::ADMINISTRATOR) {
             perms = Permissions::all();
         }
@@ -288,6 +290,14 @@ impl Server {
         channels.sort_by_key(|c| (c.parent, c.position));
         channels
     }
+}
+
+fn permissions_granted_by(role: &Role) -> Permissions {
+    let mut granted = role.permissions;
+    if role.is_everyone() {
+        granted.remove(Permissions::CREATE_INVITES);
+    }
+    granted
 }
 
 #[cfg(test)]

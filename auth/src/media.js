@@ -7,12 +7,18 @@ const TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token";
 const IGDB_GAMES_URL = "https://api.igdb.com/v4/games";
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_CAP = 500;
-const IGDB_GAP_MS = 260;
+const IGDB_MAX_REQUESTS_PER_SECOND = 4;
+const IGDB_GAP_MARGIN_MS = 10;
+const IGDB_GAP_MS = 1000 / IGDB_MAX_REQUESTS_PER_SECOND + IGDB_GAP_MARGIN_MS;
+const TOKEN_REFRESH_EARLY_SECS = 60;
 const MAX_QUERY = 100;
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
 const IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const IMAGE_TIMEOUT_MS = 15_000;
+
+const HOSTS_THAT_SIGN_URLS_WITH_A_QUERY = new Set(["static.klipy.com"]);
+const MAX_SIGNATURE_QUERY_LENGTH = 200;
 
 const MEDIA_HOSTS = {
   "static.klipy.com": /^\/[A-Za-z0-9._~\-\/]{1,400}$/,
@@ -29,7 +35,7 @@ export function mediaUrl(value) {
   const path = MEDIA_HOSTS[url.hostname];
   if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash) return null;
   if (!path || !path.test(url.pathname) || url.pathname.includes("..")) return null;
-  if (url.search && (url.hostname !== "static.klipy.com" || url.search.length > 200)) return null;
+  if (url.search && (!HOSTS_THAT_SIGN_URLS_WITH_A_QUERY.has(url.hostname) || url.search.length > MAX_SIGNATURE_QUERY_LENGTH)) return null;
   return url;
 }
 
@@ -173,8 +179,12 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
     const res = await doFetch(url, { method: "POST" });
     if (!res.ok) throw new Error(`Twitch token request answered ${res.status}`);
     const body = await res.json();
-    igdbToken = { value: body.access_token, expires: Date.now() + (Number(body.expires_in) - 60) * 1000 };
+    igdbToken = { value: body.access_token, expires: Date.now() + (Number(body.expires_in) - TOKEN_REFRESH_EARLY_SECS) * 1000 };
     return igdbToken.value;
+  }
+
+  function maskKlipyKey(message) {
+    return String(message).replaceAll(klipyKey, "***");
   }
 
   function paced(task) {
@@ -259,7 +269,7 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
             body = await res.json().catch(() => ({}));
             if (!res.ok || body.result === false) throw new Error(`KLIPY answered ${res.status}`);
           } catch (err) {
-            console.warn(`[auth] GIF search failed: ${String(err.message).replaceAll(klipyKey, "***")}`);
+            console.warn(`[auth] GIF search failed: ${maskKlipyKey(err.message)}`);
             throw new APIError("BAD_GATEWAY", { message: "The GIF service is not answering right now" });
           }
           const results = klipyResults(body);

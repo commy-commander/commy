@@ -82,7 +82,8 @@ impl Outbox {
             return true;
         }
         if let ServerEvent::MessageEdit { message, .. } = event {
-            if self.is_pending(server, *message) {
+            let rides_along_with_its_pending_message = self.is_pending(server, *message);
+            if rides_along_with_its_pending_message {
                 return changed;
             }
         }

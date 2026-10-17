@@ -1,5 +1,8 @@
 pub const MAX_EMOJI_BYTES: usize = 256 * 1024;
 pub const MAX_SOUND_BYTES: usize = 1024 * 1024;
+const LONGEST_SOUND_SECS: usize = 15;
+const HIGHEST_SOUND_KBPS: usize = 320;
+const _: () = assert!(LONGEST_SOUND_SECS * HIGHEST_SOUND_KBPS * 1000 / 8 < MAX_SOUND_BYTES);
 
 pub const DEFAULT_SOUNDS: &[&str] = &["airhorn", "ba_dum_tss", "cricket", "losing_horn"];
 

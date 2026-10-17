@@ -49,15 +49,15 @@ pub struct JitterMeter {
 }
 
 impl JitterMeter {
-    const FRAME_MS: f32 = 10.0;
+    const RFC3550_SMOOTHING_DIVISOR: f32 = 16.0;
 
     pub fn arrived(&mut self, seq: u32, at: std::time::Instant) {
         if let Some((last_seq, last_at)) = self.last {
             if seq > last_seq {
-                let expected = (seq - last_seq) as f32 * Self::FRAME_MS;
+                let expected = (seq - last_seq) as f32 * VOICE_FRAME_MS as f32;
                 let actual = at.duration_since(last_at).as_secs_f32() * 1000.0;
                 let d = (actual - expected).abs();
-                self.jitter_ms += (d - self.jitter_ms) / 16.0;
+                self.jitter_ms += (d - self.jitter_ms) / Self::RFC3550_SMOOTHING_DIVISOR;
             }
         }
         if self.last.map_or(true, |(s, _)| seq > s) {
@@ -74,11 +74,13 @@ pub type SpeakingSink = Arc<dyn Fn(UserId, bool) + Send + Sync>;
 
 const SPEAKING_TICK: std::time::Duration = std::time::Duration::from_millis(50);
 
-const FRAMES_PER_TICK: u32 = 5;
+const VOICE_FRAME_MS: u32 = 10;
+
+const SILENT_FRAMES_PER_TICK: u32 = (SPEAKING_TICK.as_millis() / VOICE_FRAME_MS as u128) as u32;
 
 fn credit_silence(detector: &mut commy_media::SpeakingDetector) -> Option<bool> {
     let mut change = None;
-    for _ in 0..FRAMES_PER_TICK {
+    for _ in 0..SILENT_FRAMES_PER_TICK {
         if let Some(c) = detector.push_voiced(false) {
             change = Some(c);
         }

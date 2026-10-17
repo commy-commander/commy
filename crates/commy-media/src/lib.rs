@@ -17,13 +17,13 @@ pub struct StreamGuards {
     pub speaker: Option<OutputHandle>,
 }
 
-const ACTIVITY_FLOOR: i32 = 327;
+const ACTIVITY_FLOOR: i32 = i16::MAX as i32 / 100;
 
 pub fn frame_has_signal(pcm: &[i16]) -> bool {
     if pcm.is_empty() {
         return false;
     }
-    let sum: i64 = pcm.iter().map(|s| (*s as i64).abs()).sum();
+    let sum: i64 = pcm.iter().map(|s| i64::from(s.unsigned_abs())).sum();
     (sum / pcm.len() as i64) as i32 >= ACTIVITY_FLOOR
 }
 

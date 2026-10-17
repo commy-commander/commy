@@ -119,7 +119,11 @@ impl Envelope {
     }
 }
 
+const IROH_GOSSIP_CLOSES_CONNECTION_ABOVE_BYTES: usize = 4096;
+
 pub const MAX_GOSSIP_BYTES: usize = 3800;
+
+const _: () = assert!(MAX_GOSSIP_BYTES < IROH_GOSSIP_CLOSES_CONNECTION_ABOVE_BYTES);
 
 pub fn gossip_size(payload: &WirePayload) -> usize {
     Envelope::new([0u8; 32], payload.clone())
@@ -190,13 +194,13 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePaylo
         profiles.pop();
     }
     type Step = fn(&mut commy_core::Server);
-    let steps: [Step; 4] = [
+    let drop_structure_members_announce_anyway: [Step; 4] = [
         |s| (s.icon, s.banner) = (None, None),
         |s| (s.game_tags, s.game_tag_meta) = (Vec::new(), Vec::new()),
         |s| s.rules_accepted.clear(),
         |s| (s.server_muted, s.server_deafened) = (Vec::new(), Vec::new()),
     ];
-    for step in steps {
+    for step in drop_structure_members_announce_anyway {
         if fits(size) {
             break;
         }

@@ -14,10 +14,15 @@ pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let json = serde_json::to_vec_pretty(value)?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, &json)?;
+    remove_target_windows_rename_cannot_replace(path)?;
+    fs::rename(&tmp, path).context("atomic rename failed")?;
+    Ok(())
+}
+
+fn remove_target_windows_rename_cannot_replace(path: &Path) -> std::io::Result<()> {
     if path.exists() {
         fs::remove_file(path)?;
     }
-    fs::rename(&tmp, path).context("atomic rename failed")?;
     Ok(())
 }
 

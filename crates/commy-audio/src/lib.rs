@@ -4,6 +4,8 @@ use thiserror::Error;
 pub const FRAME_SIZE: usize = DenoiseState::FRAME_SIZE;
 pub const SAMPLE_RATE: u32 = 48_000;
 
+const RNNOISE_I16_FULL_SCALE: f32 = 32767.0;
+
 pub mod codec;
 
 #[derive(Debug, Error, PartialEq)]
@@ -89,11 +91,11 @@ impl VoiceProcessor {
 
         let mut scaled = [0.0f32; FRAME_SIZE];
         for (dst, src) in scaled.iter_mut().zip(input) {
-            *dst = (src * self.input_gain).clamp(-1.0, 1.0) * 32767.0;
+            *dst = (src * self.input_gain).clamp(-1.0, 1.0) * RNNOISE_I16_FULL_SCALE;
         }
 
         if !self.noise_cancellation {
-            let samples = scaled.iter().map(|s| s / 32767.0).collect();
+            let samples = scaled.iter().map(|s| s / RNNOISE_I16_FULL_SCALE).collect();
             return Ok(ProcessedFrame {
                 samples,
                 voice_probability: 0.0,
@@ -105,7 +107,7 @@ impl VoiceProcessor {
         let vad = self.denoiser.process_frame(&mut denoised, &scaled);
         let mut samples: Vec<f32> = denoised
             .iter()
-            .map(|s| (s / 32767.0).clamp(-1.0, 1.0))
+            .map(|s| (s / RNNOISE_I16_FULL_SCALE).clamp(-1.0, 1.0))
             .collect();
         self.gate.apply(&mut samples, vad);
         Ok(ProcessedFrame {

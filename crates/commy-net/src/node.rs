@@ -73,7 +73,7 @@ impl MediaChannel {
 
         let stats_handle = connection.clone();
         tokio::spawn(async move {
-            let _connection = connection;
+            let _keep_connection_alive_for_both_pumps = connection;
             let reader = async {
                 loop {
                     match read_frame::<_, MediaPacket>(&mut recv).await {
@@ -92,18 +92,8 @@ impl MediaChannel {
             };
             let writer = async {
                 let mut pace = VideoPacer::default();
-                while let Some(mut packet) = out_rx.recv().await {
-                    let mut after = None;
-                    if matches!(packet, MediaPacket::Video { .. }) {
-                        while let Ok(next) = out_rx.try_recv() {
-                            if matches!(next, MediaPacket::Video { .. }) {
-                                packet = next;
-                            } else {
-                                after = Some(next);
-                                break;
-                            }
-                        }
-                    }
+                while let Some(packet) = out_rx.recv().await {
+                    let (packet, after) = skip_to_newest_queued_video(packet, &mut out_rx);
                     if matches!(packet, MediaPacket::Video { .. }) && !pace.allow(&endpoint, peer) {
                         if let Some(next) = after {
                             if let Err(e) = write_frame(&mut send, &next).await {
@@ -138,7 +128,27 @@ impl MediaChannel {
     }
 }
 
+fn skip_to_newest_queued_video(
+    packet: MediaPacket,
+    queue: &mut mpsc::UnboundedReceiver<MediaPacket>,
+) -> (MediaPacket, Option<MediaPacket>) {
+    let mut newest = packet;
+    if !matches!(newest, MediaPacket::Video { .. }) {
+        return (newest, None);
+    }
+    while let Ok(next) = queue.try_recv() {
+        if matches!(next, MediaPacket::Video { .. }) {
+            newest = next;
+        } else {
+            return (newest, Some(next));
+        }
+    }
+    (newest, None)
+}
+
 const RELAYED_VIDEO_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+const RECHECK_PATH_FOR_HOLE_PUNCH_UPGRADE: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[derive(Default)]
 struct VideoPacer {
@@ -150,7 +160,7 @@ struct VideoPacer {
 impl VideoPacer {
     fn allow(&mut self, endpoint: &iroh::net::Endpoint, peer: [u8; 32]) -> bool {
         let now = std::time::Instant::now();
-        if self.checked.map_or(true, |t| now.duration_since(t) > std::time::Duration::from_secs(2)) {
+        if self.checked.map_or(true, |t| now.duration_since(t) > RECHECK_PATH_FOR_HOLE_PUNCH_UPGRADE) {
             self.checked = Some(now);
             let relayed = iroh::net::NodeId::from_bytes(&peer)
                 .ok()
@@ -207,7 +217,7 @@ struct DmAcceptor {
     tx: mpsc::UnboundedSender<IncomingDm>,
 }
 
-#[allow(deprecated)]
+#[allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
 impl ProtocolHandler for DmAcceptor {
     fn accept(
         self: Arc<Self>,
@@ -361,7 +371,7 @@ impl std::fmt::Debug for CatchupAcceptor {
     }
 }
 
-#[allow(deprecated)]
+#[allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
 impl ProtocolHandler for CatchupAcceptor {
     fn accept(
         self: Arc<Self>,
@@ -383,7 +393,7 @@ impl ProtocolHandler for CatchupAcceptor {
                 .inbound
                 .serve(&mut io, store.as_deref(), self.local, peer)
                 .await;
-            let timed_out = matches!(outcome, Err(CatchupError::Timeout));
+            let peer_went_quiet = matches!(outcome, Err(CatchupError::Timeout));
             match outcome {
                 Ok((server, report)) => {
                     let _ = self.events.send(NetEvent::CaughtUp {
@@ -394,7 +404,7 @@ impl ProtocolHandler for CatchupAcceptor {
                 }
                 Err(e) => tracing::debug!("catch-up from peer ended: {e}"),
             }
-            if timed_out {
+            if peer_went_quiet {
                 connection.close(0u32.into(), b"timeout");
                 return Ok(());
             }
@@ -501,7 +511,7 @@ impl CommyNode {
         let endpoint = protocols.endpoint().clone();
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let catchup_store = StoreSlot::default();
-        #[allow(deprecated)]
+        #[allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
         let local = *endpoint.node_id().as_bytes();
         let catchup = CatchupAcceptor {
             store: catchup_store.clone(),
@@ -583,7 +593,7 @@ impl CommyNode {
             .unwrap_or_else(|e| e.into_inner()) = Some(store);
     }
 
-    #[allow(deprecated)]
+    #[allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
     pub fn catch_up(
         &self,
         server: ServerId,
@@ -605,10 +615,8 @@ impl CommyNode {
             let mut io = tokio::io::join(recv, send);
             let session = run_initiator(&mut io, &*store, &identity, server, me, local, peer);
             let result = tokio::time::timeout(CATCHUP_SESSION_TIMEOUT, session).await;
-            let (_, mut send) = io.into_inner();
-            if send.finish().is_ok() {
-                let _ = tokio::time::timeout(CATCHUP_LINGER, send.stopped()).await;
-            }
+            let (_, send) = io.into_inner();
+            let_our_applied_reach_the_peer(send).await;
             connection.close(0u32.into(), b"done");
             let report = result.context("catch-up timed out")??;
             Ok(report)
@@ -874,22 +882,25 @@ impl CommyNode {
             rand_suffix()
         ));
         tokio::fs::write(&path, &bytes).await.context("could not stage blob")?;
-        let added = async {
-            self.node
-                .blobs()
-                .add_from_path(
-                    path.clone(),
-                    false,
-                    iroh_blobs::util::SetTagOption::Auto,
-                    iroh::client::blobs::WrapOption::NoWrap,
-                )
-                .await?
-                .finish()
-                .await
-        }
-        .await;
+        let added = self.add_staged_file_without_bidi_rpc(&path).await;
         let _ = tokio::fs::remove_file(&path).await;
-        Ok(added?.hash.to_string())
+        Ok(added?.to_string())
+    }
+
+    async fn add_staged_file_without_bidi_rpc(&self, path: &std::path::Path) -> Result<iroh_blobs::Hash> {
+        let outcome = self
+            .node
+            .blobs()
+            .add_from_path(
+                path.to_path_buf(),
+                false,
+                iroh_blobs::util::SetTagOption::Auto,
+                iroh::client::blobs::WrapOption::NoWrap,
+            )
+            .await?
+            .finish()
+            .await?;
+        Ok(outcome.hash)
     }
 
     pub async fn fetch_blob(&self, hash: &str, provider_hex: Option<&str>) -> Result<Vec<u8>> {
@@ -956,6 +967,12 @@ impl CommyNode {
 
     pub async fn shutdown(self) -> Result<()> {
         self.node.shutdown().await.map_err(Into::into)
+    }
+}
+
+async fn let_our_applied_reach_the_peer(mut send: iroh::net::endpoint::SendStream) {
+    if send.finish().is_ok() {
+        let _ = tokio::time::timeout(CATCHUP_LINGER, send.stopped()).await;
     }
 }
 

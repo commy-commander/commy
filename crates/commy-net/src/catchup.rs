@@ -44,7 +44,11 @@ pub const MAX_LISTED: usize = 500_000;
 
 const MAX_HELLO_BYTES: u32 = 4096;
 
-const FRAME_BUDGET: usize = MAX_MEDIA_FRAME as usize - 1024;
+const FRAMING_HEADROOM_BYTES: usize = 1024;
+
+const FRAME_BUDGET: usize = MAX_MEDIA_FRAME as usize - FRAMING_HEADROOM_BYTES;
+
+const ENTRIES_PER_BUCKET_KEY: usize = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CatchupFrame {
@@ -166,15 +170,17 @@ impl Refusal {
     }
 
     pub fn frame(self) -> CatchupFrame {
-        let shown = match self {
-            Refusal::NotInServer | Refusal::Denied | Refusal::BadSignature => {
-                Refusal::UnknownMember
-            }
-            other => other,
-        };
+        let shown = self.revealing_nothing_about_membership();
         CatchupFrame::Refused {
             reason: shown.to_string(),
             retry_after_ms: shown.retry_after_ms(),
+        }
+    }
+
+    fn revealing_nothing_about_membership(self) -> Refusal {
+        match self {
+            Refusal::NotInServer | Refusal::Denied | Refusal::BadSignature => Refusal::UnknownMember,
+            other => other,
         }
     }
 }
@@ -310,7 +316,7 @@ pub fn apply_items(
 ) -> (ApplyReport, Vec<ServerEvent>) {
     let mut report = ApplyReport::default();
     let mut held = Vec::new();
-    let events = tombstones
+    let proofs_then_messages = tombstones
         .into_iter()
         .map(|p| (p.message, p.by, p.into_event()))
         .chain(
@@ -318,7 +324,7 @@ pub fn apply_items(
                 .into_iter()
                 .map(|m| (m.id, m.author, ServerEvent::MessageCreate { message: m })),
         );
-    for (id, signer, event) in events {
+    for (id, signer, event) in proofs_then_messages {
         if state.identity_of(signer).is_none() {
             report.held.push(id);
             held.push(event);
@@ -1025,7 +1031,7 @@ fn fit_digests(mut list: Vec<BucketDigest>) -> Vec<BucketDigest> {
 }
 
 fn fit_listing(mut list: Vec<BucketItems>, max: usize) -> (Vec<BucketItems>, Vec<BucketKey>) {
-    let cost = |entry: &BucketItems| 1 + entry.1.len();
+    let cost = |entry: &BucketItems| bucket_entries(&entry.1);
     if list.iter().map(cost).sum::<usize>() <= max {
         return (list, Vec::new());
     }
@@ -1050,7 +1056,11 @@ fn fit_listing(mut list: Vec<BucketItems>, max: usize) -> (Vec<BucketItems>, Vec
 }
 
 fn listed_len(page: &[BucketItems]) -> usize {
-    page.iter().map(|(_, list)| 1 + list.len()).sum()
+    page.iter().map(|(_, list)| bucket_entries(list)).sum()
+}
+
+fn bucket_entries(items: &[(MessageId, i64)]) -> usize {
+    ENTRIES_PER_BUCKET_KEY + items.len()
 }
 
 fn item_pages(list: Vec<BucketItems>) -> Vec<Vec<BucketItems>> {
@@ -1059,12 +1069,13 @@ fn item_pages(list: Vec<BucketItems>) -> Vec<Vec<BucketItems>> {
     for (key, list) in list {
         let mut rest = list.into_iter().peekable();
         loop {
-            if used + 2 > PAGE_SIZE {
+            let room_for_key_and_one_item = used + ENTRIES_PER_BUCKET_KEY + 1 <= PAGE_SIZE;
+            if !room_for_key_and_one_item {
                 out.push(std::mem::take(&mut page));
                 used = 0;
             }
-            let part: Vec<(MessageId, i64)> = rest.by_ref().take(PAGE_SIZE - used - 1).collect();
-            used += 1 + part.len();
+            let part: Vec<(MessageId, i64)> = rest.by_ref().take(PAGE_SIZE - used - ENTRIES_PER_BUCKET_KEY).collect();
+            used += bucket_entries(&part);
             page.push((key, part));
             if rest.peek().is_none() {
                 break;

@@ -1,5 +1,7 @@
 import { createClient } from "redis";
 
+const WARN_AT_MOST_EVERY_MS = 60_000;
+
 export function connectRedis(url, { log = console } = {}) {
   const options = {
     url,
@@ -11,7 +13,7 @@ export function connectRedis(url, { log = console } = {}) {
   let warned = 0;
   for (const c of [client, subscriber]) {
     c.on("error", (err) => {
-      if (Date.now() - warned < 60_000) return;
+      if (Date.now() - warned < WARN_AT_MOST_EVERY_MS) return;
       warned = Date.now();
       log.warn(`[auth] redis: ${err.message}`);
     });

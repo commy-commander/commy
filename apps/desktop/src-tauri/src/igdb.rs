@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 
 const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";
 const GAMES_URL: &str = "https://api.igdb.com/v4/games";
-const MIN_GAP: Duration = Duration::from_millis(260);
+const IGDB_MAX_REQUESTS_PER_SECOND: u128 = 4;
+const MIN_REQUEST_GAP: Duration = Duration::from_millis(260);
+const _: () = assert!(MIN_REQUEST_GAP.as_millis() * IGDB_MAX_REQUESTS_PER_SECOND > 1000);
+const TOKEN_REFRESH_MARGIN_SECS: u64 = 60;
 const SEARCH_CACHE_CAP: usize = 300;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -113,7 +116,7 @@ impl IgdbClient {
 
     async fn pace(&mut self) {
         if let Some(last) = self.last_request {
-            if let Some(wait) = MIN_GAP.checked_sub(last.elapsed()) {
+            if let Some(wait) = MIN_REQUEST_GAP.checked_sub(last.elapsed()) {
                 tokio::time::sleep(wait).await;
             }
         }
@@ -141,7 +144,7 @@ impl IgdbClient {
             return Err("Twitch rejected the client id or secret".into());
         }
         let token: TokenResponse = response.json().await.map_err(|_| "unexpected reply from Twitch".to_string())?;
-        let expires = Instant::now() + Duration::from_secs(token.expires_in.saturating_sub(60));
+        let expires = Instant::now() + Duration::from_secs(token.expires_in.saturating_sub(TOKEN_REFRESH_MARGIN_SECS));
         self.token = Some((token.access_token.clone(), expires));
         Ok(token.access_token)
     }

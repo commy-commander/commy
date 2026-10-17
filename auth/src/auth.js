@@ -10,6 +10,10 @@ import { commyVault } from "./vault.js";
 import { createMailer } from "./mailer.js";
 import { redisRateLimitStorage } from "./rate-limit.js";
 
+const PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS = ["google"];
+
+const storeSessionWithoutIpOrUserAgent = async (session) => ({ data: { ...session, ipAddress: null, userAgent: null } });
+
 export function socialProviders(config) {
   const providers = {};
   for (const name of ["google", "twitch"]) {
@@ -115,13 +119,13 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     },
     socialProviders: socialProviders(config),
     account: {
-      accountLinking: { enabled: true, trustedProviders: ["google"] },
+      accountLinking: { enabled: true, trustedProviders: PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS },
       encryptOAuthTokens: true,
     },
     databaseHooks: {
       session: {
         create: {
-          before: async (session) => ({ data: { ...session, ipAddress: null, userAgent: null } }),
+          before: storeSessionWithoutIpOrUserAgent,
         },
       },
     },

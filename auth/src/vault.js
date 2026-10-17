@@ -4,7 +4,7 @@ import { APIError, createAuthEndpoint, sessionMiddleware } from "better-auth/api
 const MODEL = "vaultItem";
 export const MAX_VAULT_BYTES = 256 * 1024;
 const NAME = /^[a-z0-9-]{1,32}$/;
-const SEALED = /^sealed1\.[A-Za-z0-9_-]{40,}$/;
+const COMMY_NET_SEALED_FORMAT = /^sealed1\.[A-Za-z0-9_-]{40,}$/;
 
 export function normalizeVaultName(value) {
   const name = String(value ?? "").trim();
@@ -13,7 +13,7 @@ export function normalizeVaultName(value) {
 
 export function validSealed(value) {
   const data = String(value ?? "");
-  return data.length <= MAX_VAULT_BYTES && SEALED.test(data) ? data : null;
+  return data.length <= MAX_VAULT_BYTES && COMMY_NET_SEALED_FORMAT.test(data) ? data : null;
 }
 
 function publicItem(name, row) {

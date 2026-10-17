@@ -290,8 +290,8 @@ direct connection is impossible, always end to end encrypted.
 - **Pause or resume by hand:** `docker compose exec relay-meter touch /flags/relay-paused`
   stops the relay until you delete that file; the meter only clears pauses it set.
 - **Several environments on one server:** run one shared relay with
-  `docker-compose.relay.yml` (see the comment at its top); the per
-  environment stacks leave the relay out.
+  `docker-compose.relay.yml`; the per environment stacks leave the relay out.
+  [DEPLOYING.md](DEPLOYING.md) has the commands.
 - **Apps:** `COMMY_RELAY_URLS=https://relay.example.org:8443` points a build at
   another relay, `none` uses only n0's.
 
@@ -367,3 +367,11 @@ docker compose up -d --build
 Caddy serves `localhost` with its own local certificate authority, so the
 browser will warn until you trust it. Auth server unit tests run with
 `cd ../auth && npm install && npm test`.
+
+To work on the auth server itself, `docker compose -f auth/docker-compose.dev.yml up -d --build`
+(from the repository root) runs it with Postgres, Redis, a mail catcher and
+Prisma Studio, all reachable from this machine only: the auth server on
+`http://localhost:3001` (start the desktop app with
+`COMMY_AUTH_URL=http://localhost:3001`), verification and sign-in mail on
+`http://localhost:8025`, the tables on `http://localhost:5555` and Redis on
+port 6380.

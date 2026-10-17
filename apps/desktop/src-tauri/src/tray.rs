@@ -11,7 +11,14 @@ const BADGE_RGB: [u8; 3] = [242, 239, 230];
 const FIGURE_RGB: [u8; 3] = [11, 13, 23];
 const RING_RGB: [u8; 3] = [11, 13, 23];
 
-fn glyph(c: char) -> [u8; 5] {
+const GLYPH_WIDTH: u32 = 3;
+const GLYPH_HEIGHT: u32 = 5;
+const GLYPH_ADVANCE: u32 = GLYPH_WIDTH + 1;
+const GLYPH_LEFTMOST_BIT: u8 = 1 << (GLYPH_WIDTH - 1);
+type GlyphRows = [u8; GLYPH_HEIGHT as usize];
+const PLUS_GLYPH: GlyphRows = [0b000, 0b010, 0b111, 0b010, 0b000];
+
+fn glyph(c: char) -> GlyphRows {
     match c {
         '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
         '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
@@ -23,7 +30,7 @@ fn glyph(c: char) -> [u8; 5] {
         '7' => [0b111, 0b001, 0b001, 0b001, 0b001],
         '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
         '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
-        _ => [0b000, 0b010, 0b111, 0b010, 0b000],
+        _ => PLUS_GLYPH,
     }
 }
 
@@ -58,10 +65,10 @@ pub fn draw_count_badge(rgba: &mut [u8], width: u32, height: u32, cx: f32, cy: f
     let y0 = (cy - total_h as f32 / 2.0).round() as i64;
     for (i, c) in label.chars().enumerate() {
         let rows = glyph(c);
-        let gx = x0 + (i as i64) * 4 * scale as i64;
+        let gx = x0 + (i as i64) * GLYPH_ADVANCE as i64 * scale as i64;
         for (row, bits) in rows.iter().enumerate() {
-            for col in 0..3 {
-                if bits & (0b100 >> col) == 0 {
+            for col in 0..GLYPH_WIDTH {
+                if bits & (GLYPH_LEFTMOST_BIT >> col) == 0 {
                     continue;
                 }
                 for sy in 0..scale as i64 {
@@ -81,9 +88,11 @@ pub fn draw_count_badge(rgba: &mut [u8], width: u32, height: u32, cx: f32, cy: f
 }
 
 fn figure_layout(radius: f32, glyphs: u32) -> (u32, u32, u32) {
-    let text_w = glyphs * 3 + glyphs.saturating_sub(1);
-    let scale = ((radius * 2.0 * 0.78) / text_w as f32).min((radius * 2.0 * 0.66) / 5.0).floor().max(1.0) as u32;
-    (scale, text_w * scale, 5 * scale)
+    let text_w = glyphs * GLYPH_WIDTH + glyphs.saturating_sub(1);
+    let fit_width = (radius * 2.0 * 0.78) / text_w as f32;
+    let fit_height = (radius * 2.0 * 0.66) / GLYPH_HEIGHT as f32;
+    let scale = fit_width.min(fit_height).floor().max(1.0) as u32;
+    (scale, text_w * scale, GLYPH_HEIGHT * scale)
 }
 
 pub fn draw_badge(rgba: &mut [u8], width: u32, height: u32, count: u32) {

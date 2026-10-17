@@ -13,6 +13,8 @@ pub const ENTRY_KEY_ALPN: &[u8] = b"commy/entry-key/1";
 
 pub const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
+const REPLY_DELIVERY_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntryKeyRequest {
     pub server: String,
@@ -71,8 +73,7 @@ impl ProtocolHandler for EntryKeyAcceptor {
                 .await
                 .map_err(|e| anyhow::anyhow!("entry key reply failed: {e}"))?;
             send.finish()?;
-            let _ =
-                tokio::time::timeout(std::time::Duration::from_secs(5), connection.closed()).await;
+            let _ = tokio::time::timeout(REPLY_DELIVERY_GRACE, connection.closed()).await;
             Ok(())
         })
     }

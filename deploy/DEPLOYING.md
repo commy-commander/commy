@@ -70,9 +70,25 @@ by `docker compose up -d` in that folder. Google OAuth needs each domain's
   account server, and release builds never use staging.
 - `docker-compose.env.yml` turns off the per-stack Caddy and joins `web` and
   `auth` to the shared `commy-public` network under those aliases. Each
-  environment's Postgres and Redis stay on its own private network.
+  environment's Postgres and Redis stay on its own private network. The aliases
+  come from `COMPOSE_PROJECT_NAME` (`commy-dev`, `commy-staging` or
+  `commy-prod`), which `setup-vps.sh` writes into each `.env`.
 - `docker-compose.agent.yml` adds the agent. It mounts the checkout read only and
   the Docker socket.
+
+To start or rebuild the relays by hand, run this in `/srv/commy-prod/deploy`:
+
+```bash
+docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml up -d --build relay relay-proxy relay-meter
+```
+
+and this in `/srv/commy-staging/deploy` for the test build relay, which has its
+own STUN port and a smaller monthly budget:
+
+```bash
+RELAY_PROXY_ALIAS=commy-relay-staging-proxy STUN_PORT=3479 RELAY_MONTHLY_LIMIT_GB=500 \
+  docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d --build relay relay-proxy relay-meter
+```
 
 ### Dockhand
 
@@ -149,8 +165,9 @@ sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
 
 To let your own IP reach port 443 directly (for example to test without
 Cloudflare), put `COMMY_FW_ALLOW="203.0.113.7/32"` in `/etc/default/commy-firewall`
-and run `sudo commy-firewall apply`. `sudo commy-firewall remove` undoes the
-Cloudflare-only rule.
+and run `sudo commy-firewall apply`. The rule applies to the interface of the
+default route; set `COMMY_FW_IFACE` in the same file if the public interface is
+a different one. `sudo commy-firewall remove` undoes the Cloudflare-only rule.
 
 ## One environment only
 
@@ -170,7 +187,8 @@ AUTH_IMAGE=ghcr.io/commy-commander/commy-auth:prod
   **Server images** workflow finishes (for the website: the **Website image**
   workflow in the commy-web repository).
 - **Staging**: run the "Cut release" workflow in both repositories with the same version (or push a release tag such as `v0.2.0` to each). Suffixed versions like `0.2.0-rc.1` are published as pre-releases, and their desktop builds sign in to staging.commy.chat by default.
-  The same tag also builds the desktop release.
+  The same tag also builds the desktop release. A tag containing `-test` (such
+  as `v0.2.0-test.1`) publishes that desktop release as a draft.
 - **Prod**: Actions > **Promote images** > Run workflow > `prod`. A required
   reviewer approves it under the run's **Review deployments** button, then prod
   picks up the exact images staging is running. The website has the same
@@ -195,3 +213,14 @@ other update. To pause automatic updates, `docker compose stop agent`.
   and mount `/root/.docker/config.json` into the agent.
 - **Environments.** Settings > Environments needs `production` with a required
   reviewer, which gates promotion to prod, and `staging` without one.
+
+## Testing these scripts
+
+`sh deploy/agent/commy-agent.test.sh` and `sh deploy/host/commy-firewall.test.sh`
+run against fake `docker`, `iptables`, `ufw` and `curl` commands, so they need
+nothing installed. `sh deploy/agent/integration.test.sh` runs the agent against
+a real Docker engine with Compose v2 and a local registry.
+`sh deploy/edge/edge.test.sh` checks the edge Caddyfile in a real Caddy, which it
+downloads unless `CADDY` names one. `sh scripts/e2e.sh` runs the end to end tests
+(it needs the Postgres server binaries, Node 22 and Rust) and then the edge
+check; give it a test name such as `doorbell` to run only the matching tests.

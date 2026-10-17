@@ -99,7 +99,7 @@ fn sign_dm(app: &App, message: &mut DmMessage) -> CmdResult<()> {
     Ok(())
 }
 
-fn key_settled(app: &App) -> CmdResult<()> {
+fn refuse_while_key_may_be_replaced(app: &App) -> CmdResult<()> {
     if app.key_settled() {
         Ok(())
     } else {
@@ -325,8 +325,7 @@ async fn send_message(
     }
     let _signing = app.signing.read().await;
     sign_message(&app, sid, &mut message)?;
-    let wire = WirePayload::Event(ServerEvent::MessageCreate { message: message.clone() });
-    if commy_net::protocol::gossip_size(&wire) > commy_net::protocol::MAX_GOSSIP_BYTES {
+    if !signed_fits_one_gossip_frame(&message) {
         return Err("that message is too long to send; try splitting it up".into());
     }
     commit_message(&app, &handle, sid, message).await
@@ -360,6 +359,11 @@ async fn set_reaction(
     Ok(())
 }
 
+fn signed_fits_one_gossip_frame(signed: &Message) -> bool {
+    let wire = WirePayload::Event(ServerEvent::MessageCreate { message: signed.clone() });
+    commy_net::protocol::gossip_size(&wire) <= commy_net::protocol::MAX_GOSSIP_BYTES
+}
+
 fn message_author(state: &ServerState, cid: ChannelId, mid: MessageId) -> CmdResult<UserId> {
     state
         .messages(cid)
@@ -369,7 +373,7 @@ fn message_author(state: &ServerState, cid: ChannelId, mid: MessageId) -> CmdRes
         .ok_or_else(|| "that message no longer exists".to_string())
 }
 
-fn edit_time(original: &Message, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+fn edit_time_after_last_edit(original: &Message, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
     match original.edited_at {
         Some(last) if now.timestamp_millis() <= last.timestamp_millis() => last + chrono::Duration::milliseconds(1),
         _ => now,
@@ -383,8 +387,9 @@ fn sign_edit(
     now: chrono::DateTime<chrono::Utc>,
     identity: &Identity,
 ) -> CmdResult<ServerEvent> {
-    let edited_at = edit_time(original, now);
-    let edited = Message { content, edited_at: Some(edited_at), sig: Some(Signature([0; 64])), ..original.clone() };
+    let edited_at = edit_time_after_last_edit(original, now);
+    let placeholder_signature_of_real_size = Some(Signature([0; 64]));
+    let edited = Message { content, edited_at: Some(edited_at), sig: placeholder_signature_of_real_size, ..original.clone() };
     if edited.authored_size() > MAX_MESSAGE_BYTES {
         return Err("that edit is too long; try shortening it".into());
     }
@@ -1093,7 +1098,7 @@ fn video_frame_payload(user: UserId, seq: Option<u64>, width: u32, height: u32, 
     payload
 }
 
-const MAX_CAMERA_FRAME: usize = 400 * 1024;
+const MAX_CAMERA_FRAME_BYTES: usize = 400 * 1024;
 
 #[tauri::command]
 async fn start_camera(
@@ -1141,7 +1146,7 @@ fn push_camera_frame(app: tauri::State<App>, jpeg: String, width: u32, height: u
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(jpeg)
         .map_err(|_| "camera frame is not valid base64".to_string())?;
-    if bytes.len() > MAX_CAMERA_FRAME || !bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+    if bytes.len() > MAX_CAMERA_FRAME_BYTES || !bytes.starts_with(&[0xff, 0xd8, 0xff]) {
         return Err("camera frame must be a JPEG under 400 KB".into());
     }
     let mut camera = app.camera.lock().unwrap();
@@ -1244,7 +1249,7 @@ fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
 async fn send_friend_signal(app: &tauri::State<'_, App>, to: UserId, signal: safety::FriendSignal) -> CmdResult<()> {
     let _signing = app.signing.read().await;
     let me = current_profile(app)?;
-    key_settled(app)?;
+    refuse_while_key_may_be_replaced(app)?;
     let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
     let mut message = DmMessage::new(me.id, to, signal.encode());
     sign_dm(app, &mut message)?;
@@ -1434,7 +1439,7 @@ async fn report_user(
     if reported == me.id {
         return Err("you cannot report yourself".into());
     }
-    key_settled(&app)?;
+    refuse_while_key_may_be_replaced(&app)?;
     let (owner, excerpt) = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
@@ -1882,12 +1887,14 @@ async fn update_channel(
     Ok(())
 }
 
+const MESH_HEAL_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
+
 async fn run_mesh_healer(handle: tauri::AppHandle) {
     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     loop {
         let app = handle.state::<App>();
         if wake::is_resting(&app) {
-            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            tokio::time::sleep(MESH_HEAL_EVERY).await;
             continue;
         }
         let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
@@ -1923,9 +1930,11 @@ async fn run_mesh_healer(handle: tauri::AppHandle) {
                 }
             }
         }
-        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        tokio::time::sleep(MESH_HEAL_EVERY).await;
     }
 }
+
+const RETENTION_PRUNE_EVERY: std::time::Duration = std::time::Duration::from_secs(600);
 
 async fn run_retention_pruner(handle: tauri::AppHandle) {
     loop {
@@ -1942,7 +1951,7 @@ async fn run_retention_pruner(handle: tauri::AppHandle) {
             app.persist_server(sid);
             let _ = handle.emit("server-event", &sid.to_string());
         }
-        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+        tokio::time::sleep(RETENTION_PRUNE_EVERY).await;
     }
 }
 
@@ -2242,7 +2251,7 @@ mod edit_tests {
     use super::*;
 
     #[test]
-    fn an_edit_is_dated_after_the_last_one() {
+    fn an_edit_is_dated_after_the_last_one_so_peers_take_it() {
         let identity = Identity::generate();
         let mut me = UserProfile::new("me");
         me.identity = Some(identity.public());
@@ -2254,23 +2263,24 @@ mod edit_tests {
         message.sign(sid, &identity);
         state.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
         let now = chrono::Utc::now();
-        assert_eq!(edit_time(&message, now), now, "never edited");
+        assert_eq!(edit_time_after_last_edit(&message, now), now, "never edited");
 
         let ahead = now + chrono::Duration::seconds(30);
         state.apply(message.edit_event(sid, "from the other device", ahead, &identity)).unwrap();
         let stored = state.message(message.id).unwrap().clone();
-        let at = edit_time(&stored, now);
+        let at = edit_time_after_last_edit(&stored, now);
         assert!(at > ahead);
         assert_eq!(state.apply(stored.edit_event(sid, "from here", at, &identity)), Ok(true));
         assert_eq!(state.message(message.id).unwrap().content, "from here");
 
         let last = state.message(message.id).unwrap().clone();
         let same = last.edited_at.unwrap();
-        assert_eq!(state.apply(last.edit_event(sid, "again", edit_time(&last, same), &identity)), Ok(true));
+        let again = last.edit_event(sid, "again", edit_time_after_last_edit(&last, same), &identity);
+        assert_eq!(state.apply(again), Ok(true));
         assert_eq!(state.message(message.id).unwrap().content, "again");
 
         let later = same + chrono::Duration::seconds(1);
-        assert_eq!(edit_time(&last, later), later);
+        assert_eq!(edit_time_after_last_edit(&last, later), later);
     }
 
     #[test]
@@ -3646,8 +3656,10 @@ async fn pick_sound() -> CmdResult<Option<(String, String)>> {
     )))
 }
 
+const IROH_STARTUP_BEFORE_BLOB_RESTORE: std::time::Duration = std::time::Duration::from_secs(8);
+
 async fn run_blob_restore(handle: tauri::AppHandle) {
-    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+    tokio::time::sleep(IROH_STARTUP_BEFORE_BLOB_RESTORE).await;
     let app = handle.state::<App>();
     let net = app.net.lock().await;
     if let Some(node) = net.as_ref() {
@@ -3776,10 +3788,12 @@ async fn set_auto_presence(app: &tauri::State<'_, App>, handle: &tauri::AppHandl
     let _ = handle.emit("profile-changed", &profile);
 }
 
+const ACTIVITY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
+
 async fn run_activity_watcher(handle: tauri::AppHandle) {
-    let mut candidate: Option<String> = None;
+    let mut seen_last_poll: Option<String> = None;
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(ACTIVITY_POLL).await;
         let app = handle.state::<App>();
         let enabled = app.voice.lock().unwrap().share_activity;
         let (seen, pid) = tokio::task::spawn_blocking(|| {
@@ -3795,13 +3809,13 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
             }
         }
         let seen = if enabled { seen } else { None };
-        let stable = if !enabled || candidate == seen {
+        let stable = if !enabled || seen_last_poll == seen {
             seen.clone()
         } else {
-            candidate = seen;
+            seen_last_poll = seen;
             continue;
         };
-        candidate = stable.clone();
+        seen_last_poll = stable.clone();
         let (stable, cover) = enrich_activity(&app, stable).await;
         let current = app.profile.lock().unwrap().as_ref().map(|p| (p.activity.clone(), p.activity_cover.clone()));
         let Some(current) = current else { continue };
@@ -4159,6 +4173,13 @@ async fn stop_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
     Ok(())
 }
 
+const MAX_RESPONSIVE_PREVIEW_BYTES: usize = 20 * 1024 * 1024;
+
+fn is_data_url_safe_image_mime(peer_supplied: &str) -> bool {
+    let subtype = peer_supplied.strip_prefix("image/").unwrap_or("");
+    !subtype.is_empty() && subtype.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
+}
+
 #[tauri::command]
 async fn get_attachment_preview(
     app: tauri::State<'_, App>,
@@ -4166,12 +4187,7 @@ async fn get_attachment_preview(
     provider: Option<String>,
     mime: String,
 ) -> CmdResult<String> {
-    let subtype = mime.strip_prefix("image/").unwrap_or("");
-    if subtype.is_empty()
-        || !subtype
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
-    {
+    if !is_data_url_safe_image_mime(&mime) {
         return Err("not an image".into());
     }
     let bytes = {
@@ -4181,7 +4197,7 @@ async fn get_attachment_preview(
             .await
             .map_err(err_to_string)?
     };
-    if bytes.len() > 20 * 1024 * 1024 {
+    if bytes.len() > MAX_RESPONSIVE_PREVIEW_BYTES {
         return Err("image too large to preview".into());
     }
     Ok(format!(
@@ -4584,7 +4600,7 @@ pub fn run() {
         }
     }
 
-    instance::apply_webview_data_dir();
+    instance::apply_webview_data_dir_before_any_window();
 
     tauri::Builder::default()
         .manage(App::default())

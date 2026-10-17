@@ -4,10 +4,10 @@ const IS_TAURI = Boolean(window.__TAURI__);
 const invoke = IS_TAURI ? window.__TAURI__.core.invoke : mockInvoke;
 
 window.addEventListener("error", e => {
-  try { toast(`UI error: ${e.message}`); } catch (_) {  }
+  try { toast(`UI error: ${e.message}`); } catch (_) {}
 });
 window.addEventListener("unhandledrejection", e => {
-  try { toast(`UI error: ${e.reason}`); } catch (_) {  }
+  try { toast(`UI error: ${e.reason}`); } catch (_) {}
 });
 
 const state = {
@@ -797,7 +797,7 @@ function applyAppearance(prefs) {
 
 function saveAppearance(prefs) {
   applyAppearance(prefs);
-  try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(prefs)); } catch {  }
+  try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(prefs)); } catch {}
 }
 
 function toast(message) {
@@ -966,7 +966,7 @@ function loadRailLayout() {
 }
 
 function saveRailLayout(layout) {
-  try { localStorage.setItem(RAIL_KEY, JSON.stringify(layout)); } catch {  }
+  try { localStorage.setItem(RAIL_KEY, JSON.stringify(layout)); } catch {}
 }
 
 function normalizeRailLayout(layout, serverIds) {
@@ -1605,7 +1605,7 @@ function soundPrefs() {
 }
 
 function saveSoundPrefs(prefs) {
-  try { localStorage.setItem(SOUND_KEY, JSON.stringify(prefs)); } catch {  }
+  try { localStorage.setItem(SOUND_KEY, JSON.stringify(prefs)); } catch {}
 }
 
 function soundFor(eventId) {
@@ -1621,7 +1621,7 @@ function playSound(eventId, force) {
   if (!force && (!prefs.enabled || state.user?.presence === "do_not_disturb")) return;
   const audio = new Audio(SOUND_FILES[name]);
   audio.volume = Math.max(0, Math.min(1, prefs.volume));
-  audio.play().catch(() => {  });
+  audio.play().catch(() => {});
 }
 
 function renderSoundSettings() {
@@ -1693,7 +1693,7 @@ function notifyPrefs() {
 }
 
 function saveNotifyPrefs(prefs) {
-  try { localStorage.setItem(NOTIFY_KEY, JSON.stringify(prefs)); } catch {  }
+  try { localStorage.setItem(NOTIFY_KEY, JSON.stringify(prefs)); } catch {}
 }
 
 const unread = { channels: new Map(), channelServer: new Map(), dms: new Map() };
@@ -1755,6 +1755,7 @@ function onMessageCreated(msg) {
 }
 
 function onMessagesCaughtUp(payload) {
+  const bareCountFromOlderBuild = count => ({ count: Number(count) });
   const server = payload && payload.server;
   const channels = payload && payload.channels;
   if (!server || !channels || typeof channels !== "object") return;
@@ -1763,7 +1764,7 @@ function onMessagesCaughtUp(payload) {
   const now = Math.floor(Date.now() / 1000);
   const level = levelForServer(notifyPrefs(), server);
   for (const [channel, value] of Object.entries(channels)) {
-    const info = typeof value === "object" && value ? value : { count: Number(value) };
+    const info = typeof value === "object" && value ? value : bareCountFromOlderBuild(value);
     const count = Number(info.count);
     if (!Number.isInteger(count) || count <= 0) continue;
     const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === channel;
@@ -1883,7 +1884,7 @@ async function startCamera() {
           height: canvas.height,
         });
       }
-    } catch {  }
+    } catch {}
     cam.busy = false;
   }, Math.round(1000 / CAMERA_FPS));
   state.cameraOn = true;
@@ -1904,7 +1905,7 @@ async function stopCamera() {
   stopCameraTracks();
   state.cameraOn = false;
   if (server) {
-    try { await invoke("stop_camera", { serverId: server.id }); } catch {  }
+    try { await invoke("stop_camera", { serverId: server.id }); } catch {}
   }
   renderVoicePanel();
   if (state.currentServer) await refreshCurrentServer();
@@ -1996,7 +1997,7 @@ async function loadCameraDevices() {
       select.appendChild(opt);
     });
     select.value = devices.some(d => d.deviceId === chosen) ? chosen : "";
-  } catch {  }
+  } catch {}
 }
 
 let previewStream = null;
@@ -2730,7 +2731,7 @@ function markPinsSeen(channelId, pins) {
     const all = JSON.parse(localStorage.getItem(PINS_SEEN_KEY) || "{}");
     all[channelId] = (pins || []).map(p => p.message.id);
     localStorage.setItem(PINS_SEEN_KEY, JSON.stringify(all));
-  } catch {  }
+  } catch {}
 }
 
 function syncPinButton() {
@@ -3091,8 +3092,9 @@ function setHidden(id, hidden) {
   if (hidden) set.add(id);
   else set.delete(id);
   try {
-    localStorage.setItem(HIDDEN_KEY, JSON.stringify([...set].slice(-2000)));
-  } catch {  }
+    const MAX_REMEMBERED_HIDES = 2000;
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify([...set].slice(-MAX_REMEMBERED_HIDES)));
+  } catch {}
   renderMessages(state.renderedMessages || []);
 }
 
@@ -3614,8 +3616,7 @@ let integrations = { igdb_client_id: "", igdb_configured: false };
 async function loadIntegrations() {
   try {
     integrations = await invoke("get_integrations");
-  } catch {
-  }
+  } catch {}
 }
 
 function igdbCover(imageId, size = "t_cover_small") {
@@ -3896,8 +3897,7 @@ async function syncAwaitedBar() {
   if (serverId) {
     try {
       text = awaitedText(await invoke("get_awaited", { serverId }));
-    } catch {
-    }
+    } catch {}
   }
   if (seq !== awaitedSeq) return;
   $("awaited-text").textContent = text || "";
@@ -4188,7 +4188,7 @@ function toggleSection(key) {
   const set = collapsedSections();
   if (set.has(key)) set.delete(key);
   else set.add(key);
-  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set])); } catch {  }
+  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set])); } catch {}
   renderChannels();
 }
 
@@ -4361,8 +4361,7 @@ let friends = { friends: [], incoming: [], outgoing: [] };
 async function loadFriends() {
   try {
     friends = await invoke("list_friends");
-  } catch {
-  }
+  } catch {}
 }
 
 function friendState(userId) {
@@ -4807,8 +4806,7 @@ const revealedBlocked = new Set();
 async function loadSafety() {
   try {
     safety = await invoke("get_safety");
-  } catch {
-  }
+  } catch {}
 }
 
 function isBlocked(userId) {
@@ -5468,7 +5466,9 @@ function appendCustomEmojiSections(grid, query, onPick, localOnly = false) {
 
 async function prepareEmojiImage(src) {
   const blob = await (await fetch(src)).blob();
-  if (blob.type === "image/gif" && blob.size <= 256 * 1024) {
+  const MAX_GIF_BYTES_KEPT_ANIMATED = 256 * 1024;
+  const EMOJI_SIZE_PX = 128;
+  if (blob.type === "image/gif" && blob.size <= MAX_GIF_BYTES_KEPT_ANIMATED) {
     return { data: await blobToBase64(blob), url: src, flattened: false };
   }
   const img = await new Promise((resolve, reject) => {
@@ -5477,7 +5477,7 @@ async function prepareEmojiImage(src) {
     i.onerror = () => reject(new Error("could not read that image"));
     i.src = src;
   });
-  const scale = Math.min(1, 128 / Math.max(img.naturalWidth, img.naturalHeight));
+  const scale = Math.min(1, EMOJI_SIZE_PX / Math.max(img.naturalWidth, img.naturalHeight));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
   canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
@@ -5637,7 +5637,7 @@ function soundboardPrefs() {
 }
 
 function saveSoundboardPrefs(prefs) {
-  try { localStorage.setItem(SOUNDBOARD_KEY, JSON.stringify(prefs)); } catch {  }
+  try { localStorage.setItem(SOUNDBOARD_KEY, JSON.stringify(prefs)); } catch {}
 }
 
 const DEFAULT_SOUNDS = [
@@ -5658,7 +5658,9 @@ async function playExpressionSound(ref, volume) {
   const builtin = defaultSound(ref);
   const url = builtin ? builtin.file : await expressionUrl(ref);
   if (!url) return;
-  if (soundboardPlaying.size >= 3) {
+  const MAX_OVERLAPPING_CLIPS = 3;
+  const STOP_A_CLIP_THAT_RUNS_ON_MS = (MAX_SOUND_SECONDS + 1) * 1000;
+  if (soundboardPlaying.size >= MAX_OVERLAPPING_CLIPS) {
     const oldest = soundboardPlaying.values().next().value;
     oldest.pause();
     soundboardPlaying.delete(oldest);
@@ -5671,7 +5673,7 @@ async function playExpressionSound(ref, volume) {
   setTimeout(() => {
     audio.pause();
     done();
-  }, (MAX_SOUND_SECONDS + 1) * 1000);
+  }, STOP_A_CLIP_THAT_RUNS_ON_MS);
   audio.play().catch(done);
 }
 
@@ -6011,7 +6013,7 @@ function wireMentions(input) {
     }
     e.preventDefault();
     e.stopImmediatePropagation();
-  }, true);
+  }, { capture: true });
 }
 
 function buildMessageContent(text) {
@@ -6757,7 +6759,7 @@ function syncGifButton() {
 
 function gifSettings() {
   let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(GIF_KEY) || "{}"); } catch {  }
+  try { saved = JSON.parse(localStorage.getItem(GIF_KEY) || "{}"); } catch {}
   if (!GIF_PROVIDERS.has(saved.provider)) saved = { provider: "klipy", key: "" };
   return { provider: "klipy", key: "", ...saved };
 }
@@ -6988,12 +6990,12 @@ function shareQuality() {
   try {
     const saved = localStorage.getItem(SHARE_QUALITY_KEY);
     if (saved in SHARE_QUALITY_HINTS) return saved;
-  } catch {  }
+  } catch {}
   return "balanced";
 }
 
 function setShareQuality(quality) {
-  try { localStorage.setItem(SHARE_QUALITY_KEY, quality); } catch {  }
+  try { localStorage.setItem(SHARE_QUALITY_KEY, quality); } catch {}
   for (const btn of $("share-quality").querySelectorAll("button")) {
     btn.classList.toggle("active", btn.dataset.q === quality);
   }
@@ -7101,7 +7103,7 @@ async function loadShareThumbs(token) {
         img.src = sharePicker.thumbs.get(key);
         card.replaceChildren(img);
       }
-    } catch {  }
+    } catch {}
   }
 }
 
@@ -7175,7 +7177,7 @@ function startOwnPreview() {
         $("vp-live-source").textContent = [state.shareSource ? `Streaming ${state.shareSource}` : "", `${fps} fps`].filter(Boolean).join(" - ");
       }
       ownFpsSample = { frames: own.frames, at: now };
-    } catch {  }
+    } catch {}
   };
   tick();
   ownPreviewTimer = setInterval(tick, 1000);
@@ -7290,7 +7292,7 @@ async function stopWatching() {
   if (state.watchingUser) {
     try {
       await invoke("stop_watching", { userId: state.watchingUser });
-    } catch (e) {  }
+    } catch (e) {}
   }
   state.watchingUser = null;
   state.watchingName = null;
@@ -7965,7 +7967,7 @@ function wireEvents() {
   $("gif-provider").addEventListener("change", syncGifHelp);
   $("gif-key-save").onclick = () => {
     const settings = { provider: $("gif-provider").value, key: $("gif-key").value.trim() };
-    try { localStorage.setItem(GIF_KEY, JSON.stringify(settings)); } catch {  }
+    try { localStorage.setItem(GIF_KEY, JSON.stringify(settings)); } catch {}
     toast(settings.key ? "GIF key saved" : "GIF key removed");
     syncGifButton();
   };
@@ -8165,7 +8167,7 @@ function wireEvents() {
   $("vp-camera").onclick = () => (state.cameraOn ? stopCamera() : startCamera());
   $("cam-preview-btn").onclick = toggleCameraPreview;
   $("camera-device").addEventListener("change", async e => {
-    try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch {  }
+    try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch {}
     if (previewStream) {
       stopCameraPreview();
       toggleCameraPreview();
@@ -8523,7 +8525,7 @@ function wireEvents() {
 }
 
 async function stopMicTest() {
-  try { await invoke("stop_mic_test"); } catch (e) {  }
+  try { await invoke("stop_mic_test"); } catch (e) {}
   state.micTesting = false;
   $("mic-test-btn").textContent = "Start Test";
 }
@@ -8901,10 +8903,11 @@ async function refreshCurrentServer() {
 }
 
 function wireActivityPing() {
+  const MIN_PING_GAP_MS = 30e3;
   let lastPing = 0;
   const ping = () => {
     const now = Date.now();
-    if (now - lastPing < 30e3) return;
+    if (now - lastPing < MIN_PING_GAP_MS) return;
     lastPing = now;
     invoke("note_user_activity").catch(() => {});
   };
@@ -8955,8 +8958,7 @@ let account = { signed_in: false, server_host: "" };
 async function loadAccount() {
   try {
     account = await invoke("account_status");
-  } catch {
-  }
+  } catch {}
   syncGifButton();
 }
 
