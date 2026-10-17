@@ -559,15 +559,18 @@ async fn attach_file(
     handle: tauri::AppHandle,
     server_id: String,
     channel_id: String,
+    kind: Option<String>,
 ) -> CmdResult<Option<MessageView>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
 
-    let Some(picked) = rfd::AsyncFileDialog::new()
-        .set_title("Share a file")
-        .pick_file()
-        .await
-    else {
+    let dialog = match kind.as_deref() {
+        Some("video") => rfd::AsyncFileDialog::new()
+            .set_title("Post a video")
+            .add_filter("Videos", INLINE_VIDEO_EXTENSIONS),
+        _ => rfd::AsyncFileDialog::new().set_title("Share a file"),
+    };
+    let Some(picked) = dialog.pick_file().await else {
         return Ok(None); // user cancelled
     };
     let path = picked.path().to_path_buf();
@@ -576,6 +579,22 @@ async fn attach_file(
     send_attachment(&app, &handle, sid, cid, filename, bytes)
         .await
         .map(Some)
+}
+
+const INLINE_VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov", "webm"];
+const MAX_INLINE_VIDEO_BYTES: usize = 100 * 1024 * 1024;
+
+#[tauri::command]
+async fn get_attachment_video(
+    app: tauri::State<'_, App>,
+    blob: String,
+    provider: Option<String>,
+) -> CmdResult<tauri::ipc::Response> {
+    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
+    if bytes.len() > MAX_INLINE_VIDEO_BYTES {
+        return Err("video too large to play here".into());
+    }
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Largest image the native picker hands to the webview for cropping.
@@ -5487,6 +5506,7 @@ pub fn run() {
             start_mic_test,
             stop_mic_test,
             get_attachment_preview,
+            get_attachment_video,
             start_screen_share,
             stop_screen_share,
             watch_screen,
