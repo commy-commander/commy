@@ -124,8 +124,15 @@ SUDO_USER=alice
 echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxQ alice@laptop" >"$FAKE/home/alice/.ssh/authorized_keys"
 echo "Port 22" >"$SSHD_CONFIG"
 harden_ssh >/dev/null
-check "no Include: refuses" "$?" "1"
-check "no Include: no drop-in" "$(dropin)" ""
+check "no Include: succeeds" "$?" "0"
+check "no Include: drop-in written" "$(dropin | grep -c 'PasswordAuthentication no')" "1"
+check "no Include: include added first" "$(head -1 "$SSHD_CONFIG")" "Include $(dirname "$SSHD_DROPIN")/*.conf"
+check "no Include: rest of the config kept" "$(sed -n 2p "$SSHD_CONFIG")" "Port 22"
+check "no Include: reloaded" "$(count 'systemctl reload ssh')" "1"
+: >"$FAKE/calls"
+harden_ssh >/dev/null
+check "no Include: re-run adds nothing" "$(grep -c '^Include' "$SSHD_CONFIG")" "1"
+check "no Include: re-run does not reload" "$(count 'systemctl')" "0"
 
 reset
 setup_fail2ban >/dev/null

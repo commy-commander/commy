@@ -127,10 +127,9 @@ MSG
 		return 1
 	fi
 	dropin_dir="$(dirname "$SSHD_DROPIN")"
+	included=1
 	if ! grep -Eq "^[[:space:]]*Include[[:space:]]+$dropin_dir/" "$SSHD_CONFIG" 2>/dev/null; then
-		echo "$SSHD_CONFIG does not include $dropin_dir; add this line at its top and run again:"
-		echo "Include $dropin_dir/*.conf"
-		return 1
+		included=0
 	fi
 	wanted="PasswordAuthentication no
 KbdInteractiveAuthentication no
@@ -139,9 +138,13 @@ PermitRootLogin $policy"
 	if [ -f "$SSHD_DROPIN" ]; then
 		previous="$(cat "$SSHD_DROPIN")"
 	fi
-	if ! write_file "$SSHD_DROPIN" "$wanted"; then
+	if ! write_file "$SSHD_DROPIN" "$wanted" && [ "$included" = 1 ]; then
 		echo "SSH: keys only, root login $policy (already set)"
 		return 0
+	fi
+	if [ "$included" = 0 ]; then
+		config_before="$(cat "$SSHD_CONFIG" 2>/dev/null)"
+		{ echo "Include $dropin_dir/*.conf"; printf '%s\n' "$config_before"; } >"$SSHD_CONFIG"
 	fi
 	mkdir -p /run/sshd 2>/dev/null || true
 	if ! sshd -t; then
@@ -149,6 +152,9 @@ PermitRootLogin $policy"
 			printf '%s\n' "$previous" >"$SSHD_DROPIN"
 		else
 			rm -f "$SSHD_DROPIN"
+		fi
+		if [ "$included" = 0 ]; then
+			printf '%s\n' "$config_before" >"$SSHD_CONFIG"
 		fi
 		echo "sshd rejected $SSHD_DROPIN: previous settings restored, nothing reloaded"
 		return 1
