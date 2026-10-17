@@ -70,6 +70,10 @@ pub struct UserProfile {
     /// seconds, so others can see when this user is back.
     #[serde(default)]
     pub presence_until: Option<i64>,
+    /// Profile banner as "blob:<iroh hash>", served by `node` like the
+    /// avatar image.
+    #[serde(default)]
+    pub banner: Option<String>,
 }
 
 /// Longest About Me, in characters.
@@ -104,6 +108,11 @@ impl Avatar {
     }
 }
 
+/// A profile banner must be an uploaded image, never an emoji.
+pub fn valid_banner(raw: &str) -> bool {
+    matches!(Avatar::parse(raw), Some(Avatar::Image { .. }))
+}
+
 /// Rough emoji check: short, non-empty, and no plain letters or digits,
 /// so names and sentences cannot pose as an emoji.
 pub fn is_emoji_like(s: &str) -> bool {
@@ -127,6 +136,7 @@ impl UserProfile {
             activity_cover: None,
             activity_since: None,
             about: None,
+            banner: None,
             identity: None,
             presence_until: None,
         }
@@ -164,6 +174,14 @@ mod tests {
         assert_eq!(user.visible_name(), "commy");
         user.display_name = Some("Commy C".to_string());
         assert_eq!(user.visible_name(), "Commy C");
+    }
+
+    #[test]
+    fn banners_are_image_blobs_only() {
+        assert!(valid_banner("blob:abc123"));
+        assert!(!valid_banner("emoji:\u{1f600}"));
+        assert!(!valid_banner("blob:"));
+        assert!(!valid_banner("blob:../x"));
     }
 
     #[test]

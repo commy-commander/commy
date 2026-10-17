@@ -382,6 +382,15 @@ async function mockInvoke(cmd, args = {}) {
         mock.user.avatar = args.kind === "emoji" ? `emoji:${args.data}` : null;
       }
       return mock.user;
+    case "set_profile_banner":
+      if (args.data) {
+        const blob = "mockbanner" + Date.now();
+        mock.avatars = { ...(mock.avatars || {}), [blob]: `data:image/jpeg;base64,${args.data}` };
+        mock.user.banner = `blob:${blob}`;
+      } else {
+        mock.user.banner = null;
+      }
+      return mock.user;
     case "rename_server":
       mock.servers[args.serverId].name = args.name;
       return null;
@@ -2279,7 +2288,8 @@ function renderProfilePopover() {
   const user = state.user;
   if (!user) return;
   const name = user.display_name || user.username;
-  $("pp-banner").style.background = bannerColor(user.id);
+  $("pp-banner").dataset.banner = "";
+  paintProfileBanner($("pp-banner"), user.banner, user.node, null, bannerColor(user.id));
   const av = $("pp-avatar");
   av.replaceChildren();
   paintAvatar(av, user.id, name);
@@ -4664,6 +4674,23 @@ function paintBanner(node, ref, fallbackColor) {
   });
 }
 
+function paintProfileBanner(node, banner, provider, role, fallback) {
+  if (!banner || !banner.startsWith("blob:")) {
+    paintBanner(node, role, fallback);
+    return;
+  }
+  node.style.backgroundImage = "";
+  node.style.background = fallback;
+  const blob = banner.slice(5);
+  loadAvatarImage(blob, provider).then(url => {
+    if (url && node.dataset.banner === blob) {
+      node.style.background = "";
+      node.style.backgroundImage = `url("${url}")`;
+    }
+  });
+  node.dataset.banner = blob;
+}
+
 // ---------- Friends ----------
 
 let friends = { friends: [], incoming: [], outgoing: [] };
@@ -4780,7 +4807,8 @@ async function openFullProfile(member) {
   // so refresh it here or the mutual servers list comes up empty or stale.
   await refreshPeople();
   const person = { ...(state.people.get(member.id) || {}), ...member };
-  paintBanner($("fp-banner"), person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
+  $("fp-banner").dataset.banner = "";
+  paintProfileBanner($("fp-banner"), person.banner, person.avatar_provider, person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
   const av = $("fp-avatar");
   av.replaceChildren();
   paintAvatar(av, person.id, person.name);
@@ -4884,7 +4912,8 @@ function openMemberCard(member, anchor) {
   const server = state.currentServer || { roles: [] };
   closeFloating();
   const card = $("member-card");
-  paintBanner($("mc-banner"), member.role_banner, member.color ? roleGradient(member.color) : bannerColor(member.id));
+  $("mc-banner").dataset.banner = "";
+  paintProfileBanner($("mc-banner"), member.banner, member.avatar_provider, member.role_banner, member.color ? roleGradient(member.color) : bannerColor(member.id));
   const av = $("mc-avatar");
   av.replaceChildren();
   paintAvatar(av, member.id, member.name);
@@ -8428,6 +8457,17 @@ function wireEvents() {
     e.stopPropagation();
     openAvatarMenu(e.currentTarget);
   };
+  $("account-banner-upload").onclick = async () => {
+    try {
+      const src = await chooseImage("Choose a profile banner", $("server-image-file"));
+      if (src) await saveAccountBanner(await cropImageFile(src, 600, 240));
+    } catch (err) {
+      toast(String(err));
+    }
+  };
+  $("account-banner-remove").onclick = () => saveAccountBanner(null);
+  $("account-banner-remove").appendChild(svgIcon("close", 14));
+  $("account-banner-upload").firstElementChild.appendChild(svgIcon("plus", 14));
   $("account-status-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("account-status"), picked));
   $("account-about-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => {
     insertEmojiInName($("account-about"), picked);
@@ -9176,6 +9216,7 @@ function openUserSettings(tab) {
   $("account-presence").value = state.user.presence || "online";
   $("account-avatar").replaceChildren();
   paintAvatar($("account-avatar"), state.user.id, state.user.display_name || state.user.username);
+  paintAccountBanner();
   $("account-preview-name").textContent = state.user.display_name || state.user.username;
   $("account-username").textContent = state.user.username;
   openSettingsLayer("user-settings", tab);
@@ -9622,6 +9663,26 @@ async function onAccountChanged() {
     showSignIn();
   }
   if (!$("user-settings").classList.contains("hidden")) renderAccountSettings();
+}
+
+function paintAccountBanner() {
+  const strip = $("account-banner");
+  strip.dataset.banner = "";
+  paintProfileBanner(strip, state.user.banner, state.user.node, null, "linear-gradient(135deg, var(--accent), var(--accent-deep))");
+  $("account-banner-upload").lastElementChild.textContent = state.user.banner ? "Change banner" : "Add banner";
+  $("account-banner-remove").classList.toggle("hidden", !state.user.banner);
+}
+
+async function saveAccountBanner(data) {
+  try {
+    state.user = await invoke("set_profile_banner", { data });
+    paintAccountBanner();
+    renderProfilePopover();
+    if (state.currentServer) await refreshCurrentServer();
+    toast(data ? "Banner saved" : "Banner removed");
+  } catch (err) {
+    toast(String(err));
+  }
 }
 
 function renderAccountSettings() {

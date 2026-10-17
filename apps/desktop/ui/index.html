@@ -642,7 +642,12 @@
         <section class="settings-page" data-page="account">
           <h1>Profile</h1>
           <div class="profile-card">
-            <div class="profile-banner"></div>
+            <div class="profile-banner" id="account-banner">
+              <div class="role-banner-tools">
+                <button class="role-banner-btn icon hidden" type="button" id="account-banner-remove" title="Remove banner"></button>
+                <button class="role-banner-btn" type="button" id="account-banner-upload"><span class="rb-plus"></span><span>Add banner</span></button>
+              </div>
+            </div>
             <div class="profile-body">
               <div class="avatar avatar-xl" id="account-avatar">?</div>
               <div class="profile-names">
