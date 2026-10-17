@@ -106,7 +106,7 @@ impl Doorbell {
     }
 
     fn save(&self, dir: &Path) -> anyhow::Result<()> {
-        crate::persist::write_json(&dir.join(DOORBELL_FILE), &self.saved)
+        crate::persist::write_secret_json(&dir.join(DOORBELL_FILE), &self.saved)
     }
 
     /// Forgets servers we are no longer in.
