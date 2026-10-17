@@ -27,7 +27,6 @@ pub enum ProtocolError {
 pub enum WirePayload {
     /// A state-mutating event, applied by every member.
     Event(ServerEvent),
-    Signed(SignedEvent),
     /// New member asking any peer for the current server state.
     SyncRequest,
     /// Snapshot of server metadata for a newcomer, serialized
@@ -51,6 +50,7 @@ pub enum WirePayload {
         channel: commy_core::ChannelId,
         from_user: commy_core::UserId,
     },
+    Signed(SignedEvent),
 }
 
 /// A member as a snapshot carries them: half the size of a

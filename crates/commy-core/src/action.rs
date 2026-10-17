@@ -82,13 +82,8 @@ pub fn may_go_unsigned(event: &ServerEvent) -> bool {
     match event {
         E::MemberJoin { profile, .. } | E::ProfileUpdate { profile } => profile.identity.is_none(),
         E::PresenceUpdate { .. }
-        | E::VoiceState { .. }
         | E::TypingStart { .. }
-        | E::ScreenShare { .. }
-        | E::CameraState { .. }
-        | E::ReactionToggle { .. }
-        | E::ReactionSet { .. }
-        | E::SoundboardPlay { .. } => true,
+        | E::ReactionSet { .. } => true,
         _ => false,
     }
 }
@@ -129,20 +124,26 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => format!("role:{role}:{user}"),
         E::VoiceModerate { user, .. } => format!("voice_moderate:{user}"),
         E::MessagePin { message, .. } => format!("pin:{message}"),
+        E::ReactionToggle { message, emoji, user, .. } | E::ReactionSet { message, emoji, user, .. } => {
+            format!("reaction:{message}:{emoji}:{user}")
+        }
+        E::VoiceState { user, .. } => format!("voice:{user}"),
+        E::ScreenShare { user, .. } => format!("share:{user}"),
+        E::CameraState { user, .. } => format!("camera:{user}"),
+        E::PresenceUpdate { user, .. } => format!("presence:{user}"),
         E::MessageCreate { .. }
         | E::MessageEdit { .. }
         | E::MessageDelete { .. }
         | E::DoorbellSet { .. }
-        | E::PresenceUpdate { .. }
-        | E::VoiceState { .. }
         | E::TypingStart { .. }
-        | E::ScreenShare { .. }
-        | E::CameraState { .. }
-        | E::ReactionToggle { .. }
-        | E::ReactionSet { .. }
         | E::SoundboardPlay { .. } => return None,
     };
     Some(s)
+}
+
+pub fn settles_authority(subject: &str) -> bool {
+    const LIVE: [&str; 7] = ["presence:", "voice:", "share:", "camera:", "reaction:", "rsvp:", "profile:"];
+    !LIVE.iter().any(|p| subject.starts_with(p))
 }
 
 pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
@@ -154,8 +155,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::MessageCreate { .. } | E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
         E::MemberJoin { .. } => actor(event) == Some(by),
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
-        E::ProfileUpdate { .. }
-        | E::PresenceUpdate { .. }
+        E::ProfileUpdate { .. } => actor(event) == Some(by),
+        E::PresenceUpdate { .. }
         | E::VoiceState { .. }
         | E::TypingStart { .. }
         | E::ScreenShare { .. }
@@ -163,8 +164,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::ReactionToggle { .. }
         | E::ReactionSet { .. }
         | E::RulesAccept { .. }
-        | E::EventRsvp { .. } => actor(event) == Some(by),
-        E::SoundboardPlay { .. } => actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD),
+        | E::EventRsvp { .. } => member && actor(event) == Some(by),
+        E::SoundboardPlay { .. } => member && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD),
         E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin(),
         E::ChannelCreate { .. }
         | E::ChannelDelete { .. }
@@ -212,6 +213,7 @@ mod tests {
     use crate::server::{Channel, ChannelKind, Role};
     use crate::test_support::{fixture, identity_for, join};
     use crate::user::{Presence, UserProfile};
+    use crate::store::StoreError;
 
     fn role(perms: Permissions, self_assignable: bool) -> Role {
         Role {
@@ -298,7 +300,7 @@ mod tests {
             subject(&ServerEvent::MemberBan { server, user }),
             subject(&ServerEvent::MemberBan { server, user: UserId::new() })
         );
-        assert_eq!(subject(&ServerEvent::VoiceState { user, channel: None, muted: false, deafened: false, since: None }), None);
+        assert!(subject(&ServerEvent::VoiceState { user, channel: None, muted: false, deafened: false, since: None }).is_some());
         assert_eq!(subject(&ServerEvent::TypingStart { channel: channel.id, user }), None);
     }
 
@@ -417,7 +419,7 @@ mod tests {
 
     #[test]
     fn the_store_takes_signed_actions_from_members_allowed_to_make_them() {
-        use crate::store::StoreError;
+
         let (mut state, _, owner) = fixture();
         let sid = state.server.id;
         let user = join(&mut state, "user");
@@ -467,7 +469,7 @@ mod tests {
 
     #[test]
     fn bare_events_are_taken_only_from_members_without_a_key() {
-        use crate::store::StoreError;
+
         let (mut state, channel, owner) = fixture();
         let sid = state.server.id;
         let keyed = join(&mut state, "keyed");
@@ -491,5 +493,78 @@ mod tests {
         other_key.identity = Some(Identity::generate().public());
         let swap = SignedEvent::sign(sid, keyed, 1, ServerEvent::ProfileUpdate { profile: other_key }, &identity_for(keyed));
         assert_eq!(state.apply_signed(&swap), Err(StoreError::IdentityMismatch));
+    }
+
+    #[test]
+    fn live_events_come_only_from_current_members() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "user");
+        let voice = ServerEvent::VoiceState { user, channel: Some(channel), muted: false, deafened: false, since: None };
+        let message = {
+            let mut m = crate::Message::new(channel, owner, "hi");
+            m.sign(sid, &identity_for(owner));
+            m
+        };
+        state.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
+        let react = ServerEvent::ReactionSet { channel, message: message.id, emoji: "x".into(), user, active: true };
+        let play = ServerEvent::SoundboardPlay { server: sid, channel, user, name: "boop".into() };
+        assert!(authorized(&state.server, user, &voice));
+        assert!(authorized(&state.server, user, &react));
+        assert!(!may_go_unsigned(&play), "sounds are signed");
+        let stranger = UserId::new();
+        let bare = ServerEvent::SoundboardPlay { server: sid, channel, user: stranger, name: "boop".into() };
+        assert_eq!(state.apply_unsigned(bare), Err(StoreError::Unsigned));
+        let ban = SignedEvent::sign(sid, owner, 1_000, ServerEvent::MemberBan { server: sid, user }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&ban), Ok(true));
+        assert!(!authorized(&state.server, user, &voice), "banned members leave voice");
+        assert!(!authorized(&state.server, user, &react));
+        let signed = SignedEvent::sign(sid, user, 2_000, voice, &identity_for(user));
+        assert_eq!(state.apply_signed(&signed), Err(StoreError::NotAllowed));
+        let presence = ServerEvent::PresenceUpdate { user: stranger, presence: Presence::Online };
+        assert_eq!(state.apply_unsigned(presence), Err(StoreError::Unsigned), "strangers have no presence here");
+    }
+
+    #[test]
+    fn no_op_changes_about_unknown_things_leave_no_clock_behind() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let rsvp = SignedEvent::sign(sid, owner, 1_000, ServerEvent::EventRsvp { server: sid, event: "nope".into(), user: owner, rsvp: None }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&rsvp), Ok(false));
+        assert!(state.snapshot().action_times.iter().all(|(s, _)| !s.starts_with("rsvp:")));
+        let real = SignedEvent::sign(sid, owner, 1_000, ServerEvent::ChannelColor { server: sid, channel, color: None }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&real), Ok(false), "already that color");
+        assert!(state.snapshot().action_times.iter().any(|(s, t)| s.ends_with(&channel.to_string()) && *t == 1_000), "but the clock is kept");
+        let older = SignedEvent::sign(sid, owner, 500, ServerEvent::ChannelColor { server: sid, channel, color: Some("ff0000".into()) }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&older), Ok(false), "an older paint loses");
+    }
+
+    #[test]
+    fn a_snapshot_floor_keeps_old_authority_changes_out() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "user");
+        let now = chrono::Utc::now().timestamp_millis();
+        state.set_action_floor(now);
+        let stale = SignedEvent::sign(sid, owner, now - 2 * crate::store::MAX_ACTION_FLOOR_MS, ServerEvent::MemberBan { server: sid, user }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&stale), Ok(false));
+        assert!(state.server.is_member(user));
+        let recent = SignedEvent::sign(sid, owner, now - crate::store::MAX_ACTION_FLOOR_MS / 2, ServerEvent::MemberBan { server: sid, user }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&recent), Ok(true));
+        let presence = SignedEvent::sign(sid, owner, now - 10 * crate::store::MAX_ACTION_FLOOR_MS, ServerEvent::PresenceUpdate { user: owner, presence: Presence::Idle }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&presence), Ok(true), "live state is not held to the floor");
+        let restored = crate::store::ServerState::from_snapshot(state.snapshot());
+        assert_eq!(restored.action_floor(), now);
+    }
+
+    #[test]
+    fn our_own_stale_change_is_refused_locally_too() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let newer = SignedEvent::sign(sid, owner, 2_000, ServerEvent::ServerRename { server: sid, name: "new".into() }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&newer), Ok(true));
+        let mine = SignedEvent::sign(sid, owner, 1_000, ServerEvent::ServerRename { server: sid, name: "mine".into() }, &identity_for(owner));
+        assert_eq!(state.apply_own(&mine), Ok(false));
+        assert_eq!(state.server.name, "new");
     }
 }
