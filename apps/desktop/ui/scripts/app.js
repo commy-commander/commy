@@ -120,7 +120,7 @@ function mockSeed() {
   ];
   server.game_tags = ["Rust", "Valorant"];
   // A custom emoji and a channel banner so names and intros can be previewed.
-  server.emojis = [{ name: "ferris", image: "ferris@mock" }];
+  server.emojis = [{ name: "ferris", image: "ferris@mock" }, { name: "ferris_wave", image: "ferris@mock" }];
   mock.expressions = { ...(mock.expressions || {}), "ferris@mock": mockCrabImage() };
   mock.serverImages = { ...(mock.serverImages || {}), "welcome-banner@mock": mockBannerImage() };
   server.channels[0].banner = "welcome-banner@mock";
@@ -169,6 +169,11 @@ function mockSeed() {
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
     { id: "x4", channel: c0, author_id: "m2", author_name: "nova",
       content: "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43), created_at: new Date(Date.now() - 60e3).toISOString(), edited: false, attachments: [] },
+  ];
+  mock.messages[server.channels[1].id] = [
+    { id: "g1", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
+      content: "clutch round from last night", created_at: new Date(Date.now() - 900e3).toISOString(), edited: false,
+      attachments: [{ filename: "clutch-round.mp4", size_bytes: 18400000, is_image: false, mime: "video/mp4", blob: "clip@mock", provider: null }] },
   ];
   // Two pins in #welcome and one announcement, for the pins panel preview.
   mock.pins = [
@@ -382,6 +387,15 @@ async function mockInvoke(cmd, args = {}) {
         mock.user.avatar = args.kind === "emoji" ? `emoji:${args.data}` : null;
       }
       return mock.user;
+    case "set_profile_banner":
+      if (args.data) {
+        const blob = "mockbanner" + Date.now();
+        mock.avatars = { ...(mock.avatars || {}), [blob]: `data:image/jpeg;base64,${args.data}` };
+        mock.user.banner = `blob:${blob}`;
+      } else {
+        mock.user.banner = null;
+      }
+      return mock.user;
     case "rename_server":
       mock.servers[args.serverId].name = args.name;
       return null;
@@ -459,7 +473,13 @@ async function mockInvoke(cmd, args = {}) {
       const s = mock.servers[args.serverId];
       const ref = `mock${Date.now()}@mock`;
       mock.expressions = { ...(mock.expressions || {}), [ref]: `data:audio/mpeg;base64,${args.data}` };
-      s.sounds = (s.sounds || []).filter(x => x.name !== args.name).concat({ name: args.name, blob: ref, volume: args.volume ?? 1 });
+      s.sounds = (s.sounds || []).filter(x => x.name !== args.name).concat({ name: args.name, blob: ref, volume: args.volume ?? 1, emoji: args.emoji || null });
+      return null;
+    }
+    case "set_sound_emoji": {
+      const s = mock.servers[args.serverId];
+      const sound = (s.sounds || []).find(x => x.name === args.name);
+      if (sound) sound.emoji = args.emoji || null;
       return null;
     }
     case "remove_sound": {
@@ -533,6 +553,7 @@ async function mockInvoke(cmd, args = {}) {
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
       Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, tag: args.tag });
+      if (args.permissions) r.permissions = args.permissions;
       return null;
     }
     case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] };
@@ -672,6 +693,7 @@ async function mockInvoke(cmd, args = {}) {
     case "attach_file":
     case "download_attachment":
     case "note_user_activity": return null;
+    case "get_attachment_video": throw "this feature needs the desktop app";
     case "get_attachment_preview":
       if (mock.avatars && mock.avatars[args.blob]) return mock.avatars[args.blob];
       throw "this feature needs the desktop app";
@@ -738,6 +760,9 @@ const ICONS = {
   pin: "M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z",
   pinOff: "M3.3 2 2 3.3l5.6 5.6V9c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7h1.17l6.96 6.96 1.3-1.3zM16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.44 0-.8.28-.94.67L16.7 13.3c.66-.78 1.76-1.3 2.3-1.3v-2c-1.66 0-3-1.34-3-3z",
   megaphone: "M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1v4h2v-4h1l5 3V6L8 9H4zm11.5 3c0-1.33-.58-2.53-1.5-3.35v6.69c.92-.81 1.5-2.01 1.5-3.34z",
+  uploadFile: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z",
+  movie: "M4 6.47 5.76 10H20v8H4V6.47M22 4h-4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2z",
+  gifBox: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H5V5h14zM9.5 13v-1h1v1a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1h-2v2zm3 1h-1v-4h1zm4-3h-2v.5H16v1h-1.5V14h-1v-4h3z",
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
 };
 
@@ -1565,13 +1590,6 @@ function loadServerImage(ref) {
   return Promise.resolve(serverImages.get(ref));
 }
 
-// Stable per-server color for places that show many servers at once.
-function serverTint(serverId) {
-  let hash = 0;
-  for (const ch of String(serverId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-  return `hsl(${Math.abs(hash) % 360} 55% 45%)`;
-}
-
 // Shows a server's avatar on a rail button or settings preview.
 function paintServerIcon(node, server) {
   node.replaceChildren(document.createTextNode(initials(server.name)));
@@ -1605,6 +1623,7 @@ function paintSidebarBanner() {
   header.classList.toggle("has-banner", Boolean(server));
   header.classList.toggle("plain", Boolean(server) && !ref);
   banner.style.backgroundImage = "";
+  header.style.setProperty("--slot", server ? serverColors(server.id).css : "");
   if (!ref) return;
   loadServerImage(ref).then(url => {
     if (url && state.currentServer && state.currentServer.banner === ref) {
@@ -2214,7 +2233,7 @@ function placePopup(popup, anchor, prefer = "above") {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "member-card", "invite-menu", "audio-pop", "fp-menu"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -2272,7 +2291,8 @@ function renderProfilePopover() {
   const user = state.user;
   if (!user) return;
   const name = user.display_name || user.username;
-  $("pp-banner").style.background = bannerColor(user.id);
+  $("pp-banner").dataset.banner = "";
+  paintProfileBanner($("pp-banner"), user.banner, user.node, null, bannerColor(user.id));
   const av = $("pp-avatar");
   av.replaceChildren();
   paintAvatar(av, user.id, name);
@@ -2779,7 +2799,7 @@ function dayDivider(date) {
 function isBareImageLink(content) {
   const text = (content || "").trim();
   if (findInviteLink(text)) return false;
-  return /^https?:\/\/\S+$/i.test(text) && extractImageUrls(text).length === 1;
+  return /^https:\/\/\S+$/i.test(text) && imageLinks(text).length === 1;
 }
 
 const PENDING_TIP = "Waiting for someone to come online";
@@ -2838,7 +2858,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
       body.appendChild(content);
     }
     // Auto-embed pasted image and gif links.
-    for (const url of extractImageUrls(message.content)) {
+    for (const url of imageLinks(message.content)) {
       body.appendChild(renderImageEmbed(url));
     }
   }
@@ -2846,6 +2866,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   for (const att of message.attachments || []) {
     body.appendChild(renderAttachment(att));
     if (att.is_image) body.appendChild(renderInlineImage(att));
+    else if (playsInline(att)) body.appendChild(renderInlineVideo(att));
   }
   const pills = reactionPills(message);
   if (pills) body.appendChild(pills);
@@ -3857,15 +3878,14 @@ function appendInlineMarkdown(node, text) {
 
 // ---------- Images through the account server ----------
 
-// GIF files and game covers load through the signed in account server, so
-// the image hosts never see the user's address. The server keeps the same
-// list of hosts (MEDIA_HOSTS in auth/src/media.js).
-const MEDIA_HOSTS = new Set(["static.klipy.com", "images.igdb.com"]);
+function mediaProxyOn() {
+  return Boolean(account.server_media && window.__TAURI__);
+}
 
 function viaAccountServer(url) {
-  if (!account.server_media || !window.__TAURI__) return url;
+  if (!mediaProxyOn()) return url;
   try {
-    if (!MEDIA_HOSTS.has(new URL(url).hostname)) return url;
+    if (!isMediaHost(new URL(url).hostname)) return url;
   } catch {
     return url;
   }
@@ -4623,6 +4643,12 @@ function isEmojiTag(tag) {
   return !/[A-Za-z0-9]/.test(tag) && [...tag].length <= 4;
 }
 
+function soundEmojiNode(value) {
+  const custom = parseEmojiToken(value);
+  if (custom) return customEmojiImg(custom.name, custom.image, "custom-emoji");
+  return el("span", "sound-emoji", value);
+}
+
 function roleTagChip(tag, color) {
   const custom = parseEmojiToken(tag);
   if (custom) {
@@ -4650,6 +4676,23 @@ function paintBanner(node, ref, fallbackColor) {
       node.style.backgroundImage = `url("${url}")`;
     }
   });
+}
+
+function paintProfileBanner(node, banner, provider, role, fallback) {
+  if (!banner || !banner.startsWith("blob:")) {
+    paintBanner(node, role, fallback);
+    return;
+  }
+  node.style.backgroundImage = "";
+  node.style.background = fallback;
+  const blob = banner.slice(5);
+  loadAvatarImage(blob, provider).then(url => {
+    if (url && node.dataset.banner === blob) {
+      node.style.background = "";
+      node.style.backgroundImage = `url("${url}")`;
+    }
+  });
+  node.dataset.banner = blob;
 }
 
 // ---------- Friends ----------
@@ -4768,7 +4811,8 @@ async function openFullProfile(member) {
   // so refresh it here or the mutual servers list comes up empty or stale.
   await refreshPeople();
   const person = { ...(state.people.get(member.id) || {}), ...member };
-  paintBanner($("fp-banner"), person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
+  $("fp-banner").dataset.banner = "";
+  paintProfileBanner($("fp-banner"), person.banner, person.avatar_provider, person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
   const av = $("fp-avatar");
   av.replaceChildren();
   paintAvatar(av, person.id, person.name);
@@ -4872,7 +4916,8 @@ function openMemberCard(member, anchor) {
   const server = state.currentServer || { roles: [] };
   closeFloating();
   const card = $("member-card");
-  paintBanner($("mc-banner"), member.role_banner, member.color ? roleGradient(member.color) : bannerColor(member.id));
+  $("mc-banner").dataset.banner = "";
+  paintProfileBanner($("mc-banner"), member.banner, member.avatar_provider, member.role_banner, member.color ? roleGradient(member.color) : bannerColor(member.id));
   const av = $("mc-avatar");
   av.replaceChildren();
   paintAvatar(av, member.id, member.name);
@@ -5006,7 +5051,31 @@ function renderRolePicker(server, list) {
   if (!list.childElementCount) list.appendChild(el("div", "manage-empty", "This server has no roles to pick yet"));
 }
 
-// Inline editor under a role row in Server Settings, Roles.
+async function uploadRoleBanner(server, role) {
+  try {
+    const src = await chooseImage("Choose a role banner", $("server-image-file"));
+    if (!src) return;
+    const data = await cropImageFile(src, 600, 240);
+    await invoke("set_role_banner", { serverId: server.id, roleId: role.id, data });
+    await refreshCurrentServer();
+    openServerSettings();
+    toast("Role banner saved");
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
+async function removeRoleBanner(server, role) {
+  try {
+    await invoke("set_role_banner", { serverId: server.id, roleId: role.id, data: null });
+    await refreshCurrentServer();
+    openServerSettings();
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
+// Inline editor under a role card in Server Settings, Roles.
 function roleEditor(server, role) {
   const box = el("div", "role-editor");
   const row1 = el("div", "inline-row");
@@ -5049,44 +5118,18 @@ function roleEditor(server, role) {
   paintTag();
   row1.append(color, name, tagBtn, clearTag);
   box.appendChild(row1);
-  const bannerRow = el("div", "role-banner-row");
-  const bannerPreview = el("div", "role-banner-preview");
-  paintBanner(bannerPreview, role.banner, role.color ? `#${role.color}` : "var(--bg-active)");
-  if (!role.banner) bannerPreview.appendChild(el("span", null, "No banner"));
-  const bannerActions = el("div", "role-banner-actions");
-  bannerActions.appendChild(el("div", "setting-sub", "Optional banner shown on profile cards of members whose highest role has one, and on the Choose Roles card."));
-  const upload = el("button", "btn-secondary btn-small", role.banner ? "Change Banner" : "Upload Banner");
-  upload.type = "button";
-  upload.onclick = async () => {
-    try {
-      const src = await chooseImage("Choose a role banner", $("server-image-file"));
-      if (!src) return;
-      const data = await cropImageFile(src, 600, 240);
-      await invoke("set_role_banner", { serverId: server.id, roleId: role.id, data });
-      await refreshCurrentServer();
-      openServerSettings();
-      toast("Role banner saved");
-    } catch (err) {
-      toast(String(err));
-    }
-  };
-  bannerActions.appendChild(upload);
-  if (role.banner) {
-    const remove = el("button", "btn-link danger", "Remove");
-    remove.type = "button";
-    remove.onclick = async () => {
-      try {
-        await invoke("set_role_banner", { serverId: server.id, roleId: role.id, data: null });
-        await refreshCurrentServer();
-        openServerSettings();
-      } catch (err) {
-        toast(String(err));
-      }
-    };
-    bannerActions.appendChild(remove);
+  box.appendChild(el("div", "setting-title role-perms-title", "Permissions"));
+  const permGrid = el("div", "perm-grid");
+  for (const [value, label] of PERMISSION_LABELS) {
+    const wrap = el("label");
+    const input = el("input");
+    input.type = "checkbox";
+    input.value = value;
+    input.checked = role.permissions.includes(value);
+    wrap.append(input, document.createTextNode(label));
+    permGrid.appendChild(wrap);
   }
-  bannerRow.append(bannerPreview, bannerActions);
-  box.appendChild(bannerRow);
+  box.appendChild(permGrid);
   const pick = el("label", "role-self");
   const check = el("input");
   check.type = "checkbox";
@@ -5104,6 +5147,7 @@ function roleEditor(server, role) {
         color: color.value.replace("#", ""),
         selfAssignable: check.checked,
         tag: tagValue,
+        permissions: Array.from(permGrid.querySelectorAll("input:checked")).map(input => input.value),
       });
       await refreshCurrentServer();
       openServerSettings();
@@ -5112,7 +5156,18 @@ function roleEditor(server, role) {
       toast(String(e));
     }
   };
-  actions.appendChild(save);
+  const del = el("button", "btn-danger btn-small", "Delete Role");
+  del.onclick = async () => {
+    if (!confirm(`Delete role ${role.name}?`)) return;
+    try {
+      await invoke("delete_role", { serverId: server.id, roleId: role.id });
+      await refreshCurrentServer();
+      openServerSettings();
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+  actions.append(del, save);
   box.appendChild(actions);
   return box;
 }
@@ -6092,6 +6147,25 @@ function soundRow(server, sound, canDelete) {
   play.appendChild(svgIcon("play", 18));
   play.onclick = () => playExpressionSound(sound.blob, (sound.volume ?? 1) * soundboardPrefs().volume);
   row.appendChild(play);
+  if (canDelete || sound.emoji) {
+    const icon = el("button", "icon-btn sound-emoji-btn");
+    icon.type = "button";
+    icon.replaceChildren(sound.emoji ? soundEmojiNode(sound.emoji) : svgIcon("smilePlus", 18));
+    if (canDelete) {
+      icon.title = "Choose an emoji for this sound";
+      icon.onclick = e => openEmojiPop(e.currentTarget, async emoji => {
+        try {
+          await invoke("set_sound_emoji", { serverId: server.id, name: sound.name, emoji });
+          await refreshExpressions();
+        } catch (err) {
+          toast(String(err));
+        }
+      }, { custom: true });
+    } else {
+      icon.disabled = true;
+    }
+    row.appendChild(icon);
+  }
   row.appendChild(el("span", "expr-name", sound.name));
   if (canDelete) {
     const del = el("button", "icon-btn expr-delete");
@@ -6158,11 +6232,22 @@ async function uploadSound() {
     audio.play().catch(() => {});
   };
   const taken = (server.sounds || []).map(s => s.name);
+  let chosenEmoji = null;
   const row = pendingExpressionRow(play, freeExpressionName(expressionName(stem, "sound"), taken), async clean => {
-    await invoke("add_sound", { serverId: server.id, name: clean, data: dataUrl.split(",")[1], volume: 1 });
+    await invoke("add_sound", { serverId: server.id, name: clean, data: dataUrl.split(",")[1], volume: 1, emoji: chosenEmoji });
     await refreshExpressions();
     toast(`Added ${clean} to the soundboard`);
   });
+  const pickBtn = el("button", "icon-btn sound-emoji-btn");
+  pickBtn.type = "button";
+  pickBtn.title = "Choose an emoji for this sound";
+  const paintPick = () => pickBtn.replaceChildren(chosenEmoji ? soundEmojiNode(chosenEmoji) : svgIcon("smilePlus", 18));
+  paintPick();
+  pickBtn.onclick = e => openEmojiPop(e.currentTarget, emoji => {
+    chosenEmoji = emoji;
+    paintPick();
+  }, { custom: true });
+  row.querySelector(".expr-name-input").before(pickBtn);
   $("sound-list").querySelector(".manage-empty")?.remove();
   $("sound-list").prepend(row);
 }
@@ -6188,9 +6273,9 @@ async function toggleSoundboardPop() {
   const grid = $("sb-grid");
   grid.replaceChildren();
   $("sb-server").textContent = "";
-  const addButton = (name, label) => {
+  const addButton = (name, label, emoji) => {
     const btn = el("button", "sb-sound");
-    btn.appendChild(svgIcon("soundboard", 14));
+    btn.appendChild(emoji ? soundEmojiNode(emoji) : svgIcon("soundboard", 14));
     btn.appendChild(el("span", null, label));
     btn.title = `Play ${label} for everyone in the channel`;
     btn.disabled = !server.can_use_soundboard;
@@ -6209,7 +6294,7 @@ async function toggleSoundboardPop() {
   grid.appendChild(el("div", "sb-section", "Default"));
   for (const sound of DEFAULT_SOUNDS) addButton(`default:${sound.id}`, sound.label);
   grid.appendChild(el("div", "sb-section", server.name));
-  for (const sound of server.sounds || []) addButton(sound.name, sound.name);
+  for (const sound of server.sounds || []) addButton(sound.name, sound.name, sound.emoji);
   if (!(server.sounds || []).length) {
     grid.appendChild(el("div", "sb-empty", server.can_upload_sounds
       ? "No server sounds yet. Add some in Server Settings under Soundboard."
@@ -6277,105 +6362,142 @@ function appendTextWithMentions(div, text) {
   if (last < text.length) div.appendChild(document.createTextNode(text.slice(last)));
 }
 
-// Live @ autocomplete for a text input.
-const mentionPop = { input: null, start: 0, items: [], index: 0 };
+const suggestPop = { input: null, token: null, items: [], index: 0, commandInputs: new Set() };
 
-function mentionQueryAt(input) {
-  const caret = input.selectionStart ?? input.value.length;
-  const before = input.value.slice(0, caret);
-  const m = before.match(/(^|\s)@([^\s@]{0,32})$/);
-  return m ? { start: caret - m[2].length - 1, query: m[2].toLowerCase() } : null;
-}
-
-function updateMentionPop(input) {
-  const found = mentionQueryAt(input);
-  const pop = $("mention-pop");
-  if (!found) {
-    closeMentionPop();
-    return;
-  }
-  const items = mentionCandidates()
-    .filter(c => c.name && c.name.toLowerCase().includes(found.query))
+function mentionSuggestions(query) {
+  return mentionCandidates()
+    .filter(c => c.name && c.name.toLowerCase().includes(query))
     .sort((a, b) => {
-      const ap = a.name.toLowerCase().startsWith(found.query) ? 0 : 1;
-      const bp = b.name.toLowerCase().startsWith(found.query) ? 0 : 1;
+      const ap = a.name.toLowerCase().startsWith(query) ? 0 : 1;
+      const bp = b.name.toLowerCase().startsWith(query) ? 0 : 1;
       return ap - bp || (a.special ? 1 : 0) - (b.special ? 1 : 0) || a.name.localeCompare(b.name);
     })
-    .slice(0, 8);
+    .slice(0, SUGGEST_LIMIT)
+    .map(c => ({ ...c, kind: "mention" }));
+}
+
+function emojiGroupsHere() {
+  const { local, external } = usableCustomEmojis();
+  return [local, ...external].filter(Boolean);
+}
+
+function suggestionsFor(token, input) {
+  if (token.kind === "mention") return mentionSuggestions(token.query);
+  if (token.kind === "emoji") return emojiSuggestions(token.query, emojiGroupsHere(), EMOJI_DATA);
+  if (token.kind === "command" && suggestPop.commandInputs.has(input)) {
+    return commandSuggestions(token, { gifs: Boolean(gifSettings().key) || serverHasGifs() });
+  }
+  return [];
+}
+
+function suggestHeading(token) {
+  if (token.kind === "command") return "Commands";
+  if (token.kind === "emoji") return `Emoji matching :${token.query}`;
+  return token.query ? `Members matching @${token.query}` : "Members";
+}
+
+function suggestionRow(item) {
+  const row = el("button", "mention-row");
+  if (item.kind === "custom") {
+    const glyph = el("span", "suggest-glyph");
+    glyph.appendChild(customEmojiImg(item.name, item.image));
+    row.append(glyph, el("span", "mention-name", `:${item.name}:`), el("span", "mention-hint", item.server));
+  } else if (item.kind === "standard") {
+    row.append(el("span", "suggest-glyph", item.emoji), el("span", "mention-name", item.name));
+  } else if (item.kind === "command") {
+    row.append(el("span", "mention-at", "/"), el("span", "mention-name", `/${item.name}`));
+    if (item.args) row.appendChild(el("span", "suggest-args", item.args));
+    row.appendChild(el("span", "mention-hint", item.args ? "Search GIFs" : "Search for a GIF"));
+  } else if (item.special) {
+    row.append(el("span", "mention-at", "@"), el("span", "mention-name", `@${item.name}`), el("span", "mention-hint", item.special));
+  } else {
+    row.append(makeAvatar(item.id, item.name, "avatar avatar-sm"), el("span", "mention-name", item.name));
+  }
+  return row;
+}
+
+function updateSuggestPop(input) {
+  const token = suggestTokenAt(input.value, input.selectionStart);
+  const items = token ? suggestionsFor(token, input) : [];
   if (!items.length) {
-    closeMentionPop();
+    closeSuggestPop();
     return;
   }
-  Object.assign(mentionPop, { input, start: found.start, items, index: Math.min(mentionPop.index, items.length - 1) });
-  if (pop.classList.contains("hidden")) mentionPop.index = 0;
-  pop.replaceChildren(el("div", "mention-head", found.query ? `Members matching @${found.query}` : "Members"));
+  const pop = $("mention-pop");
+  const sameList = !pop.classList.contains("hidden") && suggestPop.input === input && suggestPop.token && suggestPop.token.kind === token.kind;
+  Object.assign(suggestPop, { input, token, items, index: sameList ? Math.min(suggestPop.index, items.length - 1) : 0 });
+  pop.replaceChildren(el("div", "mention-head", suggestHeading(token)));
   items.forEach((item, i) => {
-    const row = el("button", "mention-row" + (i === mentionPop.index ? " active" : ""));
-    if (item.special) {
-      row.appendChild(el("span", "mention-at", "@"));
-      row.appendChild(el("span", "mention-name", `@${item.name}`));
-      row.appendChild(el("span", "mention-hint", item.special));
-    } else {
-      row.appendChild(makeAvatar(item.id, item.name, "avatar avatar-sm"));
-      row.appendChild(el("span", "mention-name", item.name));
-    }
+    const row = suggestionRow(item);
+    row.classList.toggle("active", i === suggestPop.index);
     row.onmousedown = e => {
       e.preventDefault();
-      pickMention(i);
+      pickSuggestion(i);
     };
     pop.appendChild(row);
   });
-  // Sit just above whichever composer is typing.
   const r = input.closest(".composer").getBoundingClientRect();
   pop.style.left = `${r.left}px`;
   pop.style.width = `${Math.min(r.width, 420)}px`;
   pop.style.bottom = `${window.innerHeight - r.top + 6}px`;
   pop.classList.remove("hidden");
+  pop.querySelector(".mention-row.active")?.scrollIntoView({ block: "nearest" });
 }
 
-function closeMentionPop() {
+function closeSuggestPop() {
   $("mention-pop").classList.add("hidden");
-  mentionPop.items = [];
+  suggestPop.items = [];
+  suggestPop.token = null;
 }
 
-function pickMention(i) {
-  const item = mentionPop.items[i];
-  const input = mentionPop.input;
+function runComposerCommand(input, item) {
+  input.value = "";
+  closeSuggestPop();
+  if (item.name === "gif") openGifPicker(item.args);
+}
+
+function pickSuggestion(i) {
+  const item = suggestPop.items[i];
+  const input = suggestPop.input;
   if (!item || !input) return;
+  if (item.kind === "command" && item.ready) {
+    runComposerCommand(input, item);
+    return;
+  }
   const caret = input.selectionStart ?? input.value.length;
-  const insert = `@${item.name} `;
-  input.value = input.value.slice(0, mentionPop.start) + insert + input.value.slice(caret);
-  const pos = mentionPop.start + insert.length;
+  const insert = suggestionInsert(item);
+  const start = suggestPop.token.start;
+  input.value = input.value.slice(0, start) + insert + input.value.slice(caret);
+  const pos = start + insert.length;
   input.setSelectionRange(pos, pos);
   input.focus();
-  closeMentionPop();
+  updateSuggestPop(input);
 }
 
-function mentionTypedInFull(input) {
-  const found = mentionQueryAt(input);
-  const item = mentionPop.items[mentionPop.index];
-  return !!(found && item && item.name.toLowerCase() === found.query);
+function mentionTypedInFull() {
+  const { token, items, index } = suggestPop;
+  const item = items[index];
+  return !!(token && token.kind === "mention" && item && item.name.toLowerCase() === token.query);
 }
 
-function wireMentions(input) {
-  input.addEventListener("input", () => updateMentionPop(input));
-  input.addEventListener("click", () => updateMentionPop(input));
-  input.addEventListener("blur", () => setTimeout(closeMentionPop, 100));
-  // Capture phase so Enter picks a name instead of sending.
+function wireSuggestions(input, { commands = false } = {}) {
+  if (commands) suggestPop.commandInputs.add(input);
+  input.addEventListener("input", () => updateSuggestPop(input));
+  input.addEventListener("click", () => updateSuggestPop(input));
+  input.addEventListener("blur", () => setTimeout(closeSuggestPop, 100));
   input.addEventListener("keydown", e => {
-    if ($("mention-pop").classList.contains("hidden") || mentionPop.input !== input) return;
-    const n = mentionPop.items.length;
+    if ($("mention-pop").classList.contains("hidden") || suggestPop.input !== input) return;
+    const n = suggestPop.items.length;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      mentionPop.index = (mentionPop.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
-      updateMentionPop(input);
-    } else if (e.key === "Enter" && mentionTypedInFull(input)) {
-      // "@Name" already typed out: Enter sends instead of picking again.
-      closeMentionPop();
+      suggestPop.index = (suggestPop.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+      updateSuggestPop(input);
+    } else if (e.key === "Enter" && mentionTypedInFull()) {
+      closeSuggestPop();
       return;
     } else if (e.key === "Enter" || e.key === "Tab") {
-      pickMention(mentionPop.index);
+      pickSuggestion(suggestPop.index);
     } else if (e.key === "Escape") {
-      closeMentionPop();
+      closeSuggestPop();
     } else {
       return;
     }
@@ -6418,16 +6540,6 @@ function buildMessageContent(text) {
   return div;
 }
 
-function extractImageUrls(text) {
-  const matches = text.match(/https?:\/\/[^\s<>"']+\.(?:gif|png|jpe?g|webp)(?:\?[^\s<>"']*)?/gi);
-  if (matches) return matches.slice(0, 4);
-  // A message that is nothing but one link is worth trying as an
-  // image even without a file extension; onerror removes the miss.
-  const lone = text.trim();
-  if (findInviteLink(lone)) return [];
-  return /^https?:\/\/\S+$/i.test(lone) ? [lone] : [];
-}
-
 // Source URL of an image copied from a web page, if the clipboard
 // html flavor carries one. DOMParser documents are inert: nothing
 // in the parsed markup loads or runs.
@@ -6450,34 +6562,66 @@ function keepScrolledOnLoad(img) {
   });
 }
 
-// An image embedded from a link someone pasted, as opposed to a file
-// they uploaded: it carries a visible source URL above the image.
+const loadedImageLinks = new Set();
+
 function renderImageEmbed(url) {
+  const host = imageHost(url) || url;
   const wrap = el("div", "image-embed");
-  const source = el("a", "embed-source", embedSourceLabel(url));
+  const source = el("a", "embed-source", host);
   source.href = "#";
   source.title = `Open ${url}`;
   source.onclick = e => {
     e.preventDefault();
     invoke("open_url", { url }).catch(err => toast(String(err)));
   };
-  const img = el("img", "chat-image");
-  keepScrolledOnLoad(img);
-  img.src = viaAccountServer(url);
-  img.loading = "lazy";
-  img.onclick = () => openLightbox(img.src, url, null);
-  img.onerror = () => wrap.remove();
   wrap.appendChild(source);
-  wrap.appendChild(img);
+  if (embedMode(url, mediaProxyOn()) === "auto" || loadedImageLinks.has(url)) {
+    const img = embedImage(url);
+    keepScrolledOnLoad(img);
+    img.loading = "lazy";
+    img.onerror = () => wrap.remove();
+    img.src = viaAccountServer(url);
+    wrap.appendChild(img);
+  } else {
+    wrap.appendChild(imageGate(url, host));
+  }
   return wrap;
 }
 
-function embedSourceLabel(url) {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
+function embedImage(url) {
+  const img = el("img", "chat-image");
+  img.onclick = () => openLightbox(img.src, url, null);
+  return img;
+}
+
+function imageGate(url, host) {
+  const text = imageGateText(host);
+  const gate = el("div", "image-gate");
+  const lines = el("div", "image-gate-text");
+  const title = el("div", "image-gate-title", text.title);
+  lines.appendChild(title);
+  lines.appendChild(el("div", "image-gate-hint", text.hint));
+  const button = el("button", "btn-secondary btn-small image-gate-load", text.load);
+  button.type = "button";
+  button.onclick = () => {
+    button.disabled = true;
+    button.textContent = text.loading;
+    const img = embedImage(url);
+    img.onload = () => {
+      loadedImageLinks.add(url);
+      gate.replaceWith(img);
+      img.scrollIntoView({ block: "nearest" });
+    };
+    img.onerror = () => {
+      title.textContent = text.failed;
+      button.textContent = text.retry;
+      button.disabled = false;
+    };
+    img.src = viaAccountServer(url);
+  };
+  gate.appendChild(lines);
+  gate.appendChild(button);
+  return gate;
 }
 
 // Full-size overlay; for link embeds the source URL under the image
@@ -6526,6 +6670,50 @@ function renderInlineImage(att) {
       .catch(() => img.remove());
   }
   return img;
+}
+
+const videoUrls = new Map();
+
+function videoPlayer(url) {
+  const video = el("video", "chat-video-player");
+  video.src = url;
+  video.controls = true;
+  video.preload = "metadata";
+  video.playsInline = true;
+  return video;
+}
+
+function renderInlineVideo(att) {
+  const box = el("div", "chat-video");
+  const cached = videoUrls.get(att.blob);
+  if (cached) {
+    box.appendChild(videoPlayer(cached));
+    return box;
+  }
+  const play = el("button", "chat-video-play");
+  play.type = "button";
+  play.title = "Play Video";
+  play.appendChild(svgIcon("play", 30));
+  const label = el("span", "chat-video-label", `Video, ${formatSize(att.size_bytes)}`);
+  box.append(play, label);
+  play.onclick = async () => {
+    play.disabled = true;
+    box.classList.add("loading");
+    label.textContent = "Loading video";
+    try {
+      const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null });
+      const url = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
+      videoUrls.set(att.blob, url);
+      const player = videoPlayer(url);
+      box.replaceChildren(player);
+      player.play().catch(() => {});
+    } catch (e) {
+      play.disabled = false;
+      box.classList.remove("loading");
+      label.textContent = `Could not load the video: ${e}`;
+    }
+  };
+  return box;
 }
 
 function renderShareButton() {
@@ -7119,17 +7307,16 @@ async function selectChannel(channel) {
 }
 
 async function sendMessage() {
-  if (state.view === "dm") return sendDm();
   const input = $("message-input");
-  const content = input.value.trim();
-  if (!content || !state.currentServer || !state.currentChannel) return;
-  // "/gif cats" opens the GIF picker instead of sending text.
-  const gif = content.match(/^\/gif(?:\s+(.*))?$/i);
-  if (gif) {
+  const gif = input.value.trim().match(/^\/gif(?:\s+(.*))?$/i);
+  if (gif && (gifSettings().key || serverHasGifs())) {
     input.value = "";
     openGifPicker(gif[1] || "");
     return;
   }
+  if (state.view === "dm") return sendDm();
+  const content = input.value.trim();
+  if (!content || !state.currentServer || !state.currentChannel) return;
   input.value = "";
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
   $("messages").dataset.view = "";
@@ -7308,6 +7495,33 @@ function openGifPicker(query = "", target = null) {
   $("gif-search").value = query;
   $("gif-search").focus();
   renderGifResults(query);
+}
+
+function toggleComposerMenu() {
+  const menu = $("composer-menu");
+  if (!menu.classList.contains("hidden")) {
+    menu.classList.add("hidden");
+    return;
+  }
+  closeFloating("composer-menu");
+  closeGifPicker();
+  $("cm-gif").classList.toggle("hidden", !gifSettings().key && !serverHasGifs());
+  placePopup(menu, $("attach-btn"), "above");
+}
+
+async function attachFromMenu(kind) {
+  closeFloating();
+  if (!state.currentServer || !state.currentChannel) return;
+  try {
+    const sent = await invoke("attach_file", {
+      serverId: state.currentServer.id,
+      channelId: state.currentChannel.id,
+      kind,
+    });
+    if (sent) await selectChannel(state.currentChannel);
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function closeGifPicker() {
@@ -8032,6 +8246,11 @@ function wireEvents() {
       toast(String(e));
     }
   };
+  $("new-role-open").onclick = () => {
+    $("new-role-card").classList.toggle("hidden");
+    if (!$("new-role-card").classList.contains("hidden")) $("new-role-input").focus();
+  };
+  $("new-role-cancel").onclick = () => $("new-role-card").classList.add("hidden");
   $("new-role-save").onclick = async () => {
     if (!state.currentServer) return;
     const name = $("new-role-input").value.trim();
@@ -8046,6 +8265,7 @@ function wireEvents() {
         permissions,
       });
       $("new-role-input").value = "";
+      $("new-role-card").classList.add("hidden");
       for (const box of $("new-role-perms").querySelectorAll("input:checked")) box.checked = false;
       await refreshCurrentServer();
       openServerSettings();
@@ -8134,17 +8354,15 @@ function wireEvents() {
     openUserSettings("voice");
   };
 
-  $("attach-btn").onclick = async () => {
-    if (!state.currentServer || !state.currentChannel) return;
-    try {
-      const sent = await invoke("attach_file", {
-        serverId: state.currentServer.id,
-        channelId: state.currentChannel.id,
-      });
-      if (sent) await selectChannel(state.currentChannel);
-    } catch (e) {
-      toast(String(e));
-    }
+  $("attach-btn").onclick = toggleComposerMenu;
+  $("cm-file").prepend(svgIcon("uploadFile", 18));
+  $("cm-video").prepend(svgIcon("movie", 18));
+  $("cm-gif").prepend(svgIcon("gifBox", 18));
+  $("cm-file").onclick = () => attachFromMenu("file");
+  $("cm-video").onclick = () => attachFromMenu("video");
+  $("cm-gif").onclick = () => {
+    closeFloating();
+    openGifPicker("");
   };
   $("share-btn").onclick = toggleShare;
   $("video-close").onclick = closeStageButton;
@@ -8251,7 +8469,7 @@ function wireEvents() {
 
   // Profile card composer
   $("mc-emoji").replaceChildren(svgIcon("smile", 20));
-  wireMentions($("mc-input"));
+  wireSuggestions($("mc-input"));
   $("mc-input").addEventListener("keydown", async e => {
     if (e.key !== "Enter" || e.shiftKey) return;
     e.preventDefault();
@@ -8348,6 +8566,22 @@ function wireEvents() {
     e.stopPropagation();
     openAvatarMenu(e.currentTarget);
   };
+  $("account-banner-upload").onclick = async () => {
+    try {
+      const src = await chooseImage("Choose a profile banner", $("server-image-file"));
+      if (src) await saveAccountBanner(await cropImageFile(src, 600, 240));
+    } catch (err) {
+      toast(String(err));
+    }
+  };
+  $("account-banner-remove").onclick = () => saveAccountBanner(null);
+  $("account-banner-remove").appendChild(svgIcon("close", 14));
+  $("account-banner-upload").firstElementChild.appendChild(svgIcon("plus", 14));
+  $("account-status-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("account-status"), picked));
+  $("account-about-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => {
+    insertEmojiInName($("account-about"), picked);
+    $("account-about").dispatchEvent(new Event("change", { bubbles: true }));
+  });
   $("avatar-upload").onclick = async () => {
     $("avatar-menu").classList.add("hidden");
     try {
@@ -8369,9 +8603,9 @@ function wireEvents() {
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   // Clicks outside close floating menus; clicks inside keep them open.
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "composer-menu"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
-    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn")) return;
+    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #attach-btn")) return;
     // The emoji picker and mention list opened from the card keep it open.
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
@@ -8651,8 +8885,8 @@ function wireEvents() {
   $("output-device").addEventListener("change", saveAudioDevices);
 
   // Mentions
-  wireMentions($("message-input"));
-  wireMentions($("thread-input"));
+  wireSuggestions($("message-input"), { commands: true });
+  wireSuggestions($("thread-input"));
 
   // Message actions
   $("delete-message-go").onclick = () => pendingDelete && deleteMessage(pendingDelete);
@@ -9091,6 +9325,7 @@ function openUserSettings(tab) {
   $("account-presence").value = state.user.presence || "online";
   $("account-avatar").replaceChildren();
   paintAvatar($("account-avatar"), state.user.id, state.user.display_name || state.user.username);
+  paintAccountBanner();
   $("account-preview-name").textContent = state.user.display_name || state.user.username;
   $("account-username").textContent = state.user.username;
   openSettingsLayer("user-settings", tab);
@@ -9236,36 +9471,50 @@ function renderRoleSettings(server) {
   const list = $("manage-role-list");
   list.innerHTML = "";
   for (const role of server.roles) {
-    const row = el("div", "manage-row");
+    const card = el("div", "role-card");
+    const strip = el("div", "role-card-banner");
+    paintBanner(strip, role.banner, role.color ? `#${role.color}` : "var(--bg-active)");
+    const tools = el("div", "role-banner-tools");
+    const upload = el("button", "role-banner-btn");
+    upload.type = "button";
+    upload.appendChild(svgIcon("plus", 14));
+    upload.appendChild(el("span", null, role.banner ? "Change banner" : "Add banner"));
+    upload.onclick = () => uploadRoleBanner(server, role);
+    if (role.banner) {
+      const remove = el("button", "role-banner-btn icon", "");
+      remove.type = "button";
+      remove.title = "Remove banner";
+      remove.appendChild(svgIcon("close", 14));
+      remove.onclick = () => removeRoleBanner(server, role);
+      tools.appendChild(remove);
+    }
+    tools.appendChild(upload);
+    strip.appendChild(tools);
+    card.appendChild(strip);
+    const row = el("div", "role-card-row");
     const label = el("span", "manage-row-label");
     const dot = el("span", "role-dot");
     if (role.color) dot.style.background = `#${role.color}`;
     label.appendChild(dot);
-    label.appendChild(document.createTextNode(role.name));
+    const name = el("span", "role-card-name", role.name);
+    if (role.color) name.style.color = `#${role.color}`;
+    label.appendChild(name);
     if (role.tag) label.appendChild(roleTagChip(role.tag, role.color));
     if (role.self_assignable) label.appendChild(el("span", "kind pickable", "pickable"));
-    label.appendChild(el("span", "kind", role.permissions.join(", ") || "no permissions"));
+    const count = role.permissions.length;
+    const perms = el("span", "kind", count ? (count === 1 ? "1 permission" : `${count} permissions`) : "no permissions");
+    if (count) perms.title = role.permissions.map(p => (PERMISSION_LABELS.find(([v]) => v === p) || [p, p])[1]).join(", ");
+    label.appendChild(perms);
     row.appendChild(label);
     const edit = el("button", "btn-secondary btn-small", "Edit");
     edit.onclick = () => {
-      const open = row.nextElementSibling && row.nextElementSibling.classList.contains("role-editor");
-      if (open) row.nextElementSibling.remove();
-      else row.after(roleEditor(server, role));
+      const open = card.querySelector(".role-editor");
+      if (open) open.remove();
+      else card.appendChild(roleEditor(server, role));
     };
     row.appendChild(edit);
-    const del = el("button", "btn-danger btn-small", "Delete");
-    del.onclick = async () => {
-      if (!confirm(`Delete role ${role.name}?`)) return;
-      try {
-        await invoke("delete_role", { serverId: server.id, roleId: role.id });
-        await refreshCurrentServer();
-        openServerSettings();
-      } catch (e) {
-        toast(String(e));
-      }
-    };
-    row.appendChild(del);
-    list.appendChild(row);
+    card.appendChild(row);
+    list.appendChild(card);
   }
   if (!server.roles.length) list.appendChild(el("div", "manage-empty", "No roles yet"));
 
@@ -9523,6 +9772,26 @@ async function onAccountChanged() {
     showSignIn();
   }
   if (!$("user-settings").classList.contains("hidden")) renderAccountSettings();
+}
+
+function paintAccountBanner() {
+  const strip = $("account-banner");
+  strip.dataset.banner = "";
+  paintProfileBanner(strip, state.user.banner, state.user.node, null, "linear-gradient(135deg, var(--accent), var(--accent-deep))");
+  $("account-banner-upload").lastElementChild.textContent = state.user.banner ? "Change banner" : "Add banner";
+  $("account-banner-remove").classList.toggle("hidden", !state.user.banner);
+}
+
+async function saveAccountBanner(data) {
+  try {
+    state.user = await invoke("set_profile_banner", { data });
+    paintAccountBanner();
+    renderProfilePopover();
+    if (state.currentServer) await refreshCurrentServer();
+    toast(data ? "Banner saved" : "Banner removed");
+  } catch (err) {
+    toast(String(err));
+  }
 }
 
 function renderAccountSettings() {

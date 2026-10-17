@@ -51,6 +51,26 @@ fn columns(table: &str) -> Vec<String> {
     rows.lines().map(str::to_string).collect()
 }
 
+async fn sign_in(device: &Device, email: &str) -> String {
+    let origin = auth_url();
+    let res = reqwest::Client::new()
+        .post(format!("{origin}/api/auth/sign-up/email"))
+        .header("origin", &origin)
+        .json(&serde_json::json!({ "email": email, "password": "correct horse battery", "name": "Tester" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200, "sign-up answers");
+    let token = res.headers()["set-auth-token"].to_str().unwrap().to_string();
+    let body: serde_json::Value = res.json().await.unwrap();
+    let id = body["user"]["id"].as_str().unwrap().to_string();
+    let mut state = device.app().account.lock().unwrap();
+    state.signed_in_server = Some(crate::account::effective_server());
+    state.token = Some(token);
+    state.user = Some(crate::account::AccountUser { id: id.clone(), name: "Tester".into(), email: email.into() });
+    id
+}
+
 async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
     let start = Instant::now();
     while !done() {
@@ -575,6 +595,9 @@ async fn private_invite_links_join_and_reveal_nothing() {
     owner.app().servers.lock().unwrap().get_mut(&server).unwrap()
         .apply(commy_core::ServerEvent::PublicSet { server, public: true })
         .unwrap();
+    let err = invite_link::create(owner.app(), &server.to_string(), Expiry::Never).await.unwrap_err();
+    assert_eq!(err, "Sign in to create invite links that never expire");
+    let account_id = sign_in(&owner, "ada@example.test").await;
     let forever = invite_link::create(owner.app(), &server.to_string(), Expiry::Never).await.unwrap();
     assert_eq!(forever.expires_at, None);
     let forever_code = invite_link::parse(&forever.url).unwrap().code;
@@ -584,7 +607,7 @@ async fn private_invite_links_join_and_reveal_nothing() {
     let fields: Vec<&str> = row.split('|').collect();
     eprintln!("never-expiring row: year={} serverName={:?} createdBy={}", fields[0], fields[1], fields[2]);
     assert!(fields[0].starts_with("9999"), "stored as never expiring");
-    assert_eq!((fields[1], fields[2]), ("", "<null>"), "no name and no account");
+    assert_eq!((fields[1], fields[2]), ("", account_id.as_str()), "no name; the account that asked for it");
     for secret in secrets_of(owner.app(), server) {
         assert!(!fields[3].contains(&secret), "the stored invite reveals {secret:?}");
     }

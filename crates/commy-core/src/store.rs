@@ -771,6 +771,7 @@ impl ServerState {
                 if !crate::server::valid_expression_name(&sound.name)
                     || crate::server::ImageRef::parse(&sound.blob).is_none()
                     || !(0.0..=2.0).contains(&sound.volume)
+                    || sound.emoji.as_deref().is_some_and(|e| !crate::server::valid_sound_emoji(e))
                 {
                     return Ok(false);
                 }
@@ -2541,11 +2542,49 @@ mod tests {
         assert_eq!(state.server.emojis.len(), MAX_EMOJIS);
         assert_eq!(state.apply(ServerEvent::EmojiRemove { server: sid, name: "party".into() }), Ok(true));
 
-        let sound = SoundboardSound { name: "airhorn".into(), blob: "dd@bb".into(), volume: 1.0 };
+        let sound = SoundboardSound { name: "airhorn".into(), blob: "dd@bb".into(), volume: 1.0, emoji: None };
         assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: sound.clone() }), Ok(true));
         let loud = SoundboardSound { volume: 9.0, ..sound };
         assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: loud }), Ok(false));
         assert_eq!(state.apply(ServerEvent::SoundRemove { server: sid, name: "airhorn".into() }), Ok(true));
+    }
+
+    #[test]
+    fn sound_emoji_is_validated_and_replaceable() {
+        use crate::server::SoundboardSound;
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let clip = |emoji: Option<&str>| SoundboardSound {
+            name: "rimshot".into(),
+            blob: "dd@bb".into(),
+            volume: 1.0,
+            emoji: emoji.map(String::from),
+        };
+        assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: clip(Some("🥁")) }), Ok(true));
+        assert_eq!(state.server.soundboard[0].emoji.as_deref(), Some("🥁"));
+        assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: clip(Some("🎺")) }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: clip(Some("🎺")) }), Ok(false));
+        assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: clip(None) }), Ok(true));
+        assert_eq!(state.server.soundboard[0].emoji, None);
+        for bad in ["rim", "a🥁", "🥁 🥁", "", "🥁🥁🥁🥁🥁🥁🥁🥁🥁🥁🥁🥁🥁"] {
+            assert_eq!(state.apply(ServerEvent::SoundAdd { server: sid, sound: clip(Some(bad)) }), Ok(false), "{bad:?}");
+        }
+        assert_eq!(state.server.soundboard[0].emoji, None);
+    }
+
+    #[test]
+    fn sound_emoji_accepts_custom_tokens() {
+        assert!(crate::server::valid_sound_emoji("<:hacker:aa11@bb22>"));
+        assert!(!crate::server::valid_sound_emoji("<:Bad:aa11@bb22>"));
+        assert!(crate::server::valid_sound_emoji("👨‍👩‍👧"));
+    }
+
+    #[test]
+    fn old_sounds_without_an_emoji_still_load() {
+        use crate::server::SoundboardSound;
+        let json = r#"{"name":"airhorn","blob":"dd@bb","volume":1.0}"#;
+        let sound: SoundboardSound = serde_json::from_str(json).unwrap();
+        assert_eq!(sound.emoji, None);
     }
 
     #[test]

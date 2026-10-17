@@ -25,11 +25,15 @@ const IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const IMAGE_TIMEOUT_MS = 15_000;
 
 // The only images this server fetches for apps, so it is never an open proxy.
-// The app keeps the same list (MEDIA_HOSTS in apps/desktop/ui/app.js).
-const MEDIA_HOSTS = {
-  "static.klipy.com": /^\/[A-Za-z0-9._~\-\/]{1,400}$/,
-  "images.igdb.com": /^\/igdb\/image\/upload\/t_[a-z0-9_]{1,40}\/[A-Za-z0-9]{1,32}\.(jpg|png|webp)$/,
-};
+const MEDIA_HOSTS = [
+  { host: "static.klipy.com", path: /^\/[A-Za-z0-9._~\-\/]{1,400}$/, query: 200 },
+  { host: "images.igdb.com", path: /^\/igdb\/image\/upload\/t_[a-z0-9_]{1,40}\/[A-Za-z0-9]{1,32}\.(jpg|png|webp)$/, query: 0 },
+  { host: /^(?:media[0-9]?|i)\.giphy\.com$/, path: /^\/(?:media\/[A-Za-z0-9._=\-]{1,500}\/)?[A-Za-z0-9_\-]{1,80}\.(?:gif|webp)$/, query: 300 },
+];
+
+export function mediaHost(hostname) {
+  return MEDIA_HOSTS.find((rule) => (typeof rule.host === "string" ? rule.host === hostname : rule.host.test(hostname))) ?? null;
+}
 
 // The URL to fetch for `value`, or null unless it is an https image on one of
 // the hosts above with nothing unusual in it.
@@ -40,11 +44,10 @@ export function mediaUrl(value) {
   } catch {
     return null;
   }
-  const path = MEDIA_HOSTS[url.hostname];
+  const rule = mediaHost(url.hostname);
   if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash) return null;
-  if (!path || !path.test(url.pathname) || url.pathname.includes("..")) return null;
-  // KLIPY may sign or version its URLs with a short query; IGDB never does
-  if (url.search && (url.hostname !== "static.klipy.com" || url.search.length > 200)) return null;
+  if (!rule || !rule.path.test(url.pathname) || url.pathname.includes("..")) return null;
+  if (url.search && url.search.length > rule.query) return null;
   return url;
 }
 

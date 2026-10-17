@@ -437,13 +437,24 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
     };
     // The account server only ever gets the sealed ticket; the key stays in the link
     let key = SealKey::generate();
-    let res = app
+    let token = match expiry {
+        Expiry::Never => {
+            let state = app.account.lock().unwrap();
+            crate::account::is_signed_in(&state).then(|| state.token.clone()).flatten()
+        }
+        _ => None,
+    };
+    let mut request = app
         .http
         .post(format!("{origin}/api/auth/commy/invites/create"))
         .json(&serde_json::json!({
             "ticket": seal_ticket(&key, &raw, &ticket.server_name, sealed_expiry),
             "expiresIn": expiry.as_str(),
-        }))
+        }));
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    let res = request
         .send()
         .await
         .map_err(|_| format!("Could not reach {}", host_of(&origin)))?;
