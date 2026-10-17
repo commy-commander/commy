@@ -6397,6 +6397,11 @@ function suggestHeading(token) {
   return token.query ? `Members matching @${token.query}` : "Members";
 }
 
+function commandHint(item) {
+  if (!item.available) return "GIF search is not set up";
+  return item.args ? "Search GIFs" : "Search for a GIF";
+}
+
 function suggestionRow(item) {
   const row = el("button", "mention-row");
   if (item.kind === "custom") {
@@ -6408,7 +6413,7 @@ function suggestionRow(item) {
   } else if (item.kind === "command") {
     row.append(el("span", "mention-at", "/"), el("span", "mention-name", `/${item.name}`));
     if (item.args) row.appendChild(el("span", "suggest-args", item.args));
-    row.appendChild(el("span", "mention-hint", item.args ? "Search GIFs" : "Search for a GIF"));
+    row.appendChild(el("span", "mention-hint", commandHint(item)));
   } else if (item.special) {
     row.append(el("span", "mention-at", "@"), el("span", "mention-name", `@${item.name}`), el("span", "mention-hint", item.special));
   } else {
@@ -7311,7 +7316,7 @@ async function selectChannel(channel) {
 async function sendMessage() {
   const input = $("message-input");
   const gif = input.value.trim().match(/^\/gif(?:\s+(.*))?$/i);
-  if (gif && (gifSettings().key || serverHasGifs())) {
+  if (gif) {
     input.value = "";
     openGifPicker(gif[1] || "");
     return;
