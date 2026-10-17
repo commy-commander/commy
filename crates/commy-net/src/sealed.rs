@@ -1,27 +1,15 @@
-//! Data sealed with a key the account server never sees.
-//!
-//! Invite links store a sealed ticket on the account server and carry the
-//! key in the link's `#fragment`, which browsers and the app never send to
-//! any server. AES-256-GCM so the website can open the same invite in the
-//! browser with WebCrypto.
-
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use data_encoding::BASE64URL_NOPAD;
 use rand::RngCore;
 
-/// Prefix of a sealed value: `sealed1.<base64url(nonce || ciphertext)>`.
 pub const SEALED_PREFIX: &str = "sealed1.";
 const NONCE_LEN: usize = 12;
-/// Length of a key written as unpadded base64url.
 pub const KEY_TEXT_LEN: usize = 43;
 
-/// What a sealed value is for. Bound into the ciphertext, so a value sealed
-/// for one purpose never opens as another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Purpose {
     Invite,
-    /// An account's server list and identity, see the app's `entry_list`.
     EntryList,
 }
 
@@ -44,7 +32,6 @@ pub enum SealError {
     BadKey,
 }
 
-/// A 256-bit secret key.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SealKey([u8; 32]);
 
@@ -61,7 +48,6 @@ impl SealKey {
         Self(key)
     }
 
-    /// Unpadded base64url, safe in a URL fragment.
     pub fn to_text(&self) -> String {
         BASE64URL_NOPAD.encode(&self.0)
     }
@@ -197,11 +183,8 @@ mod tests {
         );
     }
 
-    // Sealed by WebCrypto in Node with the same format the website uses, so
-    // both sides agree on it. The website's test opens the same vector.
     #[test]
     fn opens_a_webcrypto_vector() {
-        // The key is the bytes 0 to 31
         let key = SealKey((0u8..32).collect::<Vec<_>>().try_into().unwrap());
         let sealed = "sealed1.BwcHBwcHBwcHBwcHdEjIflUth52--H-g0Dib9cQ5_wCqijSd9uZ65jYZBCaQN0hGsV0";
         assert_eq!(

@@ -15,13 +15,11 @@ export function renderEmail({ instanceName, heading, body, actionLabel, url }) {
   return { text, html };
 }
 
-// Without SMTP configured, mail is dropped with a log line that names no one.
 export function createMailer(config) {
   const transport = config.smtp ? nodemailer.createTransport(config.smtp.transport) : null;
 
   return async function send({ to, subject, heading, body, actionLabel, url }) {
     if (!transport) {
-      // Never log the recipient or the link: either would leak account access
       console.warn(`[mail] SMTP not configured, dropped one "${subject}" email`);
       return;
     }

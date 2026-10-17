@@ -1,4 +1,3 @@
-// Run with: node --test "apps/desktop/ui/tests/**/*.test.mjs"
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -11,7 +10,7 @@ const plain = s => s;
 
 test("a plain message from a friend notifies out of the box", () => {
   assert.equal(DEFAULT_NOTIFY_LEVEL, "all");
-  const prefs = { servers: {} }; // nothing saved yet
+  const prefs = { servers: {} };
   const level = levelForServer(prefs, "s1");
   assert.equal(level, "all");
   assert.equal(shouldNotify({ level, presence: "online", focusedOnIt: false, isDm: false, mentioned: false }), true);

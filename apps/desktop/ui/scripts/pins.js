@@ -1,22 +1,13 @@
-// Pinned messages and announcement channels: the decisions behind the
-// pin button, the pins panel and the composer, kept free of DOM and
-// backend so they run in the app and in `node --test` alike (see
-// ui/tests/pins.test.mjs).
-
 const MAX_PINS_PER_CHANNEL = 50;
 
-// Text-like channels: the ones that hold messages and so can hold pins.
 function holdsMessages(channel) {
   return Boolean(channel) && (channel.kind === "text" || channel.kind === "announcement");
 }
 
-// Newest pin first; ties keep their order.
 function sortPins(pins) {
   return [...(pins || [])].sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
 }
 
-// Pins grouped by channel in the order their newest pin falls, each
-// group newest first, for the server-wide view.
 function groupPinsByChannel(pins) {
   const groups = new Map();
   for (const pin of sortPins(pins)) {
@@ -26,8 +17,6 @@ function groupPinsByChannel(pins) {
   return [...groups.values()];
 }
 
-// The pin button in the chat header: shown in text and announcement
-// channels, its tooltip counting the pins.
 function pinButtonState({ view, channel, count }) {
   const visible = view === "server" && holdsMessages(channel);
   const n = Number.isInteger(count) && count > 0 ? count : 0;
@@ -38,40 +27,30 @@ function pinButtonState({ view, channel, count }) {
   };
 }
 
-// Pins this device has not looked at yet: ids in `pins` that are not in
-// `seen`. The badge on the pin button counts these, so it clears once
-// the panel has been opened.
 function unseenPinIds(pins, seen) {
   const known = new Set(seen || []);
   return (pins || []).map(p => p && p.message && p.message.id).filter(id => id && !known.has(id));
 }
 
-// The badge text for that many new pins; empty means no badge.
 function pinBadgeText(unseen) {
   const n = Number(unseen) || 0;
   if (n <= 0) return "";
   return n > 99 ? "99+" : String(n);
 }
 
-// "3 pinned messages" with "(2 new)" appended while some are unseen.
 function pinTitleWithNew(title, unseen) {
   const n = Number(unseen) || 0;
   return n > 0 && title !== "Pinned Messages" ? `${title} (${n} new)` : title;
 }
 
-// Whether the viewer may pin here: the server grants it and the channel
-// holds messages.
 function canPinIn(server, channel) {
   return Boolean(server && server.can_pin) && holdsMessages(channel);
 }
 
-// Whether one more pin fits in the channel.
 function pinRoomLeft(count) {
   return (Number(count) || 0) < MAX_PINS_PER_CHANNEL;
 }
 
-// What replaces the composer when the viewer cannot post here: only in
-// announcement channels, for members without the permission.
 function composerLock({ view, server, channel }) {
   if (view !== "server" || !channel || channel.kind !== "announcement") return null;
   if (server && server.can_post_announcements) return null;
@@ -81,7 +60,6 @@ function composerLock({ view, server, channel }) {
   };
 }
 
-// One line of a pinned message for the list, without markdown marks.
 function pinExcerpt(message, plain) {
   const raw = plain(message && message.content ? message.content : "");
   const text = raw.replace(/(\*\*|__|~~|`)/g, "").replace(/^#{1,6}\s+/gm, "").trim();

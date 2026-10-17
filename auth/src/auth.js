@@ -12,6 +12,10 @@ import { commyVault } from "./vault.js";
 import { createMailer } from "./mailer.js";
 import { redisRateLimitStorage } from "./rate-limit.js";
 
+const PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS = ["google"];
+
+const storeSessionWithoutIpOrUserAgent = async (session) => ({ data: { ...session, ipAddress: null, userAgent: null } });
+
 export function socialProviders(config) {
   const providers = {};
   for (const name of ["google", "twitch"]) {
@@ -21,11 +25,8 @@ export function socialProviders(config) {
   return providers;
 }
 
-// `redis` is a connected handle from connectRedis, or null to keep doorbell
-// rings in the database and rate-limit counters in memory
 export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
   const plugins = [
-    // Desktop clients hold a session token and send it as a Bearer header
     bearer(),
     deviceAuthorization({
       expiresIn: "10m",
@@ -44,7 +45,6 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     commyVault(),
   ];
 
-  // Content-free wake-ups for messages sent while their recipient was offline
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
 
   if (config.turnstile) {
@@ -91,10 +91,8 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     emailAndPassword: {
       enabled: true,
       disableSignUp: !config.allowSignup,
-      // Verification needs mail; without SMTP accounts work unverified
       requireEmailVerification: Boolean(config.smtp),
       resetPasswordTokenExpiresIn: 3600,
-      // A reset is how people recover a stolen account, so it ends every other session
       revokeSessionsOnPasswordReset: true,
       sendResetPassword: ({ user, url }) =>
         send({
@@ -108,7 +106,6 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     },
     emailVerification: {
       sendOnSignUp: Boolean(config.smtp),
-      // Signing in with an unverified address sends a fresh link
       sendOnSignIn: Boolean(config.smtp),
       autoSignInAfterVerification: true,
       expiresIn: 24 * 3600,
@@ -124,10 +121,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     },
     socialProviders: socialProviders(config),
     account: {
-      // Google only issues verified addresses. Twitch links only when it reports
-      // the address as verified, which Better Auth checks for untrusted providers.
-      accountLinking: { enabled: true, trustedProviders: ["google"] },
-      // Provider tokens are never used after sign-in, so keep them unreadable at rest
+      accountLinking: { enabled: true, trustedProviders: PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS },
       encryptOAuthTokens: true,
     },
     databaseHooks: {
@@ -147,8 +141,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
       },
       session: {
         create: {
-          // IPs are still used for rate limiting in memory, but never stored
-          before: async (session) => ({ data: { ...session, ipAddress: null, userAgent: null } }),
+          before: storeSessionWithoutIpOrUserAgent,
         },
       },
     },
@@ -156,7 +149,6 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
       enabled: true,
       window: 60,
       max: 100,
-      // Shared, restart-proof counters under keyed hashes; in memory without Redis
       ...(redis ? { customStorage: redisRateLimitStorage(redis, config.secret) } : {}),
       customRules: {
         "/sign-up/email": { window: 600, max: 5 },

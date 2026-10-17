@@ -1,6 +1,3 @@
-// Doorbell rings and rate-limit counters in Redis. Runs against REDIS_TEST_URL,
-// or a throwaway redis-server started here when the binary is installed;
-// skipped when neither is available.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -67,7 +64,6 @@ after(async () => {
   server?.kill();
 });
 
-// Skipped inside the body: `before` has run by then, the options object has not
 const SKIP = "no Redis: set REDIS_TEST_URL or install redis-server";
 
 async function makeAuth({ doorbell, rateLimit = false, shared = redis } = {}) {
@@ -77,7 +73,6 @@ async function makeAuth({ doorbell, rateLimit = false, shared = redis } = {}) {
   options.database = memoryAdapter(db);
   if (!rateLimit) options.rateLimit = { enabled: false };
   const auth = betterAuth(options);
-  // Plugins subscribe during init, which runs on the first request
   await auth.handler(new Request(`${ORIGIN}/api/auth/ok`));
   await delay(20);
   const call = async (path, body, headers = {}) => {
@@ -265,7 +260,6 @@ test("ids past 14 days are dropped by a take and by the sweep", async (t) => {
   assert.deepEqual((await take(token, 0)).json.ids, [keep]);
   assert.equal(await total(), 0);
 
-  // A token whose last ring is old goes whole when the sweep runs
   const stale = newToken();
   const live = newToken();
   await redis.client.zAdd(`${REDIS_PREFIX}t:${stale}`, [{ score: now - MAX_AGE_MS - 60_000, value: newId() }]);
@@ -306,7 +300,6 @@ test("rate limits count in Redis under keyed hashes, never an address", async (t
   assert.ok(keys.includes(rateLimitKey(ENV.BETTER_AUTH_SECRET, `${ip}|/commy/doorbell/take`)), "the key is the hash of IP and path");
   assert.equal(await redis.client.get(rateLimitKey(ENV.BETTER_AUTH_SECRET, `${ip}|/commy/doorbell/take`)), "601");
 
-  // A second auth instance shares the counters
   const other = await makeAuth({ rateLimit: true });
   assert.equal((await other.take(token, 0, headers)).status, 429);
 });

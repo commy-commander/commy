@@ -25,7 +25,9 @@ Our Auth / Docs Website should use Postgres,Prisma,Auth.JS with Google Social Lo
 
 ### Coding Style
 
-Avoid emojis and M-Dashes, also don't be too verbose in code comments. Use generated assets and icon libraries. 
+Avoid emojis and M-Dashes. Use generated assets and icon libraries.
+
+No code comments, in any language or file type (Rust, JavaScript, CSS, HTML, shell, YAML, TOML, Dockerfiles, Caddyfiles). Rust doc comments (`///`, `//!`) count as comments. Make the code say it instead: clear names, named constants, small functions, and tests for the behaviour that matters. The only exceptions are license or SPDX headers, `// SAFETY:` notes on unsafe blocks, and tool directives (`#[allow]`, `eslint-disable`, `@ts-` directives, `# shellcheck disable`, shebangs). `deploy/.env.example` keeps its notes because it is the operator's setup guide, not code.
 
 ### Testing Approach
 

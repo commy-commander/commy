@@ -1,5 +1,3 @@
-// Message doorbell: rings store blinded ids per token, takes return and delete
-// them, and a waiting take wakes on a ring or an empty hello.
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { test } from "node:test";
@@ -18,7 +16,6 @@ const newToken = () => randomBytes(16).toString("hex");
 const newId = () => randomBytes(12).toString("hex");
 const sorted = (list) => [...list].sort();
 
-// `doorbell` swaps in a plugin built with those options, for timer and cap tests
 function makeAuth({ env = {}, doorbell, rateLimit = false } = {}) {
   const options = buildAuthOptions(loadConfig({ ...ENV, ...env }), { pool: null, send: async () => {} });
   if (doorbell) options.plugins = options.plugins.map((p) => (p.id === "commy-doorbell" ? commyDoorbell(doorbell) : p));
@@ -26,7 +23,6 @@ function makeAuth({ env = {}, doorbell, rateLimit = false } = {}) {
   options.database = memoryAdapter(db);
   if (!rateLimit) options.rateLimit = { enabled: false };
   const auth = betterAuth(options);
-  // The desktop app sends no Origin header and no cookies
   const send = async (path, init) => {
     const res = await auth.handler(new Request(`${ORIGIN}/api/auth${path}`, { method: "POST", ...init }));
     const text = await res.text();
@@ -115,8 +111,6 @@ test("a hello is never stored but wakes a waiting take", async () => {
   const { db, ring, take } = makeAuth();
   const token = newToken();
 
-  // Nobody is listening: the hello is dropped. Without the table any read or
-  // write would fail, so this also shows a hello never touches it.
   const table = db.doorbellRing;
   delete db.doorbellRing;
   const dropped = await ring(token, []);
@@ -288,13 +282,11 @@ test("rows older than 14 days are swept soon after start and then on a timer", a
     { id: "new", token, blindedId: keep, createdAt: new Date(now - DAY_MS) },
   ];
 
-  // First sweep after start, before the first interval
   const first = makeAuth({ doorbell: { firstSweepMs: 5, sweepEveryMs: 60_000 } });
   first.db.doorbellRing.push(...rows());
   await sweptOld(first.db);
   assert.deepEqual(first.db.doorbellRing.map((row) => row.id), ["new"]);
 
-  // Then every interval
   const timer = makeAuth({ doorbell: { firstSweepMs: 60_000, sweepEveryMs: 20 } });
   timer.db.doorbellRing.push(...rows());
   await sweptOld(timer.db);

@@ -6,7 +6,6 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# A localhost relay for end-to-end tests (see local_relay)
 test-relay = ["iroh/test-utils"]
 
 [dependencies]

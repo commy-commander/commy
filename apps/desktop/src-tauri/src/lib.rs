@@ -1,7 +1,3 @@
-//! Tauri shell for Commy. Holds local app state, bridges UI commands
-//! to the core model, relays remote gossip events to the webview, and
-//! orchestrates voice, screen share, file transfer, and persistence.
-
 mod account;
 mod activity;
 mod afk;
@@ -55,9 +51,6 @@ fn err_to_string(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-// ---------- Identity ----------
-
-/// Handshake from the webview: proves the IPC bridge is alive.
 #[tauri::command]
 fn ui_ready() {
     tracing::info!("webview connected over the tauri bridge");
@@ -98,22 +91,17 @@ pub(crate) fn current_profile(app: &App) -> CmdResult<UserProfile> {
     Ok(profile)
 }
 
-/// The key our messages are signed with.
 fn signing_key(app: &App) -> CmdResult<Identity> {
     app.identity().ok_or_else(|| "your identity key is not ready yet".to_string())
 }
 
-/// Signs a DM of ours as sent from this device's node. Before the network
-/// is up it names none; the outbox signs it again when it goes out.
 fn sign_dm(app: &App, message: &mut DmMessage) -> CmdResult<()> {
     let node = app.node_hex.lock().unwrap().clone().unwrap_or_default();
     message.sign(&node, &signing_key(app)?);
     Ok(())
 }
 
-/// Refuses direct sends while our key may still be replaced, since the
-/// receiver would pin the one we are about to drop.
-fn key_settled(app: &App) -> CmdResult<()> {
+fn refuse_while_key_may_be_replaced(app: &App) -> CmdResult<()> {
     if app.key_settled() {
         Ok(())
     } else {
@@ -121,11 +109,7 @@ fn key_settled(app: &App) -> CmdResult<()> {
     }
 }
 
-/// Longest a key made in this run on a signed-in device is kept to
-/// ourselves while the server list sync may replace it.
 const KEY_SETTLE_MAX: std::time::Duration = std::time::Duration::from_secs(120);
-
-// ---------- Servers ----------
 
 #[tauri::command]
 async fn create_server(
@@ -137,12 +121,10 @@ async fn create_server(
     if name.is_empty() || name.len() > 100 {
         return Err("server name must be 1 to 100 characters".into());
     }
-    // Needed before hosting; read again after it (see `own_server_state`).
     current_profile(&app)?;
     account::require_account(&app)?;
 
     let server_id = ServerId::new();
-    // Host the gossip topic; tolerate offline mode so the UI still works.
     let hosting = async {
         let mut net = app.net.lock().await;
         if let Some(node) = net.as_mut() {
@@ -187,10 +169,7 @@ async fn join_server(
     Ok(summary)
 }
 
-/// Joins a server from its ticket: from an invite, or from your server list
-/// on another of your devices.
 pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, ticket: ServerTicket) -> CmdResult<ServerSummary> {
-    // Needed before joining; read again after it (see `own_server_state`).
     current_profile(app)?;
 
     let joining = async {
@@ -212,13 +191,10 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
         Ok(())
     };
 
-    // Place a provisional local state; the SyncResponse will replace it.
     let (mut state, profile, signing) = own_server_state(app, ticket.server_id, &ticket.server_name, joining).await?;
     let _ = state.apply(ServerEvent::MemberJoin { server: ticket.server_id, profile: profile.clone() });
     let summary = ServerSummary::from_state(&state, Some(profile.id));
     app.servers.lock().unwrap().insert(ticket.server_id, state);
-    // Only this state takes a snapshot, once (see `catchup::apply_snapshot`).
-    // Announce ourselves to the topic, and ask for it again.
     for payload in catchup::await_snapshot(app, ticket.server_id, profile) {
         broadcast(app, ticket.server_id, payload).await;
     }
@@ -230,13 +206,6 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     Ok(summary)
 }
 
-/// Hosts or joins server `id` with `connect`, then makes our first state
-/// for it, with our own entry. That call can take long enough for our key,
-/// or our whole profile when the account's is taken on, to change
-/// meanwhile, so the entry is made from our profile as it is once it
-/// returns. The profile comes back for what we announce, with a hold on
-/// [`App::signing`] that keeps it current: keep it until the state is
-/// placed and the announcement sent.
 async fn own_server_state<'a>(
     app: &'a App,
     id: ServerId,
@@ -282,8 +251,6 @@ fn get_invite(app: tauri::State<App>, server_id: String) -> CmdResult<String> {
     Ok(ticket.encode())
 }
 
-// ---------- Messaging ----------
-
 #[tauri::command]
 fn get_messages(
     app: tauri::State<App>,
@@ -315,18 +282,14 @@ async fn commit_message(
         state.apply(event.clone()).map_err(err_to_string)?;
         MessageView::build(&message, state)
     };
-    // Nobody connected: it waits as pending for the next catch-up.
     let delivered = outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
-    // Members who look offline get a content-free wake-up.
     doorbell::ring(handle, sid, message.id, !delivered);
-    // Members who may be resting outside the mesh get a wake by node id.
     wake::after_send(handle, sid, message.id);
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(view.with_pending(!delivered))
 }
 
-/// Signs a message of ours for a server; peers reject unsigned ones.
 fn sign_message(app: &App, sid: ServerId, message: &mut Message) -> CmdResult<()> {
     message.sign(sid, &signing_key(app)?);
     Ok(())
@@ -349,7 +312,6 @@ async fn send_message(
     let cid = channel_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
     let mut message = Message::new(cid, profile.id, content);
-    // Replies only point at messages that exist in the same channel.
     if let Some(raw) = reply_to {
         let target: MessageId = raw.parse().map_err(err_to_string)?;
         let exists = {
@@ -363,19 +325,14 @@ async fn send_message(
         }
         message.reply_to = Some(target);
     }
-    // Our key stays in place until the message is applied and sent or pending.
     let _signing = app.signing.read().await;
-    // Signed first: the signature counts toward the size limit.
     sign_message(&app, sid, &mut message)?;
-    // Peers drop the connection on oversized frames, so refuse up front.
-    let wire = WirePayload::Event(ServerEvent::MessageCreate { message: message.clone() });
-    if commy_net::protocol::gossip_size(&wire) > commy_net::protocol::MAX_GOSSIP_BYTES {
+    if !signed_fits_one_gossip_frame(&message) {
         return Err("that message is too long to send; try splitting it up".into());
     }
     commit_message(&app, &handle, sid, message).await
 }
 
-/// Adds or removes our reaction on a message.
 #[tauri::command]
 async fn set_reaction(
     app: tauri::State<'_, App>,
@@ -404,7 +361,11 @@ async fn set_reaction(
     Ok(())
 }
 
-/// Author of a message, or an error if it does not exist.
+fn signed_fits_one_gossip_frame(signed: &Message) -> bool {
+    let wire = WirePayload::Event(ServerEvent::MessageCreate { message: signed.clone() });
+    commy_net::protocol::gossip_size(&wire) <= commy_net::protocol::MAX_GOSSIP_BYTES
+}
+
 fn message_author(state: &ServerState, cid: ChannelId, mid: MessageId) -> CmdResult<UserId> {
     state
         .messages(cid)
@@ -414,20 +375,13 @@ fn message_author(state: &ServerState, cid: ChannelId, mid: MessageId) -> CmdRes
         .ok_or_else(|| "that message no longer exists".to_string())
 }
 
-/// When an edit of `original` made at `now` is dated: after its last
-/// edit, which another device or a clock ahead of ours may have dated
-/// later, since peers drop an edit not newer than the one they hold.
-fn edit_time(original: &Message, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+fn edit_time_after_last_edit(original: &Message, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
     match original.edited_at {
         Some(last) if now.timestamp_millis() <= last.timestamp_millis() => last + chrono::Duration::milliseconds(1),
         _ => now,
     }
 }
 
-/// Our edit of `original` to `content` made at `now`, signed over the
-/// whole edited message with its time from [`edit_time`]. Refused when the
-/// edited message is larger than the store takes, which also keeps the
-/// edit, carrying less than the message, within one gossip frame.
 fn sign_edit(
     sid: ServerId,
     original: &Message,
@@ -435,16 +389,15 @@ fn sign_edit(
     now: chrono::DateTime<chrono::Utc>,
     identity: &Identity,
 ) -> CmdResult<ServerEvent> {
-    let edited_at = edit_time(original, now);
-    // A signature is the same size whatever it signs.
-    let edited = Message { content, edited_at: Some(edited_at), sig: Some(Signature([0; 64])), ..original.clone() };
+    let edited_at = edit_time_after_last_edit(original, now);
+    let placeholder_signature_of_real_size = Some(Signature([0; 64]));
+    let edited = Message { content, edited_at: Some(edited_at), sig: placeholder_signature_of_real_size, ..original.clone() };
     if edited.authored_size() > MAX_MESSAGE_BYTES {
         return Err("that edit is too long; try shortening it".into());
     }
     Ok(original.edit_event(sid, edited.content, edited_at, identity))
 }
 
-/// Edits one of our own messages.
 #[tauri::command]
 async fn edit_message(
     app: tauri::State<'_, App>,
@@ -478,7 +431,6 @@ async fn edit_message(
     Ok(())
 }
 
-/// Deletes a message for everyone: our own, or anyone's with Manage Messages.
 #[tauri::command]
 async fn delete_message(
     app: tauri::State<'_, App>,
@@ -503,8 +455,6 @@ async fn delete_message(
     Ok(())
 }
 
-/// Whether we may delete a message: our own, or anyone's with Manage
-/// Messages. Peers take any delete we sign, so this is the only check.
 fn may_delete(app: &App, state: &ServerState, channel: ChannelId, message: MessageId, me: UserId) -> CmdResult<()> {
     if message_author(state, channel, message)? != me {
         require_permission(app, state, me, Permissions::MANAGE_MESSAGES, "delete other people's messages")?;
@@ -512,11 +462,8 @@ fn may_delete(app: &App, state: &ServerState, channel: ChannelId, message: Messa
     Ok(())
 }
 
-// ---------- File sharing ----------
-
 const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
 
-/// Stores bytes as a blob and posts them as an attachment message.
 async fn send_attachment(
     app: &tauri::State<'_, App>,
     handle: &tauri::AppHandle,
@@ -574,7 +521,7 @@ async fn attach_file(
         _ => rfd::AsyncFileDialog::new().set_title("Share a file"),
     };
     let Some(picked) = dialog.pick_file().await else {
-        return Ok(None); // user cancelled
+        return Ok(None);
     };
     let path = picked.path().to_path_buf();
     let filename = picked.file_name();
@@ -605,12 +552,8 @@ async fn get_attachment_video(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
-/// Largest image the native picker hands to the webview for cropping.
 const MAX_PICKED_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 
-/// Opens the native file dialog for an image and returns it as a data
-/// URL, or None if cancelled. The webview's own file input does not
-/// open a chooser inside our Tauri window, so all image pickers use this.
 #[tauri::command]
 async fn pick_image(title: Option<String>) -> CmdResult<Option<String>> {
     let Some(picked) = rfd::AsyncFileDialog::new()
@@ -639,7 +582,6 @@ async fn pick_image(title: Option<String>) -> CmdResult<Option<String>> {
     )))
 }
 
-/// Pasted or dropped file content from the webview, base64 encoded.
 #[tauri::command]
 async fn attach_bytes(
     app: tauri::State<'_, App>,
@@ -664,16 +606,12 @@ async fn attach_bytes(
     send_attachment(&app, &handle, sid, cid, filename, bytes).await
 }
 
-/// Opens a link in the system browser. Restricted to web URLs so a
-/// malicious message cannot launch arbitrary programs or local files.
 #[tauri::command]
 async fn note_user_activity(app: tauri::State<'_, App>, handle: tauri::AppHandle) -> CmdResult<()> {
     app.last_user_activity.store(
         chrono::Utc::now().timestamp(),
         std::sync::atomic::Ordering::Relaxed,
     );
-    // Coming back from AFK shows Online right away instead of waiting
-    // for the next watchdog tick.
     if app.auto_idle.load(std::sync::atomic::Ordering::Relaxed) {
         set_auto_presence(&app, &handle, Presence::Online, false).await;
     }
@@ -748,8 +686,6 @@ async fn download_attachment(
     tokio::fs::write(&path, bytes).await.map_err(err_to_string)?;
     Ok(Some(path.display().to_string()))
 }
-
-// ---------- Voice ----------
 
 #[tauri::command]
 async fn set_voice_channel(
@@ -895,12 +831,7 @@ fn start_voice_session(
     Ok(())
 }
 
-/// Automatic AFK after a stretch with no activity at all (no audible
-/// mic input, no UI interaction, no screen share): our presence turns
-/// Idle for every peer, and we move to the server's AFK voice channel.
-/// Activity flips presence back to Online.
 async fn run_afk_watchdog(handle: tauri::AppHandle) {
-    // Dev override in seconds, for testing without waiting minutes.
     let env_override: Option<i64> = std::env::var("COMMY_AFK_SECS")
         .ok()
         .and_then(|v| v.parse().ok());
@@ -918,7 +849,6 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
             .last_user_activity
             .load(std::sync::atomic::Ordering::Relaxed);
         let last_voice = voice.map_or(0, |(_, _, last)| last);
-        // Presenting counts as present, whether or not they talk.
         let sharing = app.screen_share.lock().unwrap().is_some();
         let idle_for = if sharing {
             0
@@ -956,7 +886,6 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
             continue;
         }
         let Some(afk) = afk else {
-            // No AFK channel: a server limit frees the slot by disconnecting.
             if server_minutes.is_some() {
                 tracing::info!("idle for {idle_for}s past the server limit, leaving voice");
                 if set_voice_channel(handle.state::<App>(), handle.clone(), sid.to_string(), None).await.is_ok() {
@@ -983,8 +912,6 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
     }
 }
 
-/// Dials every member already in the channel that we are responsible
-/// for connecting to (smaller node id dials).
 fn dial_voice_members(
     app: &tauri::State<'_, App>,
     handle: &tauri::AppHandle,
@@ -1088,22 +1015,17 @@ async fn dial_media(app: &App, their_hex: &str, hello: MediaHello) -> CmdResult<
     dialer.connect(their_hex, hello).await.map_err(err_to_string)
 }
 
-// ---------- Screen share ----------
-
 #[derive(serde::Serialize)]
 struct ShareSourceView {
     kind: String,
     id: u32,
     name: String,
     is_primary: bool,
-    /// The window of the game we detected you playing.
     game: Option<String>,
 }
 
-/// Monitors and windows available to stream.
 #[tauri::command]
 async fn list_share_sources(app: tauri::State<'_, App>) -> CmdResult<Vec<ShareSourceView>> {
-    // Enumeration talks to the window manager; keep it off the runtime.
     let sources = tokio::task::spawn_blocking(commy_media::screen::list_sources)
         .await
         .map_err(err_to_string)?
@@ -1122,7 +1044,6 @@ async fn list_share_sources(app: tauri::State<'_, App>) -> CmdResult<Vec<ShareSo
             is_primary: s.is_primary,
         })
         .collect();
-    // The game's window goes first; a closed game is forgotten.
     if views.iter().any(|v| v.game.is_some()) {
         views.sort_by_key(|v| v.game.is_none());
     } else if game.is_some() {
@@ -1139,7 +1060,6 @@ fn parse_source(kind: Option<&str>, id: Option<u32>) -> Option<(SourceKind, u32)
     }
 }
 
-/// Small JPEG thumbnail of a share source for the picker, base64 encoded.
 #[tauri::command]
 async fn share_source_preview(source_kind: String, source_id: u32) -> CmdResult<String> {
     let (kind, id) =
@@ -1162,7 +1082,6 @@ struct OwnShareView {
     frames: u64,
 }
 
-/// Latest frame of our own outgoing stream plus how many peers watch it.
 #[tauri::command]
 fn own_share_frame(app: tauri::State<App>) -> CmdResult<OwnShareView> {
     let share = app.screen_share.lock().unwrap();
@@ -1190,12 +1109,9 @@ async fn start_screen_share(
     let profile = current_profile(&app)?;
     let channel = active_voice_channel(&app, sid).ok_or("join a voice channel first")?;
 
-    // None streams the primary monitor.
     let source = parse_source(source_kind.as_deref(), source_id);
     let quality = StreamQuality::from_name(quality.as_deref().unwrap_or(""));
     let session = ScreenShareSession::start(sid, channel, quality.fps(), quality.max_width(), source);
-    // Our own preview takes the same frames viewers get, so it moves at
-    // the stream's rate instead of the once-a-second stats poll.
     let (preview_tx, preview_rx) = tokio::sync::mpsc::unbounded_channel();
     session.add_subscriber(preview_tx);
     let emitter = handle.clone();
@@ -1293,8 +1209,6 @@ async fn watch_screen(
     Ok(())
 }
 
-/// One JPEG frame as the webview's `video-frame` and `camera-frame`
-/// events carry it.
 fn video_frame_payload(user: UserId, seq: Option<u64>, width: u32, height: u32, jpeg: &[u8]) -> serde_json::Value {
     let mut payload = serde_json::json!({
         "user": user.to_string(),
@@ -1308,10 +1222,7 @@ fn video_frame_payload(user: UserId, seq: Option<u64>, width: u32, height: u32, 
     payload
 }
 
-// ---------- Camera ----------
-
-/// Largest single camera frame accepted from the webview.
-const MAX_CAMERA_FRAME: usize = 400 * 1024;
+const MAX_CAMERA_FRAME_BYTES: usize = 400 * 1024;
 
 #[tauri::command]
 async fn start_camera(
@@ -1354,14 +1265,12 @@ async fn stop_camera(
     Ok(())
 }
 
-/// One JPEG frame from the webview's camera capture, base64 encoded.
-/// Returns how many peers are watching.
 #[tauri::command]
 fn push_camera_frame(app: tauri::State<App>, jpeg: String, width: u32, height: u32) -> CmdResult<usize> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(jpeg)
         .map_err(|_| "camera frame is not valid base64".to_string())?;
-    if bytes.len() > MAX_CAMERA_FRAME || !bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+    if bytes.len() > MAX_CAMERA_FRAME_BYTES || !bytes.starts_with(&[0xff, 0xd8, 0xff]) {
         return Err("camera frame must be a JPEG under 400 KB".into());
     }
     let mut camera = app.camera.lock().unwrap();
@@ -1416,10 +1325,6 @@ fn stop_watching(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
     Ok(())
 }
 
-// ---------- Direct messages ----------
-
-/// Best known node id for a user: DM contact cache first, then any
-/// shared server's profile.
 pub(crate) fn node_hex_for_user(app: &App, user: UserId) -> Option<String> {
     if let Some(hex) = app
         .dms
@@ -1446,7 +1351,6 @@ fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
     let dms = app.dms.lock().unwrap();
     let safety = app.safety.lock().unwrap();
     let mut views = dm_thread_views(&dms, me);
-    // Blocked people disappear from the list; strangers wait in requests.
     views.retain_mut(|view| {
         let Ok(partner) = view.user.parse::<UserId>() else { return true };
         if safety.is_blocked(partner) {
@@ -1460,12 +1364,10 @@ fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
     views
 }
 
-// ---------- Friends ----------
-
 async fn send_friend_signal(app: &tauri::State<'_, App>, to: UserId, signal: safety::FriendSignal) -> CmdResult<()> {
     let _signing = app.signing.read().await;
     let me = current_profile(app)?;
-    key_settled(app)?;
+    refuse_while_key_may_be_replaced(app)?;
     let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
     let mut message = DmMessage::new(me.id, to, signal.encode());
     sign_dm(app, &mut message)?;
@@ -1499,7 +1401,6 @@ fn list_friends(app: tauri::State<'_, App>) -> FriendsView {
     FriendsView { friends: view(friends), incoming: view(incoming), outgoing: view(outgoing) }
 }
 
-/// "request", "accept", "decline" or "remove" toward one person.
 #[tauri::command]
 async fn friend_action(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_id: String, action: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
@@ -1516,7 +1417,6 @@ async fn friend_action(app: tauri::State<'_, App>, handle: tauri::AppHandle, use
     if signal == safety::FriendSignal::Request && app.safety.lock().unwrap().is_blocked(user) {
         return Err("unblock them first".into());
     }
-    // Send first so a failure leaves our lists unchanged.
     send_friend_signal(&app, user, signal).await?;
     {
         let mut s = app.safety.lock().unwrap();
@@ -1547,8 +1447,6 @@ async fn friend_action(app: tauri::State<'_, App>, handle: tauri::AppHandle, use
     Ok(())
 }
 
-// ---------- Safety: blocking, message requests, reports ----------
-
 #[derive(serde::Serialize)]
 struct BlockedUserView {
     id: String,
@@ -1562,7 +1460,6 @@ struct SafetyView {
     spam_filter: bool,
 }
 
-/// Best known display name for a user from DMs or any shared server.
 fn known_name(app: &tauri::State<'_, App>, user: UserId) -> String {
     if let Some(p) = app.dms.lock().unwrap().contacts.get(&user) {
         return p.visible_name().to_string();
@@ -1616,7 +1513,6 @@ fn set_dm_settings(app: tauri::State<'_, App>, policy: String, spam_filter: bool
     Ok(())
 }
 
-/// Moves a message request into the inbox.
 #[tauri::command]
 fn accept_dm_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_id: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
@@ -1630,7 +1526,6 @@ fn accept_dm_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_
     Ok(())
 }
 
-/// Deletes a message request; they can still write again later.
 #[tauri::command]
 fn decline_dm_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_id: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
@@ -1642,8 +1537,6 @@ fn decline_dm_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, user
     Ok(())
 }
 
-/// Sends a report about a member (and optionally one of their messages)
-/// straight to the server owner's device.
 #[tauri::command]
 async fn report_user(
     app: tauri::State<'_, App>,
@@ -1659,13 +1552,12 @@ async fn report_user(
     if !safety::REPORT_REASONS.contains(&reason.as_str()) {
         return Err("pick a reason for the report".into());
     }
-    // Our key and the profile naming it stay in place until it is sent.
     let _signing = app.signing.read().await;
     let me = current_profile(&app)?;
     if reported == me.id {
         return Err("you cannot report yourself".into());
     }
-    key_settled(&app)?;
+    refuse_while_key_may_be_replaced(&app)?;
     let (owner, excerpt) = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
@@ -1718,7 +1610,6 @@ async fn report_user(
     Ok(())
 }
 
-/// Stores a report arriving for a server we own.
 fn receive_report(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sender: UserId, content: &str) {
     let Some(report) = safety::Report::decode(content, sender) else { return };
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
@@ -1786,8 +1677,6 @@ fn get_dm_messages(app: tauri::State<App>, user_id: String) -> CmdResult<Vec<DmM
         .collect())
 }
 
-/// Opens (or refreshes) a DM thread with a member, caching their
-/// profile so the conversation survives leaving shared servers.
 #[tauri::command]
 fn open_dm(app: tauri::State<App>, user_id: String) -> CmdResult<DmThreadView> {
     let partner: UserId = user_id.parse().map_err(err_to_string)?;
@@ -1798,7 +1687,6 @@ fn open_dm(app: tauri::State<App>, user_id: String) -> CmdResult<DmThreadView> {
     let profile = outbox::member_profile(&app.servers.lock().unwrap(), partner);
     let mut dms = app.dms.lock().unwrap();
     if let Some(profile) = profile {
-        // Keeps a key already pinned for them.
         dms.remember_contact(profile);
     }
     let name = dms
@@ -1829,8 +1717,6 @@ async fn send_dm(
         return Err("message must be 1 to 4000 characters".into());
     }
     let partner: UserId = user_id.parse().map_err(err_to_string)?;
-    // Our key and the profile naming it stay in place until the message
-    // is sent or kept for later.
     let _signing = app.signing.read().await;
     let me = current_profile(&app)?;
     if partner == me.id {
@@ -1846,7 +1732,6 @@ async fn send_dm(
         message: message.clone(),
         sender: me.as_seen_by_others(),
     };
-    // Earlier messages still waiting go first, so this one queues behind them.
     let waiting = app.outbox.lock().unwrap().has_dms(partner);
     let delivered = !waiting && outbox::try_send_dm(&app, partner, &envelope).await;
 
@@ -1856,14 +1741,11 @@ async fn send_dm(
         dm_message_view(&message, me.id, &dms, !delivered)
     };
     if !delivered {
-        // Kept and retried until they come online.
         outbox::queue_dm(&app, partner, message.id);
         if waiting {
-            // A new message tries the waiting ones again, in order.
             outbox::wake_dm(&app, partner);
         }
     }
-    // Writing to someone accepts their messages too.
     if app.safety.lock().unwrap().accepted.insert(partner) {
         app.persist_safety();
     }
@@ -1872,11 +1754,6 @@ async fn send_dm(
     Ok(view)
 }
 
-// ---------- Server management ----------
-
-/// What we may do in a server. One joined from a ticket names us owner
-/// until its first snapshot replaces that placeholder, so until then we
-/// may only do what any member may.
 fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
     let perms = state.server.permissions_for(me);
     if app.awaits_snapshot(state.server.id) {
@@ -1886,8 +1763,6 @@ fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
     }
 }
 
-/// Invites come only from members whose roles grant Create Invites
-/// (the owner always can).
 pub(crate) fn require_invite_permission(app: &App, sid: ServerId) -> CmdResult<()> {
     let me = current_profile(app)?;
     let servers = app.servers.lock().unwrap();
@@ -1953,8 +1828,6 @@ async fn rename_server(
     Ok(())
 }
 
-/// Channel and AFK events a reconnecting peer may have missed. Only
-/// members allowed to make those changes re-announce them.
 fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
@@ -1962,8 +1835,6 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     if our_permissions(app, state, me).allows(Permissions::MANAGE_CHANNELS) {
         for channel in &state.server.channels {
             events.push(ServerEvent::ChannelCreate { server: sid, channel: channel.clone() });
-            // Create is ignored by peers that already have the channel,
-            // so renames and retention go out separately.
             events.push(ServerEvent::ChannelUpdate {
                 server: sid,
                 channel: channel.id,
@@ -1984,8 +1855,6 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             banner: state.server.banner.clone(),
         });
     }
-    // Expressions are left out of sync snapshots, so every member re-announces
-    // them; peers ignore ones they already have.
     for emoji in &state.server.emojis {
         events.push(ServerEvent::EmojiAdd { server: sid, emoji: emoji.clone() });
     }
@@ -2011,7 +1880,6 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     if state.server.rules_accepted.contains(&me) {
         events.push(ServerEvent::RulesAccept { server: sid, user: me });
     }
-    // Events are also left out of snapshots; every member re-announces.
     for event in &state.server.events {
         events.push(ServerEvent::EventUpsert { server: sid, event: event.clone() });
         for (user, rsvp) in &event.rsvps {
@@ -2038,7 +1906,6 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             if channel.color.is_some() {
                 events.push(ServerEvent::ChannelColor { server: sid, channel: channel.id, color: channel.color.clone() });
             }
-            // Create is ignored by peers that already have the channel.
             if channel.kind == ChannelKind::Announcement {
                 events.push(ServerEvent::ChannelKindSet { server: sid, channel: channel.id, kind: channel.kind });
             }
@@ -2093,7 +1960,6 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     if state.server.public && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::PublicSet { server: sid, public: true });
     }
-    // Only an explicit choice is announced; the name fallback needs none.
     let explicit = state.server.afk_disabled || state.server.afk_channel_id.is_some();
     if explicit && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::AfkChannelSet {
@@ -2105,7 +1971,6 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     events
 }
 
-/// Longest retention the UI offers is a year; anything above is clamped.
 const MAX_RETENTION_DAYS: u32 = 365;
 
 #[tauri::command]
@@ -2126,7 +1991,6 @@ async fn update_channel(
         require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
         state.server.channel(cid).ok_or("unknown channel")?.kind
     };
-    // Text channel names are lowercase with dashes.
     let name = match kind {
         ChannelKind::Text | ChannelKind::Announcement => name.trim().to_lowercase().replace(' ', "-"),
         _ => name.trim().to_string(),
@@ -2145,17 +2009,14 @@ async fn update_channel(
     Ok(())
 }
 
-/// Keeps every server's gossip mesh connected. If both peers restart,
-/// the startup dial can run before the other side is online and nobody
-/// retries, so messages silently stop flowing. Every 15 seconds, any
-/// server with no live neighbors re-dials its known members.
+const MESH_HEAL_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
+
 async fn run_mesh_healer(handle: tauri::AppHandle) {
     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     loop {
         let app = handle.state::<App>();
-        // Resting is leaving the mesh on purpose; a wake brings us back.
         if wake::is_resting(&app) {
-            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            tokio::time::sleep(MESH_HEAL_EVERY).await;
             continue;
         }
         let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
@@ -2181,7 +2042,6 @@ async fn run_mesh_healer(handle: tauri::AppHandle) {
                     if peers.is_empty() || node.neighbor_count(sid) > 0 {
                         continue;
                     }
-                    // Never hold the network lock for long: sends wait on it.
                     let dial = node.join_peers(sid, &peers);
                     match tokio::time::timeout(std::time::Duration::from_secs(2), dial).await {
                         Ok(Ok(n)) if n > 0 => tracing::info!("server {sid} has no neighbors, re-dialing {n} members"),
@@ -2192,12 +2052,12 @@ async fn run_mesh_healer(handle: tauri::AppHandle) {
                 }
             }
         }
-        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        tokio::time::sleep(MESH_HEAL_EVERY).await;
     }
 }
 
-/// Applies every channel's retention window on startup and then every
-/// ten minutes, since old messages expire with no event to trigger it.
+const RETENTION_PRUNE_EVERY: std::time::Duration = std::time::Duration::from_secs(600);
+
 async fn run_retention_pruner(handle: tauri::AppHandle) {
     loop {
         let app = handle.state::<App>();
@@ -2213,7 +2073,7 @@ async fn run_retention_pruner(handle: tauri::AppHandle) {
             app.persist_server(sid);
             let _ = handle.emit("server-event", &sid.to_string());
         }
-        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+        tokio::time::sleep(RETENTION_PRUNE_EVERY).await;
     }
 }
 
@@ -2270,7 +2130,6 @@ async fn create_channel(
         }
         let position = state.server.channels.len() as u32;
         let mut channel = Channel::new(name, kind, position);
-        // Only an existing category can hold channels.
         channel.parent = parent_id
             .and_then(|p| p.parse::<ChannelId>().ok())
             .filter(|p| state.server.channel(*p).is_some_and(|c| c.kind == ChannelKind::Category));
@@ -2318,8 +2177,6 @@ async fn delete_channel(
     .await
 }
 
-/// Removes a member from the server (owner or KICK_MEMBERS role).
-/// Also the cleanup tool for stale member records.
 #[tauri::command]
 async fn kick_member(
     app: tauri::State<'_, App>,
@@ -2356,7 +2213,6 @@ async fn leave_server(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
 
-    // Tell everyone, then drop the topic and local state.
     broadcast_event(&app, sid, ServerEvent::MemberLeave { server: sid, user: me.id })
     .await;
     {
@@ -2377,7 +2233,6 @@ async fn leave_server(
     Ok(())
 }
 
-/// Drops queued sends and catch-up state for a server we are no longer in.
 fn forget_server_outbox(app: &App, sid: ServerId) {
     app.catchup.lock().unwrap().forget_server(sid);
     app.set_awaiting_snapshot(sid, false);
@@ -2385,8 +2240,6 @@ fn forget_server_outbox(app: &App, sid: ServerId) {
         app.persist_outbox();
     }
 }
-
-// ---------- Account management ----------
 
 #[tauri::command]
 async fn update_profile(
@@ -2399,7 +2252,6 @@ async fn update_profile(
 ) -> CmdResult<UserProfile> {
     let presence: Presence = serde_json::from_value(serde_json::json!(presence))
         .map_err(|_| "invalid presence".to_string())?;
-    // Absent keeps the current emoji; an empty string clears it.
     let status_emoji = match status_emoji.map(|e| e.trim().to_string()) {
         None => None,
         Some(e) if e.is_empty() => Some(None),
@@ -2416,7 +2268,6 @@ async fn update_profile(
         profile.display_name = clean(display_name);
         profile.custom_status = clean(custom_status);
         if presence != profile.presence {
-            // A new choice starts without an end time; set_status_expiry adds one.
             profile.presence_until = None;
         }
         profile.presence = presence;
@@ -2425,7 +2276,6 @@ async fn update_profile(
         }
         profile.clone()
     };
-    // A manual choice replaces any automatic AFK state.
     app.auto_idle.store(false, std::sync::atomic::Ordering::Relaxed);
     app.persist_profile();
     announce_profile(&app, &handle, &profile).await;
@@ -2435,9 +2285,6 @@ async fn update_profile(
     Ok(profile)
 }
 
-/// Sets when the chosen presence and the custom status expire (unix
-/// seconds; None keeps them until changed). The presence deadline also
-/// goes on the profile, so others see when you are back.
 #[tauri::command]
 async fn set_status_expiry(
     app: tauri::State<'_, App>,
@@ -2472,7 +2319,6 @@ async fn set_status_expiry(
     Ok(settings)
 }
 
-/// What expires now, given the stored deadlines.
 fn expired_status(voice: &VoiceSettings, now: i64) -> (bool, bool) {
     (
         voice.presence_until.is_some_and(|t| t <= now),
@@ -2480,7 +2326,6 @@ fn expired_status(voice: &VoiceSettings, now: i64) -> (bool, bool) {
     )
 }
 
-/// Reverts timed presences and clears timed custom statuses.
 async fn run_status_expiry(handle: tauri::AppHandle) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
@@ -2524,7 +2369,7 @@ mod edit_tests {
     use super::*;
 
     #[test]
-    fn an_edit_is_dated_after_the_last_one() {
+    fn an_edit_is_dated_after_the_last_one_so_peers_take_it() {
         let identity = Identity::generate();
         let mut me = UserProfile::new("me");
         me.identity = Some(identity.public());
@@ -2536,26 +2381,24 @@ mod edit_tests {
         message.sign(sid, &identity);
         state.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
         let now = chrono::Utc::now();
-        assert_eq!(edit_time(&message, now), now, "never edited");
+        assert_eq!(edit_time_after_last_edit(&message, now), now, "never edited");
 
-        // Edited on another device whose clock runs ahead of ours.
         let ahead = now + chrono::Duration::seconds(30);
         state.apply(message.edit_event(sid, "from the other device", ahead, &identity)).unwrap();
         let stored = state.message(message.id).unwrap().clone();
-        let at = edit_time(&stored, now);
+        let at = edit_time_after_last_edit(&stored, now);
         assert!(at > ahead);
         assert_eq!(state.apply(stored.edit_event(sid, "from here", at, &identity)), Ok(true));
         assert_eq!(state.message(message.id).unwrap().content, "from here");
 
-        // In the same millisecond as the last edit.
         let last = state.message(message.id).unwrap().clone();
         let same = last.edited_at.unwrap();
-        assert_eq!(state.apply(last.edit_event(sid, "again", edit_time(&last, same), &identity)), Ok(true));
+        let again = last.edit_event(sid, "again", edit_time_after_last_edit(&last, same), &identity);
+        assert_eq!(state.apply(again), Ok(true));
         assert_eq!(state.message(message.id).unwrap().content, "again");
 
-        // Later than the last edit, it keeps its own time.
         let later = same + chrono::Duration::seconds(1);
-        assert_eq!(edit_time(&last, later), later);
+        assert_eq!(edit_time_after_last_edit(&last, later), later);
     }
 
     #[test]
@@ -2575,13 +2418,11 @@ mod edit_tests {
         let edit = |len: usize| sign_edit(sid, &message, "x".repeat(len), now, &identity);
         let longest = (0..4000).collect::<Vec<_>>().partition_point(|&len| edit(len).is_ok()) - 1;
         let fits = edit(longest).unwrap();
-        // Within one gossip frame, so nothing else needs checking.
         let gossip = |event: &ServerEvent| commy_net::protocol::gossip_size(&WirePayload::Event(event.clone()));
         assert!(gossip(&fits) <= commy_net::protocol::MAX_GOSSIP_BYTES);
         assert_eq!(state.clone().apply(fits), Ok(true));
 
         assert_eq!(edit(longest + 1), Err("that edit is too long; try shortening it".to_string()));
-        // That edit fits a gossip frame, yet the store refuses it.
         let over = message.edit_event(sid, "x".repeat(longest + 1), now, &identity);
         assert!(gossip(&over) <= commy_net::protocol::MAX_GOSSIP_BYTES);
         assert_eq!(state.apply(over), Err(StoreError::TooLarge));
@@ -2601,7 +2442,6 @@ mod own_server_tests {
             let hex = data_encoding::HEXLOWER.encode(&identity.to_bytes());
             std::fs::write(dir.join(commy_core::identity::IDENTITY_FILE), hex).unwrap();
         };
-        // Our key was made in this run and is held back.
         let held = Identity::generate();
         write_key(&held);
         let app = App::default();
@@ -2612,7 +2452,6 @@ mod own_server_tests {
         app.hold_key(std::time::Instant::now() + KEY_SETTLE_MAX);
         assert_eq!(app.announced(current_profile(&app).unwrap()).identity, None);
 
-        // The account's key arrives and settles while we join.
         let account = Identity::generate();
         let joining = async {
             write_key(&account);
@@ -2625,7 +2464,6 @@ mod own_server_tests {
         assert_eq!(state.server.id, sid);
         assert_eq!(state.identity_of(profile.id), Some(account.public()));
         assert_eq!(app.announced(profile).identity, Some(account.public()));
-        // Nothing swaps our key while the hold is kept.
         assert!(app.signing.try_write().is_err());
         drop(signing);
         assert!(app.signing.try_write().is_ok());
@@ -2646,7 +2484,6 @@ mod placeholder_tests {
             (profile, identity)
         };
         let ((me, my_key), (other, other_key)) = (member("me"), member("other"));
-        // Joined from a ticket: the placeholder names us owner.
         let server = commy_core::Server::new("s", me.id);
         let (sid, channel) = (server.id, server.channels[0].id);
         let mut state = ServerState::new(server);
@@ -2683,13 +2520,11 @@ mod placeholder_tests {
         }
         assert!(require_permission(&app, &state, me.id, Permissions::USE_SOUNDBOARD, "play").is_ok());
         assert!(!can_upload_sounds(&app, &state, me.id));
-        // Nor is the placeholder's own structure announced as the server's.
         let structural = |events: Vec<ServerEvent>| {
             events.iter().any(|e| matches!(e, ServerEvent::ChannelCreate { .. } | ServerEvent::AfkChannelSet { .. }))
         };
         assert!(!structural(structure_announcements(&app, sid, me.id)));
 
-        // A server that is ours after all, once the wait is over.
         app.set_awaiting_snapshot(sid, false);
         assert_eq!(may_delete(&app, &state, channel, theirs.id, me.id), Ok(()));
         for needed in moderation {
@@ -2751,9 +2586,6 @@ mod status_expiry_tests {
     }
 }
 
-// ---------- In-game overlay ----------
-
-/// Registers the overlay hotkeys; returns the ones another app already holds.
 fn register_overlay_hotkeys(handle: &tauri::AppHandle, settings: &overlay::OverlaySettings) -> Vec<String> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let shortcuts = handle.global_shortcut();
@@ -2771,7 +2603,6 @@ fn register_overlay_hotkeys(handle: &tauri::AppHandle, settings: &overlay::Overl
     taken
 }
 
-/// Hotkeys that failed to register, for a warning in Settings.
 #[tauri::command]
 fn overlay_hotkey_problems(app: tauri::State<'_, App>) -> Vec<String> {
     app.overlay_hotkeys_taken.lock().unwrap().clone()
@@ -2807,7 +2638,6 @@ fn get_overlay_settings(app: tauri::State<'_, App>) -> overlay::OverlaySettings 
 }
 
 #[tauri::command]
-// Async on purpose: creating a window from a sync command deadlocks on Windows.
 async fn set_overlay_settings(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -2824,7 +2654,6 @@ async fn set_overlay_settings(
     }
     app.voice.lock().unwrap().overlay = settings.clone();
     app.persist_voice();
-    // Turning the overlay on always shows it.
     if settings.enabled {
         app.overlay_visible.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -2851,18 +2680,13 @@ async fn set_about(app: tauri::State<'_, App>, handle: tauri::AppHandle, about: 
     Ok(profile)
 }
 
-// ---------- Server avatar and banner ----------
-
 const SERVER_IMAGE_DIR: &str = "server-images";
 const MAX_SERVER_IMAGE_BYTES: usize = 1024 * 1024;
 
 fn server_image_path(app: &tauri::State<'_, App>, blob: &str) -> Option<std::path::PathBuf> {
-    // The blob name was validated by ImageRef::parse (alphanumeric only).
     app.data_dir().map(|d| d.join(SERVER_IMAGE_DIR).join(format!("{blob}.img")))
 }
 
-/// Sets or clears the server avatar ("icon") or banner. `data` is a
-/// base64 JPEG or PNG; None removes the image.
 #[tauri::command]
 async fn set_server_image(
     app: tauri::State<'_, App>,
@@ -2912,9 +2736,6 @@ async fn set_server_image(
     Ok(())
 }
 
-/// Server avatar or banner as a data URL. Images are cached on disk
-/// and re-served from our blob store, so they survive the uploader
-/// going offline once we have seen them.
 #[tauri::command]
 async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdResult<String> {
     let image = commy_core::server::ImageRef::parse(&image).ok_or("bad image reference")?;
@@ -2938,8 +2759,6 @@ async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdRes
     let mime = if bytes.starts_with(&[0x89, b'P']) { "image/png" } else { "image/jpeg" };
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }
-
-// ---------- Community: game tags, rules, events, categories, roles ----------
 
 fn manage_check(app: &tauri::State<'_, App>, sid: ServerId, user: UserId, needed: Permissions, action: &str) -> CmdResult<()> {
     let servers = app.servers.lock().unwrap();
@@ -3003,8 +2822,6 @@ async fn accept_rules(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RulesAccept { server: sid, user: me.id }).await
 }
 
-/// Members who have not accepted the rules cannot post yet.
-/// Announcement channels take posts from announcers only.
 fn require_can_post(app: &App, state: &ServerState, user: UserId, channel: ChannelId) -> CmdResult<()> {
     let announcement = state.server.channel(channel).is_some_and(|c| c.kind == ChannelKind::Announcement);
     if announcement && !our_permissions(app, state, user).can_announce() {
@@ -3109,7 +2926,6 @@ struct ChannelMove {
     position: u32,
 }
 
-/// Applies a batch of channel moves from a drag in the sidebar.
 #[tauri::command]
 async fn move_channels(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, moves: Vec<ChannelMove>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
@@ -3122,7 +2938,6 @@ async fn move_channels(app: tauri::State<'_, App>, handle: tauri::AppHandle, ser
             None => None,
         };
         let event = ServerEvent::ChannelLayout { server: sid, channel, parent, position: m.position };
-        // Already-in-place moves are no-ops, not errors.
         let _ = apply_and_broadcast(&app, &handle, sid, event).await;
     }
     Ok(())
@@ -3158,7 +2973,6 @@ async fn set_channel_limit(app: tauri::State<'_, App>, handle: tauri::AppHandle,
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelLimit { server: sid, channel: cid, user_limit: limit }).await
 }
 
-/// True when a voice channel is at its cap for someone without Manage Channels.
 fn voice_channel_full(app: &App, state: &ServerState, channel: ChannelId, user: UserId) -> bool {
     let Some(c) = state.server.channel(channel) else { return false };
     if c.user_limit == 0 || our_permissions(app, state, user).allows(Permissions::MANAGE_CHANNELS) {
@@ -3209,8 +3023,6 @@ async fn update_role(
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
 
-/// Sets or clears a role's banner. `data` is a base64 JPEG or PNG
-/// (cropped in the webview); None removes it.
 #[tauri::command]
 async fn set_role_banner(
     app: tauri::State<'_, App>,
@@ -3244,8 +3056,6 @@ async fn set_role_banner(
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
 
-/// Sets or clears a channel's banner. `data` is a base64 JPEG or PNG
-/// (cropped in the webview); None removes it.
 #[tauri::command]
 async fn set_channel_banner(
     app: tauri::State<'_, App>,
@@ -3278,8 +3088,6 @@ async fn set_channel_banner(
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelBanner { server: sid, channel: cid, banner }).await
 }
 
-/// Sets or clears the colour band drawn behind a channel's name in the
-/// channel list. `color` is RGB hex without the hash.
 #[tauri::command]
 async fn set_channel_color(
     app: tauri::State<'_, App>,
@@ -3304,8 +3112,6 @@ async fn set_channel_color(
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelColor { server: sid, channel: cid, color }).await
 }
 
-/// Makes a text channel an announcement channel ("announcement") or a
-/// plain text channel again ("text").
 #[tauri::command]
 async fn set_channel_kind(
     app: tauri::State<'_, App>,
@@ -3334,7 +3140,6 @@ async fn set_channel_kind(
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelKindSet { server: sid, channel: cid, kind }).await
 }
 
-/// Pins or unpins a message for everyone in the server.
 #[tauri::command]
 async fn pin_message(
     app: tauri::State<'_, App>,
@@ -3366,8 +3171,6 @@ async fn pin_message(
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
-/// Pinned messages of one channel, or of every channel when `channel_id`
-/// is None, newest first.
 #[tauri::command]
 fn get_pins(app: tauri::State<App>, server_id: String, channel_id: Option<String>) -> CmdResult<Vec<view::PinView>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
@@ -3379,8 +3182,6 @@ fn get_pins(app: tauri::State<App>, server_id: String, channel_id: Option<String
     let state = servers.get(&sid).ok_or("unknown server")?;
     Ok(view::pin_views(state, cid))
 }
-
-// ---------- Voice connection details ----------
 
 #[derive(serde::Serialize)]
 struct LinkView {
@@ -3403,7 +3204,6 @@ struct VoiceStatsView {
     bitrate_kbps: u32,
 }
 
-/// Live numbers for the voice connection popover.
 #[tauri::command]
 async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
     let (stats, sid) = {
@@ -3449,8 +3249,6 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
         bitrate_kbps: (commy_audio::codec::VOICE_BITRATE / 1000) as u32,
     })
 }
-
-// ---------- Moderation and personal voice controls ----------
 
 #[tauri::command]
 async fn moderate_voice(
@@ -3502,7 +3300,6 @@ async fn unban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberUnban { server: sid, user }).await
 }
 
-/// We were banned: drop the server from this device and say so.
 async fn on_banned(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId) {
     let name = app.servers.lock().unwrap().remove(&sid).map(|s| s.server.name);
     let in_voice_there = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
@@ -3534,7 +3331,6 @@ fn effective_volume(voice: &VoiceSettings, user: &str) -> f32 {
     }
 }
 
-/// Applies saved personal volumes to the current voice mix.
 fn apply_personal_volumes(app: &App) {
     let voice = app.voice.lock().unwrap().clone();
     if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
@@ -3548,7 +3344,6 @@ fn apply_personal_volumes(app: &App) {
     }
 }
 
-/// Personal volume (0 to 2, 1 is normal) and mute for one user, on this device only.
 #[tauri::command]
 fn set_user_voice(app: tauri::State<'_, App>, user_id: String, volume: Option<f32>, muted: Option<bool>) -> CmdResult<VoiceSettings> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
@@ -3578,8 +3373,6 @@ fn set_user_voice(app: tauri::State<'_, App>, user_id: String, volume: Option<f3
     Ok(settings)
 }
 
-/// Keeps screen shares honest: re-announces ours, and expires peers'
-/// shares that have not been announced for a while (crash, lost update).
 async fn run_share_heartbeat(handle: tauri::AppHandle) {
     const BEAT: std::time::Duration = std::time::Duration::from_secs(8);
     const EXPIRE: std::time::Duration = std::time::Duration::from_secs(25);
@@ -3598,7 +3391,6 @@ async fn run_share_heartbeat(handle: tauri::AppHandle) {
             let mut seen = app.share_seen.lock().unwrap();
             for (sid, state) in servers.iter() {
                 for user in state.screen_shares.keys().filter(|u| **u != me) {
-                    // First sighting (e.g. loaded from disk) starts the clock.
                     let last = *seen.entry((*sid, *user)).or_insert(now);
                     if now.duration_since(last) > EXPIRE {
                         expired.push((*sid, *user));
@@ -3625,7 +3417,6 @@ async fn run_share_heartbeat(handle: tauri::AppHandle) {
     }
 }
 
-/// Takes or drops a self-assignable role for ourselves.
 #[tauri::command]
 async fn set_own_role(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, role_id: String, held: bool) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
@@ -3647,7 +3438,6 @@ async fn set_own_role(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
-/// Reminds us of events we said we would go to or are interested in.
 async fn run_event_reminders(handle: tauri::AppHandle) {
     const LEAD_MINUTES: i64 = 15;
     let mut reminded: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -3685,10 +3475,6 @@ async fn run_event_reminders(handle: tauri::AppHandle) {
     }
 }
 
-// ---------- Custom emojis and soundboard ----------
-
-/// Adds bytes to our blob store and the on-disk cache, which is re-added
-/// at startup so peers can still fetch them after a restart.
 async fn store_shared_blob(app: &tauri::State<'_, App>, bytes: Vec<u8>) -> CmdResult<String> {
     let (blob, provider) = {
         let net = app.net.lock().await;
@@ -3765,8 +3551,6 @@ async fn remove_emoji(
     apply_and_broadcast(&app, &handle, sid, ServerEvent::EmojiRemove { server: sid, name }).await
 }
 
-/// Who may upload sounds: managers, or everyone when the server opens
-/// its soundboard. Removing someone else's clip still needs the permission.
 fn can_upload_sounds(app: &App, state: &ServerState, user: UserId) -> bool {
     our_permissions(app, state, user).allows(Permissions::MANAGE_EXPRESSIONS)
         || (state.server.soundboard_open && state.server.members.iter().any(|m| m.user == user))
@@ -3882,7 +3666,6 @@ async fn set_expression_settings(
     Ok(())
 }
 
-/// Marks a server public (invite links to it may never expire) or private.
 #[tauri::command]
 async fn set_server_public(
     app: tauri::State<'_, App>,
@@ -3902,7 +3685,6 @@ async fn set_server_public(
     Ok(())
 }
 
-/// What the webview needs to play a soundboard clip.
 #[derive(Clone, serde::Serialize)]
 struct SoundboardPlayView {
     server: String,
@@ -3914,7 +3696,6 @@ struct SoundboardPlayView {
 }
 
 fn soundboard_play_view(state: &ServerState, channel: ChannelId, user: UserId, name: &str) -> Option<SoundboardPlayView> {
-    // Built-in clips ship with the app; the webview maps the name to its file.
     if expressions::is_default_sound(name) {
         return Some(SoundboardPlayView {
             server: state.server.id.to_string(),
@@ -3936,7 +3717,6 @@ fn soundboard_play_view(state: &ServerState, channel: ChannelId, user: UserId, n
     })
 }
 
-/// Plays a clip for everyone in our voice channel, ourselves included.
 #[tauri::command]
 async fn play_soundboard(
     app: tauri::State<'_, App>,
@@ -3966,8 +3746,6 @@ async fn play_soundboard(
     Ok(())
 }
 
-/// A peer played a clip: pass it to the webview if we are in that channel
-/// and they are too.
 fn on_remote_soundboard(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, user: UserId, name: &str) {
     let mine = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
     if mine != Some((sid, channel)) {
@@ -3994,7 +3772,6 @@ struct SharedEmojiView {
     image: String,
 }
 
-/// Emojis from every server we are in that allows using them elsewhere.
 #[tauri::command]
 fn list_shareable_emojis(app: tauri::State<'_, App>) -> Vec<SharedEmojiView> {
     let servers = app.servers.lock().unwrap();
@@ -4014,7 +3791,6 @@ fn list_shareable_emojis(app: tauri::State<'_, App>) -> Vec<SharedEmojiView> {
     out
 }
 
-/// An emoji image or sound clip as a data URL, cached like server images.
 #[tauri::command]
 async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult<String> {
     let image = commy_core::server::ImageRef::parse(&blob).ok_or("bad reference")?;
@@ -4039,7 +3815,6 @@ async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }
 
-/// Opens the native file dialog for a sound clip; returns it as a data URL.
 #[tauri::command]
 async fn pick_sound() -> CmdResult<Option<(String, String)>> {
     let Some(picked) = rfd::AsyncFileDialog::new()
@@ -4061,12 +3836,10 @@ async fn pick_sound() -> CmdResult<Option<(String, String)>> {
     )))
 }
 
-/// Re-adds our saved avatar and cached server images to the blob store
-/// once the node has settled. Adding blobs during iroh 0.28's startup
-/// panics an internal node task ("called after complete"), which kills
-/// all networking for that app, so this waits and runs separately.
+const IROH_STARTUP_BEFORE_BLOB_RESTORE: std::time::Duration = std::time::Duration::from_secs(8);
+
 async fn run_blob_restore(handle: tauri::AppHandle) {
-    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+    tokio::time::sleep(IROH_STARTUP_BEFORE_BLOB_RESTORE).await;
     let app = handle.state::<App>();
     let net = app.net.lock().await;
     if let Some(node) = net.as_ref() {
@@ -4075,7 +3848,6 @@ async fn run_blob_restore(handle: tauri::AppHandle) {
     }
 }
 
-/// Re-adds cached server images to the in-memory blob store at startup.
 async fn restore_server_images(app: &tauri::State<'_, App>, node: &CommyNode) {
     let Some(dir) = app.data_dir().map(|d| d.join(SERVER_IMAGE_DIR)) else { return };
     let Ok(entries) = std::fs::read_dir(dir) else { return };
@@ -4086,12 +3858,8 @@ async fn restore_server_images(app: &tauri::State<'_, App>, node: &CommyNode) {
     }
 }
 
-/// Largest uploaded avatar we accept; the UI sends a 256 px JPEG.
 const MAX_AVATAR_BYTES: usize = 512 * 1024;
 
-/// Sets our avatar: kind "image" with base64 JPEG/PNG data, "emoji"
-/// with the emoji as data, or "none". Images are kept in the data dir
-/// and re-served from the blob store after restarts.
 #[tauri::command]
 async fn set_avatar(
     app: tauri::State<'_, App>,
@@ -4148,8 +3916,6 @@ const AVATAR_FILE: &str = "avatar.img";
 const BANNER_FILE: &str = "profile-banner.img";
 const MAX_BANNER_BYTES: usize = 512 * 1024;
 
-/// Sets or clears the profile banner. `data` is a base64 JPEG or PNG
-/// (cropped in the webview); None removes it.
 #[tauri::command]
 async fn set_profile_banner(
     app: tauri::State<'_, App>,
@@ -4200,8 +3966,6 @@ fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0xd8, 0xff]) || bytes.starts_with(&[0x89, b'P', b'N', b'G'])
 }
 
-/// Re-adds our saved avatar image to the in-memory blob store so peers
-/// can fetch it after a restart. Same bytes give the same hash.
 async fn restore_avatar_blob(app: &tauri::State<'_, App>, node: &CommyNode) {
     let (wants_avatar, wants_banner) = {
         let guard = app.profile.lock().unwrap();
@@ -4228,7 +3992,6 @@ async fn restore_avatar_blob(app: &tauri::State<'_, App>, node: &CommyNode) {
     }
 }
 
-/// Updates our entry in every joined server and tells its members.
 async fn announce_profile(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, profile: &UserProfile) {
     let server_ids: Vec<ServerId> = {
         let mut servers = app.servers.lock().unwrap();
@@ -4237,7 +4000,6 @@ async fn announce_profile(app: &tauri::State<'_, App>, handle: &tauri::AppHandle
         }
         servers.keys().copied().collect()
     };
-    // Peers see our key only once it is settled.
     let announced = app.announced(profile.clone());
     for sid in server_ids {
         outbox::broadcast_local(app, sid, ServerEvent::ProfileUpdate { profile: announced.clone() }).await;
@@ -4246,8 +4008,6 @@ async fn announce_profile(app: &tauri::State<'_, App>, handle: &tauri::AppHandle
     }
 }
 
-/// Sets an automatic presence (AFK Idle or back to Online) without
-/// touching the saved profile, so a restart never comes back as Idle.
 async fn set_auto_presence(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, presence: Presence, auto_idle: bool) {
     let profile = {
         let mut guard = app.profile.lock().unwrap();
@@ -4260,16 +4020,14 @@ async fn set_auto_presence(app: &tauri::State<'_, App>, handle: &tauri::AppHandl
     let _ = handle.emit("profile-changed", &profile);
 }
 
-/// Polls the foreground app and shares it as our activity. A change
-/// must hold for two polls before it is announced, so alt-tabbing
-/// through windows does not spam every server.
+const ACTIVITY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
+
 async fn run_activity_watcher(handle: tauri::AppHandle) {
-    let mut candidate: Option<String> = None;
+    let mut seen_last_poll: Option<String> = None;
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(ACTIVITY_POLL).await;
         let app = handle.state::<App>();
         let enabled = app.voice.lock().unwrap().share_activity;
-        // Game detection for Share Screen works even with sharing off.
         let (seen, pid) = tokio::task::spawn_blocking(|| {
             let pid = activity::foreground_pid();
             let seen = activity::foreground_app().and_then(|(path, desc)| activity::describe(&path, desc.as_deref()));
@@ -4283,13 +4041,13 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
             }
         }
         let seen = if enabled { seen } else { None };
-        let stable = if !enabled || candidate == seen {
+        let stable = if !enabled || seen_last_poll == seen {
             seen.clone()
         } else {
-            candidate = seen;
+            seen_last_poll = seen;
             continue;
         };
-        candidate = stable.clone();
+        seen_last_poll = stable.clone();
         let (stable, cover) = enrich_activity(&app, stable).await;
         let current = app.profile.lock().unwrap().as_ref().map(|p| (p.activity.clone(), p.activity_cover.clone()));
         let Some(current) = current else { continue };
@@ -4299,7 +4057,6 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
         let profile = {
             let mut guard = app.profile.lock().unwrap();
             let Some(profile) = guard.as_mut() else { continue };
-            // The clock keeps running while only the cover changes.
             if profile.activity != stable {
                 profile.activity_since = stable.as_ref().map(|_| chrono::Utc::now().timestamp());
             }
@@ -4307,8 +4064,6 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
             profile.activity_cover = cover;
             profile.clone()
         };
-        // Appearing offline shares no activity, so there is nothing to
-        // announce; a profile update from an offline user would give it away.
         if profile.presence != Presence::Invisible {
             announce_profile(&app, &handle, &profile).await;
         }
@@ -4316,8 +4071,6 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
     }
 }
 
-/// With IGDB set up, "Playing x" gets the game's proper title and cover.
-/// Only activities already recognized as games are looked up.
 async fn enrich_activity(app: &tauri::State<'_, App>, activity: Option<String>) -> (Option<String>, Option<String>) {
     let Some(text) = activity else { return (None, None) };
     let Some(name) = text.strip_prefix("Playing ") else { return (Some(text), None) };
@@ -4333,9 +4086,6 @@ async fn enrich_activity(app: &tauri::State<'_, App>, activity: Option<String>) 
     }
 }
 
-/// Same as `IgdbClient::resolve`, but through the account server's IGDB
-/// access. Misses and "not offered" are cached so the 2 second activity
-/// poll does not repeat the request; network errors are not.
 async fn resolve_game_via_account(app: &tauri::State<'_, App>, name: &str) -> Option<igdb::GameHit> {
     let key = igdb::normalize(name);
     if let Some(hit) = app.igdb.lock().await.resolved.get(&key) {
@@ -4362,8 +4112,6 @@ fn get_integrations(app: tauri::State<'_, App>) -> IntegrationsView {
     IntegrationsView { igdb_client_id: creds.client_id.clone(), igdb_configured: creds.configured() }
 }
 
-/// Saves IGDB credentials after checking them with a real search. An
-/// empty secret keeps the saved one, so the id can be edited alone.
 #[tauri::command]
 async fn set_igdb_credentials(
     app: tauri::State<'_, App>,
@@ -4376,7 +4124,6 @@ async fn set_igdb_credentials(
         creds.client_secret = secret;
     }
     if creds.client_id.is_empty() {
-        // Clearing the id turns the integration off.
         *app.igdb_creds.lock().unwrap() = igdb::IgdbCredentials::default();
         app.igdb.lock().await.reset();
         if let Some(dir) = app.data_dir() {
@@ -4406,14 +4153,12 @@ async fn search_games(app: tauri::State<'_, App>, query: String) -> CmdResult<Ve
         if query.trim().chars().count() < 2 {
             return Ok(Vec::new());
         }
-        // No credentials of our own: the account server searches for us.
         let hits = account::server_search::<igdb::GameHit>(&app, "games", query.trim()).await?;
         return Ok(igdb::safe_hits(hits.unwrap_or_default()));
     }
     app.igdb.lock().await.search(&app.http, &creds, &query).await
 }
 
-/// One GIF from the account server's search.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct GifHit {
     preview: String,
@@ -4424,8 +4169,6 @@ struct GifHit {
     title: String,
 }
 
-/// GIF search through the account server, which holds the KLIPY key.
-/// `None` means the server does not offer it, so the app asks for a key.
 #[tauri::command]
 async fn gif_search(app: tauri::State<'_, App>, query: String) -> CmdResult<Option<Vec<GifHit>>> {
     let query: String = query.trim().chars().take(100).collect();
@@ -4450,7 +4193,6 @@ async fn set_share_activity(
         voice.clone()
     };
     app.persist_voice();
-    // Turning it off clears what peers see right away.
     if !enabled {
         let profile = {
             let mut guard = app.profile.lock().unwrap();
@@ -4475,10 +4217,8 @@ struct AudioDevices {
     outputs: Vec<String>,
 }
 
-/// Microphones and speakers currently plugged in.
 #[tauri::command]
 async fn list_audio_devices() -> CmdResult<AudioDevices> {
-    // Enumeration can block on driver calls; keep it off the runtime.
     tokio::task::spawn_blocking(|| AudioDevices {
         inputs: commy_media::list_device_names(true),
         outputs: commy_media::list_device_names(false),
@@ -4487,8 +4227,6 @@ async fn list_audio_devices() -> CmdResult<AudioDevices> {
     .map_err(err_to_string)
 }
 
-/// Saves the chosen mic and speaker (None or "" means system default)
-/// and moves an active call or mic test onto them right away.
 #[tauri::command]
 async fn set_audio_devices(
     app: tauri::State<'_, App>,
@@ -4510,7 +4248,6 @@ async fn set_audio_devices(
             settings.output_device.clone(),
         );
     }
-    // A running mic test restarts on the new devices.
     let restart_test = app.mic_test.lock().unwrap().take().is_some();
     if restart_test {
         let test = MicTest::start(
@@ -4535,8 +4272,6 @@ fn set_afk_timeout(app: tauri::State<App>, minutes: u32) -> VoiceSettings {
     settings
 }
 
-// ---------- Volume ----------
-
 #[tauri::command]
 fn set_volumes(app: tauri::State<App>, output_volume: f32, input_gain: f32) -> VoiceSettings {
     let mut voice = app.voice.lock().unwrap();
@@ -4558,8 +4293,6 @@ fn set_volumes(app: tauri::State<App>, output_volume: f32, input_gain: f32) -> V
     app.persist_voice();
     snapshot
 }
-
-// ---------- Roles ----------
 
 #[tauri::command]
 async fn create_role(
@@ -4651,10 +4384,6 @@ async fn set_member_role(
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
-// ---------- Mic test ----------
-
-// Async on purpose: MicTest spawns tokio tasks, and a sync command
-// would run without a tokio runtime and panic.
 #[tauri::command]
 async fn start_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
     let test = {
@@ -4676,10 +4405,11 @@ async fn stop_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
     Ok(())
 }
 
-// ---------- Attachment previews ----------
+fn is_data_url_safe_image_mime(peer_supplied: &str) -> bool {
+    let subtype = peer_supplied.strip_prefix("image/").unwrap_or("");
+    !subtype.is_empty() && subtype.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
+}
 
-/// Returns a data URL for an image attachment so chat can render it
-/// inline. Capped to keep the webview responsive.
 #[tauri::command]
 async fn get_attachment_preview(
     app: tauri::State<'_, App>,
@@ -4688,14 +4418,7 @@ async fn get_attachment_preview(
     mime: String,
     size_bytes: Option<u64>,
 ) -> CmdResult<String> {
-    // Strict shape check: the mime is peer-supplied and goes into a
-    // data URL, so it must not carry separators or whitespace.
-    let subtype = mime.strip_prefix("image/").unwrap_or("");
-    if subtype.is_empty()
-        || !subtype
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
-    {
+    if !is_data_url_safe_image_mime(&mime) {
         return Err("not an image".into());
     }
     let max = commy_net::node::MAX_BLOB_BYTES;
@@ -4712,8 +4435,6 @@ async fn get_attachment_preview(
         base64::engine::general_purpose::STANDARD.encode(&bytes)
     ))
 }
-
-// ---------- Voice settings ----------
 
 #[tauri::command]
 fn get_voice_settings(app: tauri::State<App>) -> VoiceSettings {
@@ -4747,10 +4468,6 @@ async fn set_muted(app: tauri::State<'_, App>, handle: tauri::AppHandle, muted: 
     Ok(snapshot)
 }
 
-/// Tells the server we are in voice on where we are and whether we are
-/// muted or deafened, with the time we joined so clocks agree. Sent on
-/// every mute or deafen change and whenever a peer connects, so late
-/// arrivals see the call as it is.
 async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHandle) {
     let Some((sid, channel)) = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel)) else { return };
     let Ok(profile) = current_profile(app) else { return };
@@ -4773,7 +4490,6 @@ async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHa
     let _ = handle.emit("server-event", &sid.to_string());
 }
 
-/// Mic and speaker gates from our own choices plus any moderator override.
 fn apply_voice_gates(app: &App) {
     let voice = app.voice.lock().unwrap().clone();
     let forced_mute = app.forced_mute.load(std::sync::atomic::Ordering::Relaxed);
@@ -4785,8 +4501,6 @@ fn apply_voice_gates(app: &App) {
     }
 }
 
-/// Re-reads whether a moderator muted or deafened us in the server we
-/// are in voice on, applies it, and tells the webview when it changes.
 fn refresh_forced_voice(app: &tauri::State<'_, App>, handle: &tauri::AppHandle) {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
@@ -4822,8 +4536,6 @@ async fn set_deafened(app: tauri::State<'_, App>, handle: tauri::AppHandle, deaf
     Ok(snapshot)
 }
 
-// ---------- Event plumbing ----------
-
 async fn broadcast_event(app: &App, server: ServerId, event: ServerEvent) {
     broadcast(app, server, app.wire_for(server, event)).await;
 }
@@ -4837,7 +4549,6 @@ fn remote_action_ok(app: &App, server: ServerId, event: &ServerEvent, action: Op
     }
 }
 
-/// Broadcasts a payload if the network is up; logs and continues if not.
 async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
     let net = app.net.lock().await;
     if let Some(node) = net.as_ref() {
@@ -4847,7 +4558,6 @@ async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
     }
 }
 
-/// Applies events arriving from peers and notifies the webview.
 async fn run_net_loop(
     handle: tauri::AppHandle,
     mut events: tokio::sync::mpsc::UnboundedReceiver<NetEvent>,
@@ -4878,7 +4588,6 @@ async fn run_net_loop(
                     ServerEvent::VoiceState { user, channel, .. } => Some((*user, *channel)),
                     _ => None,
                 };
-                // Message events whose author key is not known yet wait for it.
                 let holdable = catchup::holdable(&event).then(|| event.clone());
                 let held_action = action.map(|action| SignedEvent { action, event: event.clone() });
                 let presence = outbox::online_user(&event);
@@ -4889,7 +4598,6 @@ async fn run_net_loop(
                             let was_online = presence.map(|(user, _)| {
                                 state.profiles.get(&user).is_some_and(|p| p.presence.is_visible_online())
                             });
-                            // Only a message now shown here is news.
                             let (applied, new_message, pinned) = catchup::apply_live(state, event, action);
                             (applied, was_online, new_message, pinned)
                         }
@@ -4897,11 +4605,9 @@ async fn run_net_loop(
                     }
                 };
                 if applied.is_ok() {
-                    // Only what this key signed is tried again.
                     if let Some(user) = pinned {
                         catchup::release_held(&handle, server, &[user]);
                     }
-                    // A partner turning online gets their waiting DMs now.
                     if let (Some((user, now)), Some(false)) = (presence, was_online) {
                         if now.is_visible_online() {
                             outbox::wake_dm(&app, user);
@@ -4938,20 +4644,15 @@ async fn run_net_loop(
                 }
             }
             NetEvent::SyncRequested { server, .. } => {
-                // Our snapshot, if we have one, and our own join anyway.
                 for payload in catchup::sync_replies(&app, server) {
                     broadcast(&app, server, payload).await;
                 }
             }
             NetEvent::SyncReceived { server, payload } => {
-                // Only a server joined from a ticket takes one, once; an
-                // established state never gets rebuilt from someone's reply.
                 catchup::apply_snapshot(&handle, server, payload);
             }
             NetEvent::VoiceDial { .. } => {}
             NetEvent::NeighborUp { server, peer } => {
-                // A peer connected on the topic: make sure they know us,
-                // and pull a snapshot while we wait for our first one.
                 let me = app.profile.lock().unwrap().clone();
                 let Some(me) = me else { continue };
                 let my_id = me.id;
@@ -4960,19 +4661,12 @@ async fn run_net_loop(
                 if needs_sync {
                     broadcast(&app, server, WirePayload::SyncRequest).await;
                 }
-                // Gossip has no backfill, so a peer that was offline
-                // misses structural changes. Re-announce them; every
-                // event here is idempotent and deletions are tombstoned.
                 for event in structure_announcements(&app, server, my_id) {
                     broadcast_event(&app, server, event).await;
                 }
-                // Voice is live state no snapshot or catch-up replays
-                // for a peer that was away: say again where we are.
                 if app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == server) {
                     announce_voice_state(&app, &handle).await;
                 }
-                // What we did while nobody was connected goes out now; our
-                // pending messages follow in the catch-up with this peer.
                 outbox::flush_queued(&app, server).await;
                 outbox::wake_dms_for_node(&app, peer);
                 catchup::on_neighbor_up(&handle, server, peer);
@@ -4986,8 +4680,6 @@ async fn run_net_loop(
     }
 }
 
-/// When someone joins our voice channel and the dial rule says it is
-/// on us, connect to them.
 fn react_to_voice_change(
     app: &tauri::State<'_, App>,
     handle: &tauri::AppHandle,
@@ -5041,8 +4733,6 @@ fn react_to_voice_change(
     }
 }
 
-/// Tells the webview about a message from a peer so it can count it as
-/// unread and decide whether it deserves a desktop notification.
 fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, message: &Message) {
     let payload = {
         let servers = app.servers.lock().unwrap();
@@ -5062,10 +4752,6 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
     let _ = handle.emit("message-created", payload);
 }
 
-// ---------- Notifications and tray ----------
-
-/// Shows a native desktop notification: a WinRT toast on Windows, the
-/// notification center elsewhere. Clicking it opens `target`.
 #[tauri::command]
 fn notify(handle: tauri::AppHandle, title: String, body: String, target: Option<String>) -> CmdResult<()> {
     let clip = |s: String, max: usize| s.chars().take(max).collect::<String>();
@@ -5120,7 +4806,6 @@ fn restart_to_update(handle: tauri::AppHandle) -> CmdResult<()> {
     updater::restart(&handle)
 }
 
-/// Stores DMs arriving from peers and notifies the webview.
 async fn run_dm_loop(
     handle: tauri::AppHandle,
     mut incoming: tokio::sync::mpsc::UnboundedReceiver<commy_net::node::IncomingDm>,
@@ -5137,7 +4822,6 @@ async fn run_dm_loop(
     }
 }
 
-/// Routes inbound media connections (we are the accepting side).
 async fn run_media_loop(
     handle: tauri::AppHandle,
     mut channels: tokio::sync::mpsc::UnboundedReceiver<MediaChannel>,
@@ -5166,8 +4850,6 @@ async fn run_media_loop(
                 let share = app.screen_share.lock().unwrap();
                 match share.as_ref() {
                     Some(s) if s.channel == channel => {
-                        // The subscriber list holds a clone of the outgoing
-                        // sender; the wire pumps live until the viewer leaves.
                         s.add_subscriber(media.outgoing.clone());
                         tracing::info!("viewer {} subscribed to our screen", user);
                     }
@@ -5188,7 +4870,6 @@ pub fn run() {
 
     instance::apply_test_build_data_dir();
 
-    // A commy:// link opened while Commy is already running goes to that instance.
     let launch_link = invite_link::link_from_args();
     if let (Some(link), Some(dir)) = (&launch_link, invite_link::default_data_dir()) {
         if invite_link::forward_to_running_instance(&dir, link) {
@@ -5196,12 +4877,11 @@ pub fn run() {
         }
     }
 
-    instance::apply_webview_data_dir();
+    instance::apply_webview_data_dir_before_any_window();
 
     tauri::Builder::default()
         .manage(App::default())
         .manage(updater::Updates::default())
-        // GIFs and game covers, loaded through the account server
         .register_asynchronous_uri_scheme_protocol("commy-media", |ctx, request, responder| {
             let handle = ctx.app_handle().clone();
             let uri = request.uri().to_string();
@@ -5222,7 +4902,6 @@ pub fn run() {
                 .build(),
         )
         .on_window_event(|window, event| {
-            // Closing the window hides it to the tray when that is enabled.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() != "main" {
                     return;
@@ -5236,7 +4915,6 @@ pub fn run() {
         })
         .setup(|tauri_app| {
             let handle = tauri_app.handle().clone();
-            // Test builds (pre-release tags) use only the staging servers; say so
             let label = std::env::var("COMMY_INSTANCE_LABEL").ok();
             if let Some(title) = instance::window_title(option_env!("COMMY_TEST_BUILD").is_some(), label.as_deref()) {
                 if let Some(window) = tauri_app.get_webview_window("main") {
@@ -5244,8 +4922,6 @@ pub fn run() {
                 }
             }
             {
-                // After persisted settings load below; the overlay window
-                // is created only once the main window exists.
                 let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -5259,7 +4935,6 @@ pub fn run() {
             if let Err(e) = tray::build(&handle) {
                 tracing::warn!("tray icon unavailable: {e}");
             }
-            // Native toasts need our app id registered with an icon file.
             let toast_icon = tauri_app.path().app_data_dir().ok().and_then(|dir| {
                 std::fs::create_dir_all(&dir).ok()?;
                 let path = dir.join("notification-icon.png");
@@ -5270,20 +4945,16 @@ pub fn run() {
             toast::ensure_start_menu_shortcut();
             let app = tauri_app.state::<App>();
 
-            // COMMY_DATA_DIR allows a second instance with its own
-            // identity, so voice and DMs can be tested on one machine.
             let data_dir = std::env::var("COMMY_DATA_DIR")
                 .ok()
                 .map(std::path::PathBuf::from)
                 .or_else(|| tauri_app.path().app_data_dir().ok());
 
-            // Load persisted state before anything renders.
             if let Some(dir) = data_dir {
                 let _ = app.data_dir.set(dir.clone());
                 invite_link::register_scheme();
                 invite_link::start(&handle, &dir, launch_link);
                 if let Some(mut profile) = persist::load_profile(&dir) {
-                    // Activity is live state; never resume a stale one.
                     profile.activity = None;
                     profile.activity_cover = None;
                     profile.activity_since = None;
@@ -5298,7 +4969,6 @@ pub fn run() {
                 }
                 match persist::load_safety(&dir) {
                     Some(safety) => *app.safety.lock().unwrap() = safety,
-                    // First run with safety settings: people you already talk to stay in your inbox.
                     None => {
                         let partners = app.dms.lock().unwrap().partners();
                         app.safety.lock().unwrap().accepted.extend(partners);
@@ -5329,20 +4999,15 @@ pub fn run() {
                 bell.retain_servers(|id| app.servers.lock().unwrap().contains_key(id));
                 *app.doorbell.lock().unwrap() = bell;
             }
-            // Our identity key signs messages; peers learn it from our profile.
             let signed_in = account::is_signed_in(&app.account.lock().unwrap());
             let key_file = app.data_dir().map(|dir| dir.join(commy_core::identity::IDENTITY_FILE));
             if signed_in && key_file.as_ref().is_some_and(|path| !path.exists()) {
-                // The account may already sign with another key, which the
-                // server list sync brings. Marked before the key exists, so
-                // a restart before it settles still holds it back.
                 app.mark_key_unsettled();
             }
             if let Err(e) = app.reload_identity() {
                 tracing::error!("identity key unavailable: {e}");
             }
             if app.hold_unsettled_key(signed_in, KEY_SETTLE_MAX) {
-                // Until then ours stays unannounced, at most this long per run.
                 let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(KEY_SETTLE_MAX).await;
@@ -5363,17 +5028,12 @@ pub fn run() {
                             tauri::async_runtime::spawn(entry_list::run_entry_key_requests(handle.clone(), asks));
                         }
 
-                        // Reconnect persisted servers: re-host the ones we
-                        // own, rejoin the rest via their stored invites.
                         let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
                         let stored_invites = app
                             .data_dir()
                             .map(|d| persist::load_invites(d))
                             .unwrap_or_default();
-                        // Joined on an earlier version and still waiting.
                         catchup::mark_joined_placeholders(&app, &stored_invites, node.node_id_bytes());
-                        // A joined server's placeholder names us as owner;
-                        // it rejoins from its invite rather than being hosted.
                         let awaiting = app.awaiting_snapshot.lock().unwrap().clone();
                         let to_restore: Vec<(ServerId, String, bool)> = {
                             let servers = app.servers.lock().unwrap();
@@ -5410,8 +5070,6 @@ pub fn run() {
                             let _ = persist::save_invites(dir, &app.invites.lock().unwrap().clone());
                         }
 
-                        // Servers we own that predate the AFK feature get
-                        // their AFK voice channel created now.
                         let missing_afk: Vec<ServerId> = {
                             let servers = app.servers.lock().unwrap();
                             servers
@@ -5454,9 +5112,6 @@ pub fn run() {
                             profile.clone()
                         };
                         app.persist_profile();
-                        // Re-assert our own membership and current address
-                        // in every server state. MemberJoin is idempotent
-                        // and also repairs a state that lost our entry.
                         if let Some(me) = me {
                             let mut servers = app.servers.lock().unwrap();
                             for state in servers.values_mut() {
@@ -5646,7 +5301,6 @@ pub fn run() {
         .expect("failed to run Commy")
         .run(|handle, event| {
             if let tauri::RunEvent::Exit = event {
-                // Catch-up changes still waiting for their delayed save.
                 catchup::save_unsaved(&handle.state::<App>());
             }
             invite_link::on_run_event(handle, &event)

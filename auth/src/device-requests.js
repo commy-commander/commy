@@ -1,7 +1,3 @@
-// Anti-phishing context for desktop sign-in approvals. When an app requests a
-// device code we keep a keyed hash of its network (never the IP itself), so the
-// approval page can warn when the request came from a different network than
-// the person approving it.
 import { createHmac } from "node:crypto";
 import * as z from "zod";
 import { createAuthEndpoint, createAuthMiddleware, getIP, sessionMiddleware } from "better-auth/api";
@@ -14,7 +10,6 @@ export function networkTag(secret, ip) {
   return createHmac("sha256", secret).update(`network\n${ip}`).digest("base64url");
 }
 
-// true or false when both sides are known, null when either IP is unavailable
 export function sameNetwork(storedTag, currentTag) {
   if (!storedTag || !currentTag) return null;
   return storedTag === currentTag;

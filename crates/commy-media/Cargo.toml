@@ -17,6 +17,4 @@ xcap = "0.4"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [target.'cfg(windows)'.dependencies]
-# Windows Graphics Capture: a window's own surface, without whatever is
-# painted over it on screen, and hardware-rendered games included.
 windows-capture = "2.0.1"
