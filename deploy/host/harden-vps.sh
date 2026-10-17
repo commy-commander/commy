@@ -7,6 +7,7 @@ set -eu
 
 here="$(cd "$(dirname "$0")" && pwd)"
 PUBLIC_PORTS="${PUBLIC_PORTS:-3478/udp 3479/udp 8443/tcp}"
+CONSOLE_NET="${CONSOLE_NET-169.254.0.0/16}"
 CADDY_LOGS="${CADDY_LOGS:-/var/log/commy-caddy}"
 SSHD_CONFIG="${SSHD_CONFIG:-/etc/ssh/sshd_config}"
 SSHD_DROPIN="${SSHD_DROPIN:-/etc/ssh/sshd_config.d/10-commy.conf}"
@@ -127,9 +128,21 @@ MSG
 		return 1
 	fi
 	dropin_dir="$(dirname "$SSHD_DROPIN")"
-	included=1
+	config_before="$(cat "$SSHD_CONFIG" 2>/dev/null)"
+	new_config="$config_before"
+	config_changed=0
 	if ! grep -Eq "^[[:space:]]*Include[[:space:]]+$dropin_dir/" "$SSHD_CONFIG" 2>/dev/null; then
-		included=0
+		new_config="Include $dropin_dir/*.conf
+$new_config"
+		config_changed=1
+	fi
+	if [ -n "$CONSOLE_NET" ] && ! grep -Fq "Match Address $CONSOLE_NET" "$SSHD_CONFIG" 2>/dev/null; then
+		new_config="$new_config
+
+Match Address $CONSOLE_NET
+	PasswordAuthentication yes
+	PermitRootLogin yes"
+		config_changed=1
 	fi
 	wanted="PasswordAuthentication no
 KbdInteractiveAuthentication no
@@ -138,13 +151,16 @@ PermitRootLogin $policy"
 	if [ -f "$SSHD_DROPIN" ]; then
 		previous="$(cat "$SSHD_DROPIN")"
 	fi
-	if ! write_file "$SSHD_DROPIN" "$wanted" && [ "$included" = 1 ]; then
+	dropin_changed=0
+	if write_file "$SSHD_DROPIN" "$wanted"; then
+		dropin_changed=1
+	fi
+	if [ "$dropin_changed" = 0 ] && [ "$config_changed" = 0 ]; then
 		echo "SSH: keys only, root login $policy (already set)"
 		return 0
 	fi
-	if [ "$included" = 0 ]; then
-		config_before="$(cat "$SSHD_CONFIG" 2>/dev/null)"
-		{ echo "Include $dropin_dir/*.conf"; printf '%s\n' "$config_before"; } >"$SSHD_CONFIG"
+	if [ "$config_changed" = 1 ]; then
+		printf '%s\n' "$new_config" >"$SSHD_CONFIG"
 	fi
 	mkdir -p /run/sshd 2>/dev/null || true
 	if ! sshd -t; then
@@ -153,7 +169,7 @@ PermitRootLogin $policy"
 		else
 			rm -f "$SSHD_DROPIN"
 		fi
-		if [ "$included" = 0 ]; then
+		if [ "$config_changed" = 1 ]; then
 			printf '%s\n' "$config_before" >"$SSHD_CONFIG"
 		fi
 		echo "sshd rejected $SSHD_DROPIN: previous settings restored, nothing reloaded"
@@ -161,6 +177,9 @@ PermitRootLogin $policy"
 	fi
 	reload_sshd
 	echo "SSH: password login off, root login $policy ($SSHD_DROPIN)"
+	if [ -n "$CONSOLE_NET" ]; then
+		echo "SSH: the provider console on $CONSOLE_NET keeps password login"
+	fi
 }
 
 setup_fail2ban() {
@@ -168,6 +187,7 @@ setup_fail2ban() {
 	jail="[sshd]
 enabled = true
 backend = systemd
+ignoreip = 127.0.0.1/8 ::1${CONSOLE_NET:+ $CONSOLE_NET}
 maxretry = 5
 findtime = 10m
 bantime = 1h"

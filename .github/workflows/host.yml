@@ -85,6 +85,9 @@ jobs:
           sudo sshd -T | grep -qx 'passwordauthentication no'
           sudo sshd -T | grep -qx 'kbdinteractiveauthentication no'
           sudo sshd -T | grep -qx 'permitrootlogin no'
+          sudo sshd -T -C user=root,host=console,addr=169.254.7.7 | grep -qx 'passwordauthentication yes'
+          sudo sshd -T -C user=root,host=outside,addr=203.0.113.9 | grep -qx 'passwordauthentication no'
+          sudo fail2ban-client get sshd ignoreip | grep -q '169.254.0.0/16'
           sudo systemctl is-active fail2ban
           sudo fail2ban-client status sshd
           sudo systemctl is-enabled unattended-upgrades

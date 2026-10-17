@@ -174,7 +174,11 @@ sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
   script first checks that the user running it, or root, has a key in
   `~/.ssh/authorized_keys`; without one it leaves password login on and prints
   how to add a key, so it can never lock you out. The new settings are checked
-  with `sshd -t` before sshd is reloaded.
+  with `sshd -t` before sshd is reloaded. The hosting provider's browser
+  console reaches sshd from the link-local network `169.254.0.0/16`, so a
+  `Match Address` block at the end of `sshd_config` keeps password login open
+  for that network only, and fail2ban never bans it. Set `CONSOLE_NET` to
+  another network, or to nothing to close the console too.
 - **fail2ban** with an sshd jail (5 failed attempts in 10 minutes ban the
   address for an hour) and **unattended-upgrades** with the standard daily
   security updates.

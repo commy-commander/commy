@@ -72,6 +72,9 @@ check "sudo user with key: drop-in" "$(dropin)" "PasswordAuthentication no KbdIn
 check "sudo user with key: config tested" "$(count 'sshd -t')" "1"
 check "sudo user with key: reloaded once" "$(count 'systemctl reload ssh')" "1"
 check "sudo user with key: drop-in is world readable" "$(stat -c %a "$SSHD_DROPIN")" "644"
+check "sudo user with key: console network keeps password login" "$(grep -c '^Match Address 169.254.0.0/16$' "$SSHD_CONFIG")" "1"
+check "sudo user with key: console block allows root" "$(sed -n '/^Match Address/,$p' "$SSHD_CONFIG" | grep -c 'PermitRootLogin yes')" "1"
+check "sudo user with key: include still first" "$(head -1 "$SSHD_CONFIG")" "Include $(dirname "$SSHD_DROPIN")/*.conf"
 
 reset
 SUDO_USER=alice
@@ -99,6 +102,7 @@ harden_ssh >/dev/null
 check "sshd -t failure: aborts" "$?" "1"
 check "sshd -t failure: drop-in removed" "$(dropin)" ""
 check "sshd -t failure: nothing reloaded" "$(count 'systemctl')" "0"
+check "sshd -t failure: config restored" "$(cat "$SSHD_CONFIG")" "Include $(dirname "$SSHD_DROPIN")/*.conf"
 
 reset
 SUDO_USER=alice
@@ -118,6 +122,14 @@ harden_ssh >/dev/null
 check "re-run: succeeds" "$?" "0"
 check "re-run: not reloaded again" "$(count 'systemctl')" "0"
 check "re-run: drop-in kept" "$(dropin)" "PasswordAuthentication no KbdInteractiveAuthentication no PermitRootLogin no"
+check "re-run: console block added once" "$(grep -c '^Match Address' "$SSHD_CONFIG")" "1"
+
+reset
+SUDO_USER=alice
+echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxQ alice@laptop" >"$FAKE/home/alice/.ssh/authorized_keys"
+CONSOLE_NET="" harden_ssh >/dev/null
+check "no console network: nothing appended" "$(grep -c '^Match' "$SSHD_CONFIG")" "0"
+check "no console network: config untouched" "$(wc -l <"$SSHD_CONFIG" | tr -d ' ')" "1"
 
 reset
 SUDO_USER=alice
@@ -138,6 +150,7 @@ reset
 setup_fail2ban >/dev/null
 check "fail2ban: jail enables sshd" "$(grep -c '^enabled = true$' "$FAIL2BAN_JAIL")" "1"
 check "fail2ban: jail reads the journal" "$(grep -c '^backend = systemd$' "$FAIL2BAN_JAIL")" "1"
+check "fail2ban: console network is never banned" "$(grep -c '^ignoreip = 127.0.0.1/8 ::1 169.254.0.0/16$' "$FAIL2BAN_JAIL")" "1"
 check "fail2ban: enabled" "$(count 'systemctl enable --now fail2ban')" "1"
 check "fail2ban: restarted after writing the jail" "$(count 'systemctl restart fail2ban')" "1"
 check "fail2ban: not installed when present" "$(count 'apt-get install')" "0"
