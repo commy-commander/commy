@@ -11,8 +11,8 @@ SSH keys or server secrets stored in the repository.
 | staging     | `:staging` | pushing a release tag like `v0.2.0`                | `https://staging.commy.chat` |
 | prod        | `:prod`    | running **Promote images** and approving it        | `https://commy.chat`         |
 
-Every build is also kept as `:sha-<commit>` and every release as `:<version>`,
-which is what makes rollback possible.
+Every build is also kept as `:sha-<commit>` and every release as `:<version>`;
+promoting a version again is how rollback works.
 
 ## How an update reaches the server
 
@@ -76,7 +76,8 @@ by `docker compose up -d` in that folder. Google OAuth needs each domain's
   `setup-vps.sh` creates the four networks. Each environment's Postgres and
   Redis stay on its own private network.
 - `docker-compose.agent.yml` adds the agent. It mounts the checkout read only and
-  the Docker socket.
+  the Docker socket. Its image is built from `agent/Dockerfile` (the Docker CLI
+  plus cosign).
 
 ### Dockhand
 
@@ -205,7 +206,39 @@ AUTH_IMAGE=ghcr.io/commy-commander/commy-auth:prod
 - **Prod**: Actions > **Promote images** > Run workflow > `prod`. A required
   reviewer approves it under the run's **Review deployments** button, then prod
   picks up the exact images staging is running. The website has the same
-  **Promote image** workflow in the commy-web repository; run both.
+  **Promote image** workflow in the commy-web repository; run both. The
+  workflow only accepts `staging`, `dev` (for staging) or a release version as
+  the source.
+
+### Signed promotes
+
+**Promote images** signs the promoted digest with
+[cosign](https://github.com/sigstore/cosign) (keyless, through GitHub's OIDC
+token) before it moves the tag, and the signature names the tag it was promoted
+to. The prod agent runs `cosign verify` on every new image before starting it
+and only accepts a signature made by this repository's `promote.yml` on `main`
+for that tag, so an image retagged as `:prod` by anything else, or a staging
+signature moved onto the prod tag, is refused and logged; the running
+container keeps serving and the image is tried again on the next cycle, in case
+the signature was still being written. Settings in that environment's `.env`:
+
+- `AGENT_VERIFY`: `auto` (default) checks signatures when `COMPOSE_PROJECT_NAME`
+  contains `prod` and cosign is in the agent image; `on` checks everywhere and
+  fails closed; `off` never checks. A single-environment server that runs the
+  `:prod` tags under another project name should set `on`.
+- `AGENT_COSIGN_IDENTITY`: the workflow identity to accept, by default
+  `https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main`.
+  A fork promoting its own images sets its own repository here.
+- `AGENT_COSIGN_ISSUER`: the OIDC issuer, by default GitHub Actions.
+
+To check an image by hand from any machine with cosign:
+
+```bash
+cosign verify -a tag=prod \
+  --certificate-identity https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/commy-commander/commy-auth:prod
+```
 
 Changes to the compose files themselves (a new environment variable, a new
 service) are not picked up by the agent: run `git pull` and then
@@ -216,8 +249,8 @@ agent's image).
 ## Rolling back
 
 Run **Promote images** with the environment and the version to go back to in
-**source**, for example `0.1.0` or `sha-1a2b3c4`. The agent deploys it like any
-other update. To pause automatic updates, `docker compose stop agent`.
+**source**, for example `0.1.0`. The agent deploys it like any other update.
+To pause automatic updates, `docker compose stop agent`.
 
 ## One-time GitHub setup
 

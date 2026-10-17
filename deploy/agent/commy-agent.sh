@@ -10,6 +10,9 @@ HEALTH_TIMEOUT="${AGENT_HEALTH_TIMEOUT:-180}"
 STATE_DIR="${AGENT_STATE_DIR:-/tmp/commy-agent}"
 POLL="${AGENT_HEALTH_POLL:-3}"
 PULL_TRIES="${AGENT_PULL_TRIES:-3}"
+VERIFY="${AGENT_VERIFY:-auto}"
+COSIGN_IDENTITY="${AGENT_COSIGN_IDENTITY:-https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main}"
+COSIGN_ISSUER="${AGENT_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}"
 
 log() {
 	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
@@ -22,6 +25,57 @@ is_bad() {
 mark_bad() {
 	mkdir -p "$STATE_DIR"
 	echo "$1" >>"$STATE_DIR/bad"
+}
+
+verify_enabled() {
+	case "$VERIFY" in
+	on | true | yes | 1) return 0 ;;
+	off | false | no | 0) return 1 ;;
+	esac
+	case "${COMPOSE_PROJECT_NAME:-commy}" in
+	*prod*) command -v cosign >/dev/null 2>&1 ;;
+	*) return 1 ;;
+	esac
+}
+
+repo_of() {
+	case "$1" in
+	*@*) echo "${1%%@*}" ;;
+	*)
+		case "${1##*:}" in
+		*/*) echo "$1" ;;
+		*) echo "${1%:*}" ;;
+		esac
+		;;
+	esac
+}
+
+tag_of() {
+	case "$1" in
+	*@*) return 0 ;;
+	esac
+	case "${1##*:}" in
+	*/*) echo latest ;;
+	*) echo "${1##*:}" ;;
+	esac
+}
+
+verified() {
+	ref="$1"
+	if ! command -v cosign >/dev/null 2>&1; then
+		log "$ref: cosign is not installed, refusing to deploy without a signature check"
+		return 1
+	fi
+	repo="$(repo_of "$ref")"
+	digest="$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" 2>/dev/null | grep -m 1 "^$repo@")"
+	if [ -z "$digest" ]; then
+		log "$ref: no registry digest to verify"
+		return 1
+	fi
+	tag="$(tag_of "$ref")"
+	set -- --certificate-identity "$COSIGN_IDENTITY" --certificate-oidc-issuer "$COSIGN_ISSUER"
+	[ -n "$tag" ] && set -- -a "tag=$tag" "$@"
+	cosign verify "$@" "$digest" >/dev/null 2>&1
 }
 
 # Waits until every given container reports healthy (or running, without a healthcheck).
@@ -57,6 +111,13 @@ update_service() {
 	svc="$1"
 	old="$(docker compose ps -q "$svc" 2>/dev/null)"
 	if [ -z "$old" ]; then
+		if verify_enabled; then
+			ref="$(docker compose config --images "$svc" 2>/dev/null | head -n 1)"
+			if ! verified "$ref"; then
+				log "$svc: $ref failed signature verification, not starting it"
+				return 1
+			fi
+		fi
 		log "$svc: not running, starting it"
 		docker compose up -d --no-deps --no-build "$svc"
 		return 0
@@ -69,6 +130,10 @@ update_service() {
 
 	if [ -z "$latest" ] || [ "$latest" = "$running" ] || is_bad "$latest"; then
 		return 0
+	fi
+	if verify_enabled && ! verified "$ref"; then
+		log "$svc: $latest failed signature verification, keeping $running"
+		return 1
 	fi
 
 	count="$(echo "$old" | wc -l | tr -d ' ')"
@@ -126,6 +191,11 @@ jitter() {
 
 main() {
 	log "watching [$SERVICES] in project ${COMPOSE_PROJECT_NAME:-commy} every ${INTERVAL}s"
+	if verify_enabled; then
+		log "deploying only images signed by $COSIGN_IDENTITY"
+	else
+		log "image signatures are not checked (AGENT_VERIFY=$VERIFY)"
+	fi
 	while true; do
 		run_once
 		docker image prune -f >/dev/null 2>&1

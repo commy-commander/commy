@@ -6,6 +6,7 @@ AGENT_LIB=1
 . "$here/commy-agent.sh"
 
 FAKE="$(mktemp -d)"
+BIN="$(mktemp -d)"
 STATE_DIR="$FAKE/state"
 SERVICES="web"
 HEALTH_TIMEOUT=6
@@ -63,7 +64,13 @@ docker() {
 		*) grep "^$id " "$FAKE/containers" | cut -d' ' -f2 ;;
 		esac
 		;;
-	"image inspect") cat "$FAKE/tag" ;;
+	"compose config") echo "$REF" ;;
+	"image inspect")
+		case "$4" in
+		*RepoDigests*) [ -f "$FAKE/nodigest" ] || echo "ghcr.io/commy/commy-web@$(cat "$FAKE/tag")" ;;
+		*) cat "$FAKE/tag" ;;
+		esac
+		;;
 	"stop "*) ;;
 	"rm -f")
 		grep -v "^$3 " "$FAKE/containers" >"$FAKE/c.tmp"
@@ -74,6 +81,15 @@ docker() {
 
 log() { :; }
 sleep() { :; }
+
+cat >"$BIN/cosign" <<EOF
+#!/bin/sh
+echo "\$*" >>"$FAKE/cosign_calls"
+[ ! -f "$FAKE/cosign_fails" ]
+EOF
+chmod +x "$BIN/cosign"
+PATH_WITHOUT_COSIGN="$PATH"
+PATH="$BIN:$PATH"
 
 check() {
 	if [ "$2" = "$3" ]; then
@@ -186,13 +202,99 @@ run_once
 check "other services still update" "$(images)" "sha256:new"
 SERVICES="web"
 
+# Signature checks on: a signed image deploys after cosign has seen its digest
+reset
+VERIFY=on
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "signed image deploys" "$(images)" "sha256:new"
+check "cosign checks the pulled digest, its tag and the promote identity" "$(cat "$FAKE/cosign_calls")" \
+	"verify -a tag=dev --certificate-identity $COSIGN_IDENTITY --certificate-oidc-issuer $COSIGN_ISSUER ghcr.io/commy/commy-web@sha256:new"
+
+# Signature missing or wrong: the old container keeps serving and the image is retried next cycle
+reset
+echo "sha256:new" >"$FAKE/remote"
+touch "$FAKE/cosign_fails"
+run_once
+check "unsigned image reports failure" "$?" "1"
+check "unsigned image is not started" "$(called 'compose up')" "0"
+check "old image keeps serving when the signature fails" "$(images)" "sha256:old"
+check "unsigned image is not recorded as bad" "$([ -f "$STATE_DIR/bad" ] && cat "$STATE_DIR/bad")" ""
+
+# Stopped service: verified before it is started
+reset
+: >"$FAKE/containers"
+touch "$FAKE/cosign_fails"
+run_once
+check "stopped service stays stopped on an unsigned image" "$(called 'compose up')" "0"
+reset
+: >"$FAKE/containers"
+run_once
+check "stopped service starts on a signed image" "$(called 'compose up -d --no-deps --no-build web')" "1"
+check "the configured image is what gets verified" "$(grep -c 'ghcr.io/commy/commy-web@sha256:old' "$FAKE/cosign_calls")" "1"
+
+# A locally built image has no registry digest to verify
+reset
+echo "sha256:new" >"$FAKE/remote"
+touch "$FAKE/nodigest"
+run_once
+check "image without a registry digest is refused" "$?" "1"
+check "nothing is verified without a digest" "$(called 'cosign')" "0"
+check "old image keeps serving without a digest" "$(images)" "sha256:old"
+
+# cosign missing while checks are on: fail closed
+reset
+echo "sha256:new" >"$FAKE/remote"
+PATH="$PATH_WITHOUT_COSIGN"
+run_once
+check "missing cosign refuses the image" "$?" "1"
+check "missing cosign keeps the old image" "$(images)" "sha256:old"
+PATH="$BIN:$PATH_WITHOUT_COSIGN"
+
+# auto: on for prod projects when cosign is installed, off otherwise
+VERIFY=auto
+COMPOSE_PROJECT_NAME=commy-prod
+reset
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "prod project verifies by default" "$(wc -l <"$FAKE/cosign_calls" | tr -d ' ')" "1"
+COMPOSE_PROJECT_NAME=commy-dev
+reset
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "dev project does not verify by default" "$([ -f "$FAKE/cosign_calls" ] && wc -l <"$FAKE/cosign_calls" | tr -d ' ')" ""
+check "dev project still deploys" "$(images)" "sha256:new"
+COMPOSE_PROJECT_NAME=commy-prod
+PATH="$PATH_WITHOUT_COSIGN"
+reset
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "prod project without cosign deploys unverified in auto mode" "$(images)" "sha256:new"
+PATH="$BIN:$PATH_WITHOUT_COSIGN"
+VERIFY=off
+reset
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "checks can be turned off for prod" "$([ -f "$FAKE/cosign_calls" ] && wc -l <"$FAKE/cosign_calls" | tr -d ' ')" ""
+unset COMPOSE_PROJECT_NAME
+VERIFY=auto
+
+# Image references
+check "repo of a tagged image" "$(repo_of ghcr.io/commy/commy-web:prod)" "ghcr.io/commy/commy-web"
+check "repo of a registry with a port" "$(repo_of localhost:5000/commy-web:dev)" "localhost:5000/commy-web"
+check "repo of an untagged image on a registry with a port" "$(repo_of localhost:5000/commy-web)" "localhost:5000/commy-web"
+check "repo of a digest reference" "$(repo_of ghcr.io/commy/commy-web@sha256:abc)" "ghcr.io/commy/commy-web"
+check "tag of a tagged image" "$(tag_of localhost:5000/commy-web:dev)" "dev"
+check "tag of an untagged image" "$(tag_of localhost:5000/commy-web)" "latest"
+check "tag of a digest reference" "$(tag_of ghcr.io/commy/commy-web@sha256:abc)" ""
+
 # Jitter stays within a third of the interval, capped at 20 seconds
 INTERVAL=10
 check "short interval keeps jitter small" "$(jitter | awk '{ print ($1 <= 3) }')" "1"
 INTERVAL=600
 check "jitter is capped at 20s" "$(jitter | awk '{ print ($1 <= 20) }')" "1"
 
-rm -rf "$FAKE"
+rm -rf "$FAKE" "$BIN"
 if [ "$failures" -ne 0 ]; then
 	echo "$failures test(s) failed"
 	exit 1

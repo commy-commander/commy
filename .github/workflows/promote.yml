@@ -29,28 +29,52 @@ jobs:
     concurrency: promote-${{ inputs.environment }}
     permissions:
       packages: write
+      id-token: write
     steps:
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Retag images
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Check the source tag
+        id: source
         env:
           TARGET: ${{ inputs.environment }}
           SOURCE: ${{ inputs.source }}
-          OWNER: ${{ github.repository_owner }}
         run: |
           if [ -z "$SOURCE" ]; then
             if [ "$TARGET" = prod ]; then SOURCE=staging; else SOURCE=dev; fi
           fi
+          case "$TARGET:$SOURCE" in
+            prod:staging | staging:dev) ;;
+            *)
+              if ! [[ "$SOURCE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+                echo "Refusing to promote '$SOURCE' to $TARGET: use staging (for prod), dev (for staging) or a release version such as 0.2.0"
+                exit 1
+              fi
+              ;;
+          esac
+          echo "tag=$SOURCE" >> "$GITHUB_OUTPUT"
+
+      - name: Sign and retag images
+        env:
+          TARGET: ${{ inputs.environment }}
+          SOURCE: ${{ steps.source.outputs.tag }}
+          OWNER: ${{ github.repository_owner }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/promote.yml@${{ github.ref }}
+        run: |
           for svc in auth; do
             repo="ghcr.io/${OWNER}/commy-${svc}"
             digest="$(docker buildx imagetools inspect "$repo:$SOURCE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
             echo "$svc: $repo:$SOURCE ($digest) -> $repo:$TARGET"
+            cosign sign --yes -a "tag=$TARGET" "$repo@$digest"
             docker buildx imagetools create --tag "$repo:$TARGET" "$repo@$digest"
-            echo "- \`commy-$svc\`: \`$SOURCE\` → \`$TARGET\` (\`$digest\`)" >> "$GITHUB_STEP_SUMMARY"
+            cosign verify -a "tag=$TARGET" --certificate-identity "$IDENTITY" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com "$repo:$TARGET" >/dev/null
+            echo "- \`commy-$svc\`: \`$SOURCE\` → \`$TARGET\` (\`$digest\`, signed as $IDENTITY)" >> "$GITHUB_STEP_SUMMARY"
           done

@@ -77,6 +77,16 @@ run_once
 check "bad image is skipped on the next cycle" "$?" "0"
 check "v2 still serving" "$(serving)" "v2"
 
+publish v4 "wget -qO- http://127.0.0.1:8080/"
+VERIFY=on
+run_once
+check "unsigned image is refused while signature checks are on" "$?" "1"
+check "v2 keeps serving after the refusal" "$(serving)" "v2"
+VERIFY=off
+run_once
+check "the same image deploys with signature checks off" "$?" "0"
+check "v4 replaced v2" "$(serving)" "v4"
+
 if [ "$failures" -ne 0 ]; then
 	echo "$failures integration test(s) failed"
 	exit 1
