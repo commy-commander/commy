@@ -36,6 +36,7 @@ use view::{
 };
 
 use base64::Engine as _;
+use commy_core::SignedEvent;
 use commy_core::{
     Attachment, Channel, ChannelId, ChannelKind, DmMessage, Identity, Message, MessageId, Permissions,
     Presence, RoleId, ServerEvent, ServerId, ServerState, Signature, StoreError, TombstoneProof, UserId,
@@ -145,7 +146,7 @@ async fn create_server(
     let hosting = async {
         let mut net = app.net.lock().await;
         if let Some(node) = net.as_mut() {
-            match node.host_server(server_id, &name).await {
+            match node.host_server(server_id, &name, app.own_key_for_tickets()).await {
                 Ok(ticket) => {
                     app.invites
                         .lock()
@@ -273,12 +274,11 @@ fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView
 fn get_invite(app: tauri::State<App>, server_id: String) -> CmdResult<String> {
     let id = server_id.parse().map_err(err_to_string)?;
     require_invite_permission(&app, id)?;
-    app.invites
-        .lock()
-        .unwrap()
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| "no invite available; you may be offline".into())
+    let ticket = app.vouched_ticket(id).ok_or("no invite available; you may be offline")?;
+    if ticket.owner.is_none() {
+        return Err("your account key is still being confirmed; try again in a moment".into());
+    }
+    Ok(ticket.encode())
 }
 
 // ---------- Messaging ----------
@@ -754,14 +754,14 @@ async fn leave_voice(
     app.own_preview.lock().unwrap().take();
     let share = app.screen_share.lock().unwrap().take();
     if let Some(share) = share {
-        broadcast(
+        broadcast_event(
             app,
             sid,
-            WirePayload::Event(ServerEvent::ScreenShare {
+            ServerEvent::ScreenShare {
                 user: profile.id,
                 channel: share.channel,
                 active: false,
-            }),
+            },
         )
         .await;
     }
@@ -790,7 +790,7 @@ async fn set_own_voice_state(
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         state.apply(event.clone()).map_err(err_to_string)?;
     }
-    broadcast(app, sid, WirePayload::Event(event)).await;
+    broadcast_event(app, sid, event).await;
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
 }
@@ -1143,7 +1143,7 @@ async fn start_screen_share(
             state.apply(event.clone()).map_err(err_to_string)?;
         }
     }
-    broadcast(&app, sid, WirePayload::Event(event)).await;
+    broadcast_event(&app, sid, event).await;
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
 }
@@ -1171,7 +1171,7 @@ async fn stop_screen_share(
             let _ = state.apply(event.clone());
         }
     }
-    broadcast(&app, sid, WirePayload::Event(event)).await;
+    broadcast_event(&app, sid, event).await;
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
 }
@@ -1845,7 +1845,10 @@ async fn apply_and_broadcast(
     {
         let mut servers = app.servers.lock().unwrap();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
-        state.apply(event.clone()).map_err(err_to_string)?;
+        match app.sign_event(sid, event.clone()) {
+            Some(signed) => state.apply_own(&signed).map_err(err_to_string)?,
+            None => state.apply(event.clone()).map_err(err_to_string)?,
+        };
     }
     outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
@@ -2280,11 +2283,7 @@ async fn leave_server(
     let me = current_profile(&app)?;
 
     // Tell everyone, then drop the topic and local state.
-    broadcast(
-        &app,
-        sid,
-        WirePayload::Event(ServerEvent::MemberLeave { server: sid, user: me.id }),
-    )
+    broadcast_event(&app, sid, ServerEvent::MemberLeave { server: sid, user: me.id })
     .await;
     {
         let mut net = app.net.lock().await;
@@ -3479,7 +3478,7 @@ async fn run_share_heartbeat(handle: tauri::AppHandle) {
         let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { continue };
         let ours = app.screen_share.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
         if let Some((sid, channel)) = ours {
-            broadcast(&app, sid, WirePayload::Event(ServerEvent::ScreenShare { user: me, channel, active: true })).await;
+            broadcast_event(&app, sid, ServerEvent::ScreenShare { user: me, channel, active: true }).await;
         }
         let now = std::time::Instant::now();
         let mut expired = Vec::new();
@@ -3850,11 +3849,7 @@ async fn play_soundboard(
         require_permission(&app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
         soundboard_play_view(state, channel, me.id, &name).ok_or("that sound no longer exists")?
     };
-    broadcast(
-        &app,
-        sid,
-        WirePayload::Event(ServerEvent::SoundboardPlay { server: sid, channel, user: me.id, name }),
-    )
+    broadcast_event(&app, sid, ServerEvent::SoundboardPlay { server: sid, channel, user: me.id, name })
     .await;
     let _ = handle.emit("soundboard-play", view);
     Ok(())
@@ -4658,7 +4653,7 @@ async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHa
         let _ = state.apply(event.clone());
         event
     };
-    broadcast(app, sid, WirePayload::Event(event)).await;
+    broadcast_event(app, sid, event).await;
     let _ = handle.emit("server-event", &sid.to_string());
 }
 
@@ -4713,6 +4708,19 @@ async fn set_deafened(app: tauri::State<'_, App>, handle: tauri::AppHandle, deaf
 
 // ---------- Event plumbing ----------
 
+async fn broadcast_event(app: &App, server: ServerId, event: ServerEvent) {
+    broadcast(app, server, app.wire_for(server, event)).await;
+}
+
+fn remote_action_ok(app: &App, server: ServerId, event: &ServerEvent, action: Option<commy_core::Action>) -> bool {
+    let servers = app.servers.lock().unwrap();
+    let Some(state) = servers.get(&server) else { return false };
+    match action {
+        Some(action) => state.admits_signed(&SignedEvent { action, event: event.clone() }).is_ok(),
+        None => state.admits_unsigned(event).is_ok(),
+    }
+}
+
 /// Broadcasts a payload if the network is up; logs and continues if not.
 async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
     let net = app.net.lock().await;
@@ -4731,9 +4739,11 @@ async fn run_net_loop(
     while let Some(event) = events.recv().await {
         let app = handle.state::<App>();
         match event {
-            NetEvent::Event { server, event, .. } => {
+            NetEvent::Event { server, event, action, .. } => {
                 if let ServerEvent::SoundboardPlay { channel, user, name, .. } = &event {
-                    on_remote_soundboard(&app, &handle, server, *channel, *user, name);
+                    if remote_action_ok(&app, server, &event, action) {
+                        on_remote_soundboard(&app, &handle, server, *channel, *user, name);
+                    }
                     continue;
                 }
                 if matches!(event, ServerEvent::DoorbellSet { .. }) {
@@ -4754,6 +4764,7 @@ async fn run_net_loop(
                 };
                 // Message events whose author key is not known yet wait for it.
                 let holdable = catchup::holdable(&event).then(|| event.clone());
+                let held_action = action.map(|action| SignedEvent { action, event: event.clone() });
                 let presence = outbox::online_user(&event);
                 let (applied, was_online, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
@@ -4763,7 +4774,7 @@ async fn run_net_loop(
                                 state.profiles.get(&user).is_some_and(|p| p.presence.is_visible_online())
                             });
                             // Only a message now shown here is news.
-                            let (applied, new_message, pinned) = catchup::apply_live(state, event);
+                            let (applied, new_message, pinned) = catchup::apply_live(state, event, action);
                             (applied, was_online, new_message, pinned)
                         }
                         None => continue,
@@ -4801,9 +4812,12 @@ async fn run_net_loop(
                         let _ = handle.emit("server-event", &server.to_string());
                     }
                     Ok(false) => {}
-                    Err(e) => match (e, holdable) {
-                        (StoreError::UnknownAuthorKey(signer), Some(event)) => catchup::hold(&app, server, signer, event),
-                        (e, _) => tracing::warn!("rejected remote event: {e}"),
+                    Err(e) => match (e, holdable, held_action) {
+                        (StoreError::UnknownAuthorKey(signer), Some(event), _) => catchup::hold(&app, server, signer, event),
+                        (StoreError::UnknownAuthorKey(_), None, Some(signed)) => {
+                            app.catchup.lock().unwrap().hold_action(server, signed, std::time::Instant::now())
+                        }
+                        (e, _, _) => tracing::warn!("rejected remote event: {e}"),
                     },
                 }
             }
@@ -4826,12 +4840,7 @@ async fn run_net_loop(
                 let Some(me) = me else { continue };
                 let my_id = me.id;
                 let needs_sync = app.awaits_snapshot(server);
-                broadcast(
-                    &app,
-                    server,
-                    WirePayload::Event(ServerEvent::MemberJoin { server, profile: app.announced(me) }),
-                )
-                .await;
+                broadcast_event(&app, server, ServerEvent::MemberJoin { server, profile: app.announced(me) }).await;
                 if needs_sync {
                     broadcast(&app, server, WirePayload::SyncRequest).await;
                 }
@@ -4839,7 +4848,7 @@ async fn run_net_loop(
                 // misses structural changes. Re-announce them; every
                 // event here is idempotent and deletions are tombstoned.
                 for event in structure_announcements(&app, server, my_id) {
-                    broadcast(&app, server, WirePayload::Event(event)).await;
+                    broadcast_event(&app, server, event).await;
                 }
                 // Voice is live state no snapshot or catch-up replays
                 // for a peer that was away: say again where we are.
@@ -5263,7 +5272,7 @@ pub fn run() {
                         };
                         for (id, name, owned) in to_restore {
                             if owned {
-                                match node.host_server(id, &name).await {
+                                match node.host_server(id, &name, app.own_key_for_tickets()).await {
                                     Ok(ticket) => {
                                         app.invites.lock().unwrap().insert(id, ticket.encode());
                                     }
@@ -5314,7 +5323,7 @@ pub fn run() {
                                     let _ = state.apply(event.clone());
                                 }
                             }
-                            if let Err(e) = node.broadcast(sid, WirePayload::Event(event)).await {
+                            if let Err(e) = node.broadcast(sid, app.wire_for(sid, event)).await {
                                 tracing::debug!("afk channel announce pending: {e}");
                             }
                             app.persist_server(sid);

@@ -413,14 +413,11 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
     if expiry == Expiry::Never && !app.servers.lock().unwrap().get(&id).is_some_and(|s| s.server.public) {
         return Err("Only links to a public server can last forever".into());
     }
-    let raw = app
-        .invites
-        .lock()
-        .unwrap()
-        .get(&id)
-        .cloned()
-        .ok_or("no invite available; you may be offline")?;
-    let ticket = ServerTicket::decode(&raw).map_err(|e| e.to_string())?;
+    let ticket = app.vouched_ticket(id).ok_or("no invite available; you may be offline")?;
+    if ticket.owner.is_none() {
+        return Err("your account key is still being confirmed; try again in a moment".into());
+    }
+    let raw = ticket.encode();
     let origin = account_server();
     let cache_key = format!("{origin} {} {raw}", expiry.as_str());
     if let Some((created, at)) = CREATED.lock().unwrap().as_ref().and_then(|m| m.get(&cache_key)) {

@@ -171,7 +171,7 @@ impl Device {
             .collect();
         for (id, name, owned) in servers {
             if owned {
-                let ticket = node.host_server(id, &name).await.unwrap();
+                let ticket = node.host_server(id, &name, app.own_key_for_tickets()).await.unwrap();
                 app.invites.lock().unwrap().insert(id, ticket.encode());
             } else {
                 let raw = app.invites.lock().unwrap()[&id].clone();
@@ -203,7 +203,7 @@ impl Device {
         let id = ServerId::new();
         let hosting = async {
             let mut net = app.net.lock().await;
-            let ticket = net.as_mut().unwrap().host_server(id, name).await.map_err(|e| e.to_string())?;
+            let ticket = net.as_mut().unwrap().host_server(id, name, app.own_key_for_tickets()).await.map_err(|e| e.to_string())?;
             app.invites.lock().unwrap().insert(id, ticket.encode());
             Ok(())
         };
@@ -379,16 +379,17 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
     while let Some(event) = events.recv().await {
         let app = access.app();
         match event {
-            NetEvent::Event { server, event, .. } => {
+            NetEvent::Event { server, event, action, .. } => {
                 if matches!(event, ServerEvent::DoorbellSet { .. }) {
                     doorbell::on_announce(app, server, &event);
                     continue;
                 }
                 let holdable = catchup::holdable(&event).then(|| event.clone());
+                let held_action = action.map(|action| commy_core::SignedEvent { action, event: event.clone() });
                 let (applied, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
                     let Some(state) = servers.get_mut(&server) else { continue };
-                    catchup::apply_live(state, event)
+                    catchup::apply_live(state, event, action)
                 };
                 if applied.is_ok() {
                     if let Some(user) = pinned {
@@ -406,6 +407,9 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
                     Err(StoreError::UnknownAuthorKey(signer)) if holdable.is_some() => {
                         catchup::hold(app, server, signer, holdable.unwrap())
                     }
+                    Err(StoreError::UnknownAuthorKey(_)) if held_action.is_some() => {
+                        app.catchup.lock().unwrap().hold_action(server, held_action.unwrap(), Instant::now())
+                    }
                     Err(e) => tracing::warn!("rejected remote event: {e}"),
                 }
             }
@@ -421,7 +425,7 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
             NetEvent::NeighborUp { server, peer } => {
                 let Some(me) = app.profile.lock().unwrap().clone() else { continue };
                 let join = ServerEvent::MemberJoin { server, profile: app.announced(me) };
-                broadcast(app, server, WirePayload::Event(join)).await;
+                broadcast(app, server, app.wire_for(server, join)).await;
                 if app.awaits_snapshot(server) {
                     broadcast(app, server, WirePayload::SyncRequest).await;
                 }
@@ -441,7 +445,7 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
                     session(session_access, server, peer).await;
                 });
                 if let Some(event) = doorbell::announcement(app, server).await {
-                    broadcast(app, server, WirePayload::Event(event)).await;
+                    broadcast(app, server, app.wire_for(server, event)).await;
                 }
             }
             NetEvent::CaughtUp { server, peer, report } => {
@@ -478,7 +482,7 @@ async fn gather(mut devices: Vec<Device>) -> (Vec<Device>, ServerId) {
         d.online().await;
     }
     let server = devices[0].create_server("Moonbase Book Club").await;
-    let ticket = devices[0].app().invites.lock().unwrap()[&server].clone();
+    let ticket = devices[0].app().vouched_ticket(server).unwrap().encode();
     for d in &devices[1..] {
         d.join(&ticket).await;
     }

@@ -1,3 +1,4 @@
+use crate::action::{self, SignedEvent};
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, UserId};
@@ -41,6 +42,10 @@ pub enum StoreError {
     PinLimit,
     #[error("only members allowed to post announcements can write in that channel")]
     NotAnnouncer,
+    #[error("the signer may not do that here")]
+    NotAllowed,
+    #[error("unsigned event from a member whose key is known")]
+    Unsigned,
 }
 
 /// Days a delete proof is kept, well past the catch-up window.
@@ -55,6 +60,10 @@ pub const MAX_UNAPPLIED_PROOFS: usize = 2000;
 
 /// How far ahead of our clock a signed time may be, in ms.
 pub const MAX_AHEAD_MS: i64 = 86_400_000;
+
+pub const MAX_ACTION_TIMES: usize = 16384;
+pub const MAX_ACTION_AHEAD_MS: i64 = 3_600_000;
+pub const MAX_ACTION_FLOOR_MS: i64 = 900_000;
 
 /// A delete proof as held here. `accepted_for` is the author of the
 /// message the proof removed here, or kept out when it arrived later. A
@@ -101,6 +110,8 @@ pub struct ServerState {
     /// [`MAX_UNAPPLIED_PROOFS`]. Built again when None, which every change
     /// to the proofs other than [`Self::store_proof`] sets.
     unapplied: Option<HashMap<UserId, BTreeSet<UnappliedKey>>>,
+    action_times: HashMap<String, i64>,
+    action_floor: i64,
 }
 
 /// Durable image of a server, written to disk between sessions.
@@ -118,6 +129,10 @@ pub struct Snapshot {
     /// accepted.
     #[serde(default)]
     pub accepted: Vec<(MessageId, UserId, ChannelId, UserId)>,
+    #[serde(default)]
+    pub action_times: Vec<(String, i64)>,
+    #[serde(default)]
+    pub action_floor: i64,
 }
 
 impl ServerState {
@@ -140,6 +155,8 @@ impl ServerState {
             deleted_messages: Default::default(),
             tombstones: HashMap::new(),
             unapplied: None,
+            action_times: HashMap::new(),
+            action_floor: 0,
         }
     }
 
@@ -161,6 +178,8 @@ impl ServerState {
                     s.accepted_for.map(|author| (p.message, p.by, p.channel, author))
                 })
                 .collect(),
+            action_times: self.action_times.iter().map(|(s, t)| (s.clone(), *t)).collect(),
+            action_floor: self.action_floor,
         }
     }
 
@@ -201,6 +220,8 @@ impl ServerState {
             });
             slot.extend(list);
         }
+        state.action_times = snapshot.action_times.into_iter().collect();
+        state.action_floor = snapshot.action_floor;
         state
     }
 
@@ -361,6 +382,132 @@ impl ServerState {
         };
         let start = end.saturating_sub(limit);
         &all[start..end]
+    }
+
+    pub fn admits_signed(&self, signed: &SignedEvent) -> Result<bool, StoreError> {
+        let by = signed.action.by;
+        let key = self.signer_key(signed).ok_or(StoreError::UnknownAuthorKey(by))?;
+        if !signed.verify(self.server.id, &key) {
+            return Err(StoreError::BadSignature);
+        }
+        if signed.action.at.saturating_sub(Utc::now().timestamp_millis()) > MAX_ACTION_AHEAD_MS {
+            return Err(StoreError::TooFarAhead);
+        }
+        if !action::authorized(&self.server, by, &signed.event) {
+            return Err(StoreError::NotAllowed);
+        }
+        Ok(self.fresh(action::subject(&signed.event).as_deref(), signed.action.at))
+    }
+
+    pub fn admits_unsigned(&self, event: &ServerEvent) -> Result<(), StoreError> {
+        if action::self_signed(event) {
+            return Ok(());
+        }
+        let actor = action::actor(event).filter(|user| self.identity_of(*user).is_none());
+        match actor {
+            Some(actor) if action::may_go_unsigned(event) && action::authorized(&self.server, actor, event) => Ok(()),
+            _ => Err(StoreError::Unsigned),
+        }
+    }
+
+    pub fn apply_signed(&mut self, signed: &SignedEvent) -> Result<bool, StoreError> {
+        if !self.admits_signed(signed)? {
+            return Ok(false);
+        }
+        let applied = self.apply(signed.event.clone())?;
+        if applied || self.target_known(&signed.event) {
+            self.note_action(action::subject(&signed.event), signed.action.at);
+        }
+        Ok(applied)
+    }
+
+    pub fn apply_unsigned(&mut self, event: ServerEvent) -> Result<bool, StoreError> {
+        self.admits_unsigned(&event)?;
+        self.apply(event)
+    }
+
+    pub fn apply_own(&mut self, signed: &SignedEvent) -> Result<bool, StoreError> {
+        if !self.fresh(action::subject(&signed.event).as_deref(), signed.action.at) {
+            return Ok(false);
+        }
+        let applied = self.apply(signed.event.clone())?;
+        if applied || self.target_known(&signed.event) {
+            self.note_action(action::subject(&signed.event), signed.action.at);
+        }
+        Ok(applied)
+    }
+
+    fn target_known(&self, event: &ServerEvent) -> bool {
+        use ServerEvent as E;
+        let server = &self.server;
+        match event {
+            E::ChannelDelete { channel, .. }
+            | E::ChannelUpdate { channel, .. }
+            | E::ChannelLayout { channel, .. }
+            | E::ChannelLimit { channel, .. }
+            | E::ChannelBanner { channel, .. }
+            | E::ChannelColor { channel, .. }
+            | E::ChannelKindSet { channel, .. } => server.channels.iter().any(|c| c.id == *channel),
+            E::RoleUpdate { role, .. } => server.roles.iter().any(|r| r.id == role.id),
+            E::RoleDelete { role, .. } | E::RoleAssign { role, .. } | E::RoleUnassign { role, .. } => {
+                server.roles.iter().any(|r| r.id == *role)
+            }
+            E::MemberBan { user, .. } | E::MemberUnban { user, .. } | E::MemberLeave { user, .. } => {
+                server.is_member(*user) || server.banned.contains(user) || self.profiles.contains_key(user)
+            }
+            E::EventDelete { event, .. } | E::EventRsvp { event, .. } => server.events.iter().any(|e| e.id == *event),
+            E::EmojiRemove { name, .. } => server.emojis.iter().any(|e| e.name == *name),
+            E::SoundRemove { name, .. } => server.soundboard.iter().any(|s| s.name == *name),
+            E::MessagePin { message, .. } | E::ReactionSet { message, .. } | E::ReactionToggle { message, .. } => {
+                self.has_message(*message)
+            }
+            _ => true,
+        }
+    }
+
+    pub fn set_action_floor(&mut self, at: i64) {
+        self.action_floor = self.action_floor.max(at);
+    }
+
+    pub fn action_floor(&self) -> i64 {
+        self.action_floor
+    }
+
+    fn fresh(&self, subject: Option<&str>, at: i64) -> bool {
+        let Some(subject) = subject else { return true };
+        match self.action_times.get(subject) {
+            Some(prev) => at > *prev,
+            None => !action::settles_authority(subject) || at + MAX_ACTION_FLOOR_MS >= self.action_floor,
+        }
+    }
+
+    fn signer_key(&self, signed: &SignedEvent) -> Option<IdentityKey> {
+        let by = signed.action.by;
+        if let Some(key) = self.identity_of(by) {
+            return Some(key);
+        }
+        match &signed.event {
+            ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } if profile.id == by => {
+                profile.identity
+            }
+            _ => None,
+        }
+    }
+
+    fn note_action(&mut self, subject: Option<String>, at: i64) {
+        let Some(subject) = subject else { return };
+        self.action_times.insert(subject, at);
+        while self.action_times.len() > MAX_ACTION_TIMES {
+            let oldest = |authority: bool| {
+                self.action_times
+                    .iter()
+                    .filter(|(s, _)| action::settles_authority(s) == authority)
+                    .min_by_key(|(_, t)| **t)
+                    .map(|(s, _)| s.clone())
+            };
+            let Some(evicted) = oldest(false).or_else(|| oldest(true)) else { break };
+            self.action_times.remove(&evicted);
+        }
     }
 
     /// Applies an event to local state. Returns Ok(false) when the event
@@ -1237,6 +1384,7 @@ impl ServerState {
             if channel != proof.channel {
                 return Err(StoreError::WrongChannel);
             }
+
             if let Some(list) = self.messages.get_mut(&channel) {
                 list.remove(pos);
             }
