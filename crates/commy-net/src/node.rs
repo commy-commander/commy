@@ -839,12 +839,7 @@ impl CommyNode {
     }
 
     pub async fn join_server(&mut self, ticket: &ServerTicket) -> Result<bool> {
-        let bootstrap: Vec<NodeId> = ticket.bootstrap.iter().map(|a| a.node_id).collect();
-        for addr in &ticket.bootstrap {
-            self.node.net().add_node_addr(addr.clone()).await.ok();
-        }
-        self.join_topic(ticket.server_id, ticket.topic, bootstrap)
-            .await?;
+        self.rejoin_server(ticket).await?;
         let connected = self
             .wait_for_peers(ticket.server_id, std::time::Duration::from_secs(20))
             .await;
@@ -853,6 +848,14 @@ impl CommyNode {
                 .await?;
         }
         Ok(connected)
+    }
+
+    pub async fn rejoin_server(&mut self, ticket: &ServerTicket) -> Result<()> {
+        let bootstrap: Vec<NodeId> = ticket.bootstrap.iter().map(|a| a.node_id).collect();
+        for addr in &ticket.bootstrap {
+            self.node.net().add_node_addr(addr.clone()).await.ok();
+        }
+        self.join_topic(ticket.server_id, ticket.topic, bootstrap).await
     }
 
     pub async fn wait_for_peers(
