@@ -427,8 +427,8 @@ mod tests {
         let device = Device::new("flush");
         let sid = device.sid;
         work_while_held(&device);
-        let rename = ServerEvent::ServerRename { server: sid, name: "renamed".into() };
-        device.app.outbox.lock().unwrap().note_local(sid, &rename, false);
+        let presence = ServerEvent::PresenceUpdate { user: device.me().id, presence: commy_core::Presence::Idle };
+        device.app.outbox.lock().unwrap().note_local(sid, &presence, false);
         device.account_key_arrives();
         let key = device.account.public();
         let queued = |app: &App| app.outbox.lock().unwrap().clone().take_queued(sid);
@@ -442,7 +442,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         let waiting = queued(&device.app);
         assert_eq!(waiting.len(), 2, "the edit and the delete stay queued");
-        assert!(!waiting.contains(&rename));
+        assert!(!waiting.contains(&presence));
 
         // The key settles once the flush is done.
         let settling = tokio::spawn({
@@ -461,7 +461,7 @@ mod tests {
         // Offline, so nothing went out; all of it carries the settled key.
         let waiting = queued(&device.app);
         assert_eq!(waiting.len(), 3);
-        assert!(waiting.contains(&rename));
+        assert!(waiting.contains(&presence));
         assert_eq!(stale(&device.app, &key), 0);
     }
 

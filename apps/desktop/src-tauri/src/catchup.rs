@@ -2337,6 +2337,7 @@ mod tests {
             members.retain(|m| m.user != friend.id());
             profiles.retain(|p| p.id != friend.id());
         }
+        commy_net::protocol::sign_sync_response(&mut trimmed, Utc::now().timestamp_millis(), &owner.identity);
         let WirePayload::Signed(SignedEvent { event: friend_join, .. }) = from_friend[0].clone() else { panic!("not an event") };
         for join_first in [true, false] {
             let app = app_with(&me, placeholder(&me, sid));

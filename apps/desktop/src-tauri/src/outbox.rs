@@ -479,15 +479,13 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
 
 // ---------- Network glue ----------
 
-/// Whether an event carries our signature or our identity key: our
-/// messages, edits and deletes, and our own profile. Every kind is named
-/// so a new one has to be sorted here.
 pub fn needs_settled_key(event: &ServerEvent, me: Option<UserId>) -> bool {
     match event {
         ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } => {
             me.is_none_or(|me| me == profile.id)
         }
-        event => !commy_core::action::may_go_unsigned(event),
+        ServerEvent::PresenceUpdate { .. } => false,
+        event => !is_transient(event) || !commy_core::action::may_go_unsigned(event),
     }
 }
 
@@ -1630,8 +1628,6 @@ mod tests {
             TombstoneProof::sign(sid, channel, message.id, me.id, chrono::Utc::now(), identity).into_event(),
             ServerEvent::MemberJoin { server: sid, profile: me.clone() },
             ServerEvent::ProfileUpdate { profile: me.clone() },
-        ];
-        let unsigned = vec![
             rename(sid, "renamed"),
             ServerEvent::MemberLeave { server: sid, user: other },
             ServerEvent::MemberBan { server: sid, user: other },
@@ -1642,10 +1638,11 @@ mod tests {
             ServerEvent::ChannelDelete { server: sid, channel },
             ServerEvent::ChannelUpdate { server: sid, channel, name: "general".into(), retention_days: Some(7) },
             ServerEvent::ReactionSet { channel, message: message.id, emoji: "x".into(), user: me.id, active: true },
-            ServerEvent::PresenceUpdate { user: me.id, presence: Presence::Idle },
-            // Someone else's profile names no key of ours.
-            ServerEvent::ProfileUpdate { profile: UserProfile::new("member") },
             ServerEvent::VoiceModerate { server: sid, user: other, muted: true, deafened: false },
+        ];
+        let unsigned = vec![
+            ServerEvent::PresenceUpdate { user: me.id, presence: Presence::Idle },
+            ServerEvent::ProfileUpdate { profile: UserProfile::new("member") },
         ];
         (signed, unsigned)
     }
@@ -1700,10 +1697,9 @@ mod tests {
         app.outbox.lock().unwrap().clear_delivered(sid, [message.id]);
         let edit = message.edit_event(sid, "held", chrono::Utc::now(), &identity);
         assert!(!broadcast_local(&app, sid, edit.clone()).await);
-        // What carries no key of ours goes now, and so does one queued
-        // while nobody was connected, ahead of the edit that waits.
-        assert!(broadcast_local(&app, sid, rename(sid, "now")).await);
-        app.outbox.lock().unwrap().note_local(sid, &rename(sid, "offline"), false);
+        let presence = |presence| ServerEvent::PresenceUpdate { user: message.author, presence };
+        assert!(broadcast_local(&app, sid, presence(Presence::Idle)).await);
+        app.outbox.lock().unwrap().note_local(sid, &presence(Presence::Online), false);
         flush_queued(&app, sid).await;
         assert_eq!(app.outbox.lock().unwrap().clone().take_queued(sid), vec![edit]);
 
