@@ -2786,7 +2786,7 @@ function dayDivider(date) {
 function isBareImageLink(content) {
   const text = (content || "").trim();
   if (findInviteLink(text)) return false;
-  return /^https?:\/\/\S+$/i.test(text) && extractImageUrls(text).length === 1;
+  return /^https:\/\/\S+$/i.test(text) && imageLinks(text).length === 1;
 }
 
 const PENDING_TIP = "Waiting for someone to come online";
@@ -2845,7 +2845,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
       body.appendChild(content);
     }
     // Auto-embed pasted image and gif links.
-    for (const url of extractImageUrls(message.content)) {
+    for (const url of imageLinks(message.content)) {
       body.appendChild(renderImageEmbed(url));
     }
   }
@@ -3864,15 +3864,14 @@ function appendInlineMarkdown(node, text) {
 
 // ---------- Images through the account server ----------
 
-// GIF files and game covers load through the signed in account server, so
-// the image hosts never see the user's address. The server keeps the same
-// list of hosts (MEDIA_HOSTS in auth/src/media.js).
-const MEDIA_HOSTS = new Set(["static.klipy.com", "images.igdb.com"]);
+function mediaProxyOn() {
+  return Boolean(account.server_media && window.__TAURI__);
+}
 
 function viaAccountServer(url) {
-  if (!account.server_media || !window.__TAURI__) return url;
+  if (!mediaProxyOn()) return url;
   try {
-    if (!MEDIA_HOSTS.has(new URL(url).hostname)) return url;
+    if (!isMediaHost(new URL(url).hostname)) return url;
   } catch {
     return url;
   }
@@ -6471,16 +6470,6 @@ function buildMessageContent(text) {
   return div;
 }
 
-function extractImageUrls(text) {
-  const matches = text.match(/https?:\/\/[^\s<>"']+\.(?:gif|png|jpe?g|webp)(?:\?[^\s<>"']*)?/gi);
-  if (matches) return matches.slice(0, 4);
-  // A message that is nothing but one link is worth trying as an
-  // image even without a file extension; onerror removes the miss.
-  const lone = text.trim();
-  if (findInviteLink(lone)) return [];
-  return /^https?:\/\/\S+$/i.test(lone) ? [lone] : [];
-}
-
 // Source URL of an image copied from a web page, if the clipboard
 // html flavor carries one. DOMParser documents are inert: nothing
 // in the parsed markup loads or runs.
@@ -6503,34 +6492,66 @@ function keepScrolledOnLoad(img) {
   });
 }
 
-// An image embedded from a link someone pasted, as opposed to a file
-// they uploaded: it carries a visible source URL above the image.
+const loadedImageLinks = new Set();
+
 function renderImageEmbed(url) {
+  const host = imageHost(url) || url;
   const wrap = el("div", "image-embed");
-  const source = el("a", "embed-source", embedSourceLabel(url));
+  const source = el("a", "embed-source", host);
   source.href = "#";
   source.title = `Open ${url}`;
   source.onclick = e => {
     e.preventDefault();
     invoke("open_url", { url }).catch(err => toast(String(err)));
   };
-  const img = el("img", "chat-image");
-  keepScrolledOnLoad(img);
-  img.src = viaAccountServer(url);
-  img.loading = "lazy";
-  img.onclick = () => openLightbox(img.src, url, null);
-  img.onerror = () => wrap.remove();
   wrap.appendChild(source);
-  wrap.appendChild(img);
+  if (embedMode(url, mediaProxyOn()) === "auto" || loadedImageLinks.has(url)) {
+    const img = embedImage(url);
+    keepScrolledOnLoad(img);
+    img.loading = "lazy";
+    img.onerror = () => wrap.remove();
+    img.src = viaAccountServer(url);
+    wrap.appendChild(img);
+  } else {
+    wrap.appendChild(imageGate(url, host));
+  }
   return wrap;
 }
 
-function embedSourceLabel(url) {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
+function embedImage(url) {
+  const img = el("img", "chat-image");
+  img.onclick = () => openLightbox(img.src, url, null);
+  return img;
+}
+
+function imageGate(url, host) {
+  const text = imageGateText(host);
+  const gate = el("div", "image-gate");
+  const lines = el("div", "image-gate-text");
+  const title = el("div", "image-gate-title", text.title);
+  lines.appendChild(title);
+  lines.appendChild(el("div", "image-gate-hint", text.hint));
+  const button = el("button", "btn-secondary btn-small image-gate-load", text.load);
+  button.type = "button";
+  button.onclick = () => {
+    button.disabled = true;
+    button.textContent = text.loading;
+    const img = embedImage(url);
+    img.onload = () => {
+      loadedImageLinks.add(url);
+      gate.replaceWith(img);
+      img.scrollIntoView({ block: "nearest" });
+    };
+    img.onerror = () => {
+      title.textContent = text.failed;
+      button.textContent = text.retry;
+      button.disabled = false;
+    };
+    img.src = viaAccountServer(url);
+  };
+  gate.appendChild(lines);
+  gate.appendChild(button);
+  return gate;
 }
 
 // Full-size overlay; for link embeds the source URL under the image

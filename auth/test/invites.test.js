@@ -38,7 +38,15 @@ function makeAuth(extraEnv = {}) {
     const text = await res.text();
     return { status: res.status, json: text ? JSON.parse(text) : null, setCookie: res.headers.get("set-cookie") };
   };
-  return { db, call };
+  const signUp = async (email) => {
+    const r = await call("POST", "/sign-up/email", {
+      cookie: "x=1",
+      body: { email, password: "correct horse battery", name: "T" },
+    });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    return { cookie: r.setCookie.split(";")[0], id: r.json.user.id };
+  };
+  return { db, call, signUp };
 }
 
 test("codes use an unambiguous alphabet", () => {
@@ -117,8 +125,8 @@ test("expiry choices map to fixed lengths", () => {
   assert.equal(expiryFor("__proto__", now), null);
 });
 
-test("creators pick the expiry, never included, and the row holds nothing else new", async () => {
-  const { db, call } = makeAuth({ INVITES_MAX_PERMANENT: "2" });
+test("creators pick the expiry, never for signed in creators, and the row holds nothing else new", async () => {
+  const { db, call, signUp } = makeAuth({ INVITES_MAX_PERMANENT: "2" });
   const hour = await call("POST", "/commy/invites/create", { body: { ticket: TICKET, expiresIn: "1h" } });
   assert.equal(hour.status, 200, JSON.stringify(hour.json));
   const mins = (new Date(hour.json.expiresAt) - Date.now()) / 60000;
@@ -128,14 +136,20 @@ test("creators pick the expiry, never included, and the row holds nothing else n
   const month = await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "a", expiresIn: "30d" } });
   assert.ok((new Date(month.json.expiresAt) - Date.now()) / 86400000 > 29.9, "anonymous apps may pick 30 days");
 
-  const forever = await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "b", expiresIn: "never" } });
+  const anonymous = await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "b", expiresIn: "never" } });
+  assert.equal(anonymous.status, 401, "a link that never expires needs an account");
+  assert.match(anonymous.json.message, /Sign in/);
+  assert.equal(db.invite.length, 2);
+
+  const { cookie, id } = await signUp("forever@example.test");
+  const forever = await call("POST", "/commy/invites/create", { cookie, body: { ticket: TICKET + "b", expiresIn: "never" } });
   assert.equal(forever.status, 200, JSON.stringify(forever.json));
   assert.equal(forever.json.expiresAt, null);
   assert.equal(forever.json.permanent, true);
   const row = db.invite.find((r) => r.code === forever.json.code);
   assert.deepEqual(Object.keys(row).sort(), ["code", "createdAt", "createdBy", "expiresAt", "id", "serverName", "ticket"]);
   assert.equal(row.serverName, "");
-  assert.equal(row.createdBy, null);
+  assert.equal(row.createdBy, id);
   assert.equal(row.ticket, TICKET + "b", "only the sealed invite, nothing readable");
 
   // Cleanup of expired rows leaves it, and it keeps resolving
@@ -144,8 +158,8 @@ test("creators pick the expiry, never included, and the row holds nothing else n
   assert.equal(resolved.status, 200);
   assert.equal(resolved.json.expiresAt, null);
 
-  assert.equal((await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "d", expiresIn: "never" } })).status, 200);
-  const full = await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "e", expiresIn: "never" } });
+  assert.equal((await call("POST", "/commy/invites/create", { cookie, body: { ticket: TICKET + "d", expiresIn: "never" } })).status, 200);
+  const full = await call("POST", "/commy/invites/create", { cookie, body: { ticket: TICKET + "e", expiresIn: "never" } });
   assert.equal(full.status, 403, "permanent links are capped");
   assert.equal((await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "f", expiresIn: "2y" } })).status, 400);
 });
@@ -175,19 +189,11 @@ test("plain invites made before sealing still resolve until they expire", async 
 });
 
 test("servers can require an account, and only the creator can revoke", async () => {
-  const { call } = makeAuth({ INVITES_REQUIRE_ACCOUNT: "true" });
+  const { call, signUp } = makeAuth({ INVITES_REQUIRE_ACCOUNT: "true" });
   assert.equal((await call("POST", "/commy/invites/create", { body: { ticket: TICKET } })).status, 401);
 
-  const signUp = async (email) => {
-    const r = await call("POST", "/sign-up/email", {
-      cookie: "x=1",
-      body: { email, password: "correct horse battery", name: "T" },
-    });
-    assert.equal(r.status, 200, JSON.stringify(r.json));
-    return r.setCookie.split(";")[0];
-  };
-  const alice = await signUp("alice@example.test");
-  const bob = await signUp("bob@example.test");
+  const alice = (await signUp("alice@example.test")).cookie;
+  const bob = (await signUp("bob@example.test")).cookie;
 
   const created = await call("POST", "/commy/invites/create", { cookie: alice, body: { ticket: TICKET, expiresInDays: 30 } });
   assert.equal(created.status, 200, JSON.stringify(created.json));
