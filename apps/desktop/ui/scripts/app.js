@@ -109,7 +109,7 @@ function mockSeed() {
     { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages"], self_assignable: false, tag: null },
   ];
   server.game_tags = ["Rust", "Valorant"];
-  server.emojis = [{ name: "ferris", image: "ferris@mock" }];
+  server.emojis = [{ name: "ferris", image: "ferris@mock" }, { name: "ferris_wave", image: "ferris@mock" }];
   mock.expressions = { ...(mock.expressions || {}), "ferris@mock": mockCrabImage() };
   mock.serverImages = { ...(mock.serverImages || {}), "welcome-banner@mock": mockBannerImage() };
   server.channels[0].banner = "welcome-banner@mock";
@@ -157,6 +157,11 @@ function mockSeed() {
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
     { id: "x4", channel: c0, author_id: "m2", author_name: "nova",
       content: "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43), created_at: new Date(Date.now() - 60e3).toISOString(), edited: false, attachments: [] },
+  ];
+  mock.messages[server.channels[1].id] = [
+    { id: "g1", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
+      content: "clutch round from last night", created_at: new Date(Date.now() - 900e3).toISOString(), edited: false,
+      attachments: [{ filename: "clutch-round.mp4", size_bytes: 18400000, is_image: false, mime: "video/mp4", blob: "clip@mock", provider: null }] },
   ];
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
@@ -668,6 +673,7 @@ async function mockInvoke(cmd, args = {}) {
     case "attach_file":
     case "download_attachment":
     case "note_user_activity": return null;
+    case "get_attachment_video": throw "this feature needs the desktop app";
     case "get_attachment_preview":
       if (mock.avatars && mock.avatars[args.blob]) return mock.avatars[args.blob];
       throw "this feature needs the desktop app";
@@ -731,6 +737,9 @@ const ICONS = {
   pin: "M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z",
   pinOff: "M3.3 2 2 3.3l5.6 5.6V9c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7h1.17l6.96 6.96 1.3-1.3zM16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.44 0-.8.28-.94.67L16.7 13.3c.66-.78 1.76-1.3 2.3-1.3v-2c-1.66 0-3-1.34-3-3z",
   megaphone: "M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1v4h2v-4h1l5 3V6L8 9H4zm11.5 3c0-1.33-.58-2.53-1.5-3.35v6.69c.92-.81 1.5-2.01 1.5-3.34z",
+  uploadFile: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z",
+  movie: "M4 6.47 5.76 10H20v8H4V6.47M22 4h-4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2z",
+  gifBox: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H5V5h14zM9.5 13v-1h1v1a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1h-2v2zm3 1h-1v-4h1zm4-3h-2v.5H16v1h-1.5V14h-1v-4h3z",
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
 };
 
@@ -2099,7 +2108,7 @@ function placePopup(popup, anchor, prefer = "above") {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "member-card", "invite-menu", "audio-pop", "fp-menu"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -2700,6 +2709,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   for (const att of message.attachments || []) {
     body.appendChild(renderAttachment(att));
     if (att.is_image) body.appendChild(renderInlineImage(att));
+    else if (playsInline(att)) body.appendChild(renderInlineVideo(att));
   }
   const pills = reactionPills(message);
   if (pills) body.appendChild(pills);
@@ -3292,6 +3302,7 @@ function renderAttachment(att) {
         blob: att.blob,
         filename: att.filename,
         provider: att.provider ?? null,
+        sizeBytes: att.size_bytes ?? null,
       });
       toast(path ? `Saved to ${path}` : "Download cancelled");
     } catch (e) {
@@ -6054,50 +6065,82 @@ function appendTextWithMentions(div, text) {
   if (last < text.length) div.appendChild(document.createTextNode(text.slice(last)));
 }
 
-const mentionPop = { input: null, start: 0, items: [], index: 0 };
+const suggestPop = { input: null, token: null, items: [], index: 0, commandInputs: new Set() };
 
-function mentionQueryAt(input) {
-  const caret = input.selectionStart ?? input.value.length;
-  const before = input.value.slice(0, caret);
-  const m = before.match(/(^|\s)@([^\s@]{0,32})$/);
-  return m ? { start: caret - m[2].length - 1, query: m[2].toLowerCase() } : null;
-}
-
-function updateMentionPop(input) {
-  const found = mentionQueryAt(input);
-  const pop = $("mention-pop");
-  if (!found) {
-    closeMentionPop();
-    return;
-  }
-  const items = mentionCandidates()
-    .filter(c => c.name && c.name.toLowerCase().includes(found.query))
+function mentionSuggestions(query) {
+  return mentionCandidates()
+    .filter(c => c.name && c.name.toLowerCase().includes(query))
     .sort((a, b) => {
-      const ap = a.name.toLowerCase().startsWith(found.query) ? 0 : 1;
-      const bp = b.name.toLowerCase().startsWith(found.query) ? 0 : 1;
+      const ap = a.name.toLowerCase().startsWith(query) ? 0 : 1;
+      const bp = b.name.toLowerCase().startsWith(query) ? 0 : 1;
       return ap - bp || (a.special ? 1 : 0) - (b.special ? 1 : 0) || a.name.localeCompare(b.name);
     })
-    .slice(0, 8);
+    .slice(0, SUGGEST_LIMIT)
+    .map(c => ({ ...c, kind: "mention" }));
+}
+
+function emojiGroupsHere() {
+  const { local, external } = usableCustomEmojis();
+  return [local, ...external].filter(Boolean);
+}
+
+function suggestionsFor(token, input) {
+  if (token.kind === "mention") return mentionSuggestions(token.query);
+  if (token.kind === "emoji") return emojiSuggestions(token.query, emojiGroupsHere(), EMOJI_DATA);
+  if (token.kind === "command" && suggestPop.commandInputs.has(input)) {
+    return commandSuggestions(token, { gifs: Boolean(gifSettings().key) || serverHasGifs() });
+  }
+  return [];
+}
+
+function suggestHeading(token) {
+  if (token.kind === "command") return "Commands";
+  if (token.kind === "emoji") return `Emoji matching :${token.query}`;
+  return token.query ? `Members matching @${token.query}` : "Members";
+}
+
+function commandHint(item) {
+  if (!item.available) return "GIF search is not set up";
+  return item.args ? "Search GIFs" : "Search for a GIF";
+}
+
+function suggestionRow(item) {
+  const row = el("button", "mention-row");
+  if (item.kind === "custom") {
+    const glyph = el("span", "suggest-glyph");
+    glyph.appendChild(customEmojiImg(item.name, item.image));
+    row.append(glyph, el("span", "mention-name", `:${item.name}:`), el("span", "mention-hint", item.server));
+  } else if (item.kind === "standard") {
+    row.append(el("span", "suggest-glyph", item.emoji), el("span", "mention-name", item.name));
+  } else if (item.kind === "command") {
+    row.append(el("span", "mention-at", "/"), el("span", "mention-name", `/${item.name}`));
+    if (item.args) row.appendChild(el("span", "suggest-args", item.args));
+    row.appendChild(el("span", "mention-hint", commandHint(item)));
+  } else if (item.special) {
+    row.append(el("span", "mention-at", "@"), el("span", "mention-name", `@${item.name}`), el("span", "mention-hint", item.special));
+  } else {
+    row.append(makeAvatar(item.id, item.name, "avatar avatar-sm"), el("span", "mention-name", item.name));
+  }
+  return row;
+}
+
+function updateSuggestPop(input) {
+  const token = suggestTokenAt(input.value, input.selectionStart);
+  const items = token ? suggestionsFor(token, input) : [];
   if (!items.length) {
-    closeMentionPop();
+    closeSuggestPop();
     return;
   }
-  Object.assign(mentionPop, { input, start: found.start, items, index: Math.min(mentionPop.index, items.length - 1) });
-  if (pop.classList.contains("hidden")) mentionPop.index = 0;
-  pop.replaceChildren(el("div", "mention-head", found.query ? `Members matching @${found.query}` : "Members"));
+  const pop = $("mention-pop");
+  const sameList = !pop.classList.contains("hidden") && suggestPop.input === input && suggestPop.token && suggestPop.token.kind === token.kind;
+  Object.assign(suggestPop, { input, token, items, index: sameList ? Math.min(suggestPop.index, items.length - 1) : 0 });
+  pop.replaceChildren(el("div", "mention-head", suggestHeading(token)));
   items.forEach((item, i) => {
-    const row = el("button", "mention-row" + (i === mentionPop.index ? " active" : ""));
-    if (item.special) {
-      row.appendChild(el("span", "mention-at", "@"));
-      row.appendChild(el("span", "mention-name", `@${item.name}`));
-      row.appendChild(el("span", "mention-hint", item.special));
-    } else {
-      row.appendChild(makeAvatar(item.id, item.name, "avatar avatar-sm"));
-      row.appendChild(el("span", "mention-name", item.name));
-    }
+    const row = suggestionRow(item);
+    row.classList.toggle("active", i === suggestPop.index);
     row.onmousedown = e => {
       e.preventDefault();
-      pickMention(i);
+      pickSuggestion(i);
     };
     pop.appendChild(row);
   });
@@ -6106,49 +6149,63 @@ function updateMentionPop(input) {
   pop.style.width = `${Math.min(r.width, 420)}px`;
   pop.style.bottom = `${window.innerHeight - r.top + 6}px`;
   pop.classList.remove("hidden");
+  pop.querySelector(".mention-row.active")?.scrollIntoView({ block: "nearest" });
 }
 
-function closeMentionPop() {
+function closeSuggestPop() {
   $("mention-pop").classList.add("hidden");
-  mentionPop.items = [];
+  suggestPop.items = [];
+  suggestPop.token = null;
 }
 
-function pickMention(i) {
-  const item = mentionPop.items[i];
-  const input = mentionPop.input;
+function runComposerCommand(input, item) {
+  input.value = "";
+  closeSuggestPop();
+  if (item.name === "gif") openGifPicker(item.args);
+}
+
+function pickSuggestion(i) {
+  const item = suggestPop.items[i];
+  const input = suggestPop.input;
   if (!item || !input) return;
+  if (item.kind === "command" && item.ready) {
+    runComposerCommand(input, item);
+    return;
+  }
   const caret = input.selectionStart ?? input.value.length;
-  const insert = `@${item.name} `;
-  input.value = input.value.slice(0, mentionPop.start) + insert + input.value.slice(caret);
-  const pos = mentionPop.start + insert.length;
+  const insert = suggestionInsert(item);
+  const start = suggestPop.token.start;
+  input.value = input.value.slice(0, start) + insert + input.value.slice(caret);
+  const pos = start + insert.length;
   input.setSelectionRange(pos, pos);
   input.focus();
-  closeMentionPop();
+  updateSuggestPop(input);
 }
 
-function mentionTypedInFull(input) {
-  const found = mentionQueryAt(input);
-  const item = mentionPop.items[mentionPop.index];
-  return !!(found && item && item.name.toLowerCase() === found.query);
+function mentionTypedInFull() {
+  const { token, items, index } = suggestPop;
+  const item = items[index];
+  return !!(token && token.kind === "mention" && item && item.name.toLowerCase() === token.query);
 }
 
-function wireMentions(input) {
-  input.addEventListener("input", () => updateMentionPop(input));
-  input.addEventListener("click", () => updateMentionPop(input));
-  input.addEventListener("blur", () => setTimeout(closeMentionPop, 100));
+function wireSuggestions(input, { commands = false } = {}) {
+  if (commands) suggestPop.commandInputs.add(input);
+  input.addEventListener("input", () => updateSuggestPop(input));
+  input.addEventListener("click", () => updateSuggestPop(input));
+  input.addEventListener("blur", () => setTimeout(closeSuggestPop, 100));
   input.addEventListener("keydown", e => {
-    if ($("mention-pop").classList.contains("hidden") || mentionPop.input !== input) return;
-    const n = mentionPop.items.length;
+    if ($("mention-pop").classList.contains("hidden") || suggestPop.input !== input) return;
+    const n = suggestPop.items.length;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      mentionPop.index = (mentionPop.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
-      updateMentionPop(input);
-    } else if (e.key === "Enter" && mentionTypedInFull(input)) {
-      closeMentionPop();
+      suggestPop.index = (suggestPop.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+      updateSuggestPop(input);
+    } else if (e.key === "Enter" && mentionTypedInFull()) {
+      closeSuggestPop();
       return;
     } else if (e.key === "Enter" || e.key === "Tab") {
-      pickMention(mentionPop.index);
+      pickSuggestion(suggestPop.index);
     } else if (e.key === "Escape") {
-      closeMentionPop();
+      closeSuggestPop();
     } else {
       return;
     }
@@ -6305,6 +6362,7 @@ function renderInlineImage(att) {
       blob: att.blob,
       provider: att.provider ?? null,
       mime: att.mime,
+      sizeBytes: att.size_bytes ?? null,
     })
       .then(dataUrl => {
         imagePreviewCache.set(att.blob, dataUrl);
@@ -6313,6 +6371,50 @@ function renderInlineImage(att) {
       .catch(() => img.remove());
   }
   return img;
+}
+
+const videoUrls = new Map();
+
+function videoPlayer(url) {
+  const video = el("video", "chat-video-player");
+  video.src = url;
+  video.controls = true;
+  video.preload = "metadata";
+  video.playsInline = true;
+  return video;
+}
+
+function renderInlineVideo(att) {
+  const box = el("div", "chat-video");
+  const cached = videoUrls.get(att.blob);
+  if (cached) {
+    box.appendChild(videoPlayer(cached));
+    return box;
+  }
+  const play = el("button", "chat-video-play");
+  play.type = "button";
+  play.title = "Play Video";
+  play.appendChild(svgIcon("play", 30));
+  const label = el("span", "chat-video-label", `Video, ${formatSize(att.size_bytes)}`);
+  box.append(play, label);
+  play.onclick = async () => {
+    play.disabled = true;
+    box.classList.add("loading");
+    label.textContent = "Loading video";
+    try {
+      const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null });
+      const url = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
+      videoUrls.set(att.blob, url);
+      const player = videoPlayer(url);
+      box.replaceChildren(player);
+      player.play().catch(() => {});
+    } catch (e) {
+      play.disabled = false;
+      box.classList.remove("loading");
+      label.textContent = `Could not load the video: ${e}`;
+    }
+  };
+  return box;
 }
 
 function renderShareButton() {
@@ -6880,16 +6982,16 @@ async function selectChannel(channel) {
 }
 
 async function sendMessage() {
-  if (state.view === "dm") return sendDm();
   const input = $("message-input");
-  const content = input.value.trim();
-  if (!content || !state.currentServer || !state.currentChannel) return;
-  const gif = content.match(/^\/gif(?:\s+(.*))?$/i);
+  const gif = input.value.trim().match(/^\/gif(?:\s+(.*))?$/i);
   if (gif) {
     input.value = "";
     openGifPicker(gif[1] || "");
     return;
   }
+  if (state.view === "dm") return sendDm();
+  const content = input.value.trim();
+  if (!content || !state.currentServer || !state.currentChannel) return;
   input.value = "";
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
   $("messages").dataset.view = "";
@@ -7054,6 +7156,33 @@ function openGifPicker(query = "", target = null) {
   $("gif-search").value = query;
   $("gif-search").focus();
   renderGifResults(query);
+}
+
+function toggleComposerMenu() {
+  const menu = $("composer-menu");
+  if (!menu.classList.contains("hidden")) {
+    menu.classList.add("hidden");
+    return;
+  }
+  closeFloating("composer-menu");
+  closeGifPicker();
+  $("cm-gif").classList.toggle("hidden", !gifSettings().key && !serverHasGifs());
+  placePopup(menu, $("attach-btn"), "above");
+}
+
+async function attachFromMenu(kind) {
+  closeFloating();
+  if (!state.currentServer || !state.currentChannel) return;
+  try {
+    const sent = await invoke("attach_file", {
+      serverId: state.currentServer.id,
+      channelId: state.currentChannel.id,
+      kind,
+    });
+    if (sent) await selectChannel(state.currentChannel);
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function closeGifPicker() {
@@ -7861,17 +7990,15 @@ function wireEvents() {
     openUserSettings("voice");
   };
 
-  $("attach-btn").onclick = async () => {
-    if (!state.currentServer || !state.currentChannel) return;
-    try {
-      const sent = await invoke("attach_file", {
-        serverId: state.currentServer.id,
-        channelId: state.currentChannel.id,
-      });
-      if (sent) await selectChannel(state.currentChannel);
-    } catch (e) {
-      toast(String(e));
-    }
+  $("attach-btn").onclick = toggleComposerMenu;
+  $("cm-file").prepend(svgIcon("uploadFile", 18));
+  $("cm-video").prepend(svgIcon("movie", 18));
+  $("cm-gif").prepend(svgIcon("gifBox", 18));
+  $("cm-file").onclick = () => attachFromMenu("file");
+  $("cm-video").onclick = () => attachFromMenu("video");
+  $("cm-gif").onclick = () => {
+    closeFloating();
+    openGifPicker("");
   };
   $("share-btn").onclick = toggleShare;
   $("video-close").onclick = closeStageButton;
@@ -7975,7 +8102,7 @@ function wireEvents() {
   };
 
   $("mc-emoji").replaceChildren(svgIcon("smile", 20));
-  wireMentions($("mc-input"));
+  wireSuggestions($("mc-input"));
   $("mc-input").addEventListener("keydown", async e => {
     if (e.key !== "Enter" || e.shiftKey) return;
     e.preventDefault();
@@ -8105,9 +8232,9 @@ function wireEvents() {
   };
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "composer-menu"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
-    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn")) return;
+    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #attach-btn")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
   });
@@ -8378,8 +8505,8 @@ function wireEvents() {
   $("input-device").addEventListener("change", saveAudioDevices);
   $("output-device").addEventListener("change", saveAudioDevices);
 
-  wireMentions($("message-input"));
-  wireMentions($("thread-input"));
+  wireSuggestions($("message-input"), { commands: true });
+  wireSuggestions($("thread-input"));
 
   $("delete-message-go").onclick = () => pendingDelete && deleteMessage(pendingDelete);
   $("delete-message-cancel").onclick = hideModals;

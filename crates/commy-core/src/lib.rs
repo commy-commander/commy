@@ -1,3 +1,4 @@
+pub mod action;
 pub mod catchup;
 pub mod dm;
 pub mod doorbell;
@@ -13,6 +14,7 @@ pub mod user;
 #[cfg(test)]
 mod test_support;
 
+pub use action::{Action, SignedEvent};
 pub use catchup::{BucketDigest, BucketKey};
 pub use dm::{DmMessage, DmStore};
 pub use event::ServerEvent;

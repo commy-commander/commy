@@ -227,10 +227,12 @@ pub struct Sender {
     pub blocked: bool,
     pub accepted: bool,
     pub shares_server: bool,
+    pub node: [u8; 32],
 }
 
 const RATE_WINDOW_SECS: i64 = 60;
 const RATE_LIMIT: usize = 5;
+const MAX_TRACKED: usize = 4096;
 const REPEAT_WINDOW_SECS: i64 = 600;
 const REPEAT_LIMIT: usize = 3;
 const LINK_LIMIT: usize = 3;
@@ -238,6 +240,7 @@ const LINK_LIMIT: usize = 3;
 #[derive(Default)]
 pub struct DmFilter {
     recent: HashMap<UserId, VecDeque<(i64, u64)>>,
+    recent_nodes: HashMap<[u8; 32], VecDeque<i64>>,
 }
 
 fn content_hash(content: &str) -> u64 {
@@ -281,6 +284,20 @@ impl DmFilter {
             DmPolicy::ServerMembers if !sender.shares_server => return Verdict::Drop,
             _ => {}
         }
+        if self.recent_nodes.len() >= MAX_TRACKED {
+            self.recent_nodes.retain(|_, h| h.back().is_some_and(|t| now - t <= RATE_WINDOW_SECS));
+        }
+        if self.recent.len() >= MAX_TRACKED {
+            self.recent.retain(|_, h| h.back().is_some_and(|(t, _)| now - t <= REPEAT_WINDOW_SECS));
+        }
+        let by_node = self.recent_nodes.entry(sender.node).or_default();
+        while by_node.front().is_some_and(|t| now - t > RATE_WINDOW_SECS) {
+            by_node.pop_front();
+        }
+        if by_node.len() >= RATE_LIMIT {
+            return Verdict::Drop;
+        }
+        by_node.push_back(now);
         let history = self.recent.entry(from).or_default();
         while history.front().is_some_and(|(t, _)| now - t > REPEAT_WINDOW_SECS) {
             history.pop_front();
@@ -304,16 +321,41 @@ mod tests {
     use super::*;
 
     fn stranger() -> Sender {
-        Sender { blocked: false, accepted: false, shares_server: true }
+        Sender { blocked: false, accepted: false, shares_server: true, node: [7; 32] }
+    }
+
+    #[test]
+    fn one_node_is_rate_limited_whatever_ids_it_sends_as() {
+        let mut f = DmFilter::default();
+        for i in 0..RATE_LIMIT {
+            assert_eq!(f.classify(DmPolicy::Everyone, false, &stranger(), UserId::new(), &format!("m{i}"), i as i64), Verdict::Request);
+        }
+        assert_eq!(f.classify(DmPolicy::Everyone, false, &stranger(), UserId::new(), "again", 10), Verdict::Drop);
+        let other = Sender { node: [8; 32], ..stranger() };
+        assert_eq!(f.classify(DmPolicy::Everyone, false, &other, UserId::new(), "hello", 10), Verdict::Request);
+        assert_eq!(f.classify(DmPolicy::Everyone, false, &stranger(), UserId::new(), "later", 100), Verdict::Request);
+        let friend = Sender { accepted: true, ..stranger() };
+        assert_eq!(f.classify(DmPolicy::Everyone, false, &friend, UserId::new(), "hi", 100), Verdict::Inbox);
+    }
+
+    #[test]
+    fn tracked_senders_stay_bounded() {
+        let mut f = DmFilter::default();
+        for i in 0..(MAX_TRACKED + 10) {
+            let node = Sender { node: [(i % 251) as u8; 32], ..stranger() };
+            f.classify(DmPolicy::Everyone, false, &node, UserId::new(), "x", i as i64 * 1000);
+        }
+        assert!(f.recent.len() <= MAX_TRACKED + 1);
+        assert!(f.recent_nodes.len() <= MAX_TRACKED + 1);
     }
 
     #[test]
     fn blocked_is_dropped_accepted_goes_to_inbox() {
         let mut f = DmFilter::default();
         let u = UserId::new();
-        let blocked = Sender { blocked: true, accepted: true, shares_server: true };
+        let blocked = Sender { blocked: true, accepted: true, shares_server: true, node: [7; 32] };
         assert_eq!(f.classify(DmPolicy::Everyone, true, &blocked, u, "hi", 0), Verdict::Drop);
-        let friend = Sender { blocked: false, accepted: true, shares_server: false };
+        let friend = Sender { blocked: false, accepted: true, shares_server: false, node: [7; 32] };
         assert_eq!(f.classify(DmPolicy::Accepted, true, &friend, u, "hi", 0), Verdict::Inbox);
     }
 
@@ -323,7 +365,7 @@ mod tests {
         let u = UserId::new();
         assert_eq!(f.classify(DmPolicy::Everyone, true, &stranger(), u, "hi", 0), Verdict::Request);
         assert_eq!(f.classify(DmPolicy::Accepted, true, &stranger(), u, "hi", 0), Verdict::Drop);
-        let outsider = Sender { blocked: false, accepted: false, shares_server: false };
+        let outsider = Sender { blocked: false, accepted: false, shares_server: false, node: [7; 32] };
         assert_eq!(f.classify(DmPolicy::ServerMembers, true, &outsider, u, "hi", 0), Verdict::Drop);
         assert_eq!(f.classify(DmPolicy::ServerMembers, true, &stranger(), u, "yo", 0), Verdict::Request);
     }

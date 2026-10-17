@@ -3,11 +3,11 @@ use crate::safety::{self, FriendSignal};
 use crate::state::App;
 use commy_core::catchup::{day_number, first_day};
 use commy_core::{
-    Identity, IdentityKey, Message, MessageId, Presence, ServerEvent, ServerId, ServerState, TombstoneProof, UserId,
-    UserProfile,
+    DmStore, Identity, IdentityKey, Message, MessageId, Presence, ServerEvent, ServerId, ServerState, TombstoneProof,
+    UserId, UserProfile,
 };
 use commy_net::node::IncomingDm;
-use commy_net::{DmEnvelope, WirePayload};
+use commy_net::DmEnvelope;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -303,6 +303,12 @@ pub fn screen_dm(app: &App, dm: &IncomingDm) -> Option<UserProfile> {
     Some(sender)
 }
 
+pub const MAX_STRANGER_REQUESTS: usize = 50;
+
+pub fn open_stranger_requests(dms: &DmStore, me: UserId, known: impl Fn(UserId) -> bool) -> usize {
+    dms.partners().into_iter().filter(|partner| !dms.has_sent_to(me, *partner) && !known(*partner)).count()
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Received {
     Dropped,
@@ -340,18 +346,14 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
     }
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return Received::Dropped };
     let verdict = {
-        let shares_server = app
-            .servers
-            .lock()
-            .unwrap()
-            .values()
-            .any(|s| s.server.members.iter().any(|m| m.user == partner));
+        let shares_server = app.servers.lock().unwrap().values().any(|s| s.server.is_member(partner));
         let already_talking = app.dms.lock().unwrap().has_sent_to(me, partner);
         let safety = app.safety.lock().unwrap();
         let from = safety::Sender {
             blocked: safety.is_blocked(partner),
             accepted: already_talking || safety.accepted.contains(&partner) || safety.friends.contains(&partner),
             shares_server,
+            node: dm.node,
         };
         app.dm_filter.lock().unwrap().classify(
             safety.dm_policy,
@@ -366,8 +368,28 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         tracing::debug!("dropped a DM from {partner}");
         return Received::Dropped;
     }
-    if verdict == safety::Verdict::Spam && app.safety.lock().unwrap().spam.insert(partner) {
-        app.persist_safety();
+    if verdict == safety::Verdict::Spam {
+        if app.safety.lock().unwrap().spam.insert(partner) {
+            app.persist_safety();
+        }
+        tracing::debug!("dropped a DM from {partner} that looked like spam");
+        return Received::Dropped;
+    }
+    if verdict == safety::Verdict::Request {
+        let known: HashSet<UserId> = {
+            let safety = app.safety.lock().unwrap();
+            let servers = app.servers.lock().unwrap();
+            let members = servers.values().flat_map(|s| s.server.members.iter().map(|m| m.user));
+            safety.accepted.iter().chain(safety.friends.iter()).copied().chain(members).collect()
+        };
+        let (open, already_open) = {
+            let dms = app.dms.lock().unwrap();
+            (open_stranger_requests(&dms, me, |user| known.contains(&user)), !dms.conversation(partner).is_empty())
+        };
+        if !known.contains(&partner) && !already_open && open >= MAX_STRANGER_REQUESTS {
+            tracing::debug!("dropped a DM from {partner}: too many requests from people we do not know");
+            return Received::Dropped;
+        }
     }
     let notice = serde_json::json!({
         "user": partner.to_string(),
@@ -390,52 +412,12 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
 }
 
 pub fn needs_settled_key(event: &ServerEvent, me: Option<UserId>) -> bool {
-    use ServerEvent as E;
     match event {
-        E::MessageCreate { .. } | E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
-        E::MemberJoin { profile, .. } | E::ProfileUpdate { profile } => me.is_none_or(|me| me == profile.id),
-        E::ReactionToggle { .. }
-        | E::MemberLeave { .. }
-        | E::PresenceUpdate { .. }
-        | E::ChannelCreate { .. }
-        | E::ChannelDelete { .. }
-        | E::VoiceState { .. }
-        | E::TypingStart { .. }
-        | E::ScreenShare { .. }
-        | E::ServerRename { .. }
-        | E::RoleCreate { .. }
-        | E::RoleDelete { .. }
-        | E::RoleAssign { .. }
-        | E::RoleUnassign { .. }
-        | E::AfkChannelSet { .. }
-        | E::ChannelUpdate { .. }
-        | E::CameraState { .. }
-        | E::ServerImages { .. }
-        | E::ReactionSet { .. }
-        | E::EmojiAdd { .. }
-        | E::EmojiRemove { .. }
-        | E::SoundAdd { .. }
-        | E::SoundRemove { .. }
-        | E::ExpressionSettings { .. }
-        | E::PublicSet { .. }
-        | E::SoundboardPlay { .. }
-        | E::GameTagsSet { .. }
-        | E::RulesSet { .. }
-        | E::RulesAccept { .. }
-        | E::EventUpsert { .. }
-        | E::EventDelete { .. }
-        | E::EventRsvp { .. }
-        | E::ChannelLayout { .. }
-        | E::ChannelLimit { .. }
-        | E::ChannelBanner { .. }
-        | E::ChannelColor { .. }
-        | E::MessagePin { .. }
-        | E::ChannelKindSet { .. }
-        | E::RoleUpdate { .. }
-        | E::VoiceModerate { .. }
-        | E::MemberBan { .. }
-        | E::MemberUnban { .. }
-        | E::AfkTimeoutSet { .. } => false,
+        ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } => {
+            me.is_none_or(|me| me == profile.id)
+        }
+        ServerEvent::PresenceUpdate { .. } => false,
+        event => !is_transient(event) || !commy_core::action::may_go_unsigned(event),
     }
 }
 
@@ -457,7 +439,7 @@ pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) ->
         let net = app.net.lock().await;
         match net.as_ref() {
             Some(node) if may_send(app, node.neighbor_count(server), &event) => {
-                match node.broadcast(server, WirePayload::Event(event.clone())).await {
+                match node.broadcast(server, app.wire_for(server, event.clone())).await {
                     Ok(()) => true,
                     Err(e) => {
                         tracing::warn!("broadcast failed, keeping it for later: {e}");
@@ -489,7 +471,7 @@ pub async fn flush_queued(app: &App, server: ServerId) {
             let net = app.net.lock().await;
             match net.as_ref() {
                 Some(node) if may_send(app, node.neighbor_count(server), event) => {
-                    node.broadcast(server, WirePayload::Event(event.clone())).await
+                    node.broadcast(server, app.wire_for(server, event.clone())).await
                 }
                 Some(_) => Err(anyhow::anyhow!("no neighbor is connected")),
                 None => Err(anyhow::anyhow!("network is not ready")),
@@ -1228,6 +1210,50 @@ mod tests {
     }
 
     #[test]
+    fn requests_from_strangers_are_capped_and_spam_is_not_kept() {
+        let me = UserProfile::new("me");
+        let app = Arc::new(app_as(&me));
+        let handle = TestHandle::new(app.clone());
+        let (first, identity_first) = sender_on(OTHER_NODE);
+        let opener = dm_from(&first, &identity_first, me.id, "hi there", OTHER_NODE, OTHER_NODE);
+        assert_eq!(receive_dm(&handle, opener), Received::Taken);
+        for _ in 1..MAX_STRANGER_REQUESTS {
+            let stranger = UserId::new();
+            app.dms.lock().unwrap().insert(stranger, DmMessage::new(stranger, me.id, "hey"));
+        }
+        let (sender, identity) = sender_on(SENDER_NODE);
+        let dm = dm_from(&sender, &identity, me.id, "one more", SENDER_NODE, SENDER_NODE);
+        assert_eq!(receive_dm(&handle, dm.clone()), Received::Dropped);
+        assert!(app.dms.lock().unwrap().conversation(sender.id).is_empty());
+        let follow_up = dm_from(&first, &identity_first, me.id, "still there?", OTHER_NODE, OTHER_NODE);
+        assert_eq!(receive_dm(&handle, follow_up), Received::Taken, "a request already open may continue");
+        assert_eq!(app.dms.lock().unwrap().conversation(first.id).len(), 2);
+        app.safety.lock().unwrap().accepted.insert(sender.id);
+        assert_eq!(receive_dm(&handle, dm), Received::Taken);
+        app.safety.lock().unwrap().accepted.remove(&sender.id);
+        let (spammer, identity) = sender_on([9; 32]);
+        let links = "https://a.example https://b.example https://c.example";
+        let spam = dm_from(&spammer, &identity, me.id, links, [9; 32], [9; 32]);
+        assert_eq!(receive_dm(&handle, spam), Received::Dropped);
+        assert!(app.dms.lock().unwrap().conversation(spammer.id).is_empty());
+        assert!(app.safety.lock().unwrap().spam.contains(&spammer.id));
+    }
+
+    #[test]
+    fn open_requests_count_only_people_we_never_answered_or_know() {
+        let me = UserId::new();
+        let mut dms = DmStore::new();
+        let (a, b, c) = (UserId::new(), UserId::new(), UserId::new());
+        for stranger in [a, b, c] {
+            dms.insert(stranger, DmMessage::new(stranger, me, "hi"));
+        }
+        assert_eq!(open_stranger_requests(&dms, me, |_| false), 3);
+        dms.insert(a, DmMessage::new(me, a, "hello back"));
+        assert_eq!(open_stranger_requests(&dms, me, |_| false), 2);
+        assert_eq!(open_stranger_requests(&dms, me, |u| u == b), 1);
+    }
+
+    #[test]
     fn incoming_messages_are_stored_once_with_their_node() {
         let me = UserProfile::new("me");
         let app = Arc::new(app_as(&me));
@@ -1277,7 +1303,7 @@ mod tests {
         assert_eq!(app.outbox.lock().unwrap().clone().take_queued(sid), vec![rename(sid, "offline")]);
 
         let (mut node, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(30), node.host_server(sid, "s")).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(30), node.host_server(sid, "s", None)).await.unwrap().unwrap();
         *app.net.lock().await = Some(node);
         flush_queued(&app, sid).await;
         assert_eq!(app.outbox.lock().unwrap().clone().take_queued(sid), vec![rename(sid, "offline")]);
@@ -1450,8 +1476,6 @@ mod tests {
             TombstoneProof::sign(sid, channel, message.id, me.id, chrono::Utc::now(), identity).into_event(),
             ServerEvent::MemberJoin { server: sid, profile: me.clone() },
             ServerEvent::ProfileUpdate { profile: me.clone() },
-        ];
-        let unsigned = vec![
             rename(sid, "renamed"),
             ServerEvent::MemberLeave { server: sid, user: other },
             ServerEvent::MemberBan { server: sid, user: other },
@@ -1462,9 +1486,11 @@ mod tests {
             ServerEvent::ChannelDelete { server: sid, channel },
             ServerEvent::ChannelUpdate { server: sid, channel, name: "general".into(), retention_days: Some(7) },
             ServerEvent::ReactionSet { channel, message: message.id, emoji: "x".into(), user: me.id, active: true },
+            ServerEvent::VoiceModerate { server: sid, user: other, muted: true, deafened: false },
+        ];
+        let unsigned = vec![
             ServerEvent::PresenceUpdate { user: me.id, presence: Presence::Idle },
             ServerEvent::ProfileUpdate { profile: UserProfile::new("member") },
-            ServerEvent::VoiceModerate { server: sid, user: other, muted: true, deafened: false },
         ];
         (signed, unsigned)
     }
@@ -1496,7 +1522,7 @@ mod tests {
         let within = Duration::from_secs;
         let (mut a, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
         let (mut b, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
-        let ticket = tokio::time::timeout(within(30), a.host_server(sid, "s")).await.unwrap().unwrap();
+        let ticket = tokio::time::timeout(within(30), a.host_server(sid, "s", None)).await.unwrap().unwrap();
         assert!(tokio::time::timeout(within(60), b.join_server(&ticket)).await.unwrap().unwrap());
         assert!(a.wait_for_peers(sid, within(30)).await);
         (a, b)
@@ -1516,8 +1542,9 @@ mod tests {
         app.outbox.lock().unwrap().clear_delivered(sid, [message.id]);
         let edit = message.edit_event(sid, "held", chrono::Utc::now(), &identity);
         assert!(!broadcast_local(&app, sid, edit.clone()).await);
-        assert!(broadcast_local(&app, sid, rename(sid, "now")).await);
-        app.outbox.lock().unwrap().note_local(sid, &rename(sid, "offline"), false);
+        let presence = |presence| ServerEvent::PresenceUpdate { user: message.author, presence };
+        assert!(broadcast_local(&app, sid, presence(Presence::Idle)).await);
+        app.outbox.lock().unwrap().note_local(sid, &presence(Presence::Online), false);
         flush_queued(&app, sid).await;
         assert_eq!(app.outbox.lock().unwrap().clone().take_queued(sid), vec![edit]);
 

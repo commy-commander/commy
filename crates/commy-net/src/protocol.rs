@@ -1,8 +1,11 @@
-use commy_core::{ServerEvent, ServerState, UserId};
+use commy_core::identity::{Identity, IdentityKey, Signature};
+use commy_core::{ServerEvent, ServerId, ServerState, SignedEvent, UserId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
+
+const SNAPSHOT_DOMAIN: &str = "commy-snapshot/v1";
 
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
@@ -27,11 +30,15 @@ pub enum WirePayload {
         recent_messages: Vec<commy_core::Message>,
         #[serde(default)]
         voice: Vec<SyncVoice>,
+        by: UserId,
+        at: i64,
+        sig: Signature,
     },
     VoiceDial {
         channel: commy_core::ChannelId,
         from_user: commy_core::UserId,
     },
+    Signed(SignedEvent),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -68,6 +75,60 @@ impl From<&commy_core::Member> for SyncMember {
         let joined_ms = m.joined_at.timestamp_millis();
         Self { user: m.user, nickname: m.nickname.clone(), roles: m.roles.clone(), joined_ms }
     }
+}
+
+#[derive(Serialize)]
+struct SnapshotBytes<'a> {
+    domain: &'static str,
+    server_id: ServerId,
+    by: UserId,
+    at: i64,
+    server: &'a commy_core::Server,
+    members: &'a [SyncMember],
+    profiles: &'a [commy_core::UserProfile],
+    recent_messages: &'a [commy_core::Message],
+    voice: &'a [SyncVoice],
+}
+
+fn snapshot_bytes(payload: &WirePayload) -> Option<Vec<u8>> {
+    let WirePayload::SyncResponse { server, members, profiles, recent_messages, voice, by, at, .. } = payload else {
+        return None;
+    };
+    let bytes = SnapshotBytes {
+        domain: SNAPSHOT_DOMAIN,
+        server_id: server.id,
+        by: *by,
+        at: *at,
+        server,
+        members,
+        profiles,
+        recent_messages,
+        voice,
+    };
+    postcard::to_stdvec(&bytes).ok()
+}
+
+pub fn sign_sync_response(payload: &mut WirePayload, at: i64, identity: &Identity) {
+    if let WirePayload::SyncResponse { at: slot, .. } = payload {
+        *slot = at;
+    }
+    let Some(bytes) = snapshot_bytes(payload) else { return };
+    if let WirePayload::SyncResponse { sig, .. } = payload {
+        *sig = identity.sign(&bytes);
+    }
+}
+
+pub fn verify_sync_response(payload: &WirePayload, key: &IdentityKey) -> bool {
+    let (Some(bytes), WirePayload::SyncResponse { sig, .. }) = (snapshot_bytes(payload), payload) else {
+        return false;
+    };
+    key.verify(&bytes, sig)
+}
+
+pub fn signed_size(server: ServerId, event: &ServerEvent) -> usize {
+    let by = UserId::new();
+    let signed = SignedEvent::sign(server, by, i64::MAX, event.clone(), &Identity::generate());
+    gossip_size(&WirePayload::Signed(signed))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -136,7 +197,7 @@ fn encoded<T: Serialize>(item: &T) -> usize {
     postcard::to_stdvec(item).map_or(0, |b| b.len())
 }
 
-pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePayload {
+pub fn build_sync_response(state: &ServerState, per_channel: usize, by: UserId) -> WirePayload {
     let mut server = state.server.clone();
     server.emojis.clear();
     server.soundboard.clear();
@@ -178,6 +239,9 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize) -> WirePaylo
         profiles: profiles.to_vec(),
         recent_messages: messages.iter().rev().cloned().collect(),
         voice: voice.clone(),
+        by,
+        at: i64::MAX,
+        sig: Signature([0xff; 64]),
     };
     let mut size = gossip_size(&build(&server, &members, &profiles, &messages));
     let fits = |size: usize| size <= MAX_GOSSIP_BYTES;
@@ -331,7 +395,7 @@ mod tests {
         }
         let WirePayload::SyncResponse {
             recent_messages, ..
-        } = build_sync_response(&state, 50)
+        } = build_sync_response(&state, 50, owner)
         else {
             panic!("wrong payload kind");
         };
@@ -353,7 +417,7 @@ mod tests {
                 .apply(ServerEvent::MessageCreate { message: msg })
                 .unwrap();
         }
-        let payload = build_sync_response(&state, 50);
+        let payload = build_sync_response(&state, 50, owner);
         assert!(gossip_size(&payload) <= MAX_GOSSIP_BYTES);
         let WirePayload::SyncResponse { recent_messages, .. } = payload else { panic!("wrong payload") };
         assert!(!recent_messages.is_empty(), "keeps as many recent messages as fit");
@@ -373,7 +437,7 @@ mod tests {
             profiles,
             recent_messages,
             ..
-        } = build_sync_response(&state, 50)
+        } = build_sync_response(&state, 50, owner)
         else {
             panic!("wrong payload kind");
         };
@@ -492,7 +556,7 @@ mod tests {
     fn large_servers_get_a_snapshot_that_fits() {
         for members in [15, 50, 94, 100, 200] {
             let state = realistic(members);
-            let payload = build_sync_response(&state, 50);
+            let payload = build_sync_response(&state, 50, state.server.owner);
             let size = gossip_size(&payload);
             let (server, kept, profiles, recent) = parts(payload);
             eprintln!("{members} members: {size} bytes, {} members, {} profiles, {} messages", kept.len(), profiles.len(), recent.len());
@@ -515,10 +579,14 @@ mod tests {
             assert!(others.map(|m| joined(m.user)).all(|t| t < first_dropped));
             assert!(recent.is_empty() && profiles.len() == 1, "members go last");
         }
-        let (_, kept, profiles, recent) = parts(build_sync_response(&realistic(50), 50));
+        let snapshot = |n: usize| {
+            let state = realistic(n);
+            build_sync_response(&state, 50, state.server.owner)
+        };
+        let (_, kept, profiles, recent) = parts(snapshot(50));
         assert!(kept.len() == 50 && profiles.len() > 1 && !recent.is_empty());
-        assert_eq!(parts(build_sync_response(&realistic(90), 50)).1.len(), 90);
-        assert!(parts(build_sync_response(&realistic(200), 50)).1.len() > 80);
+        assert_eq!(parts(snapshot(90)).1.len(), 90);
+        assert!(parts(snapshot(200)).1.len() > 80);
     }
 
     #[test]
@@ -530,9 +598,12 @@ mod tests {
             profiles: state.profiles.values().cloned().collect(),
             recent_messages: vec![],
             voice: vec![],
+            by: state.server.owner,
+            at: 0,
+            sig: Signature([0; 64]),
         });
         assert!(all > MAX_GOSSIP_BYTES, "its profiles alone are too many");
-        let (server, members, profiles, recent) = parts(build_sync_response(&state, 50));
+        let (server, members, profiles, recent) = parts(build_sync_response(&state, 50, state.server.owner));
         assert_eq!(members.len(), 15);
         let authors: std::collections::HashSet<UserId> = recent.iter().map(|m| m.author).collect();
         assert!(profiles.iter().all(|p| p.id == state.server.owner || authors.contains(&p.id)));
@@ -548,7 +619,7 @@ mod tests {
         small.apply(ServerEvent::MemberBan { server: small.server.id, user: UserId::new() }).unwrap();
         let message = post(&small, channel, friend, "hi");
         small.apply(ServerEvent::MessageCreate { message }).unwrap();
-        let (server, members, profiles, recent) = parts(build_sync_response(&small, 50));
+        let (server, members, profiles, recent) = parts(build_sync_response(&small, 50, owner));
         assert_eq!((members.len(), profiles.len(), recent.len()), (2, 2, 1));
         assert_eq!((server.icon.as_deref(), server.banned.len()), (Some("icon"), 1));
         assert_eq!(profiles[0].id, owner);
@@ -564,7 +635,7 @@ mod tests {
             state.apply(ServerEvent::ChannelCreate { server: sid, channel }).unwrap();
             state.apply(ServerEvent::ChannelDelete { server: sid, channel: id }).unwrap();
         }
-        let payload = build_sync_response(&state, 50);
+        let payload = build_sync_response(&state, 50, state.server.owner);
         assert!(gossip_size(&payload) <= MAX_GOSSIP_BYTES);
         let (server, members, _, recent) = parts(payload);
         assert!(recent.is_empty() && members.len() < state.server.members.len());
@@ -589,8 +660,57 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_is_bumped_for_signed_events() {
-        assert_eq!(PROTOCOL_VERSION, 3);
+    fn protocol_version_is_bumped_for_signed_actions() {
+        assert_eq!(PROTOCOL_VERSION, 4);
+    }
+
+    #[test]
+    fn a_snapshot_is_signed_by_whoever_serves_it() {
+        let (mut state, channel, owner) = fixture();
+        let friend = join(&mut state, "friend");
+        let message = post(&state, channel, friend, "hi");
+        state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        let identity = crate::test_support::identity_for(owner);
+        let mut payload = build_sync_response(&state, 50, owner);
+        assert!(!verify_sync_response(&payload, &identity.public()), "unsigned yet");
+        sign_sync_response(&mut payload, 1_234, &identity);
+        assert!(verify_sync_response(&payload, &identity.public()));
+        assert!(gossip_size(&payload) <= MAX_GOSSIP_BYTES);
+        let bytes = Envelope::new([1; 32], payload.clone()).encode().unwrap();
+        let back = Envelope::decode(&bytes).unwrap().payload;
+        assert!(verify_sync_response(&back, &identity.public()), "verifies as decoded");
+        assert!(!verify_sync_response(&back, &crate::test_support::identity_for(friend).public()));
+        let WirePayload::SyncResponse { at, by, .. } = &back else { panic!("not a snapshot") };
+        assert_eq!((*at, *by), (1_234, owner));
+        let mut tampered = back.clone();
+        if let WirePayload::SyncResponse { server, .. } = &mut tampered {
+            server.owner = friend;
+        }
+        assert!(!verify_sync_response(&tampered, &identity.public()));
+        let mut tampered = back.clone();
+        if let WirePayload::SyncResponse { members, .. } = &mut tampered {
+            members[0].roles.push(commy_core::RoleId::new());
+        }
+        assert!(!verify_sync_response(&tampered, &identity.public()));
+        let mut tampered = back;
+        if let WirePayload::SyncResponse { profiles, .. } = &mut tampered {
+            profiles[0].node = Some("00".repeat(32));
+        }
+        assert!(!verify_sync_response(&tampered, &identity.public()));
+    }
+
+    #[test]
+    fn signed_events_fit_the_frame_with_room_to_spare() {
+        let (state, _, owner) = fixture();
+        let sid = state.server.id;
+        let rules = ServerEvent::RulesSet { server: sid, rules: Some("r".repeat(commy_core::server::MAX_RULES_BYTES)) };
+        assert!(signed_size(sid, &rules) <= MAX_GOSSIP_BYTES);
+        let identity = crate::test_support::identity_for(owner);
+        let signed = SignedEvent::sign(sid, owner, 1, rules, &identity);
+        let bytes = Envelope::new([1; 32], WirePayload::Signed(signed.clone())).encode().unwrap();
+        let WirePayload::Signed(back) = Envelope::decode(&bytes).unwrap().payload else { panic!("not signed") };
+        assert_eq!(back, signed);
+        assert!(back.verify(sid, &identity.public()));
     }
 
     #[test]
@@ -603,7 +723,7 @@ mod tests {
             server.soundboard.push(SoundboardSound { name: format!("s{i}"), blob: "a@b".into(), volume: 1.0, emoji: None });
         }
         let state = ServerState::new(server);
-        let payload = build_sync_response(&state, 50);
+        let payload = build_sync_response(&state, 50, owner);
         assert!(gossip_size(&payload) <= MAX_GOSSIP_BYTES);
         let WirePayload::SyncResponse { server, .. } = payload else { panic!("wrong payload kind") };
         assert!(server.emojis.is_empty() && server.soundboard.is_empty());

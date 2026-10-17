@@ -126,7 +126,10 @@ fn load_key(dir: &Path, server: &str, account: &str) -> Option<SealKey> {
 }
 
 fn save_key(dir: &Path, server: &str, account: &str, key: &SealKey) {
-    write(&dir.join(KEY_FILE), &StoredKey { server: server.into(), account: account.into(), key: key.to_text() });
+    let stored = StoredKey { server: server.into(), account: account.into(), key: key.to_text() };
+    if let Err(e) = crate::persist::write_secret_json(&dir.join(KEY_FILE), &stored) {
+        tracing::warn!("could not save the entry key: {e}");
+    }
 }
 
 pub fn record_join(app: &App, id: ServerId) {

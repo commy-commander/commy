@@ -32,6 +32,7 @@ use view::{
 };
 
 use base64::Engine as _;
+use commy_core::SignedEvent;
 use commy_core::{
     Attachment, Channel, ChannelId, ChannelKind, DmMessage, Identity, Message, MessageId, Permissions,
     Presence, RoleId, ServerEvent, ServerId, ServerState, Signature, StoreError, TombstoneProof, UserId,
@@ -127,7 +128,7 @@ async fn create_server(
     let hosting = async {
         let mut net = app.net.lock().await;
         if let Some(node) = net.as_mut() {
-            match node.host_server(server_id, &name).await {
+            match node.host_server(server_id, &name, app.own_key_for_tickets()).await {
                 Ok(ticket) => {
                     app.invites
                         .lock()
@@ -200,6 +201,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     drop(signing);
 
     app.persist_server(ticket.server_id);
+    doorbell::record_join(app, ticket.server_id);
     handle.emit("servers-changed", serde_json::Value::Null);
     Ok(summary)
 }
@@ -242,12 +244,11 @@ fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView
 fn get_invite(app: tauri::State<App>, server_id: String) -> CmdResult<String> {
     let id = server_id.parse().map_err(err_to_string)?;
     require_invite_permission(&app, id)?;
-    app.invites
-        .lock()
-        .unwrap()
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| "no invite available; you may be offline".into())
+    let ticket = app.vouched_ticket(id).ok_or("no invite available; you may be offline")?;
+    if ticket.owner.is_none() {
+        return Err("your account key is still being confirmed; try again in a moment".into());
+    }
+    Ok(ticket.encode())
 }
 
 #[tauri::command]
@@ -461,6 +462,8 @@ fn may_delete(app: &App, state: &ServerState, channel: ChannelId, message: Messa
     Ok(())
 }
 
+const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
+
 async fn send_attachment(
     app: &tauri::State<'_, App>,
     handle: &tauri::AppHandle,
@@ -469,7 +472,7 @@ async fn send_attachment(
     filename: String,
     bytes: Vec<u8>,
 ) -> CmdResult<MessageView> {
-    if bytes.len() > 512 * 1024 * 1024 {
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
         return Err("files larger than 512 MB are not supported yet".into());
     }
     let profile = current_profile(app)?;
@@ -506,15 +509,18 @@ async fn attach_file(
     handle: tauri::AppHandle,
     server_id: String,
     channel_id: String,
+    kind: Option<String>,
 ) -> CmdResult<Option<MessageView>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
 
-    let Some(picked) = rfd::AsyncFileDialog::new()
-        .set_title("Share a file")
-        .pick_file()
-        .await
-    else {
+    let dialog = match kind.as_deref() {
+        Some("video") => rfd::AsyncFileDialog::new()
+            .set_title("Post a video")
+            .add_filter("Videos", INLINE_VIDEO_EXTENSIONS),
+        _ => rfd::AsyncFileDialog::new().set_title("Share a file"),
+    };
+    let Some(picked) = dialog.pick_file().await else {
         return Ok(None);
     };
     let path = picked.path().to_path_buf();
@@ -523,6 +529,27 @@ async fn attach_file(
     send_attachment(&app, &handle, sid, cid, filename, bytes)
         .await
         .map(Some)
+}
+
+const INLINE_VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov", "webm"];
+const MAX_INLINE_VIDEO_BYTES: usize = 100 * 1024 * 1024;
+
+#[tauri::command]
+async fn get_attachment_video(
+    app: tauri::State<'_, App>,
+    blob: String,
+    provider: Option<String>,
+    size_bytes: Option<u64>,
+) -> CmdResult<tauri::ipc::Response> {
+    let max = MAX_INLINE_VIDEO_BYTES as u64;
+    if size_bytes.is_some_and(|size| size > max) {
+        return Err("video too large to play here".into());
+    }
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
+    if bytes.len() > MAX_INLINE_VIDEO_BYTES {
+        return Err("video too large to play here".into());
+    }
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 const MAX_PICKED_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
@@ -593,11 +620,47 @@ async fn note_user_activity(app: tauri::State<'_, App>, handle: tauri::AppHandle
 
 #[tauri::command]
 fn open_url(url: String) -> CmdResult<()> {
-    let parsed = url.trim();
-    if !(parsed.starts_with("https://") || parsed.starts_with("http://")) {
-        return Err("only http and https links can be opened".into());
+    let target = web_url(&url).ok_or("only http and https links can be opened")?;
+    open::that_detached(target).map_err(err_to_string)
+}
+
+fn web_url(raw: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(raw.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return None;
     }
-    open::that_detached(parsed).map_err(err_to_string)
+    Some(parsed.to_string())
+}
+
+const MAX_FILE_NAME_CHARS: usize = 120;
+
+fn safe_file_name(name: &str) -> String {
+    let last_segment = name.rsplit(['/', '\\']).find(|part| !part.trim().is_empty()).unwrap_or("");
+    let mut cleaned: String = last_segment
+        .chars()
+        .filter(|c| !c.is_control())
+        .map(|c| if matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .collect();
+    cleaned = cleaned.trim().trim_start_matches(['.', ' ']).trim_end_matches(['.', ' ']).to_string();
+    if cleaned.chars().count() > MAX_FILE_NAME_CHARS {
+        let (stem, ext) = match cleaned.rsplit_once('.') {
+            Some((stem, ext)) if ext.len() <= 10 && !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+            _ => (cleaned.clone(), String::new()),
+        };
+        let keep = MAX_FILE_NAME_CHARS.saturating_sub(ext.chars().count()).max(1);
+        cleaned = format!("{}{ext}", stem.chars().take(keep).collect::<String>());
+    }
+    let stem = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.ends_with(|c: char| c.is_ascii_digit()));
+    if reserved {
+        cleaned = format!("_{cleaned}");
+    }
+    if cleaned.is_empty() {
+        "file".to_string()
+    } else {
+        cleaned
+    }
 }
 
 #[tauri::command]
@@ -606,10 +669,14 @@ async fn download_attachment(
     blob: String,
     filename: String,
     provider: Option<String>,
+    size_bytes: Option<u64>,
 ) -> CmdResult<Option<String>> {
-    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
+    if let Some(size) = size_bytes {
+        commy_net::node::check_blob_size(size, MAX_ATTACHMENT_BYTES).map_err(err_to_string)?;
+    }
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), MAX_ATTACHMENT_BYTES).await?;
     let Some(target) = rfd::AsyncFileDialog::new()
-        .set_file_name(&filename)
+        .set_file_name(safe_file_name(&filename))
         .save_file()
         .await
     else {
@@ -671,14 +738,14 @@ async fn leave_voice(
     app.own_preview.lock().unwrap().take();
     let share = app.screen_share.lock().unwrap().take();
     if let Some(share) = share {
-        broadcast(
+        broadcast_event(
             app,
             sid,
-            WirePayload::Event(ServerEvent::ScreenShare {
+            ServerEvent::ScreenShare {
                 user: profile.id,
                 channel: share.channel,
                 active: false,
-            }),
+            },
         )
         .await;
     }
@@ -707,7 +774,7 @@ async fn set_own_voice_state(
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         state.apply(event.clone()).map_err(err_to_string)?;
     }
-    broadcast(app, sid, WirePayload::Event(event)).await;
+    broadcast_event(app, sid, event).await;
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
 }
@@ -907,12 +974,37 @@ fn dial_voice_peer(
     });
 }
 
-async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>) -> CmdResult<Vec<u8>> {
+async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
     let fetcher = {
         let net = app.net.lock().await;
         net.as_ref().ok_or("network is not ready yet")?.blob_fetcher()
     };
-    fetcher.fetch(blob, provider).await.map_err(err_to_string)
+    fetcher.fetch(blob, provider, max).await.map_err(err_to_string)
+}
+
+fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
+    let handle = handle.clone();
+    std::sync::Arc::new(move |peer, hello| {
+        let app = handle.state::<App>();
+        let node_hex = data_encoding::HEXLOWER.encode(&peer);
+        let (user, channel, voice, server) = match *hello {
+            MediaHello::Voice { user, channel } => {
+                let session = app.voice_session.lock().unwrap();
+                (user, channel, true, session.as_ref().filter(|s| s.channel == channel).map(|s| s.server))
+            }
+            MediaHello::ScreenSubscribe { user, channel } => {
+                let share = app.screen_share.lock().unwrap();
+                (user, channel, false, share.as_ref().filter(|s| s.channel == channel).map(|s| s.server))
+            }
+            MediaHello::CameraSubscribe { user, channel } => {
+                let camera = app.camera.lock().unwrap();
+                (user, channel, false, camera.as_ref().filter(|c| c.channel == channel).map(|c| c.server))
+            }
+        };
+        let Some(server) = server else { return false };
+        let servers = app.servers.lock().unwrap();
+        servers.get(&server).is_some_and(|state| state.media_peer_ok(user, &node_hex, channel, voice))
+    })
 }
 
 async fn dial_media(app: &App, their_hex: &str, hello: MediaHello) -> CmdResult<MediaChannel> {
@@ -1040,7 +1132,7 @@ async fn start_screen_share(
             state.apply(event.clone()).map_err(err_to_string)?;
         }
     }
-    broadcast(&app, sid, WirePayload::Event(event)).await;
+    broadcast_event(&app, sid, event).await;
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
 }
@@ -1068,7 +1160,7 @@ async fn stop_screen_share(
             let _ = state.apply(event.clone());
         }
     }
-    broadcast(&app, sid, WirePayload::Event(event)).await;
+    broadcast_event(&app, sid, event).await;
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
 }
@@ -1701,7 +1793,10 @@ async fn apply_and_broadcast(
     {
         let mut servers = app.servers.lock().unwrap();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
-        state.apply(event.clone()).map_err(err_to_string)?;
+        match app.sign_event(sid, event.clone()) {
+            Some(signed) => state.apply_own(&signed).map_err(err_to_string)?,
+            None => state.apply(event.clone()).map_err(err_to_string)?,
+        };
     }
     outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
@@ -2117,11 +2212,7 @@ async fn leave_server(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
 
-    broadcast(
-        &app,
-        sid,
-        WirePayload::Event(ServerEvent::MemberLeave { server: sid, user: me.id }),
-    )
+    broadcast_event(&app, sid, ServerEvent::MemberLeave { server: sid, user: me.id })
     .await;
     {
         let mut net = app.net.lock().await;
@@ -2614,7 +2705,7 @@ async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdRes
     let bytes = match cached {
         Some(bytes) => bytes,
         None => {
-            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider)).await?;
+            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider), MAX_SERVER_IMAGE_BYTES as u64).await?;
             if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
                 return Err("server image is not a valid picture".into());
             }
@@ -3253,7 +3344,7 @@ async fn run_share_heartbeat(handle: tauri::AppHandle) {
         let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { continue };
         let ours = app.screen_share.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
         if let Some((sid, channel)) = ours {
-            broadcast(&app, sid, WirePayload::Event(ServerEvent::ScreenShare { user: me, channel, active: true })).await;
+            broadcast_event(&app, sid, ServerEvent::ScreenShare { user: me, channel, active: true }).await;
         }
         let now = std::time::Instant::now();
         let mut expired = Vec::new();
@@ -3611,11 +3702,7 @@ async fn play_soundboard(
         require_permission(&app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
         soundboard_play_view(state, channel, me.id, &name).ok_or("that sound no longer exists")?
     };
-    broadcast(
-        &app,
-        sid,
-        WirePayload::Event(ServerEvent::SoundboardPlay { server: sid, channel, user: me.id, name }),
-    )
+    broadcast_event(&app, sid, ServerEvent::SoundboardPlay { server: sid, channel, user: me.id, name })
     .await;
     let _ = handle.emit("soundboard-play", view);
     Ok(())
@@ -3673,7 +3760,7 @@ async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult
     let bytes = match cached {
         Some(bytes) => bytes,
         None => {
-            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider)).await?;
+            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider), expressions::MAX_SOUND_BYTES as u64).await?;
             if expressions::expression_mime(&bytes).is_none() {
                 return Err("not a valid emoji or sound".into());
             }
@@ -4280,8 +4367,6 @@ async fn stop_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
     Ok(())
 }
 
-const MAX_RESPONSIVE_PREVIEW_BYTES: usize = 20 * 1024 * 1024;
-
 fn is_data_url_safe_image_mime(peer_supplied: &str) -> bool {
     let subtype = peer_supplied.strip_prefix("image/").unwrap_or("");
     !subtype.is_empty() && subtype.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
@@ -4293,12 +4378,17 @@ async fn get_attachment_preview(
     blob: String,
     provider: Option<String>,
     mime: String,
+    size_bytes: Option<u64>,
 ) -> CmdResult<String> {
     if !is_data_url_safe_image_mime(&mime) {
         return Err("not an image".into());
     }
-    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
-    if bytes.len() > MAX_RESPONSIVE_PREVIEW_BYTES {
+    let max = commy_net::node::MAX_BLOB_BYTES;
+    if size_bytes.is_some_and(|size| size > max) {
+        return Err("image too large to preview".into());
+    }
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
+    if bytes.len() as u64 > max {
         return Err("image too large to preview".into());
     }
     Ok(format!(
@@ -4358,7 +4448,7 @@ async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHa
         let _ = state.apply(event.clone());
         event
     };
-    broadcast(app, sid, WirePayload::Event(event)).await;
+    broadcast_event(app, sid, event).await;
     let _ = handle.emit("server-event", &sid.to_string());
 }
 
@@ -4408,6 +4498,19 @@ async fn set_deafened(app: tauri::State<'_, App>, handle: tauri::AppHandle, deaf
     Ok(snapshot)
 }
 
+async fn broadcast_event(app: &App, server: ServerId, event: ServerEvent) {
+    broadcast(app, server, app.wire_for(server, event)).await;
+}
+
+fn remote_action_ok(app: &App, server: ServerId, event: &ServerEvent, action: Option<commy_core::Action>) -> bool {
+    let servers = app.servers.lock().unwrap();
+    let Some(state) = servers.get(&server) else { return false };
+    match action {
+        Some(action) => state.admits_signed(&SignedEvent { action, event: event.clone() }).is_ok(),
+        None => state.admits_unsigned(event).is_ok(),
+    }
+}
+
 async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
     let net = app.net.lock().await;
     if let Some(node) = net.as_ref() {
@@ -4424,9 +4527,11 @@ async fn run_net_loop(
     while let Some(event) = events.recv().await {
         let app = handle.state::<App>();
         match event {
-            NetEvent::Event { server, event, .. } => {
+            NetEvent::Event { server, event, action, .. } => {
                 if let ServerEvent::SoundboardPlay { channel, user, name, .. } = &event {
-                    on_remote_soundboard(&app, &handle, server, *channel, *user, name);
+                    if remote_action_ok(&app, server, &event, action) {
+                        on_remote_soundboard(&app, &handle, server, *channel, *user, name);
+                    }
                     continue;
                 }
                 if matches!(event, ServerEvent::DoorbellSet { .. }) {
@@ -4446,6 +4551,7 @@ async fn run_net_loop(
                     _ => None,
                 };
                 let holdable = catchup::holdable(&event).then(|| event.clone());
+                let held_action = action.map(|action| SignedEvent { action, event: event.clone() });
                 let presence = outbox::online_user(&event);
                 let (applied, was_online, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
@@ -4454,7 +4560,7 @@ async fn run_net_loop(
                             let was_online = presence.map(|(user, _)| {
                                 state.profiles.get(&user).is_some_and(|p| p.presence.is_visible_online())
                             });
-                            let (applied, new_message, pinned) = catchup::apply_live(state, event);
+                            let (applied, new_message, pinned) = catchup::apply_live(state, event, action);
                             (applied, was_online, new_message, pinned)
                         }
                         None => continue,
@@ -4490,9 +4596,12 @@ async fn run_net_loop(
                         let _ = handle.emit("server-event", &server.to_string());
                     }
                     Ok(false) => {}
-                    Err(e) => match (e, holdable) {
-                        (StoreError::UnknownAuthorKey(signer), Some(event)) => catchup::hold(&app, server, signer, event),
-                        (e, _) => tracing::warn!("rejected remote event: {e}"),
+                    Err(e) => match (e, holdable, held_action) {
+                        (StoreError::UnknownAuthorKey(signer), Some(event), _) => catchup::hold(&app, server, signer, event),
+                        (StoreError::UnknownAuthorKey(_), None, Some(signed)) => {
+                            app.catchup.lock().unwrap().hold_action(server, signed, std::time::Instant::now())
+                        }
+                        (e, _, _) => tracing::warn!("rejected remote event: {e}"),
                     },
                 }
             }
@@ -4510,17 +4619,12 @@ async fn run_net_loop(
                 let Some(me) = me else { continue };
                 let my_id = me.id;
                 let needs_sync = app.awaits_snapshot(server);
-                broadcast(
-                    &app,
-                    server,
-                    WirePayload::Event(ServerEvent::MemberJoin { server, profile: app.announced(me) }),
-                )
-                .await;
+                broadcast_event(&app, server, ServerEvent::MemberJoin { server, profile: app.announced(me) }).await;
                 if needs_sync {
                     broadcast(&app, server, WirePayload::SyncRequest).await;
                 }
                 for event in structure_announcements(&app, server, my_id) {
-                    broadcast(&app, server, WirePayload::Event(event)).await;
+                    broadcast_event(&app, server, event).await;
                 }
                 if app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == server) {
                     announce_voice_state(&app, &handle).await;
@@ -4906,7 +5010,7 @@ pub fn run() {
                         };
                         for (id, name, owned) in to_restore {
                             if owned {
-                                match node.host_server(id, &name).await {
+                                match node.host_server(id, &name, app.own_key_for_tickets()).await {
                                     Ok(ticket) => {
                                         app.invites.lock().unwrap().insert(id, ticket.encode());
                                     }
@@ -4955,7 +5059,7 @@ pub fn run() {
                                     let _ = state.apply(event.clone());
                                 }
                             }
-                            if let Err(e) = node.broadcast(sid, WirePayload::Event(event)).await {
+                            if let Err(e) = node.broadcast(sid, app.wire_for(sid, event)).await {
                                 tracing::debug!("afk channel announce pending: {e}");
                             }
                             app.persist_server(sid);
@@ -4981,6 +5085,7 @@ pub fn run() {
                             }
                         }
                         node.set_catchup_store(catchup::store(&handle));
+                        node.set_media_gate(media_gate(&handle));
                         *app.net.lock().await = Some(node);
                         tracing::info!("iroh node online");
 
@@ -5144,6 +5249,7 @@ pub fn run() {
             start_mic_test,
             stop_mic_test,
             get_attachment_preview,
+            get_attachment_video,
             start_screen_share,
             stop_screen_share,
             watch_screen,
@@ -5161,6 +5267,49 @@ pub fn run() {
             }
             invite_link::on_run_event(handle, &event)
         });
+}
+
+#[cfg(test)]
+mod hygiene_tests {
+    use super::*;
+
+    #[test]
+    fn only_web_links_open_and_they_open_as_parsed() {
+        assert_eq!(web_url(" https://commy.chat/docs ").as_deref(), Some("https://commy.chat/docs"));
+        assert_eq!(web_url("http://localhost:3100/i/abc#key").as_deref(), Some("http://localhost:3100/i/abc#key"));
+        assert_eq!(web_url("HTTPS://Example.ORG").as_deref(), Some("https://example.org/"));
+        assert_eq!(web_url("file:///etc/passwd"), None);
+        assert_eq!(web_url("javascript:alert(1)"), None);
+        assert_eq!(web_url("commy://commy.chat/i/abc"), None);
+        assert_eq!(web_url("https://"), None);
+        assert_eq!(web_url("not a link"), None);
+        assert_eq!(web_url(""), None);
+    }
+
+    #[test]
+    fn peer_file_names_are_cleaned_before_the_save_dialog() {
+        assert_eq!(safe_file_name("report.pdf"), "report.pdf");
+        assert_eq!(safe_file_name("../../etc/passwd"), "passwd");
+        assert_eq!(safe_file_name("..\\windows\\system32\\x.dll"), "x.dll");
+        assert_eq!(safe_file_name("photos/"), "photos");
+        assert_eq!(safe_file_name("/"), "file");
+        assert_eq!(safe_file_name(".bashrc"), "bashrc");
+        assert_eq!(safe_file_name("  notes.txt. "), "notes.txt");
+        assert_eq!(safe_file_name("a\u{0}b\r\nc.txt"), "abc.txt");
+        assert_eq!(safe_file_name("CON"), "_CON");
+        assert_eq!(safe_file_name("lpt1.txt"), "_lpt1.txt");
+        assert_eq!(safe_file_name("com9"), "_com9");
+        assert_eq!(safe_file_name("console.log"), "console.log");
+        assert_eq!(safe_file_name("what?.png"), "what_.png");
+        assert_eq!(safe_file_name(""), "file");
+        assert_eq!(safe_file_name("..."), "file");
+        let long = format!("{}.jpeg", "x".repeat(500));
+        let cleaned = safe_file_name(&long);
+        assert_eq!(cleaned.chars().count(), MAX_FILE_NAME_CHARS);
+        assert!(cleaned.ends_with(".jpeg"));
+        let no_ext = safe_file_name(&"y".repeat(300));
+        assert_eq!(no_ext.chars().count(), MAX_FILE_NAME_CHARS);
+    }
 }
 
 #[cfg(test)]
