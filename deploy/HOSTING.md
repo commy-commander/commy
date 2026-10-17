@@ -24,7 +24,7 @@ go to `auth`, everything else to `web`. `docs.<DOMAIN>` redirects to `/docs`.
 ## Install
 
 ```bash
-git clone https://github.com/commy-app/commy.git
+git clone https://github.com/commy-commander/commy.git
 cd commy/deploy
 cp .env.example .env
 ```

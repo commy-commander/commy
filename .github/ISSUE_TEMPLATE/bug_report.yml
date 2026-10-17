@@ -1,0 +1,70 @@
+name: Bug report
+description: Something in Commy is broken or behaves unexpectedly
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. If it is a security problem, do not file it here. Follow [SECURITY.md](https://github.com/commy-commander/commy/blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Join a voice channel
+        2. Start sharing a window
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Text chat
+        - Voice
+        - Screen or game streaming
+        - Servers, channels and roles
+        - Direct messages
+        - Invites
+        - Account and sign-in
+        - Notifications or overlay
+        - Installer or updates
+        - Self-hosting (account server)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commy version
+      description: The release you installed, for example the version in the installer file name.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste anything that helps. Remove emails, invite links and other private details first.
+      render: shell
