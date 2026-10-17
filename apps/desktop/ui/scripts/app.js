@@ -1581,13 +1581,6 @@ function loadServerImage(ref) {
   return Promise.resolve(serverImages.get(ref));
 }
 
-// Stable per-server color for places that show many servers at once.
-function serverTint(serverId) {
-  let hash = 0;
-  for (const ch of String(serverId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-  return `hsl(${Math.abs(hash) % 360} 55% 45%)`;
-}
-
 // Shows a server's avatar on a rail button or settings preview.
 function paintServerIcon(node, server) {
   node.replaceChildren(document.createTextNode(initials(server.name)));
@@ -1621,6 +1614,7 @@ function paintSidebarBanner() {
   header.classList.toggle("has-banner", Boolean(server));
   header.classList.toggle("plain", Boolean(server) && !ref);
   banner.style.backgroundImage = "";
+  header.style.setProperty("--slot", server ? serverColors(server.id).css : "");
   if (!ref) return;
   loadServerImage(ref).then(url => {
     if (url && state.currentServer && state.currentServer.banner === ref) {
