@@ -185,6 +185,11 @@ sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
   to the server IP. `commy-firewall.timer` refreshes the ranges daily, and a
   Docker drop-in re-applies them whenever Docker restarts. Port 80 stays open
   because Caddy only redirects there and Let's Encrypt needs it.
+- **Containers** run with `no-new-privileges`, every capability dropped (Caddy
+  keeps `NET_BIND_SERVICE` for ports 80 and 443) and pid and memory limits;
+  `WEB_MEM_LIMIT`, `AUTH_MEM_LIMIT`, `RELAY_MEM_LIMIT` and `CADDY_MEM_LIMIT` in
+  `.env` raise the memory limits. The edge publishes 443 over TCP only, since
+  Cloudflare reaches the origin over TCP.
 - **Access logs.** The edge Caddy writes JSON access logs with real visitor IPs
   (from `CF-Connecting-IP`) to `/var/log/commy-caddy`, so any log or intrusion
   detection tool you already run can read them. Commy does not install one.

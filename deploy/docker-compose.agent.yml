@@ -7,6 +7,10 @@ services:
     build: ./agent
     image: ${AGENT_IMAGE:-commy-agent:local}
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    pids_limit: 256
+    mem_limit: 256m
     command: ["sh", "/repo/deploy/agent/commy-agent.sh"]
     working_dir: /repo/deploy
     environment:

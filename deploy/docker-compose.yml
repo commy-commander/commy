@@ -13,8 +13,16 @@ x-logging: &logging
     max-size: "10m"
     max-file: "3"
 
+x-hardened: &hardened
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  pids_limit: 256
+
 services:
   caddy:
+    <<: *hardened
+    cap_add: [NET_BIND_SERVICE]
+    mem_limit: ${CADDY_MEM_LIMIT:-512m}
     image: caddy:2.10-alpine
     restart: unless-stopped
     ports:
@@ -40,6 +48,8 @@ services:
     logging: *logging
 
   web:
+    <<: *hardened
+    mem_limit: ${WEB_MEM_LIMIT:-1g}
     image: ${WEB_IMAGE:-ghcr.io/commy-commander/commy-web:prod}
     restart: unless-stopped
     environment:
@@ -54,6 +64,8 @@ services:
     logging: *logging
 
   auth:
+    <<: *hardened
+    mem_limit: ${AUTH_MEM_LIMIT:-768m}
     build: ../auth
     image: ${AUTH_IMAGE:-commy-auth:local}
     restart: unless-stopped
@@ -96,6 +108,8 @@ services:
     logging: *logging
 
   relay:
+    <<: *hardened
+    mem_limit: ${RELAY_MEM_LIMIT:-512m}
     build: ./relay
     image: ${RELAY_IMAGE:-commy-relay:local}
     restart: unless-stopped
@@ -110,6 +124,8 @@ services:
   # Fixes iroh-relay 0.28's upgrade response for Caddy and refuses new
   # relay connections while the meter has paused the relay
   relay-proxy:
+    <<: *hardened
+    mem_limit: 256m
     build: ./relay-tools
     image: ${RELAY_TOOLS_IMAGE:-commy-relay-tools:local}
     restart: unless-stopped
@@ -121,6 +137,8 @@ services:
     logging: *logging
 
   relay-meter:
+    <<: *hardened
+    mem_limit: 256m
     build: ./relay-tools
     image: ${RELAY_TOOLS_IMAGE:-commy-relay-tools:local}
     restart: unless-stopped
