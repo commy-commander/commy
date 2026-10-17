@@ -2623,7 +2623,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .sidebar-header.has-banner .header-btns { margin-left: auto; }
 .sidebar-header.has-banner.plain .sidebar-banner {
   display: block;
-  background: linear-gradient(160deg, var(--slot), rgba(11, 13, 23, .85));
+  background: var(--slot);
 }
 .sidebar-header.has-banner.plain .sidebar-banner::after { background: linear-gradient(rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, .35)); }
 
