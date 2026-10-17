@@ -386,7 +386,7 @@ mod tests {
         let (mut state, channel, owner) = fixture();
         let sid = state.server.id;
         let user = join(&mut state, "user");
-        let sound = |name: &str| crate::server::SoundboardSound { name: name.into(), blob: format!("{}@{}", "a1".repeat(32), "b2".repeat(32)), volume: 1.0 };
+        let sound = |name: &str| crate::server::SoundboardSound { name: name.into(), blob: format!("{}@{}", "a1".repeat(32), "b2".repeat(32)), volume: 1.0, emoji: None };
         let add = ServerEvent::SoundAdd { server: sid, sound: sound("boom") };
         assert!(!authorized(&state.server, user, &add));
         state.server.soundboard_open = true;
