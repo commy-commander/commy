@@ -27,3 +27,4 @@ safety.json
 .claude/launch.json
 
 apps/desktop/ui/stock-assets/
+dump.rdb

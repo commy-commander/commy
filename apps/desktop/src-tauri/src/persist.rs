@@ -43,7 +43,6 @@ pub(crate) fn write_secret(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let written = (|| {
         let mut file = options.open(&tmp)?;
         file.write_all(bytes)?;
-        file.sync_all()?;
         drop(file);
         if path.exists() {
             fs::remove_file(path)?;
@@ -110,6 +109,14 @@ pub fn save_safety(dir: &Path, safety: &crate::safety::SafetySettings) -> Result
 
 pub fn load_safety(dir: &Path) -> Option<crate::safety::SafetySettings> {
     read_json(&dir.join("safety.json"))
+}
+
+pub fn save_storage(dir: &Path, storage: &crate::storage::StorageSettings) -> Result<()> {
+    write_json(&dir.join("storage.json"), storage)
+}
+
+pub fn load_storage(dir: &Path) -> Option<crate::storage::StorageSettings> {
+    read_json(&dir.join("storage.json"))
 }
 
 pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {

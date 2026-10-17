@@ -162,6 +162,9 @@ function mockSeed() {
     { id: "g1", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
       content: "clutch round from last night", created_at: new Date(Date.now() - 900e3).toISOString(), edited: false,
       attachments: [{ filename: "clutch-round.mp4", size_bytes: 18400000, is_image: false, mime: "video/mp4", blob: "clip@mock", provider: null }] },
+    { id: "g2", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
+      content: "full res screenshot of the new map", created_at: new Date(Date.now() - 600e3).toISOString(), edited: false,
+      attachments: [{ filename: "new-map.png", size_bytes: 12900000, is_image: true, mime: "image/png", blob: "map@mock", provider: null }] },
   ];
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
@@ -600,6 +603,14 @@ async function mockInvoke(cmd, args = {}) {
       s.myRoles = (s.myRoles || []).filter(id => id !== args.roleId);
       if (args.held) s.myRoles.push(args.roleId);
       return null;
+    }
+    case "get_storage_settings": return mock.storage || (mock.storage = { keep: "90", servers: {} });
+    case "set_history_window": {
+      const s = mock.storage || (mock.storage = { keep: "90", servers: {} });
+      if (!args.serverId) s.keep = args.keep;
+      else if (args.keep) s.servers[args.serverId] = args.keep;
+      else delete s.servers[args.serverId];
+      return s;
     }
     case "get_safety": {
       const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
@@ -2847,7 +2858,7 @@ function pinRow(pin, { jump, showChannel = false } = {}) {
   const excerpt = el("div", "pin-text", text);
   if (!text) excerpt.classList.add("muted");
   body.appendChild(excerpt);
-  const images = (message.attachments || []).filter(a => a.is_image);
+  const images = (message.attachments || []).filter(a => a.is_image && (loadsImageOnItsOwn(a) || imagePreviewCache.has(a.blob)));
   if (images.length) {
     const thumb = renderInlineImage(images[0]);
     thumb.classList.add("pin-thumb");
@@ -4935,6 +4946,51 @@ function isBlocked(userId) {
   return Boolean(userId) && safety.blocked.some(b => b.id === userId);
 }
 
+const KEEP_LABELS = { 30: "30 days", 90: "90 days", 180: "6 months", 365: "1 year", forever: "Forever" };
+let storageSettings = { keep: "90", servers: {} };
+
+async function loadStorageSettings() {
+  try {
+    storageSettings = await invoke("get_storage_settings");
+  } catch {}
+}
+
+function keepSelect(value, defaultLabel) {
+  const select = el("select", "compact-select");
+  for (const [choice, label] of [["", defaultLabel], ...Object.entries(KEEP_LABELS)]) {
+    const option = el("option", null, label);
+    option.value = choice;
+    select.appendChild(option);
+  }
+  select.value = value;
+  return select;
+}
+
+function renderStorageSettings() {
+  $("keep-default").value = storageSettings.keep;
+  const list = $("keep-servers");
+  list.replaceChildren();
+  for (const server of state.servers) {
+    const row = el("div", "keep-row");
+    row.appendChild(el("span", "keep-name", server.name));
+    const select = keepSelect(storageSettings.servers[server.id] || "", `Default (${KEEP_LABELS[storageSettings.keep]})`);
+    select.setAttribute("aria-label", `Keep messages from ${server.name} for`);
+    select.onchange = () => setHistoryWindow(server.id, select.value || null);
+    row.appendChild(select);
+    list.appendChild(row);
+  }
+  if (!state.servers.length) list.appendChild(el("div", "manage-empty", "You are not in any servers yet"));
+}
+
+async function setHistoryWindow(serverId, keep) {
+  try {
+    storageSettings = await invoke("set_history_window", { serverId, keep });
+  } catch (e) {
+    toast(String(e));
+  }
+  renderStorageSettings();
+}
+
 function renderSafetySettings() {
   $("dm-policy").value = safety.dm_policy;
   $("spam-filter-toggle").checked = safety.spam_filter;
@@ -6346,31 +6402,85 @@ function closeLightbox() {
 }
 
 const imagePreviewCache = new Map();
+const imagePreviewLoads = new Map();
 
-function renderInlineImage(att) {
+function loadImagePreview(att, clicked) {
+  const cached = imagePreviewCache.get(att.blob);
+  if (cached) return Promise.resolve(cached);
+  let pending = imagePreviewLoads.get(att.blob);
+  if (!pending) {
+    pending = invoke("get_attachment_preview", {
+      blob: att.blob,
+      provider: att.provider ?? null,
+      mime: att.mime,
+      sizeBytes: att.size_bytes ?? null,
+      clicked,
+    })
+      .then(dataUrl => {
+        imagePreviewCache.set(att.blob, dataUrl);
+        return dataUrl;
+      })
+      .finally(() => imagePreviewLoads.delete(att.blob));
+    imagePreviewLoads.set(att.blob, pending);
+  }
+  return pending;
+}
+
+function chatImage(att) {
   const img = el("img", "chat-image");
   keepScrolledOnLoad(img);
   img.alt = att.filename;
   img.onclick = () => {
     if (img.src) openLightbox(img.src, null, att.filename);
   };
+  return img;
+}
+
+function renderInlineImage(att) {
   const cached = imagePreviewCache.get(att.blob);
+  if (!cached && !loadsImageOnItsOwn(att)) return largeImageGate(att);
+  const img = chatImage(att);
   if (cached) {
     img.src = cached;
   } else {
-    invoke("get_attachment_preview", {
-      blob: att.blob,
-      provider: att.provider ?? null,
-      mime: att.mime,
-      sizeBytes: att.size_bytes ?? null,
-    })
+    loadImagePreview(att, false)
       .then(dataUrl => {
-        imagePreviewCache.set(att.blob, dataUrl);
         img.src = dataUrl;
       })
       .catch(() => img.remove());
   }
   return img;
+}
+
+function largeImageGate(att) {
+  const size = typeof att.size_bytes === "number" ? formatSize(att.size_bytes) : "size unknown";
+  const text = largeImageGateText(size);
+  const gate = el("div", "image-gate attachment-gate");
+  const lines = el("div", "image-gate-text");
+  const title = el("div", "image-gate-title", text.title);
+  lines.append(title, el("div", "image-gate-hint", text.hint));
+  const button = el("button", "btn-secondary btn-small image-gate-load", text.load);
+  button.type = "button";
+  const load = () => {
+    button.disabled = true;
+    button.textContent = text.loading;
+    loadImagePreview(att, true)
+      .then(dataUrl => {
+        const img = chatImage(att);
+        img.src = dataUrl;
+        gate.replaceWith(img);
+        img.scrollIntoView({ block: "nearest" });
+      })
+      .catch(() => {
+        title.textContent = text.failed;
+        button.textContent = text.retry;
+        button.disabled = false;
+      });
+  };
+  button.onclick = load;
+  gate.append(lines, button);
+  if (imagePreviewLoads.has(att.blob)) load();
+  return gate;
 }
 
 const videoUrls = new Map();
@@ -8160,6 +8270,7 @@ function wireEvents() {
   wireHotkeyInput($("overlay-toggle-key"), "toggle_hotkey");
   wireHotkeyInput($("overlay-chat-key"), "chat_hotkey");
   $("dm-policy").addEventListener("change", saveDmSettings);
+  $("keep-default").addEventListener("change", e => setHistoryWindow(null, e.target.value));
   $("spam-filter-toggle").addEventListener("change", saveDmSettings);
   $("block-cancel").onclick = hideModals;
   $("block-go").onclick = async () => {
@@ -8905,6 +9016,7 @@ function openUserSettings(tab) {
   loadCameraDevices();
   renderSoundSettings();
   loadSafety().then(renderSafetySettings);
+  loadStorageSettings().then(renderStorageSettings);
   $("account-about").value = state.user.about || "";
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();

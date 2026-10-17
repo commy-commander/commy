@@ -107,6 +107,7 @@ pub struct App {
     pub camera_watches: Mutex<HashMap<UserId, ScreenWatch>>,
     pub dms: Mutex<DmStore>,
     pub safety: Mutex<crate::safety::SafetySettings>,
+    pub storage: Mutex<crate::storage::StorageSettings>,
     pub dm_filter: Mutex<crate::safety::DmFilter>,
     pub mic_test: Mutex<Option<MicTest>>,
     pub last_user_activity: std::sync::atomic::AtomicI64,
@@ -153,6 +154,7 @@ impl Default for App {
             camera_watches: Mutex::new(HashMap::new()),
             dms: Mutex::new(DmStore::new()),
             safety: Mutex::new(crate::safety::SafetySettings::default()),
+            storage: Mutex::new(crate::storage::StorageSettings::default()),
             dm_filter: Mutex::new(crate::safety::DmFilter::default()),
             mic_test: Mutex::new(None),
             last_user_activity: std::sync::atomic::AtomicI64::new(
@@ -406,6 +408,14 @@ impl App {
         let safety = self.safety.lock().unwrap().clone();
         if let Err(e) = crate::persist::save_safety(dir, &safety) {
             tracing::warn!("failed to persist safety settings: {e}");
+        }
+    }
+
+    pub fn persist_storage(&self) {
+        let Some(dir) = self.data_dir() else { return };
+        let storage = self.storage.lock().unwrap().clone();
+        if let Err(e) = crate::persist::save_storage(dir, &storage) {
+            tracing::warn!("failed to persist storage settings: {e}");
         }
     }
 

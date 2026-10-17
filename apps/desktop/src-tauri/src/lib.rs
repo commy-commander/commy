@@ -17,6 +17,7 @@ mod persist;
 mod safety;
 mod settle;
 mod state;
+mod storage;
 mod toast;
 mod tray;
 mod updater;
@@ -1967,6 +1968,7 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             channel: state.server.afk_channel(),
         });
     }
+    events.retain(|event| commy_core::action::authorized(&state.server, me, event));
     events
 }
 
@@ -2059,20 +2061,62 @@ const RETENTION_PRUNE_EVERY: std::time::Duration = std::time::Duration::from_sec
 
 async fn run_retention_pruner(handle: tauri::AppHandle) {
     loop {
-        let app = handle.state::<App>();
-        let pruned: Vec<ServerId> = {
-            let mut servers = app.servers.lock().unwrap();
-            let now = chrono::Utc::now();
-            servers
-                .values_mut()
-                .filter_map(|s| (s.prune_expired(now) > 0).then_some(s.server.id))
-                .collect()
-        };
-        for sid in pruned {
-            app.persist_server(sid);
-            let _ = handle.emit("server-event", &sid.to_string());
-        }
+        trim_history(&handle);
         tokio::time::sleep(RETENTION_PRUNE_EVERY).await;
+    }
+}
+
+fn trim_history(handle: &tauri::AppHandle) {
+    let app = handle.state::<App>();
+    let storage = app.storage.lock().unwrap().clone();
+    let pruned: Vec<ServerId> = {
+        let mut servers = app.servers.lock().unwrap();
+        let now = chrono::Utc::now();
+        servers
+            .values_mut()
+            .filter_map(|s| {
+                let floor = storage.floor(s.server.id, now);
+                let removed = s.prune_expired(now) + s.roll_off(floor);
+                (removed > 0).then_some(s.server.id)
+            })
+            .collect()
+    };
+    for sid in pruned {
+        app.persist_server(sid);
+        let _ = handle.emit("server-event", &sid.to_string());
+    }
+}
+
+#[tauri::command]
+fn get_storage_settings(app: tauri::State<'_, App>) -> storage::StorageSettings {
+    app.storage.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_history_window(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: Option<String>,
+    keep: Option<String>,
+) -> CmdResult<storage::StorageSettings> {
+    let server: Option<ServerId> = server_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let window = keep
+        .as_deref()
+        .map(|raw| storage::KeepWindow::parse(raw).ok_or("unknown history window"))
+        .transpose()?;
+    let settings = {
+        let mut storage = app.storage.lock().unwrap();
+        storage.set(server, window)?;
+        storage.clone()
+    };
+    app.persist_storage();
+    trim_history(&handle);
+    Ok(settings)
+}
+
+fn forget_history_window(app: &App, sid: ServerId) {
+    if app.storage.lock().unwrap().forget(sid) {
+        app.persist_storage();
     }
 }
 
@@ -2223,6 +2267,7 @@ async fn leave_server(
     app.servers.lock().unwrap().remove(&sid);
     app.invites.lock().unwrap().remove(&sid);
     forget_server_outbox(&app, sid);
+    forget_history_window(&app, sid);
     if let Some(dir) = app.data_dir() {
         let _ = persist::delete_server(dir, sid);
     }
@@ -2530,6 +2575,43 @@ mod placeholder_tests {
             assert!(require_permission(&app, &state, me.id, needed, "moderate").is_ok(), "{needed:?}");
         }
         assert!(structural(structure_announcements(&app, sid, me.id)));
+    }
+
+    #[test]
+    fn a_plain_member_re_announces_only_what_it_may_change() {
+        let owner = UserProfile::new("owner");
+        let mut server = commy_core::Server::new("s", owner.id);
+        server.emojis.push(commy_core::server::CustomEmoji { name: "wave".into(), blob: format!("{}@{}", "a1".repeat(32), "b2".repeat(32)) });
+        server.events.push(commy_core::server::ScheduledEvent {
+            id: "night".into(),
+            title: "Game night".into(),
+            description: String::new(),
+            start: chrono::Utc::now(),
+            end: None,
+            channel: None,
+            creator: owner.id,
+            rsvps: vec![(owner.id, commy_core::server::Rsvp::Going)],
+        });
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let me = UserProfile::new("me");
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: me.clone() }).unwrap();
+        state.apply(ServerEvent::EventRsvp { server: sid, event: "night".into(), user: me.id, rsvp: Some(commy_core::server::Rsvp::Interested) }).unwrap();
+        let app = App::default();
+        app.servers.lock().unwrap().insert(sid, state.clone());
+        app.set_awaiting_snapshot(sid, false);
+
+        let mine = structure_announcements(&app, sid, me.id);
+        assert!(mine.iter().all(|e| commy_core::action::authorized(&state.server, me.id, e)), "{mine:?}");
+        assert!(mine.iter().any(|e| matches!(e, ServerEvent::EventRsvp { user, .. } if *user == me.id)));
+        assert!(!mine.iter().any(|e| matches!(e, ServerEvent::EmojiAdd { .. } | ServerEvent::EventUpsert { .. })));
+        assert!(!mine.iter().any(|e| matches!(e, ServerEvent::EventRsvp { user, .. } if *user == owner.id)));
+
+        let theirs = structure_announcements(&app, sid, owner.id);
+        assert!(theirs.iter().all(|e| commy_core::action::authorized(&state.server, owner.id, e)), "{theirs:?}");
+        assert!(theirs.iter().any(|e| matches!(e, ServerEvent::EmojiAdd { .. })));
+        assert!(theirs.iter().any(|e| matches!(e, ServerEvent::EventUpsert { .. })));
     }
 }
 
@@ -3272,6 +3354,7 @@ async fn on_banned(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: 
     }
     app.invites.lock().unwrap().remove(&sid);
     forget_server_outbox(app, sid);
+    forget_history_window(app, sid);
     if let Some(dir) = app.data_dir() {
         let _ = persist::delete_server(dir, sid);
     }
@@ -4372,6 +4455,16 @@ fn is_data_url_safe_image_mime(peer_supplied: &str) -> bool {
     !subtype.is_empty() && subtype.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
 }
 
+const AUTO_PREVIEW_BYTES: u64 = 5 * 1024 * 1024;
+
+fn preview_limit(clicked: bool) -> u64 {
+    if clicked {
+        commy_net::node::MAX_BLOB_BYTES
+    } else {
+        AUTO_PREVIEW_BYTES
+    }
+}
+
 #[tauri::command]
 async fn get_attachment_preview(
     app: tauri::State<'_, App>,
@@ -4379,11 +4472,12 @@ async fn get_attachment_preview(
     provider: Option<String>,
     mime: String,
     size_bytes: Option<u64>,
+    clicked: Option<bool>,
 ) -> CmdResult<String> {
     if !is_data_url_safe_image_mime(&mime) {
         return Err("not an image".into());
     }
-    let max = commy_net::node::MAX_BLOB_BYTES;
+    let max = preview_limit(clicked.unwrap_or(false));
     if size_bytes.is_some_and(|size| size > max) {
         return Err("image too large to preview".into());
     }
@@ -4929,6 +5023,9 @@ pub fn run() {
                 if let Some(creds) = persist::load_integrations(&dir) {
                     *app.igdb_creds.lock().unwrap() = creds;
                 }
+                if let Some(storage) = persist::load_storage(&dir) {
+                    *app.storage.lock().unwrap() = storage;
+                }
                 match persist::load_safety(&dir) {
                     Some(safety) => *app.safety.lock().unwrap() = safety,
                     None => {
@@ -5249,6 +5346,8 @@ pub fn run() {
             start_mic_test,
             stop_mic_test,
             get_attachment_preview,
+            get_storage_settings,
+            set_history_window,
             get_attachment_video,
             start_screen_share,
             stop_screen_share,
@@ -5284,6 +5383,13 @@ mod hygiene_tests {
         assert_eq!(web_url("https://"), None);
         assert_eq!(web_url("not a link"), None);
         assert_eq!(web_url(""), None);
+    }
+
+    #[test]
+    fn images_load_on_their_own_only_up_to_five_megabytes() {
+        assert_eq!(preview_limit(false), 5 * 1024 * 1024);
+        assert_eq!(preview_limit(true), commy_net::node::MAX_BLOB_BYTES);
+        assert!(preview_limit(false) < preview_limit(true));
     }
 
     #[test]
