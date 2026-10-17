@@ -1,46 +1,85 @@
 # Commy
 
-Commy is free, open source, peer-to-peer voice and text chat for communities, written in Rust.
-Voice, text, file sharing, soundboards, emojis, and screen sharing with no
-paywall. Servers live on their members' machines over [iroh](https://iroh.computer);
-the only hosted pieces are the website and optional account auth.
+Free, open source voice and text chat for communities, written in Rust.
 
-## Architecture
+Commy servers live on their members' own computers. Chat, voice, files and
+screen shares travel directly between the people in a server, so there is no
+central service reading your messages and nothing to pay for. The only hosted
+pieces are the account server and the website at [commy.chat](https://commy.chat).
+
+## What you can do
+
+- **Servers and channels.** Create a server, add text and voice channels,
+  group servers into folders, and invite people with a link.
+- **Roles and moderation.** Colored roles with fine-grained permissions,
+  kick and ban, server mute and deafen, pinned messages and announcements.
+- **Rich chat.** Replies, reactions, edits, emoji (including custom server
+  emoji), images and files shown inline, clickable links, and a GIF picker when the server
+  operator has set up a GIF provider key.
+- **Voice.** Opus voice with a one-click noise cancellation toggle, per-person
+  volume, shared mute and deafen, and a soundboard with per-server clips.
+- **Screen and game streaming.** Share a whole monitor or a single window with
+  a Sharp, Balanced or Smooth quality preset. Windows uses Windows Graphics
+  Capture, so games stream cleanly.
+- **Direct messages.** Private conversations between two people, delivered
+  straight to their devices, with offline messages that arrive when the other
+  person comes back.
+- **Presence and notifications.** Status, Do Not Disturb with a "back at"
+  time, appear offline, and notification toasts.
+- **Game overlay.** On Windows, an in-game overlay shows who is talking and
+  recent chat, in the screen corner you choose.
+- **Safety tools.** Block and report people, and invite links that can expire.
+
+Windows is the primary platform today. macOS and Linux builds are published
+with each release; a few features, such as the game overlay and notification
+toasts, are Windows only for now.
+
+## Download
+
+Releases are on the [Releases page](https://github.com/commy-commander/commy/releases)
+and at [commy.chat](https://commy.chat). Release candidates (`-rc`) are
+pre-releases for testing and connect only to the staging servers.
+
+Builds are not code signed yet, so Windows SmartScreen and macOS Gatekeeper
+will ask you to confirm before the first launch.
+
+## How it works
 
 ```
-apps/desktop            Tauri 2 desktop app (Windows + macOS)
-  src-tauri             Rust shell: commands, app state, net event loop
-  ui                    Frontend (plain HTML/CSS/JS)
+apps/desktop            Tauri 2 desktop app
+  src-tauri             Rust shell: commands, app state, network event loop
+  ui                    Frontend (plain HTML, CSS and JavaScript)
 crates/commy-core       Domain model: servers, channels, messages,
                         permissions, replicated state (no I/O)
-crates/commy-net        P2P transport: invite tickets, gossip protocol,
-                        iroh node wrapper, blob transfer
-crates/commy-audio      Voice DSP: RNNoise noise cancellation toggle,
-                        mute gate, VAD, 48 kHz / 10 ms frames
-crates/commy-media      Device I/O: mic capture, playback mixing with
-                        jitter buffers, screen capture (MJPEG)
+crates/commy-net        Peer to peer transport: invite tickets, gossip
+                        protocol, node wrapper, blob transfer
+crates/commy-audio      Voice processing: noise cancellation, mute gate,
+                        voice activity detection, Opus codec
+crates/commy-media      Device I/O: microphone, playback mixing with jitter
+                        buffers, screen and window capture
 auth                    Account server: Better Auth, Postgres, Redis
 deploy                  Self-hosting stack and deploy pipeline
-                        (the commy.chat website lives in its own
-                        repository, commy-web)
 ```
 
-How P2P works:
+- Every running app is an [iroh](https://iroh.computer) endpoint identified by
+  an Ed25519 key. Connections are direct and encrypted; relays are only a
+  fallback transport for people who cannot reach each other directly, never a
+  place where content is stored.
+- A Commy server is a gossip topic. Every change is an event broadcast to the
+  topic and applied idempotently to each member's copy of the server state.
+- Invites are self-contained tickets. Short invite links store the ticket
+  sealed with a key that only the link carries, so the account server cannot
+  read it.
+- Files, avatars, emoji and soundboard clips move as content-addressed blobs;
+  chat messages carry only the hash.
+- Voice and screen shares use direct media connections between members. The
+  account server never sees messages, files, voice, video or which servers an
+  account belongs to. What it does hold is listed in
+  [deploy/HOSTING.md](deploy/HOSTING.md#what-the-operator-can-see).
 
-- Each running app is an iroh endpoint identified by an Ed25519 key.
-  Connections are direct QUIC with hole punching; iroh relays are only a
-  fallback transport, never a content host.
-- A Commy server is a gossip topic. Every state change is a `ServerEvent`
-  broadcast to the topic and applied idempotently to each member's
-  replicated `ServerState`.
-- Invites are self-contained `commy...` tickets carrying the topic id and
-  bootstrap addresses. Newcomers request a state snapshot from any member.
-  Short invite links store the ticket sealed with a key that only the link
-  carries, so the account server cannot read it.
-- Files, avatars, emojis, and soundboard clips move over iroh-blobs,
-  addressed by blake3 hash; chat messages carry only the hash.
+## Build from source
 
-## Prerequisites
+You need Rust (stable), Node.js and the Tauri 2 CLI.
 
 Windows (PowerShell):
 
@@ -62,100 +101,50 @@ brew install node
 cargo install tauri-cli --version "^2"
 ```
 
-## Develop
+Then:
 
 ```sh
-# Run every Rust unit test (core, net, audio)
+git clone https://github.com/commy-commander/commy.git
+cd commy
+
+# Run the Rust tests (core, net, audio, media)
 cargo test --workspace
 
 # Run the desktop app
 cd apps/desktop/src-tauri
 cargo tauri dev
-
-# Test voice, screen share, and DMs on ONE machine: run a second
-# instance with its own identity and data dir, then join your own
-# server with an invite. Settings also has a Mic Test loopback.
-# PowerShell:
-#   $env:COMMY_DATA_DIR = "$env:APPDATA\chat.commy.desktop-2"
-#   cargo run -p commy-desktop
-
-# Preview the UI alone in a browser (mock backend)
-# open apps/desktop/ui/index.html
-
-# Account server and hosting stack: see deploy/HOSTING.md
 ```
 
-Before bundling installers, generate platform icons once:
+The frontend is embedded at build time, so UI edits need a rebuild. To preview
+the UI alone in a browser with a mock backend, open `apps/desktop/ui/index.html`.
 
-```sh
-cargo tauri icon apps/desktop/ui/images/commy_v2.png
+To test voice, streaming and direct messages on one machine, run a second
+instance with its own data directory and join your own server with an invite:
+
+```powershell
+$env:COMMY_DATA_DIR = "$env:APPDATA\chat.commy.desktop-2"
+cargo run -p commy-desktop
 ```
 
-then set `bundle.active` to `true` in `apps/desktop/src-tauri/tauri.conf.json`.
+`auth/docker-compose.dev.yml` runs a local account server with a mail catcher
+and Redis.
 
-## Status
+## Self-hosting
 
-Working today:
-
-- Domain model with replicated state, permissions, and unit tests
-- Invite tickets and a versioned gossip wire protocol
-- Text chat over gossip with newcomer state sync
-- Voice chat: mic -> RNNoise noise cancellation -> PCM over direct
-  QUIC media connections (full mesh, smaller node id dials), jitter
-  buffered and mixed per peer on playback
-- Screen share: primary monitor -> MJPEG at 8 fps over a direct QUIC
-  stream, viewers subscribe via a LIVE badge in the member list
-- File sharing: attach from chat, content-addressed via iroh-blobs,
-  download fetches from the uploader
-- Persistence: profile, voice settings, DMs, and per-server snapshots
-  under the app data dir, written atomically and loaded at startup
-- Direct messages: ack-confirmed delivery over a dedicated QUIC
-  protocol, with cached contact profiles (both peers must be online)
-- Server management: rename, create and delete channels, leave server,
-  gated by the role permission system
-- Account management: display name, custom status, presence, broadcast
-  to every joined server
-- Rich chat: emoji picker, inline image and gif rendering for
-  attachments, paste and drag-drop upload, clickable links opened in
-  the system browser, auto-embedded image links
-- Screen share picker: choose any monitor or window to stream
-- Volume controls: master output and mic input gain, persisted
-- Server roles: create roles with colors and permissions, assign from
-  server settings; member names take their highest role color
-- Kick members from server settings (KICK_MEMBERS permission)
-- Auto AFK: every server has an AFK voice channel; clients park
-  themselves there after 5 minutes with no audible mic input, no
-  keyboard or mouse use, and no active screen share
-  (COMMY_AFK_SECS overrides the timeout)
-- Resting (test setting): with COMMY_REST_AFTER_SECS set, an away
-  client leaves every server's mesh after that many idle seconds and
-  keeps only its relay link; a member who sends a message wakes it by
-  node id (`commy/wake/1`, one byte, no server or message named) and it
-  rejoins and catches up
-- Mic test loopback and multi-instance support (COMMY_DATA_DIR) for
-  single-machine voice testing
-- Desktop UI shell
-
-Voice transport notes: media connections use a dedicated `commy/media/1`
-ALPN. Voice is raw PCM for now (about 96 kB/s per peer); the packet
-format has room for an Opus payload, which is the planned upgrade.
-Screen share is MJPEG for the same reason; a real video codec can slot
-into the same `MediaPacket::Video` frame.
-
-Next milestones:
-
-1. Opus voice encoding and per-user volume sliders.
-2. Hardware-accelerated video for screen share.
-3. Soundboard and custom emoji management.
-4. Direct messages between friends.
-5. Device linking against the auth website (Device model exists).
-
-Note: iroh's API moves quickly between minor versions. The workspace pins
-0.28; check the iroh changelog when bumping.
+You do not need to host anything to use Commy. If you want your own account
+server, [deploy/HOSTING.md](deploy/HOSTING.md) covers the Docker Compose stack,
+sign-in providers, optional GIF search, and pointing the desktop app at your
+server. [deploy/DEPLOYING.md](deploy/DEPLOYING.md) describes the deploy
+pipeline.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch flow and checks.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the
+branch flow and checks, and the [Code of Conduct](CODE_OF_CONDUCT.md) for how we
+treat each other. Found a bug or have an idea? Open an
+[issue](https://github.com/commy-commander/commy/issues/new/choose). To report
+a security problem, follow [SECURITY.md](SECURITY.md) instead of opening a
+public issue.
 
 ## License
 

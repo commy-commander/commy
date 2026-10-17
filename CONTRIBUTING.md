@@ -1,7 +1,9 @@
 # Contributing to Commy
 
 Thanks for helping build Commy. This file covers the branch flow and the
-checks a change needs before it lands.
+checks a change needs before it lands. Everyone taking part is expected to
+follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security problem,
+see [SECURITY.md](SECURITY.md).
 
 ## Branch flow
 
