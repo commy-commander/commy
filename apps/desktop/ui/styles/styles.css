@@ -4033,3 +4033,8 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   pointer-events: none;
 }
 #settings-btn.update-ready::after { opacity: 1; }
+.sound-emoji { font-size: 16px; line-height: 1; flex: none; }
+.sb-sound .custom-emoji { width: 16px; height: 16px; margin: 0; vertical-align: 0; flex: none; }
+.sound-emoji-btn { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.sound-emoji-btn .custom-emoji { width: 24px; height: 24px; margin: 0; vertical-align: 0; }
+.sound-emoji-btn .sound-emoji { font-size: 22px; }

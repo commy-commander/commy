@@ -3647,9 +3647,11 @@ async fn add_sound(
     name: String,
     data: String,
     volume: Option<f32>,
+    emoji: Option<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let name = check_expression_name(&name)?;
+    let emoji = check_sound_emoji(emoji)?;
     let me = current_profile(&app)?;
     {
         let servers = app.servers.lock().unwrap();
@@ -3674,6 +3676,37 @@ async fn add_sound(
         name,
         blob,
         volume: volume.unwrap_or(1.0).clamp(0.0, 2.0),
+        emoji,
+    };
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundAdd { server: sid, sound }).await
+}
+
+fn check_sound_emoji(emoji: Option<String>) -> CmdResult<Option<String>> {
+    match emoji.map(|e| e.trim().to_string()).filter(|e| !e.is_empty()) {
+        None => Ok(None),
+        Some(e) if commy_core::server::valid_sound_emoji(&e) => Ok(Some(e)),
+        Some(_) => Err("pick a single emoji for the sound".into()),
+    }
+}
+
+#[tauri::command]
+async fn set_sound_emoji(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    name: String,
+    emoji: Option<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let emoji = check_sound_emoji(emoji)?;
+    let me = current_profile(&app)?;
+    let sound = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_EXPRESSIONS, "change sounds")?;
+        let mut sound = state.server.soundboard.iter().find(|s| s.name == name).cloned().ok_or("unknown sound")?;
+        sound.emoji = emoji;
+        sound
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundAdd { server: sid, sound }).await
 }
@@ -5312,6 +5345,7 @@ pub fn run() {
             remove_emoji,
             add_sound,
             remove_sound,
+            set_sound_emoji,
             set_expression_settings,
             set_server_public,
             play_soundboard,
@@ -5429,5 +5463,13 @@ mod share_tests {
         assert_eq!(parse_source(None, None), None);
         assert_eq!(parse_source(Some("monitor"), None), None);
         assert_eq!(parse_source(Some("camera"), Some(1)), None);
+    }
+
+    #[test]
+    fn sound_emoji_input_is_trimmed_and_checked() {
+        assert_eq!(check_sound_emoji(None), Ok(None));
+        assert_eq!(check_sound_emoji(Some("  ".into())), Ok(None));
+        assert_eq!(check_sound_emoji(Some(" 🥁 ".into())), Ok(Some("🥁".into())));
+        assert!(check_sound_emoji(Some("drum".into())).is_err());
     }
 }

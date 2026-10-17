@@ -188,6 +188,7 @@ pub struct SoundView {
     pub name: String,
     pub blob: String,
     pub volume: f32,
+    pub emoji: Option<String>,
 }
 
 impl ServerView {
@@ -409,7 +410,7 @@ impl ServerView {
                 .server
                 .soundboard
                 .iter()
-                .map(|s| SoundView { name: s.name.clone(), blob: s.blob.clone(), volume: s.volume })
+                .map(|s| SoundView { name: s.name.clone(), blob: s.blob.clone(), volume: s.volume, emoji: s.emoji.clone() })
                 .collect(),
             emojis_shareable: state.server.emojis_shareable,
             soundboard_open: state.server.soundboard_open,

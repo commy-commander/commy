@@ -459,7 +459,13 @@ async function mockInvoke(cmd, args = {}) {
       const s = mock.servers[args.serverId];
       const ref = `mock${Date.now()}@mock`;
       mock.expressions = { ...(mock.expressions || {}), [ref]: `data:audio/mpeg;base64,${args.data}` };
-      s.sounds = (s.sounds || []).filter(x => x.name !== args.name).concat({ name: args.name, blob: ref, volume: args.volume ?? 1 });
+      s.sounds = (s.sounds || []).filter(x => x.name !== args.name).concat({ name: args.name, blob: ref, volume: args.volume ?? 1, emoji: args.emoji || null });
+      return null;
+    }
+    case "set_sound_emoji": {
+      const s = mock.servers[args.serverId];
+      const sound = (s.sounds || []).find(x => x.name === args.name);
+      if (sound) sound.emoji = args.emoji || null;
       return null;
     }
     case "remove_sound": {
@@ -4623,6 +4629,12 @@ function isEmojiTag(tag) {
   return !/[A-Za-z0-9]/.test(tag) && [...tag].length <= 4;
 }
 
+function soundEmojiNode(value) {
+  const custom = parseEmojiToken(value);
+  if (custom) return customEmojiImg(custom.name, custom.image, "custom-emoji");
+  return el("span", "sound-emoji", value);
+}
+
 function roleTagChip(tag, color) {
   const custom = parseEmojiToken(tag);
   if (custom) {
@@ -6089,6 +6101,25 @@ function soundRow(server, sound, canDelete) {
   play.appendChild(svgIcon("play", 18));
   play.onclick = () => playExpressionSound(sound.blob, (sound.volume ?? 1) * soundboardPrefs().volume);
   row.appendChild(play);
+  if (canDelete || sound.emoji) {
+    const icon = el("button", "icon-btn sound-emoji-btn");
+    icon.type = "button";
+    icon.replaceChildren(sound.emoji ? soundEmojiNode(sound.emoji) : svgIcon("smilePlus", 18));
+    if (canDelete) {
+      icon.title = "Choose an emoji for this sound";
+      icon.onclick = e => openEmojiPop(e.currentTarget, async emoji => {
+        try {
+          await invoke("set_sound_emoji", { serverId: server.id, name: sound.name, emoji });
+          await refreshExpressions();
+        } catch (err) {
+          toast(String(err));
+        }
+      }, { custom: true });
+    } else {
+      icon.disabled = true;
+    }
+    row.appendChild(icon);
+  }
   row.appendChild(el("span", "expr-name", sound.name));
   if (canDelete) {
     const del = el("button", "icon-btn expr-delete");
@@ -6155,11 +6186,22 @@ async function uploadSound() {
     audio.play().catch(() => {});
   };
   const taken = (server.sounds || []).map(s => s.name);
+  let chosenEmoji = null;
   const row = pendingExpressionRow(play, freeExpressionName(expressionName(stem, "sound"), taken), async clean => {
-    await invoke("add_sound", { serverId: server.id, name: clean, data: dataUrl.split(",")[1], volume: 1 });
+    await invoke("add_sound", { serverId: server.id, name: clean, data: dataUrl.split(",")[1], volume: 1, emoji: chosenEmoji });
     await refreshExpressions();
     toast(`Added ${clean} to the soundboard`);
   });
+  const pickBtn = el("button", "icon-btn sound-emoji-btn");
+  pickBtn.type = "button";
+  pickBtn.title = "Choose an emoji for this sound";
+  const paintPick = () => pickBtn.replaceChildren(chosenEmoji ? soundEmojiNode(chosenEmoji) : svgIcon("smilePlus", 18));
+  paintPick();
+  pickBtn.onclick = e => openEmojiPop(e.currentTarget, emoji => {
+    chosenEmoji = emoji;
+    paintPick();
+  }, { custom: true });
+  row.querySelector(".expr-name-input").before(pickBtn);
   $("sound-list").querySelector(".manage-empty")?.remove();
   $("sound-list").prepend(row);
 }
@@ -6185,9 +6227,9 @@ async function toggleSoundboardPop() {
   const grid = $("sb-grid");
   grid.replaceChildren();
   $("sb-server").textContent = "";
-  const addButton = (name, label) => {
+  const addButton = (name, label, emoji) => {
     const btn = el("button", "sb-sound");
-    btn.appendChild(svgIcon("soundboard", 14));
+    btn.appendChild(emoji ? soundEmojiNode(emoji) : svgIcon("soundboard", 14));
     btn.appendChild(el("span", null, label));
     btn.title = `Play ${label} for everyone in the channel`;
     btn.disabled = !server.can_use_soundboard;
@@ -6206,7 +6248,7 @@ async function toggleSoundboardPop() {
   grid.appendChild(el("div", "sb-section", "Default"));
   for (const sound of DEFAULT_SOUNDS) addButton(`default:${sound.id}`, sound.label);
   grid.appendChild(el("div", "sb-section", server.name));
-  for (const sound of server.sounds || []) addButton(sound.name, sound.name);
+  for (const sound of server.sounds || []) addButton(sound.name, sound.name, sound.emoji);
   if (!(server.sounds || []).length) {
     grid.appendChild(el("div", "sb-empty", server.can_upload_sounds
       ? "No server sounds yet. Add some in Server Settings under Soundboard."
