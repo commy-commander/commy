@@ -885,12 +885,6 @@ function loadAvatarImage(blob, provider) {
 // Fills an avatar element with an image, emoji or initials, keeping
 // any badges (presence dot) already inside it.
 // Stable per-person tint so a room full of initials still reads as people.
-function personTint(userId) {
-  let hash = 0;
-  for (const ch of String(userId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-  return `hsl(${Math.abs(hash) % 360} 38% 44%)`;
-}
-
 function paintAvatar(node, userId, name) {
   for (const child of [...node.childNodes]) {
     if (child.nodeType === Node.TEXT_NODE || child.classList?.contains("avatar-face")) child.remove();
