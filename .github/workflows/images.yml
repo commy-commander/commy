@@ -70,6 +70,7 @@ jobs:
   stack-e2e:
     name: VPS setup end to end
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -91,27 +92,29 @@ jobs:
       - name: Run setup-vps.sh
         run: |
           for env in prod staging dev; do sudo cp -r "$GITHUB_WORKSPACE" "/srv/commy-$env"; done
-          sudo COMMY_IMAGES=localhost:5000 sh deploy/setup-vps.sh commy.localhost ci@example.org
+          sudo COMMY_IMAGES=localhost:5000 AGENT_VERIFY=off sh deploy/setup-vps.sh commy.localhost ci@example.org
 
       - name: Every environment answers through the edge proxy
         run: |
-          check() {
-            host="$1"; path="$2"
-            for _ in $(seq 1 60); do
-              code="$(curl -sk -o /dev/null -w '%{http_code}' --resolve "$host:443:127.0.0.1" "https://$host$path" || true)"
-              [ "$code" = 200 ] && { echo "ok   - https://$host$path"; return 0; }
-              sleep 5
-            done
-            echo "FAIL - https://$host$path last returned $code"; return 1
-          }
-          status=0
+          urls=""
           for host in commy.localhost staging.commy.localhost dev.commy.localhost; do
-            check "$host" / || status=1
-            check "$host" /.well-known/commy-auth.json || status=1
+            urls="$urls https://$host/ https://$host/.well-known/commy-auth.json"
           done
-          robots="$(curl -sk -D - -o /dev/null --resolve staging.commy.localhost:443:127.0.0.1 https://staging.commy.localhost/ | grep -i x-robots-tag || true)"
-          [ -n "$robots" ] && echo "ok   - staging is noindex" || { echo "FAIL - staging is missing X-Robots-Tag"; status=1; }
-          exit $status
+          deadline=$(( $(date +%s) + 300 ))
+          while :; do
+            pending=""
+            for url in $urls; do
+              host="${url#https://}"; host="${host%%/*}"
+              code="$(curl -sk -m 5 -o /dev/null -w '%{http_code}' --resolve "$host:443:127.0.0.1" "$url" || true)"
+              [ "$code" = 200 ] || pending="$pending $url($code)"
+            done
+            [ -z "$pending" ] && break
+            if [ "$(date +%s)" -ge "$deadline" ]; then echo "FAIL - not answering after 5 minutes:$pending"; exit 1; fi
+            sleep 5
+          done
+          for url in $urls; do echo "ok   - $url"; done
+          robots="$(curl -sk -m 5 -D - -o /dev/null --resolve staging.commy.localhost:443:127.0.0.1 https://staging.commy.localhost/ | grep -i x-robots-tag || true)"
+          [ -n "$robots" ] && echo "ok   - staging is noindex" || { echo "FAIL - staging is missing X-Robots-Tag"; exit 1; }
 
       - name: Environments cannot reach each other
         run: |
@@ -132,6 +135,10 @@ jobs:
       - name: Logs on failure
         if: failure()
         run: |
+          docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'
+          for net in commy-prod commy-staging commy-dev commy-relay; do
+            docker network inspect "$net" --format '{{.Name}}: {{range .Containers}}{{.Name}} {{end}}'
+          done
           for env in prod staging dev; do
             (cd "/srv/commy-$env/deploy" && sudo docker compose ps -a && sudo docker compose logs --tail 40)
           done

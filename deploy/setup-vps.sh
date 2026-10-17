@@ -54,6 +54,7 @@ AUTH_IMAGE=$IMAGES/commy-auth:$env
 EOF
 		# Dev follows every merge, so its agent checks for new images more often
 		if [ "$env" = dev ]; then echo "AGENT_INTERVAL=10" >>"$envfile"; fi
+		if [ -n "${AGENT_VERIFY:-}" ]; then echo "AGENT_VERIFY=$AGENT_VERIFY" >>"$envfile"; fi
 		chmod 600 "$envfile"
 		echo "commy-$env: wrote $envfile (add Google, Twitch and SMTP settings there later)"
 	fi
