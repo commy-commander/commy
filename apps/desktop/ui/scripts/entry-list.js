@@ -21,6 +21,7 @@ function renderEntryStatus(status) {
   $("entry-detail").textContent = status.detail || "";
   $("entry-show-code").classList.toggle("hidden", !status.has_key);
   $("entry-enter").classList.toggle("hidden", status.has_key || status.state === "off" || status.state === "unsupported");
+  $("entry-start-over-row").classList.toggle("hidden", status.has_key || status.state !== "waiting");
 }
 
 async function refreshEntryStatus() {
@@ -62,6 +63,22 @@ $("entry-code-use").onclick = async () => {
     renderEntryStatus(await invoke("entry_list_use_recovery_code", { code: $("entry-code-input").value }));
     $("entry-code-input").value = "";
     toast("Recovery code accepted");
+  } catch (e) {
+    toast(String(e));
+  } finally {
+    button.disabled = false;
+  }
+};
+
+$("entry-start-over").onclick = () => showModal("modal-entry-start-over");
+$("entry-start-over-cancel").onclick = hideModals;
+$("entry-start-over-go").onclick = async () => {
+  const button = $("entry-start-over-go");
+  button.disabled = true;
+  try {
+    renderEntryStatus(await invoke("entry_list_start_over"));
+    hideModals();
+    toast("Started a new server list");
   } catch (e) {
     toast(String(e));
   } finally {

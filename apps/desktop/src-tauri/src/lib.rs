@@ -5334,6 +5334,7 @@ pub fn run() {
             entry_list::entry_list_sync,
             entry_list::entry_list_recovery_code,
             entry_list::entry_list_use_recovery_code,
+            entry_list::entry_list_start_over,
             entry_list::answer_entry_key_request,
             get_messages,
             send_message,
