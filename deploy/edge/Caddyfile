@@ -1,17 +1,11 @@
 {
 	email {$ACME_EMAIL}
 	servers {
-		# Cloudflare's edge ranges (https://www.cloudflare.com/ips/), so logs and the
-		# auth server's rate limits see the visitor's address instead of Cloudflare's
 		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
 		client_ip_headers CF-Connecting-IP X-Forwarded-For
 	}
 }
 
-# Same routing as ../Caddyfile, pointed at one environment's containers.
-# args[0] is the environment's COMPOSE_PROJECT_NAME. The upstream names are network
-# aliases that resolve to every replica, and lb_try_duration retries while the deploy
-# agent swaps containers, so updates do not drop requests.
 (commy) {
 	log {
 		output file /var/log/caddy/access.log {
@@ -21,15 +15,14 @@
 		format json
 	}
 
-	# Invite codes next to visitors' addresses could hint at who joins which
-	# server, so invite pages and invite lookups are never written to the log
 	@invites path /i/* /api/auth/commy/invites/*
 	log_skip @invites
 
-	# Doorbell tokens next to addresses could link the apps that ring a token
-	# to the app that takes it, so doorbell calls are never logged either
 	@doorbell path /api/auth/commy/doorbell/*
 	log_skip @doorbell
+
+	@secrets path /api/auth/verify-email* /api/auth/magic-link/* /api/auth/reset-password/* /api/auth/callback/* /account/reset-password* /device*
+	log_skip @secrets
 
 	encode zstd gzip
 
@@ -44,8 +37,6 @@
 	@auth path /api/auth/* /.well-known/commy-auth.json
 	handle @auth {
 		reverse_proxy {args[0]}-auth:3001 {
-			# The visitor's address alone: the auth server's rate limits ignore a
-			# forwarded chain and would put every visitor in one shared bucket
 			header_up X-Forwarded-For {client_ip}
 			lb_try_duration 15s
 		}
@@ -58,7 +49,6 @@
 		}
 	}
 
-	# Shown until the environment's first image is deployed, or if it is down
 	handle_errors 502 503 504 {
 		header Content-Type "text/html; charset=utf-8"
 		header Retry-After 60
@@ -91,13 +81,9 @@
 	redir https://{$PROD_DOMAIN}/docs{uri} permanent
 }
 
-# iroh relays (../docker-compose.relay.yml): relay.<domain> for release builds and
-# relay-staging.<domain> for test builds, so test builds never touch production.
-# Both are DNS only, so these names get Let's Encrypt certificates over port 80.
 (relay) {
-	# iroh 0.28 sends Upgrade without Connection: Upgrade, which proxies need
-	@upgrade header Upgrade *
-	request_header @upgrade Connection Upgrade
+	@upgrade_without_connection_header header Upgrade *
+	request_header @upgrade_without_connection_header Connection Upgrade
 	reverse_proxy {args[0]}:3341
 }
 
@@ -109,15 +95,13 @@
 	import relay commy-relay-staging-proxy
 }
 
-# iroh 0.28 clients send the relay hostname with a trailing dot, which no
-# named site matches, so catch it here and refuse everything else
 https://:8443 {
-	@relay header_regexp Host ^{$RELAY_DOMAIN}\.(:[0-9]+)?$
-	handle @relay {
+	@relay_name_with_trailing_dot header_regexp Host ^{$RELAY_DOMAIN}\.(:[0-9]+)?$
+	handle @relay_name_with_trailing_dot {
 		import relay commy-relay-proxy
 	}
-	@staging_relay header_regexp Host ^{$STAGING_RELAY_DOMAIN}\.(:[0-9]+)?$
-	handle @staging_relay {
+	@staging_relay_name_with_trailing_dot header_regexp Host ^{$STAGING_RELAY_DOMAIN}\.(:[0-9]+)?$
+	handle @staging_relay_name_with_trailing_dot {
 		import relay commy-relay-staging-proxy
 	}
 	handle {

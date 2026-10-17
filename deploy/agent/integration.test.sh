@@ -1,6 +1,4 @@
 #!/bin/sh
-# End to end test of commy-agent.sh against a real Docker engine and a local registry.
-# Run: sh deploy/agent/integration.test.sh   (needs Docker with Compose v2)
 
 set -e
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -26,7 +24,6 @@ check() {
 	fi
 }
 
-# Publishes a tiny web server that answers with $1; $2 is its healthcheck command.
 publish() {
 	mkdir -p "$work/img"
 	cat >"$work/img/Dockerfile" <<EOF

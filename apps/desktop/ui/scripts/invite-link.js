@@ -1,9 +1,3 @@
-// Invite links: https://<server>/i/<CODE>#<KEY> and the
-// commy://i/<host>/<CODE>#<KEY> deep link. The code is resolved on the server
-// named in the link, and a server other than this install's account server gets
-// a warning first. KEY opens the sealed invite and never leaves this device;
-// links from older versions have no key.
-
 const INVITE_LINK_RE = /\b(?:https?:\/\/[a-z0-9.\-:[\]]+\/i\/|commy:\/\/i\/[^\s/]+\/)[a-hj-np-z2-9]{8}(?:#[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])|\b\/?)/i;
 
 function findInviteLink(text) {
@@ -65,7 +59,6 @@ async function joinPendingInvite() {
   }
 }
 
-// Chat messages containing an invite link get the same Join card as raw tickets.
 function inviteLinkCard(link) {
   const card = el("div", "invite-card");
   const mark = el("div", "invite-card-mark");
@@ -82,8 +75,6 @@ function inviteLinkCard(link) {
   return card;
 }
 
-// How long the next invite link lasts. "never" is only offered for a server
-// marked public; the app checks that again before making one.
 const INVITE_EXPIRY_NAMES = { "1h": "1 hour", "1d": "1 day", "7d": "7 days", "30d": "30 days" };
 let inviteExpiry = "7d";
 let inviteLinkShown = false;
@@ -117,7 +108,6 @@ function renderInviteExpiry() {
   }
 }
 
-// Called when the invite dialog opens with a fresh code in the field.
 function resetInviteDialog() {
   inviteLinkShown = false;
   renderInviteExpiry();
@@ -151,7 +141,6 @@ for (const btn of $("invite-expiry").querySelectorAll("button")) {
     if (btn.dataset.expires === inviteExpiry) return;
     inviteExpiry = btn.dataset.expires;
     renderInviteExpiry();
-    // A link already on screen is swapped for one with the new expiry.
     if (inviteLinkShown && state.currentServer) {
       try {
         await makeInviteLink();
@@ -162,7 +151,6 @@ for (const btn of $("invite-expiry").querySelectorAll("button")) {
   };
 }
 
-// A link the app was launched with waits until first run setup is done.
 async function takePendingInviteLink() {
   if (!IS_TAURI) return;
   if (!$("modal-username").classList.contains("hidden") && !$("modal-backdrop").classList.contains("hidden")) {

@@ -1,16 +1,3 @@
-//! On-disk persistence. Everything lives under the app data dir:
-//!
-//! ```text
-//! <data>/profile.json          our identity
-//! <data>/voice.json            voice settings
-//! <data>/servers/<id>.json     one Snapshot per joined server
-//! <data>/outbox.json           sends waiting for someone to come online
-//! <data>/awaiting-snapshot.json servers joined that wait for a snapshot
-//! ```
-//!
-//! Writes go to a temp file first and are renamed into place so a
-//! crash mid-write never corrupts state.
-
 use crate::state::VoiceSettings;
 use anyhow::{Context, Result};
 use commy_core::{DmStore, ServerId, ServerState, Snapshot, UserProfile};
@@ -27,12 +14,51 @@ pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let json = serde_json::to_vec_pretty(value)?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, &json)?;
-    // Windows rename fails if the target exists.
+    remove_target_windows_rename_cannot_replace(path)?;
+    fs::rename(&tmp, path).context("atomic rename failed")?;
+    Ok(())
+}
+
+fn remove_target_windows_rename_cannot_replace(path: &Path) -> std::io::Result<()> {
     if path.exists() {
         fs::remove_file(path)?;
     }
-    fs::rename(&tmp, path).context("atomic rename failed")?;
     Ok(())
+}
+
+pub(crate) fn write_secret(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tag = data_encoding::HEXLOWER.encode(&commy_net::CommyNode::generate_secret()[..6]);
+    let tmp = path.with_extension(format!("{tag}.tmp"));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let written = (|| {
+        let mut file = options.open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        fs::rename(&tmp, path)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
+}
+
+pub(crate) fn write_secret_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let json = serde_json::to_vec_pretty(value)?;
+    write_secret(path, &json).with_context(|| format!("could not write {}", path.display()))
 }
 
 pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
@@ -63,7 +89,7 @@ pub fn load_voice(dir: &Path) -> Option<VoiceSettings> {
 }
 
 pub fn save_dms(dir: &Path, dms: &DmStore) -> Result<()> {
-    write_json(&dir.join("dms.json"), dms)
+    write_secret_json(&dir.join("dms.json"), dms)
 }
 
 pub fn load_dms(dir: &Path) -> Option<DmStore> {
@@ -86,9 +112,6 @@ pub fn load_safety(dir: &Path) -> Option<crate::safety::SafetySettings> {
     read_json(&dir.join("safety.json"))
 }
 
-/// Loads the node secret key, creating one on first launch. The key
-/// is the device's P2P identity; losing it breaks stored invites and
-/// DM addresses that peers hold.
 pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
     let path = dir.join("node.key");
     if let Ok(hex) = fs::read_to_string(&path) {
@@ -100,17 +123,14 @@ pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
         tracing::warn!("node.key is corrupt; generating a new identity");
     }
     let key = commy_net::CommyNode::generate_secret();
-    fs::create_dir_all(dir).ok()?;
-    fs::write(&path, data_encoding::HEXLOWER.encode(&key)).ok()?;
+    write_secret(&path, data_encoding::HEXLOWER.encode(&key).as_bytes()).ok()?;
     Some(key)
 }
 
-/// Servers joined that wait for their first snapshot.
 pub fn save_awaiting(dir: &Path, servers: &HashSet<ServerId>) -> Result<()> {
     write_json(&dir.join("awaiting-snapshot.json"), servers)
 }
 
-/// Earlier builds saved each with a time, which no longer counts.
 pub fn load_awaiting(dir: &Path) -> HashSet<ServerId> {
     #[derive(serde::Deserialize)]
     #[serde(untagged)]
@@ -125,10 +145,8 @@ pub fn load_awaiting(dir: &Path) -> HashSet<ServerId> {
     }
 }
 
-/// Invite tickets, kept so joined servers can be rejoined after a
-/// restart (the ticket holds the topic and bootstrap addresses).
 pub fn save_invites(dir: &Path, invites: &HashMap<ServerId, String>) -> Result<()> {
-    write_json(&dir.join("invites.json"), invites)
+    write_secret_json(&dir.join("invites.json"), invites)
 }
 
 pub fn load_invites(dir: &Path) -> HashMap<ServerId, String> {
@@ -188,7 +206,6 @@ mod tests {
         let profile = UserProfile::new("commy");
         save_profile(&dir, &profile).unwrap();
         assert_eq!(load_profile(&dir).unwrap(), profile);
-        // Overwrite works (tmp+rename path with existing target).
         let mut updated = profile.clone();
         updated.custom_status = Some("building".to_string());
         save_profile(&dir, &updated).unwrap();
@@ -238,10 +255,37 @@ mod tests {
         let first = load_or_create_node_key(&dir).unwrap();
         let second = load_or_create_node_key(&dir).unwrap();
         assert_eq!(first, second);
-        // Corrupt key falls back to a fresh identity.
         fs::write(dir.join("node.key"), "not hex").unwrap();
         let third = load_or_create_node_key(&dir).unwrap();
         assert_ne!(first, third);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn secrets_are_written_privately_and_replaced_whole() {
+        let dir = temp_dir("secret");
+        let path = dir.join("nested").join("account.json");
+        write_secret(&path, b"first").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"first");
+        write_secret(&path, b"second").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"second");
+        let names: Vec<_> = fs::read_dir(path.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names.len(), 1, "no temp file stays behind");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let key_path = dir.join("node.key");
+        let key = load_or_create_node_key(&dir).unwrap();
+        assert_eq!(load_or_create_node_key(&dir), Some(key));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&key_path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let _ = key_path;
         fs::remove_dir_all(&dir).ok();
     }
 

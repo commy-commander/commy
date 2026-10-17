@@ -1,12 +1,3 @@
-//! Message doorbell: content-free wake-ups for messages a device missed.
-//!
-//! Each device keeps a random key per server and shares it with that
-//! server's members only. Senders ring the device's daily token on its
-//! account server with blinded ids of the messages it missed; the device
-//! takes them and fetches the messages from its peers. Tokens and blinded
-//! ids are keyed hashes, so the account server never learns which server,
-//! account or message they belong to.
-
 use crate::identity::{IdentityKey, Signature};
 use crate::ids::{MessageId, ServerId, UserId};
 use chrono::{DateTime, Utc};
@@ -19,15 +10,16 @@ const TOKEN_LABEL: &[u8] = b"commy-doorbell/v1/token";
 const ID_LABEL: &[u8] = b"commy-doorbell/v1/id";
 const SET_LABEL: &str = "commy-doorbell-set/v1";
 
-/// Most blinded ids one ring carries; the account server refuses more.
 pub const MAX_RING_IDS: usize = 50;
 
-/// Days the account server keeps a ring before deleting it.
 pub const KEEP_DAYS: u32 = 14;
 
-/// Days since the Unix epoch, in UTC: the day a token belongs to.
+const SECONDS_PER_DAY: i64 = 86_400;
+const TOKEN_BYTES: usize = 16;
+const BLINDED_ID_BYTES: usize = 12;
+
 pub fn day_of(time: DateTime<Utc>) -> u32 {
-    time.timestamp().div_euclid(86_400).max(0) as u32
+    time.timestamp().div_euclid(SECONDS_PER_DAY).max(0) as u32
 }
 
 fn keyed(key: &DoorbellKey, label: &[u8], data: &[u8]) -> [u8; 32] {
@@ -41,23 +33,18 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The token rings for `day` go to, 32 hex characters.
 pub fn token(key: &DoorbellKey, day: u32) -> String {
-    hex(&keyed(key, TOKEN_LABEL, &day.to_be_bytes())[..16])
+    hex(&keyed(key, TOKEN_LABEL, &day.to_be_bytes())[..TOKEN_BYTES])
 }
 
-/// A message id as the doorbell carries it, 24 hex characters. Only
-/// holders of the key can tell which message it stands for.
 pub fn blinded_id(key: &DoorbellKey, id: MessageId) -> String {
-    hex(&keyed(key, ID_LABEL, id.0.as_bytes())[..12])
+    hex(&keyed(key, ID_LABEL, id.0.as_bytes())[..BLINDED_ID_BYTES])
 }
 
-/// What a doorbell announcement signs, see [`crate::ServerEvent::DoorbellSet`].
 pub fn set_signing_bytes(server: ServerId, user: UserId, node: &str, url: &str, key: Option<&DoorbellKey>) -> Vec<u8> {
     postcard::to_allocvec(&(SET_LABEL, server, user, node, url, key)).expect("postcard encodes plain data")
 }
 
-/// Whether a doorbell announcement was signed by `signer`.
 pub fn verify_set(
     signer: &IdentityKey,
     server: ServerId,

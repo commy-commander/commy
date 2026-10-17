@@ -2,7 +2,6 @@ use crate::identity::IdentityKey;
 use crate::ids::UserId;
 use serde::{Deserialize, Serialize};
 
-/// Presence shown in the member list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Presence {
@@ -15,15 +14,10 @@ pub enum Presence {
 }
 
 impl Presence {
-    /// Whether other members should see this user as reachable.
     pub fn is_visible_online(self) -> bool {
         matches!(self, Presence::Online | Presence::Idle | Presence::DoNotDisturb)
     }
 
-    /// The presence other members get to see. Appearing offline
-    /// (`Invisible`) never leaves this device as such: everyone else sees
-    /// plain `Offline`, so nothing on the wire tells it apart from a user
-    /// who really is offline.
     pub fn as_seen_by_others(self) -> Presence {
         match self {
             Presence::Invisible => Presence::Offline,
@@ -37,53 +31,37 @@ pub struct UserProfile {
     pub id: UserId,
     pub username: String,
     pub display_name: Option<String>,
-    /// Avatar, see [`Avatar`]: "blob:<iroh hash>" for an uploaded image
-    /// served by `node`, or "emoji:<emoji>".
     pub avatar: Option<String>,
     pub presence: Presence,
     pub custom_status: Option<String>,
-    /// Hex-encoded iroh node id of the device this user is on, used by
-    /// peers to open direct media connections (voice, screen share).
     #[serde(default)]
     pub node: Option<String>,
-    /// Emoji shown next to the custom status.
     #[serde(default)]
     pub status_emoji: Option<String>,
-    /// Game or app in the foreground ("Playing X"), when sharing is on.
     #[serde(default)]
     pub activity: Option<String>,
-    /// IGDB cover image id for the activity, when it is a known game.
     #[serde(default)]
     pub activity_cover: Option<String>,
-    /// When the current activity began, unix seconds, so others can see
-    /// how long you have been in a game.
     #[serde(default)]
     pub activity_since: Option<i64>,
-    /// Short "About Me" shown on profiles.
     #[serde(default)]
     pub about: Option<String>,
-    /// Public identity key that signs this user's messages. Peers pin
-    /// the first one they see.
     #[serde(default)]
     pub identity: Option<IdentityKey>,
-    /// When a timed presence (Do Not Disturb, Idle) ends, in unix
-    /// seconds, so others can see when this user is back.
     #[serde(default)]
     pub presence_until: Option<i64>,
+    #[serde(default)]
+    pub banner: Option<String>,
 }
 
-/// Longest About Me, in characters.
 pub const MAX_ABOUT_CHARS: usize = 190;
 
-/// Parsed form of [`UserProfile::avatar`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Avatar {
     Image { blob: String },
     Emoji(String),
 }
 
-/// Upper bound on an emoji avatar or status emoji, in bytes. Long
-/// enough for flag and family sequences, short enough to stop text.
 pub const MAX_EMOJI_BYTES: usize = 32;
 
 impl Avatar {
@@ -104,8 +82,10 @@ impl Avatar {
     }
 }
 
-/// Rough emoji check: short, non-empty, and no plain letters or digits,
-/// so names and sentences cannot pose as an emoji.
+pub fn valid_banner(raw: &str) -> bool {
+    matches!(Avatar::parse(raw), Some(Avatar::Image { .. }))
+}
+
 pub fn is_emoji_like(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= MAX_EMOJI_BYTES
@@ -127,19 +107,16 @@ impl UserProfile {
             activity_cover: None,
             activity_since: None,
             about: None,
+            banner: None,
             identity: None,
             presence_until: None,
         }
     }
 
-    /// Name to render in chat: display name if set, otherwise username.
     pub fn visible_name(&self) -> &str {
         self.display_name.as_deref().unwrap_or(&self.username)
     }
 
-    /// This profile as other members see it. While appearing offline it
-    /// shows as `Offline` and shares no activity, like a user who is not
-    /// running the app.
     pub fn as_seen_by_others(&self) -> UserProfile {
         let mut shared = self.clone();
         if self.presence == Presence::Invisible {
@@ -147,7 +124,6 @@ impl UserProfile {
             shared.activity = None;
             shared.activity_cover = None;
             shared.activity_since = None;
-            // How long you chose to look offline is yours to know.
             shared.presence_until = None;
         }
         shared
@@ -167,7 +143,15 @@ mod tests {
     }
 
     #[test]
-    fn presence_visibility() {
+    fn banners_are_image_blobs_only() {
+        assert!(valid_banner("blob:abc123"));
+        assert!(!valid_banner("emoji:\u{1f600}"));
+        assert!(!valid_banner("blob:"));
+        assert!(!valid_banner("blob:../x"));
+    }
+
+    #[test]
+    fn presence_others_see_never_reveals_appearing_offline() {
         assert!(Presence::Online.is_visible_online());
         assert!(Presence::DoNotDisturb.is_visible_online());
         assert!(!Presence::Invisible.is_visible_online());

@@ -1,8 +1,3 @@
-/* Commy desktop UI. One deep ground, two steps of panel, cream type, one accent.
-   Same system as the website: tokens first, everything references them. */
-
-/* Figtree for text, Space Grotesk for names and headings. Bundled so the app
-   looks the same offline (SIL OFL, see ../fonts/OFL.txt). */
 @font-face {
   font-family: "Figtree";
   font-style: normal;
@@ -46,7 +41,6 @@
   --font-display: "Space Grotesk", "Figtree", "Segoe UI", Helvetica, Arial, sans-serif;
   --chat-font-size: 16px;
 
-  /* the ground, the panels, the raised bits */
   --bg-darkest: #0b0d17;
   --bg-dark: #121630;
   --bg-mid: #171c33;
@@ -56,13 +50,11 @@
   --input-bg: #0e1124;
   --line: rgba(242, 239, 230, .08);
 
-  /* the type */
   --header-primary: #f2efe6;
   --text-normal: #e2e0da;
   --text-muted: #a9aebf;
   --text-faint: #878da5;
 
-  /* the accent and the live states */
   --accent: #ff4d4d;
   --accent-hover: #ff6b6b;
   --accent-ink: #ffffff;
@@ -73,7 +65,6 @@
   --yellow: #f3b53b;
   --link: #8fb8ff;
 
-  /* shape and motion */
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 16px;
@@ -83,7 +74,6 @@
   --t-hover: 160ms;
 }
 
-/* The browser surfaces carry the design too */
 ::selection { background: rgba(255, 77, 77, .35); color: var(--header-primary); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 * { scrollbar-width: thin; scrollbar-color: var(--bg-active) transparent; }
@@ -108,7 +98,6 @@ body {
   user-select: none;
 }
 
-/* The window: a bar across the top, then three panels floating on the ground */
 .app {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr) 232px;
@@ -122,7 +111,6 @@ body {
 .sidebar, .members, .thread-panel, .dm-profile { border-radius: var(--radius-lg); overflow: hidden; }
 .main { border-radius: var(--radius-lg); position: relative; }
 
-/* Top bar: the mark, your servers, your account */
 .rail {
   grid-column: 1 / -1;
   grid-row: 1;
@@ -180,7 +168,6 @@ body {
 
 .server-list { display: flex; flex-direction: row; align-items: center; gap: 8px; }
 
-/* Sidebar */
 .sidebar {
   background: var(--bg-dark);
   display: flex;
@@ -236,7 +223,6 @@ body {
 .chat-header .channel-emoji { width: 22px; height: 22px; vertical-align: -6px; }
 .channel-intro h2 .channel-emoji { width: 30px; height: 30px; vertical-align: -6px; margin: 0 3px; }
 
-/* A channel banner sits behind the name in the list, fading in from the right. */
 .channel.has-banner {
   position: relative;
   isolation: isolate;
@@ -267,7 +253,6 @@ body {
 .channel.has-banner.active::after { background: linear-gradient(90deg, var(--bg-active) 0%, rgba(45, 53, 84, .9) 45%, rgba(45, 53, 84, .3) 100%); }
 .channel.has-banner .hash, .channel.has-banner .channel-label { text-shadow: 0 1px 2px rgba(0, 0, 0, .5); }
 
-/* A colour band behind the name, the same gradient as role banners. */
 .channel.has-band {
   background: var(--channel-band);
   color: #fff;
@@ -334,7 +319,6 @@ body {
 
 .avatar.avatar-sm { width: 24px; height: 24px; font-size: 10px; }
 
-/* User panel */
 .user-panel {
   height: 44px;
   background: var(--bg-raised);
@@ -383,13 +367,11 @@ body {
 .icon-btn:hover { background: var(--bg-hover); color: var(--text-normal); }
 .icon-btn.danger { color: var(--red); }
 
-/* Main chat */
 .main {
   background: var(--bg-mid);
   display: flex;
   flex-direction: column;
   min-width: 0;
-  /* Grid items default to content height; keep the column inside the viewport. */
   min-height: 0;
 }
 
@@ -409,7 +391,6 @@ body {
 .header-actions { margin-left: auto; display: flex; gap: 4px; }
 .header-actions .icon-btn.active { color: var(--red); }
 
-/* Screen share viewer */
 .video-pane {
   background: #000;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -440,7 +421,6 @@ body {
 
 .btn-small { padding: 5px 10px; font-size: 13px; }
 
-/* Attachments */
 .attachment {
   display: flex;
   align-items: center;
@@ -483,8 +463,6 @@ body {
 
 .messages {
   flex: 1;
-  /* Without this, tall content (inline images) grows the box past
-     the viewport and pushes the composer off-screen. */
   min-height: 0;
   overflow-y: auto;
   padding: 16px 16px 8px;
@@ -515,7 +493,6 @@ body {
 }
 .empty-state h3 { color: var(--header-primary); margin-bottom: 8px; font-size: 24px; font-family: var(--font-display); letter-spacing: -.01em; }
 
-/* Top of a channel */
 .channel-intro { margin-top: auto; padding: 24px 8px 8px; }
 .channel-intro-banner {
   height: 180px;
@@ -540,7 +517,6 @@ body {
 .channel-intro h2 { font-family: var(--font-display); font-size: 26px; font-weight: 700; letter-spacing: -.01em; color: var(--header-primary); margin-bottom: 6px; }
 .channel-intro p { color: var(--text-muted); font-size: 15px; line-height: 1.5; max-width: 60ch; }
 
-/* Day dividers */
 .day-divider {
   display: flex;
   align-items: center;
@@ -552,7 +528,6 @@ body {
 .day-divider-label { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .day-divider + .msg.first { margin-top: 4px; }
 
-/* Composer */
 .composer {
   margin: 0 12px 12px;
   background: var(--bg-raised);
@@ -578,7 +553,6 @@ body {
 
 .composer input::placeholder { color: var(--text-faint); }
 
-/* Member list */
 .members {
   background: var(--bg-dark);
   overflow-y: auto;
@@ -625,7 +599,6 @@ body {
 
 .member-name { font-size: 14px; font-weight: 500; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Modals */
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -726,7 +699,6 @@ body {
 
 .switch:checked::after { left: 23px; }
 
-/* Emoji picker */
 .emoji-picker {
   position: absolute;
   bottom: 80px;
@@ -776,7 +748,6 @@ body {
 
 .main { position: relative; }
 
-/* Inline chat images */
 .chat-image {
   display: block;
   max-width: 400px;
@@ -787,7 +758,6 @@ body {
   background: var(--bg-darkest);
 }
 
-/* Link-sourced image embeds carry their source URL */
 .image-embed { margin-top: 6px; }
 .image-embed .chat-image { margin-top: 2px; }
 .embed-source {
@@ -802,7 +772,23 @@ body {
 }
 .embed-source:hover { color: var(--text-normal); text-decoration: underline; }
 
-/* Click-to-expand image overlay */
+.image-gate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 400px;
+  margin-top: 2px;
+  padding: 10px 12px;
+  background: var(--bg-dark);
+  border: 1px solid var(--bg-darkest);
+  border-radius: var(--radius);
+}
+.image-gate-text { flex: 1; min-width: 0; }
+.image-gate-title { font-weight: 600; color: var(--header-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.image-gate-hint { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.image-gate-load { flex-shrink: 0; min-width: 92px; }
+.image-gate-load:disabled { opacity: .6; cursor: default; background: var(--bg-active); color: var(--header-primary); }
+
 .lightbox {
   position: fixed;
   inset: 0;
@@ -832,14 +818,12 @@ body {
 .lightbox-source.linked { cursor: pointer; }
 .lightbox-source.linked:hover { color: #fff; text-decoration: underline; }
 
-/* DM list */
 .dm-thread { flex-direction: row; align-items: center; gap: 10px; padding: 8px; }
 .dm-thread .avatar { width: 32px; height: 32px; flex-shrink: 0; }
 .dm-meta { min-width: 0; flex: 1; }
 .dm-name { font-weight: 600; font-size: 14px; color: var(--text-normal); }
 .dm-preview { font-size: 12px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Server management lists */
 .header-btns { display: flex; }
 .inline-row { display: flex; gap: 8px; align-items: center; }
 .inline-row input[type="text"] { flex: 1; min-width: 0; }
@@ -860,7 +844,8 @@ body {
 }
 .manage-row:hover { border-color: var(--bg-active); }
 .manage-row-label { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.manage-row .kind {
+.manage-row .kind,
+.role-card .kind {
   color: var(--text-faint);
   font-size: 11px;
   font-weight: 600;
@@ -901,7 +886,6 @@ body {
 .user-meta { cursor: pointer; border-radius: 6px; padding: 2px 4px; }
 .user-meta:hover { background: var(--bg-hover); }
 
-/* Volume sliders */
 .slider-row { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
 .slider-row .setting-title span { color: var(--text-muted); font-weight: 400; font-size: 13px; }
 input[type="range"] {
@@ -920,7 +904,6 @@ input[type="range"]::-webkit-slider-thumb {
   cursor: pointer;
 }
 
-/* Share source picker */
 .share-source-list {
   display: flex;
   flex-direction: column;
@@ -954,7 +937,6 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .share-source .src-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Roles */
 .perm-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -994,7 +976,6 @@ input[type="range"]::-webkit-slider-thumb {
 .role-chips { display: flex; flex-wrap: wrap; gap: 4px; padding-left: 32px; }
 .role-chips .role-chip { margin-left: 0; padding: 3px 10px; font-size: 12px; font-weight: 500; }
 
-/* Links in chat */
 .msg-content a { color: var(--link); text-decoration: none; }
 .msg-content a:hover { text-decoration: underline; }
 
@@ -1003,7 +984,6 @@ input[type="range"]::-webkit-slider-thumb {
   outline-offset: -8px;
 }
 
-/* Toast */
 .toast {
   position: fixed;
   bottom: 24px;
@@ -1020,12 +1000,10 @@ input[type="range"]::-webkit-slider-thumb {
 
 .hidden { display: none !important; }
 
-/* Scrollbars */
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--bg-darkest); border-radius: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ---------- Typography polish ---------- */
 .msg-content { font-size: var(--chat-font-size); line-height: 1.375; }
 .msg-author { font-size: calc(var(--chat-font-size) + 1px); font-weight: 600; }
 .chat-header { font-size: 16px; }
@@ -1038,7 +1016,6 @@ body.compact .msg { padding-top: 1px; padding-bottom: 1px; }
 body.compact .msg.first { margin-top: 6px; }
 body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 
-/* Shared control polish */
 .modal { border-radius: var(--radius-lg); }
 .btn-primary, .btn-secondary, .btn-danger { transition: background var(--t-hover) ease, color var(--t-hover) ease, filter var(--t-hover) ease, transform var(--t-press) var(--ease-out); }
 .btn-primary:active, .btn-secondary:active, .btn-danger:active { transform: scale(.97); }
@@ -1054,7 +1031,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   outline: none;
 }
 
-/* ---------- Full-screen settings ---------- */
 .settings-layer {
   position: fixed;
   inset: 0;
@@ -1118,7 +1094,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .settings-tab.danger { color: var(--red); }
 .settings-tab.danger:hover { background: rgba(242, 63, 67, .1); }
 .settings-nav-sep { height: 1px; background: var(--bg-active); margin: 10px 10px; }
-.settings-version { font-size: 12px; color: var(--text-faint); padding: 4px 10px; }
 
 .settings-content {
   flex: 1 1 800px;
@@ -1218,9 +1193,9 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .settings-close:hover { background: rgba(255,255,255,.08); color: #fff; border-color: #fff; }
 .settings-close-key { font-size: 13px; font-weight: 600; color: var(--text-faint); }
 
-/* Account profile card */
 .profile-card { background: var(--bg-darkest); border-radius: 12px; overflow: hidden; }
-.profile-banner { height: 100px; background: linear-gradient(135deg, var(--accent), var(--accent-deep)); }
+.profile-banner .role-banner-tools { top: 10px; bottom: auto; }
+.profile-banner { position: relative; height: 100px; background: linear-gradient(135deg, var(--accent), var(--accent-deep)); background-size: cover; background-position: center; }
 .profile-body { display: flex; align-items: flex-end; gap: 16px; padding: 0 16px; margin-top: -40px; }
 .avatar.avatar-xl {
   width: 88px;
@@ -1242,7 +1217,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   gap: 16px;
 }
 
-/* Appearance preview */
 .appearance-preview {
   background: var(--bg-mid);
   border: 1px solid var(--bg-active);
@@ -1253,7 +1227,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 .appearance-preview .avatar { width: 40px; height: 40px; }
 
-/* Server overview */
 .overview-card { flex-direction: row; align-items: center; gap: 20px; }
 .server-icon.server-icon-xl {
   width: 80px;
@@ -1277,14 +1250,15 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   background: #fff;
   box-shadow: 0 1px 4px rgba(0,0,0,.4);
 }
-.manage-row .btn-danger {
+.manage-row .btn-danger,
+.role-editor .btn-danger {
   background: transparent;
   color: var(--red);
   border: 1px solid rgba(242, 63, 67, .5);
 }
-.manage-row .btn-danger:hover { background: var(--red); color: #fff; filter: none; }
+.manage-row .btn-danger:hover,
+.role-editor .btn-danger:hover { background: var(--red); color: #fff; filter: none; }
 
-/* ---------- Direct messages ---------- */
 .app.dm-mode { grid-template-columns: 248px minmax(0, 1fr) auto; }
 .app.dm-mode .dm-profile { grid-row: 2; }
 .rail-home.active { background: none; }
@@ -1340,7 +1314,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 #dm-profile-btn.active { color: var(--text-normal); }
 
-/* Start of DM history */
 .dm-intro { margin-top: auto; padding: 16px 8px 8px; }
 .dm-intro .avatar-xl { width: 80px; height: 80px; font-size: 30px; margin-bottom: 12px; }
 .dm-intro h2 { font-size: 30px; font-weight: 800; color: var(--header-primary); margin-bottom: 6px; }
@@ -1371,7 +1344,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 .dm-empty p { line-height: 1.5; }
 
-/* First run: no servers yet */
 .welcome-home { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 460px; }
 .welcome-mark { width: 72px; height: 72px; border-radius: 22px; margin-bottom: 4px; }
 .welcome-home h3 { font-size: 28px; margin-bottom: 0; }
@@ -1379,7 +1351,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .welcome-actions { display: flex; gap: 10px; margin-top: 12px; }
 .welcome-actions button { padding: 11px 22px; }
 
-/* Joining a server: rules, then roles, in one panel */
 .sw-head { display: flex; align-items: center; gap: 14px; }
 .sw-icon { width: 56px; height: 56px; font-size: 18px; cursor: default; background: var(--bg-active); }
 .sw-icon:hover { background: var(--bg-active); color: var(--header-primary); }
@@ -1404,7 +1375,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 #sw-role-list { margin: 8px 0 0; }
 .dm-empty .btn-primary { padding: 10px 20px; margin-top: 8px; }
 
-/* DM profile side panel */
 .dm-profile {
   width: 300px;
   background: var(--bg-dark);
@@ -1472,7 +1442,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   flex-shrink: 0;
 }
 
-/* New message picker */
 .people-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; margin: 0 -8px; }
 .person-row {
   display: flex;
@@ -1491,7 +1460,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .person-row .presence-dot { border-color: var(--bg-mid); }
 .person-row:hover .presence-dot { border-color: var(--bg-hover); }
 
-/* ---------- Voice and screen share panel ---------- */
 .voice-panel {
   background: var(--bg-darkest);
   border: 1px solid var(--line);
@@ -1503,8 +1471,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   gap: 8px;
 }
 .vp-conn { display: flex; align-items: center; gap: 2px; }
-/* Mute, deafen and noise cancellation: a row of equal segments under the
-   connection line, each a fixed footprint so toggling never shifts them. */
 .vp-voice { display: flex; gap: 8px; }
 .vp-voice .split-btn, .vp-voice > .icon-btn {
   flex: 1;
@@ -1535,7 +1501,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .vp-where { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #vp-nc.on { color: var(--accent); }
 .vp-hangup:hover { color: var(--red); }
-
 
 .vp-live {
   background: var(--bg-dark);
@@ -1583,7 +1548,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .vp-streams:empty { display: none; }
 .vp-live-actions .vp-pill { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
-/* ---------- Stream viewer (stage) ---------- */
 .stage {
   flex: 0 0 auto;
   height: 56%;
@@ -1635,8 +1599,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* The HUD sits on the footage as frosted chips rather than gradient bands,
-   so names, stats and controls stay readable on bright, moving frames. */
 .stage-top, .stage-controls {
   position: absolute;
   left: 0;
@@ -1705,7 +1667,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .stage-btn.danger:hover { background: var(--accent-hover); }
 @media (prefers-reduced-motion: reduce) { .stage-btn:hover { transform: none; } }
 
-/* ---------- Share picker ---------- */
 .modal.modal-wide { width: 640px; max-width: calc(100vw - 32px); }
 .share-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--bg-active); }
 .share-tab {
@@ -1803,7 +1764,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .modal-actions button { padding: 10px 20px; }
 .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
 
-/* ---------- Own stream preview in the voice panel ---------- */
 .vp-preview {
   position: relative;
   aspect-ratio: 16 / 9;
@@ -1834,9 +1794,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   font-family: inherit;
 }
 
-/* ---------- Speaking indicator ---------- */
-/* A solid ring plus a soft ripple, drawn on pseudo elements so the
-   avatar itself is never filtered or rescaled (which blurs its text). */
 .voice-user .avatar, .member .avatar, #me-avatar { position: relative; }
 .voice-user .avatar::before, .voice-user .avatar::after,
 .member .avatar::before, .member .avatar::after,
@@ -1879,7 +1836,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 .member .presence-dot { z-index: 2; }
 
-/* ---------- Create channel dialog ---------- */
 .kind-picker { display: flex; flex-direction: column; gap: 8px; }
 .kind-option {
   display: flex;
@@ -1918,6 +1874,11 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 .kind-option.active .kind-radio { border-color: #fff; box-shadow: inset 0 0 0 4px var(--bg-active); background: #fff; }
 
+.field-emoji { position: relative; display: block; }
+.field-emoji > input, .field-emoji > textarea { width: 100%; box-sizing: border-box; padding-right: 44px; }
+.field-emoji .input-emoji-btn { position: absolute; right: 4px; top: 50%; margin: -17px 0 0; }
+.field-emoji > textarea ~ .input-emoji-btn { top: auto; bottom: 6px; margin: 0; }
+#avatar-menu { z-index: 180; }
 .prefixed-input {
   display: flex;
   align-items: center;
@@ -1946,25 +1907,18 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .input-emoji-btn:hover { color: var(--header-primary); background: var(--bg-hover); }
 .modal .prefixed-input input[type="text"] { flex: 1; background: none; border: none; text-transform: none; letter-spacing: normal; font-weight: 400; }
 
-/* Channel group headers with a create button */
 .channel-group.dm-group { padding-right: 6px; }
 
-/* Settings select */
 .settings-page select.compact-select { min-width: 140px; flex-shrink: 0; cursor: pointer; }
 
-/* Our own presence dot in the user panel */
 #me-avatar .presence-dot { z-index: 2; border-color: #232428; }
 
-/* Logo home button: the artwork carries its own shape and color. */
-/* Hover and active keep the same footprint: a hover must never move
-   the server tiles beside the mark. */
 .rail-home, .rail-home:hover, .rail-home.active { background: none; padding: 0 8px 0 0; overflow: hidden; }
 .rail-home { width: auto; gap: 8px; }
 .rail-home img { width: 38px; height: 38px; display: block; border-radius: 12px; }
 .rail-home, .rail-home:hover { background: none; }
 .rail-home.active { box-shadow: none; border-radius: var(--radius-lg); }
 
-/* ---------- Avatars: image and emoji faces ---------- */
 .avatar { overflow: visible; }
 .avatar > img.avatar-face {
   width: 100%;
@@ -1981,7 +1935,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .avatar.avatar-lg.emoji-avatar, .avatar.avatar-xl.emoji-avatar { font-size: 72px; }
 .msg .avatar.emoji-avatar { font-size: 40px; }
 .user-sub.activity { color: var(--green); font-weight: 500; }
-/* People panel: name line glyphs for voice, one reserved sub line. */
 .member { min-height: 44px; }
 .member > div:not(.avatar) { flex: 1; min-width: 0; }
 .member-name { display: flex; align-items: center; }
@@ -1993,7 +1946,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .elapsed { font-variant-numeric: tabular-nums; }
 .voice-user-time { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; margin-right: 2px; }
 
-/* ---------- Own profile popover ---------- */
 .profile-pop {
   position: fixed;
   z-index: 120;
@@ -2092,7 +2044,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .pp-presence .presence-dot.inline { width: 12px; height: 12px; margin: 0; flex-shrink: 0; }
 .presence-dot.invisible { background: var(--text-faint); box-shadow: inset 0 0 0 3px var(--bg-darkest); }
 
-/* Small menus */
 .pop-menu {
   position: fixed;
   z-index: 130;
@@ -2111,8 +2062,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 
 .emoji-pop {
   position: fixed;
-  /* Above settings layers and modal backdrops, so pickers opened from
-     settings and dialogs are clickable. */
   z-index: 180;
   width: 340px;
   max-height: 320px;
@@ -2140,7 +2089,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .profile-avatar-btn { margin-left: auto; margin-bottom: 10px; }
 #me-avatar { cursor: pointer; }
 #pp-avatar.emoji-avatar { font-size: 72px; }
-/* Avatar edit control: a hover overlay across the whole avatar. */
 .pp-avatar-edit {
   left: 22px;
   bottom: 6px;
@@ -2154,7 +2102,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .pp-avatar-edit:hover { opacity: 1; background: rgba(0, 0, 0, .55); }
 .user-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* ---------- Channel settings ---------- */
 .channel { position: relative; }
 .channel-gear {
   margin-left: auto;
@@ -2234,7 +2181,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .btn-danger:disabled { opacity: .45; cursor: not-allowed; filter: none; }
 .confirm-prompt { display: block; font-size: 13px; line-height: 1.6; }
 
-/* ---------- Message actions ---------- */
 .msg { position: relative; }
 .msg-actions {
   position: absolute;
@@ -2308,7 +2254,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .device-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .device-grid select { width: 100%; min-width: 0; text-overflow: ellipsis; }
 
-/* ---------- Camera ---------- */
 .cam-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -2374,11 +2319,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 .cam-preview.live video { display: block; }
 
-/* ---------- Unread indicators ----------
-   A server tile with unread messages wears a count pill on its top-right
-   corner, in the accent with white figures, ringed by the ground so it
-   reads as sitting on the tile rather than in it. No extra dots: the
-   pill is the whole signal, and a muted server shows none. */
 .server-icon, .rail-home { position: relative; overflow: visible; }
 .server-icon.active::before {
   content: "";
@@ -2406,9 +2346,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 .dm-thread.unread .dm-name { color: #fff; font-weight: 700; }
 
-/* ---------- Icon alignment baseline ----------
-   Every icon button centers a block-level SVG at a fixed size, so
-   icons drawn at different sizes in markup still line up. */
 button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .icon-btn { padding: 0; line-height: 0; flex-shrink: 0; }
 .icon-btn > svg { width: 20px; height: 20px; }
@@ -2437,7 +2374,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .chat-header { align-items: center; }
 .chat-header .hash { line-height: 1; display: inline-flex; align-items: center; }
 
-/* ---------- Server rail items and folders ---------- */
 .server-list { align-items: center; }
 .rail-item { position: relative; display: flex; }
 .server-icon.has-image { background: var(--bg-dark); overflow: hidden; padding: 0; }
@@ -2502,7 +2438,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 }
 .folder-mini img { width: 100%; height: 100%; object-fit: cover; }
 
-/* ---------- Unread count pills ---------- */
 .count-badge {
   position: absolute;
   right: -6px;
@@ -2525,14 +2460,10 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   z-index: 2;
   font-variant-numeric: tabular-nums;
 }
-/* On an accent surface (the chosen tile, the Commy mark) the pill flips
-   to cream so it stays a separate shape. */
 .server-icon.active + .count-badge, #home-badge { background: var(--header-primary); color: var(--bg-darkest); }
-/* Direct messages: on the Commy mark, not the brand text. */
 #home-badge { right: auto; left: 28px; top: -4px; }
 .rail { position: relative; }
 
-/* ---------- Context menus ---------- */
 .ctx-menu { min-width: 220px; z-index: 170; }
 .ctx-title {
   font-size: 12px;
@@ -2565,7 +2496,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 }
 .pop-menu button:hover.ctx-radio::after, .pop-menu button:hover.ctx-check::after { border-color: #fff; }
 
-/* ---------- Server banner and settings images ---------- */
 .sidebar-header { position: relative; }
 .sidebar-banner { display: none; }
 .sidebar-header.has-banner { height: 120px; align-items: flex-start; padding-top: 12px; box-shadow: none; }
@@ -2580,15 +2510,27 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(rgba(0, 0, 0, .55), rgba(0, 0, 0, 0) 60%);
+  background: linear-gradient(rgba(0, 0, 0, .45), rgba(0, 0, 0, 0) 45%, rgba(0, 0, 0, .55));
 }
 .sidebar-header.has-banner > *:not(.sidebar-banner) { position: relative; z-index: 1; }
 .sidebar-header.has-banner #server-name { color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .7); }
 .sidebar-header.has-banner .icon-btn { color: #fff; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .7)); }
-/* No picture: same height, plain panel surface, normal text. */
-.sidebar-header.has-banner.plain .sidebar-banner { display: none; }
-.sidebar-header.has-banner.plain #server-name { color: inherit; text-shadow: none; }
-.sidebar-header.has-banner.plain .icon-btn { color: inherit; filter: none; }
+.sidebar-header.has-banner > #server-name {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 17px;
+  line-height: 1.2;
+}
+.sidebar-header.has-banner .header-btns { margin-left: auto; }
+.sidebar-header.has-banner.plain .sidebar-banner {
+  display: block;
+  background: var(--slot);
+}
+.sidebar-header.has-banner.plain .sidebar-banner::after { background: linear-gradient(rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, .35)); }
 
 .overview-avatar { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
 .overview-avatar .server-icon-xl { cursor: pointer; border: none; font-family: inherit; }
@@ -2612,7 +2554,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .banner-preview.empty span { display: block; }
 .banner-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 
-/* ---------- Replies ---------- */
 .msg.is-reply { flex-wrap: wrap; }
 .reply-ref {
   flex-basis: 100%;
@@ -2667,7 +2608,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .reply-bar:not(.hidden) + .gif-picker + .composer,
 .reply-bar:not(.hidden) ~ .composer { border-top-left-radius: 0; border-top-right-radius: 0; }
 
-/* Messages not yet delivered to anyone, and messages on their way to us */
 .msg.pending .msg-body > :not(.msg-head) { opacity: .6; }
 .msg-pending {
   display: inline-flex;
@@ -2693,7 +2633,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 }
 .awaited-icon { display: inline-flex; flex-shrink: 0; color: var(--accent); }
 
-/* ---------- Reactions ---------- */
 .reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .reaction {
   display: inline-flex;
@@ -2716,7 +2655,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .reaction.add { color: var(--text-muted); opacity: 0; }
 .msg:hover .reaction.add { opacity: 1; }
 
-/* ---------- Threads ---------- */
 .thread-link {
   display: inline-flex;
   align-items: center;
@@ -2767,7 +2705,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .thread-divider::after { content: ""; flex: 1; height: 1px; background: var(--bg-active); }
 .thread-composer { margin: 0 12px 16px; }
 
-/* ---------- GIF picker ---------- */
 .gif-btn { width: auto; padding: 0 6px; font-size: 12px; font-weight: 800; line-height: 1; }
 .gif-btn:hover { color: var(--text-normal); }
 .gif-picker {
@@ -2822,16 +2759,13 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 #gif-key-help a { color: var(--link); cursor: pointer; }
 #gif-key-help a:hover { text-decoration: underline; }
 
-/* Folders: gray, with each server's own color or avatar showing through */
 .rail-folder.open { background: rgba(242, 239, 230, .06); }
 .folder-head { background: var(--bg-raised); color: var(--text-muted); }
 .folder-head:hover { background: var(--bg-active); }
 .folder-mini { width: 12px; height: 12px; font-size: 6px; }
 
-/* ---------- Profile bar: one profile button plus three equal icon buttons ---------- */
 .user-panel { gap: 4px; }
 .user-chip {
-  /* A fixed footprint: the pill never grows or shrinks with the status under the name. */
   flex: 0 0 164px;
   width: 164px;
   min-width: 0;
@@ -2854,12 +2788,10 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .user-chip .user-sub { min-height: 14px; line-height: 14px; }
 .user-chip .user-sub.back { color: var(--accent-hover); font-weight: 500; }
 .user-chip #me-avatar { cursor: inherit; }
-/* Whole-pixel boxes so the three icons share one rhythm. */
 .user-actions { flex: 0 0 auto; }
 .user-actions .icon-btn { border-radius: 50%; }
 .user-actions .icon-btn { flex: 0 0 32px; width: 32px; height: 32px; border-radius: 6px; }
 
-/* ---------- GIF picker: wide masonry, search pinned on top ---------- */
 .gif-picker {
   width: 460px;
   height: 460px;
@@ -2891,7 +2823,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .gif-note { flex: 1; }
 .gif-attrib { flex-shrink: 0; }
 
-/* ---------- Sound settings ---------- */
 .sound-card .setting-row { padding: 0; }
 .sound-rows { display: flex; flex-direction: column; gap: 8px; }
 .sound-row { display: flex; align-items: center; gap: 10px; }
@@ -2900,7 +2831,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .sound-preview { color: var(--text-muted); }
 .sound-preview:hover { color: var(--accent); }
 
-/* ---------- Mentions ---------- */
 .mention {
   background: rgba(255, 77, 77, .14);
   color: #ffb3b3;
@@ -2961,8 +2891,81 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 }
 .mention-name { font-weight: 600; }
 .mention-hint { margin-left: auto; font-size: 12px; color: var(--text-faint); }
+.mention-row { min-height: 36px; flex-shrink: 0; }
+.mention-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mention-hint { white-space: nowrap; flex-shrink: 0; }
+.suggest-glyph {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+}
+.suggest-glyph .custom-emoji { width: 24px; height: 24px; margin: 0; vertical-align: 0; }
+.suggest-args {
+  color: var(--header-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
 
-/* Custom emojis */
+.composer-menu { min-width: 200px; }
+.composer-menu svg { flex-shrink: 0; color: var(--text-muted); }
+.composer-menu button:hover svg { color: #fff; }
+
+.chat-video {
+  position: relative;
+  width: 400px;
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-top: 6px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-darkest);
+  overflow: hidden;
+}
+.chat-video-player {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.chat-video-play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 60px;
+  height: 60px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--t-press) var(--ease-out);
+}
+.chat-video-play:hover { background: var(--accent-hover); }
+.chat-video-play:disabled { background: var(--bg-active); cursor: progress; }
+.chat-video-play svg { margin-left: 3px; }
+.chat-video-label {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .custom-emoji { width: 22px; height: 22px; object-fit: contain; vertical-align: -6px; margin: 0 1px; }
 .custom-emoji:not([src]) { display: inline-block; background: var(--bg-active); border-radius: 6px; }
 .custom-emoji.missing { opacity: .4; }
@@ -2991,7 +2994,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   letter-spacing: 0;
 }
 
-/* Emoji and Soundboard settings */
 .expr-intro { margin: -4px 0 16px; line-height: 1.45; }
 .expr-intro code { background: var(--bg-darkest); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
 .settings-card.readonly { opacity: .6; }
@@ -3026,7 +3028,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .expr-row:hover .expr-delete, .expr-delete:focus-visible { opacity: 1; }
 .expr-delete:hover { color: var(--red); }
 
-/* Soundboard */
 .soundboard-pop {
   position: fixed;
   z-index: 140;
@@ -3097,7 +3098,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   white-space: nowrap;
 }
 
-/* Blocking and message requests */
 .msg-hidden.blocked { color: var(--text-muted); }
 .pop-menu button.danger { color: var(--red); }
 .blocked-list { display: flex; flex-direction: column; margin-top: 10px; }
@@ -3136,7 +3136,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 }
 .dm-profile-action.danger:hover { background: var(--red); color: #fff; }
 
-/* Reports */
 .report-reasons { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; }
 .report-reasons label {
   display: flex;
@@ -3180,7 +3179,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .report-actions { display: flex; align-items: center; gap: 8px; }
 .report-actions .btn-link { margin-left: auto; }
 
-/* Timed status */
 .pp-expiry {
   display: block;
   margin: 6px 0 0;
@@ -3235,7 +3233,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   color-scheme: dark;
 }
 
-/* Game tags */
 .game-chip {
   display: inline-flex;
   align-items: center;
@@ -3255,12 +3252,10 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 #game-tag-input { flex: 1; min-width: 160px; border: none; background: none; color: var(--text-normal); font: inherit; font-size: 14px; outline: none; padding: 4px; }
 .sidebar-game-tags { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 8px 4px; }
 
-/* Sidebar shortcuts */
 .sidebar-link .channel-icon { color: var(--text-muted); }
 .sidebar-link-badge { margin-left: auto; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 8px; background: var(--accent); color: #fff; }
 .sidebar-sep { height: 1px; background: var(--bg-active); margin: 8px 8px 0; }
 
-/* Categories */
 .section-head { cursor: pointer; user-select: none; }
 .section-head:hover .section-title { color: var(--text-normal); }
 .section-caret { display: inline-flex; margin-right: 2px; transition: transform .15s; }
@@ -3270,11 +3265,9 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .section-head:hover .channel-gear { opacity: 1; }
 .drop-over { box-shadow: inset 0 2px 0 var(--accent); }
 
-/* Voice limits */
 .voice-count.limited { font-variant-numeric: tabular-nums; background: var(--bg-darkest); color: var(--text-muted); padding: 1px 6px; border-radius: 8px; font-size: 11px; }
 .voice-count.full { color: var(--red); }
 
-/* Markdown */
 .md { color: var(--text-normal); font-size: 14px; line-height: 1.5; }
 .md h3, .md h4, .md h5 { margin: 12px 0 4px; color: var(--text-normal); }
 .md h3 { font-size: 18px; }
@@ -3286,7 +3279,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .md a { color: var(--link); text-decoration: none; }
 .md a:hover { text-decoration: underline; }
 
-/* Rules */
 .rules-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 #rules-input {
   width: 100%;
@@ -3309,7 +3301,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .modal.modal-wide { width: min(560px, calc(100vw - 32px)); }
 .rules-gate { border-color: rgba(255, 77, 77, .4); }
 
-/* Events */
 .events-layer {
   position: fixed;
   inset: 0;
@@ -3384,7 +3375,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 #modal-event input[type="datetime-local"], #modal-event select { width: 100%; box-sizing: border-box; color-scheme: dark; }
 #event-description { width: 100%; box-sizing: border-box; resize: vertical; background: var(--bg-darkest); border: 1px solid transparent; border-radius: 6px; padding: 9px 10px; color: var(--text-normal); font: inherit; font-size: 14px; outline: none; }
 
-/* Role tags and picking */
 .role-tag {
   display: inline-flex;
   align-items: center;
@@ -3427,7 +3417,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .role-pick-check { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid var(--text-faint); color: transparent; }
 .role-pick.held .role-pick-check { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-/* Game overlay settings */
 .overlay-options.disabled { opacity: .5; pointer-events: none; }
 .overlay-options .setting-row + .setting-row, .overlay-options .slider-row { margin-top: 12px; }
 .hotkey-input {
@@ -3446,7 +3435,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 }
 .hotkey-input:focus { border-color: var(--accent); color: var(--text-muted); }
 .overlay-note { margin-top: 12px; line-height: 1.45; }
-/* A little screen with a button in each corner; the chosen corner is filled. */
 .corner-picker {
   position: relative;
   flex: 0 0 auto;
@@ -3475,7 +3463,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .corner-opt[data-corner="bottom-right"] { bottom: 5px; right: 5px; }
 .hotkey-warning { color: var(--yellow); margin-top: 10px; }
 
-/* Integrations */
 .integration-head { display: flex; gap: 14px; align-items: flex-start; }
 .integration-logo { flex: none; width: 52px; height: 52px; border-radius: 10px; background: #9147ff; color: #fff; font-weight: 800; font-size: 14px; display: flex; align-items: center; justify-content: center; letter-spacing: .03em; }
 .integration-state { margin-left: 6px; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 8px; }
@@ -3491,7 +3478,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .integration-result.ok { color: var(--green); }
 .integration-result.bad { color: var(--red); }
 
-/* Game search and covers */
 .tag-editor { position: relative; }
 .game-search {
   position: absolute;
@@ -3515,7 +3501,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .game-chip.small .game-chip-cover { width: 14px; height: 14px; }
 .activity-cover { width: 14px; height: 14px; border-radius: 3px; object-fit: cover; vertical-align: -3px; margin-right: 4px; }
 
-/* Role emoji tags and banners */
 .role-tag.emoji { border: none; padding: 0; font-size: 14px; height: auto; vertical-align: -1px; }
 .role-tag.emoji .custom-emoji { width: 16px; height: 16px; margin: 0; vertical-align: -3px; }
 .role-tag-pick {
@@ -3539,6 +3524,42 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .role-tag-pick .role-tag.emoji { font-size: 18px; }
 .role-tag-pick .role-tag.emoji .custom-emoji { width: 22px; height: 22px; }
 .role-tag-clear { width: 24px; height: 24px; color: var(--text-muted); }
+.roles-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.roles-head .setting-sub { flex: 1; min-width: 0; }
+.roles-head .btn-primary { flex: none; }
+.role-cards { display: flex; flex-direction: column; gap: 10px; }
+.role-card { background: var(--bg-dark); border-radius: var(--radius); overflow: hidden; }
+.role-card-banner {
+  position: relative;
+  height: 64px;
+  background-size: cover;
+  background-position: center;
+}
+.role-banner-tools { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; }
+.role-banner-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 14px;
+  background: rgba(11, 13, 23, .72);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.role-banner-btn:hover { background: rgba(11, 13, 23, .9); }
+.role-banner-btn.icon { width: 28px; padding: 0; justify-content: center; }
+.role-card-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: 14px; font-weight: 500; }
+.role-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-card .role-editor { margin: 0; border-radius: 0; border-top: 1px solid var(--bg-active); background: var(--bg-darkest); }
+.role-editor .form-actions { justify-content: space-between; }
+.role-editor .role-perms-title { margin-top: 4px; }
+.role-editor .perm-grid { gap: 8px 16px; font-size: 14px; }
+.role-editor .perm-grid input { accent-color: var(--accent); width: 16px; height: 16px; }
 .role-banner-row { display: flex; gap: 12px; align-items: center; }
 .role-banner-preview {
   flex: none;
@@ -3559,7 +3580,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .role-pick.has-banner { padding-top: 46px; }
 .role-pick-banner { position: absolute; left: 0; right: 0; top: 0; height: 38px; background-size: cover; background-position: center; }
 
-/* Member profile card */
 .member-card {
   position: fixed;
   z-index: 125;
@@ -3583,7 +3603,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .mc-role { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 6px; background: var(--bg-dark); font-size: 12px; font-weight: 500; color: var(--text-normal); }
 .mc-message { margin-top: 10px; width: 100%; }
 
-/* Member menu extras */
 .ctx-slider { padding: 6px 8px 8px; }
 .ctx-slider-label { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
 .ctx-slider input[type="range"] { width: 100%; }
@@ -3592,7 +3611,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 #report-server-row { margin: 8px 0; }
 .ctx-slider input[type="range"] { background: linear-gradient(to right, var(--accent) var(--fill, 50%), var(--bg-active) var(--fill, 50%)); height: 6px; }
 
-/* Profile card actions, about, composer */
 .mc-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .mc-action {
   display: inline-flex;
@@ -3626,7 +3644,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 #mc-gif { width: auto; padding: 0 6px; font-size: 11px; font-weight: 800; }
 .ctx-empty { padding: 8px; font-size: 12px; color: var(--text-muted); }
 
-/* Invite cards in messages */
 .invite-card { display: flex; align-items: center; gap: 12px; margin-top: 6px; padding: 12px 14px; max-width: 440px; border-radius: var(--radius); background: var(--bg-raised); border: 1px solid var(--line); }
 .msg-content > .invite-card:first-child { margin-top: 2px; }
 .invite-card-mark { width: 38px; height: 38px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: var(--bg-active); color: var(--accent); }
@@ -3634,12 +3651,10 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .invite-card-title { font-size: 14px; font-weight: 600; color: var(--header-primary); }
 .invite-card-sub { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Friends in the DM list */
 .friend-request .icon-btn { width: 28px; height: 28px; flex: none; }
 .friend-yes:hover { color: var(--green); }
 .friend-no:hover { color: var(--red); }
 
-/* Full profile */
 .modal.modal-profile { width: min(600px, calc(100vw - 32px)); padding: 0; overflow: hidden; }
 .fp-banner { height: 140px; background-size: cover; background-position: center; }
 .fp-head { display: flex; align-items: flex-end; justify-content: space-between; padding: 0 20px; height: 56px; position: relative; }
@@ -3648,7 +3663,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .fp-buttons { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .fp-more { width: 32px; height: 32px; border-radius: 50%; background: var(--bg-raised); color: var(--text-normal); }
 .fp-more:hover { background: var(--bg-active); color: var(--header-primary); }
-/* Above the profile modal and its backdrop. */
 .fp-menu { z-index: 180; }
 .fp-menu button { display: flex; align-items: center; gap: 10px; }
 .fp-body { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; }
@@ -3666,7 +3680,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .vp-game-share:hover { filter: brightness(1.1); }
 .share-card-label .kind.playing { color: var(--green); }
 
-/* Profile bar: mute and deafen with a dropdown caret */
 .user-actions { flex: 0 0 auto; width: auto; gap: 2px; }
 .split-btn { display: flex; align-items: center; border-radius: 6px; }
 .split-btn:hover { background: var(--bg-hover); }
@@ -3688,7 +3701,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .caret-btn:hover { color: var(--text-normal); }
 .caret-btn svg { width: 12px; height: 12px; }
 
-/* Toggle animation: a bounce, and a slash drawing in when turning off */
 .user-actions .icon-btn { position: relative; }
 .toggle-anim > svg { animation: toggle-bounce .38s cubic-bezier(.3, 1.6, .5, 1); }
 @keyframes toggle-bounce {
@@ -3714,7 +3726,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   to { transform: translate(-50%, -50%) rotate(45deg) scaleX(1); opacity: 0; }
 }
 
-/* Quick audio popover */
 .audio-pop {
   position: fixed;
   z-index: 130;
@@ -3734,7 +3745,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .audio-pop .pp-link { margin-top: 4px; }
 .audio-pop select { background: var(--bg-dark); color: var(--text-normal); border: 1px solid var(--bg-active); border-radius: 6px; padding: 7px 8px; font: inherit; font-size: 13px; outline: none; color-scheme: dark; }
 
-/* Voice connection details */
 .vp-status { cursor: pointer; }
 .vp-status:hover { text-decoration: underline; }
 #vp-signal[data-quality="ok"] { color: var(--yellow); }
@@ -3780,7 +3790,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .invite-actions button { flex: 1; min-width: 0; }
 #modal-invite-link .sw-head { margin-bottom: 14px; }
 
-/* Sign in */
 .modal.modal-signin { width: min(440px, calc(100vw - 32px)); text-align: center; }
 .signin-logo { width: 56px; height: 56px; margin: 0 auto 4px; display: block; }
 .modal-signin p { line-height: 1.45; }
@@ -3801,12 +3810,10 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .signin-server select { width: 100%; text-transform: none; letter-spacing: 0; font-weight: 500; }
 .signin-server-note { margin-top: 8px; font-size: 12px; color: var(--text-faint); text-align: left; line-height: 1.4; }
 
-/* Server list shared between your devices (Settings > Commy Account) */
 .entry-recovery { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .entry-recovery input { flex: 1; min-width: 240px; font-family: var(--font-code, monospace); font-size: 13px; }
 .entry-recovery .setting-sub { flex-basis: 100%; }
 
-/* Server info: what members without a management role see instead of Server Settings */
 .si-banner { height: 120px; margin: -4px -4px 14px; border-radius: 12px; background-size: cover; background-position: center; }
 .si-games { padding: 10px 0 0; }
 .si-games .game-chip.small { font-size: 12px; padding: 3px 9px; color: var(--text-normal); }
@@ -3818,7 +3825,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .si-role .role-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
 .btn-secondary.danger-text { color: var(--accent); }
 
-/* Pinned messages: header button, panel, marks, server-wide list */
 #pins-btn { position: relative; }
 .pin-count {
   position: absolute;
@@ -3963,7 +3969,6 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .msg-pinned svg { color: var(--accent); }
 .msg.pinned { box-shadow: inset 3px 0 0 rgba(255, 77, 77, .55); }
 
-/* Announcement channels */
 .channel .announce-icon { width: 20px; color: var(--text-faint); }
 .channel .announce-icon svg { width: 18px; height: 18px; }
 .chat-header .hash svg { vertical-align: -5px; }
@@ -3997,3 +4002,8 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   pointer-events: none;
 }
 #settings-btn.update-ready::after { opacity: 1; }
+.sound-emoji { font-size: 16px; line-height: 1; flex: none; }
+.sb-sound .custom-emoji { width: 16px; height: 16px; margin: 0; vertical-align: 0; flex: none; }
+.sound-emoji-btn { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.sound-emoji-btn .custom-emoji { width: 24px; height: 24px; margin: 0; vertical-align: 0; }
+.sound-emoji-btn .sound-emoji { font-size: 22px; }

@@ -1,7 +1,3 @@
-# End-to-end tests: private invite links, the message doorbell and offline
-# delivery, with the desktop app's own code on real nodes against the account
-# server on Postgres, then the edge proxy checks. See scripts/e2e.sh.
-
 name: End-to-end tests
 
 on:

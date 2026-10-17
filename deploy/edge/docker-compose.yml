@@ -1,6 +1,3 @@
-# Shared HTTPS entry point for running dev, staging and prod on one server.
-# Start this first, then each environment stack. See ../DEPLOYING.md.
-
 name: commy-edge
 
 services:
@@ -15,7 +12,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      # iroh relays (relay.<domain> and relay-staging.<domain>, DNS only), see ../docker-compose.relay.yml
       - "8443:8443"
     environment:
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
@@ -27,11 +23,9 @@ services:
       STAGING_RELAY_DOMAIN: ${STAGING_RELAY_DOMAIN:-relay-staging.${PROD_DOMAIN}}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # Optional Cloudflare origin certificate for hosts behind Cloudflare Access
       - ./certs:/etc/caddy/certs:ro
       - caddy_data:/data
       - caddy_config:/config
-      # JSON access logs for your own log tooling
       - /var/log/commy-caddy:/var/log/caddy
     networks: [prod, staging, dev, relay]
     logging:

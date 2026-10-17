@@ -1,7 +1,4 @@
 #!/bin/sh
-# Hardens a server set up by setup-vps.sh: ufw with SSH rate limiting, HTTPS only from
-# Cloudflare (refreshed daily) and the relay ports open to everyone.
-#   sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
 
 set -eu
 

@@ -1,8 +1,4 @@
 #!/bin/sh
-# Commy deploy agent. Polls the registry for the watched services and swaps in new
-# images without downtime: a new container starts beside the old one, and the old one
-# is removed only once the new one is healthy. Unhealthy images are dropped and skipped.
-# Runs inside the docker:cli image with the host Docker socket mounted.
 
 SERVICES="${AGENT_SERVICES:-auth web}"
 INTERVAL="${AGENT_INTERVAL:-60}"
@@ -78,7 +74,6 @@ verified() {
 	cosign verify "$@" "$digest" >/dev/null 2>&1
 }
 
-# Waits until every given container reports healthy (or running, without a healthcheck).
 wait_healthy() {
 	waited=0
 	while [ "$waited" -lt "$HEALTH_TIMEOUT" ]; do
@@ -105,8 +100,6 @@ remove() {
 	done
 }
 
-# Brings one service up to its latest pulled image. Returns 0 when nothing changed
-# or the swap went healthy, 1 when the new image was rejected.
 update_service() {
 	svc="$1"
 	old="$(docker compose ps -q "$svc" 2>/dev/null)"
@@ -156,8 +149,6 @@ update_service() {
 	return 1
 }
 
-# Pulls one service, retrying: concurrent pulls of shared layers (several agents on
-# one host) can fail transiently with "unable to lease content" on containerd.
 pull_service() {
 	tries=0
 	while [ "$tries" -lt "$PULL_TRIES" ]; do
@@ -175,14 +166,11 @@ run_once() {
 			log "$svc: pull failed, retrying next cycle"
 			status=1
 		fi
-		# Still reconcile: an image pulled earlier (or by hand) may be waiting
 		update_service "$svc" || status=1
 	done
 	return $status
 }
 
-# Up to a third of the interval (at most 20s) of random delay, so agents on the same
-# host do not pull in lockstep and a short dev interval stays short
 jitter() {
 	max=$((INTERVAL / 3))
 	[ "$max" -gt 20 ] && max=20

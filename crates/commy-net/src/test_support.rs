@@ -1,6 +1,3 @@
-//! Test helpers: servers whose members hold identity keys, and an
-//! in-memory catch-up store.
-
 use crate::catchup::{
     apply_items, apply_profiles, check_peer, collect, profiles_of, ApplyReport, CatchupStore,
     PeerCheck,
@@ -13,7 +10,6 @@ use commy_core::{
 };
 use std::sync::Mutex;
 
-/// Deterministic identity per user, so tests can sign as anyone.
 pub fn identity_for(user: UserId) -> Identity {
     let mut secret = [0u8; 32];
     secret[..16].copy_from_slice(user.0.as_bytes());
@@ -21,14 +17,12 @@ pub fn identity_for(user: UserId) -> Identity {
     Identity::from_bytes(&secret)
 }
 
-/// New profile carrying its test identity key.
 pub fn keyed_profile(username: &str) -> UserProfile {
     let mut profile = UserProfile::new(username);
     profile.identity = Some(identity_for(profile.id).public());
     profile
 }
 
-/// Server whose owner has a keyed profile, plus its text channel.
 pub fn fixture() -> (ServerState, ChannelId, UserId) {
     let owner = keyed_profile("owner");
     let owner_id = owner.id;
@@ -39,7 +33,6 @@ pub fn fixture() -> (ServerState, ChannelId, UserId) {
     (state, channel, owner_id)
 }
 
-/// Adds a keyed member and returns their id.
 pub fn join(state: &mut ServerState, username: &str) -> UserId {
     let profile = keyed_profile(username);
     let id = profile.id;
@@ -50,7 +43,6 @@ pub fn join(state: &mut ServerState, username: &str) -> UserId {
     id
 }
 
-/// Adds a keyed member holding a role with Manage Messages.
 pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
     let user = join(state, username);
     let server = state.server.id;
@@ -79,7 +71,6 @@ pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
     user
 }
 
-/// Signed delete of `message` by `by`, made at `at`.
 pub fn proof_at(
     state: &ServerState,
     message: &Message,
@@ -96,12 +87,10 @@ pub fn proof_at(
     )
 }
 
-/// New message from `author`, signed.
 pub fn post(state: &ServerState, channel: ChannelId, author: UserId, content: &str) -> Message {
     post_at(state, channel, author, content, Utc::now())
 }
 
-/// Signed message created at `created_at`.
 pub fn post_at(
     state: &ServerState,
     channel: ChannelId,
@@ -115,12 +104,10 @@ pub fn post_at(
     message
 }
 
-/// One device's copy of a server, as the app would expose it.
 pub struct MemStore {
     pub state: Mutex<ServerState>,
     pub me: UserId,
     pub identity: Identity,
-    /// Events set aside for an unknown author key.
     pub held: Mutex<Vec<ServerEvent>>,
 }
 
@@ -142,7 +129,6 @@ impl MemStore {
         f(&mut self.state.lock().unwrap())
     }
 
-    /// Posts and stores a signed message as `author`.
     pub fn post_as(&self, author: UserId, channel: ChannelId, content: &str) -> Message {
         self.with(|s| {
             let m = post(s, channel, author, content);
@@ -228,7 +214,6 @@ impl CatchupStore for MemStore {
     }
 }
 
-/// Several servers behind one store, the way the app holds them.
 pub struct MultiStore(pub Vec<MemStore>);
 
 impl MultiStore {

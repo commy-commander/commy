@@ -1,6 +1,3 @@
-// Your server list and identity, shared between your own devices through a
-// sealed copy on the account server (see entry_list.rs).
-
 const ENTRY_STATES = {
   off: "Not signed in",
   synced: "Up to date",
@@ -21,6 +18,7 @@ function renderEntryStatus(status) {
   $("entry-detail").textContent = status.detail || "";
   $("entry-show-code").classList.toggle("hidden", !status.has_key);
   $("entry-enter").classList.toggle("hidden", status.has_key || status.state === "off" || status.state === "unsupported");
+  $("entry-start-over-row").classList.toggle("hidden", status.has_key || status.state !== "waiting");
 }
 
 async function refreshEntryStatus() {
@@ -69,6 +67,22 @@ $("entry-code-use").onclick = async () => {
   }
 };
 
+$("entry-start-over").onclick = () => showModal("modal-entry-start-over");
+$("entry-start-over-cancel").onclick = hideModals;
+$("entry-start-over-go").onclick = async () => {
+  const button = $("entry-start-over-go");
+  button.disabled = true;
+  try {
+    renderEntryStatus(await invoke("entry_list_start_over"));
+    hideModals();
+    toast("Started a new server list");
+  } catch (e) {
+    toast(String(e));
+  } finally {
+    button.disabled = false;
+  }
+};
+
 async function answerEntryAsk(allow) {
   const ask = pendingEntryAsk;
   pendingEntryAsk = null;
@@ -88,7 +102,6 @@ $("entry-key-deny").onclick = () => answerEntryAsk(false);
 if (IS_TAURI) {
   window.__TAURI__.event.listen("entry-list-changed", e => renderEntryStatus(e.payload));
   window.__TAURI__.event.listen("entry-key-request", e => {
-    // A second request while one is open is denied; the device can ask again
     if (pendingEntryAsk) {
       invoke("answer_entry_key_request", { id: e.payload.id, allow: false }).catch(() => {});
       return;

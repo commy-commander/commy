@@ -18,21 +18,14 @@ pub struct Channel {
     pub name: String,
     pub kind: ChannelKind,
     pub topic: Option<String>,
-    /// Category this channel is nested under, if any.
     pub parent: Option<ChannelId>,
     pub position: u32,
-    /// Days messages are kept before every peer deletes them; None keeps
-    /// them forever.
     #[serde(default)]
     pub retention_days: Option<u32>,
-    /// Voice channels: most people allowed in at once; 0 is unlimited.
     #[serde(default)]
     pub user_limit: u32,
-    /// Optional banner image ref shown at the top of the channel.
     #[serde(default)]
     pub banner: Option<String>,
-    /// Optional colour (RGB hex without hash) drawn as a gradient band
-    /// behind the name in the channel list, like role banners.
     #[serde(default)]
     pub color: Option<String>,
 }
@@ -58,34 +51,34 @@ impl Channel {
 pub struct Role {
     pub id: RoleId,
     pub name: String,
-    /// RGB hex without leading hash, e.g. "5865f2".
     pub color: Option<String>,
     pub permissions: Permissions,
     pub position: u32,
-    /// Shown as its own group in the member list.
     pub hoist: bool,
-    /// Members can pick this role for themselves.
     #[serde(default)]
     pub self_assignable: bool,
-    /// Short text or emoji shown next to holders' names.
     #[serde(default)]
     pub tag: Option<String>,
-    /// Banner image ref shown on holders' profile cards.
     #[serde(default)]
     pub banner: Option<String>,
 }
 
-/// A message pinned in a channel, see [`crate::ServerEvent::MessagePin`].
+pub const EVERYONE_ROLE_POSITION: u32 = 0;
+
+impl Role {
+    pub fn is_everyone(&self) -> bool {
+        self.position == EVERYONE_ROLE_POSITION
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pin {
     pub channel: ChannelId,
     pub message: MessageId,
-    /// Who pinned it.
     pub by: UserId,
     pub at: DateTime<Utc>,
 }
 
-/// Most pinned messages one channel holds.
 pub const MAX_PINS_PER_CHANNEL: usize = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,25 +92,22 @@ pub struct Member {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SoundboardSound {
     pub name: String,
-    /// "blob@provider" of the audio clip.
     pub blob: String,
     pub volume: f32,
+    #[serde(default)]
+    pub emoji: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomEmoji {
     pub name: String,
-    /// "blob@provider" of the emoji image.
     pub blob: String,
 }
 
-/// A Commy server (a community). Lives entirely on its members'
-/// machines; there is no hosted backend for server content.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Server {
     pub id: ServerId,
     pub name: String,
-    /// Server avatar as an image ref, see [`ImageRef`].
     pub icon: Option<String>,
     pub owner: UserId,
     pub channels: Vec<Channel>,
@@ -126,71 +116,52 @@ pub struct Server {
     pub emojis: Vec<CustomEmoji>,
     pub soundboard: Vec<SoundboardSound>,
     pub created_at: DateTime<Utc>,
-    /// Ids of deleted channels, so a late re-announce of a channel
-    /// cannot bring it back.
     #[serde(default)]
     pub deleted_channels: Vec<ChannelId>,
-    /// Explicit AFK voice channel; falls back to one named "AFK".
     #[serde(default)]
     pub afk_channel_id: Option<ChannelId>,
-    /// Set when the server chose to have no AFK channel at all.
     #[serde(default)]
     pub afk_disabled: bool,
-    /// Banner shown above the channel list, as an image ref.
     #[serde(default)]
     pub banner: Option<String>,
-    /// Members may use this server's emojis in other servers and DMs.
     #[serde(default)]
     pub emojis_shareable: bool,
-    /// Everyone (not just Manage Expressions) may upload sounds.
     #[serde(default)]
     pub soundboard_open: bool,
-    /// Games the server is about, for a future discovery feature.
     #[serde(default)]
     pub game_tags: Vec<String>,
-    /// IGDB id and cover for tags picked from search, keyed by tag name.
     #[serde(default)]
     pub game_tag_meta: Vec<GameTagMeta>,
-    /// Rules new members must accept before posting (markdown).
     #[serde(default)]
     pub rules: Option<String>,
     #[serde(default)]
     pub rules_accepted: Vec<UserId>,
     #[serde(default)]
     pub events: Vec<ScheduledEvent>,
-    /// Ids of deleted events, so a late re-announce cannot restore one.
     #[serde(default)]
     pub deleted_events: Vec<String>,
-    /// Members a moderator muted or deafened in voice for everyone.
     #[serde(default)]
     pub server_muted: Vec<UserId>,
     #[serde(default)]
     pub server_deafened: Vec<UserId>,
-    /// Banned users; their joins are ignored.
     #[serde(default)]
     pub banned: Vec<UserId>,
-    /// Server-wide voice idle limit in minutes; None leaves it to each member.
     #[serde(default)]
     pub afk_timeout_minutes: Option<u32>,
-    /// Marked public by someone who manages it: anyone may join, so
-    /// invite links to it may be made that never expire.
     #[serde(default)]
     pub public: bool,
-    /// Pinned messages across all channels, in the order they were pinned.
     #[serde(default)]
     pub pins: Vec<Pin>,
 }
 
 impl Server {
-    /// Creates a server with the usual defaults: a "general" text
-    /// channel, a "General" voice channel, and an everyone role.
     pub fn new(name: impl Into<String>, owner: UserId) -> Self {
         let everyone = Role {
             id: RoleId::new(),
             name: "everyone".to_string(),
             color: None,
             permissions: Permissions::default_member(),
-            position: 0,
+            position: EVERYONE_ROLE_POSITION,
             hoist: false,
             self_assignable: false,
             tag: None,
@@ -251,8 +222,6 @@ impl Server {
         self.member(user).is_some()
     }
 
-    /// Effective permissions for a member: union of the everyone role
-    /// and every role they hold. The owner always has administrator.
     pub fn permissions_for(&self, user: UserId) -> Permissions {
         if user == self.owner {
             return Permissions::all();
@@ -260,33 +229,21 @@ impl Server {
         let Some(member) = self.member(user) else {
             return Permissions::NONE;
         };
-        // Inviting is only ever granted by a role someone was given, so
-        // the everyone role cannot hand it out, even on servers created
-        // when the default member permissions still included it.
         let mut perms = self
             .roles
             .iter()
-            .filter(|r| r.position == 0 || member.roles.contains(&r.id))
-            .fold(Permissions::NONE, |acc, r| {
-                let mut p = r.permissions;
-                if r.position == 0 {
-                    p.remove(Permissions::CREATE_INVITES);
-                }
-                acc | p
-            });
+            .filter(|r| r.is_everyone() || member.roles.contains(&r.id))
+            .fold(Permissions::NONE, |acc, r| acc | permissions_granted_by(r));
         if perms.contains(Permissions::ADMINISTRATOR) {
             perms = Permissions::all();
         }
         perms
     }
 
-    /// Whether `user` may pin and unpin messages here.
     pub fn can_pin(&self, user: UserId) -> bool {
         self.permissions_for(user).can_pin()
     }
 
-    /// Whether `user` may post in `channel`: anyone with Send Messages in
-    /// a text channel, only announcers in an announcement channel.
     pub fn can_post_in(&self, channel: ChannelId, user: UserId) -> bool {
         let perms = self.permissions_for(user);
         match self.channel(channel).map(|c| c.kind) {
@@ -299,15 +256,12 @@ impl Server {
         self.pins.iter().any(|p| p.message == message)
     }
 
-    /// Pins in `channel`, newest first.
     pub fn pins_in(&self, channel: ChannelId) -> Vec<&Pin> {
         let mut pins: Vec<&Pin> = self.pins.iter().filter(|p| p.channel == channel).collect();
         pins.sort_by(|a, b| b.at.cmp(&a.at));
         pins
     }
 
-    /// The voice channel inactive users get parked in: the one chosen in
-    /// server settings, else by convention the voice channel named "AFK".
     pub fn afk_channel(&self) -> Option<ChannelId> {
         if self.afk_disabled {
             return None;
@@ -324,8 +278,6 @@ impl Server {
             .map(|c| c.id)
     }
 
-    /// Display color for a member: the highest positioned colored role
-    /// they hold, if any.
     pub fn role_color_for(&self, user: UserId) -> Option<String> {
         let member = self.member(user)?;
         self.roles
@@ -335,12 +287,19 @@ impl Server {
             .and_then(|r| r.color.clone())
     }
 
-    /// Text channels and categories ordered for the sidebar.
     pub fn sorted_channels(&self) -> Vec<&Channel> {
         let mut channels: Vec<&Channel> = self.channels.iter().collect();
         channels.sort_by_key(|c| (c.parent, c.position));
         channels
     }
+}
+
+fn permissions_granted_by(role: &Role) -> Permissions {
+    let mut granted = role.permissions;
+    if role.is_everyone() {
+        granted.remove(Permissions::CREATE_INVITES);
+    }
+    granted
 }
 
 #[cfg(test)]
@@ -477,7 +436,6 @@ mod tests {
     fn everyone_role_never_grants_invites() {
         let owner = UserId::new();
         let mut server = Server::new("s", owner);
-        // A server made before the default changed still has it on everyone.
         server.roles[0].permissions.insert(Permissions::CREATE_INVITES);
         let plain = UserId::new();
         let inviter = UserId::new();
@@ -558,8 +516,6 @@ mod tests {
     }
 }
 
-/// A server image (avatar or banner): an iroh blob plus the node that
-/// uploaded it, stored as "<blob hash>@<node hex>".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageRef {
     pub blob: String,
@@ -596,20 +552,14 @@ mod image_ref_tests {
     }
 }
 
-/// Most custom emojis a server can hold.
 pub const MAX_EMOJIS: usize = 50;
-/// Most soundboard clips a server can hold.
 pub const MAX_SOUNDS: usize = 24;
 
-/// Emoji and sound names: 2 to 32 of a-z, 0-9 and underscore, used as
-/// ":name:" in messages and reactions.
 pub fn valid_expression_name(name: &str) -> bool {
     (2..=32).contains(&name.len())
         && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// Custom emoji as written into messages and reactions: "<:name:blob@provider>".
-/// Carries its image so it renders outside the server it came from.
 pub fn parse_emoji_token(token: &str) -> Option<(String, ImageRef)> {
     let inner = token.strip_prefix("<:")?.strip_suffix('>')?;
     let (name, image) = inner.split_once(':')?;
@@ -621,7 +571,6 @@ pub fn emoji_token(name: &str, image: &str) -> String {
     format!("<:{name}:{image}>")
 }
 
-/// A reaction is a unicode emoji, a custom ":name:" or a custom emoji token.
 pub fn valid_reaction(emoji: &str) -> bool {
     if parse_emoji_token(emoji).is_some() {
         return true;
@@ -667,16 +616,13 @@ mod expression_tests {
     }
 }
 
-/// Where a game tag came from on IGDB, for covers and discovery.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameTagMeta {
     pub name: String,
     pub igdb_id: u64,
-    /// IGDB image id of the cover.
     pub cover: Option<String>,
 }
 
-/// Keeps metadata only for tags that exist, with safe cover ids.
 pub fn clean_game_tag_meta(tags: &[String], meta: &[GameTagMeta]) -> Vec<GameTagMeta> {
     let safe = |id: &str| !id.is_empty() && id.len() <= 32 && id.chars().all(|c| c.is_ascii_alphanumeric());
     let mut out: Vec<GameTagMeta> = Vec::new();
@@ -688,7 +634,6 @@ pub fn clean_game_tag_meta(tags: &[String], meta: &[GameTagMeta]) -> Vec<GameTag
     out
 }
 
-/// RSVP to a scheduled event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Rsvp {
@@ -696,37 +641,31 @@ pub enum Rsvp {
     Interested,
 }
 
-/// A server event on the calendar.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduledEvent {
-    /// Random id chosen by the creator.
     pub id: String,
     pub title: String,
     pub description: String,
     pub start: DateTime<Utc>,
     pub end: Option<DateTime<Utc>>,
-    /// Voice channel the event happens in, if any.
     pub channel: Option<ChannelId>,
     pub creator: UserId,
     #[serde(default)]
     pub rsvps: Vec<(UserId, Rsvp)>,
 }
 
-/// Choices for the server AFK timeout, in minutes.
 pub const SERVER_AFK_MINUTES: &[u32] = &[1, 5, 15, 30, 60];
 
 pub const MAX_GAME_TAGS: usize = 5;
 pub const MAX_GAME_TAG_CHARS: usize = 32;
-/// Rules travel in one gossip frame, so they are capped in bytes.
 pub const MAX_RULES_BYTES: usize = 3000;
 pub const MAX_EVENTS: usize = 50;
 pub const MAX_EVENT_TITLE_CHARS: usize = 100;
 pub const MAX_EVENT_DESCRIPTION_BYTES: usize = 1500;
 pub const MAX_ROLE_TAG_CHARS: usize = 12;
+pub const MAX_SOUND_EMOJI_CHARS: usize = 12;
 pub const MAX_USER_LIMIT: u32 = 99;
 
-/// Trims, drops empties and duplicates (case-insensitive), caps count
-/// and length. Returns None if a tag is too long.
 pub fn clean_game_tags(tags: &[String]) -> Option<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for tag in tags {
@@ -756,6 +695,15 @@ pub fn valid_event(event: &ScheduledEvent) -> bool {
         && event.id.len() <= 64
         && !event.id.is_empty()
         && event.end.map_or(true, |end| end > event.start)
+}
+
+pub fn valid_sound_emoji(emoji: &str) -> bool {
+    if parse_emoji_token(emoji).is_some() {
+        return true;
+    }
+    let n = emoji.chars().count();
+    (1..=MAX_SOUND_EMOJI_CHARS).contains(&n)
+        && !emoji.chars().any(|c| c.is_ascii_alphanumeric() || c.is_control() || c.is_whitespace())
 }
 
 pub fn valid_role_tag(tag: &str) -> bool {

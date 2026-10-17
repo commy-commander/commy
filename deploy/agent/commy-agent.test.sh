@@ -1,5 +1,4 @@
 #!/bin/sh
-# Tests for commy-agent.sh against a fake docker CLI. Run: sh deploy/agent/commy-agent.test.sh
 
 here="$(cd "$(dirname "$0")" && pwd)"
 AGENT_LIB=1
@@ -14,8 +13,6 @@ POLL=1
 REF="ghcr.io/commy/commy-web:dev"
 failures=0
 
-# Fake engine. $FAKE/containers holds "id image" lines for the service, $FAKE/tag is
-# the image the local tag points at, $FAKE/health is what new containers report.
 reset() {
 	rm -rf "${FAKE:?}"/*
 	echo "c1 sha256:old" >"$FAKE/containers"
@@ -108,13 +105,11 @@ images() {
 	cut -d' ' -f2 "$FAKE/containers" | tr '\n' ' ' | sed 's/ $//'
 }
 
-# No new image: nothing is started or stopped
 reset
 run_once
 check "unchanged image does not start containers" "$(called 'compose up')" "0"
 check "unchanged image keeps the old container" "$(images)" "sha256:old"
 
-# New healthy image: started beside the old one, then the old one is removed
 reset
 echo "sha256:new" >"$FAKE/remote"
 run_once
@@ -122,7 +117,6 @@ check "new image is started beside the old one" "$(called 'compose up -d --no-de
 check "old container is removed after the swap" "$(called 'rm -f c1')" "1"
 check "only the new image is left running" "$(images)" "sha256:new"
 
-# New image never gets healthy: old container keeps serving
 reset
 echo "sha256:bad" >"$FAKE/remote"
 echo "starting" >"$FAKE/health"
@@ -130,7 +124,6 @@ run_once
 check "slow image reports failure" "$?" "1"
 check "slow image leaves the old container running" "$(images)" "sha256:old"
 
-# New unhealthy image: removed, recorded and skipped next cycle
 reset
 echo "sha256:bad" >"$FAKE/remote"
 echo "unhealthy" >"$FAKE/health"
@@ -144,13 +137,11 @@ check "bad image is recorded" "$(cat "$STATE_DIR/bad")" "sha256:bad"
 run_once
 check "known bad image is skipped" "$(called 'compose up')" "0"
 
-# A newer good image after a bad one: deployed
 echo "sha256:fixed" >"$FAKE/remote"
 echo "healthy" >"$FAKE/health"
 run_once
 check "fixed image after a bad one deploys" "$(images)" "sha256:fixed"
 
-# Two replicas: both are replaced
 reset
 echo "c9 sha256:old" >>"$FAKE/containers"
 echo "sha256:new" >"$FAKE/remote"
@@ -158,42 +149,35 @@ run_once
 check "scale doubles the replica count" "$(called 'scale web=4')" "1"
 check "every replica moves to the new image" "$(images)" "sha256:new sha256:new"
 
-# Service not running: started directly
 reset
 : >"$FAKE/containers"
 run_once
 check "stopped service is started" "$(called 'compose up -d --no-deps --no-build web')" "1"
 
-# Registry unreachable: nothing touched
 reset
 touch "$FAKE/pull_fails"
 run_once
 check "failed pull reports failure" "$?" "1"
 check "failed pull does not start containers" "$(called 'compose up')" "0"
 
-# Several services are each checked
 reset
 SERVICES="auth web"
 run_once
 check "every watched service is inspected" "$(called 'compose ps -q')" "2"
 SERVICES="web"
 
-
-# Pull retries before giving up
 reset
 touch "$FAKE/pull_fails"
 PULL_TRIES=3
 run_once
 check "pull is retried" "$(called 'compose pull --quiet web')" "3"
 
-# A failed pull still starts an image that is already local
 reset
 : >"$FAKE/containers"
 touch "$FAKE/pull_fails"
 run_once
 check "local image starts despite a failed pull" "$(called 'compose up -d --no-deps --no-build web')" "1"
 
-# One service failing to pull does not block the others
 reset
 SERVICES="auth web"
 touch "$FAKE/pull_fails_auth"
@@ -281,7 +265,6 @@ check "tag of a tagged image" "$(tag_of localhost:5000/commy-web:dev)" "dev"
 check "tag of an untagged image" "$(tag_of localhost:5000/commy-web)" "latest"
 check "tag of a digest reference" "$(tag_of ghcr.io/commy/commy-web@sha256:abc)" ""
 
-# Jitter stays within a third of the interval, capped at 20 seconds
 INTERVAL=10
 check "short interval keeps jitter small" "$(jitter | awk '{ print ($1 <= 3) }')" "1"
 INTERVAL=600

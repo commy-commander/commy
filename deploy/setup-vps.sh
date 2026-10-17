@@ -1,7 +1,4 @@
 #!/bin/sh
-# One-time setup of dev, staging and prod on a fresh Ubuntu server with Docker.
-#   curl -fsSL https://raw.githubusercontent.com/commy-commander/commy/main/deploy/setup-vps.sh | sudo sh -s -- commy.chat you@example.org
-# Safe to run again: existing checkouts and .env files are kept.
 
 set -eu
 
@@ -16,7 +13,6 @@ command -v docker >/dev/null || { echo "Docker is not installed"; exit 1; }
 docker compose version >/dev/null || { echo "Docker Compose v2 is not installed"; exit 1; }
 command -v git >/dev/null || { apt-get update -qq && apt-get install -y -qq git; }
 
-# Ports 80 and 443 must be free for the edge Caddy (or already be ours)
 for port in 80 443; do
 	owner="$(docker ps --filter "publish=$port" --format '{{.Names}}' | grep -v '^commy-edge-' || true)"
 	if [ -n "$owner" ]; then
@@ -52,7 +48,6 @@ BETTER_AUTH_SECRET=$(openssl rand -base64 32)
 WEB_IMAGE=$IMAGES/commy-web:$env
 AUTH_IMAGE=$IMAGES/commy-auth:$env
 EOF
-		# Dev follows every merge, so its agent checks for new images more often
 		if [ "$env" = dev ]; then echo "AGENT_INTERVAL=10" >>"$envfile"; fi
 		if [ -n "${AGENT_VERIFY:-}" ]; then echo "AGENT_VERIFY=$AGENT_VERIFY" >>"$envfile"; fi
 		chmod 600 "$envfile"
@@ -73,20 +68,16 @@ echo "edge: Caddy is serving $DOMAIN, staging.$DOMAIN and dev.$DOMAIN"
 
 for env in $ENVS; do
 	cd "$ROOT/commy-$env/deploy"
-	# The agent starts auth and web (without their dependencies) as soon as
-	# their image tag exists on GHCR, so everything auth needs starts here
 	docker compose up -d postgres redis agent
 	echo "commy-$env: database, redis and deploy agent running"
 done
 
-# One iroh relay serves every environment, run from the first checkout
 relay_dir="$ROOT/commy-$first/deploy"
 if [ -f "$relay_dir/docker-compose.relay.yml" ]; then
 	(cd "$relay_dir" && docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml \
 		up -d --build relay relay-proxy relay-meter)
 	echo "relay: running for relay.$DOMAIN"
 fi
-# Test builds use their own relay, run from the staging checkout
 if echo " $ENVS " | grep -q " staging " && [ -f "$ROOT/commy-staging/deploy/docker-compose.relay.yml" ]; then
 	(cd "$ROOT/commy-staging/deploy" && RELAY_PROXY_ALIAS=commy-relay-staging-proxy STUN_PORT=3479 RELAY_MONTHLY_LIMIT_GB=500 \
 		docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml \

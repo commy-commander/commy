@@ -1,13 +1,3 @@
-// Shareable invite links: https://<server>/i/<code>#<key> maps a short code to
-// a Commy server ticket, so the link always resolves on the server that made it.
-// The app seals the ticket with <key> before sending it, and the key only
-// travels in the link's #fragment, which never reaches a server. So this server
-// stores only the code, the sealed ticket and an expiry: it cannot read which
-// Commy server an invite opens, its name, or the device that shared it.
-// The creator picks the expiry from a few lengths, or never for a server its
-// owner made public. The app also seals the expiry inside the ticket, so a
-// row kept or extended here past it still will not open in the app.
-// Rows from before sealing hold a plain ticket and resolve until they expire.
 import { randomInt } from "node:crypto";
 import * as z from "zod";
 import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
@@ -15,15 +5,16 @@ import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api
 const MODEL = "invite";
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
-// Lengths the app offers. "never" rows carry NEVER as their expiry.
 export const EXPIRY_CHOICES = { "1h": HOUR_MS, "1d": DAY_MS, "7d": 7 * DAY_MS, "30d": 30 * DAY_MS, never: null };
 export const NEVER = new Date("9999-12-31T23:59:59.000Z");
-// Rows that never expire are never cleaned up, so their number is capped.
 export const DEFAULT_MAX_PERMANENT = 20000;
 export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const CODE_LENGTH = 8;
 export const MAX_TICKET_LENGTH = 8192;
-const SEALED = /^sealed1\.[A-Za-z0-9_-]{40,}$/;
+const COMMY_NET_SEALED_FORMAT = /^sealed1\.[A-Za-z0-9_-]{40,}$/;
+const OLDER_APP_ANONYMOUS_MAX_DAYS = 7;
+const OLDER_APP_SIGNED_IN_MAX_DAYS = 30;
+const SEALED_INVITES_STORE_NO_SERVER_NAME = "";
 const CODE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LENGTH}}$`);
 
 export function generateCode() {
@@ -37,26 +28,21 @@ export function normalizeCode(value) {
   return CODE.test(code) ? code : null;
 }
 
-// Only sealed tickets are accepted; a plain one would tell this server which
-// Commy server the invite opens.
 export function validTicket(value) {
   const ticket = String(value ?? "").trim();
-  return ticket.length <= MAX_TICKET_LENGTH && SEALED.test(ticket) ? ticket : null;
+  return ticket.length <= MAX_TICKET_LENGTH && COMMY_NET_SEALED_FORMAT.test(ticket) ? ticket : null;
 }
 
 export function isPlainTicket(value) {
   return /^commy[a-z2-7]{40,}$/.test(String(value ?? "").trim());
 }
 
-// Anonymous links are short lived; signed in users may keep them longer.
 export function clampDays(value, signedIn) {
-  const max = signedIn ? 30 : 7;
-  const days = Number.isFinite(value) ? Math.round(value) : 7;
+  const max = signedIn ? OLDER_APP_SIGNED_IN_MAX_DAYS : OLDER_APP_ANONYMOUS_MAX_DAYS;
+  const days = Number.isFinite(value) ? Math.round(value) : OLDER_APP_ANONYMOUS_MAX_DAYS;
   return Math.min(Math.max(days, 1), max);
 }
 
-// When an invite made now with `choice` expires: NEVER for "never", null for
-// an unknown choice.
 export function expiryFor(choice, now = new Date()) {
   if (!Object.hasOwn(EXPIRY_CHOICES, choice)) return null;
   const ms = EXPIRY_CHOICES[choice];
@@ -89,7 +75,6 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
         body: z.object({
           ticket: z.string(),
           expiresIn: z.enum(Object.keys(EXPIRY_CHOICES)).optional(),
-          // Older apps; anonymous links last up to 7 days, signed in up to 30
           expiresInDays: z.number().optional(),
         }),
       },
@@ -97,6 +82,9 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
         const session = await getSessionFromCtx(ctx).catch(() => null);
         if (requireAccount && !session) {
           throw new APIError("UNAUTHORIZED", { message: "Sign in to create invite links on this server" });
+        }
+        if (ctx.body.expiresIn === "never" && !session) {
+          throw new APIError("UNAUTHORIZED", { message: "Sign in to create invite links that never expire" });
         }
         if (isPlainTicket(ctx.body.ticket)) {
           throw new APIError("BAD_REQUEST", { message: "Update Commy to share invite links" });
@@ -123,10 +111,6 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
             });
           }
         }
-        // Sealed invites carry no name; the column predates sealing
-        const serverName = "";
-
-        // A retried request keeps one code
         const existing = await adapter.findOne({ model: MODEL, where: [{ field: "ticket", value: ticket }] });
         if (existing && (existing.createdBy ?? null) === createdBy) {
           const updated = await adapter.update({
@@ -143,7 +127,7 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
           if (clash) continue;
           const created = await adapter.create({
             model: MODEL,
-            data: { code, ticket, serverName, createdBy, createdAt: now, expiresAt },
+            data: { code, ticket, serverName: SEALED_INVITES_STORE_NO_SERVER_NAME, createdBy, createdAt: now, expiresAt },
           });
           return ctx.json(publicInvite(created, serverUrl));
         }
@@ -188,16 +172,13 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
   },
 });
 
-// The url has no #key: only the app that sealed the ticket can add it.
-// serverName is only set for plain rows from before sealing. expiresAt is
-// null for a link that never expires.
 export function publicInvite(row, serverUrl) {
   const permanent = isPermanent(row.expiresAt);
   return {
     code: row.code,
     url: `${serverUrl}/i/${row.code}`,
     serverName: row.serverName || null,
-    sealed: SEALED.test(row.ticket ?? ""),
+    sealed: COMMY_NET_SEALED_FORMAT.test(row.ticket ?? ""),
     expiresAt: permanent ? null : row.expiresAt,
     permanent,
   };

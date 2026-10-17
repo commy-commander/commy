@@ -1,5 +1,3 @@
-// End to end flow against an in-memory database: sign up on the website,
-// sign the desktop app in with a device code, then link its node id.
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { before, test } from "node:test";
@@ -82,7 +80,6 @@ async function desktopSignIn(cookie, { appIp = "203.0.113.5", approverIp = "203.
   const approve = await call("POST", "/device/approve", { cookie, body: { userCode: code.json.user_code } });
   assert.equal(approve.status, 200, JSON.stringify(approve.json));
 
-  // Respect the polling interval before redeeming
   await new Promise((r) => setTimeout(r, 5100));
   const granted = await call("POST", "/device/token", tokenReq);
   assert.equal(granted.status, 200, JSON.stringify(granted.json));
@@ -137,7 +134,6 @@ test("desktop sign in, prove key, link, list, transfer and remove", { timeout: 3
   const bad = await call("POST", "/commy/devices/challenge", { token, body: { nodeId: "nothex" } });
   assert.equal(bad.status, 400);
 
-  // A valid challenge signed by a different key is refused
   const ch = await call("POST", "/commy/devices/challenge", { token, body: { nodeId: key.nodeId } });
   const forged = await call("POST", "/commy/devices/register", {
     token,
@@ -145,7 +141,6 @@ test("desktop sign in, prove key, link, list, transfer and remove", { timeout: 3
   });
   assert.equal(forged.status, 403);
 
-  // A challenge issued to one user cannot be used by another
   const bob = await signUp("bob@example.test");
   const stolen = await call("POST", "/commy/devices/register", {
     cookie: bob,
@@ -171,7 +166,6 @@ test("desktop sign in, prove key, link, list, transfer and remove", { timeout: 3
   await call("POST", "/commy/devices/remove", { cookie: bob, body: { id: list.json.devices[0].id } });
   assert.equal((await call("GET", "/commy/devices", { token })).json.devices.length, 1, "bob cannot remove another user's device");
 
-  // Whoever holds the key can move the device to their account
   const moved = await link({ cookie: bob }, key, "Now Bob's");
   assert.equal(moved.status, 200, JSON.stringify(moved.json));
   assert.equal((await call("GET", "/commy/devices", { token })).json.devices.length, 0);

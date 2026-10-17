@@ -27,7 +27,6 @@
     .hidden { display: none !important; }
     .stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
     body.right .stack { align-items: flex-end; }
-    /* Who is talking: one small pill each, nothing at all when it is quiet. */
     .member {
       display: flex;
       align-items: center;
@@ -42,7 +41,6 @@
       box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
       animation: pop .14s ease-out;
     }
-    /* A short "the overlay is here" note when it appears, moves or is tested. */
     .notice {
       display: flex;
       align-items: center;
@@ -81,7 +79,6 @@
     .avatar.emoji { background: var(--raised); font-size: 14px; }
     .member.speaking .avatar { box-shadow: 0 0 0 2px var(--ink); }
     .name { font-family: var(--display); font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
-    /* Messages: a short bubble that goes away by itself. */
     .line {
       max-width: 270px;
       padding: 6px 11px;

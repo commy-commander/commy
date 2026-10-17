@@ -1,11 +1,3 @@
-// GIF search (KLIPY) and game lookups (IGDB) for signed in apps, using keys
-// held by this server. Apps never see the keys, so a release build carries
-// nothing worth extracting, and the operator can rotate a key without a new
-// app release. Either half is off when its key is not configured.
-//
-// The GIF files and game covers themselves also load through here, so a
-// signed in app only ever talks to its own account server and the image
-// CDNs never see a viewer's address.
 import { createHmac } from "node:crypto";
 import * as z from "zod";
 import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
@@ -15,24 +7,26 @@ const TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token";
 const IGDB_GAMES_URL = "https://api.igdb.com/v4/games";
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_CAP = 500;
-// IGDB allows 4 requests per second per client
-const IGDB_GAP_MS = 260;
+const IGDB_MAX_REQUESTS_PER_SECOND = 4;
+const IGDB_GAP_MARGIN_MS = 10;
+const IGDB_GAP_MS = 1000 / IGDB_MAX_REQUESTS_PER_SECOND + IGDB_GAP_MARGIN_MS;
+const TOKEN_REFRESH_EARLY_SECS = 60;
 const MAX_QUERY = 100;
-// md GIFs are a few MB; anything far bigger is not a chat GIF
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
 const IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const IMAGE_TIMEOUT_MS = 15_000;
 
-// The only images this server fetches for apps, so it is never an open proxy.
-// The app keeps the same list (MEDIA_HOSTS in apps/desktop/ui/app.js).
-const MEDIA_HOSTS = {
-  "static.klipy.com": /^\/[A-Za-z0-9._~\-\/]{1,400}$/,
-  "images.igdb.com": /^\/igdb\/image\/upload\/t_[a-z0-9_]{1,40}\/[A-Za-z0-9]{1,32}\.(jpg|png|webp)$/,
-};
+const MEDIA_HOSTS = [
+  { host: "static.klipy.com", path: /^\/[A-Za-z0-9._~\-\/]{1,400}$/, query: 200 },
+  { host: "images.igdb.com", path: /^\/igdb\/image\/upload\/t_[a-z0-9_]{1,40}\/[A-Za-z0-9]{1,32}\.(jpg|png|webp)$/, query: 0 },
+  { host: /^(?:media[0-9]?|i)\.giphy\.com$/, path: /^\/(?:media\/[A-Za-z0-9._=\-]{1,500}\/)?[A-Za-z0-9_\-]{1,80}\.(?:gif|webp)$/, query: 300 },
+];
 
-// The URL to fetch for `value`, or null unless it is an https image on one of
-// the hosts above with nothing unusual in it.
+export function mediaHost(hostname) {
+  return MEDIA_HOSTS.find((rule) => (typeof rule.host === "string" ? rule.host === hostname : rule.host.test(hostname))) ?? null;
+}
+
 export function mediaUrl(value) {
   let url;
   try {
@@ -40,11 +34,10 @@ export function mediaUrl(value) {
   } catch {
     return null;
   }
-  const path = MEDIA_HOSTS[url.hostname];
+  const rule = mediaHost(url.hostname);
   if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash) return null;
-  if (!path || !path.test(url.pathname) || url.pathname.includes("..")) return null;
-  // KLIPY may sign or version its URLs with a short query; IGDB never does
-  if (url.search && (url.hostname !== "static.klipy.com" || url.search.length > 200)) return null;
+  if (!rule || !rule.path.test(url.pathname) || url.pathname.includes("..")) return null;
+  if (url.search && url.search.length > rule.query) return null;
   return url;
 }
 
@@ -55,12 +48,10 @@ export function cleanQuery(value) {
     .slice(0, MAX_QUERY);
 }
 
-// KLIPY uses this to personalise results; a keyed hash keeps account ids private.
 export function customerId(secret, userId) {
   return createHmac("sha256", secret).update(`klipy:${userId}`).digest("hex").slice(0, 32);
 }
 
-// KLIPY nests renditions as file.<size>.gif.{url,width,height} (sizes xs, sm, md, hd).
 function rendition(file, sizes) {
   for (const size of sizes) {
     const r = file?.[size]?.gif;
@@ -78,7 +69,6 @@ export function klipyResults(body) {
   return items
     .map((item) => {
       const preview = rendition(item?.file, ["sm", "xs", "md"]);
-      // md is a good chat size; hd can be over 10 MB
       const full = rendition(item?.file, ["md", "sm", "hd"]);
       const ratio = preview?.width && preview?.height ? Number(preview.height) / Number(preview.width) : 0;
       return {
@@ -107,7 +97,6 @@ export function igdbResults(games) {
     .filter((g) => Number.isInteger(g.id) && g.name);
 }
 
-// Escapes a query for IGDB's Apicalypse `search "..."` clause.
 export function apicalypseString(query) {
   return query.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
@@ -127,7 +116,6 @@ function createCache() {
   };
 }
 
-// Images held in memory up to a total size, oldest dropped first.
 function createImageCache() {
   const entries = new Map();
   let bytes = 0;
@@ -193,12 +181,14 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
     const res = await doFetch(url, { method: "POST" });
     if (!res.ok) throw new Error(`Twitch token request answered ${res.status}`);
     const body = await res.json();
-    // Refresh a minute early
-    igdbToken = { value: body.access_token, expires: Date.now() + (Number(body.expires_in) - 60) * 1000 };
+    igdbToken = { value: body.access_token, expires: Date.now() + (Number(body.expires_in) - TOKEN_REFRESH_EARLY_SECS) * 1000 };
     return igdbToken.value;
   }
 
-  // One IGDB request at a time, spaced to stay under its rate limit
+  function maskKlipyKey(message) {
+    return String(message).replaceAll(klipyKey, "***");
+  }
+
   function paced(task) {
     const run = igdbQueue.then(task);
     igdbQueue = run.catch(() => {}).then(() => new Promise((r) => setTimeout(r, IGDB_GAP_MS)));
@@ -223,7 +213,6 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
   }
 
   async function fetchImage(url) {
-    // No redirects: a redirect could lead off the allowed hosts
     const res = await doFetch(url, { redirect: "error", signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`answered ${res.status}`);
     const type = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
@@ -282,8 +271,7 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
             body = await res.json().catch(() => ({}));
             if (!res.ok || body.result === false) throw new Error(`KLIPY answered ${res.status}`);
           } catch (err) {
-            // The message can include the request URL, which holds the key
-            console.warn(`[auth] GIF search failed: ${String(err.message).replaceAll(klipyKey, "***")}`);
+            console.warn(`[auth] GIF search failed: ${maskKlipyKey(err.message)}`);
             throw new APIError("BAD_GATEWAY", { message: "The GIF service is not answering right now" });
           }
           const results = klipyResults(body);

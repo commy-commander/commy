@@ -1,15 +1,10 @@
 use commy_audio::FRAME_SIZE;
 use std::collections::BTreeMap;
 
-/// Reorders incoming voice packets per peer. QUIC streams are ordered,
-/// so this mostly absorbs scheduling jitter; it also heals the stream
-/// after dropped frames by emitting silence.
 #[derive(Debug)]
 pub struct JitterBuffer {
     frames: BTreeMap<u32, Vec<i16>>,
     next_seq: Option<u32>,
-    /// Frames buffered beyond this are considered hopeless lag and the
-    /// buffer skips ahead.
     max_depth: usize,
 }
 
@@ -32,22 +27,23 @@ impl JitterBuffer {
         if pcm.len() != FRAME_SIZE {
             return;
         }
-        if let Some(next) = self.next_seq {
-            if seq < next {
-                return; // too late, already played past it
-            }
+        let already_played_past = self.next_seq.is_some_and(|next| seq < next);
+        if already_played_past {
+            return;
         }
         self.frames.insert(seq, pcm);
         if self.frames.len() > self.max_depth {
-            // Lagging badly: jump to the newest contiguous region.
-            let newest = *self.frames.keys().next_back().unwrap();
-            let cutoff = newest.saturating_sub(self.max_depth as u32 / 2);
-            self.frames.retain(|s, _| *s >= cutoff);
-            self.next_seq = Some(cutoff);
+            self.skip_ahead_past_hopeless_lag();
         }
     }
 
-    /// Next 10 ms frame for the mixer: the due packet, or silence.
+    fn skip_ahead_past_hopeless_lag(&mut self) {
+        let newest = *self.frames.keys().next_back().unwrap();
+        let cutoff = newest.saturating_sub(self.max_depth as u32 / 2);
+        self.frames.retain(|s, _| *s >= cutoff);
+        self.next_seq = Some(cutoff);
+    }
+
     pub fn pop(&mut self) -> Vec<i16> {
         let next = match self.next_seq {
             Some(seq) => seq,
@@ -99,7 +95,7 @@ mod tests {
         jb.push(0, frame(1));
         jb.push(2, frame(3));
         assert_eq!(jb.pop()[0], 1);
-        assert_eq!(jb.pop()[0], 0); // lost frame 1
+        assert_eq!(jb.pop()[0], 0);
         assert_eq!(jb.pop()[0], 3);
     }
 
@@ -114,7 +110,7 @@ mod tests {
         let mut jb = JitterBuffer::default();
         jb.push(0, frame(1));
         let _ = jb.pop();
-        jb.push(0, frame(9)); // replays a seq already consumed
+        jb.push(0, frame(9));
         assert!(jb.is_empty());
     }
 
@@ -125,7 +121,6 @@ mod tests {
             jb.push(seq, frame(seq as i16));
         }
         let out = jb.pop();
-        // After skipping, playback resumes near the newest packets.
         assert!(out[0] >= 16, "expected recent frame, got {}", out[0]);
     }
 

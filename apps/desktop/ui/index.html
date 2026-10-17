@@ -9,7 +9,6 @@
 </head>
 <body>
   <div id="app" class="app">
-    <!-- Server rail -->
     <nav class="rail" id="rail">
       <button class="rail-btn rail-home" id="home-btn" title="Direct Messages">
         <img src="images/commy_v2.png" alt="" width="38" height="38" draggable="false" />
@@ -21,7 +20,6 @@
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
       </button>
       <div class="rail-spacer"></div>
-      <!-- Account chip -->
       <footer class="user-panel">
       <button class="user-chip" id="user-chip" title="Set status">
         <span class="avatar" id="me-avatar">?</span>
@@ -38,7 +36,6 @@
     </footer>
     </nav>
 
-    <!-- Channel sidebar -->
     <aside class="sidebar">
       <header class="sidebar-header" id="server-name-header">
         <div class="sidebar-banner" id="sidebar-banner"></div>
@@ -55,7 +52,6 @@
       </header>
       <div class="channel-scroll" id="channel-list"></div>
 
-      <!-- Voice connection and screen share panel -->
       <section class="voice-panel hidden" id="voice-panel">
         <div class="vp-live hidden" id="vp-live">
           <div class="vp-live-head">
@@ -101,7 +97,6 @@
 
     </aside>
 
-    <!-- Main chat -->
     <main class="main">
       <header class="chat-header">
         <span class="hash" id="chat-hash">#</span>
@@ -199,7 +194,7 @@
         </div>
       </div>
       <div class="composer">
-        <button class="icon-btn composer-attach" id="attach-btn" title="Attach File">
+        <button class="icon-btn composer-attach" id="attach-btn" title="Add Files and GIFs">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4z"/></svg>
         </button>
         <input id="message-input" type="text" autocomplete="off" placeholder="Message #welcome" />
@@ -210,10 +205,8 @@
       </div>
     </main>
 
-    <!-- Member list -->
     <aside class="members" id="member-list"></aside>
 
-    <!-- Thread: a message and its replies -->
     <aside class="thread-panel hidden" id="thread-panel">
       <header class="thread-head">
         <span class="thread-head-icon" id="thread-head-icon"></span>
@@ -226,7 +219,6 @@
       </div>
     </aside>
 
-    <!-- DM partner profile -->
     <aside class="dm-profile hidden" id="dm-profile">
       <div class="dm-profile-banner" id="dm-profile-banner"></div>
       <div class="dm-profile-head">
@@ -244,7 +236,6 @@
     </aside>
   </div>
 
-  <!-- Modals -->
   <div class="modal-backdrop hidden" id="modal-backdrop">
     <div class="modal modal-signin hidden" id="modal-signin">
       <img class="signin-logo" src="images/commy_v2.png" alt="" />
@@ -330,13 +321,21 @@
       </div>
     </div>
 
-
     <div class="modal hidden" id="modal-entry-key">
       <h2>Allow <span id="entry-key-device"></span>?</h2>
       <p>One of your devices wants your server list and identity, so it can join your servers as you. Only allow it if you just signed in there yourself.</p>
       <div class="modal-actions">
         <button class="btn-secondary" id="entry-key-deny">Deny</button>
         <button class="btn-primary" id="entry-key-allow">Allow</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-entry-start-over">
+      <h2>Start a new server list?</h2>
+      <p>Your account's current server list is replaced by the servers on this device. Only do this if none of your devices has the old list and you have no recovery code. Your other devices then approve this one to get the new list.</p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="entry-start-over-cancel">Cancel</button>
+        <button class="btn-primary" id="entry-start-over-go">Start new list</button>
       </div>
     </div>
 
@@ -610,12 +609,11 @@
     </div>
   </div>
 
-  <!-- User settings (full screen) -->
   <div class="settings-layer hidden" id="user-settings" role="dialog" aria-label="User Settings">
     <nav class="settings-nav">
       <div class="settings-nav-inner">
         <div class="settings-nav-group">User Settings</div>
-        <button class="settings-tab" data-tab="account">My Account</button>
+        <button class="settings-tab" data-tab="account">Profile</button>
         <button class="settings-tab" data-tab="commy-account">Commy Account</button>
         <div class="settings-nav-group">App Settings</div>
         <button class="settings-tab" data-tab="voice">Voice &amp; Audio</button>
@@ -626,16 +624,19 @@
         <button class="settings-tab" data-tab="notifications">Notifications</button>
         <button class="settings-tab" data-tab="gifs">GIFs</button>
         <button class="settings-tab" data-tab="updates">Updates</button>
-        <div class="settings-nav-sep"></div>
-        <div class="settings-version">Commy, free and peer to peer</div>
       </div>
     </nav>
     <div class="settings-content">
       <div class="settings-content-inner">
         <section class="settings-page" data-page="account">
-          <h1>My Account</h1>
+          <h1>Profile</h1>
           <div class="profile-card">
-            <div class="profile-banner"></div>
+            <div class="profile-banner" id="account-banner">
+              <div class="role-banner-tools">
+                <button class="role-banner-btn icon hidden" type="button" id="account-banner-remove" title="Remove banner"></button>
+                <button class="role-banner-btn" type="button" id="account-banner-upload"><span class="rb-plus"></span><span>Add banner</span></button>
+              </div>
+            </div>
             <div class="profile-body">
               <div class="avatar avatar-xl" id="account-avatar">?</div>
               <div class="profile-names">
@@ -649,7 +650,10 @@
                 <input id="account-display-name" type="text" maxlength="64" placeholder="How others see you" />
               </label>
               <label class="field-label">Custom Status
-                <input id="account-status" type="text" maxlength="64" placeholder="What are you up to?" />
+                <span class="field-emoji">
+                  <input id="account-status" type="text" maxlength="64" placeholder="What are you up to?" />
+                  <button type="button" class="input-emoji-btn" id="account-status-emoji" title="Add an emoji"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 17.5c2.3 0 4.3-1.4 5.1-3.5H6.9c.8 2.1 2.8 3.5 5.1 3.5z"/></svg></button>
+                </span>
               </label>
               <label class="field-label">Presence
                 <select id="account-presence">
@@ -660,7 +664,10 @@
                 </select>
               </label>
               <label class="field-label">About Me
-                <textarea id="account-about" rows="3" maxlength="190" placeholder="A line or two about you, shown on your profile"></textarea>
+                <span class="field-emoji">
+                  <textarea id="account-about" rows="3" maxlength="190" placeholder="A line or two about you, shown on your profile"></textarea>
+                  <button type="button" class="input-emoji-btn" id="account-about-emoji" title="Add an emoji"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 17.5c2.3 0 4.3-1.4 5.1-3.5H6.9c.8 2.1 2.8 3.5 5.1 3.5z"/></svg></button>
+                </span>
               </label>
               <div class="form-actions">
                 <button class="btn-primary" id="account-save">Save Changes</button>
@@ -702,6 +709,9 @@
             <div class="entry-recovery hidden" id="entry-enter">
               <input id="entry-code-input" type="text" autocomplete="off" spellcheck="false" placeholder="Paste your recovery code" />
               <button class="btn-secondary btn-small" id="entry-code-use">Use code</button>
+            </div>
+            <div class="entry-recovery hidden" id="entry-start-over-row">
+              <button class="btn-link" id="entry-start-over">Start a new server list from this device</button>
             </div>
           </div>
         </section>
@@ -1032,7 +1042,6 @@
     </div>
   </div>
 
-  <!-- Channel settings (full screen) -->
   <div class="settings-layer hidden" id="channel-settings" role="dialog" aria-label="Channel Settings">
     <nav class="settings-nav">
       <div class="settings-nav-inner">
@@ -1133,7 +1142,6 @@
     </div>
   </div>
 
-  <!-- Server settings (full screen) -->
   <div class="settings-layer hidden" id="server-settings" role="dialog" aria-label="Server Settings">
     <nav class="settings-nav">
       <div class="settings-nav-inner">
@@ -1238,18 +1246,23 @@
 
         <section class="settings-page" data-page="roles">
           <h1>Roles</h1>
-          <div class="settings-card">
-            <div class="setting-title">Create Role</div>
+          <div class="roles-head">
+            <div class="setting-sub">Roles give members a colour, an emoji and permissions. A banner shows on the profile card of members whose highest role has one.</div>
+            <button class="btn-primary btn-small" id="new-role-open">New Role</button>
+          </div>
+          <div class="settings-card hidden" id="new-role-card">
+            <div class="setting-title">New Role</div>
             <div class="inline-row">
               <input id="new-role-color" type="color" value="#ff4d4d" title="Role color" />
               <input id="new-role-input" type="text" maxlength="50" placeholder="Role name" />
             </div>
             <div class="perm-grid" id="new-role-perms"></div>
             <div class="form-actions">
+              <button class="btn-secondary btn-small" id="new-role-cancel">Cancel</button>
               <button class="btn-primary btn-small" id="new-role-save">Create Role</button>
             </div>
           </div>
-          <div id="manage-role-list" class="manage-list"></div>
+          <div id="manage-role-list" class="role-cards"></div>
         </section>
 
         <section class="settings-page" data-page="emoji">
@@ -1328,7 +1341,6 @@
     <a id="lightbox-source" class="lightbox-source hidden" href="#"></a>
   </div>
 
-  <!-- Own profile popover, opened from the user panel -->
   <div class="profile-pop hidden" id="profile-pop" role="dialog" aria-label="Your profile">
     <div class="pp-banner" id="pp-banner"></div>
     <div class="pp-head">
@@ -1369,7 +1381,6 @@
     </div>
   </div>
 
-  <!-- Avatar source menu and shared emoji picker -->
   <div class="events-layer hidden" id="events-layer" role="dialog" aria-label="Events">
     <div class="events-panel">
       <header class="events-head">
@@ -1385,7 +1396,6 @@
     </div>
   </div>
 
-  <!-- Profile card for a member, opened from the member list -->
   <div class="member-card hidden" id="member-card" role="dialog" aria-label="Member profile">
     <div class="mc-banner" id="mc-banner"></div>
     <div class="mc-head"><div class="avatar avatar-lg" id="mc-avatar"></div></div>
@@ -1407,7 +1417,6 @@
   <div class="pop-menu ctx-menu hidden" id="invite-menu" role="menu"></div>
   <div class="pop-menu ctx-menu fp-menu hidden" id="fp-menu" role="menu"></div>
 
-  <!-- Voice connection details -->
   <div class="conn-pop hidden" id="conn-pop">
     <div class="conn-head">
       <span class="conn-title">Voice Connection</span>
@@ -1417,7 +1426,6 @@
     <div class="conn-foot" id="conn-foot"></div>
   </div>
 
-  <!-- Quick input or output device and volume, from the profile bar -->
   <div class="audio-pop hidden" id="audio-pop">
     <div class="ap-title" id="ap-title">Input Device</div>
     <select id="ap-device" class="compact-select"></select>
@@ -1426,7 +1434,6 @@
     <button class="pp-link" id="ap-settings">Voice Settings</button>
   </div>
 
-  <!-- Right-click menu for a member -->
   <div class="pop-menu ctx-menu hidden" id="member-menu" role="menu">
     <div class="ctx-title" id="member-menu-title"></div>
     <button id="mm-message">Message</button>
@@ -1435,7 +1442,12 @@
     <button class="danger" id="mm-report">Report User</button>
   </div>
 
-  <!-- Right-click menu for a server in the rail -->
+  <div class="pop-menu composer-menu hidden" id="composer-menu" role="menu">
+    <button id="cm-file" role="menuitem">Upload a File</button>
+    <button id="cm-video" role="menuitem">Post a Video</button>
+    <button id="cm-gif" role="menuitem">GIF</button>
+  </div>
+
   <div class="pop-menu ctx-menu hidden" id="server-menu" role="menu">
     <div class="ctx-title" id="server-menu-title"></div>
     <button id="sm-read">Mark As Read</button>
@@ -1483,11 +1495,14 @@
   <div class="mention-pop hidden" id="mention-pop" role="listbox"></div>
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/emoji.js"></script>
+  <script src="scripts/composer-suggest.js"></script>
+  <script src="scripts/embeds.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/pins.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>
+  <script src="scripts/server-colors.js"></script>
   <script src="scripts/tint.js"></script>
   <script src="scripts/updates.js"></script>
   <script src="scripts/app.js"></script>

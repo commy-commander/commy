@@ -1,4 +1,3 @@
-// Run with: node --test "apps/desktop/ui/tests/**/*.test.mjs"
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -16,7 +15,6 @@ test("the pin button shows in text and announcement channels only, with its coun
   assert.equal(pinButtonState({ view: "server", channel: { kind: "voice" }, count: 2 }).visible, false);
   assert.equal(pinButtonState({ view: "dm", channel: { kind: "text" }, count: 2 }).visible, false);
   assert.equal(pinButtonState({ view: "server", channel: null, count: 2 }).visible, false);
-  // A missing or odd count reads as none.
   assert.equal(pinButtonState({ view: "server", channel: { kind: "text" }, count: undefined }).count, 0);
   assert.equal(pinButtonState({ view: "server", channel: { kind: "text" }, count: -3 }).count, 0);
 });

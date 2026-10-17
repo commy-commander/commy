@@ -1,24 +1,3 @@
-//! P2P transport for Commy.
-//!
-//! Architecture:
-//! - Every running app is an iroh endpoint identified by a public key.
-//! - A Commy server maps to a gossip topic. All server events
-//!   (`commy_core::ServerEvent`) are broadcast to the topic and applied
-//!   to each member's local `ServerState`.
-//! - Invites are self-contained tickets: topic id plus the addresses of
-//!   one or more members to bootstrap from. No central registry. Invite
-//!   links store tickets sealed with a key that only travels in the link.
-//! - Files, avatars, emojis and soundboard clips transfer via
-//!   iroh-blobs, addressed by blake3 hash. Messages only carry hashes.
-//! - Voice and screen share use direct QUIC connections negotiated over
-//!   the gossip topic (signaling), falling back to iroh relays when
-//!   hole punching fails.
-//! - Members that were offline catch up on recent history with a
-//!   neighbor over a direct connection (see `catchup`). Messages carry
-//!   their author's signature, so any member can relay them.
-//! - A device can rest: it leaves every mesh and keeps only its relay
-//!   link. A member with news wakes it by node id (see `wake`).
-
 pub mod catchup;
 pub mod dm;
 pub mod entry_key;

@@ -9,9 +9,7 @@ import { connectRedis } from "./redis.js";
 
 const config = loadConfig();
 
-// Better Auth checks the schema once, as it starts, and refuses requests after
-// a mismatch, so columns it no longer knows go before it starts.
-async function dropOldColumns(attempts = 30) {
+async function dropRetiredColumnsBeforeBetterAuthStarts(attempts = 30) {
   const old = new pg.Pool({ connectionString: config.databaseUrl, max: 1 });
   try {
     for (let i = 1; ; i++) {
@@ -29,8 +27,7 @@ async function dropOldColumns(attempts = 30) {
   }
 }
 
-await dropOldColumns();
-// Not awaited: sign-in does not depend on Redis, so the server starts without it
+await dropRetiredColumnsBeforeBetterAuthStarts();
 const redis = config.redisUrl ? connectRedis(config.redisUrl) : null;
 redis?.ready.then(() => console.log("[auth] redis connected"));
 const { auth, options, pool } = createAuth(config, { redis });
@@ -73,8 +70,6 @@ const server = http.createServer(async (req, res) => {
     } catch {
       return sendJson(res, 503, '{"ok":false}');
     }
-    // Redis being away degrades the doorbell and rate limits, not sign-in, so
-    // it is reported rather than failing the check and restarting the server
     const redisOk = redis ? await redis.ping().catch(() => false) : null;
     return sendJson(res, 200, JSON.stringify(redisOk === null ? { ok: true } : { ok: true, redis: redisOk }));
   }

@@ -1,8 +1,3 @@
-# Fast compile check for pull requests that touch Rust code: cargo check on Windows
-# and macOS, and the test suite (which compiles everything) on Linux. Use this instead of running
-# "Desktop release" to prove a branch builds.
-# Dependency caches are saved from main only; pull requests restore them.
-
 name: Rust checks
 
 on:
@@ -21,7 +16,6 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request cancels its older run
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
@@ -29,7 +23,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # Debug info roughly doubles build time and cache size; CI only needs pass or fail
   CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
@@ -71,7 +64,6 @@ jobs:
           key: ${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # cargo test builds everything cargo check would, so Linux skips the check
       - name: cargo check
         if: runner.os != 'Linux'
         run: cargo check --workspace --all-targets --locked
