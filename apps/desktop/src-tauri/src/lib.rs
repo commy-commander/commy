@@ -3703,7 +3703,7 @@ async fn set_sound_emoji(
     let sound = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(state, me.id, Permissions::MANAGE_EXPRESSIONS, "change sounds")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_EXPRESSIONS, "change sounds")?;
         let mut sound = state.server.soundboard.iter().find(|s| s.name == name).cloned().ok_or("unknown sound")?;
         sound.emoji = emoji;
         sound
