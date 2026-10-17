@@ -78,6 +78,12 @@ check "a direct visitor cannot claim another address" \
 	"$(curl -fs -H "X-Forwarded-For: 6.6.6.6" "$url/api/auth/get-session")" "127.0.0.1"
 check "doorbell calls are named the same way" \
 	"$(via_proxy -X POST "$url/api/auth/commy/doorbell/ring")" "198.51.100.7"
+check "the website is told the visitor's own address" \
+	"$(via_proxy "$url/download")" "198.51.100.7"
+check "a chain the visitor started does not reach the website" \
+	"$(curl -fs --interface 127.0.0.2 -H "CF-Connecting-IP: 198.51.100.7" -H "X-Forwarded-For: 6.6.6.6, 198.51.100.7" "$url/download")" "198.51.100.7"
+check "a chain the visitor started does not reach the auth server" \
+	"$(curl -fs --interface 127.0.0.2 -H "CF-Connecting-IP: 198.51.100.7" -H "X-Forwarded-For: 6.6.6.6, 198.51.100.7" "$url/api/auth/get-session")" "198.51.100.7"
 
 for path in /i/K7QX2M9P "/api/auth/commy/invites/resolve?code=K7QX2M9P" /api/auth/commy/invites/create \
 	/api/auth/commy/doorbell/take /api/auth/commy/doorbell/ring /docs; do
