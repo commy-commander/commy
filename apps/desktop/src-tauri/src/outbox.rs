@@ -507,6 +507,7 @@ pub fn resign_ours(state: &mut ServerState, me: UserId, identity: &Identity) -> 
         fresh.profiles = std::mem::take(&mut state.profiles);
         fresh.voice_states = std::mem::take(&mut state.voice_states);
         fresh.voice_since = std::mem::take(&mut state.voice_since);
+        fresh.voice_flags = std::mem::take(&mut state.voice_flags);
         fresh.screen_shares = std::mem::take(&mut state.screen_shares);
         fresh.cameras = std::mem::take(&mut state.cameras);
         *state = fresh;
@@ -725,6 +726,18 @@ mod tests {
         message.sign(state.server.id, &identity);
         state.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
         (state, identity, message)
+    }
+
+    #[test]
+    fn resigning_keeps_live_voice_state() {
+        let (mut state, _, message) = keyed_server();
+        let me = message.author;
+        let voice = state.server.channels[0].id;
+        state.voice_states.insert(me, voice);
+        state.voice_flags.insert(me, (true, false));
+        assert!(resign_ours(&mut state, me, &Identity::generate()));
+        assert_eq!(state.voice_states.get(&me), Some(&voice));
+        assert_eq!(state.voice_flags.get(&me), Some(&(true, false)));
     }
 
     fn rename(server: ServerId, name: &str) -> ServerEvent {

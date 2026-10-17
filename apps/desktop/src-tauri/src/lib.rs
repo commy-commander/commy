@@ -3255,16 +3255,15 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
         let session = session.as_ref().ok_or("not in voice")?;
         (session.link_stats(), session.server)
     };
-    let names: Vec<(String, Option<String>)> = {
+    let names: Vec<String> = {
         let servers = app.servers.lock().unwrap();
         stats
             .iter()
-            .map(|s| {
-                let name = servers.get(&sid).map(|st| view::display_name(st, s.user)).unwrap_or_else(|| "Someone".into());
-                (name, node_hex_for_user(&app, s.user))
-            })
+            .map(|s| servers.get(&sid).map(|st| view::display_name(st, s.user)).unwrap_or_else(|| "Someone".into()))
             .collect()
     };
+    let names: Vec<(String, Option<String>)> =
+        names.into_iter().zip(&stats).map(|(name, s)| (name, node_hex_for_user(&app, s.user))).collect();
     let net = app.net.lock().await;
     let links = stats
         .into_iter()
