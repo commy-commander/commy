@@ -109,11 +109,19 @@ fn blend(px: &mut [u8], rgb: [u8; 3], alpha: f32) {
     px[3] = px[3].max((alpha * 255.0) as u8);
 }
 
+fn base_icon() -> Option<&'static image::RgbaImage> {
+    static BASE: std::sync::OnceLock<Option<image::RgbaImage>> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| {
+        let decoded = image::load_from_memory(ICON_PNG).ok()?.to_rgba8();
+        Some(image::imageops::resize(&decoded, 64, 64, image::imageops::FilterType::Triangle))
+    })
+    .as_ref()
+}
+
 pub fn icon(count: u32) -> Option<Image<'static>> {
-    let decoded = image::load_from_memory(ICON_PNG).ok()?.to_rgba8();
-    let small = image::imageops::resize(&decoded, 64, 64, image::imageops::FilterType::Triangle);
+    let small = base_icon()?;
     let (w, h) = small.dimensions();
-    let mut rgba = small.into_raw();
+    let mut rgba = small.as_raw().clone();
     if count > 0 {
         draw_badge(&mut rgba, w, h, count);
     }

@@ -24,10 +24,6 @@ pub(crate) fn is_resting(app: &App) -> bool {
     app.rest.lock().unwrap().resting
 }
 
-fn hex(bytes: &[u8]) -> String {
-    data_encoding::HEXLOWER.encode(bytes)
-}
-
 fn may_rest(presence: Presence) -> bool {
     !matches!(presence, Presence::Online | Presence::DoNotDisturb)
 }
@@ -37,26 +33,15 @@ pub(crate) fn targets(app: &App, server: ServerId) -> Vec<String> {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&server) else { return Vec::new() };
-    let resting: HashSet<UserId> = state
+    let resting = state
         .profiles
         .values()
-        .filter(|p| Some(p.id) != me && may_rest(p.presence) && crate::doorbell::member_ok(state, p.id))
-        .map(|p| p.id)
-        .collect();
-    let mut nodes: Vec<String> = state
-        .profiles
-        .values()
-        .filter(|p| resting.contains(&p.id))
-        .filter_map(|p| p.node.clone())
-        .chain(
-            app.doorbell
-                .lock()
-                .unwrap()
-                .devices(server)
-                .into_iter()
-                .filter(|(_, user)| resting.contains(user))
-                .map(|(node, _)| node),
-        )
+        .filter(|p| Some(p.id) != me && may_rest(p.presence) && state.server.is_current_member(p.id));
+    let ids: HashSet<UserId> = resting.clone().map(|p| p.id).collect();
+    let doorbell = app.doorbell.lock().unwrap();
+    let mut nodes: Vec<String> = resting
+        .filter_map(|p| p.node.as_deref())
+        .chain(doorbell.devices(server).filter(|(_, user)| ids.contains(user)).map(|(node, _)| node))
         .map(|n| n.to_ascii_lowercase())
         .filter(|n| Some(n.as_str()) != our_node.as_deref())
         .collect();
@@ -116,7 +101,7 @@ pub(crate) fn on_wake(app: &App, from: [u8; 32]) -> Vec<ServerId> {
     if !is_resting(app) {
         return Vec::new();
     }
-    let from = hex(&from);
+    let from = data_encoding::HEXLOWER.encode(&from);
     let mut shared: Vec<ServerId> = {
         let servers = app.servers.lock().unwrap();
         let doorbell = app.doorbell.lock().unwrap();
@@ -127,11 +112,10 @@ pub(crate) fn on_wake(app: &App, from: [u8; 32]) -> Vec<ServerId> {
                 let by_profile = state
                     .profiles
                     .values()
-                    .any(|p| p.node.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(&from)) && crate::doorbell::member_ok(state, p.id));
+                    .any(|p| p.node.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(&from)) && state.server.is_current_member(p.id));
                 let by_doorbell = doorbell
                     .devices(id)
-                    .iter()
-                    .any(|(n, user)| n.eq_ignore_ascii_case(&from) && crate::doorbell::member_ok(state, *user));
+                    .any(|(n, user)| n.eq_ignore_ascii_case(&from) && state.server.is_current_member(user));
                 by_profile || by_doorbell
             })
             .map(|state| state.server.id)
@@ -169,7 +153,7 @@ fn members_by_server(app: &App) -> Vec<(ServerId, Vec<String>)> {
                 .values()
                 .filter(|p| Some(p.id) != me)
                 .filter_map(|p| p.node.clone())
-                .chain(doorbell.devices(s.server.id).into_iter().map(|(n, _)| n))
+                .chain(doorbell.devices(s.server.id).map(|(n, _)| n.to_string()))
                 .collect();
             nodes.sort();
             nodes.dedup();
@@ -251,7 +235,7 @@ fn decide(resting: bool, away: bool, busy: bool, idle: Duration, after: Duration
 fn show_resting(handle: &tauri::AppHandle, resting: bool) {
     use tauri::Manager;
     let label = std::env::var("COMMY_INSTANCE_LABEL").ok();
-    let base = crate::instance::window_title(option_env!("COMMY_TEST_BUILD").is_some(), label.as_deref())
+    let base = crate::instance::window_title(crate::instance::TEST_BUILD, label.as_deref())
         .unwrap_or_else(|| "Commy".to_string());
     let title = if resting { format!("{base} · resting") } else { base };
     if let Some(window) = handle.get_webview_window("main") {

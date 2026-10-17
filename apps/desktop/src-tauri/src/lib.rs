@@ -110,6 +110,33 @@ fn refuse_while_key_may_be_replaced(app: &App) -> CmdResult<()> {
     }
 }
 
+fn clean_message(content: &str) -> CmdResult<String> {
+    let content = content.trim();
+    if content.is_empty() || content.len() > 4000 {
+        return Err("message must be 1 to 4000 characters".into());
+    }
+    Ok(content.to_string())
+}
+
+fn clean_server_name(name: &str) -> CmdResult<String> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 100 {
+        return Err("server name must be 1 to 100 characters".into());
+    }
+    Ok(name.to_string())
+}
+
+fn text_channel_name(name: &str) -> String {
+    name.trim().to_lowercase().replace(' ', "-")
+}
+
+fn check_channel_name(name: String) -> CmdResult<String> {
+    if name.is_empty() || name.len() > 50 {
+        return Err("channel name must be 1 to 50 characters".into());
+    }
+    Ok(name)
+}
+
 const KEY_SETTLE_MAX: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[tauri::command]
@@ -118,10 +145,7 @@ async fn create_server(
     handle: tauri::AppHandle,
     name: String,
 ) -> CmdResult<ServerView> {
-    let name = name.trim().to_string();
-    if name.is_empty() || name.len() > 100 {
-        return Err("server name must be 1 to 100 characters".into());
-    }
+    let name = clean_server_name(&name)?;
     current_profile(&app)?;
     account::require_account(&app)?;
 
@@ -146,9 +170,7 @@ async fn create_server(
     app.servers.lock().unwrap().insert(server_id, state);
     drop(signing);
     app.persist_server(server_id);
-    if let Some(dir) = app.data_dir() {
-        let _ = persist::save_invites(dir, &app.invites.lock().unwrap().clone());
-    }
+    app.persist_invites();
     entry_list::record_join(&app, server_id);
     entry_list::schedule(&handle);
     let _ = handle.emit("servers-changed", ());
@@ -183,9 +205,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
             .lock()
             .unwrap()
             .insert(ticket.server_id, ticket.encode());
-        if let Some(dir) = app.data_dir() {
-            let _ = persist::save_invites(dir, &app.invites.lock().unwrap().clone());
-        }
+        app.persist_invites();
         if !reached_peer {
             tracing::warn!("joined topic but no members are online yet");
         }
@@ -267,7 +287,7 @@ fn get_messages(
 }
 
 async fn commit_message(
-    app: &tauri::State<'_, App>,
+    app: &App,
     handle: &tauri::AppHandle,
     sid: ServerId,
     message: Message,
@@ -279,7 +299,7 @@ async fn commit_message(
         let mut servers = app.servers.lock().unwrap();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         require_rules_accepted(state, message.author)?;
-        require_can_post(&app, state, message.author, message.channel)?;
+        require_can_post(app, state, message.author, message.channel)?;
         state.apply(event.clone()).map_err(err_to_string)?;
         MessageView::build(&message, state)
     };
@@ -305,10 +325,7 @@ async fn send_message(
     content: String,
     reply_to: Option<String>,
 ) -> CmdResult<MessageView> {
-    let content = content.trim().to_string();
-    if content.is_empty() || content.len() > 4000 {
-        return Err("message must be 1 to 4000 characters".into());
-    }
+    let content = clean_message(&content)?;
     let sid = server_id.parse().map_err(err_to_string)?;
     let cid = channel_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
@@ -357,9 +374,7 @@ async fn set_reaction(
         &handle,
         sid,
         ServerEvent::ReactionSet { channel: cid, message: mid, emoji, user: me.id, active },
-    )
-    .await?;
-    Ok(())
+    ).await
 }
 
 fn signed_fits_one_gossip_frame(signed: &Message) -> bool {
@@ -408,10 +423,7 @@ async fn edit_message(
     message_id: String,
     content: String,
 ) -> CmdResult<()> {
-    let content = content.trim().to_string();
-    if content.is_empty() || content.len() > 4000 {
-        return Err("message must be 1 to 4000 characters".into());
-    }
+    let content = clean_message(&content)?;
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
@@ -421,15 +433,13 @@ async fn edit_message(
     let edit = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        if message_author(state, cid, mid)? != me.id {
+        let original = state.messages(cid).iter().find(|m| m.id == mid).ok_or("that message no longer exists")?;
+        if original.author != me.id {
             return Err("you can only edit your own messages".into());
         }
-        let original = state.messages(cid).iter().find(|m| m.id == mid).ok_or("that message no longer exists")?;
         sign_edit(sid, original, content, chrono::Utc::now(), &identity)?
     };
-    apply_and_broadcast(&app, &handle, sid, edit)
-        .await?;
-    Ok(())
+    apply_and_broadcast(&app, &handle, sid, edit).await
 }
 
 #[tauri::command]
@@ -452,8 +462,7 @@ async fn delete_message(
         may_delete(&app, state, cid, mid, me.id)?;
     }
     let proof = TombstoneProof::sign(sid, cid, mid, me.id, chrono::Utc::now(), &identity);
-    apply_and_broadcast(&app, &handle, sid, proof.into_event()).await?;
-    Ok(())
+    apply_and_broadcast(&app, &handle, sid, proof.into_event()).await
 }
 
 fn may_delete(app: &App, state: &ServerState, channel: ChannelId, message: MessageId, me: UserId) -> CmdResult<()> {
@@ -464,6 +473,7 @@ fn may_delete(app: &App, state: &ServerState, channel: ChannelId, message: Messa
 }
 
 const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
+const ATTACHMENT_TOO_LARGE: &str = "files larger than 512 MB are not supported yet";
 
 async fn send_attachment(
     app: &tauri::State<'_, App>,
@@ -474,7 +484,7 @@ async fn send_attachment(
     bytes: Vec<u8>,
 ) -> CmdResult<MessageView> {
     if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
-        return Err("files larger than 512 MB are not supported yet".into());
+        return Err(ATTACHMENT_TOO_LARGE.into());
     }
     let profile = current_profile(app)?;
     let size_bytes = bytes.len() as u64;
@@ -526,6 +536,9 @@ async fn attach_file(
     };
     let path = picked.path().to_path_buf();
     let filename = picked.file_name();
+    if tokio::fs::metadata(&path).await.map_err(err_to_string)?.len() > MAX_ATTACHMENT_BYTES {
+        return Err(ATTACHMENT_TOO_LARGE.into());
+    }
     let bytes = tokio::fs::read(&path).await.map_err(err_to_string)?;
     send_attachment(&app, &handle, sid, cid, filename, bytes)
         .await
@@ -553,6 +566,10 @@ async fn get_attachment_video(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+fn data_url(mime: &str, bytes: &[u8]) -> String {
+    format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 const MAX_PICKED_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 
 #[tauri::command]
@@ -577,10 +594,7 @@ async fn pick_image(title: Option<String>) -> CmdResult<Option<String>> {
         Some("webp") => "image/webp",
         _ => "image/jpeg",
     };
-    Ok(Some(format!(
-        "data:{mime};base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(&bytes)
-    )))
+    Ok(Some(data_url(mime, &bytes)))
 }
 
 #[tauri::command]
@@ -696,10 +710,7 @@ async fn set_voice_channel(
     channel_id: Option<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let cid: Option<ChannelId> = match &channel_id {
-        Some(c) => Some(c.parse().map_err(err_to_string)?),
-        None => None,
-    };
+    let cid: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
     let voice = app.voice.lock().unwrap().clone();
 
@@ -713,7 +724,7 @@ async fn set_voice_channel(
             if let Some(previous) = previous {
                 leave_voice(&app, &handle, previous, &profile, &voice).await;
             }
-            start_voice_session(&app, &handle, sid, channel, &voice, profile.id)?;
+            start_voice_session(&app, &handle, sid, channel, &voice, profile.id);
             apply_personal_volumes(&app);
             refresh_forced_voice(&app, &handle);
             dial_voice_members(&app, &handle, sid, channel, &profile);
@@ -727,7 +738,7 @@ async fn set_voice_channel(
 }
 
 async fn leave_voice(
-    app: &tauri::State<'_, App>,
+    app: &App,
     handle: &tauri::AppHandle,
     sid: ServerId,
     profile: &UserProfile,
@@ -756,7 +767,7 @@ async fn leave_voice(
 }
 
 async fn set_own_voice_state(
-    app: &tauri::State<'_, App>,
+    app: &App,
     handle: &tauri::AppHandle,
     sid: ServerId,
     profile: &UserProfile,
@@ -780,7 +791,7 @@ async fn set_own_voice_state(
     Ok(())
 }
 
-fn active_voice_channel(app: &tauri::State<'_, App>, _sid: ServerId) -> Option<ChannelId> {
+fn active_voice_channel(app: &App) -> Option<ChannelId> {
     app.voice_session.lock().unwrap().as_ref().map(|s| s.channel)
 }
 
@@ -791,7 +802,7 @@ fn start_voice_session(
     channel: ChannelId,
     voice: &VoiceSettings,
     me: UserId,
-) -> CmdResult<()> {
+) {
     let emitter = handle.clone();
     let on_speaking: media_engine::SpeakingSink = std::sync::Arc::new(move |user: UserId, speaking: bool| {
         let _ = emitter.emit(
@@ -807,7 +818,7 @@ fn start_voice_session(
             None
         }
     };
-    let session = VoiceSession::start(
+    let mut session = VoiceSession::start(
         sid,
         channel,
         StreamGuards { mic, speaker: None },
@@ -825,11 +836,9 @@ fn start_voice_session(
         }
     };
     let mut slot = app.voice_session.lock().unwrap();
-    let mut session = session;
     session.set_speaker(speaker);
     session.mixer.lock().unwrap().set_master(voice.output_volume);
     *slot = Some(session);
-    Ok(())
 }
 
 async fn run_afk_watchdog(handle: tauri::AppHandle) {
@@ -1108,7 +1117,7 @@ async fn start_screen_share(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
-    let channel = active_voice_channel(&app, sid).ok_or("join a voice channel first")?;
+    let channel = active_voice_channel(&app).ok_or("join a voice channel first")?;
 
     let source = parse_source(source_kind.as_deref(), source_id);
     let quality = StreamQuality::from_name(quality.as_deref().unwrap_or(""));
@@ -1233,16 +1242,14 @@ async fn start_camera(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
-    let channel = active_voice_channel(&app, sid).ok_or("join a voice channel first")?;
+    let channel = active_voice_channel(&app).ok_or("join a voice channel first")?;
     *app.camera.lock().unwrap() = Some(CameraSession::new(sid, channel));
     apply_and_broadcast(
         &app,
         &handle,
         sid,
         ServerEvent::CameraState { user: profile.id, channel, active: true },
-    )
-    .await?;
-    Ok(())
+    ).await
 }
 
 #[tauri::command]
@@ -1261,9 +1268,7 @@ async fn stop_camera(
         &handle,
         sid,
         ServerEvent::CameraState { user: profile.id, channel: session.channel, active: false },
-    )
-    .await?;
-    Ok(())
+    ).await
 }
 
 #[tauri::command]
@@ -1327,20 +1332,14 @@ fn stop_watching(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
 }
 
 pub(crate) fn node_hex_for_user(app: &App, user: UserId) -> Option<String> {
-    if let Some(hex) = app
-        .dms
-        .lock()
-        .unwrap()
-        .contacts
-        .get(&user)
-        .and_then(|p| p.node.clone())
-    {
-        return Some(hex);
+    known_profile_field(app, user, |p| p.node.clone())
+}
+
+fn known_profile_field<T>(app: &App, user: UserId, field: impl Fn(&UserProfile) -> Option<T>) -> Option<T> {
+    if let Some(found) = app.dms.lock().unwrap().contacts.get(&user).and_then(&field) {
+        return Some(found);
     }
-    let servers = app.servers.lock().unwrap();
-    servers
-        .values()
-        .find_map(|s| s.profiles.get(&user).and_then(|p| p.node.clone()))
+    app.servers.lock().unwrap().values().find_map(|s| s.profiles.get(&user).and_then(&field))
 }
 
 #[tauri::command]
@@ -1365,19 +1364,30 @@ fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
     views
 }
 
-async fn send_friend_signal(app: &tauri::State<'_, App>, to: UserId, signal: safety::FriendSignal) -> CmdResult<()> {
+async fn send_friend_signal(app: &App, to: UserId, signal: safety::FriendSignal) -> CmdResult<()> {
     let _signing = app.signing.read().await;
     let me = current_profile(app)?;
     refuse_while_key_may_be_replaced(app)?;
     let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
-    let mut message = DmMessage::new(me.id, to, signal.encode());
+    send_signed_dm(app, &me, to, &hex, signal.encode(), "they are offline right now; try again later").await
+}
+
+async fn send_signed_dm(
+    app: &App,
+    me: &UserProfile,
+    to: UserId,
+    hex: &str,
+    content: String,
+    offline: &str,
+) -> CmdResult<()> {
+    let mut message = DmMessage::new(me.id, to, content);
     sign_dm(app, &mut message)?;
     let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
     let send = {
         let net = app.net.lock().await;
-        net.as_ref().ok_or("network is not ready yet")?.send_dm(&hex, &envelope)
+        net.as_ref().ok_or("network is not ready yet")?.send_dm(hex, &envelope)
     };
-    send.await.map_err(|_| "they are offline right now; try again later".to_string())
+    send.await.map_err(|_| offline.to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -1461,16 +1471,9 @@ struct SafetyView {
     spam_filter: bool,
 }
 
-fn known_name(app: &tauri::State<'_, App>, user: UserId) -> String {
-    if let Some(p) = app.dms.lock().unwrap().contacts.get(&user) {
-        return p.visible_name().to_string();
-    }
-    app.servers
-        .lock()
-        .unwrap()
-        .values()
-        .find_map(|s| s.profiles.get(&user).map(|p| p.visible_name().to_string()))
-        .unwrap_or_else(|| "Unknown User".to_string())
+fn known_name(app: &App, user: UserId) -> String {
+    known_profile_field(app, user, |p| Some(p.visible_name().to_string()))
+        .unwrap_or_else(|| view::UNKNOWN_USER.to_string())
 }
 
 #[tauri::command]
@@ -1599,19 +1602,11 @@ async fn report_user(
     };
     let owner_hex = node_hex_for_user(&app, owner)
         .ok_or("the server owner's device is unknown; try again once they have been online")?;
-    let mut message = DmMessage::new(me.id, owner, report.encode());
-    sign_dm(&app, &mut message)?;
-    let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
-    let send = {
-        let net = app.net.lock().await;
-        net.as_ref().ok_or("network is not ready yet")?.send_dm(&owner_hex, &envelope)
-    };
-    send.await
-        .map_err(|_| "the server owner is offline right now; try again later".to_string())?;
-    Ok(())
+    let offline = "the server owner is offline right now; try again later";
+    send_signed_dm(&app, &me, owner, &owner_hex, report.encode(), offline).await
 }
 
-fn receive_report(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sender: UserId, content: &str) {
+fn receive_report(app: &App, handle: &tauri::AppHandle, sender: UserId, content: &str) {
     let Some(report) = safety::Report::decode(content, sender) else { return };
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
     let valid = report.server.parse::<ServerId>().ok().is_some_and(|sid| {
@@ -1713,10 +1708,7 @@ async fn send_dm(
     user_id: String,
     content: String,
 ) -> CmdResult<DmMessageView> {
-    let content = content.trim().to_string();
-    if content.is_empty() || content.len() > 4000 {
-        return Err("message must be 1 to 4000 characters".into());
-    }
+    let content = clean_message(&content)?;
     let partner: UserId = user_id.parse().map_err(err_to_string)?;
     let _signing = app.signing.read().await;
     let me = current_profile(&app)?;
@@ -1766,9 +1758,7 @@ fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
 
 pub(crate) fn require_invite_permission(app: &App, sid: ServerId) -> CmdResult<()> {
     let me = current_profile(app)?;
-    let servers = app.servers.lock().unwrap();
-    let state = servers.get(&sid).ok_or("unknown server")?;
-    require_permission(app, state, me.id, Permissions::CREATE_INVITES, "invite people")
+    manage_check(app, sid, me.id, Permissions::CREATE_INVITES, "invite people")
 }
 
 fn require_permission(
@@ -1786,7 +1776,7 @@ fn require_permission(
 }
 
 async fn apply_and_broadcast(
-    app: &tauri::State<'_, App>,
+    app: &App,
     handle: &tauri::AppHandle,
     sid: ServerId,
     event: ServerEvent,
@@ -1813,16 +1803,9 @@ async fn rename_server(
     name: String,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let name = name.trim().to_string();
-    if name.is_empty() || name.len() > 100 {
-        return Err("server name must be 1 to 100 characters".into());
-    }
+    let name = clean_server_name(&name)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "rename the server")?;
-    }
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "rename the server")?;
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ServerRename { server: sid, name })
         .await?;
     let _ = handle.emit("servers-changed", ());
@@ -1832,8 +1815,9 @@ async fn rename_server(
 fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
+    let perms = our_permissions(app, state, me);
     let mut events = Vec::new();
-    if our_permissions(app, state, me).allows(Permissions::MANAGE_CHANNELS) {
+    if perms.allows(Permissions::MANAGE_CHANNELS) {
         for channel in &state.server.channels {
             events.push(ServerEvent::ChannelCreate { server: sid, channel: channel.clone() });
             events.push(ServerEvent::ChannelUpdate {
@@ -1847,9 +1831,7 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             events.push(ServerEvent::ChannelDelete { server: sid, channel });
         }
     }
-    if (state.server.icon.is_some() || state.server.banner.is_some())
-        && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER)
-    {
+    if (state.server.icon.is_some() || state.server.banner.is_some()) && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ServerImages {
             server: sid,
             icon: state.server.icon.clone(),
@@ -1862,7 +1844,6 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     for sound in &state.server.soundboard {
         events.push(ServerEvent::SoundAdd { server: sid, sound: sound.clone() });
     }
-    let perms = our_permissions(app, state, me);
     if perms.allows(Permissions::MANAGE_SERVER) {
         if !state.server.game_tags.is_empty() {
             events.push(ServerEvent::GameTagsSet {
@@ -1926,12 +1907,11 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     if perms.allows(Permissions::MUTE_MEMBERS) {
         let moderated = state.server.server_muted.iter().chain(&state.server.server_deafened);
-        let mut seen = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for user in moderated {
-            if seen.contains(user) {
+            if !seen.insert(*user) {
                 continue;
             }
-            seen.push(*user);
             events.push(ServerEvent::VoiceModerate {
                 server: sid,
                 user: *user,
@@ -1951,18 +1931,18 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
         }
     }
     let custom = state.server.emojis_shareable || state.server.soundboard_open;
-    if custom && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER) {
+    if custom && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ExpressionSettings {
             server: sid,
             emojis_shareable: state.server.emojis_shareable,
             soundboard_open: state.server.soundboard_open,
         });
     }
-    if state.server.public && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER) {
+    if state.server.public && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::PublicSet { server: sid, public: true });
     }
     let explicit = state.server.afk_disabled || state.server.afk_channel_id.is_some();
-    if explicit && our_permissions(app, state, me).allows(Permissions::MANAGE_SERVER) {
+    if explicit && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::AfkChannelSet {
             server: sid,
             channel: state.server.afk_channel(),
@@ -1992,22 +1972,17 @@ async fn update_channel(
         require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
         state.server.channel(cid).ok_or("unknown channel")?.kind
     };
-    let name = match kind {
-        ChannelKind::Text | ChannelKind::Announcement => name.trim().to_lowercase().replace(' ', "-"),
+    let name = check_channel_name(match kind {
+        ChannelKind::Text | ChannelKind::Announcement => text_channel_name(&name),
         _ => name.trim().to_string(),
-    };
-    if name.is_empty() || name.len() > 50 {
-        return Err("channel name must be 1 to 50 characters".into());
-    }
+    })?;
     let retention_days = retention_days.filter(|d| *d > 0).map(|d| d.min(MAX_RETENTION_DAYS));
     apply_and_broadcast(
         &app,
         &handle,
         sid,
         ServerEvent::ChannelUpdate { server: sid, channel: cid, name, retention_days },
-    )
-    .await?;
-    Ok(())
+    ).await
 }
 
 const MESH_HEAL_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
@@ -2128,19 +2103,11 @@ async fn set_afk_channel(
     channel_id: Option<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let channel: Option<ChannelId> = match channel_id.as_deref() {
-        Some(c) if !c.is_empty() => Some(c.parse().map_err(err_to_string)?),
-        _ => None,
-    };
+    let channel: Option<ChannelId> =
+        channel_id.as_deref().filter(|c| !c.is_empty()).map(str::parse).transpose().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "change the AFK channel")?;
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::AfkChannelSet { server: sid, channel })
-        .await?;
-    Ok(())
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change the AFK channel")?;
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::AfkChannelSet { server: sid, channel }).await
 }
 
 #[tauri::command]
@@ -2153,10 +2120,7 @@ async fn create_channel(
     parent_id: Option<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let name = name.trim().to_lowercase().replace(' ', "-");
-    if name.is_empty() || name.len() > 50 {
-        return Err("channel name must be 1 to 50 characters".into());
-    }
+    let name = check_channel_name(text_channel_name(&name))?;
     let kind = match kind.as_str() {
         "text" => ChannelKind::Text,
         "voice" => ChannelKind::Voice,
@@ -2258,23 +2222,30 @@ async fn leave_server(
 
     broadcast_event(&app, sid, ServerEvent::MemberLeave { server: sid, user: me.id })
     .await;
-    {
-        let mut net = app.net.lock().await;
-        if let Some(node) = net.as_mut() {
-            node.leave_server(sid);
-        }
-    }
-    app.servers.lock().unwrap().remove(&sid);
-    app.invites.lock().unwrap().remove(&sid);
-    forget_server_outbox(&app, sid);
-    forget_history_window(&app, sid);
-    if let Some(dir) = app.data_dir() {
-        let _ = persist::delete_server(dir, sid);
-    }
+    leave_server_topic(&app, sid).await;
+    forget_server_locally(&app, sid);
     entry_list::record_leave(&app, sid);
     entry_list::schedule(&handle);
     let _ = handle.emit("servers-changed", ());
     Ok(())
+}
+
+async fn leave_server_topic(app: &App, sid: ServerId) {
+    let mut net = app.net.lock().await;
+    if let Some(node) = net.as_mut() {
+        node.leave_server(sid);
+    }
+}
+
+fn forget_server_locally(app: &App, sid: ServerId) -> Option<ServerState> {
+    let removed = app.servers.lock().unwrap().remove(&sid);
+    app.invites.lock().unwrap().remove(&sid);
+    forget_server_outbox(app, sid);
+    forget_history_window(app, sid);
+    if let Some(dir) = app.data_dir() {
+        let _ = persist::delete_server(dir, sid);
+    }
+    removed
 }
 
 fn forget_server_outbox(app: &App, sid: ServerId) {
@@ -2306,9 +2277,7 @@ async fn update_profile(
         s.map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty() && s.len() <= 64)
     };
-    let profile = {
-        let mut guard = app.profile.lock().unwrap();
-        let profile = guard.as_mut().ok_or("set a username first")?;
+    let profile = edit_profile(&app, |profile| {
         profile.display_name = clean(display_name);
         profile.custom_status = clean(custom_status);
         if presence != profile.presence {
@@ -2318,12 +2287,9 @@ async fn update_profile(
         if let Some(emoji) = status_emoji {
             profile.status_emoji = emoji;
         }
-        profile.clone()
-    };
+    })?;
     app.auto_idle.store(false, std::sync::atomic::Ordering::Relaxed);
-    app.persist_profile();
-    announce_profile(&app, &handle, &profile).await;
-    let _ = handle.emit("profile-changed", &profile);
+    publish_profile(&app, &handle, &profile).await;
     entry_list::record_profile_edit(&app);
     entry_list::schedule(&handle);
     Ok(profile)
@@ -2338,13 +2304,10 @@ async fn set_status_expiry(
 ) -> CmdResult<VoiceSettings> {
     let now = chrono::Utc::now().timestamp();
     let future = |t: Option<i64>| t.filter(|t| *t > now);
-    let settings = {
-        let mut voice = app.voice.lock().unwrap();
+    let settings = app.update_voice(|voice| {
         voice.presence_until = future(presence_until);
         voice.status_until = future(status_until);
-        voice.clone()
-    };
-    app.persist_voice();
+    });
     let profile = {
         let mut guard = app.profile.lock().unwrap();
         match guard.as_mut() {
@@ -2356,9 +2319,7 @@ async fn set_status_expiry(
         }
     };
     if let Some(profile) = profile {
-        app.persist_profile();
-        announce_profile(&app, &handle, &profile).await;
-        let _ = handle.emit("profile-changed", &profile);
+        publish_profile(&app, &handle, &profile).await;
     }
     Ok(settings)
 }
@@ -2379,16 +2340,14 @@ async fn run_status_expiry(handle: tauri::AppHandle) {
         if !presence && !status {
             continue;
         }
-        {
-            let mut voice = app.voice.lock().unwrap();
+        app.update_voice(|voice| {
             if presence {
                 voice.presence_until = None;
             }
             if status {
                 voice.status_until = None;
             }
-        }
-        app.persist_voice();
+        });
         let profile = {
             let mut guard = app.profile.lock().unwrap();
             let Some(profile) = guard.as_mut() else { continue };
@@ -2402,9 +2361,7 @@ async fn run_status_expiry(handle: tauri::AppHandle) {
             }
             profile.clone()
         };
-        app.persist_profile();
-        announce_profile(&app, &handle, &profile).await;
-        let _ = handle.emit("profile-changed", &profile);
+        publish_profile(&app, &handle, &profile).await;
     }
 }
 
@@ -2630,7 +2587,7 @@ mod status_expiry_tests {
     }
 }
 
-fn register_overlay_hotkeys(handle: &tauri::AppHandle, settings: &overlay::OverlaySettings) -> Vec<String> {
+fn register_overlay_hotkeys(handle: &tauri::AppHandle, settings: &overlay::OverlaySettings) {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let shortcuts = handle.global_shortcut();
     let _ = shortcuts.unregister_all();
@@ -2643,8 +2600,7 @@ fn register_overlay_hotkeys(handle: &tauri::AppHandle, settings: &overlay::Overl
             }
         }
     }
-    *handle.state::<App>().overlay_hotkeys_taken.lock().unwrap() = taken.clone();
-    taken
+    *handle.state::<App>().overlay_hotkeys_taken.lock().unwrap() = taken;
 }
 
 #[tauri::command]
@@ -2665,12 +2621,7 @@ fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
         app.overlay_visible.store(visible, std::sync::atomic::Ordering::Relaxed);
         overlay::apply(handle, &settings, visible);
     } else if hotkey_id(&settings.chat_hotkey) == Some(id) {
-        let settings = {
-            let mut voice = app.voice.lock().unwrap();
-            voice.overlay.show_chat = !voice.overlay.show_chat;
-            voice.overlay.clone()
-        };
-        app.persist_voice();
+        let settings = app.update_voice(|voice| voice.overlay.show_chat = !voice.overlay.show_chat).overlay;
         let _ = handle.emit_to(overlay::LABEL, "overlay-config", &settings);
         let _ = handle.emit("overlay-settings-changed", &settings);
     }
@@ -2696,8 +2647,7 @@ async fn set_overlay_settings(
     if settings.toggle_hotkey.eq_ignore_ascii_case(&settings.chat_hotkey) {
         return Err("the two overlay hotkeys must be different".into());
     }
-    app.voice.lock().unwrap().overlay = settings.clone();
-    app.persist_voice();
+    app.update_voice(|voice| voice.overlay = settings.clone());
     if settings.enabled {
         app.overlay_visible.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -2712,22 +2662,15 @@ async fn set_about(app: tauri::State<'_, App>, handle: tauri::AppHandle, about: 
     if about.chars().count() > commy_core::user::MAX_ABOUT_CHARS {
         return Err(format!("About Me can be up to {} characters", commy_core::user::MAX_ABOUT_CHARS));
     }
-    let profile = {
-        let mut guard = app.profile.lock().unwrap();
-        let profile = guard.as_mut().ok_or("set a username first")?;
-        profile.about = (!about.is_empty()).then_some(about);
-        profile.clone()
-    };
-    app.persist_profile();
-    announce_profile(&app, &handle, &profile).await;
-    let _ = handle.emit("profile-changed", &profile);
+    let profile = edit_profile(&app, |profile| profile.about = (!about.is_empty()).then_some(about))?;
+    publish_profile(&app, &handle, &profile).await;
     Ok(profile)
 }
 
 const SERVER_IMAGE_DIR: &str = "server-images";
 const MAX_SERVER_IMAGE_BYTES: usize = 1024 * 1024;
 
-fn server_image_path(app: &tauri::State<'_, App>, blob: &str) -> Option<std::path::PathBuf> {
+fn server_image_path(app: &App, blob: &str) -> Option<std::path::PathBuf> {
     app.data_dir().map(|d| d.join(SERVER_IMAGE_DIR).join(format!("{blob}.img")))
 }
 
@@ -2750,24 +2693,8 @@ async fn set_server_image(
     let image = match data {
         None => None,
         Some(b64) => {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(b64)
-                .map_err(|_| "image data is not valid base64".to_string())?;
-            if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
-                return Err("server images must be a JPEG or PNG under 1 MB".into());
-            }
-            let (blob, provider) = {
-                let net = app.net.lock().await;
-                let node = net.as_ref().ok_or("network is not ready yet")?;
-                (node.add_blob(bytes.clone()).await.map_err(err_to_string)?, node.node_id_hex())
-            };
-            if let Some(path) = server_image_path(&app, &blob) {
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                std::fs::write(&path, &bytes).map_err(err_to_string)?;
-            }
-            Some(commy_core::server::ImageRef { blob, provider }.encode())
+            let bytes = decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "server images must be a JPEG or PNG under 1 MB")?;
+            Some(store_shared_blob(&app, bytes).await?)
         }
     };
     let (icon, banner) = match which.as_str() {
@@ -2783,7 +2710,8 @@ async fn set_server_image(
 #[tauri::command]
 async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdResult<String> {
     let image = commy_core::server::ImageRef::parse(&image).ok_or("bad image reference")?;
-    let cached = server_image_path(&app, &image.blob).and_then(|p| std::fs::read(p).ok());
+    let path = server_image_path(&app, &image.blob);
+    let cached = path.as_ref().and_then(|p| std::fs::read(p).ok());
     let bytes = match cached {
         Some(bytes) => bytes,
         None => {
@@ -2791,20 +2719,17 @@ async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdRes
             if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
                 return Err("server image is not a valid picture".into());
             }
-            if let Some(path) = server_image_path(&app, &image.blob) {
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&path, &bytes);
+            if let Some(path) = &path {
+                let _ = write_blob_cache(path, &bytes);
             }
             bytes
         }
     };
     let mime = if bytes.starts_with(&[0x89, b'P']) { "image/png" } else { "image/jpeg" };
-    Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
+    Ok(data_url(mime, &bytes))
 }
 
-fn manage_check(app: &tauri::State<'_, App>, sid: ServerId, user: UserId, needed: Permissions, action: &str) -> CmdResult<()> {
+fn manage_check(app: &App, sid: ServerId, user: UserId, needed: Permissions, action: &str) -> CmdResult<()> {
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
     require_permission(app, state, user, needed, action)
@@ -2903,10 +2828,8 @@ async fn save_event(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let channel: Option<ChannelId> = match channel_id.filter(|c| !c.is_empty()) {
-        Some(c) => Some(c.parse().map_err(err_to_string)?),
-        None => None,
-    };
+    let channel: Option<ChannelId> =
+        channel_id.as_deref().filter(|c| !c.is_empty()).map(str::parse).transpose().map_err(err_to_string)?;
     let creator = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
@@ -2977,10 +2900,7 @@ async fn move_channels(app: tauri::State<'_, App>, handle: tauri::AppHandle, ser
     manage_check(&app, sid, me.id, Permissions::MANAGE_CHANNELS, "move channels")?;
     for m in moves.into_iter().take(200) {
         let channel: ChannelId = m.channel.parse().map_err(err_to_string)?;
-        let parent: Option<ChannelId> = match m.parent {
-            Some(p) => Some(p.parse().map_err(err_to_string)?),
-            None => None,
-        };
+        let parent: Option<ChannelId> = m.parent.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
         let event = ServerEvent::ChannelLayout { server: sid, channel, parent, position: m.position };
         let _ = apply_and_broadcast(&app, &handle, sid, event).await;
     }
@@ -3047,7 +2967,7 @@ async fn update_role(
         return Err(format!("tags can be up to {} characters", commy_core::server::MAX_ROLE_TAG_CHARS));
     }
     let color = color.map(|c| c.trim_start_matches('#').to_lowercase()).filter(|c| !c.is_empty());
-    if color.as_deref().is_some_and(|c| c.len() != 6 || !c.chars().all(|ch| ch.is_ascii_hexdigit())) {
+    if color.as_deref().is_some_and(|c| !commy_core::server::valid_hex_color(c)) {
         return Err("colors are six hex digits".into());
     }
     let role = {
@@ -3087,12 +3007,7 @@ async fn set_role_banner(
     let banner = match data {
         None => None,
         Some(b64) => {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(b64)
-                .map_err(|_| "image data is not valid base64".to_string())?;
-            if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
-                return Err("role banners must be a JPEG or PNG under 1 MB".into());
-            }
+            let bytes = decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "role banners must be a JPEG or PNG under 1 MB")?;
             Some(store_shared_blob(&app, bytes).await?)
         }
     };
@@ -3120,12 +3035,7 @@ async fn set_channel_banner(
     let banner = match data {
         None => None,
         Some(b64) => {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(b64)
-                .map_err(|_| "image data is not valid base64".to_string())?;
-            if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
-                return Err("channel banners must be a JPEG or PNG under 1 MB".into());
-            }
+            let bytes = decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "channel banners must be a JPEG or PNG under 1 MB")?;
             Some(store_shared_blob(&app, bytes).await?)
         }
     };
@@ -3150,7 +3060,7 @@ async fn set_channel_color(
         state.server.channel(cid).ok_or("unknown channel")?;
     }
     let color = color.map(|c| c.trim().trim_start_matches('#').to_ascii_lowercase());
-    if color.as_deref().is_some_and(|c| c.len() != 6 || !c.chars().all(|ch| ch.is_ascii_hexdigit())) {
+    if color.as_deref().is_some_and(|c| !commy_core::server::valid_hex_color(c)) {
         return Err("channel colour must be six hex digits".into());
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelColor { server: sid, channel: cid, color }).await
@@ -3204,7 +3114,8 @@ async fn pin_message(
             return Err("you do not have permission to pin messages".into());
         }
         message_author(state, cid, mid)?;
-        if pinned && state.server.pins_in(cid).len() >= commy_core::server::MAX_PINS_PER_CHANNEL {
+        let pins = state.server.pins.iter().filter(|p| p.channel == cid).count();
+        if pinned && pins >= commy_core::server::MAX_PINS_PER_CHANNEL {
             return Err(format!(
                 "a channel can hold {} pinned messages; unpin one first",
                 commy_core::server::MAX_PINS_PER_CHANNEL
@@ -3218,10 +3129,7 @@ async fn pin_message(
 #[tauri::command]
 fn get_pins(app: tauri::State<App>, server_id: String, channel_id: Option<String>) -> CmdResult<Vec<view::PinView>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let cid = match channel_id {
-        Some(raw) => Some(raw.parse::<ChannelId>().map_err(err_to_string)?),
-        None => None,
-    };
+    let cid: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
     Ok(view::pin_views(state, cid))
@@ -3343,26 +3251,15 @@ async fn unban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberUnban { server: sid, user }).await
 }
 
-async fn on_banned(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId) {
-    let name = app.servers.lock().unwrap().remove(&sid).map(|s| s.server.name);
+async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
+    let name = forget_server_locally(app, sid).map(|s| s.server.name);
     let in_voice_there = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
     if in_voice_there {
         *app.voice_session.lock().unwrap() = None;
         app.own_preview.lock().unwrap().take();
         *app.screen_share.lock().unwrap() = None;
     }
-    app.invites.lock().unwrap().remove(&sid);
-    forget_server_outbox(app, sid);
-    forget_history_window(app, sid);
-    if let Some(dir) = app.data_dir() {
-        let _ = persist::delete_server(dir, sid);
-    }
-    {
-        let mut net = app.net.lock().await;
-        if let Some(node) = net.as_mut() {
-            node.leave_server(sid);
-        }
-    }
+    leave_server_topic(app, sid).await;
     let _ = handle.emit("banned", serde_json::json!({ "server": sid.to_string(), "name": name }));
     let _ = handle.emit("servers-changed", ());
 }
@@ -3392,8 +3289,7 @@ fn apply_personal_volumes(app: &App) {
 fn set_user_voice(app: tauri::State<'_, App>, user_id: String, volume: Option<f32>, muted: Option<bool>) -> CmdResult<VoiceSettings> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let key = user.to_string();
-    let settings = {
-        let mut voice = app.voice.lock().unwrap();
+    let settings = app.update_voice(|voice| {
         if let Some(volume) = volume {
             let volume = volume.clamp(0.0, 2.0);
             if (volume - 1.0).abs() < f32::EPSILON {
@@ -3408,9 +3304,7 @@ fn set_user_voice(app: tauri::State<'_, App>, user_id: String, volume: Option<f3
                 voice.muted_users.push(key.clone());
             }
         }
-        voice.clone()
-    };
-    app.persist_voice();
+    });
     if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
         session.mixer.lock().unwrap().set_peer_gain(media_engine::mixer_key(user), effective_volume(&settings, &key));
     }
@@ -3519,19 +3413,23 @@ async fn run_event_reminders(handle: tauri::AppHandle) {
     }
 }
 
-async fn store_shared_blob(app: &tauri::State<'_, App>, bytes: Vec<u8>) -> CmdResult<String> {
+async fn store_shared_blob(app: &App, bytes: Vec<u8>) -> CmdResult<String> {
     let (blob, provider) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
         (node.add_blob(bytes.clone()).await.map_err(err_to_string)?, node.node_id_hex())
     };
     if let Some(path) = server_image_path(app, &blob) {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        std::fs::write(&path, &bytes).map_err(err_to_string)?;
+        write_blob_cache(&path, &bytes).map_err(err_to_string)?;
     }
     Ok(commy_core::server::ImageRef { blob, provider }.encode())
+}
+
+fn write_blob_cache(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(path, bytes)
 }
 
 fn decode_upload(data: &str) -> CmdResult<Vec<u8>> {
@@ -3587,17 +3485,13 @@ async fn remove_emoji(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_EXPRESSIONS, "manage emojis")?;
-    }
+    manage_check(&app, sid, me.id, Permissions::MANAGE_EXPRESSIONS, "manage emojis")?;
     apply_and_broadcast(&app, &handle, sid, ServerEvent::EmojiRemove { server: sid, name }).await
 }
 
 fn can_upload_sounds(app: &App, state: &ServerState, user: UserId) -> bool {
     our_permissions(app, state, user).allows(Permissions::MANAGE_EXPRESSIONS)
-        || (state.server.soundboard_open && state.server.members.iter().any(|m| m.user == user))
+        || (state.server.soundboard_open && state.server.is_member(user))
 }
 
 #[tauri::command]
@@ -3681,11 +3575,7 @@ async fn remove_sound(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_EXPRESSIONS, "remove sounds")?;
-    }
+    manage_check(&app, sid, me.id, Permissions::MANAGE_EXPRESSIONS, "remove sounds")?;
     apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundRemove { server: sid, name }).await
 }
 
@@ -3699,11 +3589,7 @@ async fn set_expression_settings(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "change expression settings")?;
-    }
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change expression settings")?;
     let event = ServerEvent::ExpressionSettings { server: sid, emojis_shareable, soundboard_open };
     apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
@@ -3719,11 +3605,7 @@ async fn set_server_public(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "make this server public")?;
-    }
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "make this server public")?;
     apply_and_broadcast(&app, &handle, sid, ServerEvent::PublicSet { server: sid, public }).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
@@ -3838,25 +3720,18 @@ fn list_shareable_emojis(app: tauri::State<'_, App>) -> Vec<SharedEmojiView> {
 #[tauri::command]
 async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult<String> {
     let image = commy_core::server::ImageRef::parse(&blob).ok_or("bad reference")?;
-    let cached = server_image_path(&app, &image.blob).and_then(|p| std::fs::read(p).ok());
+    let path = server_image_path(&app, &image.blob);
+    let cached = path.as_ref().and_then(|p| std::fs::read(p).ok());
+    let fetched = cached.is_none();
     let bytes = match cached {
         Some(bytes) => bytes,
-        None => {
-            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider), expressions::MAX_SOUND_BYTES as u64).await?;
-            if expressions::expression_mime(&bytes).is_none() {
-                return Err("not a valid emoji or sound".into());
-            }
-            if let Some(path) = server_image_path(&app, &image.blob) {
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&path, &bytes);
-            }
-            bytes
-        }
+        None => fetch_blob(&app, &image.blob, Some(&image.provider), expressions::MAX_SOUND_BYTES as u64).await?,
     };
     let mime = expressions::expression_mime(&bytes).ok_or("not a valid emoji or sound")?;
-    Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
+    if let Some(path) = path.as_ref().filter(|_| fetched) {
+        let _ = write_blob_cache(path, &bytes);
+    }
+    Ok(data_url(mime, &bytes))
 }
 
 #[tauri::command]
@@ -3876,7 +3751,7 @@ async fn pick_sound() -> CmdResult<Option<(String, String)>> {
     let mime = expressions::audio_mime(&bytes).ok_or("sounds must be an MP3, OGG or WAV file")?;
     Ok(Some((
         picked.file_name().rsplit_once('.').map(|(stem, _)| stem.to_string()).unwrap_or_default(),
-        format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)),
+        data_url(mime, &bytes),
     )))
 }
 
@@ -3921,36 +3796,15 @@ async fn set_avatar(
             Some(commy_core::Avatar::Emoji(emoji))
         }
         "image" => {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(data.unwrap_or_default())
-                .map_err(|_| "image data is not valid base64".to_string())?;
-            if bytes.len() > MAX_AVATAR_BYTES {
-                return Err("avatar image is too large".into());
-            }
-            if !is_jpeg_or_png(&bytes) {
-                return Err("avatar must be a JPEG or PNG image".into());
-            }
-            if let Some(dir) = app.data_dir() {
-                std::fs::write(dir.join(AVATAR_FILE), &bytes).map_err(err_to_string)?;
-            }
-            let blob = {
-                let net = app.net.lock().await;
-                let node = net.as_ref().ok_or("network is not ready yet")?;
-                node.add_blob(bytes).await.map_err(err_to_string)?
-            };
+            let data = data.unwrap_or_default();
+            let (too_large, not_image) = ("avatar image is too large", "avatar must be a JPEG or PNG image");
+            let blob = store_profile_image(&app, &data, MAX_AVATAR_BYTES, too_large, not_image, AVATAR_FILE).await?;
             Some(commy_core::Avatar::Image { blob })
         }
         _ => return Err("unknown avatar kind".into()),
     };
-    let profile = {
-        let mut guard = app.profile.lock().unwrap();
-        let profile = guard.as_mut().ok_or("set a username first")?;
-        profile.avatar = avatar.map(|a| a.encode());
-        profile.clone()
-    };
-    app.persist_profile();
-    announce_profile(&app, &handle, &profile).await;
-    let _ = handle.emit("profile-changed", &profile);
+    let profile = edit_profile(&app, |profile| profile.avatar = avatar.map(|a| a.encode()))?;
+    publish_profile(&app, &handle, &profile).await;
     entry_list::record_profile_edit(&app);
     entry_list::schedule(&handle);
     Ok(profile)
@@ -3969,23 +3823,8 @@ async fn set_profile_banner(
     let banner = match data {
         None => None,
         Some(data) => {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(data)
-                .map_err(|_| "image data is not valid base64".to_string())?;
-            if bytes.len() > MAX_BANNER_BYTES {
-                return Err("banner image is too large".into());
-            }
-            if !is_jpeg_or_png(&bytes) {
-                return Err("banner must be a JPEG or PNG image".into());
-            }
-            if let Some(dir) = app.data_dir() {
-                std::fs::write(dir.join(BANNER_FILE), &bytes).map_err(err_to_string)?;
-            }
-            let blob = {
-                let net = app.net.lock().await;
-                let node = net.as_ref().ok_or("network is not ready yet")?;
-                node.add_blob(bytes).await.map_err(err_to_string)?
-            };
+            let (too_large, not_image) = ("banner image is too large", "banner must be a JPEG or PNG image");
+            let blob = store_profile_image(&app, &data, MAX_BANNER_BYTES, too_large, not_image, BANNER_FILE).await?;
             Some(commy_core::Avatar::Image { blob }.encode())
         }
     };
@@ -3994,20 +3833,50 @@ async fn set_profile_banner(
             let _ = std::fs::remove_file(dir.join(BANNER_FILE));
         }
     }
-    let profile = {
-        let mut guard = app.profile.lock().unwrap();
-        let profile = guard.as_mut().ok_or("set a username first")?;
-        profile.banner = banner;
-        profile.clone()
-    };
-    app.persist_profile();
-    announce_profile(&app, &handle, &profile).await;
-    let _ = handle.emit("profile-changed", &profile);
+    let profile = edit_profile(&app, |profile| profile.banner = banner)?;
+    publish_profile(&app, &handle, &profile).await;
     Ok(profile)
 }
 
 fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0xd8, 0xff]) || bytes.starts_with(&[0x89, b'P', b'N', b'G'])
+}
+
+fn decode_base64_image(data: &str) -> CmdResult<Vec<u8>> {
+    base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|_| "image data is not valid base64".to_string())
+}
+
+fn decode_image(data: &str, max: usize, invalid: &str) -> CmdResult<Vec<u8>> {
+    let bytes = decode_base64_image(data)?;
+    if bytes.len() > max || !is_jpeg_or_png(&bytes) {
+        return Err(invalid.into());
+    }
+    Ok(bytes)
+}
+
+async fn store_profile_image(
+    app: &App,
+    data: &str,
+    max: usize,
+    too_large: &str,
+    not_image: &str,
+    file: &str,
+) -> CmdResult<String> {
+    let bytes = decode_base64_image(data)?;
+    if bytes.len() > max {
+        return Err(too_large.into());
+    }
+    if !is_jpeg_or_png(&bytes) {
+        return Err(not_image.into());
+    }
+    if let Some(dir) = app.data_dir() {
+        std::fs::write(dir.join(file), &bytes).map_err(err_to_string)?;
+    }
+    let net = app.net.lock().await;
+    let node = net.as_ref().ok_or("network is not ready yet")?;
+    node.add_blob(bytes).await.map_err(err_to_string)
 }
 
 async fn restore_avatar_blob(app: &tauri::State<'_, App>, node: &CommyNode) {
@@ -4036,7 +3905,7 @@ async fn restore_avatar_blob(app: &tauri::State<'_, App>, node: &CommyNode) {
     }
 }
 
-async fn announce_profile(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, profile: &UserProfile) {
+async fn announce_profile(app: &App, handle: &tauri::AppHandle, profile: &UserProfile) {
     let server_ids: Vec<ServerId> = {
         let mut servers = app.servers.lock().unwrap();
         for state in servers.values_mut() {
@@ -4052,7 +3921,20 @@ async fn announce_profile(app: &tauri::State<'_, App>, handle: &tauri::AppHandle
     }
 }
 
-async fn set_auto_presence(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, presence: Presence, auto_idle: bool) {
+fn edit_profile(app: &App, edit: impl FnOnce(&mut UserProfile)) -> CmdResult<UserProfile> {
+    let mut guard = app.profile.lock().unwrap();
+    let profile = guard.as_mut().ok_or("set a username first")?;
+    edit(profile);
+    Ok(profile.clone())
+}
+
+async fn publish_profile(app: &App, handle: &tauri::AppHandle, profile: &UserProfile) {
+    app.persist_profile();
+    announce_profile(app, handle, profile).await;
+    let _ = handle.emit("profile-changed", profile);
+}
+
+async fn set_auto_presence(app: &App, handle: &tauri::AppHandle, presence: Presence, auto_idle: bool) {
     let profile = {
         let mut guard = app.profile.lock().unwrap();
         let Some(profile) = guard.as_mut() else { return };
@@ -4215,7 +4097,7 @@ struct GifHit {
 
 #[tauri::command]
 async fn gif_search(app: tauri::State<'_, App>, query: String) -> CmdResult<Option<Vec<GifHit>>> {
-    let query: String = query.trim().chars().take(100).collect();
+    let query = safety::truncate(query.trim(), 100);
     let hits = account::server_search::<GifHit>(&app, "gifs", &query).await?;
     Ok(hits.map(|hits| {
         hits.into_iter()
@@ -4231,12 +4113,7 @@ async fn set_share_activity(
     handle: tauri::AppHandle,
     enabled: bool,
 ) -> CmdResult<VoiceSettings> {
-    let settings = {
-        let mut voice = app.voice.lock().unwrap();
-        voice.share_activity = enabled;
-        voice.clone()
-    };
-    app.persist_voice();
+    let settings = app.update_voice(|voice| voice.share_activity = enabled);
     if !enabled {
         let profile = {
             let mut guard = app.profile.lock().unwrap();
@@ -4278,13 +4155,10 @@ async fn set_audio_devices(
     output: Option<String>,
 ) -> CmdResult<VoiceSettings> {
     let clean = |s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    let settings = {
-        let mut voice = app.voice.lock().unwrap();
+    let settings = app.update_voice(|voice| {
         voice.input_device = clean(input);
         voice.output_device = clean(output);
-        voice.clone()
-    };
-    app.persist_voice();
+    });
     if let Some(session) = app.voice_session.lock().unwrap().as_mut() {
         session.switch_devices(
             app.processor.clone(),
@@ -4307,22 +4181,15 @@ async fn set_audio_devices(
 
 #[tauri::command]
 fn set_afk_timeout(app: tauri::State<App>, minutes: u32) -> VoiceSettings {
-    let settings = {
-        let mut voice = app.voice.lock().unwrap();
-        voice.afk_timeout_minutes = afk::clamp_timeout_minutes(minutes);
-        voice.clone()
-    };
-    app.persist_voice();
-    settings
+    app.update_voice(|voice| voice.afk_timeout_minutes = afk::clamp_timeout_minutes(minutes))
 }
 
 #[tauri::command]
 fn set_volumes(app: tauri::State<App>, output_volume: f32, input_gain: f32) -> VoiceSettings {
-    let mut voice = app.voice.lock().unwrap();
-    voice.output_volume = output_volume.clamp(0.0, 2.0);
-    voice.input_gain = input_gain.clamp(0.0, 2.0);
-    let snapshot = voice.clone();
-    drop(voice);
+    let snapshot = app.update_voice(|voice| {
+        voice.output_volume = output_volume.clamp(0.0, 2.0);
+        voice.input_gain = input_gain.clamp(0.0, 2.0);
+    });
     app.processor
         .lock()
         .unwrap()
@@ -4334,7 +4201,6 @@ fn set_volumes(app: tauri::State<App>, output_volume: f32, input_gain: f32) -> V
             .unwrap()
             .set_master(snapshot.output_volume);
     }
-    app.persist_voice();
     snapshot
 }
 
@@ -4354,7 +4220,7 @@ async fn create_role(
     }
     let color = color
         .map(|c| c.trim().trim_start_matches('#').to_lowercase())
-        .filter(|c| c.len() == 6 && c.chars().all(|ch| ch.is_ascii_hexdigit()));
+        .filter(|c| commy_core::server::valid_hex_color(c));
     let me = current_profile(&app)?;
     let role = {
         let servers = app.servers.lock().unwrap();
@@ -4393,11 +4259,7 @@ async fn delete_role(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
-    }
+    manage_check(&app, sid, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleDelete { server: sid, role: rid })
         .await
 }
@@ -4415,11 +4277,7 @@ async fn set_member_role(
     let uid: UserId = user_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
-    }
+    manage_check(&app, sid, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
     let event = if grant {
         ServerEvent::RoleAssign { server: sid, user: uid, role: rid }
     } else {
@@ -4430,15 +4288,11 @@ async fn set_member_role(
 
 #[tauri::command]
 async fn start_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
-    let test = {
-        if app.mic_test.lock().unwrap().is_some() {
-            return Ok(());
-        }
-        {
-            let voice = app.voice.lock().unwrap().clone();
-            MicTest::start(app.processor.clone(), voice.input_device, voice.output_device)
-        }.map_err(err_to_string)?
-    };
+    if app.mic_test.lock().unwrap().is_some() {
+        return Ok(());
+    }
+    let voice = app.voice.lock().unwrap().clone();
+    let test = MicTest::start(app.processor.clone(), voice.input_device, voice.output_device).map_err(err_to_string)?;
     *app.mic_test.lock().unwrap() = Some(test);
     Ok(())
 }
@@ -4484,11 +4338,7 @@ async fn get_attachment_preview(
     if bytes.len() as u64 > max {
         return Err("image too large to preview".into());
     }
-    Ok(format!(
-        "data:{};base64,{}",
-        mime,
-        base64::engine::general_purpose::STANDARD.encode(&bytes)
-    ))
+    Ok(data_url(&mime, &bytes))
 }
 
 #[tauri::command]
@@ -4498,27 +4348,19 @@ fn get_voice_settings(app: tauri::State<App>) -> VoiceSettings {
 
 #[tauri::command]
 fn set_noise_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
-    let mut voice = app.voice.lock().unwrap();
-    voice.noise_cancellation = enabled;
-    app.processor
-        .lock()
-        .unwrap()
-        .set_noise_cancellation(enabled);
-    let snapshot = voice.clone();
-    drop(voice);
-    app.persist_voice();
-    snapshot
+    app.update_voice(|voice| {
+        voice.noise_cancellation = enabled;
+        app.processor
+            .lock()
+            .unwrap()
+            .set_noise_cancellation(enabled);
+    })
 }
 
 #[tauri::command]
 async fn set_muted(app: tauri::State<'_, App>, handle: tauri::AppHandle, muted: bool) -> CmdResult<VoiceSettings> {
-    let snapshot = {
-        let mut voice = app.voice.lock().unwrap();
-        voice.muted = muted;
-        voice.clone()
-    };
+    let snapshot = app.update_voice(|voice| voice.muted = muted);
     apply_voice_gates(&app);
-    app.persist_voice();
     announce_voice_state(&app, &handle).await;
     Ok(snapshot)
 }
@@ -4526,7 +4368,10 @@ async fn set_muted(app: tauri::State<'_, App>, handle: tauri::AppHandle, muted: 
 async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHandle) {
     let Some((sid, channel)) = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel)) else { return };
     let Ok(profile) = current_profile(app) else { return };
-    let voice = app.voice.lock().unwrap().clone();
+    let (muted, deafened) = {
+        let voice = app.voice.lock().unwrap();
+        (voice.muted, voice.deafened)
+    };
     let event = {
         let mut servers = app.servers.lock().unwrap();
         let Some(state) = servers.get_mut(&sid) else { return };
@@ -4534,8 +4379,8 @@ async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHa
         let event = ServerEvent::VoiceState {
             user: profile.id,
             channel: Some(channel),
-            muted: voice.muted,
-            deafened: voice.deafened,
+            muted,
+            deafened,
             since: Some(since),
         };
         let _ = state.apply(event.clone());
@@ -4546,17 +4391,20 @@ async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHa
 }
 
 fn apply_voice_gates(app: &App) {
-    let voice = app.voice.lock().unwrap().clone();
+    let (muted, deafened) = {
+        let voice = app.voice.lock().unwrap();
+        (voice.muted, voice.deafened)
+    };
     let forced_mute = app.forced_mute.load(std::sync::atomic::Ordering::Relaxed);
     let forced_deaf = app.forced_deaf.load(std::sync::atomic::Ordering::Relaxed);
-    let deaf = voice.deafened || forced_deaf;
-    app.processor.lock().unwrap().set_muted(voice.muted || deaf || forced_mute);
+    let deaf = deafened || forced_deaf;
+    app.processor.lock().unwrap().set_muted(muted || deaf || forced_mute);
     if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
         session.deafened.store(deaf, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
-fn refresh_forced_voice(app: &tauri::State<'_, App>, handle: &tauri::AppHandle) {
+fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
     let (muted, deafened) = match (me, server) {
@@ -4577,16 +4425,13 @@ fn refresh_forced_voice(app: &tauri::State<'_, App>, handle: &tauri::AppHandle) 
 
 #[tauri::command]
 async fn set_deafened(app: tauri::State<'_, App>, handle: tauri::AppHandle, deafened: bool) -> CmdResult<VoiceSettings> {
-    let snapshot = {
-        let mut voice = app.voice.lock().unwrap();
+    let snapshot = app.update_voice(|voice| {
         voice.deafened = deafened;
         if deafened {
             voice.muted = true;
         }
-        voice.clone()
-    };
+    });
     apply_voice_gates(&app);
-    app.persist_voice();
     announce_voice_state(&app, &handle).await;
     Ok(snapshot)
 }
@@ -4643,8 +4488,8 @@ async fn run_net_loop(
                     ServerEvent::VoiceState { user, channel, .. } => Some((*user, *channel)),
                     _ => None,
                 };
-                let holdable = catchup::holdable(&event).then(|| event.clone());
-                let held_action = action.map(|action| SignedEvent { action, event: event.clone() });
+                let holdable = catchup::holdable(&event);
+                let kept = (holdable || action.is_some()).then(|| event.clone());
                 let presence = outbox::online_user(&event);
                 let (applied, was_online, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
@@ -4689,9 +4534,12 @@ async fn run_net_loop(
                         let _ = handle.emit("server-event", &server.to_string());
                     }
                     Ok(false) => {}
-                    Err(e) => match (e, holdable, held_action) {
-                        (StoreError::UnknownAuthorKey(signer), Some(event), _) => catchup::hold(&app, server, signer, event),
-                        (StoreError::UnknownAuthorKey(_), None, Some(signed)) => {
+                    Err(e) => match (e, kept, action) {
+                        (StoreError::UnknownAuthorKey(signer), Some(event), _) if holdable => {
+                            catchup::hold(&app, server, signer, event)
+                        }
+                        (StoreError::UnknownAuthorKey(_), Some(event), Some(action)) => {
+                            let signed = SignedEvent { action, event };
                             app.catchup.lock().unwrap().hold_action(server, signed, std::time::Instant::now())
                         }
                         (e, _, _) => tracing::warn!("rejected remote event: {e}"),
@@ -4809,9 +4657,8 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
 
 #[tauri::command]
 fn notify(handle: tauri::AppHandle, title: String, body: String, target: Option<String>) -> CmdResult<()> {
-    let clip = |s: String, max: usize| s.chars().take(max).collect::<String>();
     let target = target.filter(|t| toast::valid_target(t));
-    toast::show(&handle, &clip(title, 80), &clip(body, 240), target)
+    toast::show(&handle, &safety::truncate(&title, 80), &safety::truncate(&body, 240), target)
 }
 
 #[tauri::command]
@@ -4821,23 +4668,12 @@ fn set_unread(handle: tauri::AppHandle, count: u32) {
 
 #[tauri::command]
 fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
-    let settings = {
-        let mut voice = app.voice.lock().unwrap();
-        voice.close_to_tray = enabled;
-        voice.clone()
-    };
-    app.persist_voice();
-    settings
+    app.update_voice(|voice| voice.close_to_tray = enabled)
 }
 
 #[tauri::command]
 fn set_auto_update(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bool) -> VoiceSettings {
-    let settings = {
-        let mut voice = app.voice.lock().unwrap();
-        voice.auto_update = enabled;
-        voice.clone()
-    };
-    app.persist_voice();
+    let settings = app.update_voice(|voice| voice.auto_update = enabled);
     if enabled {
         tauri::async_runtime::spawn(async move {
             updater::check(&handle).await;
@@ -4971,7 +4807,7 @@ pub fn run() {
         .setup(|tauri_app| {
             let handle = tauri_app.handle().clone();
             let label = std::env::var("COMMY_INSTANCE_LABEL").ok();
-            if let Some(title) = instance::window_title(option_env!("COMMY_TEST_BUILD").is_some(), label.as_deref()) {
+            if let Some(title) = instance::window_title(instance::TEST_BUILD, label.as_deref()) {
                 if let Some(window) = tauri_app.get_webview_window("main") {
                     let _ = window.set_title(&title);
                 }
@@ -5040,11 +4876,17 @@ pub fn run() {
                     drop(processor);
                     *app.voice.lock().unwrap() = voice;
                 }
-                for state in persist::load_servers(&dir) {
-                    app.servers.lock().unwrap().insert(state.server.id, state);
+                {
+                    let mut servers = app.servers.lock().unwrap();
+                    for state in persist::load_servers(&dir) {
+                        servers.insert(state.server.id, state);
+                    }
                 }
                 let mut awaiting = persist::load_awaiting(&dir);
-                awaiting.retain(|id| app.servers.lock().unwrap().contains_key(id));
+                {
+                    let servers = app.servers.lock().unwrap();
+                    awaiting.retain(|id| servers.contains_key(id));
+                }
                 *app.awaiting_snapshot.lock().unwrap() = awaiting;
                 let mut queue = outbox::Outbox::load(&dir);
                 let now = chrono::Utc::now();
@@ -5054,7 +4896,10 @@ pub fn run() {
                     app.persist_outbox();
                 }
                 let mut bell = doorbell::Doorbell::load(&dir);
-                bell.retain_servers(|id| app.servers.lock().unwrap().contains_key(id));
+                {
+                    let servers = app.servers.lock().unwrap();
+                    bell.retain_servers(|id| servers.contains_key(id));
+                }
                 *app.doorbell.lock().unwrap() = bell;
             }
             let signed_in = account::is_signed_in(&app.account.lock().unwrap());
@@ -5124,37 +4969,24 @@ pub fn run() {
                                 }
                             }
                         }
-                        if let Some(dir) = app.data_dir() {
-                            let _ = persist::save_invites(dir, &app.invites.lock().unwrap().clone());
-                        }
+                        app.persist_invites();
 
-                        let missing_afk: Vec<ServerId> = {
-                            let servers = app.servers.lock().unwrap();
+                        let afk_channels: Vec<(ServerId, ServerEvent)> = {
+                            let mut servers = app.servers.lock().unwrap();
                             servers
-                                .values()
-                                .filter(|s| {
-                                    Some(s.server.owner) == me
-                                        && s.server.afk_channel().is_none()
+                                .values_mut()
+                                .filter(|s| Some(s.server.owner) == me && s.server.afk_channel().is_none())
+                                .map(|state| {
+                                    let sid = state.server.id;
+                                    let position = state.server.channels.len() as u32;
+                                    let channel = Channel::new("AFK", ChannelKind::Voice, position);
+                                    let event = ServerEvent::ChannelCreate { server: sid, channel };
+                                    let _ = state.apply(event.clone());
+                                    (sid, event)
                                 })
-                                .map(|s| s.server.id)
                                 .collect()
                         };
-                        for sid in missing_afk {
-                            let channel = {
-                                let servers = app.servers.lock().unwrap();
-                                let position = servers
-                                    .get(&sid)
-                                    .map(|s| s.server.channels.len() as u32)
-                                    .unwrap_or(0);
-                                Channel::new("AFK", ChannelKind::Voice, position)
-                            };
-                            let event = ServerEvent::ChannelCreate { server: sid, channel };
-                            {
-                                let mut servers = app.servers.lock().unwrap();
-                                if let Some(state) = servers.get_mut(&sid) {
-                                    let _ = state.apply(event.clone());
-                                }
-                            }
+                        for (sid, event) in afk_channels {
                             if let Err(e) = node.broadcast(sid, app.wire_for(sid, event)).await {
                                 tracing::debug!("afk channel announce pending: {e}");
                             }

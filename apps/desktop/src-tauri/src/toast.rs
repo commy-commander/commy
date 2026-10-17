@@ -1,5 +1,6 @@
 use tauri::AppHandle;
 
+#[cfg(any(windows, target_os = "macos"))]
 pub const APP_ID: &str = "chat.commy.desktop";
 
 pub fn valid_target(target: &str) -> bool {

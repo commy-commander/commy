@@ -14,11 +14,7 @@ const MANIFEST: &str = "latest.json";
 const FIRST_CHECK: Duration = Duration::from_secs(30);
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
-fn test_build() -> bool {
-    option_env!("COMMY_TEST_BUILD").is_some()
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     #[default]
@@ -92,7 +88,6 @@ pub fn pick_release<'a>(
 }
 
 fn install_blocker(handle: &AppHandle) -> Option<&'static str> {
-    VERSION?;
     #[cfg(windows)]
     {
         let installed = std::env::current_exe()
@@ -161,7 +156,7 @@ pub async fn check(handle: &AppHandle) -> UpdateStatus {
         return status(handle);
     }
     let updates = handle.state::<Updates>();
-    let phase = updates.status.lock().unwrap().phase.clone();
+    let phase = updates.status.lock().unwrap().phase;
     if phase == Phase::Ready || updates.busy.swap(true, Ordering::SeqCst) {
         return status(handle);
     }
@@ -200,12 +195,13 @@ async fn run_check(handle: &AppHandle) -> Result<(), String> {
         return Err("This build does not update itself.".into());
     };
     let releases = fetch_releases().await?;
-    let Some((release, version, manifest)) = pick_release(&releases, &current, test_build()) else {
+    let Some((release, version, manifest)) = pick_release(&releases, &current, crate::instance::TEST_BUILD) else {
         return Ok(());
     };
     let found = version.to_string();
     let page = release.html_url.clone();
-    if !status(handle).can_install {
+    let can_install = handle.state::<Updates>().status.lock().unwrap().can_install;
+    if !can_install {
         set(handle, |s| {
             s.phase = Phase::Available;
             s.version = Some(found);
@@ -281,7 +277,8 @@ async fn fetch_releases() -> Result<Vec<Release>, String> {
 }
 
 pub fn restart(handle: &AppHandle) -> Result<(), String> {
-    if status(handle).phase != Phase::Ready {
+    let phase = handle.state::<Updates>().status.lock().unwrap().phase;
+    if phase != Phase::Ready {
         return Err("No update is ready yet.".into());
     }
     let pending = handle.state::<Updates>().pending.lock().unwrap().take();

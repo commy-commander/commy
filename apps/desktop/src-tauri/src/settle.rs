@@ -14,7 +14,7 @@ pub trait KeyNet: AppAccess {
 
 impl KeyNet for tauri::AppHandle {
     async fn announce(&self, profile: &UserProfile) {
-        crate::announce_profile(&self.state::<App>(), self, profile).await;
+        crate::announce_profile(self.app(), self, profile).await;
     }
 
     async fn neighbors(&self) -> Vec<(ServerId, Vec<[u8; 32]>)> {

@@ -47,15 +47,10 @@ impl TryFrom<String> for KeepWindow {
     }
 }
 
-fn default_keep() -> KeepWindow {
-    DEFAULT_KEEP
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StorageSettings {
-    #[serde(default = "default_keep")]
     pub keep: KeepWindow,
-    #[serde(default)]
     pub servers: HashMap<ServerId, KeepWindow>,
 }
 

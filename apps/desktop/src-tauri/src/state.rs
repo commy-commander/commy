@@ -50,7 +50,7 @@ pub struct VoiceSettings {
     pub auto_update: bool,
 }
 
-fn default_true() -> bool {
+pub(crate) fn default_true() -> bool {
     true
 }
 
@@ -248,9 +248,13 @@ impl App {
         true
     }
 
-    pub fn sign_event(&self, server: ServerId, event: ServerEvent) -> Option<SignedEvent> {
+    fn signer(&self) -> Option<(UserId, Identity)> {
         let me = self.profile.lock().unwrap().as_ref().map(|p| p.id)?;
-        let identity = self.identity()?;
+        Some((me, self.identity()?))
+    }
+
+    pub fn sign_event(&self, server: ServerId, event: ServerEvent) -> Option<SignedEvent> {
+        let (me, identity) = self.signer()?;
         let at = chrono::Utc::now().timestamp_millis();
         Some(SignedEvent::sign(server, me, at, event, &identity))
     }
@@ -259,10 +263,9 @@ impl App {
         if action::self_signed(&event) || (!self.key_settled() && action::may_go_unsigned(&event)) {
             return WirePayload::Event(event);
         }
-        match self.sign_event(server, event.clone()) {
-            Some(signed) => WirePayload::Signed(signed),
-            None => WirePayload::Event(event),
-        }
+        let Some((me, identity)) = self.signer() else { return WirePayload::Event(event) };
+        let at = chrono::Utc::now().timestamp_millis();
+        WirePayload::Signed(SignedEvent::sign(server, me, at, event, &identity))
     }
 
     pub fn own_key_for_tickets(&self) -> Option<(UserId, IdentityKey)> {
@@ -282,25 +285,25 @@ impl App {
         let raw = self.invites.lock().unwrap().get(&server).cloned()?;
         let mut ticket = ServerTicket::decode(&raw).ok()?;
         if ticket.owner.is_none() {
-            let owner = {
+            let (owns, owner) = {
                 let servers = self.servers.lock().unwrap();
                 let state = servers.get(&server)?;
                 let owner = state.server.owner;
-                state.identity_of(owner).map(|key| (owner, key))
+                (owner, state.identity_of(owner).map(|key| (owner, key)))
             };
-            let owner = owner.or_else(|| {
-                let owns = self.servers.lock().unwrap().get(&server).map(|s| s.server.owner);
-                self.own_key_for_tickets().filter(|(id, _)| owns == Some(*id))
-            });
+            let owner = owner.or_else(|| self.own_key_for_tickets().filter(|(id, _)| *id == owns));
             if let Some(owner) = owner {
                 ticket.owner = Some(owner);
                 self.invites.lock().unwrap().insert(server, ticket.encode());
-                if let Some(dir) = self.data_dir() {
-                    let _ = crate::persist::save_invites(dir, &self.invites.lock().unwrap().clone());
-                }
+                self.persist_invites();
             }
         }
         Some(ticket)
+    }
+
+    pub fn persist_invites(&self) {
+        let Some(dir) = self.data_dir() else { return };
+        let _ = crate::persist::save_invites(dir, &self.invites.lock().unwrap());
     }
 
     pub fn announced(&self, profile: UserProfile) -> UserProfile {
@@ -332,9 +335,7 @@ impl App {
     pub fn persist_awaiting(&self) {
         let Some(dir) = self.data_dir() else { return };
         let set = self.awaiting_snapshot.lock().unwrap();
-        if let Err(e) = crate::persist::save_awaiting(dir, &set) {
-            tracing::warn!("failed to persist servers awaiting a snapshot: {e}");
-        }
+        warn_unsaved("servers awaiting a snapshot", crate::persist::save_awaiting(dir, &set));
     }
 
     pub fn reload_identity(&self) -> std::io::Result<Option<UserProfile>> {
@@ -380,43 +381,36 @@ impl App {
         let Some(dir) = self.data_dir() else { return };
         let servers = self.servers.lock().unwrap();
         if let Some(state) = servers.get(&id) {
-            if let Err(e) = crate::persist::save_server(dir, state) {
-                tracing::warn!("failed to persist server: {e}");
-            }
+            warn_unsaved("server", crate::persist::save_server(dir, state));
         }
     }
 
     pub fn persist_profile(&self) {
         let Some(dir) = self.data_dir() else { return };
         if let Some(profile) = self.profile.lock().unwrap().as_ref() {
-            if let Err(e) = crate::persist::save_profile(dir, profile) {
-                tracing::warn!("failed to persist profile: {e}");
-            }
+            warn_unsaved("profile", crate::persist::save_profile(dir, profile));
         }
     }
 
-    pub fn persist_voice(&self) {
-        let Some(dir) = self.data_dir() else { return };
-        let voice = self.voice.lock().unwrap().clone();
-        if let Err(e) = crate::persist::save_voice(dir, &voice) {
-            tracing::warn!("failed to persist voice settings: {e}");
+    pub fn update_voice(&self, edit: impl FnOnce(&mut VoiceSettings)) -> VoiceSettings {
+        let mut voice = self.voice.lock().unwrap();
+        edit(&mut voice);
+        if let Some(dir) = self.data_dir() {
+            warn_unsaved("voice settings", crate::persist::save_voice(dir, &voice));
         }
+        voice.clone()
     }
 
     pub fn persist_safety(&self) {
         let Some(dir) = self.data_dir() else { return };
-        let safety = self.safety.lock().unwrap().clone();
-        if let Err(e) = crate::persist::save_safety(dir, &safety) {
-            tracing::warn!("failed to persist safety settings: {e}");
-        }
+        let json = serde_json::to_vec_pretty(&*self.safety.lock().unwrap()).map_err(anyhow::Error::from);
+        warn_unsaved("safety settings", json.and_then(|json| crate::persist::save_safety(dir, &json)));
     }
 
     pub fn persist_storage(&self) {
         let Some(dir) = self.data_dir() else { return };
         let storage = self.storage.lock().unwrap().clone();
-        if let Err(e) = crate::persist::save_storage(dir, &storage) {
-            tracing::warn!("failed to persist storage settings: {e}");
-        }
+        warn_unsaved("storage settings", crate::persist::save_storage(dir, &storage));
     }
 
     pub fn persist_outbox(&self) {
@@ -426,17 +420,19 @@ impl App {
 
     fn write_outbox(&self, write: impl FnOnce(&crate::outbox::Outbox) -> anyhow::Result<()>) {
         let outbox = self.outbox.lock().unwrap();
-        if let Err(e) = write(&outbox) {
-            tracing::warn!("failed to persist outbox: {e}");
-        }
+        warn_unsaved("outbox", write(&outbox));
     }
 
     pub fn persist_dms(&self) {
         let Some(dir) = self.data_dir() else { return };
-        let dms = self.dms.lock().unwrap().clone();
-        if let Err(e) = crate::persist::save_dms(dir, &dms) {
-            tracing::warn!("failed to persist dms: {e}");
-        }
+        let json = serde_json::to_vec_pretty(&*self.dms.lock().unwrap()).map_err(anyhow::Error::from);
+        warn_unsaved("dms", json.and_then(|json| crate::persist::save_dms(dir, &json)));
+    }
+}
+
+fn warn_unsaved(what: &str, saved: anyhow::Result<()>) {
+    if let Err(e) = saved {
+        tracing::warn!("failed to persist {what}: {e}");
     }
 }
 

@@ -1,6 +1,6 @@
 use commy_core::{ChannelId, ServerId, UserId};
 use commy_media::{Mixer, OutputHandle, StreamGuards};
-use commy_net::media::{MediaHello, MediaPacket};
+use commy_net::media::MediaPacket;
 use commy_net::node::MediaChannel;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -220,43 +220,40 @@ impl VoiceSession {
                             }
                         }
                     }
-                    packet = incoming.recv() => match packet {
-                        Some(MediaPacket::Opus { seq, data }) => {
-                            heard_since_tick = true;
-                            meter.lock().unwrap().arrived(seq, std::time::Instant::now());
-                            if let Some(last) = last_seq {
-                                let gap = seq.wrapping_sub(last);
-                                if (2..=3).contains(&gap) {
-                                    for missing in 1..gap {
-                                        let pcm = decoder.decode(&[]);
-                                        if !deafened.load(Ordering::Relaxed) {
-                                            mixer.lock().unwrap().push(key, last.wrapping_add(missing), pcm);
+                    packet = incoming.recv() => {
+                        let (seq, pcm) = match packet {
+                            Some(MediaPacket::Opus { seq, data }) => {
+                                heard_since_tick = true;
+                                meter.lock().unwrap().arrived(seq, std::time::Instant::now());
+                                if let Some(last) = last_seq {
+                                    let gap = seq.wrapping_sub(last);
+                                    if (2..=3).contains(&gap) {
+                                        for missing in 1..gap {
+                                            let pcm = decoder.decode(&[]);
+                                            if !deafened.load(Ordering::Relaxed) {
+                                                mixer.lock().unwrap().push(key, last.wrapping_add(missing), pcm);
+                                            }
                                         }
                                     }
                                 }
+                                last_seq = Some(seq);
+                                (seq, decoder.decode(&data))
                             }
-                            last_seq = Some(seq);
-                            let pcm = decoder.decode(&data);
-                            if let Some(speaking) = detector.push(&pcm) {
-                                on_speaking(user, speaking);
+                            Some(MediaPacket::Voice { seq, pcm }) => {
+                                heard_since_tick = true;
+                                meter.lock().unwrap().arrived(seq, std::time::Instant::now());
+                                (seq, pcm)
                             }
-                            if !deafened.load(Ordering::Relaxed) {
-                                mixer.lock().unwrap().push(key, seq, pcm);
-                            }
+                            Some(_) => continue,
+                            None => break,
+                        };
+                        if let Some(speaking) = detector.push(&pcm) {
+                            on_speaking(user, speaking);
                         }
-                        Some(MediaPacket::Voice { seq, pcm }) => {
-                            heard_since_tick = true;
-                            meter.lock().unwrap().arrived(seq, std::time::Instant::now());
-                            if let Some(speaking) = detector.push(&pcm) {
-                                on_speaking(user, speaking);
-                            }
-                            if !deafened.load(Ordering::Relaxed) {
-                                mixer.lock().unwrap().push(key, seq, pcm);
-                            }
+                        if !deafened.load(Ordering::Relaxed) {
+                            mixer.lock().unwrap().push(key, seq, pcm);
                         }
-                        Some(_) => {}
-                        None => break,
-                    },
+                    }
                     frame = mic_rx.recv() => match frame {
                         Ok((seq, data)) => {
                             if outgoing.send(MediaPacket::Opus { seq, data: data.as_ref().clone() }).is_err() {
@@ -517,10 +514,6 @@ impl CameraSession {
         self.subscribers.retain(|tx| tx.send(packet.clone()).is_ok());
         self.subscribers.len()
     }
-}
-
-pub fn voice_hello(user: UserId, channel: ChannelId) -> MediaHello {
-    MediaHello::Voice { user, channel }
 }
 
 pub struct MicTest {

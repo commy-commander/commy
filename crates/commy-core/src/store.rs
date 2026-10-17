@@ -931,7 +931,7 @@ impl ServerState {
                 self.same_server(server)?;
                 let color = color
                     .map(|c| c.to_ascii_lowercase())
-                    .filter(|c| c.len() == 6 && c.chars().all(|ch| ch.is_ascii_hexdigit()));
+                    .filter(|c| crate::server::valid_hex_color(c));
                 let Some(target) = self.server.channel_mut(channel) else {
                     return Err(StoreError::UnknownChannel);
                 };
@@ -1321,7 +1321,7 @@ impl ServerState {
     }
 
     pub fn media_peer_ok(&self, user: UserId, node_hex: &str, channel: ChannelId, voice: bool) -> bool {
-        if !self.server.is_member(user) || self.server.banned.contains(&user) {
+        if !self.server.is_current_member(user) {
             return false;
         }
         let node_ok = self

@@ -22,6 +22,8 @@ pub fn apply_webview_data_dir_before_any_window() {
 
 pub const TEST_BUILD_DIR: &str = "test-build";
 
+pub const TEST_BUILD: bool = option_env!("COMMY_TEST_BUILD").is_some();
+
 pub fn test_build_data_dir(test_build: bool, data_dir: Option<&str>, default: Option<PathBuf>) -> Option<PathBuf> {
     if !test_build || data_dir.is_some_and(|s| !s.trim().is_empty()) {
         return None;
@@ -31,7 +33,7 @@ pub fn test_build_data_dir(test_build: bool, data_dir: Option<&str>, default: Op
 
 pub fn apply_test_build_data_dir() {
     let target = test_build_data_dir(
-        option_env!("COMMY_TEST_BUILD").is_some(),
+        TEST_BUILD,
         std::env::var("COMMY_DATA_DIR").ok().as_deref(),
         crate::invite_link::default_data_dir(),
     );
