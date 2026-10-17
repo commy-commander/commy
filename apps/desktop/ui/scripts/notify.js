@@ -9,12 +9,20 @@ function shouldNotify({ level, presence, focusedOnIt, isDm, mentioned, announcem
   return level === "mentions" && Boolean(mentioned || announcement);
 }
 
+function noticeText(content, hasAttachments, plain) {
+  return plain(content || "") || (hasAttachments ? "Sent an attachment" : "");
+}
+
+function noticeTitle(authorName, channelName, serverName) {
+  return `${authorName || "Someone"} (#${channelName}, ${serverName})`;
+}
+
 function messageNotice({ author_name, channel_name, server_name, content, has_attachments, announcement }, plain) {
-  const body = plain(content || "") || (has_attachments ? "Sent an attachment" : "");
+  const body = noticeText(content, has_attachments, plain);
   if (announcement) {
     return { title: `Announcement in #${channel_name} (${server_name})`, body: `${author_name || "Someone"}: ${body}` };
   }
-  return { title: `${author_name || "Someone"} (#${channel_name}, ${server_name})`, body };
+  return { title: noticeTitle(author_name, channel_name, server_name), body };
 }
 
 function mentionsName(content, names) {
@@ -36,11 +44,11 @@ function isRecent(atSecs, nowSecs) {
 }
 
 function caughtUpNotice({ count, author_name, channel_name, server_name, content, has_attachments }, plain) {
-  const text = plain(content || "") || (has_attachments ? "Sent an attachment" : "");
+  const text = noticeText(content, has_attachments, plain);
   const rest = count - 1;
   const more = rest > 0 ? `${rest} more message${rest === 1 ? "" : "s"}` : "";
   return {
-    title: `${author_name || "Someone"} (#${channel_name}, ${server_name})`,
+    title: noticeTitle(author_name, channel_name, server_name),
     body: [text, more].filter(Boolean).join(" · "),
   };
 }

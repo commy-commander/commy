@@ -11,6 +11,10 @@ function list(value) {
     .filter(Boolean);
 }
 
+function validPort(n) {
+  return Number.isInteger(n) && n > 0 && n <= 65535;
+}
+
 function stripSlash(url) {
   return url.replace(/\/+$/, "");
 }
@@ -41,7 +45,7 @@ function smtpConfig(env, errors) {
     }
   } else {
     const port = Number(env.SMTP_PORT || SMTP_SUBMISSION_PORT);
-    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    if (!validPort(port)) {
       errors.push("SMTP_PORT must be a valid TCP port");
     }
     user = (env.SMTP_USER ?? "").trim();
@@ -82,7 +86,7 @@ export function loadConfig(env = process.env) {
   }
 
   const port = Number(env.PORT ?? DEFAULT_PORT);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+  if (!validPort(port)) {
     errors.push("PORT must be a valid TCP port");
   }
 

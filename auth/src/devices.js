@@ -11,6 +11,14 @@ export function normalizeNodeId(value) {
   return NODE_ID.test(id) ? id : null;
 }
 
+function requireNodeId(value) {
+  const nodeId = normalizeNodeId(value);
+  if (!nodeId) {
+    throw new APIError("BAD_REQUEST", { message: "nodeId must be a 64 character hex iroh node id" });
+  }
+  return nodeId;
+}
+
 export const DEVICE_LABEL = "Commy desktop";
 
 export function toPublicDevice(row) {
@@ -68,10 +76,7 @@ export const commyDevices = ({ secret, serverUrl }) => ({
         body: z.object({ nodeId: z.string() }),
       },
       async (ctx) => {
-        const nodeId = normalizeNodeId(ctx.body.nodeId);
-        if (!nodeId) {
-          throw new APIError("BAD_REQUEST", { message: "nodeId must be a 64 character hex iroh node id" });
-        }
+        const nodeId = requireNodeId(ctx.body.nodeId);
         const challenge = makeChallenge(secret, ctx.context.session.user.id, nodeId);
         return ctx.json({ challenge, message: linkMessage(serverUrl, nodeId, challenge) });
       },
@@ -91,10 +96,7 @@ export const commyDevices = ({ secret, serverUrl }) => ({
       },
       async (ctx) => {
         const userId = ctx.context.session.user.id;
-        const nodeId = normalizeNodeId(ctx.body.nodeId);
-        if (!nodeId) {
-          throw new APIError("BAD_REQUEST", { message: "nodeId must be a 64 character hex iroh node id" });
-        }
+        const nodeId = requireNodeId(ctx.body.nodeId);
         const { challenge, signature } = ctx.body;
         if (
           !checkChallenge(secret, userId, nodeId, challenge) ||

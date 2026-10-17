@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import * as z from "zod";
 import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
+import { COMMY_NET_SEALED_FORMAT } from "./vault.js";
 
 const MODEL = "invite";
 const HOUR_MS = 60 * 60 * 1000;
@@ -11,7 +12,6 @@ export const DEFAULT_MAX_PERMANENT = 20000;
 export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const CODE_LENGTH = 8;
 export const MAX_TICKET_LENGTH = 8192;
-const COMMY_NET_SEALED_FORMAT = /^sealed1\.[A-Za-z0-9_-]{40,}$/;
 const OLDER_APP_ANONYMOUS_MAX_DAYS = 7;
 const OLDER_APP_SIGNED_IN_MAX_DAYS = 30;
 const SEALED_INVITES_STORE_NO_SERVER_NAME = "";
