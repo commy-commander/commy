@@ -56,11 +56,16 @@ function emojiSuggestions(query, groups, standard, limit = SUGGEST_LIMIT) {
 }
 
 function commandSuggestions(token, available = {}) {
-  const commands = COMPOSER_COMMANDS.filter(c => available[c.needs]);
   const typed = token.args !== null;
-  return commands
+  return COMPOSER_COMMANDS
     .filter(c => (typed ? c.name === token.query : c.name.startsWith(token.query)))
-    .map(c => ({ kind: "command", name: c.name, args: typed ? token.args.trim() : "", ready: c.name === token.query }));
+    .map(c => ({
+      kind: "command",
+      name: c.name,
+      args: typed ? token.args.trim() : "",
+      ready: c.name === token.query,
+      available: Boolean(available[c.needs]),
+    }));
 }
 
 function suggestionInsert(item) {
