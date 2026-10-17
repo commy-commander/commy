@@ -289,6 +289,10 @@ async function mockInvoke(cmd, args = {}) {
       return msg;
     }
     case "get_voice_settings": return mock.voice;
+    case "set_auto_update": mock.voice.auto_update = args.enabled; return mock.voice;
+    case "get_update_status": return mock.update || (mock.update = { current: "0.1.0", can_install: true, reason: null, phase: "idle", version: null, progress: null, checked_at: null, error: null, page: null });
+    case "check_for_updates": mock.update = { ...mock.update, phase: "up_to_date", checked_at: Math.floor(Date.now() / 1000) }; return mock.update;
+    case "restart_to_update": return null;
     case "set_noise_cancellation": mock.voice.noise_cancellation = args.enabled; return mock.voice;
     case "set_muted": mock.voice.muted = args.muted; return mock.voice;
     case "set_deafened":
@@ -3287,6 +3291,61 @@ function renderAttachment(att) {
   };
   box.appendChild(btn);
   return box;
+}
+
+let updateStatus = null;
+
+async function loadUpdateStatus() {
+  try {
+    onUpdateStatus(await invoke("get_update_status"));
+  } catch {
+    updateStatus = null;
+  }
+}
+
+function onUpdateStatus(status) {
+  const wasReady = updateStatus && updateStatus.phase === "ready";
+  updateStatus = status;
+  const ready = status && status.phase === "ready";
+  $("settings-btn").classList.toggle("update-ready", !!ready);
+  $("settings-btn").title = ready ? "Settings (update ready)" : "Settings";
+  if (ready && !wasReady && openSettingsLayerId() !== "user-settings") {
+    toast(`Commy ${status.version} is ready. Restart from Settings > Updates.`);
+  }
+  renderUpdateStatus();
+}
+
+function renderUpdateStatus() {
+  const s = updateStatus || {};
+  $("update-version").textContent = s.current ? `Commy ${s.current}` : "Commy";
+  $("update-state").textContent = updateStatusText(s);
+  const { label, action, disabled } = updateAction(s);
+  const btn = $("update-action");
+  btn.textContent = label;
+  btn.dataset.action = action;
+  btn.disabled = disabled;
+  btn.className = `${action === "restart" ? "btn-primary" : "btn-secondary"} btn-small update-action`;
+  const toggle = $("auto-update-toggle");
+  toggle.checked = state.voice ? state.voice.auto_update !== false : true;
+  toggle.disabled = !s.can_install;
+  toggle.closest(".settings-card").classList.toggle("readonly", !s.can_install);
+}
+
+async function runUpdateAction() {
+  const action = $("update-action").dataset.action;
+  try {
+    if (action === "restart") {
+      await invoke("restart_to_update");
+    } else if (action === "page") {
+      if (updateStatus && updateStatus.page) await invoke("open_url", { url: updateStatus.page });
+    } else {
+      onUpdateStatus({ ...(updateStatus || {}), phase: "checking" });
+      onUpdateStatus(await invoke("check_for_updates"));
+    }
+  } catch (err) {
+    toast(String(err));
+    loadUpdateStatus();
+  }
 }
 
 let overlaySettings = null;
@@ -8143,6 +8202,15 @@ function wireEvents() {
       toast(String(err));
     }
   });
+  $("auto-update-toggle").addEventListener("change", async e => {
+    try {
+      state.voice = await invoke("set_auto_update", { enabled: e.target.checked });
+    } catch (err) {
+      toast(String(err));
+    }
+    renderUpdateStatus();
+  });
+  $("update-action").onclick = runUpdateAction;
   $("sounds-toggle").addEventListener("change", e => {
     const prefs = soundPrefs();
     prefs.enabled = e.target.checked;
@@ -8440,6 +8508,7 @@ function wireEvents() {
       lastOverlayRoster = "";
       pushOverlayRoster(true);
     });
+    window.__TAURI__.event.listen("update-status", event => onUpdateStatus(event.payload));
     window.__TAURI__.event.listen("overlay-settings-changed", event => {
       overlaySettings = event.payload;
       renderOverlaySettings();
@@ -8581,6 +8650,7 @@ function openUserSettings(tab) {
   loadSafety().then(renderSafetySettings);
   $("account-about").value = state.user.about || "";
   loadOverlaySettings().then(renderOverlaySettings);
+  loadUpdateStatus();
   loadIntegrations().then(renderIntegrations);
   loadAccount().then(() => {
     renderAccountSettings();
@@ -8928,6 +8998,7 @@ async function boot() {
   await loadSafety();
   await loadFriends();
   await loadOverlaySettings();
+  loadUpdateStatus();
   await loadIntegrations();
   await loadAccount();
   if (!account.signed_in) {

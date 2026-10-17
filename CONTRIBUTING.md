@@ -1,7 +1,9 @@
 # Contributing to Commy
 
 Thanks for helping build Commy. This file covers the branch flow and the
-checks a change needs before it lands.
+checks a change needs before it lands. Everyone taking part is expected to
+follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security problem,
+see [SECURITY.md](SECURITY.md).
 
 ## Branch flow
 
@@ -27,6 +29,14 @@ git push -u origin feature/my-change
 Use [Conventional Commits](https://www.conventionalcommits.org):
 `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, with an optional
 scope such as `feat(ui):` or `fix(net):`.
+
+## Code style
+
+No code comments. Say it in the code instead: clear names, named constants,
+small functions, and tests for the behaviour that matters. Rust doc comments
+count as comments. The only exceptions are license or SPDX headers,
+`// SAFETY:` notes on unsafe blocks, and tool directives such as `#[allow]`,
+`eslint-disable` or `# shellcheck disable`.
 
 ## Before opening a PR
 

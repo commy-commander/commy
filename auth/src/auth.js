@@ -1,6 +1,8 @@
 import { betterAuth } from "better-auth";
 import { bearer, captcha, deviceAuthorization, magicLink } from "better-auth/plugins";
+import { APIError } from "better-auth/api";
 import pg from "pg";
+import { hasAccess } from "./access.js";
 import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
 import { commyDoorbell } from "./doorbell.js";
@@ -123,6 +125,20 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
       encryptOAuthTokens: true,
     },
     databaseHooks: {
+      user: {
+        create: {
+          before: async (user, ctx) => {
+            if (!config.accessCode) return;
+            const cookie = ctx?.headers?.get("cookie") ?? ctx?.request?.headers.get("cookie");
+            if (!hasAccess(cookie, config.accessCode)) {
+              throw new APIError("FORBIDDEN", {
+                code: "ACCESS_CODE_REQUIRED",
+                message: "Creating an account needs the access code. Enter it on the sign-up page first.",
+              });
+            }
+          },
+        },
+      },
       session: {
         create: {
           before: storeSessionWithoutIpOrUserAgent,

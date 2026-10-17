@@ -25,5 +25,13 @@
   },
   "bundle": {
     "active": false
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

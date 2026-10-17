@@ -243,7 +243,7 @@
       <p>A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
       <div class="signin-start" id="signin-start">
         <button class="btn-primary signin-go" id="signin-go">Sign in with your browser</button>
-        <div class="signin-note">No account yet? You can create one on the same page.</div>
+        <div class="signin-note">Your browser opens to sign in or create an account. Come back here once you approve.</div>
       </div>
       <div class="signin-wait hidden" id="signin-wait">
         <div class="signin-label">Check that your browser shows this code, then approve it</div>
@@ -265,7 +265,7 @@
         <input id="signin-server-input" type="text" autocomplete="off" spellcheck="false" placeholder="chat.example.com" />
         <button class="btn-secondary btn-small" id="signin-server-save">Use</button>
       </div>
-      <div class="signin-server-note" id="signin-server-note">Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the sign-in page.</div>
+      <div class="signin-server-note" id="signin-server-note">Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.</div>
     </div>
 
     <div class="modal hidden" id="modal-username">
@@ -614,6 +614,7 @@
         <button class="settings-tab" data-tab="integrations">Integrations</button>
         <button class="settings-tab" data-tab="notifications">Notifications</button>
         <button class="settings-tab" data-tab="gifs">GIFs</button>
+        <button class="settings-tab" data-tab="updates">Updates</button>
         <div class="settings-nav-sep"></div>
         <div class="settings-version">Commy, free and peer to peer</div>
       </div>
@@ -964,6 +965,24 @@
               <div class="setting-sub">Shows the game or app in front on your screen as "Playing ..." or "Using ..." under your name, for everyone in your servers. Turn it off and it clears right away.</div>
             </div>
             <input type="checkbox" id="share-activity-toggle" class="switch" />
+          </label>
+        </section>
+
+        <section class="settings-page" data-page="updates">
+          <h1>Updates</h1>
+          <div class="settings-card setting-row update-card">
+            <div>
+              <div class="setting-title" id="update-version">Commy</div>
+              <div class="setting-sub update-state" id="update-state"></div>
+            </div>
+            <button class="btn-secondary btn-small update-action" id="update-action">Check for Updates</button>
+          </div>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Update automatically</div>
+              <div class="setting-sub">Commy looks for a new version when it starts and every few hours, downloads it in the background and lets you know when a restart will finish it. Turn this off to update only when you click Check for Updates.</div>
+            </div>
+            <input type="checkbox" id="auto-update-toggle" class="switch" />
           </label>
         </section>
 
@@ -1450,6 +1469,7 @@
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>
   <script src="scripts/tint.js"></script>
+  <script src="scripts/updates.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
   <script src="scripts/entry-list.js"></script>
