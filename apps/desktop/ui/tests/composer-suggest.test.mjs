@@ -58,11 +58,11 @@ test("emoji suggestions stop at the limit", () => {
   assert.equal(emojiSuggestions("cat", [many], STANDARD).length, SUGGEST_LIMIT);
 });
 
-test("/gif is offered only where GIFs work", () => {
-  assert.deepEqual(commandSuggestions(suggestTokenAt("/g"), { gifs: true }), [{ kind: "command", name: "gif", args: "", ready: false }]);
-  assert.deepEqual(commandSuggestions(suggestTokenAt("/gif"), { gifs: true }), [{ kind: "command", name: "gif", args: "", ready: true }]);
-  assert.deepEqual(commandSuggestions(suggestTokenAt("/gif  space cats "), { gifs: true }), [{ kind: "command", name: "gif", args: "space cats", ready: true }]);
-  assert.deepEqual(commandSuggestions(suggestTokenAt("/g"), { gifs: false }), []);
+test("/gif is always offered and says when GIF search is not set up", () => {
+  assert.deepEqual(commandSuggestions(suggestTokenAt("/g"), { gifs: true }), [{ kind: "command", name: "gif", args: "", ready: false, available: true }]);
+  assert.deepEqual(commandSuggestions(suggestTokenAt("/gif"), { gifs: true }), [{ kind: "command", name: "gif", args: "", ready: true, available: true }]);
+  assert.deepEqual(commandSuggestions(suggestTokenAt("/gif  space cats "), { gifs: true }), [{ kind: "command", name: "gif", args: "space cats", ready: true, available: true }]);
+  assert.deepEqual(commandSuggestions(suggestTokenAt("/g"), { gifs: false }), [{ kind: "command", name: "gif", args: "", ready: false, available: false }]);
   assert.deepEqual(commandSuggestions(suggestTokenAt("/x"), { gifs: true }), []);
 });
 

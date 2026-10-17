@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const { elapsedClock, elapsedWords } = createRequire(import.meta.url)("../scripts/timers.js");
-const now = 1_760_000_000_000; // ms
+const now = 1_760_000_000_000;
 const ago = secs => now / 1000 - secs;
 
 test("clock counts minutes and seconds, then hours", () => {

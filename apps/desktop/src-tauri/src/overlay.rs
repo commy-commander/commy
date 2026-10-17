@@ -1,9 +1,3 @@
-//! In-game overlay: a small transparent, click-through, always-on-top
-//! window in a screen corner showing your voice channel (with speaking
-//! rings) and optionally recent chat. It never takes focus, so it can sit
-//! over a borderless-windowed game. Exclusive fullscreen games draw over
-//! every other window, the overlay included.
-
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -20,13 +14,10 @@ pub struct OverlaySettings {
     pub enabled: bool,
     #[serde(default = "default_corner")]
     pub corner: String,
-    /// 0.2 to 1.0
     #[serde(default = "default_opacity")]
     pub opacity: f32,
     #[serde(default = "default_true")]
     pub show_chat: bool,
-    /// Draw everyone in the voice channel; off shows only people who are
-    /// talking, and only while they talk.
     #[serde(default)]
     pub show_everyone: bool,
     #[serde(default = "default_toggle_hotkey")]
@@ -66,7 +57,6 @@ impl Default for OverlaySettings {
 }
 
 impl OverlaySettings {
-    /// Clamps values from the UI; unknown corners fall back to top-left.
     pub fn sanitized(mut self) -> Self {
         if !CORNERS.contains(&self.corner.as_str()) {
             self.corner = default_corner();
@@ -76,12 +66,10 @@ impl OverlaySettings {
     }
 }
 
-/// True for a hotkey the global shortcut plugin can register.
 pub fn valid_hotkey(hotkey: &str) -> bool {
     hotkey.parse::<tauri_plugin_global_shortcut::Shortcut>().is_ok()
 }
 
-/// Top-left position for a window of `size` in `corner` of a work area.
 pub fn corner_position(area: (i32, i32, u32, u32), size: (u32, u32), corner: &str) -> (i32, i32) {
     let (x, y, w, h) = area;
     let right = x + w as i32 - size.0 as i32 - MARGIN;
@@ -94,7 +82,6 @@ pub fn corner_position(area: (i32, i32, u32, u32), size: (u32, u32), corner: &st
     }
 }
 
-/// Creates the overlay window if needed. Hidden until `apply` shows it.
 fn ensure_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     if let Some(window) = app.get_webview_window(LABEL) {
         return Ok(window);
@@ -114,7 +101,6 @@ fn ensure_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
         .build()
 }
 
-/// Shows, moves or hides the overlay to match settings and the hotkey toggle.
 pub fn apply(app: &AppHandle, settings: &OverlaySettings, visible: bool) {
     if !settings.enabled || !visible {
         if let Some(window) = app.get_webview_window(LABEL) {
@@ -146,7 +132,6 @@ pub fn apply(app: &AppHandle, settings: &OverlaySettings, visible: bool) {
     let _ = app.emit_to(LABEL, "overlay-config", settings);
 }
 
-/// Shows the window without activating it, so a game keeps keyboard focus.
 #[cfg(windows)]
 fn show_without_focus(window: &tauri::WebviewWindow) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{

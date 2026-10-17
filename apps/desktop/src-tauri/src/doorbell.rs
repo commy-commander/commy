@@ -1,14 +1,3 @@
-//! Message doorbell client, see [`commy_core::doorbell`].
-//!
-//! Each device listens on its own account server for rings addressed to
-//! its daily token in every server it is in, and announces the key and
-//! account server to that server's members. When a message of ours goes
-//! out while a member's device looks offline, we ring that device with
-//! the message's blinded id. A device that takes ids it lacks shows them
-//! as on their way and reaches out to its peers until they arrive.
-//! Requests carry one token each and never a sign-in, and neither tokens
-//! nor ids reveal the server, account or message to the account server.
-
 use crate::catchup::AppAccess;
 use crate::state::App;
 use commy_core::doorbell::{self as bell, DoorbellKey};
@@ -19,38 +8,23 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 pub const DOORBELL_FILE: &str = "doorbell.json";
-/// Ids for one device are gathered this long into one ring.
 const RING_DEBOUNCE: Duration = Duration::from_secs(2);
-/// How long an account server's doorbell support is trusted.
-const ORIGIN_TTL: Duration = Duration::from_secs(60 * 60);
-/// Long-poll length of a take, in seconds; the server allows up to 25.
-const TAKE_WAIT_SECS: u64 = 25;
-/// Hellos to one server's members at most this often.
+const DOORBELL_SUPPORT_TTL: Duration = Duration::from_secs(60 * 60);
+const SERVER_MAX_TAKE_WAIT_SECS: u64 = 25;
 const HELLO_EVERY: Duration = Duration::from_secs(30 * 60);
-/// While messages are on their way, peers are asked again this often,
-/// and after the first hour only every [`NUDGE_SLOW`].
 const NUDGE_EVERY: Duration = Duration::from_secs(60);
 const NUDGE_SLOW: Duration = Duration::from_secs(10 * 60);
-/// After launch, hellos wait this long so peers can connect first.
 const HELLO_AFTER_START: Duration = Duration::from_secs(30);
-/// How often the listener looks for servers it does not listen in yet.
 const LISTEN_CHECK_EVERY: Duration = Duration::from_secs(5);
-/// Repeat rings to one device are spaced at least this far apart.
 const RING_SPACING: Duration = Duration::from_secs(30);
-/// Rings sent to one account server per minute, under its limit of 300.
 const RINGS_PER_MINUTE: usize = 250;
-/// Just after midnight, yesterday's token is taken again for rings
-/// from senders whose clocks run behind.
-const DAY_GRACE_SECS: i64 = 60 * 60;
-/// Devices kept per member in a server.
+const SERVER_RINGS_PER_MINUTE_LIMIT: usize = 300;
+const _: () = assert!(RINGS_PER_MINUTE < SERVER_RINGS_PER_MINUTE_LIMIT);
+const YESTERDAY_TOKEN_GRACE_SECS: i64 = 60 * 60;
 const MAX_PEERS_PER_USER: usize = 8;
-/// Awaited ids that never arrive are dropped after the server would
-/// have deleted the ring anyway.
 const AWAIT_SECS: i64 = bell::KEEP_DAYS as i64 * 86_400;
-/// Most awaited ids kept per server.
 const MAX_AWAITED: usize = 1000;
 
-/// Where one member's device listens.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Peer {
     pub user: UserId,
@@ -58,27 +32,20 @@ pub struct Peer {
     pub key: DoorbellKey,
 }
 
-/// What survives restarts, by server id.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Saved {
-    /// Our key in each server.
     #[serde(default)]
     own: HashMap<ServerId, DoorbellKey>,
-    /// Members' devices by node id (hex).
     #[serde(default)]
     peers: HashMap<ServerId, HashMap<String, Peer>>,
-    /// Blinded ids we were rung for and do not hold yet, with the Unix
-    /// time they arrived.
     #[serde(default)]
     awaited: HashMap<ServerId, HashMap<String, i64>>,
-    /// Last day whose token we took from, per server.
     #[serde(default)]
     last_take: HashMap<ServerId, u32>,
     #[serde(default)]
     origins: HashMap<ServerId, String>,
 }
 
-/// Doorbell endpoints an account server offers.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Endpoints {
     pub(crate) ring: String,
@@ -88,13 +55,9 @@ pub(crate) struct Endpoints {
 #[derive(Debug, Default)]
 pub struct Doorbell {
     saved: Saved,
-    /// Ids waiting for the debounce, by (account server origin, token).
     ringing: HashMap<(String, String), Vec<String>>,
-    /// Account servers checked for the doorbell, with when.
     origins: HashMap<String, (Instant, Option<Endpoints>)>,
-    /// When each device was last rung, by (origin, token).
     rung_at: HashMap<(String, String), Instant>,
-    /// Rings sent per account server in the current minute.
     budget: HashMap<String, (Instant, usize)>,
     hello_at: HashMap<ServerId, Instant>,
     nudged_at: HashMap<ServerId, Instant>,
@@ -116,7 +79,6 @@ impl Doorbell {
         self.saved.own.len() + self.saved.peers.len() + self.saved.awaited.len() + self.saved.last_take.len() + self.saved.origins.len()
     }
 
-    /// Forgets servers we are no longer in.
     pub fn retain_servers(&mut self, keep: impl Fn(&ServerId) -> bool) -> bool {
         let before = self.saved_entries();
         self.saved.own.retain(|s, _| keep(s));
@@ -140,7 +102,6 @@ impl Doorbell {
         url == own_origin || self.saved.origins.get(&server).is_some_and(|origin| origin == url)
     }
 
-    /// Our key in a server, made on first use. True when it is new.
     pub(crate) fn own_key(&mut self, server: ServerId) -> (DoorbellKey, bool) {
         if let Some(key) = self.saved.own.get(&server) {
             return (*key, false);
@@ -150,9 +111,6 @@ impl Doorbell {
         (key, true)
     }
 
-    /// Records `user`'s announcement for one of their devices. A device
-    /// another member announced first stays theirs, and each member keeps
-    /// at most [`MAX_PEERS_PER_USER`] devices. True when it changed anything.
     fn set_peer(&mut self, server: ServerId, user: UserId, node: &str, peer: Option<Peer>) -> bool {
         let peers = self.saved.peers.entry(server).or_default();
         if peers.get(node).is_some_and(|p| p.user != user) {
@@ -163,7 +121,6 @@ impl Doorbell {
                 if !peers.contains_key(node) {
                     let theirs: Vec<String> = peers.iter().filter(|(_, p)| p.user == user).map(|(n, _)| n.clone()).collect();
                     if theirs.len() >= MAX_PEERS_PER_USER {
-                        // Their lowest node id goes, so every device drops the same one.
                         if let Some(drop) = theirs.iter().min() {
                             peers.remove(drop);
                         }
@@ -175,7 +132,6 @@ impl Doorbell {
         }
     }
 
-    /// Forgets devices of people no longer in a server.
     fn retain_members(&mut self, server: ServerId, keep: impl Fn(UserId) -> bool) -> bool {
         let Some(peers) = self.saved.peers.get_mut(&server) else { return false };
         let before = peers.len();
@@ -183,8 +139,6 @@ impl Doorbell {
         before != peers.len()
     }
 
-    /// Counts one ring to an account server against its per-minute
-    /// budget, or says how long to wait when the minute's budget is spent.
     fn spend(&mut self, origin: &str, now: Instant) -> Option<Duration> {
         let minute = Duration::from_secs(60);
         let (start, used) = self.budget.entry(origin.to_string()).or_insert((now, 0));
@@ -198,13 +152,10 @@ impl Doorbell {
         None
     }
 
-    /// When the newest awaited id in a server arrived.
     fn newest_awaited(&self, server: ServerId) -> Option<i64> {
         self.saved.awaited.get(&server)?.values().copied().max()
     }
 
-    /// Adds ids we were rung for, minus those we hold. True when the
-    /// awaited set changed.
     fn add_awaited(&mut self, server: ServerId, ids: Vec<String>, held: &HashSet<String>, now: i64) -> bool {
         let awaited = self.saved.awaited.entry(server).or_default();
         let mut changed = false;
@@ -213,7 +164,6 @@ impl Doorbell {
                 continue;
             }
             if awaited.len() >= MAX_AWAITED {
-                // The oldest goes; it is the likeliest to have been deleted.
                 let oldest = awaited.iter().min_by_key(|(id, at)| (**at, (*id).clone())).map(|(id, _)| id.clone());
                 if let Some(oldest) = oldest {
                     awaited.remove(&oldest);
@@ -225,7 +175,6 @@ impl Doorbell {
         changed
     }
 
-    /// Drops awaited ids we now hold or that expired. True when it changed.
     fn settle_awaited(&mut self, server: ServerId, held: &HashSet<String>, now: i64) -> bool {
         let Some(awaited) = self.saved.awaited.get_mut(&server) else { return false };
         let before = awaited.len();
@@ -233,7 +182,6 @@ impl Doorbell {
         before != awaited.len()
     }
 
-    /// Members' devices we know in a server: (node hex, member).
     pub(crate) fn devices(&self, server: ServerId) -> Vec<(String, UserId)> {
         self.saved.peers.get(&server).map_or_else(Vec::new, |peers| peers.iter().map(|(n, p)| (n.clone(), p.user)).collect())
     }
@@ -243,8 +191,6 @@ impl Doorbell {
     }
 }
 
-/// `url` as a doorbell origin: exactly `scheme://host[:port]`, https, or
-/// plain http on this machine only when it is our own account server.
 fn peer_origin_ok(url: &str, own_origin: &str) -> bool {
     crate::invite_link::normalize_origin(url).as_deref() == Some(url)
         && (url.starts_with("https://") || url == own_origin)
@@ -276,8 +222,6 @@ struct Discovery {
     endpoints: Option<DiscoveryEndpoints>,
 }
 
-/// The doorbell endpoints in a discovery document, when it offers them on
-/// its own origin.
 fn endpoints_of(doc: Discovery, origin: &str) -> Option<Endpoints> {
     if !doc.features.is_some_and(|f| f.doorbell) {
         return None;
@@ -287,10 +231,9 @@ fn endpoints_of(doc: Discovery, origin: &str) -> Option<Endpoints> {
     (on_origin(&ring, origin) && on_origin(&take, origin)).then_some(Endpoints { ring, take })
 }
 
-/// The doorbell endpoints of an account server, checked at most hourly.
 pub(crate) async fn endpoints(app: &App, origin: &str) -> Option<Endpoints> {
     if let Some((at, found)) = app.doorbell.lock().unwrap().origins.get(origin) {
-        if at.elapsed() < ORIGIN_TTL {
+        if at.elapsed() < DOORBELL_SUPPORT_TTL {
             return found.clone();
         }
     }
@@ -308,7 +251,6 @@ pub(crate) async fn endpoints(app: &App, origin: &str) -> Option<Endpoints> {
         Some(res.json::<Discovery>().await.ok())
     }
     .await;
-    // A network failure is not remembered, so the next try checks again.
     let doc = fetched?;
     let found = doc.and_then(|doc| endpoints_of(doc, origin));
     app.doorbell.lock().unwrap().origins.insert(origin.to_string(), (Instant::now(), found.clone()));
@@ -333,8 +275,6 @@ fn now_secs() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
-/// Blinded ids, under our key, of every message we hold in a server or
-/// know was deleted: neither is worth waiting for.
 fn held_ids(state: &ServerState, key: &DoorbellKey) -> HashSet<String> {
     state
         .server
@@ -351,11 +291,6 @@ pub(crate) fn member_ok(state: &ServerState, user: UserId) -> bool {
     state.server.is_member(user) && !state.server.banned.contains(&user)
 }
 
-// ---------- Announcing ----------
-
-/// Our signed announcement for a server: our account server and key when
-/// it offers the doorbell, else none so members stop ringing us there.
-/// None while our key may still change or the network is not up.
 pub(crate) async fn announcement(app: &App, server: ServerId) -> Option<ServerEvent> {
     if !app.key_settled() {
         return None;
@@ -378,8 +313,6 @@ pub(crate) async fn announcement(app: &App, server: ServerId) -> Option<ServerEv
     Some(ServerEvent::DoorbellSet { server, user, node, url, key, sig })
 }
 
-/// Tells a server's members where we listen. Runs apart from the caller
-/// since it may ask the account server first.
 pub fn announce<A: AppAccess + Clone>(access: &A, server: ServerId) {
     let access = access.clone();
     spawn(async move {
@@ -395,8 +328,6 @@ pub fn announce<A: AppAccess + Clone>(access: &A, server: ServerId) {
     });
 }
 
-/// A member's announcement: kept when it is signed by their pinned key,
-/// they are still in the server and its origin is acceptable.
 pub fn on_announce(app: &App, server: ServerId, event: &ServerEvent) {
     let ServerEvent::DoorbellSet { server: named, user, node, url, key, sig } = event else { return };
     if *named != server || node.len() != 64 || !node.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -431,11 +362,6 @@ pub fn on_announce(app: &App, server: ServerId, event: &ServerEvent) {
     }
 }
 
-// ---------- Ringing ----------
-
-/// Rings members' devices for a message of ours. With `everyone`, the
-/// message reached nobody, so every device is rung; otherwise only those
-/// of members who do not look online.
 pub fn ring<A: AppAccess + Clone>(access: &A, server: ServerId, message: MessageId, everyone: bool) {
     let targets = ring_targets(access.app(), server, message, everyone);
     for (url, token, id) in targets {
@@ -443,8 +369,6 @@ pub fn ring<A: AppAccess + Clone>(access: &A, server: ServerId, message: Message
     }
 }
 
-/// The devices [`ring`] rings for a message: (account server origin,
-/// today's token, blinded id) for each.
 pub(crate) fn ring_targets(app: &App, server: ServerId, message: MessageId, everyone: bool) -> Vec<(String, String, String)> {
     let our_node = app.node_hex.lock().unwrap().clone();
     let own_origin = crate::account::effective_server();
@@ -462,8 +386,6 @@ pub(crate) fn ring_targets(app: &App, server: ServerId, message: MessageId, ever
         .collect()
 }
 
-/// Adds an id (or, with None, a hello) to a device's next ring, starting
-/// the debounce for that device when none is running.
 fn queue_ring<A: AppAccess + Clone>(access: &A, url: String, token: String, id: Option<String>) {
     let app = access.app();
     let key = (url, token);
@@ -480,7 +402,6 @@ fn queue_ring<A: AppAccess + Clone>(access: &A, url: String, token: String, id: 
     let access = access.clone();
     spawn(async move {
         let app = access.app();
-        // A device rung moments ago waits for the spacing, gathering ids.
         let wait = app.doorbell.lock().unwrap().rung_at.get(&key).map_or(RING_DEBOUNCE, |at| {
             RING_SPACING.saturating_sub(at.elapsed()).max(RING_DEBOUNCE)
         });
@@ -513,7 +434,6 @@ fn queue_ring<A: AppAccess + Clone>(access: &A, url: String, token: String, id: 
                 Ok(_) => {
                     chunks.next();
                 }
-                // One more try a minute later, e.g. after a rate limit.
                 Err(e) if !retried => {
                     tracing::debug!("doorbell ring failed, trying again: {e}");
                     retried = true;
@@ -528,7 +448,6 @@ fn queue_ring<A: AppAccess + Clone>(access: &A, url: String, token: String, id: 
     });
 }
 
-/// Rings one device for a message, e.g. when a wake did not reach it.
 pub fn ring_device<A: AppAccess + Clone>(access: &A, server: ServerId, node: &str, message: MessageId) {
     let target = {
         let app = access.app();
@@ -547,15 +466,12 @@ pub fn ring_device<A: AppAccess + Clone>(access: &A, server: ServerId, node: &st
     queue_ring(access, url, token, Some(id));
 }
 
-/// One ring: `ids` (none for a hello) to `token` at a ring endpoint.
 pub(crate) async fn send_ring(app: &App, ring: &str, token: &str, ids: &[String]) -> reqwest::Result<()> {
     let body = serde_json::json!({ "token": token, "ids": ids });
     app.http.post(ring).json(&body).timeout(Duration::from_secs(15)).send().await?.error_for_status()?;
     Ok(())
 }
 
-/// Wakes every member device of a server we know, once per
-/// [`HELLO_EVERY`]: they then reach out to us.
 fn hello<A: AppAccess + Clone>(access: &A, server: ServerId) {
     let app = access.app();
     let our_node = app.node_hex.lock().unwrap().clone();
@@ -582,12 +498,6 @@ fn hello<A: AppAccess + Clone>(access: &A, server: ServerId) {
     }
 }
 
-// ---------- Listening ----------
-
-/// Starts listening in every server we are in right away, so rings
-/// waiting for us show before any peer is back, and says hello where we
-/// have messages waiting and nobody to give them to. Runs for the life
-/// of the app.
 pub async fn run<A: AppAccess + Clone>(access: A) {
     let started = Instant::now();
     let mut hello_at: Option<Instant> = None;
@@ -620,7 +530,6 @@ pub async fn run<A: AppAccess + Clone>(access: A) {
     }
 }
 
-/// Spawns on the runtime we are on, or the app's outside one.
 pub(crate) fn spawn<F>(future: F)
 where
     F: std::future::Future<Output = ()> + Send + 'static,
@@ -656,8 +565,6 @@ pub(crate) async fn take(app: &App, endpoints: &Endpoints, token: &str, wait: u6
     Ok(res.json().await?)
 }
 
-/// Takes rings for one server from our account server: days missed since
-/// the last take, then today's token in a long poll, until we leave it.
 async fn listen<A: AppAccess + Clone>(access: A, server: ServerId) {
     let mut failures: u32 = 0;
     loop {
@@ -679,14 +586,14 @@ async fn listen<A: AppAccess + Clone>(access: A, server: ServerId) {
         let today = bell::day_of(chrono::Utc::now());
         let first = app.doorbell.lock().unwrap().saved.last_take.get(&server).copied().unwrap_or(today);
         let first = first.max(today.saturating_sub(bell::KEEP_DAYS - 1));
-        let first = if chrono::Utc::now().timestamp().rem_euclid(86_400) < DAY_GRACE_SECS {
+        let first = if chrono::Utc::now().timestamp().rem_euclid(86_400) < YESTERDAY_TOKEN_GRACE_SECS {
             first.min(today.saturating_sub(1))
         } else {
             first
         };
         let mut result = Ok(());
         for day in first..=today {
-            let wait = if day == today { TAKE_WAIT_SECS } else { 0 };
+            let wait = if day == today { SERVER_MAX_TAKE_WAIT_SECS } else { 0 };
             match take(app, &endpoints, &bell::token(&key, day), wait).await {
                 Ok(taken) => {
                     let changed = app.doorbell.lock().unwrap().saved.last_take.insert(server, day) != Some(day);
@@ -722,8 +629,6 @@ fn rand_jitter(base: u64) -> u64 {
     r * base / 512
 }
 
-/// Rings we took: ids we lack are awaited and we reach out to peers; a
-/// hello means someone is back, so we reach out too.
 fn on_taken<A: AppAccess + Clone>(access: &A, server: ServerId, key: &DoorbellKey, taken: Taken) {
     let app = access.app();
     if !app.servers.lock().unwrap().contains_key(&server) {
@@ -740,8 +645,6 @@ fn on_taken<A: AppAccess + Clone>(access: &A, server: ServerId, key: &DoorbellKe
     }
 }
 
-/// Awaits the ids we took that we do not hold, and saves them. True when
-/// the awaited set changed.
 pub(crate) fn note_taken(app: &App, server: ServerId, key: &DoorbellKey, ids: Vec<String>) -> bool {
     let ids: Vec<String> = ids.into_iter().filter(|id| id.len() == 24 && id.bytes().all(|b| b.is_ascii_hexdigit())).collect();
     if ids.is_empty() {
@@ -759,13 +662,10 @@ pub(crate) fn note_taken(app: &App, server: ServerId, key: &DoorbellKey, ids: Ve
     changed
 }
 
-/// Re-dials a server's members and catches up with current neighbors, at
-/// most once per [`NUDGE_EVERY`].
 async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
     let app = access.app();
     {
         let mut doorbell = app.doorbell.lock().unwrap();
-        // Ids that stay away past their first hour are asked for less often.
         let fresh = doorbell.newest_awaited(server).is_some_and(|at| now_secs() - at < 3600);
         let every = if fresh { NUDGE_EVERY } else { NUDGE_SLOW };
         if doorbell.nudged_at.get(&server).is_some_and(|at| at.elapsed() < every) {
@@ -779,7 +679,6 @@ async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
         let Some(state) = servers.get(&server) else { return };
         state.profiles.values().filter(|p| Some(p.id) != me).filter_map(|p| p.node.clone()).collect()
     };
-    // A ring while resting: back into the mesh first.
     if crate::wake::unrest(app).await > 0 {
         tracing::info!("a doorbell ring woke us from resting");
     }
@@ -787,7 +686,6 @@ async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
         let net = app.net.lock().await;
         let Some(node) = net.as_ref() else { return };
         if !members.is_empty() {
-            // Never hold the network lock for long: sends wait on it.
             let _ = tokio::time::timeout(Duration::from_secs(2), node.join_peers(server, &members)).await;
         }
         node.neighbors(server)
@@ -797,10 +695,6 @@ async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
     }
 }
 
-// ---------- Arrivals ----------
-
-/// Drops awaited ids for messages we now hold, after a catch-up or when
-/// one arrives live.
 pub fn settle<A: AppAccess>(access: &A, server: ServerId) {
     let app = access.app();
     let changed = {
@@ -821,7 +715,6 @@ pub fn settle<A: AppAccess>(access: &A, server: ServerId) {
     }
 }
 
-/// A message arrived: it is no longer on its way.
 pub fn arrived<A: AppAccess>(access: &A, server: ServerId, message: MessageId) {
     let app = access.app();
     let changed = {
@@ -836,17 +729,13 @@ pub fn arrived<A: AppAccess>(access: &A, server: ServerId, message: MessageId) {
     }
 }
 
-/// How many messages we were told about in a server and do not hold yet.
 #[tauri::command]
 pub fn get_awaited(app: tauri::State<'_, App>, server_id: String) -> Result<u32, String> {
     let server: ServerId = server_id.parse().map_err(|e| format!("{e}"))?;
     Ok(awaited(&app, server))
 }
 
-/// The count [`get_awaited`] shows: "N messages are on their way".
 pub(crate) fn awaited(app: &App, server: ServerId) -> u32 {
-    // Messages can arrive by any path (live, catch-up, held, snapshot), so
-    // what we now hold is checked here, when the count is shown.
     let (changed, count) = {
         let servers = app.servers.lock().unwrap();
         let mut doorbell = app.doorbell.lock().unwrap();

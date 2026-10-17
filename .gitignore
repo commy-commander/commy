@@ -1,38 +1,30 @@
-# Rust
 target/
 
-# Node
 node_modules/
 .next/
 dist/
 build/
 out/
 
-# Env and secrets
 .env
 .env.*
 !.env.example
 
-# Logs
 *.log
 logs/
 
-# OS
 .DS_Store
 Thumbs.db
 
-# Tauri
 apps/desktop/src-tauri/gen/
 
-# Local app data (COMMY_DATA_DIR test instances, saved credentials)
 data/
 commy-data*/
 integrations.json
 safety.json
 
-# Claude Code local settings
 .claude/settings.local.json
 .claude/launch.json
 
-# Licensed stock art kept locally, never published
 apps/desktop/ui/stock-assets/
+dump.rdb

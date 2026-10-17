@@ -1,5 +1,3 @@
-//! System tray icon, unread badge and desktop notifications.
-
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -9,15 +7,18 @@ pub const TRAY_ID: &str = "commy-tray";
 
 pub const ICON_PNG: &[u8] = include_bytes!("../icons/icon.png");
 
-/// Cream with figures in the ground colour: the top bar's pill as it
-/// looks on an accent surface, which the red app icon is.
 const BADGE_RGB: [u8; 3] = [242, 239, 230];
 const FIGURE_RGB: [u8; 3] = [11, 13, 23];
-/// The ground colour, as the ring that lifts the badge off the artwork.
 const RING_RGB: [u8; 3] = [11, 13, 23];
 
-/// 3x5 pixel figures, one row per byte, high bit first.
-fn glyph(c: char) -> [u8; 5] {
+const GLYPH_WIDTH: u32 = 3;
+const GLYPH_HEIGHT: u32 = 5;
+const GLYPH_ADVANCE: u32 = GLYPH_WIDTH + 1;
+const GLYPH_LEFTMOST_BIT: u8 = 1 << (GLYPH_WIDTH - 1);
+type GlyphRows = [u8; GLYPH_HEIGHT as usize];
+const PLUS_GLYPH: GlyphRows = [0b000, 0b010, 0b111, 0b010, 0b000];
+
+fn glyph(c: char) -> GlyphRows {
     match c {
         '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
         '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
@@ -29,11 +30,10 @@ fn glyph(c: char) -> [u8; 5] {
         '7' => [0b111, 0b001, 0b001, 0b001, 0b001],
         '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
         '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
-        _ => [0b000, 0b010, 0b111, 0b010, 0b000], // '+'
+        _ => PLUS_GLYPH,
     }
 }
 
-/// What the badge says for `count`: the number up to 99, then "99+".
 pub fn badge_label(count: u32) -> String {
     if count > 99 {
         "99+".to_string()
@@ -42,8 +42,6 @@ pub fn badge_label(count: u32) -> String {
     }
 }
 
-/// Draws a round badge with `count` in it, centred on (`cx`, `cy`) with
-/// `radius`, into RGBA pixels. Pure so it can be tested without a display.
 pub fn draw_count_badge(rgba: &mut [u8], width: u32, height: u32, cx: f32, cy: f32, radius: f32, count: u32) {
     let ring = (radius * 0.14).max(1.0);
     for y in 0..height {
@@ -67,10 +65,10 @@ pub fn draw_count_badge(rgba: &mut [u8], width: u32, height: u32, cx: f32, cy: f
     let y0 = (cy - total_h as f32 / 2.0).round() as i64;
     for (i, c) in label.chars().enumerate() {
         let rows = glyph(c);
-        let gx = x0 + (i as i64) * 4 * scale as i64;
+        let gx = x0 + (i as i64) * GLYPH_ADVANCE as i64 * scale as i64;
         for (row, bits) in rows.iter().enumerate() {
-            for col in 0..3 {
-                if bits & (0b100 >> col) == 0 {
+            for col in 0..GLYPH_WIDTH {
+                if bits & (GLYPH_LEFTMOST_BIT >> col) == 0 {
                     continue;
                 }
                 for sy in 0..scale as i64 {
@@ -89,15 +87,14 @@ pub fn draw_count_badge(rgba: &mut [u8], width: u32, height: u32, cx: f32, cy: f
     }
 }
 
-/// Figures of `glyphs` characters in a disc of `radius`: the largest
-/// whole-pixel scale that keeps them inside, with the block's size.
 fn figure_layout(radius: f32, glyphs: u32) -> (u32, u32, u32) {
-    let text_w = glyphs * 3 + glyphs.saturating_sub(1);
-    let scale = ((radius * 2.0 * 0.78) / text_w as f32).min((radius * 2.0 * 0.66) / 5.0).floor().max(1.0) as u32;
-    (scale, text_w * scale, 5 * scale)
+    let text_w = glyphs * GLYPH_WIDTH + glyphs.saturating_sub(1);
+    let fit_width = (radius * 2.0 * 0.78) / text_w as f32;
+    let fit_height = (radius * 2.0 * 0.66) / GLYPH_HEIGHT as f32;
+    let scale = fit_width.min(fit_height).floor().max(1.0) as u32;
+    (scale, text_w * scale, GLYPH_HEIGHT * scale)
 }
 
-/// The unread badge in the bottom-right corner of an icon.
 pub fn draw_badge(rgba: &mut [u8], width: u32, height: u32, count: u32) {
     let size = width.min(height) as f32;
     let radius = size * 0.27;
@@ -112,7 +109,6 @@ fn blend(px: &mut [u8], rgb: [u8; 3], alpha: f32) {
     px[3] = px[3].max((alpha * 255.0) as u8);
 }
 
-/// The app icon, with the unread badge when `count` is above zero.
 pub fn icon(count: u32) -> Option<Image<'static>> {
     let decoded = image::load_from_memory(ICON_PNG).ok()?.to_rgba8();
     let small = image::imageops::resize(&decoded, 64, 64, image::imageops::FilterType::Triangle);
@@ -124,8 +120,6 @@ pub fn icon(count: u32) -> Option<Image<'static>> {
     Some(Image::new_owned(rgba, w, h))
 }
 
-/// The Windows taskbar overlay: a badge filling a small square, which
-/// the taskbar lays over the app icon's corner.
 #[cfg(windows)]
 pub fn overlay(count: u32) -> Image<'static> {
     let size = 32u32;
@@ -143,7 +137,6 @@ pub fn show_main_window(app: &AppHandle) {
     }
 }
 
-/// Builds the tray icon with Open, Mute and Quit.
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Commy", true, None::<&str>)?;
     let mute = MenuItem::with_id(app, "mute", "Mute / Unmute", true, None::<&str>)?;
@@ -157,7 +150,6 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
             "mute" => {
-                // The webview owns the mute flow (sound, UI, persistence).
                 let _ = app.emit("tray-toggle-mute", ());
             }
             "quit" => app.exit(0),
@@ -180,9 +172,6 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Shows the unread count where the platform puts it: on the tray icon
-/// and tooltip everywhere, as a taskbar overlay on Windows, and as the
-/// dock badge on macOS (and launchers that support one on Linux).
 pub fn set_unread(app: &AppHandle, count: u32) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_icon(icon(count));

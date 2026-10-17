@@ -1,5 +1,3 @@
-// Emoji picker data: [emoji, searchable name]. Product content for the
-// picker, grouped loosely by category.
 "use strict";
 
 const EMOJI_DATA = [

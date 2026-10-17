@@ -13,7 +13,6 @@
 		-Server
 	}
 
-	# Auth API and the discovery document the desktop app reads
 	@auth path /api/auth/* /.well-known/commy-auth.json
 	handle @auth {
 		reverse_proxy auth:3001
@@ -28,22 +27,17 @@
 	redir https://{$DOMAIN}/docs{uri} permanent
 }
 
-# iroh relay on port 8443 (443 stays free for a Cloudflare-proxied site). The
-# relay hostname must be DNS only in Cloudflare; open 8443/tcp and 3478/udp.
 {$RELAY_DOMAIN}:8443 {
-	# iroh 0.28 sends Upgrade without Connection: Upgrade, which proxies need
-	@upgrade header Upgrade *
-	request_header @upgrade Connection Upgrade
+	@upgrade_without_connection_header header Upgrade *
+	request_header @upgrade_without_connection_header Connection Upgrade
 	reverse_proxy relay-proxy:3341
 }
 
-# iroh 0.28 clients send the relay hostname with a trailing dot, which no
-# named site matches, so catch it here and refuse everything else
 https://:8443 {
-	@relay header_regexp Host ^{$RELAY_DOMAIN}\.(:[0-9]+)?$
-	handle @relay {
-		@upgrade header Upgrade *
-		request_header @upgrade Connection Upgrade
+	@relay_name_with_trailing_dot header_regexp Host ^{$RELAY_DOMAIN}\.(:[0-9]+)?$
+	handle @relay_name_with_trailing_dot {
+		@upgrade_without_connection_header header Upgrade *
+		request_header @upgrade_without_connection_header Connection Upgrade
 		reverse_proxy relay-proxy:3341
 	}
 	handle {

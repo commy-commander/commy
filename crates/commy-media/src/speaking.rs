@@ -1,13 +1,7 @@
-//! Speaking indicator: turns a stream of PCM frames into debounced
-//! "started talking" / "stopped talking" transitions for the UI.
-
 use crate::frame_has_signal;
 
-/// Frames of silence before the indicator turns off. Voice frames are
-/// 10 ms, so 25 frames keeps the ring lit across short pauses.
 pub const DEFAULT_HOLD_FRAMES: u32 = 25;
 
-/// Consecutive voiced frames needed to turn on, which ignores clicks.
 pub const DEFAULT_ATTACK_FRAMES: u32 = 2;
 
 #[derive(Debug, Clone)]
@@ -40,12 +34,10 @@ impl SpeakingDetector {
         self.speaking
     }
 
-    /// Feeds one frame. Returns the new state only when it changes.
     pub fn push(&mut self, pcm: &[i16]) -> Option<bool> {
         self.push_voiced(frame_has_signal(pcm))
     }
 
-    /// Same as `push` for callers that already know if the frame is voiced.
     pub fn push_voiced(&mut self, voiced: bool) -> Option<bool> {
         if voiced {
             self.voiced_run = self.voiced_run.saturating_add(1);
@@ -65,8 +57,6 @@ impl SpeakingDetector {
         None
     }
 
-    /// Forces the indicator off, e.g. when a peer disconnects.
-    /// Returns true if it was on.
     pub fn reset(&mut self) -> bool {
         let was = self.speaking;
         *self = Self::new(self.attack, self.hold);

@@ -1,6 +1,3 @@
-# Checks for the desktop UI (plain HTML and JavaScript, no build step):
-# the node tests of the scripts that keep their logic free of the DOM.
-
 name: UI checks
 
 on:
@@ -8,6 +5,7 @@ on:
     branches: [main]
     paths: &ui-paths
       - "apps/desktop/ui/**"
+      - "apps/desktop/src-tauri/src/expressions.rs"
       - ".github/workflows/ui.yml"
   pull_request:
     paths: *ui-paths

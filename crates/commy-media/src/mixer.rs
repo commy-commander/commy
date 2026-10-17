@@ -2,8 +2,6 @@ use crate::jitter::JitterBuffer;
 use commy_audio::FRAME_SIZE;
 use std::collections::HashMap;
 
-/// Sums the voice streams of every connected peer into one output
-/// frame. Keyed by an opaque peer id chosen by the caller.
 #[derive(Debug)]
 pub struct Mixer {
     peers: HashMap<u64, JitterBuffer>,
@@ -30,8 +28,6 @@ impl Mixer {
         self.peers.entry(peer).or_default().push(seq, pcm);
     }
 
-    /// Drops a peer's stream. Its volume is kept, so a personal volume
-    /// or mute survives the peer reconnecting.
     pub fn remove_peer(&mut self, peer: u64) {
         self.peers.remove(&peer);
     }
@@ -40,7 +36,6 @@ impl Mixer {
         self.peers.len()
     }
 
-    /// Master output volume; 1.0 is unity, clamped to [0, 2].
     pub fn set_master(&mut self, gain: f32) {
         self.master = gain.clamp(0.0, 2.0);
     }
@@ -49,12 +44,10 @@ impl Mixer {
         self.master
     }
 
-    /// Per-peer volume; 1.0 is unity, clamped to [0, 2].
     pub fn set_peer_gain(&mut self, peer: u64, gain: f32) {
         self.peer_gains.insert(peer, gain.clamp(0.0, 2.0));
     }
 
-    /// Next mixed 10 ms frame, saturating on overflow.
     pub fn next_frame(&mut self) -> Vec<i16> {
         let mut acc = vec![0f32; FRAME_SIZE];
         for (peer, jb) in self.peers.iter_mut() {
@@ -109,7 +102,6 @@ mod tests {
         mixer.set_master(0.0);
         mixer.push(1, 1, frame(1000));
         assert_eq!(mixer.next_frame(), frame(0));
-        // Clamped to at most 2x.
         mixer.set_master(10.0);
         assert_eq!(mixer.master(), 2.0);
     }
@@ -142,7 +134,6 @@ mod tests {
         mixer.push(7, 0, frame(1000));
         mixer.remove_peer(7);
         mixer.push(7, 0, frame(1000));
-        // Jitter buffers may hold the first frame back; drain a few.
         let loudest = (0..5).flat_map(|_| mixer.next_frame()).map(|s| s.abs()).max().unwrap();
         assert_eq!(loudest, 0, "a muted peer stays muted after reconnecting");
     }

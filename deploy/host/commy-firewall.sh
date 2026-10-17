@@ -1,10 +1,4 @@
 #!/bin/sh
-# Restricts HTTPS on this host to Cloudflare's edge. Docker-published ports skip ufw,
-# so port 443 is filtered in the DOCKER-USER chain as well as through ufw.
-# Port 80 stays open: Caddy only redirects there and Let's Encrypt needs it.
-# COMMY_FW_ALLOW adds extra ranges (for example your own IP) to the allow list and
-# COMMY_FW_IFACE picks the public interface; both can live in /etc/default/commy-firewall.
-# Installed by harden-vps.sh and re-run daily by commy-firewall.timer.
 
 set -eu
 
@@ -15,11 +9,9 @@ STATE="${COMMY_FW_STATE:-/var/lib/commy-firewall}"
 CHAIN="COMMY-CF"
 TAG="commy-cf"
 
-# Last known ranges, used when cloudflare.com cannot be reached
 BUILTIN_V4="173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22"
 BUILTIN_V6="2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32"
 
-# Prints a valid range list from url, else the cached copy, else the builtin list.
 ranges() {
 	family="$1" url="$2" builtin="$3"
 	mkdir -p "$STATE"
@@ -41,7 +33,6 @@ valid_ranges() {
 	done
 }
 
-# Rebuilds the COMMY-CF chain and hooks it into DOCKER-USER for port 443.
 apply_docker_user() {
 	ipt="$1" list="$2" iface="$3"
 	$ipt -L DOCKER-USER -n >/dev/null 2>&1 || return 0
@@ -57,7 +48,6 @@ apply_docker_user() {
 	done
 }
 
-# Replaces the tagged ufw rules that allow 443 from Cloudflare (docker-proxy path).
 apply_ufw() {
 	command -v ufw >/dev/null || return 0
 	ufw status numbered | grep "$TAG" | sed -n 's/^\[ *\([0-9]*\)\].*/\1/p' | sort -rn |

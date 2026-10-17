@@ -1,11 +1,3 @@
-//! End-to-end checks of private invite links, the message doorbell,
-//! offline delivery and waking a resting device, with the app's own code on real iroh nodes and a real
-//! account server. Each device is an `App` without a webview; its network
-//! events are handled the way `run_net_loop` handles them.
-//!
-//! Run them with `scripts/e2e.sh`, which starts the account server on a
-//! throwaway Postgres and sets `COMMY_AUTH_URL` and `COMMY_E2E_DATABASE_URL`.
-
 use crate::catchup::{self, AppAccess, AppStore, TestHandle};
 use crate::doorbell;
 use crate::invite_link::{self, Expiry};
@@ -32,8 +24,6 @@ fn auth_url() -> String {
     std::env::var("COMMY_AUTH_URL").expect("run these with scripts/e2e.sh, which sets COMMY_AUTH_URL")
 }
 
-/// Runs a query on the account server's database and returns its rows,
-/// one per line with `|` between columns.
 fn sql(query: &str) -> String {
     let url = std::env::var("COMMY_E2E_DATABASE_URL").expect("COMMY_E2E_DATABASE_URL is set by scripts/e2e.sh");
     let out = std::process::Command::new("psql")
@@ -83,7 +73,6 @@ fn hex(bytes: &[u8]) -> String {
     data_encoding::HEXLOWER.encode(bytes)
 }
 
-/// Things about a server that its invite row must not reveal.
 fn secrets_of(app: &App, server: ServerId) -> Vec<String> {
     let servers = app.servers.lock().unwrap();
     let state = &servers[&server];
@@ -99,14 +88,11 @@ fn secrets_of(app: &App, server: ServerId) -> Vec<String> {
     out
 }
 
-// ---------- A device ----------
-
 struct Device {
     access: TestHandle,
     secret: [u8; 32],
     pump: Option<JoinHandle<()>>,
     dir: PathBuf,
-    /// Relays the node uses instead of the app's (see [`LocalRelay`]).
     relays: Option<commy_net::local_relay::RelayMap>,
 }
 
@@ -124,7 +110,6 @@ impl Device {
         Self { access: TestHandle::new(Arc::new(app)), secret: CommyNode::generate_secret(), pump: None, dir, relays: None }
     }
 
-    /// A device whose only relay is `relay`.
     fn on_relay(name: &str, relay: &LocalRelay) -> Self {
         let mut device = Self::new(name);
         device.relays = Some(relay.map());
@@ -147,7 +132,6 @@ impl Device {
         self.app().node_hex.lock().unwrap().clone().unwrap()
     }
 
-    /// Starts the node and rejoins every server, as the app does at launch.
     async fn online(&mut self) {
         let app = self.app();
         let (mut node, events, _media, _dms) = match &self.relays {
@@ -187,7 +171,6 @@ impl Device {
         self.pump = Some(tokio::spawn(pump(self.access.clone(), events)));
     }
 
-    /// Closes the app: the node goes away, what it saved stays.
     async fn offline(&mut self) {
         if let Some(pump) = self.pump.take() {
             pump.abort();
@@ -230,15 +213,11 @@ impl Device {
         self.app().servers.lock().unwrap().get(&server).is_some_and(|s| s.server.is_member(user))
     }
 
-    /// Gossip neighbors on a server; None while the node is busy.
     fn neighbors(&self, server: ServerId) -> Option<usize> {
         let net = self.app().net.try_lock().ok()?;
         Some(net.as_ref().map_or(0, |n| n.neighbor_count(server)))
     }
 
-    /// Sends a message the way `commit_message` does: applied here, sent
-    /// or kept pending, then the doorbells of members who may have missed
-    /// it are rung. Returns it, whether it went out, and the rings.
     async fn send(&self, server: ServerId, content: &str) -> (Message, bool, Vec<(String, String, String)>) {
         let app = self.app();
         let mut message = Message::new(self.text_channel(server), self.me().id, content);
@@ -255,7 +234,6 @@ impl Device {
         (message, delivered, rings)
     }
 
-    /// Edits or deletes the way `edit_message` and `delete_message` do.
     async fn change(&self, server: ServerId, event: ServerEvent) -> bool {
         let app = self.app();
         app.servers.lock().unwrap().get_mut(&server).unwrap().apply(event.clone()).unwrap();
@@ -278,8 +256,6 @@ impl Device {
         self.change(server, proof.into_event()).await
     }
 
-    /// Takes today's rings for a server, as the listener does, and returns
-    /// the token and the ids taken.
     async fn take_doorbell(&self, server: ServerId) -> (String, Vec<String>) {
         let app = self.app();
         let endpoints = doorbell::endpoints(app, &auth_url()).await.unwrap();
@@ -290,7 +266,6 @@ impl Device {
         (token, taken.ids)
     }
 
-    /// "N messages are on their way".
     fn awaited(&self, server: ServerId) -> u32 {
         doorbell::awaited(self.app(), server)
     }
@@ -299,7 +274,6 @@ impl Device {
         Outbox::load(&self.dir)
     }
 
-    /// Away, the way AFK sets it: Idle for every member to see.
     async fn go_away(&self, server: ServerId) {
         let app = self.app();
         let profile = {
@@ -318,7 +292,6 @@ impl Device {
         self.app().servers.lock().unwrap()[&server].profiles.get(&user).map(|p| p.presence)
     }
 
-    /// In the server's mesh; None while the node is busy.
     fn joined(&self, server: ServerId) -> Option<bool> {
         let net = self.app().net.try_lock().ok()?;
         Some(net.as_ref().is_some_and(|n| n.is_joined(server)))
@@ -379,7 +352,6 @@ async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
     }
 }
 
-/// A catch-up session with `peer`, as `catchup::run_session` runs it.
 async fn session(access: TestHandle, server: ServerId, peer: [u8; 32]) {
     for _ in 0..3 {
         let app = access.app();
@@ -406,7 +378,6 @@ async fn session(access: TestHandle, server: ServerId, peer: [u8; 32]) {
     }
 }
 
-/// What `run_net_loop` does with each network event, minus voice.
 async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
     while let Some(event) = events.recv().await {
         let app = access.app();
@@ -492,8 +463,6 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
                 app.catchup.lock().unwrap().record_completed((server, peer), Instant::now());
                 catchup::after_session(&access, server, Some(&report));
             }
-            // As `wake::handle_wake`: back into the mesh, then a catch-up
-            // with whoever woke us.
             NetEvent::Wake { from } => {
                 let servers = wake::on_wake(app, from);
                 if servers.is_empty() {
@@ -511,8 +480,6 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
     }
 }
 
-/// An owner with a server, and members who joined it from its ticket and
-/// know each other's doorbells.
 async fn community(names: &[&str]) -> (Vec<Device>, ServerId) {
     gather(names.iter().map(|n| Device::new(n)).collect()).await
 }
@@ -532,7 +499,6 @@ async fn gather(mut devices: Vec<Device>) -> (Vec<Device>, ServerId) {
             wait_until("every member to know every other", || a.knows_member(server, user)).await;
         }
     }
-    // Each device rings every other one
     let others = devices.len() - 1;
     for d in &devices {
         wait_until("doorbell announcements", || {
@@ -549,8 +515,6 @@ fn init_logs() {
         .with_test_writer()
         .try_init();
 }
-
-// ---------- 1. Private invite links ----------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn private_invite_links_join_and_reveal_nothing() {
@@ -570,7 +534,6 @@ async fn private_invite_links_join_and_reveal_nothing() {
     let key = parsed.key.clone().expect("the link carries its key");
     assert_eq!(link, format!("{origin}/i/{}#{key}", parsed.code));
 
-    // The stored row: a code, a sealed blob and an expiry, nothing else
     assert_eq!(columns("invite"), ["code", "createdAt", "createdBy", "expiresAt", "id", "serverName", "ticket"]);
     let row = sql(&format!(
         "select ticket, \"serverName\", coalesce(\"createdBy\", '<null>') from invite where code = '{}'",
@@ -588,7 +551,6 @@ async fn private_invite_links_join_and_reveal_nothing() {
         assert!(!ticket.contains(&secret), "the stored invite reveals {secret:?}");
     }
 
-    // A second device joins through the link
     let resolved = invite_link::resolve(joiner.app(), &link).await.unwrap();
     assert_eq!(resolved.server_name, "Moonbase Book Club");
     assert!(resolved.trusted, "the link points at our own account server");
@@ -598,10 +560,8 @@ async fn private_invite_links_join_and_reveal_nothing() {
     wait_until("the owner to see the joiner", || owner.knows_member(server, joiner_id)).await;
     assert_eq!(joiner.app().servers.lock().unwrap()[&server].server.name, "Moonbase Book Club");
 
-    // A link is good for anyone until it expires
     assert!(invite_link::resolve(stranger.app(), &link).await.is_ok());
 
-    // Another key, a missing key or another code opens nothing
     let wrong = format!("{origin}/i/{}#{}", parsed.code, SealKey::generate().to_text());
     let err = invite_link::resolve(stranger.app(), &wrong).await.unwrap_err();
     assert_eq!(err, "This invite link is damaged or was changed");
@@ -612,7 +572,6 @@ async fn private_invite_links_join_and_reveal_nothing() {
     let err = invite_link::resolve(stranger.app(), &format!("{origin}/i/{other_code}#{key}")).await.unwrap_err();
     assert_eq!(err, "This invite is invalid or has expired");
 
-    // An expired link is refused, and the next link made sweeps it away
     sql(&format!("update invite set \"expiresAt\" = now() - interval '1 minute' where code = '{}'", parsed.code));
     let err = invite_link::resolve(stranger.app(), &link).await.unwrap_err();
     assert_eq!(err, "This invite is invalid or has expired");
@@ -620,7 +579,6 @@ async fn private_invite_links_join_and_reveal_nothing() {
     invite_link::create(joiner.app(), &other.to_string(), Expiry::Week).await.unwrap();
     assert_eq!(sql(&format!("select count(*) from invite where code = '{}'", parsed.code)), "0");
 
-    // The expiry sealed in the link caps a row the server kept longer
     let hour = invite_link::create(owner.app(), &server.to_string(), Expiry::Hour).await.unwrap();
     let hour_code = invite_link::parse(&hour.url).unwrap().code;
     sql(&format!("update invite set \"expiresAt\" = now() + interval '1 year' where code = '{hour_code}'"));
@@ -629,7 +587,6 @@ async fn private_invite_links_join_and_reveal_nothing() {
     let left = until.with_timezone(&chrono::Utc) - chrono::Utc::now();
     assert!(left <= chrono::Duration::hours(1) && left > chrono::Duration::minutes(55), "{left}");
 
-    // Links that never expire: only for a server marked public
     let err = invite_link::create(owner.app(), &server.to_string(), Expiry::Never).await.unwrap_err();
     assert_eq!(err, "Only links to a public server can last forever");
     owner.app().servers.lock().unwrap().get_mut(&server).unwrap()
@@ -655,7 +612,6 @@ async fn private_invite_links_join_and_reveal_nothing() {
     assert_eq!(resolved.expires_at, None);
     assert_eq!(resolved.server_name, "Moonbase Book Club");
 
-    // A plain ticket, which names the server, is never accepted
     let raw = owner.app().invites.lock().unwrap()[&server].clone();
     let res = owner
         .app()
@@ -672,8 +628,6 @@ async fn private_invite_links_join_and_reveal_nothing() {
     }
 }
 
-// ---------- 2. Doorbell and catch-up ----------
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn doorbell_wakes_offline_members_and_catch_up_delivers() {
     init_logs();
@@ -687,14 +641,12 @@ async fn doorbell_wakes_offline_members_and_catch_up_delivers() {
     second.offline().await;
     wait_until("the sender to have no neighbors", || sender.neighbors(server) == Some(0)).await;
 
-    // Sent with nobody online: it waits on the sender and both are rung
     let (message, delivered, rings) = sender.send(server, "Chapter 3 tonight at eight").await;
     assert!(!delivered);
     assert!(sender.app().outbox.lock().unwrap().is_pending(server, message.id));
     assert!(sender.outbox_on_disk().is_pending(server, message.id), "the pending send is saved");
     assert_eq!(rings.len(), 2, "one ring per offline device");
 
-    // What the account server holds: a daily token and a blinded id per ring
     assert_eq!(columns("doorbellRing"), ["blindedId", "createdAt", "id", "token"]);
     let stored = sql("select token, \"blindedId\" from \"doorbellRing\" order by token");
     let mut plain = vec![message.id.to_string(), message.id.0.simple().to_string(), server.to_string(), message.content.clone()];
@@ -713,7 +665,6 @@ async fn doorbell_wakes_offline_members_and_catch_up_delivers() {
     assert_ne!(ids[0], ids[1], "one message looks different to each device");
     eprintln!("stored rings: {}", rings.iter().map(|(_, t, i)| format!("{t}|{i}")).collect::<Vec<_>>().join(", "));
 
-    // The first member's app starts: it takes its ring before the network is up
     let (token, taken) = first.take_doorbell(server).await;
     assert_eq!(taken.len(), 1);
     assert!(ids.contains(&taken[0]));
@@ -722,7 +673,6 @@ async fn doorbell_wakes_offline_members_and_catch_up_delivers() {
     let (_, again) = first.take_doorbell(server).await;
     assert!(again.is_empty(), "a ring is taken once");
 
-    // Online again: catch-up brings the message, signed by its author
     first.online().await;
     wait_until("the message to arrive by catch-up", || first.message(server, message.id).is_some()).await;
     let got = first.message(server, message.id).unwrap();
@@ -731,7 +681,6 @@ async fn doorbell_wakes_offline_members_and_catch_up_delivers() {
     assert_eq!(first.awaited(server), 0, "nothing is on its way any more");
     wait_until("the sender's outbox to clear", || !sender.app().outbox.lock().unwrap().has_pending(server)).await;
 
-    // The second member's ring was still waiting for it
     let (_, taken_second) = second.take_doorbell(server).await;
     assert_eq!(taken_second.len(), 1);
     assert!(ids.contains(&taken_second[0]) && taken_second[0] != taken[0]);
@@ -746,16 +695,11 @@ async fn doorbell_wakes_offline_members_and_catch_up_delivers() {
     }
 }
 
-/// Linked devices are kept as an id, node id, owner and two times: no
-/// computer name or anything else that describes them.
 #[test]
 fn linked_devices_keep_nothing_descriptive() {
     assert_eq!(columns("linkedDevice"), ["createdAt", "id", "lastSeenAt", "nodeId", "userId"]);
 }
 
-/// The bench case: the sender closes, the member comes back alone and
-/// sees "1 message is on its way" from the app's own listener, before any
-/// peer is reachable.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn doorbell_banner_shows_before_any_peer_is_back() {
     init_logs();
@@ -768,7 +712,6 @@ async fn doorbell_banner_shows_before_any_peer_is_back() {
     assert!(!delivered && rings.len() == 1);
     sender.offline().await;
 
-    // The member's app starts as it does at launch: network up, listener running
     member.online().await;
     member.access.take_events();
     let launched = Instant::now();
@@ -783,8 +726,6 @@ async fn doorbell_banner_shows_before_any_peer_is_back() {
     });
     assert!(refreshed, "the window is told to refresh the banner");
 
-    // The sender comes back and dials the member, as the app's mesh healer
-    // does: the message arrives and the banner goes
     sender.online().await;
     let member_node = member.node_hex();
     {
@@ -811,7 +752,6 @@ async fn doorbell_limits_hold() {
         http.post(url).header("x-forwarded-for", ip).json(&body).send()
     };
 
-    // Per token: at most 1000 rings are kept, the oldest go first
     let token = random(16);
     for _ in 0..21 {
         let ids: Vec<String> = (0..bell::MAX_RING_IDS).map(|_| random(12)).collect();
@@ -824,7 +764,6 @@ async fn doorbell_limits_hold() {
     assert_eq!(taken["ids"].as_array().unwrap().len(), 1000);
     assert_eq!(sql(&format!("select count(*) from \"doorbellRing\" where token = '{token}'")), "0");
 
-    // Malformed rings are refused
     let bad = [
         serde_json::json!({ "token": "nothex", "ids": [] }),
         serde_json::json!({ "token": random(16), "ids": ["short"] }),
@@ -836,7 +775,6 @@ async fn doorbell_limits_hold() {
     let big = serde_json::json!({ "token": random(16), "ids": [], "pad": "x".repeat(9000) });
     assert_eq!(post(&ring, "198.51.100.2", big).await.unwrap().status(), 413);
 
-    // Per address: 300 rings and 600 takes a minute, each address on its own
     for (url, max) in [(&ring, 300), (&take, 600)] {
         let ip = format!("203.0.113.{}", if max == 300 { 10 } else { 11 });
         for i in 0..max {
@@ -849,8 +787,6 @@ async fn doorbell_limits_hold() {
         assert_eq!(post(url, "203.0.113.99", body).await.unwrap().status(), 200, "another address is not held up");
     }
 }
-
-// ---------- 3. Edits and deletes made offline ----------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn offline_edits_and_deletes_arrive_in_order_signed() {
@@ -868,9 +804,6 @@ async fn offline_edits_and_deletes_arrive_in_order_signed() {
     assert!(!author.edit(server, kept.id, "final words").await);
     assert!(!author.delete(server, gone.id).await);
 
-    // Waiting on the author: the kept message, edited in place, and the
-    // delete. Edits of a message still pending travel with it, so none can
-    // reach the reader before the message it changes.
     let mut saved = author.outbox_on_disk();
     assert!(saved.is_pending(server, kept.id));
     assert!(!saved.is_pending(server, gone.id), "a deleted message is not sent");
@@ -887,7 +820,6 @@ async fn offline_edits_and_deletes_arrive_in_order_signed() {
     assert_eq!(kinds.last().unwrap(), &format!("delete {}", gone.id));
     assert!(!kinds.iter().any(|k| k.starts_with("edit ")), "edits of a pending message are not queued");
 
-    // Edited once it went out: that edit is queued and arrives after it
     reader.online().await;
     wait_until("the kept message to arrive", || reader.message(server, kept.id).is_some()).await;
     assert_eq!(reader.message(server, kept.id).unwrap().content, "final words");
@@ -918,7 +850,6 @@ async fn offline_edits_and_deletes_arrive_in_order_signed() {
     let proofs = reader.app().servers.lock().unwrap()[&server].tombstones_for(gone.id).into_iter().cloned().collect::<Vec<_>>();
     assert!(proofs.iter().all(|p| p.by == author.me().id && p.verify(server, &author_key)));
 
-    // A message deleted before it went out never reaches anyone
     let channel = reader.text_channel(server);
     let reader_view: Vec<(MessageId, String)> =
         reader.app().servers.lock().unwrap()[&server].messages(channel).iter().map(|m| (m.id, m.content.clone())).collect();
@@ -936,8 +867,6 @@ async fn offline_edits_and_deletes_arrive_in_order_signed() {
     }
 }
 
-// ---------- 4. Waking a resting device ----------
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_wake_through_the_relay_brings_a_resting_device_back() {
     init_logs();
@@ -951,22 +880,18 @@ async fn a_wake_through_the_relay_brings_a_resting_device_back() {
     }
     let sleeper_id = sleeper.me().id;
 
-    // The sleeper goes away, then rests: out of every mesh, relay link kept
     sleeper.go_away(server).await;
     wait_until("the others to see the sleeper away", || {
         sender.presence_of(server, sleeper_id) == Some(Presence::Idle)
             && other.presence_of(server, sleeper_id) == Some(Presence::Idle)
     })
     .await;
-    // Catch-up sessions from joining (retried every 2 s) finish first; a
-    // resting device still answers catch-up, it just starts none.
     tokio::time::sleep(Duration::from_secs(8)).await;
     assert_eq!(wake::rest(sleeper.app()).await, 1);
     assert!(wake::is_resting(sleeper.app()));
     assert_eq!(sleeper.joined(server), Some(false));
     assert_eq!(sleeper.home_relay().as_deref(), Some(relay_url.as_str()), "still on the relay");
 
-    // Messages go out to the mesh; the resting device misses them
     let mut sent = Vec::new();
     for text in ["Chapter 3 tonight at eight", "Bring the annotated copy", "Snacks are on me"] {
         let (message, delivered, _) = sender.send(server, text).await;
@@ -979,14 +904,12 @@ async fn a_wake_through_the_relay_brings_a_resting_device_back() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(sent.iter().all(|m| sleeper.message(server, m.id).is_none()), "nothing reaches a resting device");
 
-    // The sender wakes only devices of members who look away or offline
     assert_eq!(wake::targets(sender.app(), server), vec![sleeper.node_hex()]);
     let woken = wake::wake_members(sender.app(), server).await;
     eprintln!("wakes sent: {woken:?}");
     assert_eq!(woken, vec![(sleeper.node_hex(), true)], "one wake, and it landed");
     assert!(wake::wake_members(sender.app(), server).await.is_empty(), "one wake per device per 30 s");
 
-    // Woken: back in the mesh, and catch-up with the sender brings every message
     for m in &sent {
         wait_until("the woken device to catch up", || sleeper.message(server, m.id).is_some()).await;
         assert!(sleeper.message(server, m.id).unwrap().verify(server, &sender.key()), "signed by its author");
@@ -999,7 +922,6 @@ async fn a_wake_through_the_relay_brings_a_resting_device_back() {
     wait_until("live messages to flow again", || sleeper.message(server, live.id).is_some()).await;
     assert!(wake::on_wake(sleeper.app(), sender.node_bytes()).is_empty(), "an awake device ignores wakes");
 
-    // A device that is not a member cannot wake anyone
     let mut stranger = Device::on_relay("mallory", &relay);
     stranger.online().await;
     wake::rest(sleeper.app()).await;
@@ -1017,7 +939,6 @@ async fn a_wake_through_the_relay_brings_a_resting_device_back() {
     relay.stop().await;
 }
 
-// ---------- 5. Small groups while the author is away ----------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_member_starts_at_once_when_nobody_else_is_online() {

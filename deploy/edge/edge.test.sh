@@ -1,9 +1,4 @@
 #!/bin/sh
-# Runs the edge Caddyfile's site block in a real Caddy and checks two things:
-# invite and doorbell requests never reach the access log, and the auth server
-# is told the visitor's own address (one value, which its rate limits need)
-# whether the visitor comes through a trusted proxy or straight in.
-# Run: sh deploy/edge/edge.test.sh   (downloads Caddy unless CADDY is set)
 
 set -e
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -37,7 +32,6 @@ if [ -z "$caddy" ]; then
 	caddy="$work/caddy"
 fi
 
-# An upstream that answers with the X-Forwarded-For header it was sent
 cat >"$work/echo.mjs" <<'EOF'
 import http from "node:http";
 http
@@ -47,8 +41,6 @@ EOF
 node "$work/echo.mjs" "$echo_port" &
 echo_pid=$!
 
-# The real global options and site snippet. 127.0.0.2 stands in for Cloudflare,
-# and every upstream is the echo server.
 awk 'NR == 1, /^}/' "$here/Caddyfile" |
 	sed -e "s#trusted_proxies static .*#trusted_proxies static 127.0.0.2/32#" \
 		-e "s#email {\$ACME_EMAIL}#auto_https off#" >"$work/Caddyfile"

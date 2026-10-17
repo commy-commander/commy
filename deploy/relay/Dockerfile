@@ -1,4 +1,3 @@
-# iroh-relay built from the same iroh-net release the app uses; bump together.
 FROM rust:1.90-slim-bookworm AS build
 ARG IROH_NET_VERSION=0.28.2
 RUN cargo install iroh-net --version "=${IROH_NET_VERSION}" --features iroh-relay --bin iroh-relay --root /out

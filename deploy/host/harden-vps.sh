@@ -1,9 +1,4 @@
 #!/bin/sh
-# Hardens a server set up by setup-vps.sh: ufw with SSH rate limiting, HTTPS only from
-# Cloudflare (refreshed daily) and the relay ports open to everyone.
-#   sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
-# Settings (environment variables):
-#   PUBLIC_PORTS   ports open to everyone besides 80, default "3478/udp 3479/udp 7842/udp 8443/tcp" (iroh relays; 3479/udp is the staging relay's STUN)
 
 set -eu
 
@@ -16,11 +11,14 @@ CADDY_LOGS="${CADDY_LOGS:-/var/log/commy-caddy}"
 echo "== Firewall"
 command -v ufw >/dev/null || { apt-get update -qq && apt-get install -y -qq ufw; }
 
-# SSH first so enabling ufw can never cut off the current session
-ssh_ports="$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2}' || true)"
-for port in ${ssh_ports:-22}; do
-	ufw limit "$port/tcp" comment "commy-ssh" >/dev/null
-done
+allow_ssh_before_ufw_is_enabled() {
+	ssh_ports="$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2}' || true)"
+	for port in ${ssh_ports:-22}; do
+		ufw limit "$port/tcp" comment "commy-ssh" >/dev/null
+	done
+}
+
+allow_ssh_before_ufw_is_enabled
 ufw allow 80/tcp comment "commy-http" >/dev/null
 for p in $PUBLIC_PORTS; do
 	ufw allow "$p" comment "commy-public" >/dev/null
@@ -56,7 +54,6 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
-# Docker recreates its chains on restart, so re-apply after it
 mkdir -p /etc/systemd/system/docker.service.d
 cat >/etc/systemd/system/docker.service.d/commy-firewall.conf <<'EOF'
 [Service]
@@ -66,8 +63,6 @@ systemctl daemon-reload
 systemctl enable --now commy-firewall.service commy-firewall.timer >/dev/null 2>&1
 /usr/local/sbin/commy-firewall apply
 
-
-# Pick up the current edge Caddyfile and its access log mount
 edge="$here/../edge"
 if [ -f "$edge/.env" ] && docker compose --project-directory "$edge" ps -q caddy 2>/dev/null | grep -q .; then
 	echo "== Edge proxy"

@@ -1,8 +1,3 @@
-//! cpal device glue. The sample-rate/channel shaping lives in pure
-//! structs (`FrameAssembler`, `OutputShaper`) so it can be tested;
-//! the cpal streams themselves are created on dedicated threads
-//! because they are not Send.
-
 use crate::mixer::Mixer;
 use anyhow::{anyhow, Context, Result};
 use commy_audio::{VoiceProcessor, FRAME_SIZE, SAMPLE_RATE};
@@ -12,8 +7,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
-/// Turns arbitrary interleaved device input into 48 kHz mono frames
-/// of FRAME_SIZE samples, with linear resampling.
 pub struct FrameAssembler {
     src_rate: u32,
     channels: u16,
@@ -38,7 +31,6 @@ impl FrameAssembler {
         }
     }
 
-    /// Next 10 ms 48 kHz mono frame, or None until enough input landed.
     pub fn next_frame(&mut self) -> Option<Vec<f32>> {
         let ratio = self.src_rate as f64 / SAMPLE_RATE as f64;
         let last_needed = self.pos + (FRAME_SIZE as f64) * ratio + 1.0;
@@ -62,8 +54,6 @@ impl FrameAssembler {
     }
 }
 
-/// Feeds a device output callback from 48 kHz mono mixer frames,
-/// resampling and fanning out to the device channel count.
 pub struct OutputShaper {
     dev_rate: u32,
     buffer: VecDeque<f32>,
@@ -111,7 +101,6 @@ impl OutputShaper {
     }
 }
 
-/// Keeps a device stream alive on its own thread until dropped.
 pub struct StreamHandle {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -156,7 +145,6 @@ fn run_stream_thread(
     })
 }
 
-/// Names of the system's microphones (`input`) or speakers.
 pub fn list_device_names(input: bool) -> Vec<String> {
     let host = cpal::default_host();
     let devices = if input { host.input_devices() } else { host.output_devices() };
@@ -167,8 +155,6 @@ pub fn list_device_names(input: bool) -> Vec<String> {
     names
 }
 
-/// Index of the device to use: the saved name if it is still plugged
-/// in, otherwise None so the caller falls back to the system default.
 pub fn select_device(available: &[String], wanted: Option<&str>) -> Option<usize> {
     let wanted = wanted?.trim();
     if wanted.is_empty() {
@@ -194,8 +180,6 @@ fn find_device(host: &cpal::Host, input: bool, wanted: Option<&str>) -> Option<c
     chosen.or_else(|| if input { host.default_input_device() } else { host.default_output_device() })
 }
 
-/// Captures a microphone (the named one, else the default), runs it through the shared
-/// `VoiceProcessor`, and emits transmit-ready PCM frames.
 pub fn start_microphone(
     processor: Arc<Mutex<VoiceProcessor>>,
     tx: UnboundedSender<Vec<i16>>,
@@ -286,7 +270,6 @@ pub fn start_microphone(
         })
 }
 
-/// Plays the mixed voices of every peer through the default output.
 pub fn start_playback(mixer: Arc<Mutex<Mixer>>, device_name: Option<String>) -> Result<OutputHandle> {
     let stop = Arc::new(AtomicBool::new(false));
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -345,7 +328,6 @@ mod tests {
     #[test]
     fn stereo_is_downmixed() {
         let mut fa = FrameAssembler::new(SAMPLE_RATE, 2);
-        // L=1.0, R=0.0 -> mono 0.5
         let mut input = Vec::new();
         for _ in 0..FRAME_SIZE * 2 {
             input.push(1.0);
@@ -359,7 +341,6 @@ mod tests {
     #[test]
     fn resamples_44100_to_48000() {
         let mut fa = FrameAssembler::new(44_100, 1);
-        // One second of input should yield close to 100 frames.
         fa.push(&vec![0.25f32; 44_100]);
         let mut frames = 0;
         while fa.next_frame().is_some() {
@@ -381,9 +362,8 @@ mod tests {
     #[test]
     fn output_shaper_fills_stereo_from_mono_frames() {
         let mut shaper = OutputShaper::new(SAMPLE_RATE);
-        let mut out = vec![0.0f32; 960]; // 480 stereo samples
+        let mut out = vec![0.0f32; 960];
         shaper.fill(&mut out, 2, || vec![16384i16; FRAME_SIZE]);
-        // Both channels carry the same upscaled value (~0.5).
         assert!((out[0] - 0.5).abs() < 0.01);
         assert!((out[1] - 0.5).abs() < 0.01);
         assert!((out[958] - 0.5).abs() < 0.01);
@@ -398,7 +378,6 @@ mod tests {
             calls += 1;
             vec![0i16; FRAME_SIZE]
         });
-        // 441 samples at 44.1 kHz is 10 ms, about one 48 kHz frame.
         assert!((1..=3).contains(&calls), "pulled {calls} frames");
     }
 

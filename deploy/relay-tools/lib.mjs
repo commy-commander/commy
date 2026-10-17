@@ -1,8 +1,5 @@
-// Pure logic for the relay bandwidth meter, unit tested in test/.
-
 const GB = 1e9;
 
-// Reads relayed byte counters from iroh-relay's Prometheus metrics.
 export function parseMetrics(text) {
   const read = (name) => {
     const m = new RegExp(`^relayserver_${name}_total\\s+([0-9.e+]+)\\s*$`, "m").exec(text);
@@ -22,8 +19,12 @@ export function initialState(now) {
   return { month: monthKey(now), total: 0, last: null, level: "ok" };
 }
 
-// Adds the bytes relayed since the previous sample. A counter that went
-// backwards means the relay restarted, so the new value is all fresh traffic.
+function bytesSince(current, previous) {
+  if (previous === undefined || previous === null) return 0;
+  const relayRestartedAndResetItsCounter = current < previous;
+  return relayRestartedAndResetItsCounter ? current : current - previous;
+}
+
 export function step(state, sample, now) {
   const month = monthKey(now);
   const next = { ...state };
@@ -32,8 +33,7 @@ export function step(state, sample, now) {
     next.total = 0;
   }
   if (sample) {
-    const delta = (cur, prev) => (prev === undefined || prev === null ? 0 : cur >= prev ? cur - prev : cur);
-    next.total += delta(sample.sent, state.last?.sent) + delta(sample.recv, state.last?.recv);
+    next.total += bytesSince(sample.sent, state.last?.sent) + bytesSince(sample.recv, state.last?.recv);
     next.last = sample;
   }
   return next;
@@ -72,9 +72,6 @@ export function loadConfig(env) {
   };
 }
 
-// iroh-relay 0.28 answers its upgrade with 101 but no `Connection: Upgrade`
-// header, which reverse proxies (Caddy included) require before switching
-// protocols. Adds the header to a 101 response head that lacks it.
 export function fixUpgradeHead(head) {
   if (!/^HTTP\/1\.[01] 101\b/.test(head) || /\r\nconnection:/i.test(head)) return head;
   const end = head.indexOf("\r\n\r\n");
@@ -82,7 +79,6 @@ export function fixUpgradeHead(head) {
   return `${head.slice(0, end)}\r\nConnection: Upgrade${head.slice(end)}`;
 }
 
-// Rebuilds an HTTP/1.1 request head from Node's raw header list.
 export function requestHead(method, url, rawHeaders) {
   let out = `${method} ${url} HTTP/1.1\r\n`;
   for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
