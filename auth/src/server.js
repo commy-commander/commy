@@ -9,19 +9,23 @@ import { connectRedis } from "./redis.js";
 
 const config = loadConfig();
 
+async function retryUntilDatabaseReady(work, attempts) {
+  for (let i = 1; ; i++) {
+    try {
+      await work();
+      return;
+    } catch (err) {
+      if (i >= attempts) throw err;
+      console.warn(`[auth] database not ready (${err.code ?? err.message}), retrying`);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+}
+
 async function dropRetiredColumnsBeforeBetterAuthStarts(attempts = 30) {
   const old = new pg.Pool({ connectionString: config.databaseUrl, max: 1 });
   try {
-    for (let i = 1; ; i++) {
-      try {
-        await dropDeviceNames(old);
-        return;
-      } catch (err) {
-        if (i >= attempts) throw err;
-        console.warn(`[auth] database not ready (${err.code ?? err.message}), retrying`);
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-    }
+    await retryUntilDatabaseReady(() => dropDeviceNames(old), attempts);
   } finally {
     await old.end();
   }
@@ -33,20 +37,13 @@ redis?.ready.then(() => console.log("[auth] redis connected"));
 const { auth, options, pool } = createAuth(config, { redis });
 
 async function migrate(attempts = 30) {
-  for (let i = 1; ; i++) {
-    try {
-      const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(options);
-      if (toBeCreated.length || toBeAdded.length) {
-        console.log(`[auth] applying schema: ${toBeCreated.length} new tables, ${toBeAdded.length} altered`);
-        await runMigrations();
-      }
-      return;
-    } catch (err) {
-      if (i >= attempts) throw err;
-      console.warn(`[auth] database not ready (${err.code ?? err.message}), retrying`);
-      await new Promise((r) => setTimeout(r, 2000));
+  await retryUntilDatabaseReady(async () => {
+    const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(options);
+    if (toBeCreated.length || toBeAdded.length) {
+      console.log(`[auth] applying schema: ${toBeCreated.length} new tables, ${toBeAdded.length} altered`);
+      await runMigrations();
     }
-  }
+  }, attempts);
 }
 
 const authHandler = toNodeHandler(auth);
