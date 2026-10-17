@@ -48,6 +48,7 @@ function renderMembers() {
     const row = el("div", "member" + (overlay.speaking.has(member.id) ? " speaking" : ""));
     row.dataset.user = member.id;
     const avatar = el("div", "avatar");
+    avatar.style.setProperty("--tint", personTint(member.id));
     if (member.image) {
       const img = el("img");
       img.src = member.image;
