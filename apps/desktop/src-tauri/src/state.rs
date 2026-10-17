@@ -217,6 +217,7 @@ impl Default for App {
             igdb: tokio::sync::Mutex::new(crate::igdb::IgdbClient::default()),
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
                 .user_agent("Commy")
                 .build()
                 .unwrap_or_default(),
