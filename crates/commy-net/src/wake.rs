@@ -46,7 +46,6 @@ impl WakeAcceptor {
     }
 }
 
-#[allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
 impl ProtocolHandler for WakeAcceptor {
     fn accept(self: Arc<Self>, connecting: Connecting) -> futures_lite::future::Boxed<Result<()>> {
         Box::pin(async move {
@@ -71,16 +70,12 @@ impl ProtocolHandler for WakeAcceptor {
     }
 }
 
-#[allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
 pub(crate) async fn send(
     endpoint: iroh::net::Endpoint,
     node: iroh::net::NodeId,
     relay: Option<iroh::net::relay::RelayUrl>,
 ) -> Result<()> {
-    let mut addr = iroh::net::NodeAddr::new(node);
-    if let Some(relay) = relay {
-        addr = addr.with_relay_url(relay);
-    }
+    let addr = crate::node::addr_with_relay(node, relay);
     let wake = async {
         let connection = endpoint.connect(addr, WAKE_ALPN).await.context("device is unreachable")?;
         let (mut send, mut recv) = connection.open_bi().await?;

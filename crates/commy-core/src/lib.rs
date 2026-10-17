@@ -11,8 +11,8 @@ pub mod server;
 pub mod store;
 pub mod user;
 
-#[cfg(test)]
-mod test_support;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 pub use action::{Action, SignedEvent};
 pub use catchup::{BucketDigest, BucketKey};

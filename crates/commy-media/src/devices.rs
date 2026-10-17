@@ -39,12 +39,7 @@ impl FrameAssembler {
         }
         let mut out = Vec::with_capacity(FRAME_SIZE);
         for i in 0..FRAME_SIZE {
-            let p = self.pos + i as f64 * ratio;
-            let idx = p as usize;
-            let frac = (p - idx as f64) as f32;
-            let a = *self.mono.get(idx).unwrap_or(&0.0);
-            let b = *self.mono.get(idx + 1).unwrap_or(&a);
-            out.push(a + (b - a) * frac);
+            out.push(sample_at(&self.mono, self.pos + i as f64 * ratio));
         }
         self.pos += FRAME_SIZE as f64 * ratio;
         let consumed = self.pos as usize;
@@ -52,6 +47,14 @@ impl FrameAssembler {
         self.pos -= consumed as f64;
         Some(out)
     }
+}
+
+fn sample_at(samples: &VecDeque<f32>, pos: f64) -> f32 {
+    let idx = pos as usize;
+    let frac = (pos - idx as f64) as f32;
+    let a = *samples.get(idx).unwrap_or(&0.0);
+    let b = *samples.get(idx + 1).unwrap_or(&a);
+    a + (b - a) * frac
 }
 
 pub struct OutputShaper {
@@ -83,11 +86,7 @@ impl OutputShaper {
                 self.buffer
                     .extend(frame.iter().map(|s| *s as f32 / 32768.0));
             }
-            let idx = self.pos as usize;
-            let frac = (self.pos - idx as f64) as f32;
-            let a = *self.buffer.get(idx).unwrap_or(&0.0);
-            let b = *self.buffer.get(idx + 1).unwrap_or(&a);
-            let sample = a + (b - a) * frac;
+            let sample = sample_at(&self.buffer, self.pos);
             for slot in chunk.iter_mut() {
                 *slot = sample;
             }
@@ -120,11 +119,13 @@ impl Drop for StreamHandle {
 }
 
 fn run_stream_thread(
-    stop: Arc<AtomicBool>,
+    died: &'static str,
     build: impl FnOnce() -> Result<cpal::Stream> + Send + 'static,
-    ready: std::sync::mpsc::Sender<Result<()>>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
+) -> Result<StreamHandle> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (ready, ready_rx) = std::sync::mpsc::channel();
+    let stopped = stop.clone();
+    let thread = std::thread::spawn(move || {
         let stream = match build() {
             Ok(stream) => {
                 let _ = ready.send(Ok(()));
@@ -138,10 +139,14 @@ fn run_stream_thread(
         if let Err(e) = stream.play() {
             tracing::error!("audio stream failed to start: {e}");
         }
-        while !stop.load(Ordering::Relaxed) {
+        while !stopped.load(Ordering::Relaxed) {
             std::thread::park_timeout(std::time::Duration::from_millis(200));
         }
         drop(stream);
+    });
+    ready_rx.recv().context(died)?.map(|_| StreamHandle {
+        stop,
+        thread: Some(thread),
     })
 }
 
@@ -185,129 +190,96 @@ pub fn start_microphone(
     tx: UnboundedSender<Vec<i16>>,
     device_name: Option<String>,
 ) -> Result<InputHandle> {
-    let stop = Arc::new(AtomicBool::new(false));
-    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    run_stream_thread("microphone thread died", move || {
+        let host = cpal::default_host();
+        let device = find_device(&host, true, device_name.as_deref())
+            .ok_or_else(|| anyhow!("no microphone found"))?;
+        let config = device
+            .default_input_config()
+            .context("no default input config")?;
+        let sample_rate = config.sample_rate().0;
+        let channels = config.channels();
+        let mut assembler = FrameAssembler::new(sample_rate, channels);
 
-    let thread = run_stream_thread(
-        stop.clone(),
-        move || {
-            let host = cpal::default_host();
-            let device = find_device(&host, true, device_name.as_deref())
-                .ok_or_else(|| anyhow!("no microphone found"))?;
-            let config = device
-                .default_input_config()
-                .context("no default input config")?;
-            let sample_rate = config.sample_rate().0;
-            let channels = config.channels();
-            let assembler = Arc::new(Mutex::new(FrameAssembler::new(sample_rate, channels)));
-
-            let data_cb = {
-                let assembler = assembler.clone();
-                let processor = processor.clone();
-                let tx = tx.clone();
-                move |data: &[f32]| {
-                    let mut assembler = assembler.lock().unwrap();
-                    assembler.push(data);
-                    while let Some(frame) = assembler.next_frame() {
-                        let processed = processor.lock().unwrap().process(&frame);
-                        if let Ok(processed) = processed {
-                            if processed.should_transmit {
-                                let pcm: Vec<i16> = processed
-                                    .samples
-                                    .iter()
-                                    .map(|s| (s * 32767.0) as i16)
-                                    .collect();
-                                let _ = tx.send(pcm);
-                            }
-                        }
+        let mut data_cb = move |data: &[f32]| {
+            assembler.push(data);
+            while let Some(frame) = assembler.next_frame() {
+                let processed = processor.lock().unwrap().process(&frame);
+                if let Ok(processed) = processed {
+                    if processed.should_transmit {
+                        let pcm: Vec<i16> = processed
+                            .samples
+                            .iter()
+                            .map(|s| (s * 32767.0) as i16)
+                            .collect();
+                        let _ = tx.send(pcm);
                     }
                 }
-            };
+            }
+        };
 
-            let err_cb = |e| tracing::error!("microphone stream error: {e}");
-            let stream = match config.sample_format() {
-                cpal::SampleFormat::F32 => device.build_input_stream(
-                    &config.into(),
-                    move |data: &[f32], _| data_cb(data),
-                    err_cb,
-                    None,
-                )?,
-                cpal::SampleFormat::I16 => device.build_input_stream(
+        let err_cb = |e| tracing::error!("microphone stream error: {e}");
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => device.build_input_stream(
+                &config.into(),
+                move |data: &[f32], _| data_cb(data),
+                err_cb,
+                None,
+            )?,
+            cpal::SampleFormat::I16 => {
+                let mut floats: Vec<f32> = Vec::new();
+                device.build_input_stream(
                     &config.into(),
                     move |data: &[i16], _| {
-                        let floats: Vec<f32> =
-                            data.iter().map(|s| *s as f32 / 32768.0).collect();
+                        floats.clear();
+                        floats.extend(data.iter().map(|s| *s as f32 / 32768.0));
                         data_cb(&floats);
                     },
                     err_cb,
                     None,
-                )?,
-                cpal::SampleFormat::U16 => device.build_input_stream(
+                )?
+            }
+            cpal::SampleFormat::U16 => {
+                let mut floats: Vec<f32> = Vec::new();
+                device.build_input_stream(
                     &config.into(),
                     move |data: &[u16], _| {
-                        let floats: Vec<f32> = data
-                            .iter()
-                            .map(|s| (*s as f32 - 32768.0) / 32768.0)
-                            .collect();
+                        floats.clear();
+                        floats.extend(data.iter().map(|s| (*s as f32 - 32768.0) / 32768.0));
                         data_cb(&floats);
                     },
                     err_cb,
                     None,
-                )?,
-                other => return Err(anyhow!("unsupported input format {other:?}")),
-            };
-            Ok(stream)
-        },
-        ready_tx,
-    );
-
-    ready_rx
-        .recv()
-        .context("microphone thread died")?
-        .map(|_| StreamHandle {
-            stop,
-            thread: Some(thread),
-        })
+                )?
+            }
+            other => return Err(anyhow!("unsupported input format {other:?}")),
+        };
+        Ok(stream)
+    })
 }
 
 pub fn start_playback(mixer: Arc<Mutex<Mixer>>, device_name: Option<String>) -> Result<OutputHandle> {
-    let stop = Arc::new(AtomicBool::new(false));
-    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    run_stream_thread("playback thread died", move || {
+        let host = cpal::default_host();
+        let device = find_device(&host, false, device_name.as_deref())
+            .ok_or_else(|| anyhow!("no output device found"))?;
+        let config = device
+            .default_output_config()
+            .context("no default output config")?;
+        let sample_rate = config.sample_rate().0;
+        let channels = config.channels();
+        let mut shaper = OutputShaper::new(sample_rate);
 
-    let thread = run_stream_thread(
-        stop.clone(),
-        move || {
-            let host = cpal::default_host();
-            let device = find_device(&host, false, device_name.as_deref())
-                .ok_or_else(|| anyhow!("no output device found"))?;
-            let config = device
-                .default_output_config()
-                .context("no default output config")?;
-            let sample_rate = config.sample_rate().0;
-            let channels = config.channels();
-            let mut shaper = OutputShaper::new(sample_rate);
-
-            let stream = device.build_output_stream(
-                &config.into(),
-                move |data: &mut [f32], _| {
-                    let mixer = mixer.clone();
-                    shaper.fill(data, channels, move || mixer.lock().unwrap().next_frame());
-                },
-                |e| tracing::error!("playback stream error: {e}"),
-                None,
-            )?;
-            Ok(stream)
-        },
-        ready_tx,
-    );
-
-    ready_rx
-        .recv()
-        .context("playback thread died")?
-        .map(|_| StreamHandle {
-            stop,
-            thread: Some(thread),
-        })
+        let stream = device.build_output_stream(
+            &config.into(),
+            move |data: &mut [f32], _| {
+                shaper.fill(data, channels, || mixer.lock().unwrap().next_frame());
+            },
+            |e| tracing::error!("playback stream error: {e}"),
+            None,
+        )?;
+        Ok(stream)
+    })
 }
 
 #[cfg(test)]

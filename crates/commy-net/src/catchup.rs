@@ -1,6 +1,6 @@
-use crate::media::{read_frame, write_frame, MediaError, MAX_MEDIA_FRAME};
+use crate::media::{read_frame, read_frame_capped, write_frame, MediaError, MAX_MEDIA_FRAME};
 use commy_core::catchup::{
-    bucket_digest, cap, current_window, day_number, diff, mismatched, BucketItems, Listing,
+    bucket_digest, cap, current_window, day_number, lacking_from, mismatched, BucketItems, Listing,
     CATCHUP_MAX_ITEMS,
 };
 use commy_core::{
@@ -14,7 +14,7 @@ use std::fmt;
 use std::hash::Hash;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 pub const CATCHUP_ALPN: &[u8] = b"commy/catchup/1";
 
@@ -400,7 +400,9 @@ where
         .items(server, &keys)
         .into_iter()
         .partition(|(key, _)| listed.contains(key));
-    let (mut they_lack, mut we_want) = diff(&mine, &theirs);
+    let peer = Listing::new(&theirs);
+    let mut they_lack = lacking_from(&mine, &peer);
+    let mut we_want = lacking_from(&theirs, &Listing::new(&mine));
     log_capped("send", cap(&mut they_lack));
     log_capped("fetch", cap(&mut we_want));
 
@@ -415,7 +417,7 @@ where
     }
 
     let pushed_set: HashSet<MessageId> = pushed.iter().copied().collect();
-    let peer_had: Vec<MessageId> = initiator_peer_had(&settled, &sent, &mine, &theirs)
+    let peer_had: Vec<MessageId> = initiator_peer_had(&settled, &sent, &mine, &peer)
         .into_iter()
         .filter(|id| !pushed_set.contains(id))
         .collect();
@@ -647,9 +649,8 @@ fn initiator_peer_had(
     settled: &[BucketItems],
     sent: &HashMap<BucketKey, BucketDigest>,
     mine: &[BucketItems],
-    theirs: &[BucketItems],
+    listing: &Listing,
 ) -> Vec<MessageId> {
-    let listing = Listing::new(theirs);
     let (mut confirmed, mut lacked) = (Vec::new(), HashSet::new());
     for (key, list) in mine {
         for &(id, version) in list {
@@ -753,12 +754,7 @@ where
                 budget = budget
                     .checked_sub(size.max(1))
                     .ok_or(CatchupError::TooMuch)?;
-                signers.extend(
-                    tombstones
-                        .iter()
-                        .map(|p| p.by)
-                        .chain(messages.iter().map(|m| m.author)),
-                );
+                signers.extend(signers_of(&messages, &tombstones));
                 let (messages, refused): (Vec<Message>, Vec<Message>) = messages
                     .into_iter()
                     .partition(|m| fits(m.id, message_key(m)));
@@ -767,15 +763,10 @@ where
                     .into_iter()
                     .partition(|p| fits(p.message, tombstone_key(p)));
                 out.rejected.extend(refused.iter().map(|p| p.message));
-                let profiles: Vec<UserProfile> = dedup(
-                    tombstones
-                        .iter()
-                        .map(|p| p.by)
-                        .chain(messages.iter().map(|m| m.author)),
-                )
-                .into_iter()
-                .filter_map(|user| waiting.remove(&user).map(|(p, _)| p))
-                .collect();
+                let profiles: Vec<UserProfile> = dedup(signers_of(&messages, &tombstones))
+                    .into_iter()
+                    .filter_map(|user| waiting.remove(&user).map(|(p, _)| p))
+                    .collect();
                 waiting.clear();
                 waiting_bytes = 0;
                 if messages.is_empty() && tombstones.is_empty() {
@@ -807,7 +798,17 @@ where
 }
 
 fn encoded_len<T: Serialize>(value: &T) -> usize {
-    postcard::to_stdvec(value).map_or(usize::MAX, |b| b.len())
+    postcard::serialize_with_flavor(value, postcard::ser_flavors::Size::default()).unwrap_or(usize::MAX)
+}
+
+fn signers_of<'a>(
+    messages: &'a [Message],
+    tombstones: &'a [TombstoneProof],
+) -> impl Iterator<Item = UserId> + 'a {
+    tombstones
+        .iter()
+        .map(|p| p.by)
+        .chain(messages.iter().map(|m| m.author))
 }
 
 fn message_key(m: &Message) -> BucketKey {
@@ -882,12 +883,7 @@ where
     messages.retain(|m| keep(message_key(m)));
     tombstones.retain(|p| keep(tombstone_key(p)));
     let (messages, tombstones) = fit_items(ids, messages, tombstones, MAX_PUSHED_ITEMS);
-    let signers = dedup(
-        tombstones
-            .iter()
-            .map(|p| p.by)
-            .chain(messages.iter().map(|m| m.author)),
-    );
+    let signers = dedup(signers_of(&messages, &tombstones));
     let mut profiles: HashMap<UserId, UserProfile> = if signers.is_empty() {
         HashMap::new()
     } else {
@@ -914,15 +910,10 @@ where
         else {
             continue;
         };
-        let ahead: Vec<UserProfile> = dedup(
-            tombstones
-                .iter()
-                .map(|p| p.by)
-                .chain(messages.iter().map(|m| m.author)),
-        )
-        .into_iter()
-        .filter_map(|user| profiles.remove(&user))
-        .collect();
+        let ahead: Vec<UserProfile> = dedup(signers_of(messages, tombstones))
+            .into_iter()
+            .filter_map(|user| profiles.remove(&user))
+            .collect();
         for chunk in chunks(ahead) {
             write_frame(io, &CatchupFrame::Profiles(chunk)).await?;
         }
@@ -998,7 +989,7 @@ fn chunks<T: Serialize>(values: impl IntoIterator<Item = T>) -> Vec<Vec<T>> {
     let mut out = Vec::new();
     let (mut run, mut bytes) = (Vec::new(), 0usize);
     for value in values {
-        let size = postcard::to_stdvec(&value).map_or(usize::MAX, |b| b.len());
+        let size = encoded_len(&value);
         if size > FRAME_BUDGET {
             tracing::warn!("catch-up item of {size} bytes is too large to send");
             continue;
@@ -1115,21 +1106,7 @@ async fn read<R: AsyncRead + Unpin>(io: &mut R) -> Result<CatchupFrame, CatchupE
 }
 
 async fn read_hello<R: AsyncRead + Unpin>(io: &mut R) -> Result<CatchupFrame, CatchupError> {
-    let mut len = [0u8; 4];
-    match io.read_exact(&mut len).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-            return Err(CatchupError::Closed)
-        }
-        Err(e) => return Err(MediaError::from(e).into()),
-    }
-    let len = u32::from_le_bytes(len);
-    if len > MAX_HELLO_BYTES {
-        return Err(MediaError::FrameTooLarge(len).into());
-    }
-    let mut buf = vec![0u8; len as usize];
-    io.read_exact(&mut buf).await.map_err(MediaError::from)?;
-    postcard::from_bytes(&buf).map_err(|_| MediaError::Malformed.into())
+    read_frame_capped(io, MAX_HELLO_BYTES).await?.ok_or(CatchupError::Closed)
 }
 
 pub(crate) async fn refuse<W: AsyncWrite + Unpin>(io: &mut W, refusal: Refusal) -> CatchupError {

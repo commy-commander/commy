@@ -128,6 +128,17 @@ impl UserProfile {
         }
         shared
     }
+
+    pub fn pin_identity(&mut self, pinned: Option<IdentityKey>) -> bool {
+        match (pinned, self.identity) {
+            (Some(pinned), Some(key)) => pinned == key,
+            (Some(pinned), None) => {
+                self.identity = Some(pinned);
+                true
+            }
+            (None, _) => true,
+        }
+    }
 }
 
 #[cfg(test)]

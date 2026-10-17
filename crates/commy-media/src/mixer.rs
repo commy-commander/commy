@@ -49,7 +49,7 @@ impl Mixer {
     }
 
     pub fn next_frame(&mut self) -> Vec<i16> {
-        let mut acc = vec![0f32; FRAME_SIZE];
+        let mut acc = [0f32; FRAME_SIZE];
         for (peer, jb) in self.peers.iter_mut() {
             let gain = *self.peer_gains.get(peer).unwrap_or(&1.0);
             let frame = jb.pop();

@@ -138,7 +138,7 @@ fn covered(state: &ServerState, channel: ChannelId, now: DateTime<Utc>) -> impl 
     state
         .messages(channel)
         .iter()
-        .filter(move |m| peers_would_accept(m) && m.created_at >= since && m.created_at < until)
+        .filter(move |m| m.created_at >= since && m.created_at < until && peers_would_accept(m))
 }
 
 fn peers_would_accept(message: &Message) -> bool {
@@ -260,7 +260,10 @@ impl Listing {
 }
 
 fn lacking(have: &[BucketItems], other: &[BucketItems]) -> Vec<MessageId> {
-    let other = Listing::new(other);
+    lacking_from(have, &Listing::new(other))
+}
+
+pub fn lacking_from(have: &[BucketItems], other: &Listing) -> Vec<MessageId> {
     type IsMessageDayVersionId = (bool, u32, i64, MessageId);
     let mut found: Vec<IsMessageDayVersionId> = Vec::new();
     for (key, list) in have {
