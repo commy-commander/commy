@@ -1,6 +1,8 @@
 // Turns environment variables into a validated config object. Kept free of
 // side effects so it can be unit tested without a database.
 
+import { normalizeAccessCode } from "./access.js";
+
 const DEFAULT_PORT = 3001;
 
 function list(value) {
@@ -120,6 +122,7 @@ export function loadConfig(env = process.env) {
     instanceName: env.COMMY_INSTANCE_NAME || "Commy",
     desktopClientIds: list(env.DEVICE_CLIENT_IDS).length > 0 ? list(env.DEVICE_CLIENT_IDS) : ["commy-desktop"],
     allowSignup: env.ALLOW_SIGNUP !== "false",
+    accessCode: normalizeAccessCode(env.ACCESS_CODE) || null,
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
     invitesMaxPermanent: Number(env.INVITES_MAX_PERMANENT) > 0 ? Math.floor(Number(env.INVITES_MAX_PERMANENT)) : undefined,
     doorbell: env.DOORBELL !== "false",
@@ -149,6 +152,7 @@ export function featureSummary(config) {
     `doorbell=${on(config.doorbell)}`,
     `redis=${on(config.redisUrl)}`,
     `signup=${on(config.allowSignup)}`,
+    `access_code=${on(config.accessCode)}`,
   ].join(" ");
 }
 

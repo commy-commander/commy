@@ -86,7 +86,10 @@ and Twitch application (both accept several).
 See [GIF search and Twitch](#gif-search-and-twitch) below for GIFs, game
 search and the Twitch app they share.
 
-Set `ALLOW_SIGNUP=false` to close registration on a private instance.
+Set `ALLOW_SIGNUP=false` to close registration on a private instance, or set
+`ACCESS_CODE` to let in only people you give a code to: the website asks for it
+before showing downloads or the sign-up form, and the auth server refuses new
+accounts from anyone who has not entered it. Existing users sign in as usual.
 Run `docker compose up -d` after any `.env` change.
 
 ## GIF search and Twitch

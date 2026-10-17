@@ -23,6 +23,7 @@ mod settle;
 mod state;
 mod toast;
 mod tray;
+mod updater;
 mod view;
 mod wake;
 
@@ -4853,6 +4854,37 @@ fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
     settings
 }
 
+#[tauri::command]
+fn set_auto_update(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bool) -> VoiceSettings {
+    let settings = {
+        let mut voice = app.voice.lock().unwrap();
+        voice.auto_update = enabled;
+        voice.clone()
+    };
+    app.persist_voice();
+    if enabled {
+        tauri::async_runtime::spawn(async move {
+            updater::check(&handle).await;
+        });
+    }
+    settings
+}
+
+#[tauri::command]
+fn get_update_status(handle: tauri::AppHandle) -> updater::UpdateStatus {
+    updater::status(&handle)
+}
+
+#[tauri::command]
+async fn check_for_updates(handle: tauri::AppHandle) -> CmdResult<updater::UpdateStatus> {
+    Ok(updater::check(&handle).await)
+}
+
+#[tauri::command]
+fn restart_to_update(handle: tauri::AppHandle) -> CmdResult<()> {
+    updater::restart(&handle)
+}
+
 /// Stores DMs arriving from peers and notifies the webview.
 async fn run_dm_loop(
     handle: tauri::AppHandle,
@@ -4933,6 +4965,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(App::default())
+        .manage(updater::Updates::default())
         // GIFs and game covers, loaded through the account server
         .register_asynchronous_uri_scheme_protocol("commy-media", |ctx, request, responder| {
             let handle = ctx.app_handle().clone();
@@ -4943,6 +4976,7 @@ pub fn run() {
             });
         })
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|handle, shortcut, event| {
@@ -4985,6 +5019,8 @@ pub fn run() {
                     overlay::apply(&handle, &settings, true);
                 });
             }
+            updater::init(&handle);
+            updater::start(&handle);
             if let Err(e) = tray::build(&handle) {
                 tracing::warn!("tray icon unavailable: {e}");
             }
@@ -5330,6 +5366,10 @@ pub fn run() {
             notify,
             set_unread,
             set_close_to_tray,
+            set_auto_update,
+            get_update_status,
+            check_for_updates,
+            restart_to_update,
             set_server_image,
             fetch_server_image,
             set_reaction,

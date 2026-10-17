@@ -3979,3 +3979,21 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   justify-content: center;
   flex-shrink: 0;
 }
+
+.update-card .update-state { min-height: calc(2 * 1.4em); }
+.update-card .update-action { flex: 0 0 152px; width: 152px; white-space: nowrap; }
+#settings-btn { position: relative; }
+#settings-btn::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-raised);
+  opacity: 0;
+  pointer-events: none;
+}
+#settings-btn.update-ready::after { opacity: 1; }
