@@ -199,7 +199,7 @@
         </div>
       </div>
       <div class="composer">
-        <button class="icon-btn composer-attach" id="attach-btn" title="Attach File">
+        <button class="icon-btn composer-attach" id="attach-btn" title="Add Files and GIFs">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4z"/></svg>
         </button>
         <input id="message-input" type="text" autocomplete="off" placeholder="Message #welcome" />
@@ -337,6 +337,15 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="entry-key-deny">Deny</button>
         <button class="btn-primary" id="entry-key-allow">Allow</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-entry-start-over">
+      <h2>Start a new server list?</h2>
+      <p>Your account's current server list is replaced by the servers on this device. Only do this if none of your devices has the old list and you have no recovery code. Your other devices then approve this one to get the new list.</p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="entry-start-over-cancel">Cancel</button>
+        <button class="btn-primary" id="entry-start-over-go">Start new list</button>
       </div>
     </div>
 
@@ -615,7 +624,7 @@
     <nav class="settings-nav">
       <div class="settings-nav-inner">
         <div class="settings-nav-group">User Settings</div>
-        <button class="settings-tab" data-tab="account">My Account</button>
+        <button class="settings-tab" data-tab="account">Profile</button>
         <button class="settings-tab" data-tab="commy-account">Commy Account</button>
         <div class="settings-nav-group">App Settings</div>
         <button class="settings-tab" data-tab="voice">Voice &amp; Audio</button>
@@ -626,16 +635,19 @@
         <button class="settings-tab" data-tab="notifications">Notifications</button>
         <button class="settings-tab" data-tab="gifs">GIFs</button>
         <button class="settings-tab" data-tab="updates">Updates</button>
-        <div class="settings-nav-sep"></div>
-        <div class="settings-version">Commy, free and peer to peer</div>
       </div>
     </nav>
     <div class="settings-content">
       <div class="settings-content-inner">
         <section class="settings-page" data-page="account">
-          <h1>My Account</h1>
+          <h1>Profile</h1>
           <div class="profile-card">
-            <div class="profile-banner"></div>
+            <div class="profile-banner" id="account-banner">
+              <div class="role-banner-tools">
+                <button class="role-banner-btn icon hidden" type="button" id="account-banner-remove" title="Remove banner"></button>
+                <button class="role-banner-btn" type="button" id="account-banner-upload"><span class="rb-plus"></span><span>Add banner</span></button>
+              </div>
+            </div>
             <div class="profile-body">
               <div class="avatar avatar-xl" id="account-avatar">?</div>
               <div class="profile-names">
@@ -649,7 +661,10 @@
                 <input id="account-display-name" type="text" maxlength="64" placeholder="How others see you" />
               </label>
               <label class="field-label">Custom Status
-                <input id="account-status" type="text" maxlength="64" placeholder="What are you up to?" />
+                <span class="field-emoji">
+                  <input id="account-status" type="text" maxlength="64" placeholder="What are you up to?" />
+                  <button type="button" class="input-emoji-btn" id="account-status-emoji" title="Add an emoji"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 17.5c2.3 0 4.3-1.4 5.1-3.5H6.9c.8 2.1 2.8 3.5 5.1 3.5z"/></svg></button>
+                </span>
               </label>
               <label class="field-label">Presence
                 <select id="account-presence">
@@ -660,7 +675,10 @@
                 </select>
               </label>
               <label class="field-label">About Me
-                <textarea id="account-about" rows="3" maxlength="190" placeholder="A line or two about you, shown on your profile"></textarea>
+                <span class="field-emoji">
+                  <textarea id="account-about" rows="3" maxlength="190" placeholder="A line or two about you, shown on your profile"></textarea>
+                  <button type="button" class="input-emoji-btn" id="account-about-emoji" title="Add an emoji"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 17.5c2.3 0 4.3-1.4 5.1-3.5H6.9c.8 2.1 2.8 3.5 5.1 3.5z"/></svg></button>
+                </span>
               </label>
               <div class="form-actions">
                 <button class="btn-primary" id="account-save">Save Changes</button>
@@ -702,6 +720,9 @@
             <div class="entry-recovery hidden" id="entry-enter">
               <input id="entry-code-input" type="text" autocomplete="off" spellcheck="false" placeholder="Paste your recovery code" />
               <button class="btn-secondary btn-small" id="entry-code-use">Use code</button>
+            </div>
+            <div class="entry-recovery hidden" id="entry-start-over-row">
+              <button class="btn-link" id="entry-start-over">Start a new server list from this device</button>
             </div>
           </div>
         </section>
@@ -1238,18 +1259,23 @@
 
         <section class="settings-page" data-page="roles">
           <h1>Roles</h1>
-          <div class="settings-card">
-            <div class="setting-title">Create Role</div>
+          <div class="roles-head">
+            <div class="setting-sub">Roles give members a colour, an emoji and permissions. A banner shows on the profile card of members whose highest role has one.</div>
+            <button class="btn-primary btn-small" id="new-role-open">New Role</button>
+          </div>
+          <div class="settings-card hidden" id="new-role-card">
+            <div class="setting-title">New Role</div>
             <div class="inline-row">
               <input id="new-role-color" type="color" value="#ff4d4d" title="Role color" />
               <input id="new-role-input" type="text" maxlength="50" placeholder="Role name" />
             </div>
             <div class="perm-grid" id="new-role-perms"></div>
             <div class="form-actions">
+              <button class="btn-secondary btn-small" id="new-role-cancel">Cancel</button>
               <button class="btn-primary btn-small" id="new-role-save">Create Role</button>
             </div>
           </div>
-          <div id="manage-role-list" class="manage-list"></div>
+          <div id="manage-role-list" class="role-cards"></div>
         </section>
 
         <section class="settings-page" data-page="emoji">
@@ -1435,6 +1461,12 @@
     <button class="danger" id="mm-report">Report User</button>
   </div>
 
+  <div class="pop-menu composer-menu hidden" id="composer-menu" role="menu">
+    <button id="cm-file" role="menuitem">Upload a File</button>
+    <button id="cm-video" role="menuitem">Post a Video</button>
+    <button id="cm-gif" role="menuitem">GIF</button>
+  </div>
+
   <!-- Right-click menu for a server in the rail -->
   <div class="pop-menu ctx-menu hidden" id="server-menu" role="menu">
     <div class="ctx-title" id="server-menu-title"></div>
@@ -1483,11 +1515,14 @@
   <div class="mention-pop hidden" id="mention-pop" role="listbox"></div>
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/emoji.js"></script>
+  <script src="scripts/composer-suggest.js"></script>
+  <script src="scripts/embeds.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/pins.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>
+  <script src="scripts/server-colors.js"></script>
   <script src="scripts/tint.js"></script>
   <script src="scripts/updates.js"></script>
   <script src="scripts/app.js"></script>

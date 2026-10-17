@@ -791,7 +791,7 @@ mod tests {
         let mut server = Server::new("s", owner);
         for i in 0..50 {
             server.emojis.push(CustomEmoji { name: format!("emoji{i}"), blob: format!("{}@{}", "a".repeat(64), "b".repeat(64)) });
-            server.soundboard.push(SoundboardSound { name: format!("s{i}"), blob: "a@b".into(), volume: 1.0 });
+            server.soundboard.push(SoundboardSound { name: format!("s{i}"), blob: "a@b".into(), volume: 1.0, emoji: None });
         }
         let state = ServerState::new(server);
         let payload = build_sync_response(&state, 50, owner);

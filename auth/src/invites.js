@@ -98,6 +98,9 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
         if (requireAccount && !session) {
           throw new APIError("UNAUTHORIZED", { message: "Sign in to create invite links on this server" });
         }
+        if (ctx.body.expiresIn === "never" && !session) {
+          throw new APIError("UNAUTHORIZED", { message: "Sign in to create invite links that never expire" });
+        }
         if (isPlainTicket(ctx.body.ticket)) {
           throw new APIError("BAD_REQUEST", { message: "Update Commy to share invite links" });
         }

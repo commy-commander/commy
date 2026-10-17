@@ -562,15 +562,18 @@ async fn attach_file(
     handle: tauri::AppHandle,
     server_id: String,
     channel_id: String,
+    kind: Option<String>,
 ) -> CmdResult<Option<MessageView>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
 
-    let Some(picked) = rfd::AsyncFileDialog::new()
-        .set_title("Share a file")
-        .pick_file()
-        .await
-    else {
+    let dialog = match kind.as_deref() {
+        Some("video") => rfd::AsyncFileDialog::new()
+            .set_title("Post a video")
+            .add_filter("Videos", INLINE_VIDEO_EXTENSIONS),
+        _ => rfd::AsyncFileDialog::new().set_title("Share a file"),
+    };
+    let Some(picked) = dialog.pick_file().await else {
         return Ok(None); // user cancelled
     };
     let path = picked.path().to_path_buf();
@@ -579,6 +582,22 @@ async fn attach_file(
     send_attachment(&app, &handle, sid, cid, filename, bytes)
         .await
         .map(Some)
+}
+
+const INLINE_VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov", "webm"];
+const MAX_INLINE_VIDEO_BYTES: usize = 100 * 1024 * 1024;
+
+#[tauri::command]
+async fn get_attachment_video(
+    app: tauri::State<'_, App>,
+    blob: String,
+    provider: Option<String>,
+) -> CmdResult<tauri::ipc::Response> {
+    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
+    if bytes.len() > MAX_INLINE_VIDEO_BYTES {
+        return Err("video too large to play here".into());
+    }
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Largest image the native picker hands to the webview for cropping.
@@ -3117,6 +3136,7 @@ async fn update_role(
     color: Option<String>,
     self_assignable: bool,
     tag: Option<String>,
+    permissions: Option<Vec<String>>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
@@ -3138,7 +3158,10 @@ async fn update_role(
         if name.is_empty() || name.chars().count() > 50 {
             return Err("role names must be 1 to 50 characters".into());
         }
-        commy_core::server::Role { name, color, self_assignable, tag, ..existing.clone() }
+        let permissions = permissions
+            .map(|names| permissions_from_names(&names))
+            .unwrap_or(existing.permissions);
+        commy_core::server::Role { name, color, self_assignable, tag, permissions, ..existing.clone() }
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
@@ -3714,9 +3737,11 @@ async fn add_sound(
     name: String,
     data: String,
     volume: Option<f32>,
+    emoji: Option<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let name = check_expression_name(&name)?;
+    let emoji = check_sound_emoji(emoji)?;
     let me = current_profile(&app)?;
     {
         let servers = app.servers.lock().unwrap();
@@ -3741,6 +3766,37 @@ async fn add_sound(
         name,
         blob,
         volume: volume.unwrap_or(1.0).clamp(0.0, 2.0),
+        emoji,
+    };
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundAdd { server: sid, sound }).await
+}
+
+fn check_sound_emoji(emoji: Option<String>) -> CmdResult<Option<String>> {
+    match emoji.map(|e| e.trim().to_string()).filter(|e| !e.is_empty()) {
+        None => Ok(None),
+        Some(e) if commy_core::server::valid_sound_emoji(&e) => Ok(Some(e)),
+        Some(_) => Err("pick a single emoji for the sound".into()),
+    }
+}
+
+#[tauri::command]
+async fn set_sound_emoji(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    name: String,
+    emoji: Option<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let emoji = check_sound_emoji(emoji)?;
+    let me = current_profile(&app)?;
+    let sound = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_EXPRESSIONS, "change sounds")?;
+        let mut sound = state.server.soundboard.iter().find(|s| s.name == name).cloned().ok_or("unknown sound")?;
+        sound.emoji = emoji;
+        sound
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundAdd { server: sid, sound }).await
 }
@@ -4046,6 +4102,56 @@ async fn set_avatar(
 }
 
 const AVATAR_FILE: &str = "avatar.img";
+const BANNER_FILE: &str = "profile-banner.img";
+const MAX_BANNER_BYTES: usize = 512 * 1024;
+
+/// Sets or clears the profile banner. `data` is a base64 JPEG or PNG
+/// (cropped in the webview); None removes it.
+#[tauri::command]
+async fn set_profile_banner(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    data: Option<String>,
+) -> CmdResult<UserProfile> {
+    let banner = match data {
+        None => None,
+        Some(data) => {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .map_err(|_| "image data is not valid base64".to_string())?;
+            if bytes.len() > MAX_BANNER_BYTES {
+                return Err("banner image is too large".into());
+            }
+            if !is_jpeg_or_png(&bytes) {
+                return Err("banner must be a JPEG or PNG image".into());
+            }
+            if let Some(dir) = app.data_dir() {
+                std::fs::write(dir.join(BANNER_FILE), &bytes).map_err(err_to_string)?;
+            }
+            let blob = {
+                let net = app.net.lock().await;
+                let node = net.as_ref().ok_or("network is not ready yet")?;
+                node.add_blob(bytes).await.map_err(err_to_string)?
+            };
+            Some(commy_core::Avatar::Image { blob }.encode())
+        }
+    };
+    if banner.is_none() {
+        if let Some(dir) = app.data_dir() {
+            let _ = std::fs::remove_file(dir.join(BANNER_FILE));
+        }
+    }
+    let profile = {
+        let mut guard = app.profile.lock().unwrap();
+        let profile = guard.as_mut().ok_or("set a username first")?;
+        profile.banner = banner;
+        profile.clone()
+    };
+    app.persist_profile();
+    announce_profile(&app, &handle, &profile).await;
+    let _ = handle.emit("profile-changed", &profile);
+    Ok(profile)
+}
 
 fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0xd8, 0xff]) || bytes.starts_with(&[0x89, b'P', b'N', b'G'])
@@ -4054,24 +4160,28 @@ fn is_jpeg_or_png(bytes: &[u8]) -> bool {
 /// Re-adds our saved avatar image to the in-memory blob store so peers
 /// can fetch it after a restart. Same bytes give the same hash.
 async fn restore_avatar_blob(app: &tauri::State<'_, App>, node: &CommyNode) {
-    let wants_image = app
-        .profile
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|p| p.avatar.as_deref().and_then(commy_core::Avatar::parse))
-        .is_some_and(|a| matches!(a, commy_core::Avatar::Image { .. }));
-    if !wants_image {
-        return;
-    }
-    let Some(path) = app.data_dir().map(|d| d.join(AVATAR_FILE)) else { return };
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            if let Err(e) = node.add_blob(bytes).await {
-                tracing::warn!("could not restore avatar blob: {e}");
-            }
+    let (wants_avatar, wants_banner) = {
+        let guard = app.profile.lock().unwrap();
+        let profile = guard.as_ref();
+        let avatar = profile
+            .and_then(|p| p.avatar.as_deref().and_then(commy_core::Avatar::parse))
+            .is_some_and(|a| matches!(a, commy_core::Avatar::Image { .. }));
+        let banner = profile.is_some_and(|p| p.banner.as_deref().is_some_and(commy_core::user::valid_banner));
+        (avatar, banner)
+    };
+    for (wanted, file, what) in [(wants_avatar, AVATAR_FILE, "avatar"), (wants_banner, BANNER_FILE, "banner")] {
+        if !wanted {
+            continue;
         }
-        Err(e) => tracing::warn!("avatar image missing: {e}"),
+        let Some(path) = app.data_dir().map(|d| d.join(file)) else { continue };
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                if let Err(e) = node.add_blob(bytes).await {
+                    tracing::warn!("could not restore {what} blob: {e}");
+                }
+            }
+            Err(e) => tracing::warn!("{what} image missing: {e}"),
+        }
     }
 }
 
@@ -5395,6 +5505,7 @@ pub fn run() {
             remove_emoji,
             add_sound,
             remove_sound,
+            set_sound_emoji,
             set_expression_settings,
             set_server_public,
             play_soundboard,
@@ -5417,6 +5528,7 @@ pub fn run() {
             entry_list::entry_list_sync,
             entry_list::entry_list_recovery_code,
             entry_list::entry_list_use_recovery_code,
+            entry_list::entry_list_start_over,
             entry_list::answer_entry_key_request,
             get_messages,
             send_message,
@@ -5430,6 +5542,7 @@ pub fn run() {
             set_afk_timeout,
             set_afk_channel,
             set_avatar,
+            set_profile_banner,
             set_share_activity,
             update_channel,
             set_channel_banner,
@@ -5476,6 +5589,7 @@ pub fn run() {
             start_mic_test,
             stop_mic_test,
             get_attachment_preview,
+            get_attachment_video,
             start_screen_share,
             stop_screen_share,
             watch_screen,
@@ -5554,5 +5668,13 @@ mod share_tests {
         assert_eq!(parse_source(None, None), None);
         assert_eq!(parse_source(Some("monitor"), None), None);
         assert_eq!(parse_source(Some("camera"), Some(1)), None);
+    }
+
+    #[test]
+    fn sound_emoji_input_is_trimmed_and_checked() {
+        assert_eq!(check_sound_emoji(None), Ok(None));
+        assert_eq!(check_sound_emoji(Some("  ".into())), Ok(None));
+        assert_eq!(check_sound_emoji(Some(" 🥁 ".into())), Ok(Some("🥁".into())));
+        assert!(check_sound_emoji(Some("drum".into())).is_err());
     }
 }
