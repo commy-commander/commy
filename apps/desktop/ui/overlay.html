@@ -5,11 +5,11 @@
   <title>Commy Overlay</title>
   <style>
     @font-face { font-family: "Figtree"; src: url("fonts/figtree-latin.woff2") format("woff2"); font-weight: 300 900; }
-    :root { --opacity: .9; --accent: #ff4d4d; --speaking: #35c26b; }
+    :root { --opacity: .92; --accent: #ff4d4d; --ink: #f2efe6; --panel: rgba(11, 13, 23, .84); }
     html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
     body {
       font-family: "Figtree", "Segoe UI", system-ui, sans-serif;
-      color: #f2efe6;
+      color: var(--ink);
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -21,17 +21,22 @@
     }
     body.bottom { justify-content: flex-end; }
     body.right { align-items: flex-end; }
-    .card {
-      background: rgba(17, 18, 20, .78);
-      border-radius: 10px;
-      padding: 8px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, .35);
-      max-width: 270px;
-      box-sizing: border-box;
-    }
     .hidden { display: none !important; }
-    .where { font-size: 11px; font-weight: 600; color: #b5bac1; padding: 0 2px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .member { display: flex; align-items: center; gap: 8px; padding: 3px 2px; }
+    .stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+    body.right .stack { align-items: flex-end; }
+    /* Who is talking: one small pill each, nothing at all when it is quiet. */
+    .member {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      max-width: 250px;
+      padding: 3px 12px 3px 3px;
+      border-radius: 999px;
+      background: var(--panel);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+      animation: pop .14s ease-out;
+    }
+    .member:not(.speaking) { opacity: .62; }
     .avatar {
       width: 24px;
       height: 24px;
@@ -41,29 +46,39 @@
       align-items: center;
       justify-content: center;
       background: var(--accent);
+      color: #fff;
       font-size: 10px;
-      font-weight: 600;
+      font-weight: 700;
       overflow: hidden;
       box-shadow: 0 0 0 2px transparent;
-      transition: box-shadow .08s;
     }
     .avatar img { width: 100%; height: 100%; object-fit: cover; }
-    .avatar.emoji { background: #2b2d31; font-size: 14px; }
-    .member.speaking .avatar { box-shadow: 0 0 0 2px var(--speaking); }
-    .name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }
-    .member:not(.speaking) .name { color: #dbdee1; }
-    .chat { display: flex; flex-direction: column; gap: 3px; }
-    .line { font-size: 12.5px; line-height: 1.35; word-wrap: break-word; transition: opacity .6s; }
-    .line b { font-weight: 600; }
+    .avatar.emoji { background: #1f2438; font-size: 14px; }
+    .member.speaking .avatar { box-shadow: 0 0 0 2px var(--ink); }
+    .name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+    /* Messages: a short bubble that goes away by itself. */
+    .line {
+      max-width: 270px;
+      padding: 6px 11px;
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+      font-size: 12.5px;
+      line-height: 1.35;
+      word-wrap: break-word;
+      animation: pop .14s ease-out;
+      transition: opacity .5s;
+    }
+    .line b { font-weight: 700; }
     .line.fading { opacity: 0; }
+    @keyframes pop { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .member, .line { animation: none; } }
   </style>
 </head>
 <body>
-  <div class="card hidden" id="voice">
-    <div class="where" id="where"></div>
-    <div id="members"></div>
-  </div>
-  <div class="card chat hidden" id="chat"></div>
+  <div class="stack" id="members"></div>
+  <div class="stack" id="chat"></div>
+  <script src="scripts/overlay-view.js"></script>
   <script src="scripts/overlay.js"></script>
 </body>
 </html>

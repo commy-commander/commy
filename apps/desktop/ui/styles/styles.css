@@ -3446,6 +3446,33 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 }
 .hotkey-input:focus { border-color: var(--accent); color: var(--text-muted); }
 .overlay-note { margin-top: 12px; line-height: 1.45; }
+/* A little screen with a button in each corner; the chosen corner is filled. */
+.corner-picker {
+  position: relative;
+  flex: 0 0 auto;
+  width: 112px;
+  height: 70px;
+  border: 2px solid var(--bg-active);
+  border-radius: 8px;
+  background: var(--bg-darkest);
+}
+.corner-opt {
+  position: absolute;
+  width: 26px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: var(--bg-active);
+  cursor: pointer;
+  transition: background var(--t-hover) ease;
+}
+.corner-opt:hover { background: var(--text-faint); }
+.corner-opt.selected, .corner-opt.selected:hover { background: var(--accent); }
+.corner-opt[data-corner="top-left"] { top: 5px; left: 5px; }
+.corner-opt[data-corner="top-right"] { top: 5px; right: 5px; }
+.corner-opt[data-corner="bottom-left"] { bottom: 5px; left: 5px; }
+.corner-opt[data-corner="bottom-right"] { bottom: 5px; right: 5px; }
 .hotkey-warning { color: var(--yellow); margin-top: 10px; }
 
 /* Integrations */

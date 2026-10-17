@@ -1,14 +1,14 @@
 // In-game overlay window. Receives the voice roster and chat lines from
-// the main window and speaking updates straight from the backend.
+// the main window and speaking updates straight from the backend. It
+// draws only who is talking (or everyone, if asked) and chat lines that
+// fade by themselves; the layout rules live in overlay-view.js.
 
 "use strict";
 
 const tauri = window.__TAURI__;
 const $ = id => document.getElementById(id);
-const CHAT_LINES = 6;
-const CHAT_FADE_MS = 30000;
 
-const overlay = { members: [], speaking: new Set(), showChat: true };
+const overlay = { members: [], speaking: new Set(), lingering: new Map(), showChat: true, showEveryone: false, lines: [] };
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -22,21 +22,29 @@ function initials(name) {
 }
 
 function applyConfig(config) {
-  document.documentElement.style.setProperty("--opacity", String(config.opacity ?? 0.9));
-  const corner = config.corner || "top-left";
-  document.body.classList.toggle("bottom", corner.startsWith("bottom"));
-  document.body.classList.toggle("right", corner.endsWith("right"));
+  document.documentElement.style.setProperty("--opacity", String(config.opacity ?? 0.92));
+  const corner = overlayCorner(config.corner);
+  document.body.classList.toggle("bottom", corner.bottom);
+  document.body.classList.toggle("right", corner.right);
   overlay.showChat = config.show_chat !== false;
-  $("chat").classList.toggle("hidden", !overlay.showChat || !$("chat").childElementCount);
+  overlay.showEveryone = Boolean(config.show_everyone);
+  if (!overlay.showChat) {
+    overlay.lines = [];
+    $("chat").replaceChildren();
+  }
+  renderMembers();
 }
 
 function renderRoster(roster) {
   overlay.members = (roster && roster.members) || [];
-  $("voice").classList.toggle("hidden", !overlay.members.length);
-  $("where").textContent = roster && roster.channel ? `${roster.channel} - ${roster.server}` : "";
+  renderMembers();
+}
+
+function renderMembers() {
   const list = $("members");
   list.replaceChildren();
-  for (const member of overlay.members) {
+  const lingering = new Set(overlay.lingering.keys());
+  for (const member of overlayVisibleMembers({ members: overlay.members, speaking: overlay.speaking, lingering, showEveryone: overlay.showEveryone })) {
     const row = el("div", "member" + (overlay.speaking.has(member.id) ? " speaking" : ""));
     row.dataset.user = member.id;
     const avatar = el("div", "avatar");
@@ -52,37 +60,47 @@ function renderRoster(roster) {
       avatar.textContent = initials(member.name);
     }
     row.appendChild(avatar);
-    const name = el("div", "name", member.name);
-    if (member.color) name.style.color = `#${member.color}`;
-    row.appendChild(name);
+    row.appendChild(el("div", "name", member.name));
     list.appendChild(row);
   }
 }
 
 function setSpeaking(user, speaking) {
-  if (speaking) overlay.speaking.add(user);
-  else overlay.speaking.delete(user);
-  for (const row of document.querySelectorAll(`.member[data-user="${CSS.escape(user)}"]`)) {
-    row.classList.toggle("speaking", speaking);
+  const pending = overlay.lingering.get(user);
+  if (pending) clearTimeout(pending);
+  overlay.lingering.delete(user);
+  if (speaking) {
+    overlay.speaking.add(user);
+  } else {
+    overlay.speaking.delete(user);
+    // Stay lit a moment so a short pause does not make the pill blink.
+    overlay.lingering.set(user, setTimeout(() => {
+      overlay.lingering.delete(user);
+      renderMembers();
+    }, OVERLAY_LINGER_MS));
   }
+  renderMembers();
 }
 
 function addChatLine(line) {
+  if (!overlay.showChat) return;
   const chat = $("chat");
   const node = el("div", "line");
   const who = el("b", null, `${line.author}: `);
   if (line.color) who.style.color = `#${line.color}`;
   node.append(who, document.createTextNode(line.text));
   chat.appendChild(node);
-  while (chat.childElementCount > CHAT_LINES) chat.firstElementChild.remove();
-  chat.classList.toggle("hidden", !overlay.showChat);
+  overlay.lines = overlayPushLine(overlay.lines, node);
+  for (const old of [...chat.children]) {
+    if (!overlay.lines.includes(old)) old.remove();
+  }
   setTimeout(() => {
     node.classList.add("fading");
     setTimeout(() => {
       node.remove();
-      if (!chat.childElementCount) chat.classList.add("hidden");
-    }, 700);
-  }, CHAT_FADE_MS);
+      overlay.lines = overlay.lines.filter(n => n !== node);
+    }, 550);
+  }, OVERLAY_CHAT_MS);
 }
 
 async function start() {
@@ -98,6 +116,22 @@ async function start() {
   }
   // Ask the main window for the current roster.
   await tauri.event.emitTo("main", "overlay-hello", null);
+}
+
+// The page also runs outside the app for design previews: a hash like
+// #preview=bottom-right,everyone fills it with sample people and lines.
+if (!tauri && typeof location !== "undefined" && location.hash.startsWith("#preview")) {
+  const opts = location.hash.slice(9).replace(/^=/, "").split(",");
+  applyConfig({ corner: opts[0] || "top-left", show_everyone: opts.includes("everyone"), show_chat: true, opacity: 0.92 });
+  renderRoster({ members: [
+    { id: "ferris", name: "ferris", emoji: "🦀" },
+    { id: "nova", name: "nova" },
+    { id: "rusty", name: "rusty" },
+  ] });
+  setSpeaking("ferris", true);
+  setSpeaking("nova", true);
+  addChatLine({ author: "nova", color: "9b7bff", text: "push to the left side, I'll hold mid" });
+  addChatLine({ author: "ferris", text: "on it" });
 }
 
 start();
