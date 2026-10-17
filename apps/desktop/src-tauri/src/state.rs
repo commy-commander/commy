@@ -337,15 +337,21 @@ impl App {
         let raw = self.invites.lock().unwrap().get(&server).cloned()?;
         let mut ticket = ServerTicket::decode(&raw).ok()?;
         if ticket.owner.is_none() {
-            let owns = self.servers.lock().unwrap().get(&server).map(|s| s.server.owner);
-            let me = self.own_key_for_tickets();
-            if let (Some(owner), Some((id, key))) = (owns, me) {
-                if owner == id {
-                    ticket.owner = Some((id, key));
-                    self.invites.lock().unwrap().insert(server, ticket.encode());
-                    if let Some(dir) = self.data_dir() {
-                        let _ = crate::persist::save_invites(dir, &self.invites.lock().unwrap().clone());
-                    }
+            let owner = {
+                let servers = self.servers.lock().unwrap();
+                let state = servers.get(&server)?;
+                let owner = state.server.owner;
+                state.identity_of(owner).map(|key| (owner, key))
+            };
+            let owner = owner.or_else(|| {
+                let owns = self.servers.lock().unwrap().get(&server).map(|s| s.server.owner);
+                self.own_key_for_tickets().filter(|(id, _)| owns == Some(*id))
+            });
+            if let Some(owner) = owner {
+                ticket.owner = Some(owner);
+                self.invites.lock().unwrap().insert(server, ticket.encode());
+                if let Some(dir) = self.data_dir() {
+                    let _ = crate::persist::save_invites(dir, &self.invites.lock().unwrap().clone());
                 }
             }
         }

@@ -275,12 +275,11 @@ fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView
 fn get_invite(app: tauri::State<App>, server_id: String) -> CmdResult<String> {
     let id = server_id.parse().map_err(err_to_string)?;
     require_invite_permission(&app, id)?;
-    app.invites
-        .lock()
-        .unwrap()
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| "no invite available; you may be offline".into())
+    let ticket = app.vouched_ticket(id).ok_or("no invite available; you may be offline")?;
+    if ticket.owner.is_none() {
+        return Err("your account key is still being confirmed; try again in a moment".into());
+    }
+    Ok(ticket.encode())
 }
 
 // ---------- Messaging ----------
@@ -4679,10 +4678,9 @@ async fn broadcast_event(app: &App, server: ServerId, event: ServerEvent) {
 fn remote_action_ok(app: &App, server: ServerId, event: &ServerEvent, action: Option<commy_core::Action>) -> bool {
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&server) else { return false };
-    let mut check = state.clone();
     match action {
-        Some(action) => check.apply_signed(&SignedEvent { action, event: event.clone() }).is_ok(),
-        None => check.apply_unsigned(event.clone()).is_ok(),
+        Some(action) => state.admits_signed(&SignedEvent { action, event: event.clone() }).is_ok(),
+        None => state.admits_unsigned(event).is_ok(),
     }
 }
 

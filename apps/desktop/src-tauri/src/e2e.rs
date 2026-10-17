@@ -462,7 +462,7 @@ async fn gather(mut devices: Vec<Device>) -> (Vec<Device>, ServerId) {
         d.online().await;
     }
     let server = devices[0].create_server("Moonbase Book Club").await;
-    let ticket = devices[0].app().invites.lock().unwrap()[&server].clone();
+    let ticket = devices[0].app().vouched_ticket(server).unwrap().encode();
     for d in &devices[1..] {
         d.join(&ticket).await;
     }

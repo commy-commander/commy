@@ -41,6 +41,8 @@ pub const HOLD_FOR: Duration = Duration::from_secs(15 * 60);
 /// Most bytes of events held per server, counted as sent.
 pub const HOLD_BYTES: usize = 4 * 1024 * 1024;
 pub const HOLD_ACTIONS_CAP: usize = 512;
+pub const HOLD_ACTIONS_PER_SIGNER: usize = 32;
+pub const SNAPSHOT_MAX_AGE_MS: i64 = 900_000;
 
 type SessionKey = (ServerId, [u8; 32]);
 
@@ -235,6 +237,13 @@ impl Catchup {
 
     pub fn hold_action(&mut self, server: ServerId, signed: SignedEvent, now: Instant) {
         let queue = self.held_actions.entry(server).or_default();
+        let by = signed.action.by;
+        let same = queue.iter().filter(|(_, held)| held.action.by == by).count();
+        if same >= HOLD_ACTIONS_PER_SIGNER {
+            if let Some(oldest) = queue.iter().position(|(_, held)| held.action.by == by) {
+                queue.remove(oldest);
+            }
+        }
         queue.push_back((now, signed));
         while queue.len() > HOLD_ACTIONS_CAP {
             queue.pop_front();
@@ -1008,7 +1017,7 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         tracing::warn!("dropping a snapshot of {server} that its owner did not sign");
         return false;
     }
-    let WirePayload::SyncResponse { server: mut remote_server, members, profiles, recent_messages, voice, .. } = payload else {
+    let WirePayload::SyncResponse { server: mut remote_server, members, profiles, recent_messages, voice, at, .. } = payload else {
         return false;
     };
     if remote_server.id != server {
@@ -1025,6 +1034,7 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         let Some(old) = servers.remove(&server) else { return false };
         let pinned: HashMap<UserId, IdentityKey> = old.profiles.values().filter_map(|p| Some((p.id, p.identity?))).collect();
         let mut state = ServerState::new(remote_server);
+        state.set_action_floor(at);
         // Snapshots carry no emojis, sounds or pins; keep any announced already.
         if old.server.rules.is_some() {
             let _ = state.apply(ServerEvent::RulesSet { server, rules: old.server.rules.clone() });
@@ -1115,22 +1125,17 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
 }
 
 fn snapshot_vouched(app: &App, server: ServerId, payload: &WirePayload) -> bool {
-    let WirePayload::SyncResponse { server: remote, profiles, by, .. } = payload else { return false };
+    let WirePayload::SyncResponse { server: remote, by, at, .. } = payload else { return false };
     if remote.id != server {
         return false;
     }
-    let key = match app.ticket_owner(server) {
-        Some((owner, key)) => {
-            if *by != owner || remote.owner != owner {
-                return false;
-            }
-            key
-        }
-        None => match profiles.iter().find(|p| p.id == *by).and_then(|p| p.identity) {
-            Some(key) => key,
-            None => return false,
-        },
-    };
+    let Some((owner, key)) = app.ticket_owner(server) else { return false };
+    if *by != owner || remote.owner != owner {
+        return false;
+    }
+    if (Utc::now().timestamp_millis() - *at).abs() > SNAPSHOT_MAX_AGE_MS {
+        return false;
+    }
     commy_net::protocol::verify_sync_response(payload, &key)
 }
 
@@ -1562,6 +1567,12 @@ mod tests {
     }
 
     /// The store over a real `App`, as the node sees it.
+    fn invited_by(app: &App, sid: ServerId, owner: &Member) {
+        let mut ticket = commy_net::ServerTicket::new(sid, "s", [0; 32], vec![]);
+        ticket.owner = Some((owner.id(), owner.identity.public()));
+        app.invites.lock().unwrap().insert(sid, ticket.encode());
+    }
+
     fn app_with(owner: &Member, state: ServerState) -> Arc<App> {
         let app = Arc::new(App::default());
         *app.profile.lock().unwrap() = Some(owner.profile.clone());
@@ -1974,12 +1985,52 @@ mod tests {
         let handle = TestHandle::new(app.clone());
         app.set_awaiting_snapshot(lid, true);
         app.invites.lock().unwrap().insert(lid, commy_net::ServerTicket::new(lid, "s", [0; 32], vec![]).encode());
-        let mut forged = snapshot_by(&legacy, &other);
-        if let WirePayload::SyncResponse { by, .. } = &mut forged {
-            *by = me.id();
+        assert!(!apply_snapshot(&handle, lid, snapshot_by(&legacy, &other)), "an invite without an owner vouches for nobody");
+        assert!(app.awaits_snapshot(lid));
+    }
+
+    #[test]
+    fn a_snapshot_from_another_day_is_not_taken() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let app = app_with(&me, placeholder(&me, sid));
+        let handle = TestHandle::new(app.clone());
+        app.set_awaiting_snapshot(sid, true);
+        let mut ticket = commy_net::ServerTicket::new(sid, "s", [0; 32], vec![]);
+        ticket.owner = Some((owner.id(), owner.identity.public()));
+        app.invites.lock().unwrap().insert(sid, ticket.encode());
+        let mut old = commy_net::protocol::build_sync_response(&real, 50, owner.id());
+        let then = Utc::now().timestamp_millis() - 2 * SNAPSHOT_MAX_AGE_MS;
+        commy_net::protocol::sign_sync_response(&mut old, then, &owner.identity);
+        assert!(!apply_snapshot(&handle, sid, old));
+        assert!(app.awaits_snapshot(sid));
+        assert!(apply_snapshot(&handle, sid, snapshot_by(&real, &owner)));
+        let floor = app.servers.lock().unwrap()[&sid].action_floor();
+        assert!(floor > then && floor <= Utc::now().timestamp_millis());
+    }
+
+    #[test]
+    fn one_signer_cannot_crowd_out_what_others_have_waiting() {
+        let sid = ServerId::new();
+        let loud = Member::new("loud");
+        let quiet = Member::new("quiet");
+        let mut catchup = Catchup::default();
+        let now = Instant::now();
+        let signed = |who: &Member, at: i64| {
+            SignedEvent::sign(sid, who.id(), at, ServerEvent::ServerRename { server: sid, name: format!("{at}") }, &who.identity)
+        };
+        catchup.hold_action(sid, signed(&quiet, 1), now);
+        for at in 0..(HOLD_ACTIONS_PER_SIGNER as i64 + 8) {
+            catchup.hold_action(sid, signed(&loud, at), now);
         }
-        assert!(!apply_snapshot(&handle, lid, forged), "an invite without an owner still wants a signature that holds");
-        assert!(apply_snapshot(&handle, lid, snapshot_by(&legacy, &other)));
+        let signers: HashSet<UserId> = [loud.id(), quiet.id()].into_iter().collect();
+        let taken = catchup.take_held_actions(sid, &signers, now);
+        assert_eq!(taken.iter().filter(|(_, s)| s.action.by == loud.id()).count(), HOLD_ACTIONS_PER_SIGNER);
+        assert!(taken.iter().any(|(_, s)| s.action.by == quiet.id()), "the quiet one's action is still there");
+        assert!(taken.iter().all(|(_, s)| s.action.by != loud.id() || s.action.at >= 8), "the oldest of the loud one's went");
     }
 
     #[test]
@@ -2049,6 +2100,8 @@ mod tests {
         assert!(!app.servers.lock().unwrap()[&sid].has_message(hello.id));
 
         app.set_awaiting_snapshot(sid, true);
+
+        invited_by(&app, sid, &owner);
         // A snapshot of another server on this topic is refused.
         let (other, _) = server(&owner);
         assert!(!apply_snapshot(&handle, sid, snapshot_of(&other)));
@@ -2099,6 +2152,7 @@ mod tests {
         placeholder.profiles.insert(me.id(), me.profile.clone());
         let app = app_with(&me, placeholder);
         app.set_awaiting_snapshot(sid, true);
+        invited_by(&app, sid, &owner);
         let handle = TestHandle::new(app.clone());
         assert!(apply_snapshot(&handle, sid, snapshot));
         assert!(!app.awaits_snapshot(sid));
@@ -2148,6 +2202,7 @@ mod tests {
             let app = app_with(&me, ours.clone());
             let handle = TestHandle::new(app.clone());
             app.set_awaiting_snapshot(sid, true);
+            invited_by(&app, sid, &owner);
             match how {
                 "session" => after_session(&handle, sid, Some(&SessionReport::default())),
                 "restart" => {
@@ -2190,6 +2245,7 @@ mod tests {
         join(&mut ours, &friend);
         let app = app_with(&me, ours);
         app.set_awaiting_snapshot(sid, true);
+        invited_by(&app, sid, &owner);
         let handle = TestHandle::new(app.clone());
 
         // The snapshot's keys win, except for us; one it leaves out stays.
@@ -2239,6 +2295,7 @@ mod tests {
         let app = app_with(&me, ours);
         app.outbox.lock().unwrap().note_local(sid, &create, false);
         app.set_awaiting_snapshot(sid, true);
+        invited_by(&app, sid, &owner);
         let handle = TestHandle::new(app.clone());
 
         assert!(apply_snapshot(&handle, sid, snapshot_of(&real)));
@@ -2261,6 +2318,7 @@ mod tests {
         join(&mut real, &me);
         let sid = real.server.id;
         let app = app_with(&me, placeholder(&me, sid));
+        invited_by(&app, sid, &owner);
         let handle = TestHandle::new(app.clone());
         let theirs = app_with(&owner, real);
         // What we send reaches the owner, whose snapshot reaches us.
@@ -2291,6 +2349,7 @@ mod tests {
         let app = app_with(&me, placeholder(&me, sid));
         let handle = TestHandle::new(app.clone());
         app.set_awaiting_snapshot(sid, true);
+        invited_by(&app, sid, &owner);
         assert!(snapshot_for(&app, sid).is_none(), "still waiting for ours");
         // Nor once a session completed, nor after a restart.
         after_session(&handle, sid, Some(&SessionReport::default()));
@@ -2342,6 +2401,7 @@ mod tests {
         for join_first in [true, false] {
             let app = app_with(&me, placeholder(&me, sid));
             app.set_awaiting_snapshot(sid, true);
+            invited_by(&app, sid, &owner);
             let apply_join = || app.servers.lock().unwrap().get_mut(&sid).unwrap().apply(friend_join.clone()).unwrap();
             if join_first {
                 apply_join();
@@ -2375,6 +2435,7 @@ mod tests {
         // A pin heard before the snapshot landed is kept once it does.
         let app = app_with(&me, placeholder(&me, sid));
         app.set_awaiting_snapshot(sid, true);
+        invited_by(&app, sid, &owner);
         let early = app.servers.lock().unwrap().get_mut(&sid).unwrap().apply(ServerEvent::ChannelCreate {
             server: sid,
             channel: commy_core::Channel { id: channel, ..commy_core::Channel::new("general", commy_core::ChannelKind::Text, 0) },

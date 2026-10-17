@@ -415,6 +415,9 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
         return Err("Only links to a public server can last forever".into());
     }
     let ticket = app.vouched_ticket(id).ok_or("no invite available; you may be offline")?;
+    if ticket.owner.is_none() {
+        return Err("your account key is still being confirmed; try again in a moment".into());
+    }
     let raw = ticket.encode();
     let origin = account_server();
     let cache_key = format!("{origin} {} {raw}", expiry.as_str());
