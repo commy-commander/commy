@@ -8407,6 +8407,11 @@ function wireEvents() {
     e.stopPropagation();
     openAvatarMenu(e.currentTarget);
   };
+  $("account-status-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("account-status"), picked));
+  $("account-about-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => {
+    insertEmojiInName($("account-about"), picked);
+    $("account-about").dispatchEvent(new Event("change", { bubbles: true }));
+  });
   $("avatar-upload").onclick = async () => {
     $("avatar-menu").classList.add("hidden");
     try {
