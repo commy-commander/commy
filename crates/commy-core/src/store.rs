@@ -46,6 +46,8 @@ pub enum StoreError {
     NotAllowed,
     #[error("unsigned event from a member whose key is known")]
     Unsigned,
+    #[error("that server already holds as many of those as it can")]
+    Limit,
 }
 
 /// Days a delete proof is kept, well past the catch-up window.
@@ -62,6 +64,17 @@ pub const MAX_UNAPPLIED_PROOFS: usize = 2000;
 pub const MAX_AHEAD_MS: i64 = 86_400_000;
 
 pub const MAX_ACTION_TIMES: usize = 4096;
+
+pub const MAX_MEMBERS: usize = 10_000;
+pub const MAX_PROFILES: usize = 2 * MAX_MEMBERS;
+pub const MAX_CHANNELS: usize = 500;
+pub const MAX_ROLES: usize = 250;
+pub const MAX_BANS: usize = 10_000;
+pub const MAX_REACTIONS_PER_MESSAGE: usize = MAX_RELAYED_REACTIONS;
+pub const MAX_REACTORS_PER_REACTION: usize = MAX_RELAYED_REACTORS;
+pub const MAX_LIVE_ENTRIES: usize = MAX_MEMBERS;
+pub const MAX_RSVPS_PER_EVENT: usize = MAX_MEMBERS;
+pub const MAX_TOMBSTONED_IDS: usize = 5_000;
 
 /// A delete proof as held here. `accepted_for` is the author of the
 /// message the proof removed here, or kept out when it arrived later. A
@@ -464,6 +477,9 @@ impl ServerState {
                 user,
             } => {
                 let msg = self.find_message_mut(channel, message)?;
+                if !reaction_room(msg, &emoji, user) {
+                    return Err(StoreError::Limit);
+                }
                 msg.toggle_reaction(&emoji, user);
                 Ok(true)
             }
@@ -482,6 +498,9 @@ impl ServerState {
                 if has == active {
                     return Ok(false);
                 }
+                if active && !reaction_room(msg, &emoji, user) {
+                    return Err(StoreError::Limit);
+                }
                 msg.toggle_reaction(&emoji, user);
                 Ok(true)
             }
@@ -498,6 +517,10 @@ impl ServerState {
                     self.profiles.insert(profile.id, profile);
                     return Ok(false);
                 }
+                if self.server.members.len() >= MAX_MEMBERS {
+                    return Err(StoreError::Limit);
+                }
+                self.make_profile_room(profile.id)?;
                 self.server.members.push(Member {
                     user: profile.id,
                     nickname: None,
@@ -539,6 +562,9 @@ impl ServerState {
                 {
                     return Ok(false);
                 }
+                if self.server.channels.len() >= MAX_CHANNELS {
+                    return Err(StoreError::Limit);
+                }
                 self.messages.insert(channel.id, Vec::new());
                 self.server.channels.push(channel);
                 Ok(true)
@@ -559,6 +585,9 @@ impl ServerState {
                 let new_tombstone = !self.server.deleted_channels.contains(&channel);
                 if new_tombstone {
                     self.server.deleted_channels.push(channel);
+                    if self.server.deleted_channels.len() > MAX_TOMBSTONED_IDS {
+                        self.server.deleted_channels.remove(0);
+                    }
                 }
                 if self.server.afk_channel_id == Some(channel) {
                     self.server.afk_channel_id = None;
@@ -614,6 +643,9 @@ impl ServerState {
                     if self.server.channel(ch).is_none() {
                         return Err(StoreError::UnknownChannel);
                     }
+                    if !self.voice_states.contains_key(&user) && self.voice_states.len() >= MAX_LIVE_ENTRIES {
+                        return Err(StoreError::Limit);
+                    }
                     let moved = self.voice_states.insert(user, ch) != Some(ch);
                     let flagged = self.voice_flags.insert(user, (muted, deafened)) != Some((muted, deafened));
                     if moved || !self.voice_since.contains_key(&user) {
@@ -642,6 +674,9 @@ impl ServerState {
                     if self.server.channel(channel).is_none() {
                         return Err(StoreError::UnknownChannel);
                     }
+                    if !self.screen_shares.contains_key(&user) && self.screen_shares.len() >= MAX_LIVE_ENTRIES {
+                        return Err(StoreError::Limit);
+                    }
                     Ok(self.screen_shares.insert(user, channel) != Some(channel))
                 } else {
                     Ok(self.screen_shares.remove(&user).is_some())
@@ -655,6 +690,9 @@ impl ServerState {
                 if active {
                     if self.server.channel(channel).is_none() {
                         return Err(StoreError::UnknownChannel);
+                    }
+                    if !self.cameras.contains_key(&user) && self.cameras.len() >= MAX_LIVE_ENTRIES {
+                        return Err(StoreError::Limit);
                     }
                     Ok(self.cameras.insert(user, channel) != Some(channel))
                 } else {
@@ -815,6 +853,9 @@ impl ServerState {
                 let new_tombstone = !self.server.deleted_events.contains(&event);
                 if new_tombstone && event.len() <= 64 {
                     self.server.deleted_events.push(event);
+                    if self.server.deleted_events.len() > MAX_TOMBSTONED_IDS {
+                        self.server.deleted_events.remove(0);
+                    }
                 }
                 Ok(self.server.events.len() != before)
             }
@@ -826,6 +867,9 @@ impl ServerState {
                 let current = target.rsvps.iter().find(|(u, _)| *u == user).map(|(_, r)| *r);
                 if current == rsvp {
                     return Ok(false);
+                }
+                if current.is_none() && target.rsvps.len() >= MAX_RSVPS_PER_EVENT {
+                    return Err(StoreError::Limit);
                 }
                 target.rsvps.retain(|(u, _)| *u != user);
                 if let Some(rsvp) = rsvp {
@@ -893,6 +937,9 @@ impl ServerState {
                 }
                 if user == self.server.owner || self.server.banned.contains(&user) {
                     return Ok(false);
+                }
+                if self.server.banned.len() >= MAX_BANS {
+                    return Err(StoreError::Limit);
                 }
                 self.server.banned.push(user);
                 self.server.members.retain(|m| m.user != user);
@@ -1077,6 +1124,9 @@ impl ServerState {
                 // Position 0 is reserved for the implicit everyone role.
                 if role.position == 0 {
                     return Ok(false);
+                }
+                if self.server.roles.len() >= MAX_ROLES {
+                    return Err(StoreError::Limit);
                 }
                 self.server.roles.push(role);
                 Ok(true)
@@ -1423,6 +1473,31 @@ impl ServerState {
 
     /// Pins the first identity key seen for a user. A profile without a
     /// key keeps the pinned one; a different key is refused.
+    fn make_profile_room(&mut self, user: UserId) -> Result<(), StoreError> {
+        if self.profiles.contains_key(&user) || self.profiles.len() < MAX_PROFILES {
+            return Ok(());
+        }
+        let members: HashSet<UserId> = self.server.members.iter().map(|m| m.user).collect();
+        self.profiles.retain(|id, _| members.contains(id));
+        if self.profiles.len() < MAX_PROFILES {
+            Ok(())
+        } else {
+            Err(StoreError::Limit)
+        }
+    }
+
+    pub fn media_peer_ok(&self, user: UserId, node_hex: &str, channel: ChannelId, voice: bool) -> bool {
+        if !self.server.is_member(user) || self.server.banned.contains(&user) {
+            return false;
+        }
+        let node_ok = self
+            .profiles
+            .get(&user)
+            .and_then(|p| p.node.as_deref())
+            .is_some_and(|node| node.eq_ignore_ascii_case(node_hex));
+        node_ok && (!voice || self.voice_states.get(&user) == Some(&channel))
+    }
+
     fn pin_identity(&self, profile: &mut UserProfile) -> Result<(), StoreError> {
         match (self.identity_of(profile.id), profile.identity) {
             (Some(pinned), Some(key)) if pinned != key => Err(StoreError::IdentityMismatch),
@@ -1533,6 +1608,13 @@ fn relayed_reactions(reactions: Vec<Reaction>) -> Vec<Reaction> {
         out.push(Reaction { emoji: reaction.emoji, users: list });
     }
     out
+}
+
+fn reaction_room(message: &Message, emoji: &str, user: UserId) -> bool {
+    match message.reactions.iter().find(|r| r.emoji == emoji) {
+        Some(reaction) => reaction.users.contains(&user) || reaction.users.len() < MAX_REACTORS_PER_REACTION,
+        None => message.reactions.len() < MAX_REACTIONS_PER_MESSAGE,
+    }
 }
 
 /// Whether a signed time lies more than [`MAX_AHEAD_MS`] past `now`.
@@ -3608,5 +3690,220 @@ mod tests {
         assert_eq!(create(&mut restored, &late), Ok(true));
         assert!(restored.has_message(msg.id));
         assert_eq!(crate::catchup::digests(&restored, Utc::now()).len(), 1);
+    }
+
+    fn filler_member() -> Member {
+        Member { user: UserId::new(), nickname: None, roles: vec![], joined_at: Utc::now() }
+    }
+
+    #[test]
+    fn a_full_server_takes_no_more_members() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        while state.server.members.len() < MAX_MEMBERS {
+            state.server.members.push(filler_member());
+        }
+        let newcomer = keyed_profile("late");
+        let join = ServerEvent::MemberJoin { server: sid, profile: newcomer.clone() };
+        assert_eq!(state.apply(join.clone()), Err(StoreError::Limit));
+        assert!(!state.profiles.contains_key(&newcomer.id));
+        let again = ServerEvent::MemberJoin { server: sid, profile: state.profiles[&owner].clone() };
+        assert_eq!(state.apply(again), Ok(false), "a member already in stays");
+        let gone = state.server.members[5].user;
+        assert_eq!(state.apply(ServerEvent::MemberLeave { server: sid, user: gone }), Ok(true));
+        assert_eq!(state.apply(join), Ok(true));
+    }
+
+    #[test]
+    fn profiles_of_former_members_make_room_for_a_newcomer() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        while state.profiles.len() < MAX_PROFILES {
+            let left = UserProfile::new("left");
+            state.profiles.insert(left.id, left);
+        }
+        let newcomer = keyed_profile("new");
+        assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile: newcomer.clone() }), Ok(true));
+        assert!(state.profiles.contains_key(&newcomer.id) && state.profiles.contains_key(&owner));
+        assert_eq!(state.profiles.len(), 2);
+    }
+
+    #[test]
+    fn channels_and_roles_are_capped() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        while state.server.channels.len() < MAX_CHANNELS {
+            state.server.channels.push(Channel::new("more", ChannelKind::Text, 1));
+        }
+        let channel = Channel::new("one more", ChannelKind::Text, 1);
+        assert_eq!(state.apply(ServerEvent::ChannelCreate { server: sid, channel }), Err(StoreError::Limit));
+        assert_eq!(state.server.channels.len(), MAX_CHANNELS);
+        while state.server.roles.len() < MAX_ROLES {
+            state.server.roles.push(Role {
+                id: RoleId::new(),
+                name: "r".into(),
+                color: None,
+                permissions: Permissions::NONE,
+                position: 1,
+                hoist: false,
+                self_assignable: false,
+                tag: None,
+                banner: None,
+            });
+        }
+        let role = Role {
+            id: RoleId::new(),
+            name: "last".into(),
+            color: None,
+            permissions: Permissions::NONE,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+        };
+        assert_eq!(state.apply(ServerEvent::RoleCreate { server: sid, role }), Err(StoreError::Limit));
+        assert_eq!(state.server.roles.len(), MAX_ROLES);
+    }
+
+    #[test]
+    fn reactions_per_message_and_reactors_per_emoji_are_capped() {
+        let (mut state, channel, owner) = fixture();
+        let msg = post(&state, channel, owner, "popular");
+        create(&mut state, &msg).unwrap();
+        let react = |emoji: &str, user| ServerEvent::ReactionToggle { channel, message: msg.id, emoji: emoji.into(), user };
+        let set = |emoji: &str, user, active| ServerEvent::ReactionSet { channel, message: msg.id, emoji: emoji.into(), user, active };
+        {
+            let held = state.find_message_mut(channel, msg.id).unwrap();
+            for i in 0..MAX_REACTIONS_PER_MESSAGE {
+                held.reactions.push(Reaction { emoji: format!(":e{i}:"), users: vec![UserId::new()] });
+            }
+        }
+        assert_eq!(state.apply(react(":new:", owner)), Err(StoreError::Limit));
+        assert_eq!(state.apply(set(":new:", owner, true)), Err(StoreError::Limit));
+        assert_eq!(state.apply(react(":e0:", owner)), Ok(true), "an emoji already there takes more people");
+        assert_eq!(state.apply(react(":e0:", owner)), Ok(true), "and lets them go");
+        {
+            let held = state.find_message_mut(channel, msg.id).unwrap();
+            let first = &mut held.reactions[0];
+            while first.users.len() < MAX_REACTORS_PER_REACTION {
+                first.users.push(UserId::new());
+            }
+        }
+        assert_eq!(state.apply(react(":e0:", owner)), Err(StoreError::Limit));
+        assert_eq!(state.apply(set(":e0:", owner, true)), Err(StoreError::Limit));
+        let someone = state.message(msg.id).unwrap().reactions[0].users[3];
+        assert_eq!(state.apply(set(":e0:", someone, false)), Ok(true), "leaving is always possible");
+        assert_eq!(state.apply(react(":e0:", owner)), Ok(true));
+        assert_eq!(state.message(msg.id).unwrap().reactions[0].users.len(), MAX_REACTORS_PER_REACTION);
+    }
+
+    #[test]
+    fn live_voice_share_and_camera_entries_are_capped() {
+        let (mut state, _, owner) = fixture();
+        let voice = state.server.channels[1].id;
+        for _ in 0..MAX_LIVE_ENTRIES {
+            let user = UserId::new();
+            state.voice_states.insert(user, voice);
+            state.screen_shares.insert(user, voice);
+            state.cameras.insert(user, voice);
+        }
+        let inside = *state.voice_states.keys().next().unwrap();
+        let share = |user, active| ServerEvent::ScreenShare { user, channel: voice, active };
+        assert_eq!(state.apply(share(owner, true)), Err(StoreError::Limit));
+        assert_eq!(state.apply(share(inside, true)), Ok(false), "someone in already is unaffected");
+        assert_eq!(state.apply(share(inside, false)), Ok(true));
+        assert_eq!(state.apply(share(owner, true)), Ok(true));
+        let camera = |user, active| ServerEvent::CameraState { user, channel: voice, active };
+        assert_eq!(state.apply(camera(owner, true)), Err(StoreError::Limit));
+        assert_eq!(state.apply(camera(inside, false)), Ok(true));
+        assert_eq!(state.apply(camera(owner, true)), Ok(true));
+        let join = |user, channel| ServerEvent::VoiceState { user, channel, muted: false, deafened: false, since: None };
+        assert_eq!(state.apply(join(owner, Some(voice))), Err(StoreError::Limit));
+        assert!(state.apply(join(inside, Some(voice))).is_ok());
+        assert_eq!(state.apply(join(inside, None)), Ok(true));
+        assert_eq!(state.apply(join(owner, Some(voice))), Ok(true));
+    }
+
+    #[test]
+    fn rsvps_and_bans_are_capped() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let event = crate::server::ScheduledEvent {
+            id: "night".into(),
+            title: "Game night".into(),
+            description: String::new(),
+            start: Utc::now(),
+            end: None,
+            channel: None,
+            creator: owner,
+            rsvps: (0..MAX_RSVPS_PER_EVENT).map(|_| (UserId::new(), crate::server::Rsvp::Going)).collect(),
+        };
+        state.server.events.push(event);
+        let rsvp = |user, rsvp| ServerEvent::EventRsvp { server: sid, event: "night".into(), user, rsvp };
+        assert_eq!(state.apply(rsvp(owner, Some(crate::server::Rsvp::Going))), Err(StoreError::Limit));
+        let someone = state.server.events[0].rsvps[0].0;
+        assert_eq!(state.apply(rsvp(someone, Some(crate::server::Rsvp::Interested))), Ok(true), "changing an answer is fine");
+        assert_eq!(state.apply(rsvp(someone, None)), Ok(true));
+        assert_eq!(state.apply(rsvp(owner, Some(crate::server::Rsvp::Going))), Ok(true));
+        while state.server.banned.len() < MAX_BANS {
+            state.server.banned.push(UserId::new());
+        }
+        let user = join(&mut state, "troll");
+        assert_eq!(state.apply(ServerEvent::MemberBan { server: sid, user }), Err(StoreError::Limit));
+        assert!(state.server.is_member(user));
+        let pardoned = state.server.banned[0];
+        assert_eq!(state.apply(ServerEvent::MemberUnban { server: sid, user: pardoned }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::MemberBan { server: sid, user }), Ok(true));
+    }
+
+    #[test]
+    fn tombstoned_ids_keep_only_the_newest() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let oldest = ChannelId::new();
+        state.server.deleted_channels.push(oldest);
+        while state.server.deleted_channels.len() < MAX_TOMBSTONED_IDS {
+            state.server.deleted_channels.push(ChannelId::new());
+        }
+        let gone = ChannelId::new();
+        assert_eq!(state.apply(ServerEvent::ChannelDelete { server: sid, channel: gone }), Ok(true));
+        assert_eq!(state.server.deleted_channels.len(), MAX_TOMBSTONED_IDS);
+        assert!(state.server.deleted_channels.contains(&gone) && !state.server.deleted_channels.contains(&oldest));
+        state.server.deleted_events = (0..MAX_TOMBSTONED_IDS).map(|i| format!("e{i}")).collect();
+        assert_eq!(state.apply(ServerEvent::EventDelete { server: sid, event: "last".into() }), Ok(false));
+        assert_eq!(state.server.deleted_events.len(), MAX_TOMBSTONED_IDS);
+        assert_eq!(state.server.deleted_events.last().map(String::as_str), Some("last"));
+        assert_ne!(state.server.deleted_events[0], "e0");
+    }
+
+    #[test]
+    fn media_peers_must_be_members_on_their_own_node() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let lobby = Channel::new("Lobby", ChannelKind::Voice, 9);
+        let other = lobby.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: lobby }).unwrap();
+        let node = "ab".repeat(32);
+        let member = join(&mut state, "friend");
+        assert!(!state.media_peer_ok(member, &node, voice, false), "no node announced yet");
+        state.profiles.get_mut(&member).unwrap().node = Some(node.clone());
+        assert!(state.media_peer_ok(member, &node, voice, false));
+        assert!(state.media_peer_ok(member, &node.to_uppercase(), voice, false));
+        assert!(!state.media_peer_ok(member, &"cd".repeat(32), voice, false), "another node");
+        assert!(!state.media_peer_ok(member, &node, voice, true), "not in voice");
+        let in_voice = |user, channel| ServerEvent::VoiceState { user, channel, muted: false, deafened: false, since: None };
+        state.apply(in_voice(member, Some(other))).unwrap();
+        assert!(!state.media_peer_ok(member, &node, voice, true), "in another channel");
+        state.apply(in_voice(member, Some(voice))).unwrap();
+        assert!(state.media_peer_ok(member, &node, voice, true));
+        let stranger = UserProfile::new("stranger");
+        state.profiles.insert(stranger.id, UserProfile { node: Some(node.clone()), ..stranger.clone() });
+        state.voice_states.insert(stranger.id, voice);
+        assert!(!state.media_peer_ok(stranger.id, &node, voice, true), "not a member");
+        assert!(!state.media_peer_ok(owner, &node, voice, false), "owner is on another node");
+        state.apply(ServerEvent::MemberBan { server: sid, user: member }).unwrap();
+        assert!(!state.media_peer_ok(member, &node, voice, false));
     }
 }
