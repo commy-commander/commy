@@ -23,7 +23,9 @@ jobs:
       - run: shellcheck -s sh deploy/host/commy-firewall.sh deploy/host/harden-vps.sh
 
       - name: Unit tests
-        run: sh deploy/host/commy-firewall.test.sh
+        run: |
+          sh deploy/host/commy-firewall.test.sh
+          sh deploy/host/harden-vps.test.sh
 
       # A network namespace stands in for the internet: it reaches the host over a
       # veth pair, so its traffic to published ports goes through DOCKER-USER.
@@ -65,6 +67,10 @@ jobs:
       - name: Full hardening run
         run: |
           echo "COMMY_FW_IFACE=veth-host" | sudo tee /etc/default/commy-firewall
+          sudo apt-get install -y -qq openssh-server
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/ci_key
+          cat ~/.ssh/ci_key.pub >> ~/.ssh/authorized_keys
           sudo sh deploy/host/harden-vps.sh
           sudo sh deploy/host/harden-vps.sh >/dev/null
           echo "re-run is idempotent"
@@ -76,6 +82,13 @@ jobs:
           expect 80 200
           sudo systemctl is-enabled commy-firewall.timer
           sudo ufw status | grep -q 'commy-cf'
+          sudo sshd -T | grep -qx 'passwordauthentication no'
+          sudo sshd -T | grep -qx 'kbdinteractiveauthentication no'
+          sudo sshd -T | grep -qx 'permitrootlogin no'
+          sudo systemctl is-active fail2ban
+          sudo fail2ban-client status sshd
+          sudo systemctl is-enabled unattended-upgrades
+          grep -q 'APT::Periodic::Unattended-Upgrade "1";' /etc/apt/apt.conf.d/20auto-upgrades
           # Docker restarts rebuild its chains; the drop-in re-applies ours
           sudo systemctl restart docker
           docker start https >/dev/null; sleep 2

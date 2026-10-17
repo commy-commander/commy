@@ -166,8 +166,18 @@ sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
 ```
 
 - **ufw** denies incoming connections except SSH (rate limited), port 80 and
-  the iroh relay ports (`PUBLIC_PORTS`, default `3478/udp 3479/udp 7842/udp 8443/tcp`),
+  the iroh relay ports (`PUBLIC_PORTS`, default `3478/udp 3479/udp 8443/tcp`),
   which stay open to everyone because clients reach the relay directly.
+- **SSH with keys only.** A drop-in in `/etc/ssh/sshd_config.d/` turns off
+  password and keyboard-interactive login and closes root login (key-only root
+  login when the script is run as root rather than through a sudo user). The
+  script first checks that the user running it, or root, has a key in
+  `~/.ssh/authorized_keys`; without one it leaves password login on and prints
+  how to add a key, so it can never lock you out. The new settings are checked
+  with `sshd -t` before sshd is reloaded.
+- **fail2ban** with an sshd jail (5 failed attempts in 10 minutes ban the
+  address for an hour) and **unattended-upgrades** with the standard daily
+  security updates.
 - **HTTPS only from Cloudflare.** Port 443 is accepted only from
   [Cloudflare's ranges](https://www.cloudflare.com/ips/), both in ufw and in
   Docker's `DOCKER-USER` chain, since ports published by Docker skip ufw. This
