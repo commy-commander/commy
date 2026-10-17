@@ -1,6 +1,9 @@
 const MEDIA_HOSTS = [
   "static.klipy.com",
   "images.igdb.com",
+  "media.giphy.com",
+  /^media[0-9]\.giphy\.com$/,
+  "i.giphy.com",
 ];
 
 const IMAGE_LINK = /https:\/\/[^\s<>"'?]+\.(?:gif|png|jpe?g|webp)(?:\?[^\s<>"']*)?/gi;

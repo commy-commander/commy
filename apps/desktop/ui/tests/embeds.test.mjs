@@ -6,13 +6,14 @@ const require = createRequire(import.meta.url);
 const { MAX_IMAGE_EMBEDS, isMediaHost, imageHost, imageLinks, embedMode, imageGateText } = require("../scripts/embeds.js");
 
 const KLIPY = "https://static.klipy.com/ii/4e7b/fd/3b/5wGhb3j5.gif";
+const GIPHY = "https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYWJj/giphy.gif?cid=790b7611abc&rid=giphy.gif&ct=g";
 const OTHER = "https://pics.example.org/cat.png";
 
 test("only the hosts the account server proxies count as media hosts", () => {
-  for (const host of ["static.klipy.com", "images.igdb.com", "Static.KLIPY.com"]) {
+  for (const host of ["static.klipy.com", "images.igdb.com", "media.giphy.com", "media0.giphy.com", "media4.giphy.com", "media9.giphy.com", "i.giphy.com", "I.GIPHY.COM"]) {
     assert.ok(isMediaHost(host), host);
   }
-  for (const host of ["static.klipy.com.evil.example", "klipy.com", "xstatic.klipy.com", "example.org", "", null]) {
+  for (const host of ["giphy.com", "api.giphy.com", "media10.giphy.com", "media0.giphy.com.evil.example", "evilmedia0.giphy.com", "static.klipy.com.evil.example", "klipy.com", "example.org", "", null]) {
     assert.equal(isMediaHost(host), false, String(host));
   }
 });
@@ -27,7 +28,7 @@ test("the host of an image link is read from the URL, https only", () => {
 });
 
 test("image links are https links with an image extension, at most four", () => {
-  assert.deepEqual(imageLinks(`look ${OTHER} and ${KLIPY}?v=2`), [OTHER, `${KLIPY}?v=2`]);
+  assert.deepEqual(imageLinks(`look ${OTHER} and ${GIPHY}`), [OTHER, GIPHY]);
   assert.deepEqual(imageLinks("https://a.example/x.webp?size=2 https://b.example/y.jpeg"), ["https://a.example/x.webp?size=2", "https://b.example/y.jpeg"]);
   assert.deepEqual(imageLinks("http://a.example/x.gif"), [], "plain http is never embedded");
   assert.deepEqual(imageLinks("https://a.example/photo"), [], "a lone link without an extension is never embedded");
@@ -41,6 +42,7 @@ test("image links are https links with an image extension, at most four", () => 
 
 test("proxied hosts embed on their own, everything else waits for a click", () => {
   assert.equal(embedMode(KLIPY), "auto");
+  assert.equal(embedMode(GIPHY), "auto");
   assert.equal(embedMode("https://images.igdb.com/igdb/image/upload/t_thumb/co1rs4.jpg"), "auto");
   assert.equal(embedMode(OTHER), "click");
   assert.equal(embedMode("https://static.klipy.com@evil.example/a.gif"), "click");
