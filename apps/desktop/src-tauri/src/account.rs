@@ -104,11 +104,8 @@ pub fn load(dir: &Path) -> AccountState {
 }
 
 fn save(dir: &Path, state: &AccountState) {
-    if let Ok(json) = serde_json::to_string_pretty(state) {
-        let tmp = path(dir).with_extension("json.tmp");
-        if std::fs::write(&tmp, json).is_ok() {
-            let _ = std::fs::rename(&tmp, path(dir));
-        }
+    if let Err(e) = crate::persist::write_secret_json(&path(dir), state) {
+        tracing::warn!("could not save the account: {e}");
     }
 }
 

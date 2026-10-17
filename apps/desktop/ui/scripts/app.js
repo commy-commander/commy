@@ -3481,6 +3481,7 @@ function renderAttachment(att) {
         blob: att.blob,
         filename: att.filename,
         provider: att.provider ?? null,
+        sizeBytes: att.size_bytes ?? null,
       });
       toast(path ? `Saved to ${path}` : "Download cancelled");
     } catch (e) {
@@ -6662,6 +6663,7 @@ function renderInlineImage(att) {
       blob: att.blob,
       provider: att.provider ?? null,
       mime: att.mime,
+      sizeBytes: att.size_bytes ?? null,
     })
       .then(dataUrl => {
         imagePreviewCache.set(att.blob, dataUrl);
@@ -6701,7 +6703,7 @@ function renderInlineVideo(att) {
     box.classList.add("loading");
     label.textContent = "Loading video";
     try {
-      const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null });
+      const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null });
       const url = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
       videoUrls.set(att.blob, url);
       const player = videoPlayer(url);

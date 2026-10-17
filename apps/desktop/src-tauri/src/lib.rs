@@ -225,6 +225,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     drop(signing);
 
     app.persist_server(ticket.server_id);
+    doorbell::record_join(app, ticket.server_id);
     handle.emit("servers-changed", serde_json::Value::Null);
     Ok(summary)
 }
@@ -513,6 +514,8 @@ fn may_delete(app: &App, state: &ServerState, channel: ChannelId, message: Messa
 
 // ---------- File sharing ----------
 
+const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
+
 /// Stores bytes as a blob and posts them as an attachment message.
 async fn send_attachment(
     app: &tauri::State<'_, App>,
@@ -522,7 +525,7 @@ async fn send_attachment(
     filename: String,
     bytes: Vec<u8>,
 ) -> CmdResult<MessageView> {
-    if bytes.len() > 512 * 1024 * 1024 {
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
         return Err("files larger than 512 MB are not supported yet".into());
     }
     let profile = current_profile(app)?;
@@ -589,8 +592,13 @@ async fn get_attachment_video(
     app: tauri::State<'_, App>,
     blob: String,
     provider: Option<String>,
+    size_bytes: Option<u64>,
 ) -> CmdResult<tauri::ipc::Response> {
-    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
+    let max = MAX_INLINE_VIDEO_BYTES as u64;
+    if size_bytes.is_some_and(|size| size > max) {
+        return Err("video too large to play here".into());
+    }
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
     if bytes.len() > MAX_INLINE_VIDEO_BYTES {
         return Err("video too large to play here".into());
     }
@@ -674,11 +682,47 @@ async fn note_user_activity(app: tauri::State<'_, App>, handle: tauri::AppHandle
 
 #[tauri::command]
 fn open_url(url: String) -> CmdResult<()> {
-    let parsed = url.trim();
-    if !(parsed.starts_with("https://") || parsed.starts_with("http://")) {
-        return Err("only http and https links can be opened".into());
+    let target = web_url(&url).ok_or("only http and https links can be opened")?;
+    open::that_detached(target).map_err(err_to_string)
+}
+
+fn web_url(raw: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(raw.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return None;
     }
-    open::that_detached(parsed).map_err(err_to_string)
+    Some(parsed.to_string())
+}
+
+const MAX_FILE_NAME_CHARS: usize = 120;
+
+fn safe_file_name(name: &str) -> String {
+    let last_segment = name.rsplit(['/', '\\']).find(|part| !part.trim().is_empty()).unwrap_or("");
+    let mut cleaned: String = last_segment
+        .chars()
+        .filter(|c| !c.is_control())
+        .map(|c| if matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .collect();
+    cleaned = cleaned.trim().trim_start_matches(['.', ' ']).trim_end_matches(['.', ' ']).to_string();
+    if cleaned.chars().count() > MAX_FILE_NAME_CHARS {
+        let (stem, ext) = match cleaned.rsplit_once('.') {
+            Some((stem, ext)) if ext.len() <= 10 && !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+            _ => (cleaned.clone(), String::new()),
+        };
+        let keep = MAX_FILE_NAME_CHARS.saturating_sub(ext.chars().count()).max(1);
+        cleaned = format!("{}{ext}", stem.chars().take(keep).collect::<String>());
+    }
+    let stem = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.ends_with(|c: char| c.is_ascii_digit()));
+    if reserved {
+        cleaned = format!("_{cleaned}");
+    }
+    if cleaned.is_empty() {
+        "file".to_string()
+    } else {
+        cleaned
+    }
 }
 
 #[tauri::command]
@@ -687,10 +731,14 @@ async fn download_attachment(
     blob: String,
     filename: String,
     provider: Option<String>,
+    size_bytes: Option<u64>,
 ) -> CmdResult<Option<String>> {
-    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
+    if let Some(size) = size_bytes {
+        commy_net::node::check_blob_size(size, MAX_ATTACHMENT_BYTES).map_err(err_to_string)?;
+    }
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), MAX_ATTACHMENT_BYTES).await?;
     let Some(target) = rfd::AsyncFileDialog::new()
-        .set_file_name(&filename)
+        .set_file_name(safe_file_name(&filename))
         .save_file()
         .await
     else {
@@ -999,12 +1047,37 @@ fn dial_voice_peer(
     });
 }
 
-async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>) -> CmdResult<Vec<u8>> {
+async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
     let fetcher = {
         let net = app.net.lock().await;
         net.as_ref().ok_or("network is not ready yet")?.blob_fetcher()
     };
-    fetcher.fetch(blob, provider).await.map_err(err_to_string)
+    fetcher.fetch(blob, provider, max).await.map_err(err_to_string)
+}
+
+fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
+    let handle = handle.clone();
+    std::sync::Arc::new(move |peer, hello| {
+        let app = handle.state::<App>();
+        let node_hex = data_encoding::HEXLOWER.encode(&peer);
+        let (user, channel, voice, server) = match *hello {
+            MediaHello::Voice { user, channel } => {
+                let session = app.voice_session.lock().unwrap();
+                (user, channel, true, session.as_ref().filter(|s| s.channel == channel).map(|s| s.server))
+            }
+            MediaHello::ScreenSubscribe { user, channel } => {
+                let share = app.screen_share.lock().unwrap();
+                (user, channel, false, share.as_ref().filter(|s| s.channel == channel).map(|s| s.server))
+            }
+            MediaHello::CameraSubscribe { user, channel } => {
+                let camera = app.camera.lock().unwrap();
+                (user, channel, false, camera.as_ref().filter(|c| c.channel == channel).map(|c| c.server))
+            }
+        };
+        let Some(server) = server else { return false };
+        let servers = app.servers.lock().unwrap();
+        servers.get(&server).is_some_and(|state| state.media_peer_ok(user, &node_hex, channel, voice))
+    })
 }
 
 async fn dial_media(app: &App, their_hex: &str, hello: MediaHello) -> CmdResult<MediaChannel> {
@@ -2811,7 +2884,7 @@ async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdRes
     let bytes = match cached {
         Some(bytes) => bytes,
         None => {
-            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider)).await?;
+            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider), MAX_SERVER_IMAGE_BYTES as u64).await?;
             if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
                 return Err("server image is not a valid picture".into());
             }
@@ -3911,7 +3984,7 @@ async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult
     let bytes = match cached {
         Some(bytes) => bytes,
         None => {
-            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider)).await?;
+            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider), expressions::MAX_SOUND_BYTES as u64).await?;
             if expressions::expression_mime(&bytes).is_none() {
                 return Err("not a valid emoji or sound".into());
             }
@@ -4575,6 +4648,7 @@ async fn get_attachment_preview(
     blob: String,
     provider: Option<String>,
     mime: String,
+    size_bytes: Option<u64>,
 ) -> CmdResult<String> {
     // Strict shape check: the mime is peer-supplied and goes into a
     // data URL, so it must not carry separators or whitespace.
@@ -4586,8 +4660,12 @@ async fn get_attachment_preview(
     {
         return Err("not an image".into());
     }
-    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
-    if bytes.len() > 20 * 1024 * 1024 {
+    let max = commy_net::node::MAX_BLOB_BYTES;
+    if size_bytes.is_some_and(|size| size > max) {
+        return Err("image too large to preview".into());
+    }
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
+    if bytes.len() as u64 > max {
         return Err("image too large to preview".into());
     }
     Ok(format!(
@@ -5352,6 +5430,7 @@ pub fn run() {
                             }
                         }
                         node.set_catchup_store(catchup::store(&handle));
+                        node.set_media_gate(media_gate(&handle));
                         *app.net.lock().await = Some(node);
                         tracing::info!("iroh node online");
 
@@ -5534,6 +5613,49 @@ pub fn run() {
             }
             invite_link::on_run_event(handle, &event)
         });
+}
+
+#[cfg(test)]
+mod hygiene_tests {
+    use super::*;
+
+    #[test]
+    fn only_web_links_open_and_they_open_as_parsed() {
+        assert_eq!(web_url(" https://commy.chat/docs ").as_deref(), Some("https://commy.chat/docs"));
+        assert_eq!(web_url("http://localhost:3100/i/abc#key").as_deref(), Some("http://localhost:3100/i/abc#key"));
+        assert_eq!(web_url("HTTPS://Example.ORG").as_deref(), Some("https://example.org/"));
+        assert_eq!(web_url("file:///etc/passwd"), None);
+        assert_eq!(web_url("javascript:alert(1)"), None);
+        assert_eq!(web_url("commy://commy.chat/i/abc"), None);
+        assert_eq!(web_url("https://"), None);
+        assert_eq!(web_url("not a link"), None);
+        assert_eq!(web_url(""), None);
+    }
+
+    #[test]
+    fn peer_file_names_are_cleaned_before_the_save_dialog() {
+        assert_eq!(safe_file_name("report.pdf"), "report.pdf");
+        assert_eq!(safe_file_name("../../etc/passwd"), "passwd");
+        assert_eq!(safe_file_name("..\\windows\\system32\\x.dll"), "x.dll");
+        assert_eq!(safe_file_name("photos/"), "photos");
+        assert_eq!(safe_file_name("/"), "file");
+        assert_eq!(safe_file_name(".bashrc"), "bashrc");
+        assert_eq!(safe_file_name("  notes.txt. "), "notes.txt");
+        assert_eq!(safe_file_name("a\u{0}b\r\nc.txt"), "abc.txt");
+        assert_eq!(safe_file_name("CON"), "_CON");
+        assert_eq!(safe_file_name("lpt1.txt"), "_lpt1.txt");
+        assert_eq!(safe_file_name("com9"), "_com9");
+        assert_eq!(safe_file_name("console.log"), "console.log");
+        assert_eq!(safe_file_name("what?.png"), "what_.png");
+        assert_eq!(safe_file_name(""), "file");
+        assert_eq!(safe_file_name("..."), "file");
+        let long = format!("{}.jpeg", "x".repeat(500));
+        let cleaned = safe_file_name(&long);
+        assert_eq!(cleaned.chars().count(), MAX_FILE_NAME_CHARS);
+        assert!(cleaned.ends_with(".jpeg"));
+        let no_ext = safe_file_name(&"y".repeat(300));
+        assert_eq!(no_ext.chars().count(), MAX_FILE_NAME_CHARS);
+    }
 }
 
 #[cfg(test)]
