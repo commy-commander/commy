@@ -125,6 +125,7 @@ pub struct ServerState {
     unapplied: Option<HashMap<UserId, BTreeSet<UnappliedKey>>>,
     action_times: HashMap<String, i64>,
     action_floor: i64,
+    local_floor: Option<DateTime<Utc>>,
 }
 
 /// Durable image of a server, written to disk between sessions.
@@ -170,6 +171,7 @@ impl ServerState {
             unapplied: None,
             action_times: HashMap::new(),
             action_floor: 0,
+            local_floor: None,
         }
     }
 
@@ -276,6 +278,52 @@ impl ServerState {
             *unapplied = None;
         }
         removed
+    }
+
+    pub fn roll_off(&mut self, floor: Option<DateTime<Utc>>) -> usize {
+        self.local_floor = floor;
+        let Some(floor) = floor else { return 0 };
+        if !self.messages.values().flatten().any(|m| m.created_at < floor) {
+            return 0;
+        }
+        let pinned: HashSet<MessageId> = self.server.pins.iter().map(|p| p.message).collect();
+        let parents: HashMap<MessageId, MessageId> =
+            self.messages.values().flatten().filter_map(|m| Some((m.id, m.reply_to?))).collect();
+        let mut keep: HashSet<MessageId> = self
+            .messages
+            .values()
+            .flatten()
+            .filter(|m| m.created_at >= floor || pinned.contains(&m.id))
+            .map(|m| m.id)
+            .collect();
+        let mut unvisited: Vec<MessageId> = keep.iter().copied().collect();
+        while let Some(id) = unvisited.pop() {
+            if let Some(&parent) = parents.get(&id) {
+                if keep.insert(parent) {
+                    unvisited.push(parent);
+                }
+            }
+        }
+        let Self { messages, index, .. } = self;
+        let mut removed = 0;
+        for list in messages.values_mut() {
+            let before = list.len();
+            list.retain(|m| {
+                let kept = keep.contains(&m.id);
+                if !kept {
+                    index.remove(&m.id);
+                }
+                kept
+            });
+            removed += before - list.len();
+        }
+        removed
+    }
+
+    fn rolled_off(&self, message: &Message) -> bool {
+        self.local_floor.is_some_and(|floor| message.created_at < floor)
+            && !self.server.is_pinned(message.id)
+            && !self.has_message(message.id)
     }
 
     /// Oldest creation time a channel still keeps, or None when it keeps
@@ -1301,6 +1349,9 @@ impl ServerState {
         }
         // A late copy of an already-expired message stays gone.
         if self.retention_cutoff(message.channel, now).is_some_and(|cutoff| message.created_at < cutoff) {
+            return Ok(false);
+        }
+        if self.rolled_off(&message) {
             return Ok(false);
         }
         let server = self.server.id;
@@ -2515,6 +2566,61 @@ mod tests {
         assert_eq!(state.prune_expired(now), 1);
         let left: Vec<_> = state.messages(channel).iter().map(|m| m.content.as_str()).collect();
         assert_eq!(left, vec!["2d", "0d"]);
+    }
+
+    fn post_aged(state: &mut ServerState, channel: ChannelId, owner: UserId, age_days: i64, reply_to: Option<MessageId>) -> Message {
+        let mut msg = Message::new(channel, owner, format!("{age_days}d"));
+        msg.created_at = Utc::now() - chrono::Duration::days(age_days);
+        msg.reply_to = reply_to;
+        let msg = signed(state, msg);
+        state.apply(ServerEvent::MessageCreate { message: msg.clone() }).unwrap();
+        msg
+    }
+
+    fn contents(state: &ServerState, channel: ChannelId) -> Vec<&str> {
+        state.messages(channel).iter().map(|m| m.content.as_str()).collect()
+    }
+
+    #[test]
+    fn roll_off_drops_messages_older_than_the_floor() {
+        let (mut state, channel, owner) = fixture();
+        for age in [200, 100, 10] {
+            post_aged(&mut state, channel, owner, age, None);
+        }
+        assert_eq!(state.roll_off(None), 0);
+        assert_eq!(contents(&state, channel), vec!["200d", "100d", "10d"]);
+        let floor = Utc::now() - chrono::Duration::days(90);
+        assert_eq!(state.roll_off(Some(floor)), 2);
+        assert_eq!(contents(&state, channel), vec!["10d"]);
+        assert_eq!(state.roll_off(Some(floor)), 0);
+    }
+
+    #[test]
+    fn roll_off_keeps_pinned_messages_and_what_kept_replies_point_to() {
+        let (mut state, channel, owner) = fixture();
+        let pinned = post_aged(&mut state, channel, owner, 300, None);
+        let root = post_aged(&mut state, channel, owner, 200, None);
+        let middle = post_aged(&mut state, channel, owner, 150, Some(root.id));
+        post_aged(&mut state, channel, owner, 120, None);
+        post_aged(&mut state, channel, owner, 5, Some(middle.id));
+        state.apply(pin_event(&state, channel, pinned.id, owner, true)).unwrap();
+        let floor = Utc::now() - chrono::Duration::days(90);
+        assert_eq!(state.roll_off(Some(floor)), 1);
+        assert_eq!(contents(&state, channel), vec!["300d", "200d", "150d", "5d"]);
+        assert!(state.has_message(pinned.id));
+    }
+
+    #[test]
+    fn a_rolled_off_message_does_not_come_back_unless_pinned() {
+        let (mut state, channel, owner) = fixture();
+        let old = post_aged(&mut state, channel, owner, 200, None);
+        let floor = Utc::now() - chrono::Duration::days(90);
+        assert_eq!(state.roll_off(Some(floor)), 1);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: old.clone() }), Ok(false));
+        assert!(!state.has_message(old.id));
+        state.apply(pin_event(&state, channel, old.id, owner, true)).unwrap();
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: old.clone() }), Ok(true));
+        assert!(state.has_message(old.id));
     }
 
     #[test]

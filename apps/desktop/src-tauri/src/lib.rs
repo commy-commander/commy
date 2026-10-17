@@ -21,6 +21,7 @@ mod persist;
 mod safety;
 mod settle;
 mod state;
+mod storage;
 mod toast;
 mod tray;
 mod updater;
@@ -2195,24 +2196,64 @@ async fn run_mesh_healer(handle: tauri::AppHandle) {
     }
 }
 
-/// Applies every channel's retention window on startup and then every
-/// ten minutes, since old messages expire with no event to trigger it.
 async fn run_retention_pruner(handle: tauri::AppHandle) {
     loop {
-        let app = handle.state::<App>();
-        let pruned: Vec<ServerId> = {
-            let mut servers = app.servers.lock().unwrap();
-            let now = chrono::Utc::now();
-            servers
-                .values_mut()
-                .filter_map(|s| (s.prune_expired(now) > 0).then_some(s.server.id))
-                .collect()
-        };
-        for sid in pruned {
-            app.persist_server(sid);
-            let _ = handle.emit("server-event", &sid.to_string());
-        }
+        trim_history(&handle);
         tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+    }
+}
+
+fn trim_history(handle: &tauri::AppHandle) {
+    let app = handle.state::<App>();
+    let storage = app.storage.lock().unwrap().clone();
+    let pruned: Vec<ServerId> = {
+        let mut servers = app.servers.lock().unwrap();
+        let now = chrono::Utc::now();
+        servers
+            .values_mut()
+            .filter_map(|s| {
+                let floor = storage.floor(s.server.id, now);
+                let removed = s.prune_expired(now) + s.roll_off(floor);
+                (removed > 0).then_some(s.server.id)
+            })
+            .collect()
+    };
+    for sid in pruned {
+        app.persist_server(sid);
+        let _ = handle.emit("server-event", &sid.to_string());
+    }
+}
+
+#[tauri::command]
+fn get_storage_settings(app: tauri::State<'_, App>) -> storage::StorageSettings {
+    app.storage.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_history_window(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: Option<String>,
+    keep: Option<String>,
+) -> CmdResult<storage::StorageSettings> {
+    let server: Option<ServerId> = server_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let window = keep
+        .as_deref()
+        .map(|raw| storage::KeepWindow::parse(raw).ok_or("unknown history window"))
+        .transpose()?;
+    let settings = {
+        let mut storage = app.storage.lock().unwrap();
+        storage.set(server, window)?;
+        storage.clone()
+    };
+    app.persist_storage();
+    trim_history(&handle);
+    Ok(settings)
+}
+
+fn forget_history_window(app: &App, sid: ServerId) {
+    if app.storage.lock().unwrap().forget(sid) {
+        app.persist_storage();
     }
 }
 
@@ -2367,6 +2408,7 @@ async fn leave_server(
     app.servers.lock().unwrap().remove(&sid);
     app.invites.lock().unwrap().remove(&sid);
     forget_server_outbox(&app, sid);
+    forget_history_window(&app, sid);
     if let Some(dir) = app.data_dir() {
         let _ = persist::delete_server(dir, sid);
     }
@@ -3475,6 +3517,7 @@ async fn on_banned(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: 
     }
     app.invites.lock().unwrap().remove(&sid);
     forget_server_outbox(app, sid);
+    forget_history_window(app, sid);
     if let Some(dir) = app.data_dir() {
         let _ = persist::delete_server(dir, sid);
     }
@@ -4640,6 +4683,16 @@ async fn stop_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
 
 // ---------- Attachment previews ----------
 
+const AUTO_PREVIEW_BYTES: u64 = 5 * 1024 * 1024;
+
+fn preview_limit(clicked: bool) -> u64 {
+    if clicked {
+        commy_net::node::MAX_BLOB_BYTES
+    } else {
+        AUTO_PREVIEW_BYTES
+    }
+}
+
 /// Returns a data URL for an image attachment so chat can render it
 /// inline. Capped to keep the webview responsive.
 #[tauri::command]
@@ -4649,6 +4702,7 @@ async fn get_attachment_preview(
     provider: Option<String>,
     mime: String,
     size_bytes: Option<u64>,
+    clicked: Option<bool>,
 ) -> CmdResult<String> {
     // Strict shape check: the mime is peer-supplied and goes into a
     // data URL, so it must not carry separators or whitespace.
@@ -4660,7 +4714,7 @@ async fn get_attachment_preview(
     {
         return Err("not an image".into());
     }
-    let max = commy_net::node::MAX_BLOB_BYTES;
+    let max = preview_limit(clicked.unwrap_or(false));
     if size_bytes.is_some_and(|size| size > max) {
         return Err("image too large to preview".into());
     }
@@ -5258,6 +5312,9 @@ pub fn run() {
                 if let Some(creds) = persist::load_integrations(&dir) {
                     *app.igdb_creds.lock().unwrap() = creds;
                 }
+                if let Some(storage) = persist::load_storage(&dir) {
+                    *app.storage.lock().unwrap() = storage;
+                }
                 match persist::load_safety(&dir) {
                     Some(safety) => *app.safety.lock().unwrap() = safety,
                     // First run with safety settings: people you already talk to stay in your inbox.
@@ -5594,6 +5651,8 @@ pub fn run() {
             start_mic_test,
             stop_mic_test,
             get_attachment_preview,
+            get_storage_settings,
+            set_history_window,
             get_attachment_video,
             start_screen_share,
             stop_screen_share,
@@ -5630,6 +5689,13 @@ mod hygiene_tests {
         assert_eq!(web_url("https://"), None);
         assert_eq!(web_url("not a link"), None);
         assert_eq!(web_url(""), None);
+    }
+
+    #[test]
+    fn images_load_on_their_own_only_up_to_five_megabytes() {
+        assert_eq!(preview_limit(false), 5 * 1024 * 1024);
+        assert_eq!(preview_limit(true), commy_net::node::MAX_BLOB_BYTES);
+        assert!(preview_limit(false) < preview_limit(true));
     }
 
     #[test]

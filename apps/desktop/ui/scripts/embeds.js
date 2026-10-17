@@ -10,6 +10,7 @@ const IMAGE_LINK = /https:\/\/[^\s<>"'?]+\.(?:gif|png|jpe?g|webp)(?:\?[^\s<>"']*
 const MAX_IMAGE_EMBEDS = 4;
 const INLINE_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "video/x-m4v", "video/ogg"]);
 const MAX_INLINE_VIDEO_BYTES = 100 * 1024 * 1024;
+const MAX_AUTO_IMAGE_BYTES = 5 * 1024 * 1024;
 
 function isMediaHost(hostname) {
   const host = String(hostname || "").toLowerCase();
@@ -52,11 +53,27 @@ function imageGateText(host) {
   };
 }
 
+function loadsImageOnItsOwn(att) {
+  const size = att ? att.size_bytes : undefined;
+  return typeof size === "number" && size >= 0 && size <= MAX_AUTO_IMAGE_BYTES;
+}
+
+function largeImageGateText(size) {
+  return {
+    title: `Image, ${size}`,
+    load: "Load",
+    loading: "Loading...",
+    retry: "Try again",
+    hint: "Images over 5 MB load when you click them.",
+    failed: "The image could not be loaded.",
+  };
+}
+
 function playsInline(att) {
   if (!att || !INLINE_VIDEO_TYPES.has(String(att.mime || "").toLowerCase())) return false;
   return att.size_bytes > 0 && att.size_bytes <= MAX_INLINE_VIDEO_BYTES;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { MAX_IMAGE_EMBEDS, MAX_INLINE_VIDEO_BYTES, isMediaHost, imageHost, imageLinks, embedMode, imageGateText, playsInline };
+  module.exports = { MAX_IMAGE_EMBEDS, MAX_INLINE_VIDEO_BYTES, MAX_AUTO_IMAGE_BYTES, isMediaHost, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText, playsInline };
 }

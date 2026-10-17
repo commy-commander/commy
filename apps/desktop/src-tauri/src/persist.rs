@@ -121,6 +121,14 @@ pub fn load_safety(dir: &Path) -> Option<crate::safety::SafetySettings> {
     read_json(&dir.join("safety.json"))
 }
 
+pub fn save_storage(dir: &Path, storage: &crate::storage::StorageSettings) -> Result<()> {
+    write_json(&dir.join("storage.json"), storage)
+}
+
+pub fn load_storage(dir: &Path) -> Option<crate::storage::StorageSettings> {
+    read_json(&dir.join("storage.json"))
+}
+
 /// Loads the node secret key, creating one on first launch. The key
 /// is the device's P2P identity; losing it breaks stored invites and
 /// DM addresses that peers hold.
