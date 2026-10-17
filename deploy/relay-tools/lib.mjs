@@ -1,4 +1,4 @@
-const GB = 1e9;
+export const GB = 1e9;
 
 export function parseMetrics(text) {
   const read = (name) => {

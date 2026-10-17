@@ -98,10 +98,8 @@ impl DmStore {
     }
 
     pub fn remember_contact(&mut self, mut profile: UserProfile) -> bool {
-        match (self.pinned_key(profile.id), profile.identity) {
-            (Some(pinned), Some(key)) if pinned != key => return false,
-            (Some(pinned), None) => profile.identity = Some(pinned),
-            _ => {}
+        if !profile.pin_identity(self.pinned_key(profile.id)) {
+            return false;
         }
         self.contacts.insert(profile.id, profile);
         true

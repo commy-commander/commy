@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { MAX_IMAGE_EMBEDS, isMediaHost, imageHost, imageLinks, embedMode, imageGateText } = require("../scripts/embeds.js");
+const { MAX_IMAGE_EMBEDS, MAX_AUTO_IMAGE_BYTES, isMediaHost, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText } = require("../scripts/embeds.js");
 
 const KLIPY = "https://static.klipy.com/ii/4e7b/fd/3b/5wGhb3j5.gif";
 const GIPHY = "https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYWJj/giphy.gif?cid=790b7611abc&rid=giphy.gif&ct=g";
@@ -58,4 +58,24 @@ test("the placeholder names the host in every line it shows", () => {
   assert.equal(text.hint, "Loading fetches it from pics.example.org, so that site sees your address.");
   assert.match(text.failed, /pics\.example\.org/);
   assert.ok(text.loading && text.retry);
+});
+
+test("images up to 5 MB load on their own, bigger ones wait for a click", () => {
+  assert.equal(MAX_AUTO_IMAGE_BYTES, 5 * 1024 * 1024);
+  assert.ok(loadsImageOnItsOwn({ size_bytes: 0 }));
+  assert.ok(loadsImageOnItsOwn({ size_bytes: 240_000 }));
+  assert.ok(loadsImageOnItsOwn({ size_bytes: MAX_AUTO_IMAGE_BYTES }));
+  assert.equal(loadsImageOnItsOwn({ size_bytes: MAX_AUTO_IMAGE_BYTES + 1 }), false);
+  assert.equal(loadsImageOnItsOwn({ size_bytes: 19_000_000 }), false);
+  assert.equal(loadsImageOnItsOwn({}), false, "an image without a size waits");
+  assert.equal(loadsImageOnItsOwn({ size_bytes: -1 }), false);
+  assert.equal(loadsImageOnItsOwn({ size_bytes: "lots" }), false);
+  assert.equal(loadsImageOnItsOwn(null), false);
+});
+
+test("the large image placeholder says its size and why it waits", () => {
+  const text = largeImageGateText("12.4 MB");
+  assert.equal(text.title, "Image, 12.4 MB");
+  assert.match(text.hint, /5 MB/);
+  assert.ok(text.load && text.loading && text.retry && text.failed);
 });

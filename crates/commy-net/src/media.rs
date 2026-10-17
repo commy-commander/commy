@@ -42,17 +42,25 @@ where
     W: AsyncWrite + Unpin,
     T: Serialize,
 {
-    let bytes = postcard::to_stdvec(value).map_err(|_| MediaError::Malformed)?;
-    let len = bytes.len() as u32;
+    let mut bytes = postcard::to_extend(value, vec![0u8; 4]).map_err(|_| MediaError::Malformed)?;
+    let len = (bytes.len() - 4) as u32;
     if len > MAX_MEDIA_FRAME {
         return Err(MediaError::FrameTooLarge(len));
     }
-    writer.write_all(&len.to_le_bytes()).await?;
+    bytes[..4].copy_from_slice(&len.to_le_bytes());
     writer.write_all(&bytes).await?;
     Ok(())
 }
 
 pub async fn read_frame<R, T>(reader: &mut R) -> Result<Option<T>, MediaError>
+where
+    R: AsyncRead + Unpin,
+    T: DeserializeOwned,
+{
+    read_frame_capped(reader, MAX_MEDIA_FRAME).await
+}
+
+pub(crate) async fn read_frame_capped<R, T>(reader: &mut R, max: u32) -> Result<Option<T>, MediaError>
 where
     R: AsyncRead + Unpin,
     T: DeserializeOwned,
@@ -64,7 +72,7 @@ where
         Err(e) => return Err(e.into()),
     }
     let len = u32::from_le_bytes(len_bytes);
-    if len > MAX_MEDIA_FRAME {
+    if len > max {
         return Err(MediaError::FrameTooLarge(len));
     }
     let mut buf = vec![0u8; len as usize];

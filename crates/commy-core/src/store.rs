@@ -1,7 +1,7 @@
 use crate::action::{self, SignedEvent};
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
-use crate::ids::{ChannelId, MessageId, UserId};
+use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 use crate::message::{
     Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES, MAX_RELAYED_REACTIONS, MAX_RELAYED_REACTORS,
 };
@@ -96,6 +96,7 @@ pub struct ServerState {
     action_times: HashMap<String, i64>,
     action_floor: i64,
     signed_actions: HashMap<String, SignedEvent>,
+    local_floor: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +141,7 @@ impl ServerState {
             action_times: HashMap::new(),
             action_floor: 0,
             signed_actions: HashMap::new(),
+            local_floor: None,
         }
     }
 
@@ -242,6 +244,52 @@ impl ServerState {
         removed
     }
 
+    pub fn roll_off(&mut self, floor: Option<DateTime<Utc>>) -> usize {
+        self.local_floor = floor;
+        let Some(floor) = floor else { return 0 };
+        if !self.messages.values().flatten().any(|m| m.created_at < floor) {
+            return 0;
+        }
+        let pinned: HashSet<MessageId> = self.server.pins.iter().map(|p| p.message).collect();
+        let parents: HashMap<MessageId, MessageId> =
+            self.messages.values().flatten().filter_map(|m| Some((m.id, m.reply_to?))).collect();
+        let mut keep: HashSet<MessageId> = self
+            .messages
+            .values()
+            .flatten()
+            .filter(|m| m.created_at >= floor || pinned.contains(&m.id))
+            .map(|m| m.id)
+            .collect();
+        let mut unvisited: Vec<MessageId> = keep.iter().copied().collect();
+        while let Some(id) = unvisited.pop() {
+            if let Some(&parent) = parents.get(&id) {
+                if keep.insert(parent) {
+                    unvisited.push(parent);
+                }
+            }
+        }
+        let Self { messages, index, .. } = self;
+        let mut removed = 0;
+        for list in messages.values_mut() {
+            let before = list.len();
+            list.retain(|m| {
+                let kept = keep.contains(&m.id);
+                if !kept {
+                    index.remove(&m.id);
+                }
+                kept
+            });
+            removed += before - list.len();
+        }
+        removed
+    }
+
+    fn rolled_off(&self, message: &Message) -> bool {
+        self.local_floor.is_some_and(|floor| message.created_at < floor)
+            && !self.server.is_pinned(message.id)
+            && !self.has_message(message.id)
+    }
+
     pub fn retention_cutoff(&self, channel: ChannelId, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         self.server.channel(channel).and_then(|c| retention_cutoff(c, now))
     }
@@ -250,13 +298,17 @@ impl ServerState {
         self.profiles.get(&user).and_then(|p| p.identity)
     }
 
+    fn key_of(&self, user: UserId) -> Result<IdentityKey, StoreError> {
+        self.identity_of(user).ok_or(StoreError::UnknownAuthorKey(user))
+    }
+
     pub fn messages_since(&self, channel: ChannelId, since: DateTime<Utc>) -> impl Iterator<Item = &Message> {
         self.messages(channel).iter().filter(move |m| m.created_at >= since)
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
         let channel = self.index.get(&id)?;
-        self.messages.get(channel)?.iter().find(|m| m.id == id)
+        self.messages.get(channel)?.iter().rev().find(|m| m.id == id)
     }
 
     pub fn has_message(&self, id: MessageId) -> bool {
@@ -367,12 +419,7 @@ impl ServerState {
         if !self.admits_signed(signed)? {
             return Ok(false);
         }
-        let applied = self.apply(signed.event.clone())?;
-        if applied || self.target_known(&signed.event) {
-            self.note_action(action::subject(&signed.event), signed.action.at);
-            self.keep_signed(signed);
-        }
-        Ok(applied)
+        self.apply_noted(signed)
     }
 
     pub fn apply_unsigned(&mut self, event: ServerEvent) -> Result<bool, StoreError> {
@@ -384,6 +431,10 @@ impl ServerState {
         if !self.fresh(action::subject(&signed.event).as_deref(), signed.action.at) {
             return Ok(false);
         }
+        self.apply_noted(signed)
+    }
+
+    fn apply_noted(&mut self, signed: &SignedEvent) -> Result<bool, StoreError> {
         let applied = self.apply(signed.event.clone())?;
         if applied || self.target_known(&signed.event) {
             self.note_action(action::subject(&signed.event), signed.action.at);
@@ -402,7 +453,7 @@ impl ServerState {
             | E::ChannelLimit { channel, .. }
             | E::ChannelBanner { channel, .. }
             | E::ChannelColor { channel, .. }
-            | E::ChannelKindSet { channel, .. } => server.channels.iter().any(|c| c.id == *channel),
+            | E::ChannelKindSet { channel, .. } => server.channel(*channel).is_some(),
             E::RoleUpdate { role, .. } => server.roles.iter().any(|r| r.id == role.id),
             E::RoleDelete { role, .. } | E::RoleAssign { role, .. } | E::RoleUnassign { role, .. } => {
                 server.roles.iter().any(|r| r.id == *role)
@@ -492,6 +543,13 @@ impl ServerState {
         self.signed_actions.contains_key(subject)
     }
 
+    fn same_server(&self, server: ServerId) -> Result<(), StoreError> {
+        if server != self.server.id {
+            return Err(StoreError::WrongServer);
+        }
+        Ok(())
+    }
+
     pub fn apply(&mut self, event: ServerEvent) -> Result<bool, StoreError> {
         match event {
             ServerEvent::MessageCreate { message } => self.create_message(message),
@@ -544,9 +602,7 @@ impl ServerState {
                 Ok(true)
             }
             ServerEvent::MemberJoin { server, mut profile } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if self.server.banned.contains(&profile.id) {
                     return Ok(false);
                 }
@@ -570,9 +626,7 @@ impl ServerState {
                 Ok(true)
             }
             ServerEvent::MemberLeave { server, user } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let before = self.server.members.len();
                 self.server.members.retain(|m| m.user != user);
                 self.voice_states.remove(&user);
@@ -593,9 +647,7 @@ impl ServerState {
                 }
             }
             ServerEvent::ChannelCreate { server, channel } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if self.server.channel(channel.id).is_some()
                     || self.server.deleted_channels.contains(&channel.id)
                 {
@@ -609,9 +661,7 @@ impl ServerState {
                 Ok(true)
             }
             ServerEvent::ChannelDelete { server, channel } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let before = self.server.channels.len();
                 self.server.channels.retain(|c| c.id != channel);
                 self.server.pins.retain(|p| p.channel != channel);
@@ -623,10 +673,7 @@ impl ServerState {
                 }
                 let new_tombstone = !self.server.deleted_channels.contains(&channel);
                 if new_tombstone {
-                    self.server.deleted_channels.push(channel);
-                    if self.server.deleted_channels.len() > MAX_TOMBSTONED_IDS {
-                        self.server.deleted_channels.remove(0);
-                    }
+                    push_capped(&mut self.server.deleted_channels, channel, MAX_TOMBSTONED_IDS);
                 }
                 if self.server.afk_channel_id == Some(channel) {
                     self.server.afk_channel_id = None;
@@ -639,29 +686,24 @@ impl ServerState {
                 name,
                 retention_days,
             } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let name = name.trim().to_string();
                 if name.is_empty() {
                     return Ok(false);
                 }
-                let Some(target) = self.server.channels.iter_mut().find(|c| c.id == channel) else {
+                let Some(target) = self.server.channel_mut(channel) else {
                     return Err(StoreError::UnknownChannel);
                 };
-                let retention_days = retention_days.filter(|d| *d > 0);
-                if target.name == name && target.retention_days == retention_days {
+                let a = replace(&mut target.name, name);
+                let b = replace(&mut target.retention_days, retention_days.filter(|d| *d > 0));
+                if !(a | b) {
                     return Ok(false);
                 }
-                target.name = name;
-                target.retention_days = retention_days;
                 self.prune_expired(Utc::now());
                 Ok(true)
             }
             ServerEvent::AfkChannelSet { server, channel } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if let Some(id) = channel {
                     match self.server.channel(id) {
                         Some(c) if c.kind == ChannelKind::Voice => {}
@@ -682,9 +724,7 @@ impl ServerState {
                     if self.server.channel(ch).is_none() {
                         return Err(StoreError::UnknownChannel);
                     }
-                    if !self.voice_states.contains_key(&user) && self.voice_states.len() >= MAX_LIVE_ENTRIES {
-                        return Err(StoreError::Limit);
-                    }
+                    live_room(&self.voice_states, user)?;
                     let moved = self.voice_states.insert(user, ch) != Some(ch);
                     let flagged = self.voice_flags.insert(user, (muted, deafened)) != Some((muted, deafened));
                     if moved || !self.voice_since.contains_key(&user) {
@@ -706,70 +746,34 @@ impl ServerState {
                 channel,
                 active,
             } => {
-                if active {
-                    if self.server.channel(channel).is_none() {
-                        return Err(StoreError::UnknownChannel);
-                    }
-                    if !self.screen_shares.contains_key(&user) && self.screen_shares.len() >= MAX_LIVE_ENTRIES {
-                        return Err(StoreError::Limit);
-                    }
-                    Ok(self.screen_shares.insert(user, channel) != Some(channel))
-                } else {
-                    Ok(self.screen_shares.remove(&user).is_some())
-                }
+                let known = self.server.channel(channel).is_some();
+                set_live(&mut self.screen_shares, known, user, channel, active)
             }
             ServerEvent::CameraState {
                 user,
                 channel,
                 active,
             } => {
-                if active {
-                    if self.server.channel(channel).is_none() {
-                        return Err(StoreError::UnknownChannel);
-                    }
-                    if !self.cameras.contains_key(&user) && self.cameras.len() >= MAX_LIVE_ENTRIES {
-                        return Err(StoreError::Limit);
-                    }
-                    Ok(self.cameras.insert(user, channel) != Some(channel))
-                } else {
-                    Ok(self.cameras.remove(&user).is_some())
-                }
+                let known = self.server.channel(channel).is_some();
+                set_live(&mut self.cameras, known, user, channel, active)
             }
             ServerEvent::EmojiAdd { server, emoji } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if !crate::server::valid_expression_name(&emoji.name)
                     || crate::server::ImageRef::parse(&emoji.blob).is_none()
                 {
                     return Ok(false);
                 }
-                let count = self.server.emojis.len();
-                match self.server.emojis.iter_mut().find(|e| e.name == emoji.name) {
-                    Some(existing) if *existing == emoji => Ok(false),
-                    Some(existing) => {
-                        *existing = emoji;
-                        Ok(true)
-                    }
-                    None if count >= crate::server::MAX_EMOJIS => Ok(false),
-                    None => {
-                        self.server.emojis.push(emoji);
-                        Ok(true)
-                    }
-                }
+                Ok(upsert_by(&mut self.server.emojis, emoji, crate::server::MAX_EMOJIS, |a, b| a.name == b.name))
             }
             ServerEvent::EmojiRemove { server, name } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let before = self.server.emojis.len();
                 self.server.emojis.retain(|e| e.name != name);
                 Ok(self.server.emojis.len() != before)
             }
             ServerEvent::SoundAdd { server, sound } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if !crate::server::valid_expression_name(&sound.name)
                     || crate::server::ImageRef::parse(&sound.blob).is_none()
                     || !(0.0..=2.0).contains(&sound.volume)
@@ -777,87 +781,50 @@ impl ServerState {
                 {
                     return Ok(false);
                 }
-                let count = self.server.soundboard.len();
-                match self.server.soundboard.iter_mut().find(|s| s.name == sound.name) {
-                    Some(existing) if *existing == sound => Ok(false),
-                    Some(existing) => {
-                        *existing = sound;
-                        Ok(true)
-                    }
-                    None if count >= crate::server::MAX_SOUNDS => Ok(false),
-                    None => {
-                        self.server.soundboard.push(sound);
-                        Ok(true)
-                    }
-                }
+                Ok(upsert_by(&mut self.server.soundboard, sound, crate::server::MAX_SOUNDS, |a, b| a.name == b.name))
             }
             ServerEvent::SoundRemove { server, name } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let before = self.server.soundboard.len();
                 self.server.soundboard.retain(|s| s.name != name);
                 Ok(self.server.soundboard.len() != before)
             }
             ServerEvent::ExpressionSettings { server, emojis_shareable, soundboard_open } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
-                if self.server.emojis_shareable == emojis_shareable && self.server.soundboard_open == soundboard_open {
-                    return Ok(false);
-                }
-                self.server.emojis_shareable = emojis_shareable;
-                self.server.soundboard_open = soundboard_open;
-                Ok(true)
+                self.same_server(server)?;
+                let a = replace(&mut self.server.emojis_shareable, emojis_shareable);
+                let b = replace(&mut self.server.soundboard_open, soundboard_open);
+                Ok(a | b)
             }
             ServerEvent::PublicSet { server, public } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
-                if self.server.public == public {
-                    return Ok(false);
-                }
-                self.server.public = public;
-                Ok(true)
+                self.same_server(server)?;
+                Ok(replace(&mut self.server.public, public))
             }
             ServerEvent::SoundboardPlay { .. } => Ok(false),
             ServerEvent::GameTagsSet { server, tags, meta } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let Some(tags) = crate::server::clean_game_tags(&tags) else { return Ok(false) };
                 let meta = crate::server::clean_game_tag_meta(&tags, &meta);
-                if self.server.game_tags == tags && self.server.game_tag_meta == meta {
-                    return Ok(false);
-                }
-                self.server.game_tags = tags;
-                self.server.game_tag_meta = meta;
-                Ok(true)
+                let a = replace(&mut self.server.game_tags, tags);
+                let b = replace(&mut self.server.game_tag_meta, meta);
+                Ok(a | b)
             }
             ServerEvent::RulesSet { server, rules } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
-                if rules.as_deref().is_some_and(|r| !crate::server::valid_rules(r)) || self.server.rules == rules {
+                self.same_server(server)?;
+                if rules.as_deref().is_some_and(|r| !crate::server::valid_rules(r)) {
                     return Ok(false);
                 }
-                self.server.rules = rules;
-                Ok(true)
+                Ok(replace(&mut self.server.rules, rules))
             }
             ServerEvent::RulesAccept { server, user } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
-                if self.server.rules_accepted.contains(&user) || !self.server.members.iter().any(|m| m.user == user) {
+                self.same_server(server)?;
+                if self.server.rules_accepted.contains(&user) || !self.server.is_member(user) {
                     return Ok(false);
                 }
                 self.server.rules_accepted.push(user);
                 Ok(true)
             }
             ServerEvent::EventUpsert { server, event } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if !crate::server::valid_event(&event) || self.server.deleted_events.contains(&event.id) {
                     return Ok(false);
                 }
@@ -880,24 +847,17 @@ impl ServerState {
                 Ok(true)
             }
             ServerEvent::EventDelete { server, event } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let before = self.server.events.len();
                 self.server.events.retain(|e| e.id != event);
                 let new_tombstone = !self.server.deleted_events.contains(&event);
                 if new_tombstone && event.len() <= 64 {
-                    self.server.deleted_events.push(event);
-                    if self.server.deleted_events.len() > MAX_TOMBSTONED_IDS {
-                        self.server.deleted_events.remove(0);
-                    }
+                    push_capped(&mut self.server.deleted_events, event, MAX_TOMBSTONED_IDS);
                 }
                 Ok(self.server.events.len() != before)
             }
             ServerEvent::EventRsvp { server, event, user, rsvp } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let Some(target) = self.server.events.iter_mut().find(|e| e.id == event) else { return Ok(false) };
                 let current = target.rsvps.iter().find(|(u, _)| *u == user).map(|(_, r)| *r);
                 if current == rsvp {
@@ -913,41 +873,28 @@ impl ServerState {
                 Ok(true)
             }
             ServerEvent::ChannelLayout { server, channel, parent, position } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let parent_ok = parent.is_none_or(|p| {
                     self.server.channel(p).is_some_and(|c| c.kind == crate::server::ChannelKind::Category)
                 });
-                let Some(target) = self.server.channels.iter_mut().find(|c| c.id == channel) else { return Ok(false) };
+                let Some(target) = self.server.channel_mut(channel) else { return Ok(false) };
                 if !parent_ok || (parent.is_some() && target.kind == crate::server::ChannelKind::Category) {
                     return Ok(false);
                 }
-                if target.parent == parent && target.position == position {
-                    return Ok(false);
-                }
-                target.parent = parent;
-                target.position = position;
-                Ok(true)
+                let a = replace(&mut target.parent, parent);
+                let b = replace(&mut target.position, position);
+                Ok(a | b)
             }
             ServerEvent::ChannelLimit { server, channel, user_limit } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
-                let Some(target) = self.server.channels.iter_mut().find(|c| c.id == channel) else { return Ok(false) };
-                if target.kind != crate::server::ChannelKind::Voice
-                    || user_limit > crate::server::MAX_USER_LIMIT
-                    || target.user_limit == user_limit
-                {
+                self.same_server(server)?;
+                let Some(target) = self.server.channel_mut(channel) else { return Ok(false) };
+                if target.kind != crate::server::ChannelKind::Voice || user_limit > crate::server::MAX_USER_LIMIT {
                     return Ok(false);
                 }
-                target.user_limit = user_limit;
-                Ok(true)
+                Ok(replace(&mut target.user_limit, user_limit))
             }
             ServerEvent::VoiceModerate { server, user, muted, deafened } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if user == self.server.owner {
                     return Ok(false);
                 }
@@ -965,9 +912,7 @@ impl ServerState {
                 Ok(a || b)
             }
             ServerEvent::MemberBan { server, user } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if user == self.server.owner || self.server.banned.contains(&user) {
                     return Ok(false);
                 }
@@ -983,28 +928,21 @@ impl ServerState {
                 Ok(true)
             }
             ServerEvent::AfkTimeoutSet { server, minutes } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
-                if minutes.is_some_and(|m| !crate::server::SERVER_AFK_MINUTES.contains(&m)) || self.server.afk_timeout_minutes == minutes {
+                self.same_server(server)?;
+                if minutes.is_some_and(|m| !crate::server::SERVER_AFK_MINUTES.contains(&m)) {
                     return Ok(false);
                 }
-                self.server.afk_timeout_minutes = minutes;
-                Ok(true)
+                Ok(replace(&mut self.server.afk_timeout_minutes, minutes))
             }
             ServerEvent::DoorbellSet { .. } => Ok(false),
             ServerEvent::MemberUnban { server, user } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let before = self.server.banned.len();
                 self.server.banned.retain(|u| *u != user);
                 Ok(self.server.banned.len() != before)
             }
             ServerEvent::RoleUpdate { server, role } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if role.banner.as_deref().is_some_and(|b| crate::server::ImageRef::parse(b).is_none()) {
                     return Ok(false);
                 }
@@ -1022,39 +960,25 @@ impl ServerState {
                 Ok(true)
             }
             ServerEvent::ChannelBanner { server, channel, banner } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let banner = banner.filter(|r| crate::server::ImageRef::parse(r).is_some());
-                let Some(target) = self.server.channels.iter_mut().find(|c| c.id == channel) else {
+                let Some(target) = self.server.channel_mut(channel) else {
                     return Err(StoreError::UnknownChannel);
                 };
-                if target.banner == banner {
-                    return Ok(false);
-                }
-                target.banner = banner;
-                Ok(true)
+                Ok(replace(&mut target.banner, banner))
             }
             ServerEvent::ChannelColor { server, channel, color } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let color = color
                     .map(|c| c.to_ascii_lowercase())
                     .filter(|c| c.len() == 6 && c.chars().all(|ch| ch.is_ascii_hexdigit()));
-                let Some(target) = self.server.channels.iter_mut().find(|c| c.id == channel) else {
+                let Some(target) = self.server.channel_mut(channel) else {
                     return Err(StoreError::UnknownChannel);
                 };
-                if target.color == color {
-                    return Ok(false);
-                }
-                target.color = color;
-                Ok(true)
+                Ok(replace(&mut target.color, color))
             }
             ServerEvent::MessagePin { server, channel, message, by, at, pinned } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if self.server.channel(channel).is_none() {
                     return Err(StoreError::UnknownChannel);
                 }
@@ -1086,41 +1010,29 @@ impl ServerState {
                 }
             }
             ServerEvent::ChannelKindSet { server, channel, kind } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
-                let Some(target) = self.server.channels.iter_mut().find(|c| c.id == channel) else {
+                self.same_server(server)?;
+                let Some(target) = self.server.channel_mut(channel) else {
                     return Err(StoreError::UnknownChannel);
                 };
                 let text_like = |k: ChannelKind| matches!(k, ChannelKind::Text | ChannelKind::Announcement);
-                if !text_like(kind) || !text_like(target.kind) || target.kind == kind {
+                if !text_like(kind) || !text_like(target.kind) {
                     return Ok(false);
                 }
-                target.kind = kind;
-                Ok(true)
+                Ok(replace(&mut target.kind, kind))
             }
             ServerEvent::ServerImages { server, icon, banner } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let clean = |v: Option<String>| v.filter(|r| crate::server::ImageRef::parse(r).is_some());
-                let (icon, banner) = (clean(icon), clean(banner));
-                if self.server.icon == icon && self.server.banner == banner {
-                    return Ok(false);
-                }
-                self.server.icon = icon;
-                self.server.banner = banner;
-                Ok(true)
+                let a = replace(&mut self.server.icon, clean(icon));
+                let b = replace(&mut self.server.banner, clean(banner));
+                Ok(a | b)
             }
             ServerEvent::ServerRename { server, name } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
-                if self.server.name == name || name.trim().is_empty() {
+                self.same_server(server)?;
+                if name.trim().is_empty() {
                     return Ok(false);
                 }
-                self.server.name = name;
-                Ok(true)
+                Ok(replace(&mut self.server.name, name))
             }
             ServerEvent::ProfileUpdate { mut profile } => {
                 if !self.server.is_member(profile.id) {
@@ -1137,9 +1049,7 @@ impl ServerState {
                 }
             }
             ServerEvent::RoleCreate { server, role } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if self.server.roles.iter().any(|r| r.id == role.id) {
                     return Ok(false);
                 }
@@ -1153,9 +1063,7 @@ impl ServerState {
                 Ok(true)
             }
             ServerEvent::RoleDelete { server, role } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 let is_everyone = self
                     .server
                     .roles
@@ -1172,14 +1080,11 @@ impl ServerState {
                 Ok(self.server.roles.len() != before)
             }
             ServerEvent::RoleAssign { server, user, role } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
+                self.same_server(server)?;
                 if !self.server.roles.iter().any(|r| r.id == role) {
                     return Ok(false);
                 }
-                let Some(member) = self.server.members.iter_mut().find(|m| m.user == user)
-                else {
+                let Some(member) = self.server.member_mut(user) else {
                     return Ok(false);
                 };
                 if member.roles.contains(&role) {
@@ -1189,11 +1094,8 @@ impl ServerState {
                 Ok(true)
             }
             ServerEvent::RoleUnassign { server, user, role } => {
-                if server != self.server.id {
-                    return Err(StoreError::WrongServer);
-                }
-                let Some(member) = self.server.members.iter_mut().find(|m| m.user == user)
-                else {
+                self.same_server(server)?;
+                let Some(member) = self.server.member_mut(user) else {
                     return Ok(false);
                 };
                 let before = member.roles.len();
@@ -1211,9 +1113,7 @@ impl ServerState {
         if message.authored_size() > MAX_MESSAGE_BYTES {
             return Err(StoreError::TooLarge);
         }
-        let key = self
-            .identity_of(message.author)
-            .ok_or(StoreError::UnknownAuthorKey(message.author))?;
+        let key = self.key_of(message.author)?;
         if !message.verify(self.server.id, &key) {
             return Err(StoreError::BadSignature);
         }
@@ -1224,13 +1124,14 @@ impl ServerState {
         if !self.messages.contains_key(&message.channel) {
             return Err(StoreError::UnknownChannel);
         }
-        if !self.has_message(message.id)
+        let held = self.has_message(message.id);
+        if !held
             && self.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement)
             && !self.server.can_post_in(message.channel, message.author)
         {
             return Err(StoreError::NotAnnouncer);
         }
-        if !self.has_message(message.id) {
+        if !held {
             if let Some(changed) = self.bind_proofs(&message) {
                 return Ok(changed);
             }
@@ -1239,6 +1140,9 @@ impl ServerState {
             return Ok(false);
         }
         if self.retention_cutoff(message.channel, now).is_some_and(|cutoff| message.created_at < cutoff) {
+            return Ok(false);
+        }
+        if self.rolled_off(&message) {
             return Ok(false);
         }
         let server = self.server.id;
@@ -1307,7 +1211,7 @@ impl ServerState {
     ) -> Result<bool, StoreError> {
         let server = self.server.id;
         let author = self.find_message_mut(channel, id)?.author;
-        let key = self.identity_of(author).ok_or(StoreError::UnknownAuthorKey(author))?;
+        let key = self.key_of(author)?;
         let msg = self.find_message_mut(channel, id)?;
         let edited = Message { content, edited_at: Some(edited_at), sig: Some(sig), ..msg.without_reactions() };
         if edited.authored_size() > MAX_MESSAGE_BYTES {
@@ -1329,7 +1233,7 @@ impl ServerState {
     }
 
     fn delete_message(&mut self, proof: TombstoneProof) -> Result<bool, StoreError> {
-        let key = self.identity_of(proof.by).ok_or(StoreError::UnknownAuthorKey(proof.by))?;
+        let key = self.key_of(proof.by)?;
         if !proof.verify(self.server.id, &key) {
             return Err(StoreError::BadSignature);
         }
@@ -1341,7 +1245,7 @@ impl ServerState {
         }
         let held = self.index.get(&proof.message).and_then(|channel| {
             let list = self.messages.get(channel)?;
-            let pos = list.iter().position(|m| m.id == proof.message)?;
+            let pos = list.iter().rposition(|m| m.id == proof.message)?;
             Some((*channel, pos, list[pos].author))
         });
         if let Some((channel, pos, author)) = held {
@@ -1469,19 +1373,16 @@ impl ServerState {
     }
 
     fn pin_identity(&self, profile: &mut UserProfile) -> Result<(), StoreError> {
-        match (self.identity_of(profile.id), profile.identity) {
-            (Some(pinned), Some(key)) if pinned != key => Err(StoreError::IdentityMismatch),
-            (Some(pinned), None) => {
-                profile.identity = Some(pinned);
-                Ok(())
-            }
-            _ => Ok(()),
+        if profile.pin_identity(self.identity_of(profile.id)) {
+            Ok(())
+        } else {
+            Err(StoreError::IdentityMismatch)
         }
     }
 
     fn message_mut(&mut self, id: MessageId) -> Option<&mut Message> {
         let channel = self.index.get(&id)?;
-        self.messages.get_mut(channel)?.iter_mut().find(|m| m.id == id)
+        self.messages.get_mut(channel)?.iter_mut().rev().find(|m| m.id == id)
     }
 
     fn find_message_mut(
@@ -1493,6 +1394,7 @@ impl ServerState {
             .get_mut(&channel)
             .ok_or(StoreError::UnknownChannel)?
             .iter_mut()
+            .rev()
             .find(|m| m.id == id)
             .ok_or(StoreError::UnknownMessage)
     }
@@ -1570,6 +1472,61 @@ fn reaction_room(message: &Message, emoji: &str, user: UserId) -> bool {
     match message.reactions.iter().find(|r| r.emoji == emoji) {
         Some(reaction) => reaction.users.contains(&user) || reaction.users.len() < MAX_REACTORS_PER_REACTION,
         None => message.reactions.len() < MAX_REACTIONS_PER_MESSAGE,
+    }
+}
+
+fn replace<T: PartialEq>(slot: &mut T, value: T) -> bool {
+    if *slot == value {
+        return false;
+    }
+    *slot = value;
+    true
+}
+
+fn live_room(map: &HashMap<UserId, ChannelId>, user: UserId) -> Result<(), StoreError> {
+    if !map.contains_key(&user) && map.len() >= MAX_LIVE_ENTRIES {
+        return Err(StoreError::Limit);
+    }
+    Ok(())
+}
+
+fn set_live(
+    map: &mut HashMap<UserId, ChannelId>,
+    known: bool,
+    user: UserId,
+    channel: ChannelId,
+    active: bool,
+) -> Result<bool, StoreError> {
+    if !active {
+        return Ok(map.remove(&user).is_some());
+    }
+    if !known {
+        return Err(StoreError::UnknownChannel);
+    }
+    live_room(map, user)?;
+    Ok(map.insert(user, channel) != Some(channel))
+}
+
+fn upsert_by<T: PartialEq>(list: &mut Vec<T>, value: T, cap: usize, same: impl Fn(&T, &T) -> bool) -> bool {
+    let count = list.len();
+    match list.iter_mut().find(|e| same(e, &value)) {
+        Some(existing) if *existing == value => false,
+        Some(existing) => {
+            *existing = value;
+            true
+        }
+        None if count >= cap => false,
+        None => {
+            list.push(value);
+            true
+        }
+    }
+}
+
+fn push_capped<T>(list: &mut Vec<T>, value: T, cap: usize) {
+    list.push(value);
+    if list.len() > cap {
+        list.remove(0);
     }
 }
 
@@ -2362,6 +2319,61 @@ mod tests {
         assert_eq!(state.prune_expired(now), 1);
         let left: Vec<_> = state.messages(channel).iter().map(|m| m.content.as_str()).collect();
         assert_eq!(left, vec!["2d", "0d"]);
+    }
+
+    fn post_aged(state: &mut ServerState, channel: ChannelId, owner: UserId, age_days: i64, reply_to: Option<MessageId>) -> Message {
+        let mut msg = Message::new(channel, owner, format!("{age_days}d"));
+        msg.created_at = Utc::now() - chrono::Duration::days(age_days);
+        msg.reply_to = reply_to;
+        let msg = signed(state, msg);
+        state.apply(ServerEvent::MessageCreate { message: msg.clone() }).unwrap();
+        msg
+    }
+
+    fn contents(state: &ServerState, channel: ChannelId) -> Vec<&str> {
+        state.messages(channel).iter().map(|m| m.content.as_str()).collect()
+    }
+
+    #[test]
+    fn roll_off_drops_messages_older_than_the_floor() {
+        let (mut state, channel, owner) = fixture();
+        for age in [200, 100, 10] {
+            post_aged(&mut state, channel, owner, age, None);
+        }
+        assert_eq!(state.roll_off(None), 0);
+        assert_eq!(contents(&state, channel), vec!["200d", "100d", "10d"]);
+        let floor = Utc::now() - chrono::Duration::days(90);
+        assert_eq!(state.roll_off(Some(floor)), 2);
+        assert_eq!(contents(&state, channel), vec!["10d"]);
+        assert_eq!(state.roll_off(Some(floor)), 0);
+    }
+
+    #[test]
+    fn roll_off_keeps_pinned_messages_and_what_kept_replies_point_to() {
+        let (mut state, channel, owner) = fixture();
+        let pinned = post_aged(&mut state, channel, owner, 300, None);
+        let root = post_aged(&mut state, channel, owner, 200, None);
+        let middle = post_aged(&mut state, channel, owner, 150, Some(root.id));
+        post_aged(&mut state, channel, owner, 120, None);
+        post_aged(&mut state, channel, owner, 5, Some(middle.id));
+        state.apply(pin_event(&state, channel, pinned.id, owner, true)).unwrap();
+        let floor = Utc::now() - chrono::Duration::days(90);
+        assert_eq!(state.roll_off(Some(floor)), 1);
+        assert_eq!(contents(&state, channel), vec!["300d", "200d", "150d", "5d"]);
+        assert!(state.has_message(pinned.id));
+    }
+
+    #[test]
+    fn a_rolled_off_message_does_not_come_back_unless_pinned() {
+        let (mut state, channel, owner) = fixture();
+        let old = post_aged(&mut state, channel, owner, 200, None);
+        let floor = Utc::now() - chrono::Duration::days(90);
+        assert_eq!(state.roll_off(Some(floor)), 1);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: old.clone() }), Ok(false));
+        assert!(!state.has_message(old.id));
+        state.apply(pin_event(&state, channel, old.id, owner, true)).unwrap();
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: old.clone() }), Ok(true));
+        assert!(state.has_message(old.id));
     }
 
     #[test]

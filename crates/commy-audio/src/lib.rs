@@ -26,7 +26,6 @@ pub struct VoiceProcessor {
     noise_cancellation: bool,
     muted: bool,
     input_gain: f32,
-    vad_threshold: f32,
     gate: VoiceGate,
 }
 
@@ -43,7 +42,6 @@ impl VoiceProcessor {
             noise_cancellation: true,
             muted: false,
             input_gain: 1.0,
-            vad_threshold: 0.0,
             gate: VoiceGate::default(),
         }
     }
@@ -64,16 +62,8 @@ impl VoiceProcessor {
         self.muted = muted;
     }
 
-    pub fn is_muted(&self) -> bool {
-        self.muted
-    }
-
     pub fn set_input_gain(&mut self, gain: f32) {
         self.input_gain = gain.clamp(0.0, 4.0);
-    }
-
-    pub fn set_vad_threshold(&mut self, threshold: f32) {
-        self.vad_threshold = threshold.clamp(0.0, 1.0);
     }
 
     pub fn process(&mut self, input: &[f32]) -> Result<ProcessedFrame, AudioError> {
@@ -113,7 +103,7 @@ impl VoiceProcessor {
         Ok(ProcessedFrame {
             samples,
             voice_probability: vad,
-            should_transmit: self.vad_threshold == 0.0 || vad >= self.vad_threshold,
+            should_transmit: true,
         })
     }
 }

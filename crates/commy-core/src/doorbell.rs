@@ -1,4 +1,4 @@
-use crate::identity::{IdentityKey, Signature};
+use crate::identity::{to_hex, IdentityKey, Signature};
 use crate::ids::{MessageId, ServerId, UserId};
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
@@ -14,12 +14,11 @@ pub const MAX_RING_IDS: usize = 50;
 
 pub const KEEP_DAYS: u32 = 14;
 
-const SECONDS_PER_DAY: i64 = 86_400;
 const TOKEN_BYTES: usize = 16;
 const BLINDED_ID_BYTES: usize = 12;
 
 pub fn day_of(time: DateTime<Utc>) -> u32 {
-    time.timestamp().div_euclid(SECONDS_PER_DAY).max(0) as u32
+    crate::catchup::day_number(time)
 }
 
 fn keyed(key: &DoorbellKey, label: &[u8], data: &[u8]) -> [u8; 32] {
@@ -29,16 +28,12 @@ fn keyed(key: &DoorbellKey, label: &[u8], data: &[u8]) -> [u8; 32] {
     mac.finalize().into_bytes().into()
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 pub fn token(key: &DoorbellKey, day: u32) -> String {
-    hex(&keyed(key, TOKEN_LABEL, &day.to_be_bytes())[..TOKEN_BYTES])
+    to_hex(&keyed(key, TOKEN_LABEL, &day.to_be_bytes())[..TOKEN_BYTES])
 }
 
 pub fn blinded_id(key: &DoorbellKey, id: MessageId) -> String {
-    hex(&keyed(key, ID_LABEL, id.0.as_bytes())[..BLINDED_ID_BYTES])
+    to_hex(&keyed(key, ID_LABEL, id.0.as_bytes())[..BLINDED_ID_BYTES])
 }
 
 pub fn set_signing_bytes(server: ServerId, user: UserId, node: &str, url: &str, key: Option<&DoorbellKey>) -> Vec<u8> {
@@ -83,6 +78,40 @@ mod tests {
         let t = DateTime::parse_from_rfc3339("2026-10-16T23:59:59Z").unwrap().with_timezone(&Utc);
         assert_eq!(day_of(t), 20_742);
         assert_eq!(day_of(t + chrono::Duration::seconds(1)), 20_743);
+    }
+
+    #[test]
+    fn days_match_whole_seconds_split_at_midnight() {
+        let millis = [
+            i64::MIN / 4,
+            -86_400_001,
+            -86_400_000,
+            -86_399_999,
+            -1_001,
+            -1_000,
+            -999,
+            -1,
+            0,
+            1,
+            999,
+            1_000,
+            86_399_999,
+            86_400_000,
+            86_400_001,
+            1_792_195_199_999,
+            1_792_195_200_000,
+            8_200_000_000_000_000,
+        ];
+        for ms in millis {
+            let Some(t) = DateTime::from_timestamp_millis(ms) else { continue };
+            assert_eq!(day_of(t), t.timestamp().div_euclid(86_400).max(0) as u32, "{ms}");
+        }
+        for nanos in [-1, -999_999_999, -1_000_000_000, 1, 999_999_999] {
+            let t = DateTime::from_timestamp_nanos(nanos);
+            assert_eq!(day_of(t), t.timestamp().div_euclid(86_400).max(0) as u32, "{nanos}");
+        }
+        assert_eq!(day_of(DateTime::<Utc>::MIN_UTC), 0);
+        assert_eq!(day_of(DateTime::<Utc>::MAX_UTC), DateTime::<Utc>::MAX_UTC.timestamp().div_euclid(86_400) as u32);
     }
 
     #[test]

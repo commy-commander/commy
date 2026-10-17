@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, initialState, levelFor, loadConfig, parseMetrics, step } from "./lib.mjs";
+import { GB, describe, initialState, levelFor, loadConfig, parseMetrics, step } from "./lib.mjs";
 
 const cfg = loadConfig(process.env);
 
@@ -70,7 +70,7 @@ async function tick(state) {
 }
 
 let state = await readState();
-console.log(`[meter] watching ${cfg.metricsUrl}, limit ${cfg.limitBytes / 1e9} GB per month`);
+console.log(`[meter] watching ${cfg.metricsUrl}, limit ${cfg.limitBytes / GB} GB per month`);
 for (;;) {
   try {
     state = await tick(state);

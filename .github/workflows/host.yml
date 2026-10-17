@@ -16,12 +16,14 @@ jobs:
     name: Firewall
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - run: shellcheck -s sh deploy/host/commy-firewall.sh deploy/host/harden-vps.sh
 
       - name: Unit tests
-        run: sh deploy/host/commy-firewall.test.sh
+        run: |
+          sh deploy/host/commy-firewall.test.sh
+          sh deploy/host/harden-vps.test.sh
 
       - name: Simulated outside client
         run: |
@@ -61,6 +63,10 @@ jobs:
       - name: Full hardening run
         run: |
           echo "COMMY_FW_IFACE=veth-host" | sudo tee /etc/default/commy-firewall
+          sudo apt-get install -y -qq openssh-server
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/ci_key
+          cat ~/.ssh/ci_key.pub >> ~/.ssh/authorized_keys
           sudo sh deploy/host/harden-vps.sh
           sudo sh deploy/host/harden-vps.sh >/dev/null
           echo "re-run is idempotent"
@@ -72,6 +78,16 @@ jobs:
           expect 80 200
           sudo systemctl is-enabled commy-firewall.timer
           sudo ufw status | grep -q 'commy-cf'
+          sudo sshd -T | grep -qx 'passwordauthentication no'
+          sudo sshd -T | grep -qx 'kbdinteractiveauthentication no'
+          sudo sshd -T | grep -qx 'permitrootlogin no'
+          sudo sshd -T -C user=root,host=console,addr=169.254.7.7 | grep -qx 'passwordauthentication yes'
+          sudo sshd -T -C user=root,host=outside,addr=203.0.113.9 | grep -qx 'passwordauthentication no'
+          sudo fail2ban-client get sshd ignoreip | grep -q '169.254.0.0/16'
+          sudo systemctl is-active fail2ban
+          sudo fail2ban-client status sshd
+          sudo systemctl is-enabled unattended-upgrades
+          grep -q 'APT::Periodic::Unattended-Upgrade "1";' /etc/apt/apt.conf.d/20auto-upgrades
           sudo systemctl restart docker
           docker start https >/dev/null; sleep 2
           expect 443 000

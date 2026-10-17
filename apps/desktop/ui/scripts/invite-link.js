@@ -48,10 +48,7 @@ async function joinPendingInvite() {
     const summary = await invoke("join_server", { ticket: invite.ticket });
     pendingInvite = null;
     hideModals();
-    rolePromptPending.add(summary.id);
-    await refreshServers();
-    await selectServer(summary.id);
-    toast("Joined server, syncing from peers");
+    await enterJoinedServer(summary);
   } catch (e) {
     toast(String(e));
   } finally {

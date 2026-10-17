@@ -279,6 +279,7 @@ impl Catchup {
 
     pub fn forget_server(&mut self, server: ServerId) {
         self.held.remove(&server);
+        self.held_actions.remove(&server);
         self.fresh.remove(&server);
         self.dirty.remove(&server);
         self.unsaved.remove(&server);

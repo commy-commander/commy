@@ -41,7 +41,7 @@ pub struct Message {
     pub sig: Option<Signature>,
 }
 
-const GOSSIP_FRAME_BYTES: usize = 3800;
+pub const GOSSIP_FRAME_BYTES: usize = 3800;
 const SMALLEST_MESSAGE_CREATE_ENVELOPE_BYTES: usize = 36;
 pub const MAX_MESSAGE_BYTES: usize = GOSSIP_FRAME_BYTES - SMALLEST_MESSAGE_CREATE_ENVELOPE_BYTES;
 

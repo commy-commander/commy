@@ -87,6 +87,10 @@ impl Capturer {
                 Err(e) => tracing::warn!("graphics capture unavailable, using GDI: {e:#}"),
             }
         }
+        Self::open_xcap(source)
+    }
+
+    fn open_xcap(source: Option<(SourceKind, u32)>) -> Result<Self> {
         match source {
             Some((SourceKind::Window, id)) => {
                 let window = xcap::Window::all()
@@ -121,17 +125,6 @@ impl Capturer {
             Self::Graphics(c) => c.grab(),
         }
     }
-}
-
-pub fn capture_primary(max_width: u32, quality: u8) -> Result<ScreenFrame> {
-    let monitors = xcap::Monitor::all().context("cannot enumerate monitors")?;
-    let monitor = monitors
-        .iter()
-        .find(|m| m.is_primary().unwrap_or(false))
-        .or_else(|| monitors.first())
-        .context("no monitor found")?;
-    let image = monitor.capture_image().context("screen capture failed")?;
-    encode_frame(image, max_width, quality)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -223,26 +216,8 @@ pub fn capture_source(
     max_width: u32,
     quality: u8,
 ) -> Result<ScreenFrame> {
-    match kind {
-        SourceKind::Monitor => {
-            let monitors = xcap::Monitor::all().context("cannot enumerate monitors")?;
-            let monitor = monitors
-                .iter()
-                .find(|m| m.id().map(|m_id| m_id == id).unwrap_or(false))
-                .context("monitor is gone")?;
-            let image = monitor.capture_image().context("monitor capture failed")?;
-            encode_frame(image, max_width, quality)
-        }
-        SourceKind::Window => {
-            let windows = xcap::Window::all().context("cannot enumerate windows")?;
-            let window = windows
-                .iter()
-                .find(|w| w.id().map(|w_id| w_id == id).unwrap_or(false))
-                .context("window is gone or closed")?;
-            let image = window.capture_image().context("window capture failed")?;
-            encode_frame(image, max_width, quality)
-        }
-    }
+    let image = Capturer::open_xcap(Some((kind, id)))?.grab()?;
+    encode_frame(image, max_width, quality)
 }
 
 #[cfg(test)]

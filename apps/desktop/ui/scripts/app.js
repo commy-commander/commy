@@ -162,6 +162,9 @@ function mockSeed() {
     { id: "g1", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
       content: "clutch round from last night", created_at: new Date(Date.now() - 900e3).toISOString(), edited: false,
       attachments: [{ filename: "clutch-round.mp4", size_bytes: 18400000, is_image: false, mime: "video/mp4", blob: "clip@mock", provider: null }] },
+    { id: "g2", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
+      content: "full res screenshot of the new map", created_at: new Date(Date.now() - 600e3).toISOString(), edited: false,
+      attachments: [{ filename: "new-map.png", size_bytes: 12900000, is_image: true, mime: "image/png", blob: "map@mock", provider: null }] },
   ];
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
@@ -601,6 +604,14 @@ async function mockInvoke(cmd, args = {}) {
       if (args.held) s.myRoles.push(args.roleId);
       return null;
     }
+    case "get_storage_settings": return mock.storage || (mock.storage = { keep: "90", servers: {} });
+    case "set_history_window": {
+      const s = mock.storage || (mock.storage = { keep: "90", servers: {} });
+      if (!args.serverId) s.keep = args.keep;
+      else if (args.keep) s.servers[args.serverId] = args.keep;
+      else delete s.servers[args.serverId];
+      return s;
+    }
     case "get_safety": {
       const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
       return { ...s, blocked: s.blocked.map(id => ({ id, name: (Object.values(mock.servers)[0].members.find(m => m.id === id) || { name: "Someone" }).name })) };
@@ -863,20 +874,24 @@ function avatarFor(userId) {
   return avatarDirectory.get(userId) || null;
 }
 
-function loadAvatarImage(blob, provider) {
-  if (!avatarImages.has(blob)) {
-    const pending = invoke("get_attachment_preview", { blob, provider, mime: "image/jpeg" })
+function cachedLoad(cache, key, load) {
+  if (!cache.has(key)) {
+    const pending = load()
       .then(url => {
-        avatarImages.set(blob, url);
+        cache.set(key, url);
         return url;
       })
       .catch(() => {
-        avatarImages.delete(blob);
+        cache.delete(key);
         return null;
       });
-    avatarImages.set(blob, pending);
+    cache.set(key, pending);
   }
-  return Promise.resolve(avatarImages.get(blob));
+  return Promise.resolve(cache.get(key));
+}
+
+function loadAvatarImage(blob, provider) {
+  return cachedLoad(avatarImages, blob, () => invoke("get_attachment_preview", { blob, provider, mime: "image/jpeg" }));
 }
 
 function paintAvatar(node, userId, name) {
@@ -1492,19 +1507,7 @@ const serverImages = new Map();
 
 function loadServerImage(ref) {
   if (!ref) return Promise.resolve(null);
-  if (!serverImages.has(ref)) {
-    const pending = invoke("fetch_server_image", { image: ref })
-      .then(url => {
-        serverImages.set(ref, url);
-        return url;
-      })
-      .catch(() => {
-        serverImages.delete(ref);
-        return null;
-      });
-    serverImages.set(ref, pending);
-  }
-  return Promise.resolve(serverImages.get(ref));
+  return cachedLoad(serverImages, ref, () => invoke("fetch_server_image", { image: ref }));
 }
 
 function paintServerIcon(node, server) {
@@ -1661,9 +1664,7 @@ function renderSoundSettings() {
     row.appendChild(el("span", "sound-label", event.label));
     const select = el("select", "compact-select");
     for (const name of [...Object.keys(SOUND_FILES), "none"]) {
-      const opt = el("option", null, name === "none" ? "No sound" : name[0].toUpperCase() + name.slice(1));
-      opt.value = name;
-      select.appendChild(opt);
+      select.appendChild(new Option(name === "none" ? "No sound" : name[0].toUpperCase() + name.slice(1), name));
     }
     select.value = soundFor(event.id) || "none";
     select.onchange = () => {
@@ -1749,13 +1750,6 @@ function clearChannelUnread(channelId) {
 
 function clearDmUnread(userId) {
   if (unread.dms.delete(userId)) syncUnreadBadge();
-}
-
-function serverHasUnread(serverId) {
-  for (const [channel, server] of unread.channelServer) {
-    if (server === serverId && unread.channels.get(channel)) return true;
-  }
-  return false;
 }
 
 function onMessageCreated(msg) {
@@ -2012,13 +2006,9 @@ async function loadCameraDevices() {
     const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
     const chosen = savedCameraId();
     select.replaceChildren();
-    const def = el("option", null, "Default");
-    def.value = "";
-    select.appendChild(def);
+    select.appendChild(new Option("Default", ""));
     devices.forEach((d, i) => {
-      const opt = el("option", null, d.label || `Camera ${i + 1}`);
-      opt.value = d.deviceId;
-      select.appendChild(opt);
+      select.appendChild(new Option(d.label || `Camera ${i + 1}`, d.deviceId));
     });
     select.value = devices.some(d => d.deviceId === chosen) ? chosen : "";
   } catch {}
@@ -2054,19 +2044,9 @@ function stopCameraPreview() {
 
 function fillDeviceSelect(select, names, chosen) {
   select.replaceChildren();
-  const def = el("option", null, "Default");
-  def.value = "";
-  select.appendChild(def);
-  for (const name of names) {
-    const opt = el("option", null, name);
-    opt.value = name;
-    select.appendChild(opt);
-  }
-  if (chosen && !names.includes(chosen)) {
-    const opt = el("option", null, `${chosen} (not connected)`);
-    opt.value = chosen;
-    select.appendChild(opt);
-  }
+  select.appendChild(new Option("Default", ""));
+  for (const name of names) select.appendChild(new Option(name, name));
+  if (chosen && !names.includes(chosen)) select.appendChild(new Option(`${chosen} (not connected)`, chosen));
   select.value = chosen || "";
 }
 
@@ -2280,9 +2260,7 @@ function openChannelSettings(channelId) {
   const retention = String(channel.retention_days || 0);
   const select = $("channel-edit-retention");
   if (![...select.options].some(o => o.value === retention)) {
-    const opt = el("option", null, `${retention} days`);
-    opt.value = retention;
-    select.appendChild(opt);
+    select.appendChild(new Option(`${retention} days`, retention));
   }
   select.value = retention;
   $("channel-limit-row").classList.toggle("hidden", !voice);
@@ -2346,7 +2324,7 @@ function channelEdits() {
   const channel = editingChannel();
   if (!channel) return null;
   let name = $("channel-edit-name").value.trim();
-  if (channel.kind === "text" || channel.kind === "announcement") name = name.toLowerCase().replace(/\s+/g, "-");
+  if (holdsMessages(channel)) name = name.toLowerCase().replace(/\s+/g, "-");
   const retention = Number($("channel-edit-retention").value) || 0;
   const limit = channel.kind === "voice" ? Number($("channel-limit").value) || 0 : 0;
   const color = channelColorDraft;
@@ -2530,14 +2508,15 @@ function renderMembers() {
       meta.appendChild(nameRow);
       const hover = memberHover(member, channel);
       if (hover) row.title = hover;
-      const text = backLine(member) || statusLine(member);
-      const line = el("div", "user-sub" + (member.activity && !backLine(member) ? " activity" : "") + (text || channel ? "" : " empty"));
+      const back = backLine(member);
+      const text = back || statusLine(member);
+      const line = el("div", "user-sub" + (member.activity && !back ? " activity" : "") + (text || channel ? "" : " empty"));
       if (channel) {
         const icon = el("span", "sub-voice");
         icon.appendChild(svgIcon("speaker", 14));
         line.appendChild(icon);
       }
-      const cover = member.activity && !backLine(member) && igdbCover(member.activity_cover, "t_thumb");
+      const cover = member.activity && !back && igdbCover(member.activity_cover, "t_thumb");
       if (cover) {
         const img = el("img", "activity-cover");
         img.src = cover;
@@ -2847,7 +2826,7 @@ function pinRow(pin, { jump, showChannel = false } = {}) {
   const excerpt = el("div", "pin-text", text);
   if (!text) excerpt.classList.add("muted");
   body.appendChild(excerpt);
-  const images = (message.attachments || []).filter(a => a.is_image);
+  const images = (message.attachments || []).filter(a => a.is_image && (loadsImageOnItsOwn(a) || imagePreviewCache.has(a.blob)));
   if (images.length) {
     const thumb = renderInlineImage(images[0]);
     thumb.classList.add("pin-thumb");
@@ -3071,8 +3050,23 @@ function reactionPills(message) {
   return wrap;
 }
 
+let currentMembersSource = null;
+let currentMembersById = new Map();
+
+function currentServerMember(id) {
+  const server = state.currentServer;
+  if (!server) return server;
+  if (currentMembersSource !== server.members) {
+    const byId = new Map();
+    for (const m of server.members) if (!byId.has(m.id)) byId.set(m.id, m);
+    currentMembersSource = server.members;
+    currentMembersById = byId;
+  }
+  return currentMembersById.get(id);
+}
+
 function avatarNameFor(userId) {
-  const member = state.currentServer && state.currentServer.members.find(m => m.id === userId);
+  const member = currentServerMember(userId);
   return member ? member.name : "Someone";
 }
 
@@ -3398,7 +3392,7 @@ function overlayRoster() {
     channel: channel.name,
     members: channel.voice_users.map((name, i) => {
       const id = ids[i];
-      const member = server.members.find(m => m.id === id);
+      const member = currentServerMember(id);
       const raw = avatarFor(id)?.avatar || "";
       const cached = raw.startsWith("blob:") ? avatarImages.get(raw.slice(5)) : null;
       return {
@@ -3423,7 +3417,7 @@ function pushOverlayRoster(force = false) {
 
 function pushOverlayChat(authorId, author, content, hasAttachments) {
   if (!overlaySettings || !overlaySettings.show_chat) return;
-  const member = state.currentServer && state.currentServer.members.find(m => m.id === authorId);
+  const member = currentServerMember(authorId);
   const text = plainText(content) || (hasAttachments ? "sent an attachment" : "");
   if (text) emitToOverlay("overlay-chat", { author, color: member && member.color, text: text.slice(0, 200) });
 }
@@ -3615,13 +3609,7 @@ async function toggleAudioPop(which, anchor) {
     const devices = await invoke("list_audio_devices");
     const names = input ? devices.inputs : devices.outputs;
     const current = (input ? state.voice.input_device : state.voice.output_device) || "";
-    const def = el("option", null, "Default");
-    def.value = "";
-    select.replaceChildren(def, ...names.map(n => {
-      const opt = el("option", null, n);
-      opt.value = n;
-      return opt;
-    }));
+    select.replaceChildren(new Option("Default", ""), ...names.map(n => new Option(n, n)));
     select.value = names.includes(current) ? current : "";
   } catch (e) {
     select.replaceChildren(el("option", null, "No devices found"));
@@ -3668,13 +3656,7 @@ function appendInlineMarkdown(node, text) {
     else if (m[3]) node.appendChild(el("code", null, m[3]));
     else {
       const url = m[4];
-      const a = el("a", null, url);
-      a.href = "#";
-      a.onclick = e => {
-        e.preventDefault();
-        invoke("open_url", { url }).catch(err => toast(String(err)));
-      };
-      node.appendChild(a);
+      node.appendChild(wireExternalLink(el("a", null, url), url));
     }
     last = m.index + m[0].length;
   }
@@ -3798,6 +3780,17 @@ function tagCover(server, name, size) {
   return meta ? igdbCover(meta.cover, size) : null;
 }
 
+function gameChip(server, tag, cls) {
+  const chip = el("span", cls, tag);
+  const cover = server && tagCover(server, tag, "t_thumb");
+  if (cover) {
+    const img = el("img", "game-chip-cover");
+    img.src = cover;
+    chip.prepend(img);
+  }
+  return chip;
+}
+
 function renderGameTagEditor(server) {
   gameTagDraft = [...(server.game_tags || [])];
   gameTagMetaDraft = [...(server.game_tag_meta || [])];
@@ -3810,13 +3803,7 @@ function paintGameTagChips(editable) {
   const chips = $("game-tag-chips");
   chips.replaceChildren();
   for (const tag of gameTagDraft) {
-    const chip = el("span", "game-chip", tag);
-    const cover = state.currentServer && tagCover(state.currentServer, tag, "t_thumb");
-    if (cover) {
-      const img = el("img", "game-chip-cover");
-      img.src = cover;
-      chip.prepend(img);
-    }
+    const chip = gameChip(state.currentServer, tag, "game-chip");
     if (editable) {
       const x = el("button", "game-chip-x");
       x.title = `Remove ${tag}`;
@@ -3844,14 +3831,7 @@ function renderServerExtras(list, server) {
   if (server.game_tags && server.game_tags.length) {
     const row = el("div", "sidebar-game-tags");
     for (const tag of server.game_tags) {
-      const chip = el("span", "game-chip small", tag);
-      const cover = tagCover(server, tag, "t_thumb");
-      if (cover) {
-        const img = el("img", "game-chip-cover");
-        img.src = cover;
-        chip.prepend(img);
-      }
-      row.appendChild(chip);
+      row.appendChild(gameChip(server, tag, "game-chip small"));
     }
     list.appendChild(row);
   }
@@ -3937,6 +3917,13 @@ function openServerWelcome(step) {
 }
 
 const rolePromptPending = new Set();
+
+async function enterJoinedServer(summary) {
+  rolePromptPending.add(summary.id);
+  await refreshServers();
+  await selectServer(summary.id);
+  toast("Joined server, syncing from peers");
+}
 
 function maybePromptRoles() {
   const server = state.currentServer;
@@ -4208,6 +4195,11 @@ function toLocalInput(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function fillVoiceChannelSelect(select, noneLabel, server, value) {
+  select.replaceChildren(new Option(noneLabel, ""), ...server.channels.filter(c => c.kind === "voice").map(c => new Option(c.name, c.id)));
+  select.value = value;
+}
+
 function openEventEditor(event) {
   const server = state.currentServer;
   editingEventId = event ? event.id : null;
@@ -4217,17 +4209,7 @@ function openEventEditor(event) {
   const start = event ? new Date(event.start) : new Date(Math.ceil(Date.now() / 3600e3) * 3600e3 + 3600e3);
   $("event-start").value = toLocalInput(start);
   $("event-end").value = event && event.end ? toLocalInput(new Date(event.end)) : "";
-  const select = $("event-channel");
-  select.replaceChildren();
-  const none = el("option", null, "No voice channel");
-  none.value = "";
-  select.appendChild(none);
-  for (const channel of server.channels.filter(c => c.kind === "voice")) {
-    const opt = el("option", null, channel.name);
-    opt.value = channel.id;
-    select.appendChild(opt);
-  }
-  select.value = event && event.channel ? event.channel : "";
+  fillVoiceChannelSelect($("event-channel"), "No voice channel", server, event && event.channel ? event.channel : "");
   showModal("modal-event");
   $("event-title").focus();
 }
@@ -4283,9 +4265,8 @@ function channelSections(server, canCreate) {
   const categories = channels.filter(c => c.kind === "category").sort((a, b) => a.position - b.position);
   const catIds = new Set(categories.map(c => c.id));
   const loose = channels.filter(c => c.kind !== "category" && !(c.parent && catIds.has(c.parent)));
-  const isText = c => c.kind === "text" || c.kind === "announcement";
   const sections = [];
-  const looseText = loose.filter(isText).sort(byPos);
+  const looseText = loose.filter(holdsMessages).sort(byPos);
   const looseVoice = loose.filter(c => c.kind === "voice").sort(byPos);
   if (looseText.length || canCreate) sections.push({ key: `${server.id}:text`, title: "Text Channels", kind: "text", parent: null, channels: looseText });
   if (looseVoice.length || canCreate) sections.push({ key: `${server.id}:voice`, title: "Voice Channels", kind: "voice", parent: null, channels: looseVoice });
@@ -4554,10 +4535,7 @@ function inviteCard(text) {
     join.disabled = true;
     try {
       const summary = await invoke("join_server", { ticket: m[0] });
-      rolePromptPending.add(summary.id);
-      await refreshServers();
-      await selectServer(summary.id);
-      toast("Joined server, syncing from peers");
+      await enterJoinedServer(summary);
     } catch (e) {
       join.disabled = false;
       toast(String(e));
@@ -4652,9 +4630,7 @@ function openProfileMenu(person, x, y) {
       openBlock(person.id, person.name);
     }
   });
-  const targets = state.currentServer && reportableIn(state.currentServer, person.id)
-    ? [state.currentServer]
-    : reportServersFor(person.id).filter(s => reportableIn(s, person.id));
+  const targets = reportTargetsFor(person.id);
   if (targets.length) {
     item("Report", "flag", () => {
       hideModals();
@@ -4730,9 +4706,7 @@ function openMemberCard(member, anchor) {
       if (isBlocked(member.id)) setBlocked(member.id, member.name, false);
       else openBlock(member.id, member.name);
     });
-    const targets = state.currentServer && reportableIn(state.currentServer, member.id)
-      ? [state.currentServer]
-      : reportServersFor(member.id).filter(s => reportableIn(s, member.id));
+    const targets = reportTargetsFor(member.id);
     if (targets.length) {
       action("flag", "Report", () => {
         closeFloating();
@@ -4754,7 +4728,7 @@ function openMemberCard(member, anchor) {
 }
 
 function decorateAuthor(node, authorId) {
-  const member = state.view === "server" && state.currentServer && state.currentServer.members.find(m => m.id === authorId);
+  const member = state.view === "server" && currentServerMember(authorId);
   if (!member) return;
   if (member.color) node.style.color = `#${member.color}`;
   if (member.tag) node.after(roleTagChip(member.tag, member.tag_color));
@@ -4869,17 +4843,7 @@ function roleEditor(server, role) {
   row1.append(color, name, tagBtn, clearTag);
   box.appendChild(row1);
   box.appendChild(el("div", "setting-title role-perms-title", "Permissions"));
-  const permGrid = el("div", "perm-grid");
-  for (const [value, label] of PERMISSION_LABELS) {
-    const wrap = el("label");
-    const input = el("input");
-    input.type = "checkbox";
-    input.value = value;
-    input.checked = role.permissions.includes(value);
-    wrap.append(input, document.createTextNode(label));
-    permGrid.appendChild(wrap);
-  }
-  box.appendChild(permGrid);
+  box.appendChild(permissionCheckboxes(el("div", "perm-grid"), role.permissions));
   const pick = el("label", "role-self");
   const check = el("input");
   check.type = "checkbox";
@@ -4933,6 +4897,51 @@ async function loadSafety() {
 
 function isBlocked(userId) {
   return Boolean(userId) && safety.blocked.some(b => b.id === userId);
+}
+
+const KEEP_LABELS = { 30: "30 days", 90: "90 days", 180: "6 months", 365: "1 year", forever: "Forever" };
+let storageSettings = { keep: "90", servers: {} };
+
+async function loadStorageSettings() {
+  try {
+    storageSettings = await invoke("get_storage_settings");
+  } catch {}
+}
+
+function keepSelect(value, defaultLabel) {
+  const select = el("select", "compact-select");
+  for (const [choice, label] of [["", defaultLabel], ...Object.entries(KEEP_LABELS)]) {
+    const option = el("option", null, label);
+    option.value = choice;
+    select.appendChild(option);
+  }
+  select.value = value;
+  return select;
+}
+
+function renderStorageSettings() {
+  $("keep-default").value = storageSettings.keep;
+  const list = $("keep-servers");
+  list.replaceChildren();
+  for (const server of state.servers) {
+    const row = el("div", "keep-row");
+    row.appendChild(el("span", "keep-name", server.name));
+    const select = keepSelect(storageSettings.servers[server.id] || "", `Default (${KEEP_LABELS[storageSettings.keep]})`);
+    select.setAttribute("aria-label", `Keep messages from ${server.name} for`);
+    select.onchange = () => setHistoryWindow(server.id, select.value || null);
+    row.appendChild(select);
+    list.appendChild(row);
+  }
+  if (!state.servers.length) list.appendChild(el("div", "manage-empty", "You are not in any servers yet"));
+}
+
+async function setHistoryWindow(serverId, keep) {
+  try {
+    storageSettings = await invoke("set_history_window", { serverId, keep });
+  } catch (e) {
+    toast(String(e));
+  }
+  renderStorageSettings();
 }
 
 function renderSafetySettings() {
@@ -5007,8 +5016,6 @@ function blockedPlaceholder(run) {
   return row;
 }
 
-let menuMember = null;
-
 function reportServersFor(userId) {
   const person = state.people.get(userId);
   return (person ? person.servers : [])
@@ -5016,14 +5023,13 @@ function reportServersFor(userId) {
     .filter(s => s && s.id);
 }
 
-function openMemberMenu(member, x, y, { dm = false } = {}) {
-  if (state.user && member.id === state.user.id) return;
-  closeFloating();
-  menuMember = member;
-  const server = dm ? null : state.currentServer;
-  const inServer = Boolean(server && server.members.some(m => m.id === member.id));
-  const menu = $("member-menu");
-  menu.replaceChildren(el("div", "ctx-title", member.name));
+function reportTargetsFor(userId) {
+  return state.currentServer && reportableIn(state.currentServer, userId)
+    ? [state.currentServer]
+    : reportServersFor(userId).filter(s => reportableIn(s, userId));
+}
+
+function contextMenuBuilder(menu) {
   const item = (label, onClick, cls = "") => {
     const btn = el("button", cls, label);
     btn.onclick = () => {
@@ -5034,6 +5040,35 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     return btn;
   };
   const sep = () => menu.appendChild(el("div", "ctx-sep"));
+  const slider = (label, value, onChange) => {
+    const wrap = el("div", "ctx-slider");
+    const text = el("div", "ctx-slider-label");
+    text.append(el("span", null, label), el("span", null, `${value}%`));
+    const range = el("input");
+    range.type = "range";
+    range.min = "0";
+    range.max = "200";
+    range.value = String(value);
+    range.oninput = () => {
+      text.lastChild.textContent = `${range.value}%`;
+      syncRangeFill(range);
+    };
+    range.onchange = () => onChange(Number(range.value) / 100);
+    wrap.append(text, range);
+    menu.appendChild(wrap);
+    syncRangeFill(range);
+  };
+  return { item, sep, slider };
+}
+
+function openMemberMenu(member, x, y, { dm = false } = {}) {
+  if (state.user && member.id === state.user.id) return;
+  closeFloating();
+  const server = dm ? null : state.currentServer;
+  const inServer = Boolean(server && server.members.some(m => m.id === member.id));
+  const menu = $("member-menu");
+  menu.replaceChildren(el("div", "ctx-title", member.name));
+  const { item, sep, slider } = contextMenuBuilder(menu);
 
   item("Profile", () => openMemberCard(fullMember(member), { getBoundingClientRect: () => ({ left: x, top: y }) }));
   if (!(dm && state.currentDm && state.currentDm.user === member.id)) {
@@ -5046,22 +5081,7 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
   const mute = item(mutedForMe ? "Unmute" : "Mute", () => setUserVoice(member.id, { muted: !mutedForMe }), "ctx-check" + (mutedForMe ? " checked" : ""));
   mute.title = "Only you stop hearing them";
   const volume = Math.round(((voice.user_volumes || {})[member.id] ?? 1) * 100);
-  const slider = el("div", "ctx-slider");
-  const label = el("div", "ctx-slider-label");
-  label.append(el("span", null, "User Volume"), el("span", null, `${volume}%`));
-  const range = el("input");
-  range.type = "range";
-  range.min = "0";
-  range.max = "200";
-  range.value = String(volume);
-  range.oninput = () => {
-    label.lastChild.textContent = `${range.value}%`;
-    syncRangeFill(range);
-  };
-  range.onchange = () => setUserVoice(member.id, { volume: Number(range.value) / 100 });
-  slider.append(label, range);
-  menu.appendChild(slider);
-  syncRangeFill(range);
+  slider("User Volume", volume, v => setUserVoice(member.id, { volume: v }));
   sep();
 
   item(isBlocked(member.id) ? "Unblock" : "Block", () => {
@@ -5114,38 +5134,10 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
 function openSelfVoiceMenu(x, y) {
   if (!state.user) return;
   closeFloating();
-  menuMember = null;
   const menu = $("member-menu");
   menu.replaceChildren(el("div", "ctx-title", state.user.display_name || state.user.username));
-  const item = (label, onClick, cls = "") => {
-    const btn = el("button", cls, label);
-    btn.onclick = () => {
-      closeFloating();
-      onClick();
-    };
-    menu.appendChild(btn);
-    return btn;
-  };
-  const sep = () => menu.appendChild(el("div", "ctx-sep"));
-  const level = (label, key, onChange) => {
-    const value = Math.round((state.voice[key] ?? 1) * 100);
-    const slider = el("div", "ctx-slider");
-    const text = el("div", "ctx-slider-label");
-    text.append(el("span", null, label), el("span", null, `${value}%`));
-    const range = el("input");
-    range.type = "range";
-    range.min = "0";
-    range.max = "200";
-    range.value = String(value);
-    range.oninput = () => {
-      text.lastChild.textContent = `${range.value}%`;
-      syncRangeFill(range);
-    };
-    range.onchange = () => onChange(Number(range.value) / 100);
-    slider.append(text, range);
-    menu.appendChild(slider);
-    syncRangeFill(range);
-  };
+  const { item, sep, slider } = contextMenuBuilder(menu);
+  const level = (label, key, onChange) => slider(label, Math.round((state.voice[key] ?? 1) * 100), onChange);
   const setLevels = async (outputVolume, inputGain) => {
     try {
       state.voice = await invoke("set_volumes", { outputVolume, inputGain });
@@ -5175,7 +5167,7 @@ function openSelfVoiceMenu(x, y) {
 }
 
 function fullMember(person) {
-  const fromServer = state.currentServer && state.currentServer.members.find(m => m.id === person.id);
+  const fromServer = currentServerMember(person.id);
   if (fromServer) return fromServer;
   const known = state.people.get(person.id);
   return { presence: "offline", roles: [], ...(known || {}), ...person };
@@ -5209,11 +5201,7 @@ function openReport(target) {
   const servers = target.servers || [];
   $("report-server-row").classList.toggle("hidden", servers.length < 2);
   const pick = $("report-server");
-  pick.replaceChildren(...servers.map(s => {
-    const opt = el("option", null, s.name);
-    opt.value = s.id;
-    return opt;
-  }));
+  pick.replaceChildren(...servers.map(s => new Option(s.name, s.id)));
   pick.value = target.serverId;
   pick.onchange = () => {
     reportTarget.serverId = pick.value;
@@ -5421,9 +5409,7 @@ function openDurations(mode, anchor) {
     ? "Others see when you are back."
     : "";
   $("pp-durations-note").classList.toggle("hidden", !$("pp-durations-note").textContent);
-  const pad = n => String(n).padStart(2, "0");
-  const later = new Date(Date.now() + 2 * 3600e3);
-  $("pp-custom-time").value = `${later.getFullYear()}-${pad(later.getMonth() + 1)}-${pad(later.getDate())}T${pad(later.getHours())}:${pad(later.getMinutes())}`;
+  $("pp-custom-time").value = toLocalInput(new Date(Date.now() + 2 * 3600e3));
   const menu = $("pp-durations");
   menu.classList.remove("hidden");
   const pop = $("profile-pop").getBoundingClientRect();
@@ -6228,13 +6214,8 @@ function buildMessageContent(text) {
       appendRichText(div, text.slice(last, match.index));
     }
     const url = match[0];
-    const a = el("a", null, url);
-    a.href = "#";
+    const a = wireExternalLink(el("a", null, url), url);
     a.title = `Open ${url}`;
-    a.onclick = e => {
-      e.preventDefault();
-      invoke("open_url", { url }).catch(err => toast(String(err)));
-    };
     div.appendChild(a);
     last = match.index + url.length;
   }
@@ -6266,16 +6247,20 @@ function keepScrolledOnLoad(img) {
 
 const loadedImageLinks = new Set();
 
-function renderImageEmbed(url) {
-  const host = imageHost(url) || url;
-  const wrap = el("div", "image-embed");
-  const source = el("a", "embed-source", host);
-  source.href = "#";
-  source.title = `Open ${url}`;
-  source.onclick = e => {
+function wireExternalLink(a, url) {
+  a.href = "#";
+  a.onclick = e => {
     e.preventDefault();
     invoke("open_url", { url }).catch(err => toast(String(err)));
   };
+  return a;
+}
+
+function renderImageEmbed(url) {
+  const host = imageHost(url) || url;
+  const wrap = el("div", "image-embed");
+  const source = wireExternalLink(el("a", "embed-source", host), url);
+  source.title = `Open ${url}`;
   wrap.appendChild(source);
   if (embedMode(url, mediaProxyOn()) === "auto" || loadedImageLinks.has(url)) {
     const img = embedImage(url);
@@ -6346,31 +6331,85 @@ function closeLightbox() {
 }
 
 const imagePreviewCache = new Map();
+const imagePreviewLoads = new Map();
 
-function renderInlineImage(att) {
+function loadImagePreview(att, clicked) {
+  const cached = imagePreviewCache.get(att.blob);
+  if (cached) return Promise.resolve(cached);
+  let pending = imagePreviewLoads.get(att.blob);
+  if (!pending) {
+    pending = invoke("get_attachment_preview", {
+      blob: att.blob,
+      provider: att.provider ?? null,
+      mime: att.mime,
+      sizeBytes: att.size_bytes ?? null,
+      clicked,
+    })
+      .then(dataUrl => {
+        imagePreviewCache.set(att.blob, dataUrl);
+        return dataUrl;
+      })
+      .finally(() => imagePreviewLoads.delete(att.blob));
+    imagePreviewLoads.set(att.blob, pending);
+  }
+  return pending;
+}
+
+function chatImage(att) {
   const img = el("img", "chat-image");
   keepScrolledOnLoad(img);
   img.alt = att.filename;
   img.onclick = () => {
     if (img.src) openLightbox(img.src, null, att.filename);
   };
+  return img;
+}
+
+function renderInlineImage(att) {
   const cached = imagePreviewCache.get(att.blob);
+  if (!cached && !loadsImageOnItsOwn(att)) return largeImageGate(att);
+  const img = chatImage(att);
   if (cached) {
     img.src = cached;
   } else {
-    invoke("get_attachment_preview", {
-      blob: att.blob,
-      provider: att.provider ?? null,
-      mime: att.mime,
-      sizeBytes: att.size_bytes ?? null,
-    })
+    loadImagePreview(att, false)
       .then(dataUrl => {
-        imagePreviewCache.set(att.blob, dataUrl);
         img.src = dataUrl;
       })
       .catch(() => img.remove());
   }
   return img;
+}
+
+function largeImageGate(att) {
+  const size = typeof att.size_bytes === "number" ? formatSize(att.size_bytes) : "size unknown";
+  const text = largeImageGateText(size);
+  const gate = el("div", "image-gate attachment-gate");
+  const lines = el("div", "image-gate-text");
+  const title = el("div", "image-gate-title", text.title);
+  lines.append(title, el("div", "image-gate-hint", text.hint));
+  const button = el("button", "btn-secondary btn-small image-gate-load", text.load);
+  button.type = "button";
+  const load = () => {
+    button.disabled = true;
+    button.textContent = text.loading;
+    loadImagePreview(att, true)
+      .then(dataUrl => {
+        const img = chatImage(att);
+        img.src = dataUrl;
+        gate.replaceWith(img);
+        img.scrollIntoView({ block: "nearest" });
+      })
+      .catch(() => {
+        title.textContent = text.failed;
+        button.textContent = text.retry;
+        button.disabled = false;
+      });
+  };
+  button.onclick = load;
+  gate.append(lines, button);
+  if (imagePreviewLoads.has(att.blob)) load();
+  return gate;
 }
 
 const videoUrls = new Map();
@@ -6844,9 +6883,7 @@ function renderDmProfile(userId, name) {
 }
 
 function bannerColor(userId) {
-  let hash = 0;
-  for (const ch of String(userId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-  const hue = Math.abs(hash) % 360;
+  const hue = tintHue(userId);
   return `linear-gradient(135deg, hsl(${hue} 42% 40%), hsl(${(hue + 40) % 360} 45% 26%))`;
 }
 
@@ -7695,10 +7732,7 @@ function wireEvents() {
       const summary = await invoke("join_server", { ticket });
       hideModals();
       $("join-ticket-input").value = "";
-      rolePromptPending.add(summary.id);
-      await refreshServers();
-      await selectServer(summary.id);
-      toast("Joined server, syncing from peers");
+      await enterJoinedServer(summary);
     } catch (e) {
       toast(String(e));
     }
@@ -8160,6 +8194,7 @@ function wireEvents() {
   wireHotkeyInput($("overlay-toggle-key"), "toggle_hotkey");
   wireHotkeyInput($("overlay-chat-key"), "chat_hotkey");
   $("dm-policy").addEventListener("change", saveDmSettings);
+  $("keep-default").addEventListener("change", e => setHistoryWindow(null, e.target.value));
   $("spam-filter-toggle").addEventListener("change", saveDmSettings);
   $("block-cancel").onclick = hideModals;
   $("block-go").onclick = async () => {
@@ -8168,22 +8203,6 @@ function wireEvents() {
   };
   $("report-cancel").onclick = hideModals;
   $("report-go").onclick = submitReport;
-  $("mm-message").onclick = () => {
-    closeFloating();
-    if (menuMember) messageUser(menuMember.id, menuMember.name);
-  };
-  $("mm-block").onclick = () => {
-    closeFloating();
-    if (!menuMember) return;
-    if (isBlocked(menuMember.id)) setBlocked(menuMember.id, menuMember.name, false);
-    else openBlock(menuMember.id, menuMember.name);
-  };
-  $("mm-report").onclick = () => {
-    closeFloating();
-    if (menuMember && state.currentServer) {
-      openReport({ serverId: state.currentServer.id, userId: menuMember.id, name: menuMember.name });
-    }
-  };
   $("dm-request-accept").onclick = () => answerDmRequest("accept");
   $("dm-request-decline").onclick = () => answerDmRequest("decline");
   $("dm-request-block").onclick = () => answerDmRequest("block");
@@ -8323,18 +8342,13 @@ function wireEvents() {
     if (menuServer) markServerRead(menuServer.id);
     closeFloating();
   };
-  $("sm-invite").onclick = async () => {
-    closeFloating();
-    if (!menuServer) return;
-    if (!state.currentServer || state.currentServer.id !== menuServer.id) await selectServer(menuServer.id);
-    $("invite-btn").click();
-  };
   const fromMenu = action => async () => {
     closeFloating();
     if (!menuServer) return;
     if (!state.currentServer || state.currentServer.id !== menuServer.id) await selectServer(menuServer.id);
     action();
   };
+  $("sm-invite").onclick = fromMenu(() => $("invite-btn").click());
   $("sm-events").onclick = fromMenu(openEvents);
   $("sm-pins").onclick = fromMenu(openServerPins);
   $("sm-rules").onclick = fromMenu(openRules);
@@ -8353,11 +8367,7 @@ function wireEvents() {
   $("igdb-save").onclick = () => saveIgdb(false);
   $("igdb-remove").onclick = () => saveIgdb(true);
   for (const link of document.querySelectorAll(".integration-steps a[data-href]")) {
-    link.href = "#";
-    link.onclick = e => {
-      e.preventDefault();
-      invoke("open_url", { url: link.dataset.href }).catch(err => toast(String(err)));
-    };
+    wireExternalLink(link, link.dataset.href);
   }
   $("rules-input").addEventListener("input", syncRulesPreview);
   $("rules-save").onclick = () => saveRules(false);
@@ -8382,12 +8392,7 @@ function wireEvents() {
   $("event-save").onclick = saveEvent;
   $("choose-roles-done").onclick = hideModals;
   $("create-category-icon").replaceChildren(svgIcon("chevronDown", 20));
-  $("sm-settings").onclick = async () => {
-    closeFloating();
-    if (!menuServer) return;
-    if (!state.currentServer || state.currentServer.id !== menuServer.id) await selectServer(menuServer.id);
-    openServerSettings();
-  };
+  $("sm-settings").onclick = fromMenu(() => openServerSettings());
   $("sm-ungroup").onclick = () => {
     closeFloating();
     if (!menuServer) return;
@@ -8880,6 +8885,19 @@ function insertIntoComposer(text) {
   input.setSelectionRange(next, next);
 }
 
+function permissionCheckboxes(grid, checked) {
+  for (const [value, label] of PERMISSION_LABELS) {
+    const wrap = el("label");
+    const input = el("input");
+    input.type = "checkbox";
+    input.value = value;
+    if (checked) input.checked = checked.includes(value);
+    wrap.append(input, document.createTextNode(label));
+    grid.appendChild(wrap);
+  }
+  return grid;
+}
+
 const PERMISSION_LABELS = [
   ["manage_server", "Manage Server"],
   ["manage_channels", "Manage Channels"],
@@ -8905,6 +8923,7 @@ function openUserSettings(tab) {
   loadCameraDevices();
   renderSoundSettings();
   loadSafety().then(renderSafetySettings);
+  loadStorageSettings().then(renderStorageSettings);
   $("account-about").value = state.user.about || "";
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();
@@ -8953,14 +8972,7 @@ function openServerInfo(server) {
   const games = $("si-games");
   games.replaceChildren();
   for (const tag of server.game_tags || []) {
-    const chip = el("span", "game-chip small", tag);
-    const cover = tagCover(server, tag, "t_thumb");
-    if (cover) {
-      const img = el("img", "game-chip-cover");
-      img.src = cover;
-      chip.prepend(img);
-    }
-    games.appendChild(chip);
+    games.appendChild(gameChip(server, tag, "game-chip small"));
   }
   games.classList.toggle("hidden", !games.childElementCount);
   $("si-rules-wrap").classList.toggle("hidden", !server.rules);
@@ -8996,16 +9008,7 @@ function openServerSettings(tab) {
   $("server-public-toggle").disabled = !server.can_manage_server;
   $("server-public-row").classList.toggle("readonly", !server.can_manage_server);
   const afkSelect = $("afk-channel-select");
-  afkSelect.innerHTML = "";
-  const none = el("option", null, "No AFK channel");
-  none.value = "";
-  afkSelect.appendChild(none);
-  for (const channel of server.channels.filter(c => c.kind === "voice")) {
-    const opt = el("option", null, channel.name);
-    opt.value = channel.id;
-    afkSelect.appendChild(opt);
-  }
-  afkSelect.value = server.afk_channel || "";
+  fillVoiceChannelSelect(afkSelect, "No AFK channel", server, server.afk_channel || "");
   afkSelect.disabled = !server.can_manage_server;
   $("server-afk-timeout").value = String(server.afk_timeout_minutes || 0);
   $("server-afk-timeout").disabled = !server.can_manage_server;
@@ -9115,17 +9118,7 @@ function renderRoleSettings(server) {
   if (!server.roles.length) list.appendChild(el("div", "manage-empty", "No roles yet"));
 
   const grid = $("new-role-perms");
-  if (!grid.childElementCount) {
-    for (const [value, label] of PERMISSION_LABELS) {
-      const wrap = el("label");
-      const box = el("input");
-      box.type = "checkbox";
-      box.value = value;
-      wrap.appendChild(box);
-      wrap.appendChild(document.createTextNode(label));
-      grid.appendChild(wrap);
-    }
-  }
+  if (!grid.childElementCount) permissionCheckboxes(grid);
 }
 
 function renderMemberSettings(server) {
