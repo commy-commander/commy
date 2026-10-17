@@ -199,7 +199,7 @@
         </div>
       </div>
       <div class="composer">
-        <button class="icon-btn composer-attach" id="attach-btn" title="Attach File">
+        <button class="icon-btn composer-attach" id="attach-btn" title="Add Files and GIFs">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4z"/></svg>
         </button>
         <input id="message-input" type="text" autocomplete="off" placeholder="Message #welcome" />
@@ -1461,6 +1461,12 @@
     <button class="danger" id="mm-report">Report User</button>
   </div>
 
+  <div class="pop-menu composer-menu hidden" id="composer-menu" role="menu">
+    <button id="cm-file" role="menuitem">Upload a File</button>
+    <button id="cm-video" role="menuitem">Post a Video</button>
+    <button id="cm-gif" role="menuitem">GIF</button>
+  </div>
+
   <!-- Right-click menu for a server in the rail -->
   <div class="pop-menu ctx-menu hidden" id="server-menu" role="menu">
     <div class="ctx-title" id="server-menu-title"></div>
@@ -1509,6 +1515,7 @@
   <div class="mention-pop hidden" id="mention-pop" role="listbox"></div>
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/emoji.js"></script>
+  <script src="scripts/composer-suggest.js"></script>
   <script src="scripts/embeds.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/pins.js"></script>
