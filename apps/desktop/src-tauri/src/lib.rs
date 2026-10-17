@@ -515,9 +515,9 @@ fn may_delete(app: &App, state: &ServerState, channel: ChannelId, message: Messa
 
 // ---------- File sharing ----------
 
-/// Stores bytes as a blob and posts them as an attachment message.
 const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
 
+/// Stores bytes as a blob and posts them as an attachment message.
 async fn send_attachment(
     app: &tauri::State<'_, App>,
     handle: &tauri::AppHandle,
@@ -659,11 +659,47 @@ async fn note_user_activity(app: tauri::State<'_, App>, handle: tauri::AppHandle
 
 #[tauri::command]
 fn open_url(url: String) -> CmdResult<()> {
-    let parsed = url.trim();
-    if !(parsed.starts_with("https://") || parsed.starts_with("http://")) {
-        return Err("only http and https links can be opened".into());
+    let target = web_url(&url).ok_or("only http and https links can be opened")?;
+    open::that_detached(target).map_err(err_to_string)
+}
+
+fn web_url(raw: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(raw.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return None;
     }
-    open::that_detached(parsed).map_err(err_to_string)
+    Some(parsed.to_string())
+}
+
+const MAX_FILE_NAME_CHARS: usize = 120;
+
+fn safe_file_name(name: &str) -> String {
+    let last_segment = name.rsplit(['/', '\\']).find(|part| !part.trim().is_empty()).unwrap_or("");
+    let mut cleaned: String = last_segment
+        .chars()
+        .filter(|c| !c.is_control())
+        .map(|c| if matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .collect();
+    cleaned = cleaned.trim().trim_start_matches(['.', ' ']).trim_end_matches(['.', ' ']).to_string();
+    if cleaned.chars().count() > MAX_FILE_NAME_CHARS {
+        let (stem, ext) = match cleaned.rsplit_once('.') {
+            Some((stem, ext)) if ext.len() <= 10 && !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+            _ => (cleaned.clone(), String::new()),
+        };
+        let keep = MAX_FILE_NAME_CHARS.saturating_sub(ext.chars().count()).max(1);
+        cleaned = format!("{}{ext}", stem.chars().take(keep).collect::<String>());
+    }
+    let stem = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.ends_with(|c: char| c.is_ascii_digit()));
+    if reserved {
+        cleaned = format!("_{cleaned}");
+    }
+    if cleaned.is_empty() {
+        "file".to_string()
+    } else {
+        cleaned
+    }
 }
 
 #[tauri::command]
@@ -672,13 +708,14 @@ async fn download_attachment(
     blob: String,
     filename: String,
     provider: Option<String>,
+    size_bytes: Option<u64>,
 ) -> CmdResult<Option<String>> {
     if let Some(size) = size_bytes {
         commy_net::node::check_blob_size(size, MAX_ATTACHMENT_BYTES).map_err(err_to_string)?;
     }
     let bytes = fetch_blob(&app, &blob, provider.as_deref(), MAX_ATTACHMENT_BYTES).await?;
     let Some(target) = rfd::AsyncFileDialog::new()
-        .set_file_name(&filename)
+        .set_file_name(safe_file_name(&filename))
         .save_file()
         .await
     else {
@@ -712,7 +749,6 @@ async fn set_voice_channel(
             if full {
                 return Err("that voice channel is full".into());
             }
-    size_bytes: Option<u64>,
             let previous = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != sid);
             if let Some(previous) = previous {
                 leave_voice(&app, &handle, previous, &profile, &voice).await;
@@ -4498,6 +4534,7 @@ async fn get_attachment_preview(
     blob: String,
     provider: Option<String>,
     mime: String,
+    size_bytes: Option<u64>,
 ) -> CmdResult<String> {
     // Strict shape check: the mime is peer-supplied and goes into a
     // data URL, so it must not carry separators or whitespace.
@@ -4564,7 +4601,6 @@ async fn set_muted(app: tauri::State<'_, App>, handle: tauri::AppHandle, muted: 
 /// arrivals see the call as it is.
 async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHandle) {
     let Some((sid, channel)) = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel)) else { return };
-    size_bytes: Option<u64>,
     let Ok(profile) = current_profile(app) else { return };
     let voice = app.voice.lock().unwrap().clone();
     let event = {
@@ -5281,6 +5317,7 @@ pub fn run() {
                             }
                         }
                         node.set_catchup_store(catchup::store(&handle));
+                        node.set_media_gate(media_gate(&handle));
                         *app.net.lock().await = Some(node);
                         tracing::info!("iroh node online");
 
@@ -5318,7 +5355,6 @@ pub fn run() {
             account::set_account_server,
             account::account_begin_sign_in,
             account::account_cancel_sign_in,
-                        node.set_media_gate(media_gate(&handle));
             account::account_sign_out,
             voice_stats,
             set_server_afk_timeout,
@@ -5460,6 +5496,49 @@ pub fn run() {
             }
             invite_link::on_run_event(handle, &event)
         });
+}
+
+#[cfg(test)]
+mod hygiene_tests {
+    use super::*;
+
+    #[test]
+    fn only_web_links_open_and_they_open_as_parsed() {
+        assert_eq!(web_url(" https://commy.chat/docs ").as_deref(), Some("https://commy.chat/docs"));
+        assert_eq!(web_url("http://localhost:3100/i/abc#key").as_deref(), Some("http://localhost:3100/i/abc#key"));
+        assert_eq!(web_url("HTTPS://Example.ORG").as_deref(), Some("https://example.org/"));
+        assert_eq!(web_url("file:///etc/passwd"), None);
+        assert_eq!(web_url("javascript:alert(1)"), None);
+        assert_eq!(web_url("commy://commy.chat/i/abc"), None);
+        assert_eq!(web_url("https://"), None);
+        assert_eq!(web_url("not a link"), None);
+        assert_eq!(web_url(""), None);
+    }
+
+    #[test]
+    fn peer_file_names_are_cleaned_before_the_save_dialog() {
+        assert_eq!(safe_file_name("report.pdf"), "report.pdf");
+        assert_eq!(safe_file_name("../../etc/passwd"), "passwd");
+        assert_eq!(safe_file_name("..\\windows\\system32\\x.dll"), "x.dll");
+        assert_eq!(safe_file_name("photos/"), "photos");
+        assert_eq!(safe_file_name("/"), "file");
+        assert_eq!(safe_file_name(".bashrc"), "bashrc");
+        assert_eq!(safe_file_name("  notes.txt. "), "notes.txt");
+        assert_eq!(safe_file_name("a\u{0}b\r\nc.txt"), "abc.txt");
+        assert_eq!(safe_file_name("CON"), "_CON");
+        assert_eq!(safe_file_name("lpt1.txt"), "_lpt1.txt");
+        assert_eq!(safe_file_name("com9"), "_com9");
+        assert_eq!(safe_file_name("console.log"), "console.log");
+        assert_eq!(safe_file_name("what?.png"), "what_.png");
+        assert_eq!(safe_file_name(""), "file");
+        assert_eq!(safe_file_name("..."), "file");
+        let long = format!("{}.jpeg", "x".repeat(500));
+        let cleaned = safe_file_name(&long);
+        assert_eq!(cleaned.chars().count(), MAX_FILE_NAME_CHARS);
+        assert!(cleaned.ends_with(".jpeg"));
+        let no_ext = safe_file_name(&"y".repeat(300));
+        assert_eq!(no_ext.chars().count(), MAX_FILE_NAME_CHARS);
+    }
 }
 
 #[cfg(test)]
