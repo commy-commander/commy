@@ -87,7 +87,8 @@ pub fn mentions(content: &str, names: &[&str]) -> bool {
     let targets = names.iter().map(|n| n.to_lowercase()).chain(["everyone".into(), "here".into()]);
     for name in targets.filter(|n| !n.is_empty()) {
         let mut from = 0;
-        while let Some(pos) = lower[from..].find(&format!("@{name}")) {
+        let needle = format!("@{name}");
+        while let Some(pos) = lower[from..].find(&needle) {
             let end = from + pos + 1 + name.len();
             let boundary = lower[end..].chars().next().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
             if boundary {
@@ -153,13 +154,8 @@ impl Catchup {
     }
 
     pub fn take_held(&mut self, server: ServerId, signers: &HashSet<UserId>, now: Instant) -> Vec<Held> {
-        let Some(queue) = self.held.get_mut(&server) else { return Vec::new() };
-        let (taken, kept): (VecDeque<_>, VecDeque<_>) =
-            queue.drain(..).filter(|((at, _, _), _)| !expired(*at, now)).partition(|((_, by, _), _)| signers.contains(by));
-        *queue = kept;
-        if queue.is_empty() {
-            self.held.remove(&server);
-        }
+        let live = |((at, _, _), _): &(Held, usize)| !expired(*at, now);
+        let taken = take_where(&mut self.held, server, live, |((_, by, _), _)| signers.contains(by));
         taken.into_iter().map(|(held, _)| held).collect()
     }
 
@@ -178,14 +174,8 @@ impl Catchup {
     }
 
     pub fn expire_held(&mut self, now: Instant) {
-        for queue in self.held.values_mut() {
-            queue.retain(|((at, _, _), _)| !expired(*at, now));
-        }
-        self.held.retain(|_, queue| !queue.is_empty());
-        for queue in self.held_actions.values_mut() {
-            queue.retain(|(at, _)| !expired(*at, now));
-        }
-        self.held_actions.retain(|_, queue| !queue.is_empty());
+        expire_queues(&mut self.held, |((at, _, _), _)| !expired(*at, now));
+        expire_queues(&mut self.held_actions, |(at, _)| !expired(*at, now));
     }
 
     pub fn hold_action(&mut self, server: ServerId, signed: SignedEvent, now: Instant) {
@@ -204,15 +194,8 @@ impl Catchup {
     }
 
     pub fn take_held_actions(&mut self, server: ServerId, signers: &HashSet<UserId>, now: Instant) -> Vec<(Instant, SignedEvent)> {
-        let Some(queue) = self.held_actions.get_mut(&server) else { return Vec::new() };
-        let (taken, kept): (VecDeque<_>, VecDeque<_>) = queue
-            .drain(..)
-            .filter(|(at, _)| !expired(*at, now))
-            .partition(|(_, signed)| signers.contains(&signed.action.by));
-        *queue = kept;
-        if queue.is_empty() {
-            self.held_actions.remove(&server);
-        }
+        let live = |(at, _): &(Instant, SignedEvent)| !expired(*at, now);
+        let taken = take_where(&mut self.held_actions, server, live, |(_, signed)| signers.contains(&signed.action.by));
         taken.into_iter().collect()
     }
 
@@ -289,6 +272,28 @@ impl Catchup {
 
 fn expired(at: Instant, now: Instant) -> bool {
     now.saturating_duration_since(at) >= HOLD_FOR
+}
+
+fn take_where<T>(
+    map: &mut HashMap<ServerId, VecDeque<T>>,
+    server: ServerId,
+    live: impl Fn(&T) -> bool,
+    take: impl Fn(&T) -> bool,
+) -> VecDeque<T> {
+    let Some(queue) = map.get_mut(&server) else { return VecDeque::new() };
+    let (taken, kept) = queue.drain(..).filter(|item| live(item)).partition(|item| take(item));
+    *queue = kept;
+    if queue.is_empty() {
+        map.remove(&server);
+    }
+    taken
+}
+
+fn expire_queues<T>(map: &mut HashMap<ServerId, VecDeque<T>>, live: impl Fn(&T) -> bool) {
+    for queue in map.values_mut() {
+        queue.retain(&live);
+    }
+    map.retain(|_, queue| !queue.is_empty());
 }
 
 fn held_size(event: &ServerEvent) -> Option<usize> {
@@ -465,11 +470,12 @@ pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChann
         .iter()
         .map(|(channel, fresh)| {
             let latest = &fresh.latest;
+            let found = state.and_then(|s| s.server.channel(*channel));
             let value = serde_json::json!({
                 "count": fresh.count,
                 "mentioned": fresh.mentioned,
-                "channel_name": state.and_then(|s| s.server.channel(*channel)).map(|c| c.name.clone()).unwrap_or_default(),
-                "announcement": state.and_then(|s| s.server.channel(*channel)).is_some_and(|c| c.kind == commy_core::ChannelKind::Announcement),
+                "channel_name": found.map(|c| c.name.clone()).unwrap_or_default(),
+                "announcement": found.is_some_and(|c| c.kind == commy_core::ChannelKind::Announcement),
                 "author": latest.author.to_string(),
                 "author_name": state
                     .and_then(|s| s.profiles.get(&latest.author))
@@ -729,17 +735,13 @@ pub fn on_caught_up(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32],
 
 pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<&SessionReport>) {
     let app = access.app();
-    let mut outbox_changed = false;
-    if let Some(report) = report {
-        let delivered = report.delivered.iter().copied();
-        outbox_changed = app.outbox.lock().unwrap().clear_delivered(server, delivered);
-    }
-    {
+    let outbox_changed = {
         let servers = app.servers.lock().unwrap();
-        if let Some(state) = servers.get(&server) {
-            outbox_changed |= app.outbox.lock().unwrap().prune(state, Utc::now());
-        }
-    }
+        let mut outbox = app.outbox.lock().unwrap();
+        let delivered = report.is_some_and(|r| outbox.clear_delivered(server, r.delivered.iter().copied()));
+        let pruned = servers.get(&server).is_some_and(|state| outbox.prune(state, Utc::now()));
+        delivered | pruned
+    };
     if outbox_changed {
         app.persist_outbox();
     }
@@ -801,9 +803,10 @@ pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserI
                 }
             }
         }
-        app.catchup.lock().unwrap().restore_held_actions(server, still);
+        let mut catchup = app.catchup.lock().unwrap();
+        catchup.restore_held_actions(server, still);
         if changed {
-            app.catchup.lock().unwrap().note_applied(server, []);
+            catchup.note_applied(server, []);
         }
     }
     if events.is_empty() {
@@ -1021,14 +1024,8 @@ pub fn every_neighbor(neighbors: Vec<(ServerId, Vec<[u8; 32]>)>) -> Vec<SessionK
 pub async fn run_periodic(handle: tauri::AppHandle) {
     loop {
         tokio::time::sleep(PERIODIC_INTERVAL).await;
-        let app = handle.state::<App>();
-        app.catchup.lock().unwrap().expire_held(Instant::now());
-        let servers: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
-        let neighbors: Vec<(ServerId, Vec<[u8; 32]>)> = {
-            let net = app.net.lock().await;
-            let Some(node) = net.as_ref() else { continue };
-            servers.into_iter().map(|sid| (sid, node.neighbors(sid))).collect()
-        };
+        handle.state::<App>().catchup.lock().unwrap().expire_held(Instant::now());
+        let neighbors = crate::settle::KeyNet::neighbors(&handle).await;
         let nanos = std::time::UNIX_EPOCH.elapsed().map(|d| d.subsec_nanos() as u64).unwrap_or(0);
         for (i, (sid, list)) in neighbors.into_iter().enumerate() {
             if let Some(peer) = pick(&list, nanos.wrapping_add(i as u64)) {

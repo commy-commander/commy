@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
@@ -40,6 +40,20 @@ pub struct ServerFeatures {
 }
 
 impl AccountState {
+    pub fn credentials(&self, kind: &str) -> Option<(String, String)> {
+        if !self.server_offers(kind) {
+            return None;
+        }
+        Some((self.signed_in_server.clone()?, self.token.clone()?))
+    }
+
+    pub fn clear_session(&mut self) {
+        self.token = None;
+        self.user = None;
+        self.signed_in_server = None;
+        self.features = None;
+    }
+
     pub fn server_offers(&self, kind: &str) -> bool {
         is_signed_in(self)
             && match (self.features, kind) {
@@ -62,8 +76,11 @@ pub struct AccountUser {
 
 static CHOSEN_SERVER: Mutex<Option<String>> = Mutex::new(None);
 
+static ENV_SERVER: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("COMMY_AUTH_URL").ok().and_then(|s| normalize_origin(&s)));
+
 pub fn effective_server() -> String {
-    if let Some(env) = std::env::var("COMMY_AUTH_URL").ok().and_then(|s| normalize_origin(&s)) {
+    if let Some(env) = ENV_SERVER.clone() {
         return env;
     }
     CHOSEN_SERVER.lock().unwrap().clone().unwrap_or_else(|| DEFAULT_ACCOUNT_SERVER.to_string())
@@ -82,7 +99,8 @@ pub fn load(dir: &Path) -> AccountState {
     state
 }
 
-fn save(dir: &Path, state: &AccountState) {
+fn store(app: &App, state: &AccountState) {
+    let Some(dir) = app.data_dir() else { return };
     if let Err(e) = crate::persist::write_secret_json(&path(dir), state) {
         tracing::warn!("could not save the account: {e}");
     }
@@ -110,9 +128,12 @@ pub fn link_message_ok(message: &str, server: &str, node_id: &str, challenge: &s
 
 pub fn sign_with_node_key(secret: &[u8; 32], message: &[u8]) -> (String, String) {
     let key = SigningKey::from_bytes(secret);
-    let node_id = data_encoding::HEXLOWER.encode(key.verifying_key().as_bytes());
     let signature = data_encoding::HEXLOWER.encode(&key.sign(message).to_bytes());
-    (node_id, signature)
+    (node_id_of(&key), signature)
+}
+
+fn node_id_of(key: &SigningKey) -> String {
+    data_encoding::HEXLOWER.encode(key.verifying_key().as_bytes())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -186,16 +207,8 @@ struct SearchResponse<T> {
 }
 
 pub async fn server_search<T: serde::de::DeserializeOwned>(app: &App, kind: &str, query: &str) -> Result<Option<Vec<T>>, String> {
-    let (server, token) = {
-        let state = app.account.lock().unwrap();
-        if !state.server_offers(kind) {
-            return Ok(None);
-        }
-        match (state.signed_in_server.clone(), state.token.clone()) {
-            (Some(server), Some(token)) => (server, token),
-            _ => return Ok(None),
-        }
-    };
+    let credentials = app.account.lock().unwrap().credentials(kind);
+    let Some((server, token)) = credentials else { return Ok(None) };
     let host = host_of(&server);
     let res = app
         .http
@@ -239,16 +252,8 @@ pub async fn media_image(app: &App, request_uri: &str) -> tauri::http::Response<
     let Some(target) = media_target(request_uri) else {
         return media_response(400, "text/plain", Vec::new());
     };
-    let (server, token) = {
-        let state = app.account.lock().unwrap();
-        if !state.server_offers("media") {
-            return media_response(404, "text/plain", Vec::new());
-        }
-        match (state.signed_in_server.clone(), state.token.clone()) {
-            (Some(server), Some(token)) => (server, token),
-            _ => return media_response(404, "text/plain", Vec::new()),
-        }
-    };
+    let credentials = app.account.lock().unwrap().credentials("media");
+    let Some((server, token)) = credentials else { return media_response(404, "text/plain", Vec::new()) };
     let res = app
         .http
         .get(format!("{server}/api/auth/commy/media"))
@@ -293,18 +298,20 @@ pub struct AccountView {
 }
 
 fn view(app: &App) -> AccountView {
-    let state = app.account.lock().unwrap().clone();
+    let pending_code = app.sign_in.lock().unwrap().as_ref().map(|p| p.user_code.clone());
+    let state = app.account.lock().unwrap();
     let server = effective_server();
+    let signed_in = is_signed_in(&state);
     AccountView {
-        signed_in: is_signed_in(&state),
-        user: if is_signed_in(&state) { state.user.clone() } else { None },
+        signed_in,
+        user: if signed_in { state.user.clone() } else { None },
         server_host: host_of(&server),
         is_default_server: server == DEFAULT_ACCOUNT_SERVER,
         default_server_host: host_of(DEFAULT_ACCOUNT_SERVER),
-        server_from_env: std::env::var("COMMY_AUTH_URL").ok().and_then(|s| normalize_origin(&s)).is_some(),
+        server_from_env: ENV_SERVER.is_some(),
         server,
         device_linked: state.device_linked,
-        pending_code: app.sign_in.lock().unwrap().as_ref().map(|p| p.user_code.clone()),
+        pending_code,
         server_gifs: state.server_offers("gifs"),
         server_games: state.server_offers("games"),
         server_media: state.server_offers("media"),
@@ -332,9 +339,7 @@ pub fn set_account_server(app: tauri::State<'_, App>, server: Option<String>) ->
     {
         let mut state = app.account.lock().unwrap();
         state.server = server.clone();
-        if let Some(dir) = app.data_dir() {
-            save(dir, &state);
-        }
+        store(&app, &state);
     }
     *CHOSEN_SERVER.lock().unwrap() = server;
     Ok(view(&app))
@@ -528,9 +533,7 @@ async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -
         state.user = Some(user);
         state.device_linked = device_linked.is_ok();
         state.features = doc.features;
-        if let Some(dir) = app.data_dir() {
-            save(dir, &state);
-        }
+        store(app, &state);
     }
     device_linked.map(|_| ())
 }
@@ -540,7 +543,7 @@ async fn link_device(app: &App, server: &str, doc: &Discovery, token: &str) -> R
         .data_dir()
         .and_then(|d| crate::persist::load_or_create_node_key(d))
         .ok_or("This install has no node key yet")?;
-    let (node_id, _) = sign_with_node_key(&secret, b"");
+    let node_id = node_id_of(&SigningKey::from_bytes(&secret));
     let res = app
         .http
         .post(&doc.endpoints.link_challenge)
@@ -582,14 +585,9 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
     }
     {
         let mut state = app.account.lock().unwrap();
-        state.token = None;
-        state.user = None;
-        state.signed_in_server = None;
+        state.clear_session();
         state.device_linked = false;
-        state.features = None;
-        if let Some(dir) = app.data_dir() {
-            save(dir, &state);
-        }
+        store(&app, &state);
     }
     let _ = handle.emit("account-changed", ());
     Ok(view(&app))
@@ -614,9 +612,7 @@ pub async fn verify_saved_session(handle: AppHandle) {
             let changed = state.features != doc.features;
             if changed {
                 state.features = doc.features;
-                if let Some(dir) = app.data_dir() {
-                    save(dir, &state);
-                }
+                store(&app, &state);
             }
             changed
         };
@@ -627,13 +623,8 @@ pub async fn verify_saved_session(handle: AppHandle) {
     }
     {
         let mut state = app.account.lock().unwrap();
-        state.token = None;
-        state.user = None;
-        state.signed_in_server = None;
-        state.features = None;
-        if let Some(dir) = app.data_dir() {
-            save(dir, &state);
-        }
+        state.clear_session();
+        store(&app, &state);
     }
     let _ = handle.emit("account-changed", ());
 }

@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use commy_core::{MessageId, UserId};
 use serde::{Deserialize, Serialize};
 
+use crate::state::default_true;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DmPolicy {
@@ -157,16 +159,10 @@ pub fn apply_friend_signal(s: &mut SafetySettings, from: UserId, signal: FriendS
             None
         }
         FriendSignal::Remove => {
-            s.friends.remove(&from);
-            s.friend_in.remove(&from);
-            s.friend_out.remove(&from);
+            s.forget_friend(from);
             None
         }
     }
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Default for SafetySettings {
@@ -196,13 +192,17 @@ impl SafetySettings {
         if blocked && !had {
             self.blocked.push(user);
             self.accepted.remove(&user);
-            self.friends.remove(&user);
-            self.friend_in.remove(&user);
-            self.friend_out.remove(&user);
+            self.forget_friend(user);
         } else if !blocked && had {
             self.blocked.retain(|u| *u != user);
         }
         had != blocked
+    }
+
+    pub fn forget_friend(&mut self, user: UserId) {
+        self.friends.remove(&user);
+        self.friend_in.remove(&user);
+        self.friend_out.remove(&user);
     }
 
     pub fn add_report(&mut self, report: Report) -> bool {

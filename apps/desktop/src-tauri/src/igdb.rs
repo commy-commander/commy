@@ -56,10 +56,6 @@ pub fn valid_image_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 32 && id.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-pub fn cover_url(image_id: &str, size: &str) -> Option<String> {
-    valid_image_id(image_id).then(|| format!("https://images.igdb.com/igdb/image/upload/{size}/{image_id}.jpg"))
-}
-
 pub fn normalize(name: &str) -> String {
     name.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
@@ -221,12 +217,9 @@ mod tests {
 
     #[test]
     fn covers_only_from_safe_ids() {
-        assert_eq!(
-            cover_url("co1rgi", "t_thumb").as_deref(),
-            Some("https://images.igdb.com/igdb/image/upload/t_thumb/co1rgi.jpg")
-        );
-        assert!(cover_url("../evil", "t_thumb").is_none());
-        assert!(cover_url("", "t_thumb").is_none());
+        assert!(valid_image_id("co1rgi"));
+        assert!(!valid_image_id("../evil"));
+        assert!(!valid_image_id(""));
     }
 
     #[test]

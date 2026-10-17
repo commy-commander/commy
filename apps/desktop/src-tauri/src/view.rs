@@ -1,4 +1,7 @@
-use commy_core::{ChannelId, ChannelKind, DmMessage, DmStore, Message, MessageId, Permissions, ServerState, UserId};
+use commy_core::server::Rsvp;
+use commy_core::{
+    ChannelId, ChannelKind, DmMessage, DmStore, Message, MessageId, Permissions, Presence, ServerState, UserId,
+};
 use std::collections::HashSet;
 use serde::Serialize;
 
@@ -29,7 +32,7 @@ impl ServerSummary {
 pub struct ChannelView {
     pub id: String,
     pub name: String,
-    pub kind: String,
+    pub kind: ChannelKind,
     pub topic: Option<String>,
     pub voice_users: Vec<String>,
     pub voice_user_ids: Vec<String>,
@@ -49,7 +52,7 @@ pub struct ChannelView {
 pub struct MemberView {
     pub id: String,
     pub name: String,
-    pub presence: String,
+    pub presence: Presence,
     pub presence_until: Option<i64>,
     pub custom_status: Option<String>,
     pub color: Option<String>,
@@ -96,7 +99,7 @@ pub struct EventView {
     pub creator_name: String,
     pub going: usize,
     pub interested: usize,
-    pub my_rsvp: Option<String>,
+    pub my_rsvp: Option<Rsvp>,
     pub can_edit: bool,
 }
 
@@ -165,107 +168,81 @@ pub struct SoundView {
 }
 
 impl ServerView {
-    pub fn from_state(state: &ServerState) -> Self {
-        Self::for_viewer(state, None)
-    }
-
     pub fn for_viewer(state: &ServerState, viewer: Option<UserId>) -> Self {
         let channels = state
             .server
             .sorted_channels()
             .into_iter()
-            .map(|c| ChannelView {
-                id: c.id.to_string(),
-                name: c.name.clone(),
-                kind: match c.kind {
-                    ChannelKind::Text => "text",
-                    ChannelKind::Voice => "voice",
-                    ChannelKind::Announcement => "announcement",
-                    ChannelKind::Category => "category",
+            .map(|c| {
+                let voice = state.voice_members(c.id);
+                ChannelView {
+                    id: c.id.to_string(),
+                    name: c.name.clone(),
+                    kind: c.kind,
+                    topic: c.topic.clone(),
+                    voice_users: voice.iter().map(|u| display_name(state, *u)).collect(),
+                    retention_days: c.retention_days,
+                    parent: c.parent.map(|p| p.to_string()),
+                    position: c.position,
+                    user_limit: c.user_limit,
+                    banner: c.banner.clone(),
+                    color: c.color.clone(),
+                    pins: state.server.pins.iter().filter(|p| p.channel == c.id && state.has_message(p.message)).count(),
+                    voice_user_ids: voice.iter().map(|u| u.to_string()).collect(),
+                    voice_since: voice.iter().map(|u| state.voice_since(*u)).collect(),
+                    voice_muted: voice.iter().map(|u| state.voice_flags(*u).0).collect(),
+                    voice_deafened: voice.iter().map(|u| state.voice_flags(*u).1).collect(),
                 }
-                .to_string(),
-                topic: c.topic.clone(),
-                voice_users: state
-                    .voice_members(c.id)
-                    .iter()
-                    .map(|u| display_name(state, *u))
-                    .collect(),
-                retention_days: c.retention_days,
-                parent: c.parent.map(|p| p.to_string()),
-                position: c.position,
-                user_limit: c.user_limit,
-                banner: c.banner.clone(),
-                color: c.color.clone(),
-                pins: state.server.pins_in(c.id).iter().filter(|p| state.has_message(p.message)).count(),
-                voice_user_ids: state
-                    .voice_members(c.id)
-                    .iter()
-                    .map(|u| u.to_string())
-                    .collect(),
-                voice_since: state
-                    .voice_members(c.id)
-                    .iter()
-                    .map(|u| state.voice_since(*u))
-                    .collect(),
-                voice_muted: state.voice_members(c.id).iter().map(|u| state.voice_flags(*u).0).collect(),
-                voice_deafened: state.voice_members(c.id).iter().map(|u| state.voice_flags(*u).1).collect(),
             })
             .collect();
 
         let members = state
             .member_list()
             .into_iter()
-            .map(|p| MemberView {
-                id: p.id.to_string(),
-                name: p.visible_name().to_string(),
-                presence: serde_json::to_value(p.presence)
-                    .ok()
-                    .and_then(|v| v.as_str().map(String::from))
-                    .unwrap_or_else(|| "offline".to_string()),
-                presence_until: p.presence_until,
-                custom_status: p.custom_status.clone(),
-                color: state.server.role_color_for(p.id),
-                roles: state
-                    .server
-                    .member(p.id)
-                    .map(|m| m.roles.iter().map(|r| r.to_string()).collect())
-                    .unwrap_or_default(),
-                avatar: p
-                    .avatar
-                    .as_deref()
-                    .and_then(commy_core::Avatar::parse)
-                    .map(|a| a.encode()),
-                avatar_provider: p.node.clone(),
-                banner: p.banner.clone().filter(|b| commy_core::user::valid_banner(b)),
-                status_emoji: p
-                    .status_emoji
-                    .clone()
-                    .filter(|e| commy_core::user::is_emoji_like(e)),
-                activity: p
-                    .activity
-                    .clone()
-                    .filter(|_| p.presence.is_visible_online()),
-                about: p.about.clone().map(|a| a.chars().take(commy_core::user::MAX_ABOUT_CHARS).collect()),
-                activity_cover: p
-                    .activity_cover
-                    .clone()
-                    .filter(|c| p.activity.is_some() && crate::igdb::valid_image_id(c)),
-                activity_since: p.activity_since.filter(|_| p.activity.is_some() && p.presence.is_visible_online()),
-                voice_channel: state.voice_states.get(&p.id).map(|c| c.to_string()),
-                voice_since: state.voice_since(p.id),
-                voice_muted: state.voice_flags(p.id).0,
-                voice_deafened: state.voice_flags(p.id).1,
-                tag: member_tag(state, p.id).map(|(t, _)| t),
-                tag_color: member_tag(state, p.id).and_then(|(_, c)| c),
-                role_banner: state.server.member(p.id).and_then(|m| {
-                    state
+            .map(|p| {
+                let tag = member_tag(state, p.id);
+                let (voice_muted, voice_deafened) = state.voice_flags(p.id);
+                MemberView {
+                    id: p.id.to_string(),
+                    name: p.visible_name().to_string(),
+                    presence: p.presence,
+                    presence_until: p.presence_until,
+                    custom_status: p.custom_status.clone(),
+                    color: state.server.role_color_for(p.id),
+                    roles: state
                         .server
-                        .roles
-                        .iter()
-                        .filter(|r| m.roles.contains(&r.id) && r.banner.is_some())
-                        .max_by_key(|r| r.position)
-                        .and_then(|r| r.banner.clone())
-                }),
+                        .member(p.id)
+                        .map(|m| m.roles.iter().map(|r| r.to_string()).collect())
+                        .unwrap_or_default(),
+                    avatar: p
+                        .avatar
+                        .as_deref()
+                        .and_then(commy_core::Avatar::parse)
+                        .map(|a| a.encode()),
+                    avatar_provider: p.node.clone(),
+                    banner: p.banner.clone().filter(|b| commy_core::user::valid_banner(b)),
+                    status_emoji: p
+                        .status_emoji
+                        .clone()
+                        .filter(|e| commy_core::user::is_emoji_like(e)),
+                    activity: p
+                        .activity
+                        .clone()
+                        .filter(|_| p.presence.is_visible_online()),
+                    about: p.about.as_deref().map(|a| crate::safety::truncate(a, commy_core::user::MAX_ABOUT_CHARS)),
+                    activity_cover: p
+                        .activity_cover
+                        .clone()
+                        .filter(|c| p.activity.is_some() && crate::igdb::valid_image_id(c)),
+                    activity_since: p.activity_since.filter(|_| p.activity.is_some() && p.presence.is_visible_online()),
+                    voice_channel: state.voice_states.get(&p.id).map(|c| c.to_string()),
+                    voice_since: state.voice_since(p.id),
+                    voice_muted,
+                    voice_deafened,
+                    tag_color: tag.as_ref().and_then(|(_, c)| c.clone()),
+                    tag: tag.map(|(t, _)| t),
+                    role_banner: state.server.top_role_with(p.id, |r| r.banner.is_some()).and_then(|r| r.banner.clone()),
+                }
             })
             .collect();
 
@@ -306,7 +283,7 @@ impl ServerView {
             .events
             .iter()
             .map(|e| {
-                let count = |want: commy_core::server::Rsvp| e.rsvps.iter().filter(|(_, r)| *r == want).count();
+                let count = |want: Rsvp| e.rsvps.iter().filter(|(_, r)| *r == want).count();
                 EventView {
                     id: e.id.clone(),
                     title: e.title.clone(),
@@ -317,22 +294,16 @@ impl ServerView {
                     channel_name: e.channel.and_then(|c| state.server.channel(c)).map(|c| c.name.clone()),
                     creator: e.creator.to_string(),
                     creator_name: display_name(state, e.creator),
-                    going: count(commy_core::server::Rsvp::Going),
-                    interested: count(commy_core::server::Rsvp::Interested),
-                    my_rsvp: viewer
-                        .and_then(|v| e.rsvps.iter().find(|(u, _)| *u == v))
-                        .map(|(_, r)| match r {
-                            commy_core::server::Rsvp::Going => "going".to_string(),
-                            commy_core::server::Rsvp::Interested => "interested".to_string(),
-                        }),
+                    going: count(Rsvp::Going),
+                    interested: count(Rsvp::Interested),
+                    my_rsvp: viewer.and_then(|v| e.rsvps.iter().find(|(u, _)| *u == v)).map(|(_, r)| *r),
                     can_edit: perms.allows(Permissions::MANAGE_EVENTS) || viewer == Some(e.creator),
                 }
             })
             .collect();
         let needs_rules = viewer.is_some_and(|v| {
             state.server.rules.is_some()
-                && v != state.server.owner
-                && !state.server.permissions_for(v).allows(Permissions::MANAGE_SERVER)
+                && !perms.allows(Permissions::MANAGE_SERVER)
                 && !state.server.rules_accepted.contains(&v)
         });
 
@@ -389,7 +360,7 @@ impl ServerView {
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS)
-                || (state.server.soundboard_open && viewer.is_some_and(|v| state.server.members.iter().any(|m| m.user == v))),
+                || (state.server.soundboard_open && viewer.is_some_and(|v| state.server.is_member(v))),
             can_use_soundboard: perms.allows(Permissions::USE_SOUNDBOARD),
         }
     }
@@ -453,10 +424,7 @@ pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore, pending: bool
     let from_name = if msg.from == me {
         "You".to_string()
     } else {
-        dms.contacts
-            .get(&msg.from)
-            .map(|p| p.visible_name().to_string())
-            .unwrap_or_else(|| "Unknown User".to_string())
+        name_or_unknown(dms.contacts.get(&msg.from))
     };
     DmMessageView {
         id: msg.id.to_string(),
@@ -477,15 +445,11 @@ pub fn dm_thread_views(dms: &DmStore, me: UserId) -> Vec<DmThreadView> {
             let last = convo.last();
             DmThreadView {
                 user: partner.to_string(),
-                name: dms
-                    .contacts
-                    .get(&partner)
-                    .map(|p| p.visible_name().to_string())
-                    .unwrap_or_else(|| "Unknown User".to_string()),
+                name: name_or_unknown(dms.contacts.get(&partner)),
                 last_message: last
                     .map(|m| {
                         let prefix = if m.from == me { "You: " } else { "" };
-                        format!("{prefix}{}", m.content.chars().take(60).collect::<String>())
+                        format!("{prefix}{}", crate::safety::truncate(&m.content, 60))
                     })
                     .unwrap_or_default(),
                 last_at: last
@@ -583,8 +547,8 @@ impl MessageView {
             edited: message.edited_at.is_some(),
             reply_to: message.reply_to.map(|id| id.to_string()),
             reply_preview: message.reply_to.and_then(|id| {
-                let original = state.messages(message.channel).iter().find(|m| m.id == id)?;
-                let mut excerpt: String = original.content.chars().take(120).collect();
+                let original = state.message(id).filter(|m| m.channel == message.channel)?;
+                let mut excerpt = crate::safety::truncate(&original.content, 120);
                 if excerpt.is_empty() && !original.attachments.is_empty() {
                     excerpt = "Click to see attachment".to_string();
                 }
@@ -635,21 +599,19 @@ pub fn message_views(state: &ServerState, channel: ChannelId, limit: usize, pend
 }
 
 pub fn display_name(state: &ServerState, user: commy_core::UserId) -> String {
-    state
-        .profiles
-        .get(&user)
-        .map(|p| p.visible_name().to_string())
-        .unwrap_or_else(|| "Unknown User".to_string())
+    name_or_unknown(state.profiles.get(&user))
+}
+
+pub const UNKNOWN_USER: &str = "Unknown User";
+
+pub fn name_or_unknown(profile: Option<&commy_core::UserProfile>) -> String {
+    profile.map_or_else(|| UNKNOWN_USER.to_string(), |p| p.visible_name().to_string())
 }
 
 pub fn member_tag(state: &ServerState, user: UserId) -> Option<(String, Option<String>)> {
-    let member = state.server.member(user)?;
     state
         .server
-        .roles
-        .iter()
-        .filter(|r| member.roles.contains(&r.id) && r.tag.is_some())
-        .max_by_key(|r| r.position)
+        .top_role_with(user, |r| r.tag.is_some())
         .map(|r| (r.tag.clone().unwrap_or_default(), r.color.clone()))
 }
 

@@ -90,10 +90,7 @@ impl Outbox {
         let list = self.queued.entry(server).or_default();
         list.retain(|old| !supersedes(event, old));
         list.push(event.clone());
-        if list.len() > MAX_QUEUED {
-            let excess = list.len() - MAX_QUEUED;
-            list.drain(..excess);
-        }
+        cap_queue(list);
         true
     }
 
@@ -110,28 +107,18 @@ impl Outbox {
     }
 
     pub fn clear_delivered(&mut self, server: ServerId, ids: impl IntoIterator<Item = MessageId>) -> bool {
-        let Some(list) = self.pending.get_mut(&server) else { return false };
-        let done: HashSet<MessageId> = ids.into_iter().collect();
-        let before = list.len();
-        list.retain(|id| !done.contains(id));
-        let changed = list.len() != before;
-        if list.is_empty() {
-            self.pending.remove(&server);
+        if !self.pending.contains_key(&server) {
+            return false;
         }
-        changed
+        let done: HashSet<MessageId> = ids.into_iter().collect();
+        retain_list(&mut self.pending, server, |id| !done.contains(id))
     }
 
     pub fn prune(&mut self, state: &ServerState, now: chrono::DateTime<chrono::Utc>) -> bool {
-        let server = state.server.id;
-        let Some(list) = self.pending.get_mut(&server) else { return false };
         let first = first_day(now);
-        let before = list.len();
-        list.retain(|id| state.message(*id).is_some_and(|m| day_number(m.created_at) >= first));
-        let changed = list.len() != before;
-        if list.is_empty() {
-            self.pending.remove(&server);
-        }
-        changed
+        retain_list(&mut self.pending, state.server.id, |id| {
+            state.message(*id).is_some_and(|m| day_number(m.created_at) >= first)
+        })
     }
 
     #[cfg(test)]
@@ -174,10 +161,7 @@ impl Outbox {
             list.push(event);
         }
         list.extend(queued);
-        if list.len() > MAX_QUEUED {
-            let excess = list.len() - MAX_QUEUED;
-            list.drain(..excess);
-        }
+        cap_queue(&mut list);
         self.queued.insert(server, list);
     }
 
@@ -212,15 +196,24 @@ impl Outbox {
     }
 
     pub fn dm_done(&mut self, partner: UserId, id: MessageId) -> bool {
-        let Some(list) = self.dms.get_mut(&partner) else { return false };
-        let before = list.len();
-        list.retain(|m| *m != id);
-        let changed = list.len() != before;
-        if list.is_empty() {
-            self.dms.remove(&partner);
-        }
-        changed
+        retain_list(&mut self.dms, partner, |m| *m != id)
     }
+}
+
+fn retain_list<K: std::hash::Hash + Eq, T>(map: &mut HashMap<K, Vec<T>>, key: K, keep: impl FnMut(&T) -> bool) -> bool {
+    let Some(list) = map.get_mut(&key) else { return false };
+    let before = list.len();
+    list.retain(keep);
+    let changed = list.len() != before;
+    if list.is_empty() {
+        map.remove(&key);
+    }
+    changed
+}
+
+fn cap_queue(list: &mut Vec<ServerEvent>) {
+    let excess = list.len().saturating_sub(MAX_QUEUED);
+    list.drain(..excess);
 }
 
 #[derive(Debug, Default)]
@@ -329,12 +322,15 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         return Received::Report { from: partner, content: message.content };
     }
     if let Some(signal) = FriendSignal::decode(&message.content) {
-        let fresh = safety::note_friend_signal(&mut app.safety.lock().unwrap(), partner, message.id, message.created_at);
-        if !fresh {
+        let reply = {
+            let mut safety = app.safety.lock().unwrap();
+            safety::note_friend_signal(&mut safety, partner, message.id, message.created_at)
+                .then(|| safety::apply_friend_signal(&mut safety, partner, signal))
+        };
+        let Some(reply) = reply else {
             tracing::debug!("ignored a friend signal from {partner} seen before");
             return Received::Dropped;
-        }
-        let reply = safety::apply_friend_signal(&mut app.safety.lock().unwrap(), partner, signal);
+        };
         app.dms.lock().unwrap().remember_contact(sender.clone());
         app.persist_dms();
         app.persist_safety();
@@ -435,25 +431,29 @@ pub fn may_send(app: &App, neighbors: usize, event: &ServerEvent) -> bool {
 
 pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) -> bool {
     crate::wake::unrest(app).await;
-    let delivered = {
-        let net = app.net.lock().await;
-        match net.as_ref() {
-            Some(node) if may_send(app, node.neighbor_count(server), &event) => {
-                match node.broadcast(server, app.wire_for(server, event.clone())).await {
-                    Ok(()) => true,
-                    Err(e) => {
-                        tracing::warn!("broadcast failed, keeping it for later: {e}");
-                        false
-                    }
-                }
-            }
-            _ => false,
+    let delivered = match send_now(app, server, &event).await {
+        Ok(Ok(())) => true,
+        Ok(Err(e)) => {
+            tracing::warn!("broadcast failed, keeping it for later: {e}");
+            false
         }
+        Err(_) => false,
     };
     if app.outbox.lock().unwrap().note_local(server, &event, delivered) {
         app.persist_outbox();
     }
     delivered
+}
+
+async fn send_now(app: &App, server: ServerId, event: &ServerEvent) -> Result<anyhow::Result<()>, &'static str> {
+    let net = app.net.lock().await;
+    match net.as_ref() {
+        Some(node) if may_send(app, node.neighbor_count(server), event) => {
+            Ok(node.broadcast(server, app.wire_for(server, event.clone())).await)
+        }
+        Some(_) => Err("no neighbor is connected"),
+        None => Err("network is not ready"),
+    }
 }
 
 pub async fn flush_queued(app: &App, server: ServerId) {
@@ -466,20 +466,12 @@ pub async fn flush_queued(app: &App, server: ServerId) {
     }
     let total = events.len();
     let mut left = Vec::new();
-    for (i, (_, event)) in events.iter().enumerate() {
-        let sent = {
-            let net = app.net.lock().await;
-            match net.as_ref() {
-                Some(node) if may_send(app, node.neighbor_count(server), event) => {
-                    node.broadcast(server, app.wire_for(server, event.clone())).await
-                }
-                Some(_) => Err(anyhow::anyhow!("no neighbor is connected")),
-                None => Err(anyhow::anyhow!("network is not ready")),
-            }
-        };
-        if let Err(e) = sent {
+    let mut events = events.into_iter();
+    while let Some(entry) = events.next() {
+        if let Err(e) = send_now(app, server, &entry.1).await.unwrap_or_else(|why| Err(anyhow::anyhow!(why))) {
             tracing::warn!("re-sending queued events stopped: {e}");
-            left.extend_from_slice(&events[i..]);
+            left.push(entry);
+            left.extend(events);
             break;
         }
     }

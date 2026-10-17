@@ -1,3 +1,4 @@
+use crate::state::default_true;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -31,9 +32,6 @@ fn default_corner() -> String {
 }
 fn default_opacity() -> f32 {
     0.9
-}
-fn default_true() -> bool {
-    true
 }
 fn default_toggle_hotkey() -> String {
     "Ctrl+Shift+F10".to_string()

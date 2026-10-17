@@ -1,9 +1,10 @@
-use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
+use commy_core::identity::IDENTITY_FILE;
 use commy_core::{Identity, ServerId, UserProfile};
 use commy_net::sealed::{Purpose, SealKey};
 use commy_net::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ServerTicket};
@@ -14,8 +15,8 @@ use crate::state::App;
 
 const KEY_FILE: &str = "entry-key.json";
 const LOCAL_FILE: &str = "entry-list.json";
-const IDENTITY_FILE: &str = "identity.key";
 const VAULT_ITEM: &str = "servers";
+const NO_VAULT: &str = "Your account server cannot keep a server list yet.";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
@@ -132,13 +133,19 @@ fn save_key(dir: &Path, server: &str, account: &str, key: &SealKey) {
     }
 }
 
-pub fn record_join(app: &App, id: ServerId) {
+fn update_record(app: &App, edit: impl FnOnce(&mut LocalRecord)) {
     let Some(dir) = app.data_dir() else { return };
     let path = dir.join(LOCAL_FILE);
     let mut record: LocalRecord = read(&path).unwrap_or_default();
-    record.joined.insert(id, Utc::now());
-    record.left.remove(&id);
+    edit(&mut record);
     write(&path, &record);
+}
+
+pub fn record_join(app: &App, id: ServerId) {
+    update_record(app, |record| {
+        record.joined.insert(id, Utc::now());
+        record.left.remove(&id);
+    });
 }
 
 pub fn record_profile_edit(app: &App) {
@@ -146,20 +153,14 @@ pub fn record_profile_edit(app: &App) {
 }
 
 fn set_profile_edited(app: &App, at: DateTime<Utc>) {
-    let Some(dir) = app.data_dir() else { return };
-    let path = dir.join(LOCAL_FILE);
-    let mut record: LocalRecord = read(&path).unwrap_or_default();
-    record.profile_edited = Some(at);
-    write(&path, &record);
+    update_record(app, |record| record.profile_edited = Some(at));
 }
 
 pub fn record_leave(app: &App, id: ServerId) {
-    let Some(dir) = app.data_dir() else { return };
-    let path = dir.join(LOCAL_FILE);
-    let mut record: LocalRecord = read(&path).unwrap_or_default();
-    record.joined.remove(&id);
-    record.left.insert(id, Utc::now());
-    write(&path, &record);
+    update_record(app, |record| {
+        record.joined.remove(&id);
+        record.left.insert(id, Utc::now());
+    });
 }
 
 fn read_identity(dir: &Path) -> Option<String> {
@@ -178,7 +179,6 @@ fn decode_identity(encoded: &str) -> Option<Identity> {
 
 fn write_identity(dir: &Path, encoded: &str) -> bool {
     use base64::Engine;
-    use std::io::Write;
     let bytes = match base64::engine::general_purpose::STANDARD.decode(encoded) {
         Ok(bytes) if decode_identity(encoded).is_some() => bytes,
         _ => {
@@ -188,21 +188,8 @@ fn write_identity(dir: &Path, encoded: &str) -> bool {
     };
     let tmp = dir.join(format!("{IDENTITY_FILE}.tmp"));
     let _ = std::fs::remove_file(&tmp);
-    let written = (|| {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            const READ_WRITE_BY_OWNER_ONLY: u32 = 0o600;
-            options.mode(READ_WRITE_BY_OWNER_ONLY);
-        }
-        let mut file = options.open(&tmp)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&tmp, dir.join(IDENTITY_FILE))
-    })();
+    let written =
+        commy_core::identity::write_private(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, dir.join(IDENTITY_FILE)));
     if let Err(e) = written {
         tracing::warn!("could not write the shared identity: {e}");
         let _ = std::fs::remove_file(&tmp);
@@ -298,6 +285,12 @@ struct Session {
     account: String,
 }
 
+fn signed_in(app: &App) -> Result<(PathBuf, Session), String> {
+    let dir = app.data_dir().cloned().ok_or("No data folder")?;
+    let s = session(app).ok_or("Sign in first")?;
+    Ok((dir, s))
+}
+
 fn session(app: &App) -> Option<Session> {
     let state = app.account.lock().unwrap();
     if !crate::account::is_signed_in(&state) {
@@ -323,22 +316,32 @@ enum Fetched {
     Unsupported,
 }
 
-async fn fetch(app: &App, s: &Session) -> Result<Fetched, String> {
-    let res = app
-        .http
-        .get(format!("{}/api/auth/commy/vault", s.server))
-        .query(&[("name", VAULT_ITEM)])
-        .bearer_auth(&s.token)
-        .send()
-        .await
-        .map_err(|_| "Could not reach your account server".to_string())?;
-    if res.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(Fetched::Unsupported);
-    }
+fn account_api(app: &App, s: &Session, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+    app.http.request(method, format!("{}/api/auth/commy/{path}", s.server)).bearer_auth(&s.token)
+}
+
+async fn reach(request: reqwest::RequestBuilder) -> Result<reqwest::Response, String> {
+    request.send().await.map_err(|_| "Could not reach your account server".to_string())
+}
+
+fn answered(res: &reqwest::Response) -> Result<(), String> {
     if !res.status().is_success() {
         return Err(format!("Your account server answered {}", res.status()));
     }
-    res.json().await.map(Fetched::Item).map_err(|_| "Your account server sent an invalid reply".to_string())
+    Ok(())
+}
+
+async fn vault_item(res: reqwest::Response) -> Result<VaultItem, String> {
+    res.json().await.map_err(|_| "Your account server sent an invalid reply".to_string())
+}
+
+async fn fetch(app: &App, s: &Session) -> Result<Fetched, String> {
+    let res = reach(account_api(app, s, reqwest::Method::GET, "vault").query(&[("name", VAULT_ITEM)])).await?;
+    if res.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(Fetched::Unsupported);
+    }
+    answered(&res)?;
+    vault_item(res).await.map(Fetched::Item)
 }
 
 enum Put {
@@ -347,21 +350,13 @@ enum Put {
 }
 
 async fn put(app: &App, s: &Session, data: String, version: u64) -> Result<Put, String> {
-    let res = app
-        .http
-        .post(format!("{}/api/auth/commy/vault/put", s.server))
-        .bearer_auth(&s.token)
-        .json(&serde_json::json!({ "name": VAULT_ITEM, "data": data, "version": version }))
-        .send()
-        .await
-        .map_err(|_| "Could not reach your account server".to_string())?;
+    let body = serde_json::json!({ "name": VAULT_ITEM, "data": data, "version": version });
+    let res = reach(account_api(app, s, reqwest::Method::POST, "vault/put").json(&body)).await?;
     if res.status() == reqwest::StatusCode::CONFLICT {
-        let item: VaultItem = res.json().await.map_err(|_| "Your account server sent an invalid reply".to_string())?;
+        let item = vault_item(res).await?;
         return Ok(if item.conflict { Put::Conflict } else { Put::Done });
     }
-    if !res.status().is_success() {
-        return Err(format!("Your account server answered {}", res.status()));
-    }
+    answered(&res)?;
     Ok(Put::Done)
 }
 
@@ -377,13 +372,7 @@ struct DeviceRow {
 }
 
 async fn account_devices(app: &App, s: &Session) -> Result<Vec<String>, String> {
-    let res = app
-        .http
-        .get(format!("{}/api/auth/commy/devices", s.server))
-        .bearer_auth(&s.token)
-        .send()
-        .await
-        .map_err(|_| "Could not reach your account server".to_string())?;
+    let res = reach(account_api(app, s, reqwest::Method::GET, "devices")).await?;
     let list: DeviceList = res.json().await.map_err(|_| "Could not list your devices".to_string())?;
     Ok(list.devices.into_iter().map(|d| d.node_id).collect())
 }
@@ -408,14 +397,10 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
     let app = handle.state::<App>();
     let Some(dir) = app.data_dir().cloned() else { return Ok(()) };
     let Some(s) = session(&app) else {
-        set_status(handle, "off", "", 0, false);
-        crate::settle::settle_key(handle).await;
-        return Ok(());
+        return finish(handle, "off", "", 0, false).await;
     };
     if app.account.lock().unwrap().features.is_some_and(|f| !f.vault) {
-        set_status(handle, "unsupported", "Your account server cannot keep a server list yet.", 0, false);
-        crate::settle::settle_key(handle).await;
-        return Ok(());
+        return finish(handle, "unsupported", NO_VAULT, 0, false).await;
     }
     if app.profile.lock().unwrap().is_none() {
         return Ok(());
@@ -425,11 +410,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
     for _ in 0..4 {
         let item = match fetch(&app, &s).await {
             Ok(Fetched::Item(item)) => item,
-            Ok(Fetched::Unsupported) => {
-                set_status(handle, "unsupported", "Your account server cannot keep a server list yet.", 0, false);
-                crate::settle::settle_key(handle).await;
-                return Ok(());
-            }
+            Ok(Fetched::Unsupported) => return finish(handle, "unsupported", NO_VAULT, 0, false).await,
             Err(e) => {
                 set_status(handle, "error", e.clone(), 0, load_key(&dir, &s.server, &s.account).is_some());
                 return Err(e);
@@ -484,15 +465,14 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
                 return Ok(());
             }
             AfterStep::StayOut => {
-                set_status(
+                return finish(
                     handle,
                     "own_identity",
                     "This device already had servers under its own identity, so it keeps them and does not share your list.",
                     shared.servers.len(),
                     true,
-                );
-                crate::settle::settle_key(handle).await;
-                return Ok(());
+                )
+                .await;
             }
         }
 
@@ -508,16 +488,10 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
         join_missing(handle, &app, &merged, &local).await;
 
         if merged == shared && item.data.is_some() {
-            set_status(handle, "synced", "", merged.servers.len(), true);
-            crate::settle::settle_key(handle).await;
-            return Ok(());
+            return finish(handle, "synced", "", merged.servers.len(), true).await;
         }
         match put(&app, &s, merged.seal(&key), item.version).await? {
-            Put::Done => {
-                set_status(handle, "synced", "", merged.servers.len(), true);
-                crate::settle::settle_key(handle).await;
-                return Ok(());
-            }
+            Put::Done => return finish(handle, "synced", "", merged.servers.len(), true).await,
             Put::Conflict => {
                 if generated {
                     let _ = std::fs::remove_file(dir.join(KEY_FILE));
@@ -528,6 +502,12 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
         }
     }
     Err("Your devices kept changing the server list at the same time; it will sync again soon".into())
+}
+
+async fn finish(handle: &AppHandle, state: &str, detail: &str, servers: usize, has_key: bool) -> Result<(), String> {
+    set_status(handle, state, detail, servers, has_key);
+    crate::settle::settle_key(handle).await;
+    Ok(())
 }
 
 const KEY_WAIT_RETRY: std::time::Duration = std::time::Duration::from_secs(120);
@@ -717,7 +697,7 @@ async fn ask(handle: &AppHandle) -> Result<Asked, String> {
 }
 
 static NEXT_ASK: AtomicU64 = AtomicU64::new(1);
-static PENDING: Mutex<Option<HashMap<u64, tokio::sync::oneshot::Sender<EntryKeyReply>>>> = Mutex::new(None);
+static PENDING: Mutex<BTreeMap<u64, tokio::sync::oneshot::Sender<EntryKeyReply>>> = Mutex::new(BTreeMap::new());
 
 #[derive(Debug, Clone, Serialize)]
 struct KeyAskView {
@@ -731,10 +711,9 @@ pub async fn run_entry_key_requests(handle: AppHandle, mut asks: tokio::sync::mp
         tauri::async_runtime::spawn(async move {
             let reply = answer(&handle, ask.peer, &ask.request).await;
             match reply {
-                Some(view_rx) => {
-                    let (id, rx) = view_rx;
+                Some((id, rx)) => {
                     let reply = rx.await.unwrap_or(EntryKeyReply::Denied);
-                    PENDING.lock().unwrap().get_or_insert_with(HashMap::new).remove(&id);
+                    PENDING.lock().unwrap().remove(&id);
                     let _ = ask.reply.send(reply);
                 }
                 None => {
@@ -764,24 +743,19 @@ async fn answer(
     }
     let id = NEXT_ASK.fetch_add(1, Ordering::SeqCst);
     let (tx, rx) = tokio::sync::oneshot::channel();
-    PENDING.lock().unwrap().get_or_insert_with(HashMap::new).insert(id, tx);
+    PENDING.lock().unwrap().insert(id, tx);
     let name: String = request.device_name.chars().filter(|c| !c.is_control()).take(64).collect();
-    if let Some(window) = handle.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    crate::tray::show_main_window(handle);
     let _ = handle.emit("entry-key-request", KeyAskView { id, device_name: name });
     Some((id, rx))
 }
 
 #[tauri::command]
 pub fn answer_entry_key_request(app: tauri::State<'_, App>, id: u64, allow: bool) -> Result<(), String> {
-    let sender = PENDING.lock().unwrap().get_or_insert_with(HashMap::new).remove(&id).ok_or("That request has expired")?;
+    let sender = PENDING.lock().unwrap().remove(&id).ok_or("That request has expired")?;
     let reply = if allow {
-        let dir = app.data_dir().ok_or("No data folder")?;
-        let s = session(&app).ok_or("Sign in first")?;
-        let key = load_key(dir, &s.server, &s.account).ok_or("This device has no server list key")?;
+        let (dir, s) = signed_in(&app)?;
+        let key = load_key(&dir, &s.server, &s.account).ok_or("This device has no server list key")?;
         EntryKeyReply::Key(key.to_text())
     } else {
         EntryKeyReply::Denied
@@ -792,17 +766,15 @@ pub fn answer_entry_key_request(app: tauri::State<'_, App>, id: u64, allow: bool
 
 #[tauri::command]
 pub fn entry_list_recovery_code(app: tauri::State<'_, App>) -> Result<String, String> {
-    let dir = app.data_dir().ok_or("No data folder")?;
-    let s = session(&app).ok_or("Sign in first")?;
-    let key = load_key(dir, &s.server, &s.account).ok_or("This device has no server list key yet")?;
+    let (dir, s) = signed_in(&app)?;
+    let key = load_key(&dir, &s.server, &s.account).ok_or("This device has no server list key yet")?;
     Ok(key.to_text())
 }
 
 #[tauri::command]
 pub async fn entry_list_use_recovery_code(handle: AppHandle, code: String) -> Result<EntryStatus, String> {
     let app = handle.state::<App>();
-    let dir = app.data_dir().cloned().ok_or("No data folder")?;
-    let s = session(&app).ok_or("Sign in first")?;
+    let (dir, s) = signed_in(&app)?;
     let key = SealKey::from_text(code.trim()).map_err(|_| "That is not a recovery code".to_string())?;
     if let Fetched::Item(VaultItem { data: Some(data), .. }) = fetch(&app, &s).await? {
         EntryList::open(&key, &data)?;
@@ -817,13 +789,12 @@ pub async fn entry_list_start_over(handle: AppHandle) -> Result<EntryStatus, Str
     {
         let _guard = SYNC.lock().await;
         let app = handle.state::<App>();
-        let dir = app.data_dir().cloned().ok_or("No data folder")?;
-        let s = session(&app).ok_or("Sign in first")?;
+        let (dir, s) = signed_in(&app)?;
         if load_key(&dir, &s.server, &s.account).is_some() {
             return Err("This device already has the key to your server list".into());
         }
         let Fetched::Item(item) = fetch(&app, &s).await? else {
-            return Err("Your account server cannot keep a server list yet.".into());
+            return Err(NO_VAULT.into());
         };
         let key = SealKey::generate();
         match put(&app, &s, local_list(&app, &dir).seal(&key), item.version).await? {

@@ -230,6 +230,10 @@ impl Server {
         self.member(user).is_some()
     }
 
+    pub fn is_current_member(&self, user: UserId) -> bool {
+        self.is_member(user) && !self.banned.contains(&user)
+    }
+
     pub fn permissions_for(&self, user: UserId) -> Permissions {
         if user == self.owner {
             return Permissions::all();
@@ -287,12 +291,15 @@ impl Server {
     }
 
     pub fn role_color_for(&self, user: UserId) -> Option<String> {
+        self.top_role_with(user, |r| r.color.is_some()).and_then(|r| r.color.clone())
+    }
+
+    pub fn top_role_with(&self, user: UserId, wanted: impl Fn(&Role) -> bool) -> Option<&Role> {
         let member = self.member(user)?;
         self.roles
             .iter()
-            .filter(|r| member.roles.contains(&r.id) && r.color.is_some())
+            .filter(|r| member.roles.contains(&r.id) && wanted(r))
             .max_by_key(|r| r.position)
-            .and_then(|r| r.color.clone())
     }
 
     pub fn sorted_channels(&self) -> Vec<&Channel> {
@@ -720,6 +727,10 @@ pub fn valid_role_tag(tag: &str) -> bool {
     }
     let n = tag.chars().count();
     n >= 1 && n <= MAX_ROLE_TAG_CHARS && !tag.chars().any(char::is_control)
+}
+
+pub fn valid_hex_color(color: &str) -> bool {
+    color.len() == 6 && color.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 #[cfg(test)]

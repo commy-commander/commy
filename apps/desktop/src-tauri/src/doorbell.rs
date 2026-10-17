@@ -102,6 +102,21 @@ impl Doorbell {
         url == own_origin || self.saved.origins.get(&server).is_some_and(|origin| origin == url)
     }
 
+    fn ringable<'a>(
+        &'a self,
+        state: &'a ServerState,
+        server: ServerId,
+        our_node: Option<&'a str>,
+        own_origin: &'a str,
+    ) -> impl Iterator<Item = &'a Peer> + 'a {
+        self.saved.peers.get(&server).into_iter().flatten().filter_map(move |(node, p)| {
+            (Some(node.as_str()) != our_node
+                && state.server.is_current_member(p.user)
+                && self.origin_allowed(server, &p.url, own_origin))
+            .then_some(p)
+        })
+    }
+
     pub(crate) fn own_key(&mut self, server: ServerId) -> (DoorbellKey, bool) {
         if let Some(key) = self.saved.own.get(&server) {
             return (*key, false);
@@ -182,8 +197,8 @@ impl Doorbell {
         before != awaited.len()
     }
 
-    pub(crate) fn devices(&self, server: ServerId) -> Vec<(String, UserId)> {
-        self.saved.peers.get(&server).map_or_else(Vec::new, |peers| peers.iter().map(|(n, p)| (n.clone(), p.user)).collect())
+    pub(crate) fn devices(&self, server: ServerId) -> impl Iterator<Item = (&str, UserId)> {
+        self.saved.peers.get(&server).into_iter().flatten().map(|(n, p)| (n.as_str(), p.user))
     }
 
     pub(crate) fn awaited_count(&self, server: ServerId) -> usize {
@@ -287,10 +302,6 @@ fn held_ids(state: &ServerState, key: &DoorbellKey) -> HashSet<String> {
         .collect()
 }
 
-pub(crate) fn member_ok(state: &ServerState, user: UserId) -> bool {
-    state.server.is_member(user) && !state.server.banned.contains(&user)
-}
-
 pub(crate) async fn announcement(app: &App, server: ServerId) -> Option<ServerEvent> {
     if !app.key_settled() {
         return None;
@@ -336,25 +347,21 @@ pub fn on_announce(app: &App, server: ServerId, event: &ServerEvent) {
     if app.node_hex.lock().unwrap().as_deref() == Some(node.as_str()) {
         return;
     }
-    let signed = {
-        let servers = app.servers.lock().unwrap();
-        let Some(state) = servers.get(&server) else { return };
-        let signer = state.profiles.get(user).and_then(|p| p.identity);
-        member_ok(state, *user)
-            && signer.is_some_and(|k| bell::verify_set(&k, server, *user, node, url, key.as_ref(), sig))
-    };
-    if !signed {
-        tracing::debug!("dropped a doorbell announcement that does not verify");
-        return;
-    }
     let own_origin = crate::account::effective_server();
     let changed = {
         let servers = app.servers.lock().unwrap();
         let Some(state) = servers.get(&server) else { return };
+        let signer = state.profiles.get(user).and_then(|p| p.identity);
+        if !state.server.is_current_member(*user)
+            || !signer.is_some_and(|k| bell::verify_set(&k, server, *user, node, url, key.as_ref(), sig))
+        {
+            tracing::debug!("dropped a doorbell announcement that does not verify");
+            return;
+        }
         let mut doorbell = app.doorbell.lock().unwrap();
         let known = peer_origin_ok(url, &own_origin) && doorbell.origin_allowed(server, url, &own_origin);
         let peer = key.filter(|_| known).map(|key| Peer { user: *user, url: url.clone(), key });
-        let pruned = doorbell.retain_members(server, |u| member_ok(state, u));
+        let pruned = doorbell.retain_members(server, |u| state.server.is_current_member(u));
         doorbell.set_peer(server, *user, &node.to_lowercase(), peer) | pruned
     };
     if changed {
@@ -376,13 +383,10 @@ pub(crate) fn ring_targets(app: &App, server: ServerId, message: MessageId, ever
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&server) else { return Vec::new() };
     let doorbell = app.doorbell.lock().unwrap();
-    let Some(peers) = doorbell.saved.peers.get(&server) else { return Vec::new() };
-    peers
-        .iter()
-        .filter(|(node, _)| Some(node.as_str()) != our_node.as_deref())
-        .filter(|(_, p)| member_ok(state, p.user) && doorbell.origin_allowed(server, &p.url, &own_origin))
-        .filter(|(_, p)| everyone || !state.profiles.get(&p.user).is_some_and(|u| u.presence.is_visible_online()))
-        .map(|(_, p)| (p.url.clone(), bell::token(&p.key, day), bell::blinded_id(&p.key, message)))
+    doorbell
+        .ringable(state, server, our_node.as_deref(), &own_origin)
+        .filter(|p| everyone || !state.profiles.get(&p.user).is_some_and(|u| u.presence.is_visible_online()))
+        .map(|p| (p.url.clone(), bell::token(&p.key, day), bell::blinded_id(&p.key, message)))
         .collect()
 }
 
@@ -456,7 +460,7 @@ pub fn ring_device<A: AppAccess + Clone>(access: &A, server: ServerId, node: &st
         let Some(state) = servers.get(&server) else { return };
         let doorbell = app.doorbell.lock().unwrap();
         let Some(peer) = doorbell.saved.peers.get(&server).and_then(|p| p.get(node)) else { return };
-        if !member_ok(state, peer.user) || !doorbell.origin_allowed(server, &peer.url, &own_origin) {
+        if !state.server.is_current_member(peer.user) || !doorbell.origin_allowed(server, &peer.url, &own_origin) {
             return;
         }
         let day = bell::day_of(chrono::Utc::now());
@@ -485,12 +489,9 @@ fn hello<A: AppAccess + Clone>(access: &A, server: ServerId) {
             return;
         }
         doorbell.hello_at.insert(server, Instant::now());
-        let Some(peers) = doorbell.saved.peers.get(&server) else { return };
-        peers
-            .iter()
-            .filter(|(node, p)| Some(node.as_str()) != our_node.as_deref() && member_ok(state, p.user))
-            .filter(|(_, p)| doorbell.origin_allowed(server, &p.url, &own_origin))
-            .map(|(_, p)| (p.url.clone(), bell::token(&p.key, day)))
+        doorbell
+            .ringable(state, server, our_node.as_deref(), &own_origin)
+            .map(|p| (p.url.clone(), bell::token(&p.key, day)))
             .collect()
     };
     for (url, token) in targets {
@@ -698,16 +699,14 @@ async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
 pub fn settle<A: AppAccess>(access: &A, server: ServerId) {
     let app = access.app();
     let changed = {
-        let Some(key) = app.doorbell.lock().unwrap().saved.own.get(&server).copied() else { return };
-        if app.doorbell.lock().unwrap().awaited_count(server) == 0 {
+        let servers = app.servers.lock().unwrap();
+        let mut doorbell = app.doorbell.lock().unwrap();
+        let Some(key) = doorbell.saved.own.get(&server).copied() else { return };
+        if doorbell.awaited_count(server) == 0 {
             return;
         }
-        let held = {
-            let servers = app.servers.lock().unwrap();
-            let Some(state) = servers.get(&server) else { return };
-            held_ids(state, &key)
-        };
-        app.doorbell.lock().unwrap().settle_awaited(server, &held, now_secs())
+        let Some(state) = servers.get(&server) else { return };
+        doorbell.settle_awaited(server, &held_ids(state, &key), now_secs())
     };
     if changed {
         persist(app);

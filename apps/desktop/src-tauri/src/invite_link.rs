@@ -1,7 +1,7 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -10,8 +10,9 @@ use commy_net::sealed::{self, Purpose, SealKey};
 use commy_net::ServerTicket;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
+use crate::account::host_of;
 use crate::state::App;
 
 pub const DEFAULT_ACCOUNT_SERVER: &str = match option_env!("COMMY_DEFAULT_ACCOUNT_SERVER") {
@@ -24,6 +25,7 @@ const CODE_LENGTH: usize = 8;
 const MAX_LINK_LEN: usize = 2048;
 const PORT_FILE: &str = "link.port";
 const HANDOFF_PREFIX: &str = "commy-link-v1 ";
+const HANDOFF_LIMIT: u64 = (MAX_LINK_LEN + HANDOFF_PREFIX.len() + 2) as u64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expiry {
@@ -70,7 +72,7 @@ impl Expiry {
 const REUSE_MIN_LIFE_LEFT: f64 = 0.85;
 
 static PENDING: Mutex<Option<String>> = Mutex::new(None);
-static CREATED: Mutex<Option<HashMap<String, (CreatedInvite, Instant)>>> = Mutex::new(None);
+static CREATED: Mutex<BTreeMap<String, (CreatedInvite, Instant)>> = Mutex::new(BTreeMap::new());
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteLink {
@@ -87,13 +89,9 @@ impl InviteLink {
         }
     }
 
-    pub fn host(&self) -> &str {
-        self.origin.split("://").nth(1).unwrap_or(&self.origin)
+    pub fn host(&self) -> String {
+        host_of(&self.origin)
     }
-}
-
-pub fn account_server() -> String {
-    crate::account::effective_server()
 }
 
 fn is_loopback(host: &str) -> bool {
@@ -230,10 +228,18 @@ fn effective_expiry(
         Some(SealedExpiry::At(t)) => Some(t),
         Some(SealedExpiry::Never) | None => None,
     };
-    Ok(match (server, sealed) {
+    Ok(earliest(server, sealed))
+}
+
+fn earliest(a: Option<DateTime<Utc>>, b: Option<DateTime<Utc>>) -> Option<DateTime<Utc>> {
+    match (a, b) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
-    })
+    }
+}
+
+fn stamp(t: DateTime<Utc>) -> String {
+    t.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 #[derive(Deserialize)]
@@ -249,12 +255,19 @@ async fn error_message(res: reqwest::Response) -> String {
     }
 }
 
-fn clip(s: &str, max: usize) -> String {
-    s.chars().filter(|c| !c.is_control()).take(max).collect()
+async fn invite_call<T: serde::de::DeserializeOwned>(
+    request: reqwest::RequestBuilder,
+    origin: &str,
+) -> Result<T, String> {
+    let res = request.send().await.map_err(|_| format!("Could not reach {}", host_of(origin)))?;
+    if !res.status().is_success() {
+        return Err(error_message(res).await);
+    }
+    res.json().await.map_err(|_| "The invite server sent an invalid reply".to_string())
 }
 
-fn host_of(origin: &str) -> String {
-    origin.split("://").nth(1).unwrap_or(origin).to_string()
+fn clip(s: &str, max: usize) -> String {
+    s.chars().filter(|c| !c.is_control()).take(max).collect()
 }
 
 #[tauri::command]
@@ -266,28 +279,19 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
     let parsed = parse(link).ok_or("That is not a Commy invite link")?;
     let mut url = Url::parse(&format!("{}/api/auth/commy/invites/resolve", parsed.origin)).map_err(|e| e.to_string())?;
     url.query_pairs_mut().append_pair("code", &parsed.code);
-    let res = app
-        .http
-        .get(url)
-        .send()
-        .await
-        .map_err(|_| format!("Could not reach {}", parsed.host()))?;
-    if !res.status().is_success() {
-        return Err(error_message(res).await);
-    }
-    let body: ResolveResponse = res.json().await.map_err(|_| "The invite server sent an invalid reply".to_string())?;
+    let body: ResolveResponse = invite_call(app.http.get(url), &parsed.origin).await?;
     let (raw, sealed_expiry) = open_ticket(&body.ticket, parsed.key.as_deref())?;
     let ticket = ServerTicket::decode(&raw).map_err(|_| "The invite server sent an invalid invite".to_string())?;
     app.doorbell.lock().unwrap().note_invite_origin(ticket.server_id, parsed.origin.clone());
     let server_expiry = body.expires_at.as_deref().and_then(parse_time);
     let expires_at = effective_expiry(server_expiry, sealed_expiry, Utc::now())?;
-    let account = account_server();
+    let account = crate::account::effective_server();
     Ok(ResolvedInvite {
         link: parsed.url(),
-        host: parsed.host().to_string(),
+        host: parsed.host(),
         server_name: clip(&ticket.server_name, 100),
         ticket: ticket.encode(),
-        expires_at: expires_at.map(|t| t.to_rfc3339_opts(SecondsFormat::Secs, true)),
+        expires_at: expires_at.map(stamp),
         trusted: parsed.origin == account,
         account_server_host: host_of(&account),
     })
@@ -369,9 +373,9 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
         return Err("your account key is still being confirmed; try again in a moment".into());
     }
     let raw = ticket.encode();
-    let origin = account_server();
+    let origin = crate::account::effective_server();
     let cache_key = format!("{origin} {} {raw}", expiry.as_str());
-    if let Some((created, at)) = CREATED.lock().unwrap().as_ref().and_then(|m| m.get(&cache_key)) {
+    if let Some((created, at)) = CREATED.lock().unwrap().get(&cache_key) {
         let fresh = match expiry.length() {
             Some(length) => at.elapsed().as_secs_f64() < length.num_seconds() as f64 * (1.0 - REUSE_MIN_LIFE_LEFT),
             None => created.expires_at.is_none(),
@@ -403,14 +407,7 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
-    let res = request
-        .send()
-        .await
-        .map_err(|_| format!("Could not reach {}", host_of(&origin)))?;
-    if !res.status().is_success() {
-        return Err(error_message(res).await);
-    }
-    let body: CreateResponse = res.json().await.map_err(|_| "The invite server sent an invalid reply".to_string())?;
+    let body: CreateResponse = invite_call(request, &origin).await?;
     match parse(&body.url) {
         Some(link) if link.origin == origin && link.key.is_none() => {
             let url = InviteLink { key: Some(key.to_text()), ..link }.url();
@@ -419,15 +416,8 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
                 SealedExpiry::At(t) => Some(t),
                 SealedExpiry::Never => None,
             };
-            let expires_at = match (server_expiry, sealed) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            };
-            let created = CreatedInvite {
-                url,
-                expires_at: expires_at.map(|t| t.to_rfc3339_opts(SecondsFormat::Secs, true)),
-            };
-            CREATED.lock().unwrap().get_or_insert_with(HashMap::new).insert(cache_key, (created.clone(), Instant::now()));
+            let created = CreatedInvite { url, expires_at: earliest(server_expiry, sealed).map(stamp) };
+            CREATED.lock().unwrap().insert(cache_key, (created.clone(), Instant::now()));
             Ok(created)
         }
         _ => Err("The invite server sent an unexpected link".into()),
@@ -443,7 +433,7 @@ pub struct AccountServerInfo {
 
 #[tauri::command]
 pub fn account_server_info() -> AccountServerInfo {
-    let origin = account_server();
+    let origin = crate::account::effective_server();
     AccountServerInfo { host: host_of(&origin), is_default: origin == DEFAULT_ACCOUNT_SERVER, origin }
 }
 
@@ -497,11 +487,7 @@ pub fn forward_to_running_instance(data_dir: &Path, link: &str) -> bool {
 
 fn deliver(handle: &AppHandle, link: String) {
     *PENDING.lock().unwrap() = Some(link.clone());
-    if let Some(window) = handle.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    crate::tray::show_main_window(handle);
     let _ = handle.emit("invite-link", link);
 }
 
@@ -541,7 +527,7 @@ pub fn start(handle: &AppHandle, data_dir: &Path, launch_link: Option<String>) {
         for stream in listener.incoming().flatten() {
             let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
             let mut line = String::new();
-            let mut reader = BufReader::new(stream.take_limit());
+            let mut reader = BufReader::new(stream.take(HANDOFF_LIMIT));
             if reader.read_line(&mut line).is_err() {
                 continue;
             }
@@ -558,16 +544,6 @@ pub fn start(handle: &AppHandle, data_dir: &Path, launch_link: Option<String>) {
             }
         }
     });
-}
-
-trait TakeLimit {
-    fn take_limit(self) -> std::io::Take<TcpStream>;
-}
-
-impl TakeLimit for TcpStream {
-    fn take_limit(self) -> std::io::Take<TcpStream> {
-        std::io::Read::take(self, (MAX_LINK_LEN + HANDOFF_PREFIX.len() + 2) as u64)
-    }
 }
 
 #[cfg(windows)]
@@ -763,7 +739,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
             let mut line = String::new();
-            let mut reader = BufReader::new(stream.take_limit());
+            let mut reader = BufReader::new(stream.take(HANDOFF_LIMIT));
             reader.read_line(&mut line).unwrap();
             reader.into_inner().into_inner().write_all(b"ok\n").unwrap();
             line

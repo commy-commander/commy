@@ -8,12 +8,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    write_json_bytes(path, &serde_json::to_vec_pretty(value)?)
+}
+
+fn write_json_bytes(path: &Path, json: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let json = serde_json::to_vec_pretty(value)?;
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, &json)?;
+    fs::write(&tmp, json)?;
     remove_target_windows_rename_cannot_replace(path)?;
     fs::rename(&tmp, path).context("atomic rename failed")?;
     Ok(())
@@ -44,9 +47,7 @@ pub(crate) fn write_secret(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let mut file = options.open(&tmp)?;
         file.write_all(bytes)?;
         drop(file);
-        if path.exists() {
-            fs::remove_file(path)?;
-        }
+        remove_target_windows_rename_cannot_replace(path)?;
         fs::rename(&tmp, path)
     })();
     if written.is_err() {
@@ -56,8 +57,11 @@ pub(crate) fn write_secret(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 pub(crate) fn write_secret_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    let json = serde_json::to_vec_pretty(value)?;
-    write_secret(path, &json).with_context(|| format!("could not write {}", path.display()))
+    write_secret_bytes(path, &serde_json::to_vec_pretty(value)?)
+}
+
+fn write_secret_bytes(path: &Path, json: &[u8]) -> Result<()> {
+    write_secret(path, json).with_context(|| format!("could not write {}", path.display()))
 }
 
 pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
@@ -87,8 +91,8 @@ pub fn load_voice(dir: &Path) -> Option<VoiceSettings> {
     read_json(&dir.join("voice.json"))
 }
 
-pub fn save_dms(dir: &Path, dms: &DmStore) -> Result<()> {
-    write_secret_json(&dir.join("dms.json"), dms)
+pub fn save_dms(dir: &Path, json: &[u8]) -> Result<()> {
+    write_secret_bytes(&dir.join("dms.json"), json)
 }
 
 pub fn load_dms(dir: &Path) -> Option<DmStore> {
@@ -103,8 +107,8 @@ pub fn load_integrations(dir: &Path) -> Option<crate::igdb::IgdbCredentials> {
     read_json(&dir.join("integrations.json"))
 }
 
-pub fn save_safety(dir: &Path, safety: &crate::safety::SafetySettings) -> Result<()> {
-    write_json(&dir.join("safety.json"), safety)
+pub fn save_safety(dir: &Path, json: &[u8]) -> Result<()> {
+    write_json_bytes(&dir.join("safety.json"), json)
 }
 
 pub fn load_safety(dir: &Path) -> Option<crate::safety::SafetySettings> {
@@ -303,7 +307,7 @@ mod tests {
         let mut dms = DmStore::new();
         let (me, them) = (UserId::new(), UserId::new());
         dms.insert(them, commy_core::DmMessage::new(me, them, "hello"));
-        save_dms(&dir, &dms).unwrap();
+        save_dms(&dir, &serde_json::to_vec_pretty(&dms).unwrap()).unwrap();
         let loaded = load_dms(&dir).unwrap();
         assert_eq!(loaded.conversation(them).len(), 1);
         fs::remove_dir_all(&dir).ok();
