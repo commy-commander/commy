@@ -196,10 +196,46 @@ impl VideoPacer {
     }
 }
 
+pub type MediaGate = Arc<dyn Fn([u8; 32], &MediaHello) -> bool + Send + Sync>;
+
+type GateSlot = Arc<RwLock<Option<MediaGate>>>;
+
+const MEDIA_GATE_WAIT: Duration = Duration::from_secs(5);
+
+const MEDIA_GATE_POLL: Duration = Duration::from_millis(250);
+
 /// Accepts inbound media connections and hands them to the app.
 struct MediaAcceptor {
     tx: mpsc::UnboundedSender<MediaChannel>,
     endpoint: iroh::net::Endpoint,
+    gate: GateSlot,
+}
+
+impl std::fmt::Debug for MediaAcceptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MediaAcceptor").finish_non_exhaustive()
+    }
+}
+
+impl MediaAcceptor {
+    async fn admitted(&self, peer: [u8; 32], hello: &MediaHello) -> bool {
+        let started = std::time::Instant::now();
+        loop {
+            let allowed = self
+                .gate
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .is_some_and(|gate| gate(peer, hello));
+            if allowed {
+                return true;
+            }
+            if started.elapsed() >= MEDIA_GATE_WAIT {
+                return false;
+            }
+            tokio::time::sleep(MEDIA_GATE_POLL).await;
+        }
+    }
 }
 
 impl ProtocolHandler for MediaAcceptor {
@@ -216,6 +252,11 @@ impl ProtocolHandler for MediaAcceptor {
                 .await
                 .map_err(|e| anyhow::anyhow!("bad media hello: {e}"))?
                 .context("peer closed before hello")?;
+            if !self.admitted(*peer.as_bytes(), &hello).await {
+                tracing::debug!("refused a media stream from a node that is not a member here");
+                connection.close(1u32.into(), b"not a member here");
+                return Ok(());
+            }
             let channel = MediaChannel::spawn(self.endpoint.clone(), *peer.as_bytes(), hello, connection, send, recv);
             tx.send(channel).ok();
             Ok(())
@@ -553,9 +594,18 @@ impl MediaDialer {
     }
 }
 
+pub const MAX_BLOB_BYTES: u64 = 20 * 1024 * 1024;
+
+pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
+    anyhow::ensure!(size <= max, "that file is larger than {} MB", max / (1024 * 1024));
+    Ok(())
+}
+
 #[derive(Clone)]
+#[allow(deprecated)]
 pub struct BlobFetcher {
     blobs: iroh::client::blobs::Client,
+    endpoint: iroh::net::Endpoint,
 }
 
 impl BlobFetcher {
@@ -644,8 +694,12 @@ async fn stage_and_add(blobs: &iroh::client::blobs::Client, bytes: Vec<u8>) -> R
                 iroh::client::blobs::WrapOption::NoWrap,
             )
             .await?
+            .finish()
             .await
     }
+    .await;
+    let _ = tokio::fs::remove_file(&path).await;
+    Ok(added?.hash)
 }
 
 /// Wraps an in-process iroh node: one gossip topic per joined server,
@@ -658,6 +712,7 @@ pub struct CommyNode {
     /// Entry key requests from the account's other devices, until taken.
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
     catchup_store: StoreSlot,
+    media_gate: GateSlot,
 }
 
 impl CommyNode {
@@ -666,18 +721,9 @@ impl CommyNode {
         rand::random()
     }
 
-pub const MAX_BLOB_BYTES: u64 = 20 * 1024 * 1024;
-
-pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
-    anyhow::ensure!(size <= max, "that file is larger than {} MB", max / (1024 * 1024));
-    Ok(())
-}
-
     /// Spawns an iroh node with n0 discovery, Commy's relay first and n0's
-#[allow(deprecated)]
     /// relays as fallback (see `relays`).
     /// Pass the persisted secret key so the node keeps the same
-    endpoint: iroh::net::Endpoint,
     /// identity across restarts; a fresh key invalidates every invite
     /// and DM address that peers have stored.
     /// Returns gossip events, inbound media channels, and inbound DMs
@@ -691,15 +737,11 @@ pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
         mpsc::UnboundedReceiver<IncomingDm>,
     )> {
         let relays = match crate::relays::relay_map(&crate::relays::own_relays()) {
-            .finish()
             Ok(map) => Some(map),
             Err(e) => {
                 tracing::warn!("using default relays: {e:#}");
                 None
             }
-    .await;
-    let _ = tokio::fs::remove_file(&path).await;
-    Ok(added?.hash)
         };
         Self::spawn_with(secret, relays).await
     }
@@ -728,6 +770,7 @@ pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
         let endpoint = protocols.endpoint().clone();
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let catchup_store = StoreSlot::default();
+        let media_gate = GateSlot::default();
         #[allow(deprecated)] // iroh 0.28 networking layer, as elsewhere here
         let local = *endpoint.node_id().as_bytes();
         let catchup = CatchupAcceptor {
@@ -737,7 +780,7 @@ pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
             inbound: Inbound::new(MAX_CATCHUP_SESSIONS, HANDSHAKE_TIMEOUT),
         };
         let node = protocols
-            .accept(MEDIA_ALPN.to_vec(), Arc::new(MediaAcceptor { tx: media_tx, endpoint }))
+            .accept(MEDIA_ALPN.to_vec(), Arc::new(MediaAcceptor { tx: media_tx, endpoint, gate: media_gate.clone() }))
             .accept(DM_ALPN.to_vec(), Arc::new(DmAcceptor { tx: dm_tx }))
             .accept(
                 crate::entry_key::ENTRY_KEY_ALPN.to_vec(),
@@ -755,6 +798,7 @@ pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
                 events_tx,
                 entry_key_requests: Some(entry_key_rx),
                 catchup_store,
+                media_gate,
             },
             events_rx,
             media_rx,
@@ -1153,6 +1197,10 @@ pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
 
     pub fn blob_fetcher(&self) -> BlobFetcher {
         BlobFetcher { blobs: self.node.blobs().clone(), endpoint: self.node.endpoint().clone() }
+    }
+
+    pub fn set_media_gate(&self, gate: MediaGate) {
+        *self.media_gate.write().unwrap_or_else(|e| e.into_inner()) = Some(gate);
     }
 
     pub fn leave_server(&mut self, server_id: ServerId) {
@@ -1654,7 +1702,6 @@ mod tests {
         assert_eq!(topic_for(a), topic_for(a));
         assert_ne!(topic_for(a), topic_for(b));
     }
-}
 
     #[test]
     fn blob_sizes_over_the_cap_are_refused_before_any_bytes() {
@@ -1683,3 +1730,4 @@ mod tests {
         }
         std::fs::remove_file(&a).unwrap();
     }
+}

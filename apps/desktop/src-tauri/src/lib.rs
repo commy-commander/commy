@@ -992,7 +992,32 @@ async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, max: u64) -> 
         let net = app.net.lock().await;
         net.as_ref().ok_or("network is not ready yet")?.blob_fetcher()
     };
-    fetcher.fetch(blob, provider).await.map_err(err_to_string)
+    fetcher.fetch(blob, provider, max).await.map_err(err_to_string)
+}
+
+fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
+    let handle = handle.clone();
+    std::sync::Arc::new(move |peer, hello| {
+        let app = handle.state::<App>();
+        let node_hex = data_encoding::HEXLOWER.encode(&peer);
+        let (user, channel, voice, server) = match *hello {
+            MediaHello::Voice { user, channel } => {
+                let session = app.voice_session.lock().unwrap();
+                (user, channel, true, session.as_ref().filter(|s| s.channel == channel).map(|s| s.server))
+            }
+            MediaHello::ScreenSubscribe { user, channel } => {
+                let share = app.screen_share.lock().unwrap();
+                (user, channel, false, share.as_ref().filter(|s| s.channel == channel).map(|s| s.server))
+            }
+            MediaHello::CameraSubscribe { user, channel } => {
+                let camera = app.camera.lock().unwrap();
+                (user, channel, false, camera.as_ref().filter(|c| c.channel == channel).map(|c| c.server))
+            }
+        };
+        let Some(server) = server else { return false };
+        let servers = app.servers.lock().unwrap();
+        servers.get(&server).is_some_and(|state| state.media_peer_ok(user, &node_hex, channel, voice))
+    })
 }
 
 async fn dial_media(app: &App, their_hex: &str, hello: MediaHello) -> CmdResult<MediaChannel> {
@@ -5292,6 +5317,7 @@ pub fn run() {
             account::set_account_server,
             account::account_begin_sign_in,
             account::account_cancel_sign_in,
+                        node.set_media_gate(media_gate(&handle));
             account::account_sign_out,
             voice_stats,
             set_server_afk_timeout,
