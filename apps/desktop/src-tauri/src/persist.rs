@@ -111,6 +111,14 @@ pub fn load_safety(dir: &Path) -> Option<crate::safety::SafetySettings> {
     read_json(&dir.join("safety.json"))
 }
 
+pub fn save_storage(dir: &Path, storage: &crate::storage::StorageSettings) -> Result<()> {
+    write_json(&dir.join("storage.json"), storage)
+}
+
+pub fn load_storage(dir: &Path) -> Option<crate::storage::StorageSettings> {
+    read_json(&dir.join("storage.json"))
+}
+
 pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
     let path = dir.join("node.key");
     if let Ok(hex) = fs::read_to_string(&path) {
