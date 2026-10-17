@@ -4,10 +4,14 @@ services:
   caddy:
     image: caddy:2.10-alpine
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    pids_limit: 512
+    mem_limit: ${CADDY_MEM_LIMIT:-512m}
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"
       - "8443:8443"
     environment:
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
@@ -23,7 +27,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
       - /var/log/commy-caddy:/var/log/caddy
-    networks: [public]
+    networks: [prod, staging, dev, relay]
     logging:
       driver: json-file
       options:
@@ -31,8 +35,18 @@ services:
         max-file: "3"
 
 networks:
-  public:
-    name: commy-public
+  prod:
+    external: true
+    name: commy-prod
+  staging:
+    external: true
+    name: commy-staging
+  dev:
+    external: true
+    name: commy-dev
+  relay:
+    external: true
+    name: commy-relay
 
 volumes:
   caddy_data:

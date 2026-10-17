@@ -11,8 +11,8 @@ SSH keys or server secrets stored in the repository.
 | staging     | `:staging` | pushing a release tag like `v0.2.0`                | `https://staging.commy.chat` |
 | prod        | `:prod`    | running **Promote images** and approving it        | `https://commy.chat`         |
 
-Every build is also kept as `:sha-<commit>` and every release as `:<version>`,
-which is what makes rollback possible.
+Every build is also kept as `:sha-<commit>` and every release as `:<version>`;
+promoting a version again is how rollback works.
 
 ## How an update reaches the server
 
@@ -69,12 +69,15 @@ by `docker compose up -d` in that folder. Google OAuth needs each domain's
   `setup-vps.sh` starts both. Test builds never use the production relay or
   account server, and release builds never use staging.
 - `docker-compose.env.yml` turns off the per-stack Caddy and joins `web` and
-  `auth` to the shared `commy-public` network under those aliases. Each
-  environment's Postgres and Redis stay on its own private network. The aliases
-  come from `COMPOSE_PROJECT_NAME` (`commy-dev`, `commy-staging` or
-  `commy-prod`), which `setup-vps.sh` writes into each `.env`.
+  `auth` to that environment's own Docker network (`commy-prod`, `commy-staging`
+  or `commy-dev`, named after `COMPOSE_PROJECT_NAME`) under those aliases. Only
+  the edge Caddy is on all of them, plus `commy-relay` for the relays, so a
+  container in one environment cannot reach another environment's containers.
+  `setup-vps.sh` creates the four networks. Each environment's Postgres and
+  Redis stay on its own private network.
 - `docker-compose.agent.yml` adds the agent. It mounts the checkout read only and
-  the Docker socket.
+  the Docker socket. Its image is built from `agent/Dockerfile` (the Docker CLI
+  plus cosign).
 
 To start or rebuild the relays by hand, run this in `/srv/commy-prod/deploy`:
 
@@ -96,6 +99,33 @@ Dockhand shows the containers the script starts (projects `commy-edge`,
 `commy-prod`, `commy-staging` and `commy-dev`), so you can read logs and restart
 them. Keep their settings in the `.env` files rather than Dockhand's environment
 editor, because the agent reads `.env` when it recreates containers.
+
+### Moving from the shared `commy-public` network
+
+Servers set up before the per-environment networks existed have every
+environment on one `commy-public` network. Move them once, environment by
+environment, without taking the site down. Name the services on every
+`docker compose up` line: a bare `up -d` would also recreate Postgres and Redis.
+
+```bash
+for env in prod staging dev; do (cd /srv/commy-$env && git pull); done
+for net in commy-prod commy-staging commy-dev commy-relay; do docker network create $net; done
+for net in commy-prod commy-staging commy-dev commy-relay; do docker network connect $net commy-edge-caddy-1; done
+for env in dev staging prod; do (cd /srv/commy-$env/deploy && docker compose up -d --build agent && docker compose up -d auth web); done
+cd /srv/commy-prod/deploy && docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml up -d relay-proxy
+cd /srv/commy-staging/deploy && RELAY_PROXY_ALIAS=commy-relay-staging-proxy STUN_PORT=3479 RELAY_MONTHLY_LIMIT_GB=500 docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d relay-proxy
+cd /srv/commy-prod/deploy/edge && docker compose up -d
+docker network inspect commy-public --format '{{range .Containers}}{{.Name}} {{end}}'
+docker network rm commy-public
+```
+
+The running edge Caddy is attached to the new networks by hand first, so it
+keeps reaching each environment while that environment's `auth` and `web` are
+recreated on their new network (the recreate restarts them, which the edge
+covers with its 15 second retry). The last `up -d` in `edge/` recreates Caddy
+on the four networks only. The inspect line should print nothing before the old
+network is removed; if it names a container, recreate that one with
+`docker compose up -d <service>` in its folder first.
 
 ## Cloudflare in front
 
@@ -150,8 +180,22 @@ sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
 ```
 
 - **ufw** denies incoming connections except SSH (rate limited), port 80 and
-  the iroh relay ports (`PUBLIC_PORTS`, default `3478/udp 3479/udp 7842/udp 8443/tcp`),
+  the iroh relay ports (`PUBLIC_PORTS`, default `3478/udp 3479/udp 8443/tcp`),
   which stay open to everyone because clients reach the relay directly.
+- **SSH with keys only.** A drop-in in `/etc/ssh/sshd_config.d/` turns off
+  password and keyboard-interactive login and closes root login (key-only root
+  login when the script is run as root rather than through a sudo user). The
+  script first checks that the user running it, or root, has a key in
+  `~/.ssh/authorized_keys`; without one it leaves password login on and prints
+  how to add a key, so it can never lock you out. The new settings are checked
+  with `sshd -t` before sshd is reloaded. The hosting provider's browser
+  console reaches sshd from the link-local network `169.254.0.0/16`, so a
+  `Match Address` block at the end of `sshd_config` keeps password login open
+  for that network only, and fail2ban never bans it. Set `CONSOLE_NET` to
+  another network, or to nothing to close the console too.
+- **fail2ban** with an sshd jail (5 failed attempts in 10 minutes ban the
+  address for an hour) and **unattended-upgrades** with the standard daily
+  security updates.
 - **HTTPS only from Cloudflare.** Port 443 is accepted only from
   [Cloudflare's ranges](https://www.cloudflare.com/ips/), both in ufw and in
   Docker's `DOCKER-USER` chain, since ports published by Docker skip ufw. This
@@ -159,6 +203,11 @@ sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
   to the server IP. `commy-firewall.timer` refreshes the ranges daily, and a
   Docker drop-in re-applies them whenever Docker restarts. Port 80 stays open
   because Caddy only redirects there and Let's Encrypt needs it.
+- **Containers** run with `no-new-privileges`, every capability dropped (Caddy
+  keeps `NET_BIND_SERVICE` for ports 80 and 443) and pid and memory limits;
+  `WEB_MEM_LIMIT`, `AUTH_MEM_LIMIT`, `RELAY_MEM_LIMIT` and `CADDY_MEM_LIMIT` in
+  `.env` raise the memory limits. The edge publishes 443 over TCP only, since
+  Cloudflare reaches the origin over TCP.
 - **Access logs.** The edge Caddy writes JSON access logs with real visitor IPs
   (from `CF-Connecting-IP`) to `/var/log/commy-caddy`, so any log or intrusion
   detection tool you already run can read them. Commy does not install one.
@@ -192,17 +241,51 @@ AUTH_IMAGE=ghcr.io/commy-commander/commy-auth:prod
 - **Prod**: Actions > **Promote images** > Run workflow > `prod`. A required
   reviewer approves it under the run's **Review deployments** button, then prod
   picks up the exact images staging is running. The website has the same
-  **Promote image** workflow in the commy-web repository; run both.
+  **Promote image** workflow in the commy-web repository; run both. The
+  workflow only accepts `staging`, `dev` (for staging) or a release version as
+  the source.
+
+### Signed promotes
+
+**Promote images** signs the promoted digest with
+[cosign](https://github.com/sigstore/cosign) (keyless, through GitHub's OIDC
+token) before it moves the tag, and the signature names the tag it was promoted
+to. The prod agent runs `cosign verify` on every new image before starting it
+and only accepts a signature made by this repository's `promote.yml` on `main`
+for that tag, so an image retagged as `:prod` by anything else, or a staging
+signature moved onto the prod tag, is refused and logged; the running
+container keeps serving and the image is tried again on the next cycle, in case
+the signature was still being written. Settings in that environment's `.env`:
+
+- `AGENT_VERIFY`: `auto` (default) checks signatures when `COMPOSE_PROJECT_NAME`
+  contains `prod` and cosign is in the agent image; `on` checks everywhere and
+  fails closed; `off` never checks. A single-environment server that runs the
+  `:prod` tags under another project name should set `on`.
+- `AGENT_COSIGN_IDENTITY`: the workflow identity to accept, by default
+  `https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main`.
+  A fork promoting its own images sets its own repository here.
+- `AGENT_COSIGN_ISSUER`: the OIDC issuer, by default GitHub Actions.
+
+To check an image by hand from any machine with cosign:
+
+```bash
+cosign verify -a tag=prod \
+  --certificate-identity https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/commy-commander/commy-auth:prod
+```
 
 Changes to the compose files themselves (a new environment variable, a new
-service) are not picked up by the agent: run
-`git pull && docker compose up -d` in that environment's `deploy` folder.
+service) are not picked up by the agent: run `git pull` and then
+`docker compose up -d <service>` for the changed services in that environment's
+`deploy` folder (`docker compose up -d --build agent` after a change to the
+agent's image).
 
 ## Rolling back
 
 Run **Promote images** with the environment and the version to go back to in
-**source**, for example `0.1.0` or `sha-1a2b3c4`. The agent deploys it like any
-other update. To pause automatic updates, `docker compose stop agent`.
+**source**, for example `0.1.0`. The agent deploys it like any other update.
+To pause automatic updates, `docker compose stop agent`.
 
 ## One-time GitHub setup
 

@@ -1,7 +1,12 @@
 services:
   agent:
-    image: docker:27-cli
+    build: ./agent
+    image: ${AGENT_IMAGE:-commy-agent:local}
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    pids_limit: 256
+    mem_limit: 256m
     command: ["sh", "/repo/deploy/agent/commy-agent.sh"]
     working_dir: /repo/deploy
     environment:
@@ -9,6 +14,9 @@ services:
       AGENT_SERVICES: auth web
       AGENT_INTERVAL: ${AGENT_INTERVAL:-60}
       AGENT_HEALTH_TIMEOUT: ${AGENT_HEALTH_TIMEOUT:-180}
+      AGENT_VERIFY: ${AGENT_VERIFY:-auto}
+      AGENT_COSIGN_IDENTITY: ${AGENT_COSIGN_IDENTITY:-https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main}
+      AGENT_COSIGN_ISSUER: ${AGENT_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ..:/repo:ro
