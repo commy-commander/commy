@@ -1220,7 +1220,8 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 
 /* Account profile card */
 .profile-card { background: var(--bg-darkest); border-radius: 12px; overflow: hidden; }
-.profile-banner { height: 100px; background: linear-gradient(135deg, var(--accent), var(--accent-deep)); }
+.profile-banner .role-banner-tools { top: 10px; bottom: auto; }
+.profile-banner { position: relative; height: 100px; background: linear-gradient(135deg, var(--accent), var(--accent-deep)); background-size: cover; background-position: center; }
 .profile-body { display: flex; align-items: flex-end; gap: 16px; padding: 0 16px; margin-top: -40px; }
 .avatar.avatar-xl {
   width: 88px;

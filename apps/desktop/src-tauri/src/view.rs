@@ -71,6 +71,8 @@ pub struct MemberView {
     /// Raw avatar ("blob:..." or "emoji:..."), and the node serving blobs.
     pub avatar: Option<String>,
     pub avatar_provider: Option<String>,
+    /// Their own profile banner ("blob:..."), served by the same node.
+    pub banner: Option<String>,
     pub status_emoji: Option<String>,
     pub activity: Option<String>,
     pub about: Option<String>,
@@ -264,6 +266,7 @@ impl ServerView {
                     .and_then(commy_core::Avatar::parse)
                     .map(|a| a.encode()),
                 avatar_provider: p.node.clone(),
+                banner: p.banner.clone().filter(|b| commy_core::user::valid_banner(b)),
                 status_emoji: p
                     .status_emoji
                     .clone()
