@@ -486,7 +486,7 @@ async function mockInvoke(cmd, args = {}) {
       return Object.values(mock.servers).filter(s => s.emojis_shareable)
         .flatMap(s => (s.emojis || []).map(e => ({ server: s.id, server_name: s.name, name: e.name, image: e.image })));
     case "fetch_server_image": return (mock.serverImages || {})[args.image] || null;
-    case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11" });
+    case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, show_everyone: false, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11" });
     case "set_overlay_settings": mock.overlay = args.settings; return mock.overlay;
     case "overlay_hotkey_problems": return [];
     case "get_integrations": return mock.integrations || { igdb_client_id: "", igdb_configured: false };
@@ -3543,7 +3543,12 @@ function renderOverlaySettings() {
   if (!s) return;
   $("overlay-enabled").checked = s.enabled;
   $("overlay-options").classList.toggle("disabled", !s.enabled);
-  $("overlay-corner").value = s.corner;
+  for (const opt of document.querySelectorAll("#overlay-corner .corner-opt")) {
+    const on = opt.dataset.corner === s.corner;
+    opt.classList.toggle("selected", on);
+    opt.setAttribute("aria-checked", String(on));
+  }
+  $("overlay-everyone").checked = Boolean(s.show_everyone);
   $("overlay-opacity").value = Math.round(s.opacity * 100);
   $("overlay-opacity-label").textContent = `${$("overlay-opacity").value}%`;
   syncRangeFill($("overlay-opacity"));
@@ -8232,7 +8237,11 @@ function wireEvents() {
 
   // Safety
   $("overlay-enabled").addEventListener("change", e => saveOverlaySettings({ enabled: e.target.checked }));
-  $("overlay-corner").addEventListener("change", e => saveOverlaySettings({ corner: e.target.value }));
+  $("overlay-corner").addEventListener("click", e => {
+    const opt = e.target.closest(".corner-opt");
+    if (opt) saveOverlaySettings({ corner: opt.dataset.corner });
+  });
+  $("overlay-everyone").addEventListener("change", e => saveOverlaySettings({ show_everyone: e.target.checked }));
   $("overlay-opacity").addEventListener("input", e => {
     $("overlay-opacity-label").textContent = `${e.target.value}%`;
   });

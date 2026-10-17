@@ -25,6 +25,10 @@ pub struct OverlaySettings {
     pub opacity: f32,
     #[serde(default = "default_true")]
     pub show_chat: bool,
+    /// Draw everyone in the voice channel; off shows only people who are
+    /// talking, and only while they talk.
+    #[serde(default)]
+    pub show_everyone: bool,
     #[serde(default = "default_toggle_hotkey")]
     pub toggle_hotkey: String,
     #[serde(default = "default_chat_hotkey")]
@@ -54,6 +58,7 @@ impl Default for OverlaySettings {
             corner: default_corner(),
             opacity: default_opacity(),
             show_chat: true,
+            show_everyone: false,
             toggle_hotkey: default_toggle_hotkey(),
             chat_hotkey: default_chat_hotkey(),
         }
@@ -212,5 +217,13 @@ mod tests {
     fn defaults_from_empty_json() {
         let s: OverlaySettings = serde_json::from_str("{}").unwrap();
         assert_eq!(s, OverlaySettings::default());
+        assert!(!s.show_everyone);
+    }
+
+    #[test]
+    fn older_settings_files_keep_the_talking_only_view() {
+        let s: OverlaySettings = serde_json::from_str(r#"{"enabled":true,"corner":"bottom-right","opacity":0.8}"#).unwrap();
+        assert!(!s.show_everyone && s.show_chat);
+        assert_eq!(s.corner, "bottom-right");
     }
 }

@@ -882,19 +882,22 @@
           <label class="settings-card setting-row">
             <div>
               <div class="setting-title">Enable in-game overlay</div>
-              <div class="setting-sub">A small see-through panel in a corner of your screen showing who is in your voice channel, lit up as they talk. It never takes focus or clicks from your game.</div>
+              <div class="setting-sub">A small see-through overlay in a corner of your screen that shows who is talking and recent messages, then gets out of the way. It never takes focus or clicks from your game.</div>
             </div>
             <input type="checkbox" id="overlay-enabled" class="switch" />
           </label>
           <div class="settings-card overlay-options" id="overlay-options">
             <div class="setting-row">
-              <div class="setting-title">Position</div>
-              <select id="overlay-corner" class="compact-select">
-                <option value="top-left">Top left</option>
-                <option value="top-right">Top right</option>
-                <option value="bottom-left">Bottom left</option>
-                <option value="bottom-right">Bottom right</option>
-              </select>
+              <div>
+                <div class="setting-title">Position</div>
+                <div class="setting-sub">Pick the corner of your screen. It moves as soon as you choose.</div>
+              </div>
+              <div class="corner-picker" id="overlay-corner" role="radiogroup" aria-label="Overlay position">
+                <button class="corner-opt" data-corner="top-left" role="radio" aria-label="Top left" title="Top left"></button>
+                <button class="corner-opt" data-corner="top-right" role="radio" aria-label="Top right" title="Top right"></button>
+                <button class="corner-opt" data-corner="bottom-left" role="radio" aria-label="Bottom left" title="Bottom left"></button>
+                <button class="corner-opt" data-corner="bottom-right" role="radio" aria-label="Bottom right" title="Bottom right"></button>
+              </div>
             </div>
             <div class="slider-row">
               <div class="setting-title">Opacity <span id="overlay-opacity-label">90%</span></div>
@@ -903,9 +906,16 @@
             <label class="setting-row">
               <div>
                 <div class="setting-title">Show chat</div>
-                <div class="setting-sub">Recent messages from the channel you have open, fading after 30 seconds.</div>
+                <div class="setting-sub">New messages from the channel you have open show for a few seconds, then disappear.</div>
               </div>
               <input type="checkbox" id="overlay-chat" class="switch" />
+            </label>
+            <label class="setting-row">
+              <div>
+                <div class="setting-title">Always show everyone in the channel</div>
+                <div class="setting-sub">Off, only people who are talking appear, and only while they talk.</div>
+              </div>
+              <input type="checkbox" id="overlay-everyone" class="switch" />
             </label>
             <div class="setting-row">
               <div>
