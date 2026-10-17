@@ -451,8 +451,11 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
             let members = servers.values().flat_map(|s| s.server.members.iter().map(|m| m.user));
             safety.accepted.iter().chain(safety.friends.iter()).copied().chain(members).collect()
         };
-        let open = open_stranger_requests(&app.dms.lock().unwrap(), me, |user| known.contains(&user));
-        if !known.contains(&partner) && open >= MAX_STRANGER_REQUESTS {
+        let (open, already_open) = {
+            let dms = app.dms.lock().unwrap();
+            (open_stranger_requests(&dms, me, |user| known.contains(&user)), !dms.conversation(partner).is_empty())
+        };
+        if !known.contains(&partner) && !already_open && open >= MAX_STRANGER_REQUESTS {
             tracing::debug!("dropped a DM from {partner}: too many requests from people we do not know");
             return Received::Dropped;
         }
@@ -1363,7 +1366,10 @@ mod tests {
         let me = UserProfile::new("me");
         let app = Arc::new(app_as(&me));
         let handle = TestHandle::new(app.clone());
-        for _ in 0..MAX_STRANGER_REQUESTS {
+        let (first, identity_first) = sender_on(OTHER_NODE);
+        let opener = dm_from(&first, &identity_first, me.id, "hi there", OTHER_NODE, OTHER_NODE);
+        assert_eq!(receive_dm(&handle, opener), Received::Taken);
+        for _ in 1..MAX_STRANGER_REQUESTS {
             let stranger = UserId::new();
             app.dms.lock().unwrap().insert(stranger, DmMessage::new(stranger, me.id, "hey"));
         }
@@ -1371,12 +1377,15 @@ mod tests {
         let dm = dm_from(&sender, &identity, me.id, "one more", SENDER_NODE, SENDER_NODE);
         assert_eq!(receive_dm(&handle, dm.clone()), Received::Dropped);
         assert!(app.dms.lock().unwrap().conversation(sender.id).is_empty());
+        let follow_up = dm_from(&first, &identity_first, me.id, "still there?", OTHER_NODE, OTHER_NODE);
+        assert_eq!(receive_dm(&handle, follow_up), Received::Taken, "a request already open may continue");
+        assert_eq!(app.dms.lock().unwrap().conversation(first.id).len(), 2);
         app.safety.lock().unwrap().accepted.insert(sender.id);
         assert_eq!(receive_dm(&handle, dm), Received::Taken);
         app.safety.lock().unwrap().accepted.remove(&sender.id);
-        let (spammer, identity) = sender_on(OTHER_NODE);
+        let (spammer, identity) = sender_on([9; 32]);
         let links = "https://a.example https://b.example https://c.example";
-        let spam = dm_from(&spammer, &identity, me.id, links, OTHER_NODE, OTHER_NODE);
+        let spam = dm_from(&spammer, &identity, me.id, links, [9; 32], [9; 32]);
         assert_eq!(receive_dm(&handle, spam), Received::Dropped);
         assert!(app.dms.lock().unwrap().conversation(spammer.id).is_empty());
         assert!(app.safety.lock().unwrap().spam.contains(&spammer.id));
