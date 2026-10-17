@@ -143,6 +143,7 @@ PermitRootLogin $policy"
 		echo "SSH: keys only, root login $policy (already set)"
 		return 0
 	fi
+	mkdir -p /run/sshd 2>/dev/null || true
 	if ! sshd -t; then
 		if [ -n "$previous" ]; then
 			printf '%s\n' "$previous" >"$SSHD_DROPIN"
