@@ -182,7 +182,7 @@ impl Envelope {
 
 const IROH_GOSSIP_CLOSES_CONNECTION_ABOVE_BYTES: usize = 4096;
 
-pub const MAX_GOSSIP_BYTES: usize = 3800;
+pub const MAX_GOSSIP_BYTES: usize = commy_core::message::GOSSIP_FRAME_BYTES;
 
 const _: () = assert!(MAX_GOSSIP_BYTES < IROH_GOSSIP_CLOSES_CONNECTION_ABOVE_BYTES);
 
@@ -194,7 +194,7 @@ pub fn gossip_size(payload: &WirePayload) -> usize {
 }
 
 fn encoded<T: Serialize>(item: &T) -> usize {
-    postcard::to_stdvec(item).map_or(0, |b| b.len())
+    postcard::serialize_with_flavor(item, postcard::ser_flavors::Size::default()).unwrap_or(0)
 }
 
 pub fn build_sync_response(state: &ServerState, per_channel: usize, by: UserId) -> WirePayload {
@@ -245,13 +245,17 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize, by: UserId) 
     };
     let mut size = gossip_size(&build(&server, &members, &profiles, &messages));
     let fits = |size: usize| size <= MAX_GOSSIP_BYTES;
-    let needed = |user: UserId, messages: &[commy_core::Message]| {
-        user == owner || messages.iter().any(|m| m.author == user)
+    let mut authored: std::collections::HashMap<UserId, usize> = std::collections::HashMap::new();
+    for m in &messages {
+        *authored.entry(m.author).or_default() += 1;
+    }
+    let needed = |user: UserId, authored: &std::collections::HashMap<UserId, usize>| {
+        user == owner || authored.contains_key(&user)
     };
 
     while !fits(size) {
         let Some(last) = profiles.last() else { break };
-        if needed(last.id, &messages) {
+        if needed(last.id, &authored) {
             break;
         }
         size -= encoded(last);
@@ -275,7 +279,13 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize, by: UserId) 
     while !fits(size) {
         let Some(message) = messages.pop() else { break };
         size -= encoded(&message);
-        if !needed(message.author, &messages) {
+        if let Some(count) = authored.get_mut(&message.author) {
+            *count -= 1;
+            if *count == 0 {
+                authored.remove(&message.author);
+            }
+        }
+        if !needed(message.author, &authored) {
             if let Some(pos) = profiles.iter().position(|p| p.id == message.author) {
                 size -= encoded(&profiles.remove(pos));
             }

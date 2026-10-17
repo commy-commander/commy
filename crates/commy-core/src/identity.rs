@@ -109,23 +109,26 @@ fn write_secret_atomically(dir: &Path, path: &Path, contents: &str) -> io::Resul
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join(format!("{IDENTITY_FILE}.{}.tmp", to_hex(&rand::random::<[u8; 6]>())));
     let result = (|| {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&tmp)?;
-        file.write_all(contents.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
+        write_private(&tmp, contents.as_bytes())?;
         std::fs::rename(&tmp, path)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
     result
+}
+
+pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 pub(crate) fn to_hex(bytes: &[u8]) -> String {

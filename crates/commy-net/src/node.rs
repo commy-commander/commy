@@ -7,7 +7,7 @@ use crate::media::{read_frame, write_frame, MediaHello, MediaPacket, MEDIA_ALPN}
 use crate::protocol::{Envelope, WirePayload};
 use crate::ticket::ServerTicket;
 use anyhow::{Context, Result};
-use commy_core::identity::IdentityKey;
+use commy_core::identity::{write_private, IdentityKey};
 use commy_core::{ServerEvent, ServerId, UserId};
 use futures_lite::StreamExt;
 use futures_util::{Sink, SinkExt};
@@ -96,19 +96,12 @@ impl MediaChannel {
                 let mut pace = VideoPacer::default();
                 while let Some(packet) = out_rx.recv().await {
                     let (packet, after) = skip_to_newest_queued_video(packet, &mut out_rx);
-                    if matches!(packet, MediaPacket::Video { .. }) && !pace.allow(&endpoint, peer) {
-                        if let Some(next) = after {
-                            if let Err(e) = write_frame(&mut send, &next).await {
-                                tracing::debug!("media write ended: {e}");
-                                break;
-                            }
-                        }
-                        continue;
-                    }
-                    let mut failed = write_frame(&mut send, &packet).await.err();
-                    if failed.is_none() {
-                        if let Some(next) = after {
-                            failed = write_frame(&mut send, &next).await.err();
+                    let paced = matches!(packet, MediaPacket::Video { .. }) && !pace.allow(&endpoint, peer);
+                    let mut failed = None;
+                    for frame in (!paced).then_some(packet).into_iter().chain(after) {
+                        if let Err(e) = write_frame(&mut send, &frame).await {
+                            failed = Some(e);
+                            break;
                         }
                     }
                     if let Some(e) = failed {
@@ -499,6 +492,14 @@ pub fn topic_for(server_id: ServerId) -> [u8; 32] {
     topic
 }
 
+pub(crate) fn addr_with_relay(node: NodeId, relay: Option<iroh::net::relay::RelayUrl>) -> NodeAddr {
+    let addr = NodeAddr::new(node);
+    match relay {
+        Some(relay) => addr.with_relay_url(relay),
+        None => addr,
+    }
+}
+
 pub const MEDIA_DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
@@ -559,11 +560,11 @@ impl BlobFetcher {
         }
         let provider = provider_hex.context("blob not local and no provider known")?;
         let node_id = parse_node_hex(provider)?;
-        let bytes = fetch_capped(&self.endpoint, node_id, hash, max).await?;
+        let bytes = Arc::new(fetch_capped(&self.endpoint, node_id, hash, max).await?);
         if let Err(e) = stage_and_add(&self.blobs, bytes.clone()).await {
             tracing::debug!("fetched blob was not kept locally: {e}");
         }
-        Ok(bytes)
+        Ok(Arc::try_unwrap(bytes).unwrap_or_else(|shared| shared.to_vec()))
     }
 }
 
@@ -605,20 +606,7 @@ fn staging_path() -> Result<std::path::PathBuf> {
     Ok(dir.join(format!("{}.bin", data_encoding::HEXLOWER.encode(&rand::random::<[u8; 16]>()))))
 }
 
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    std::io::Write::write_all(&mut file, bytes)?;
-    file.sync_all()
-}
-
-async fn stage_and_add(blobs: &iroh::client::blobs::Client, bytes: Vec<u8>) -> Result<iroh_blobs::Hash> {
+async fn stage_and_add(blobs: &iroh::client::blobs::Client, bytes: Arc<Vec<u8>>) -> Result<iroh_blobs::Hash> {
     let path = staging_path()?;
     let staged = path.clone();
     tokio::task::spawn_blocking(move || write_private(&staged, &bytes))
@@ -1005,25 +993,12 @@ impl CommyNode {
             .topics
             .get(&server_id)
             .context("not joined to that server")?;
-        let our_id = self.node_id_bytes();
         let relay_hint = self
             .node_addr()
             .await
             .ok()
             .and_then(|a| a.relay_url().cloned());
-        let mut ids = Vec::new();
-        for hex in peers_hex {
-            let Ok(id) = parse_node_hex(hex) else { continue };
-            if *id.as_bytes() == our_id {
-                continue;
-            }
-            let mut addr = NodeAddr::new(id);
-            if let Some(relay) = relay_hint.clone() {
-                addr = addr.with_relay_url(relay);
-            }
-            self.node.net().add_node_addr(addr).await.ok();
-            ids.push(id);
-        }
+        let ids = self.add_peers(peers_hex, relay_hint).await;
         if ids.is_empty() {
             return Ok(0);
         }
@@ -1050,20 +1025,12 @@ impl CommyNode {
         Ok(())
     }
 
-    pub async fn connect_media(&self, node_hex: &str, hello: MediaHello) -> Result<MediaChannel> {
-        self.media_dialer().connect(node_hex, hello).await
-    }
-
     pub fn media_dialer(&self) -> MediaDialer {
         MediaDialer { endpoint: self.node.endpoint().clone() }
     }
 
     pub async fn add_blob(&self, bytes: Vec<u8>) -> Result<String> {
-        Ok(stage_and_add(self.node.blobs(), bytes).await?.to_string())
-    }
-
-    pub async fn fetch_blob(&self, hash: &str, provider_hex: Option<&str>, max: u64) -> Result<Vec<u8>> {
-        self.blob_fetcher().fetch(hash, provider_hex, max).await
+        Ok(stage_and_add(self.node.blobs(), Arc::new(bytes)).await?.to_string())
     }
 
     pub fn blob_fetcher(&self) -> BlobFetcher {
@@ -1094,22 +1061,23 @@ impl CommyNode {
         if self.is_joined(server_id) {
             return Ok(());
         }
-        let our_id = self.node_id_bytes();
         let relay = self.node.endpoint().home_relay();
+        let ids = self.add_peers(peers_hex, relay).await;
+        self.join_topic(server_id, topic_for(server_id), ids).await
+    }
+
+    async fn add_peers(&self, peers_hex: &[String], relay: Option<iroh::net::relay::RelayUrl>) -> Vec<NodeId> {
+        let our_id = self.node_id_bytes();
         let mut ids = Vec::new();
         for hex in peers_hex {
             let Ok(id) = parse_node_hex(hex) else { continue };
             if *id.as_bytes() == our_id {
                 continue;
             }
-            let mut addr = NodeAddr::new(id);
-            if let Some(relay) = relay.clone() {
-                addr = addr.with_relay_url(relay);
-            }
-            self.node.net().add_node_addr(addr).await.ok();
+            self.node.net().add_node_addr(addr_with_relay(id, relay.clone())).await.ok();
             ids.push(id);
         }
-        self.join_topic(server_id, topic_for(server_id), ids).await
+        ids
     }
 
     pub fn wake(&self, node_hex: &str) -> impl Future<Output = Result<()>> + Send + 'static {

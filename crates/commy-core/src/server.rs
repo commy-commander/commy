@@ -214,8 +214,16 @@ impl Server {
         self.channels.iter().find(|c| c.id == id)
     }
 
+    pub fn channel_mut(&mut self, id: ChannelId) -> Option<&mut Channel> {
+        self.channels.iter_mut().find(|c| c.id == id)
+    }
+
     pub fn member(&self, user: UserId) -> Option<&Member> {
         self.members.iter().find(|m| m.user == user)
+    }
+
+    pub fn member_mut(&mut self, user: UserId) -> Option<&mut Member> {
+        self.members.iter_mut().find(|m| m.user == user)
     }
 
     pub fn is_member(&self, user: UserId) -> bool {

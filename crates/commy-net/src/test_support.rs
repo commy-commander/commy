@@ -2,107 +2,16 @@ use crate::catchup::{
     apply_items, apply_profiles, check_peer, collect, profiles_of, ApplyReport, CatchupStore,
     PeerCheck,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use commy_core::catchup::{digests, items, BucketItems};
+pub use commy_core::test_support::{
+    fixture, identity_for, join, join_moderator, keyed_profile, post, post_at, proof as proof_at,
+};
 use commy_core::{
-    BucketDigest, BucketKey, ChannelId, Identity, IdentityKey, Message, MessageId, Permissions,
-    Role, RoleId, Server, ServerEvent, ServerId, ServerState, TombstoneProof, UserId, UserProfile,
+    BucketDigest, BucketKey, ChannelId, Identity, IdentityKey, Message, MessageId, ServerEvent, ServerId,
+    ServerState, TombstoneProof, UserId, UserProfile,
 };
 use std::sync::Mutex;
-
-pub fn identity_for(user: UserId) -> Identity {
-    let mut secret = [0u8; 32];
-    secret[..16].copy_from_slice(user.0.as_bytes());
-    secret[16..].copy_from_slice(user.0.as_bytes());
-    Identity::from_bytes(&secret)
-}
-
-pub fn keyed_profile(username: &str) -> UserProfile {
-    let mut profile = UserProfile::new(username);
-    profile.identity = Some(identity_for(profile.id).public());
-    profile
-}
-
-pub fn fixture() -> (ServerState, ChannelId, UserId) {
-    let owner = keyed_profile("owner");
-    let owner_id = owner.id;
-    let server = Server::new("test", owner_id);
-    let channel = server.channels[0].id;
-    let mut state = ServerState::new(server);
-    state.profiles.insert(owner_id, owner);
-    (state, channel, owner_id)
-}
-
-pub fn join(state: &mut ServerState, username: &str) -> UserId {
-    let profile = keyed_profile(username);
-    let id = profile.id;
-    let server = state.server.id;
-    state
-        .apply(ServerEvent::MemberJoin { server, profile })
-        .unwrap();
-    id
-}
-
-pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
-    let user = join(state, username);
-    let server = state.server.id;
-    let role = Role {
-        id: RoleId::new(),
-        name: "mods".into(),
-        color: None,
-        permissions: Permissions::MANAGE_MESSAGES,
-        position: 1,
-        hoist: false,
-        self_assignable: false,
-        tag: None,
-        banner: None,
-    };
-    let id = role.id;
-    state
-        .apply(ServerEvent::RoleCreate { server, role })
-        .unwrap();
-    state
-        .apply(ServerEvent::RoleAssign {
-            server,
-            user,
-            role: id,
-        })
-        .unwrap();
-    user
-}
-
-pub fn proof_at(
-    state: &ServerState,
-    message: &Message,
-    by: UserId,
-    at: DateTime<Utc>,
-) -> TombstoneProof {
-    TombstoneProof::sign(
-        state.server.id,
-        message.channel,
-        message.id,
-        by,
-        at,
-        &identity_for(by),
-    )
-}
-
-pub fn post(state: &ServerState, channel: ChannelId, author: UserId, content: &str) -> Message {
-    post_at(state, channel, author, content, Utc::now())
-}
-
-pub fn post_at(
-    state: &ServerState,
-    channel: ChannelId,
-    author: UserId,
-    content: &str,
-    created_at: DateTime<Utc>,
-) -> Message {
-    let mut message = Message::new(channel, author, content);
-    message.created_at = created_at;
-    message.sign(state.server.id, &identity_for(author));
-    message
-}
 
 pub struct MemStore {
     pub state: Mutex<ServerState>,
