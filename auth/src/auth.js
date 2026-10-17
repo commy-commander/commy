@@ -133,9 +133,6 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     databaseHooks: {
       user: {
         create: {
-          // Every sign-up route (email, Google, Twitch, magic link) creates the
-          // user here, so one check covers them all. An OAuth sign-up is sent
-          // back to its errorCallbackURL with ?error=access_code_required.
           before: async (user, ctx) => {
             if (!config.accessCode) return;
             const cookie = ctx?.headers?.get("cookie") ?? ctx?.request?.headers.get("cookie");

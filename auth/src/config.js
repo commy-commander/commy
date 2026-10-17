@@ -122,7 +122,6 @@ export function loadConfig(env = process.env) {
     instanceName: env.COMMY_INSTANCE_NAME || "Commy",
     desktopClientIds: list(env.DEVICE_CLIENT_IDS).length > 0 ? list(env.DEVICE_CLIENT_IDS) : ["commy-desktop"],
     allowSignup: env.ALLOW_SIGNUP !== "false",
-    // Private preview: new accounts need the code entered on the website, see access.js
     accessCode: normalizeAccessCode(env.ACCESS_CODE) || null,
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
     invitesMaxPermanent: Number(env.INVITES_MAX_PERMANENT) > 0 ? Math.floor(Number(env.INVITES_MAX_PERMANENT)) : undefined,

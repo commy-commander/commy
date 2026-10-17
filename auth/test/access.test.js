@@ -1,5 +1,3 @@
-// The private-preview access code: sign-up needs the commy_access cookie the
-// website sets once the code is entered; sign-in and open servers are untouched.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { betterAuth } from "better-auth";
