@@ -31,6 +31,12 @@
 	@doorbell path /api/auth/commy/doorbell/*
 	log_skip @doorbell
 
+	# Sign-in links, reset links, provider callbacks and device codes carry a
+	# single-use secret in the URL, which would otherwise sit in the log for as
+	# long as the log is kept
+	@secrets path /api/auth/verify-email* /api/auth/magic-link/* /api/auth/reset-password/* /api/auth/callback/* /account/reset-password* /device*
+	log_skip @secrets
+
 	encode zstd gzip
 
 	header {
