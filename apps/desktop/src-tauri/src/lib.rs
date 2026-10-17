@@ -592,8 +592,13 @@ async fn get_attachment_video(
     app: tauri::State<'_, App>,
     blob: String,
     provider: Option<String>,
+    size_bytes: Option<u64>,
 ) -> CmdResult<tauri::ipc::Response> {
-    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
+    let max = MAX_INLINE_VIDEO_BYTES as u64;
+    if size_bytes.is_some_and(|size| size > max) {
+        return Err("video too large to play here".into());
+    }
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
     if bytes.len() > MAX_INLINE_VIDEO_BYTES {
         return Err("video too large to play here".into());
     }
