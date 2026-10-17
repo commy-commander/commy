@@ -1,6 +1,3 @@
-//! Serializable view models sent to the webview. Kept separate from
-//! core types so the UI contract can evolve without touching the model.
-
 use commy_core::{ChannelId, ChannelKind, DmMessage, DmStore, Message, MessageId, Permissions, ServerState, UserId};
 use std::collections::HashSet;
 use serde::Serialize;
@@ -11,7 +8,6 @@ pub struct ServerSummary {
     pub name: String,
     pub member_count: usize,
     pub icon: Option<String>,
-    /// The viewer may invite people to this server.
     pub can_invite: bool,
 }
 
@@ -33,26 +29,17 @@ pub struct ChannelView {
     pub name: String,
     pub kind: String,
     pub topic: Option<String>,
-    /// Users currently connected, voice channels only.
     pub voice_users: Vec<String>,
-    /// User ids parallel to `voice_users`, for speaking indicators.
     pub voice_user_ids: Vec<String>,
-    /// Join times (unix seconds) parallel to `voice_users`.
     pub voice_since: Vec<Option<i64>>,
-    /// Muted and deafened flags, parallel to `voice_users`.
     pub voice_muted: Vec<bool>,
     pub voice_deafened: Vec<bool>,
     pub retention_days: Option<u32>,
-    /// Category id this channel sits under.
     pub parent: Option<String>,
     pub position: u32,
-    /// Voice member cap; 0 is unlimited.
     pub user_limit: u32,
-    /// Banner image ref, if the channel has one.
     pub banner: Option<String>,
-    /// Name-band colour (RGB hex), if set.
     pub color: Option<String>,
-    /// Pinned messages held here.
     pub pins: usize,
 }
 
@@ -61,32 +48,23 @@ pub struct MemberView {
     pub id: String,
     pub name: String,
     pub presence: String,
-    /// When a timed presence ends (unix seconds), shown as "back at".
     pub presence_until: Option<i64>,
     pub custom_status: Option<String>,
-    /// Hex color of their highest colored role, if any.
     pub color: Option<String>,
-    /// Ids of roles this member holds.
     pub roles: Vec<String>,
-    /// Raw avatar ("blob:..." or "emoji:..."), and the node serving blobs.
     pub avatar: Option<String>,
     pub avatar_provider: Option<String>,
     pub status_emoji: Option<String>,
     pub activity: Option<String>,
     pub about: Option<String>,
-    /// IGDB cover image id for their game, when known.
     pub activity_cover: Option<String>,
-    /// When their activity began (unix seconds), for "for 1h 12m".
     pub activity_since: Option<i64>,
-    /// Voice channel they are connected to, and since when (unix seconds).
     pub voice_channel: Option<String>,
     pub voice_since: Option<i64>,
     pub voice_muted: bool,
     pub voice_deafened: bool,
-    /// Tag of their highest tagged role, shown next to their name.
     pub tag: Option<String>,
     pub tag_color: Option<String>,
-    /// Banner of their highest role that has one.
     pub role_banner: Option<String>,
 }
 
@@ -115,7 +93,6 @@ pub struct EventView {
     pub creator_name: String,
     pub going: usize,
     pub interested: usize,
-    /// The viewer's own answer: "going", "interested" or None.
     pub my_rsvp: Option<String>,
     pub can_edit: bool,
 }
@@ -135,7 +112,6 @@ pub struct ServerView {
     pub channels: Vec<ChannelView>,
     pub members: Vec<MemberView>,
     pub screen_shares: Vec<ScreenShareView>,
-    /// Ids of users with their camera on.
     pub cameras: Vec<String>,
     pub roles: Vec<RoleView>,
     pub afk_channel: Option<String>,
@@ -147,20 +123,16 @@ pub struct ServerView {
     pub can_kick: bool,
     pub can_manage_messages: bool,
     pub can_invite: bool,
-    /// The viewer may pin and unpin messages.
     pub can_pin: bool,
-    /// The viewer may post in announcement channels.
     pub can_post_announcements: bool,
     pub game_tags: Vec<String>,
     pub game_tag_meta: Vec<commy_core::server::GameTagMeta>,
     pub rules: Option<String>,
-    /// The viewer must accept the rules before posting.
     pub needs_rules: bool,
     pub events: Vec<EventView>,
     pub can_manage_events: bool,
     pub server_muted: Vec<String>,
     pub server_deafened: Vec<String>,
-    /// Banned users with names, for people who can unban.
     pub banned: Vec<(String, String)>,
     pub afk_timeout_minutes: Option<u32>,
     pub can_mute: bool,
@@ -169,7 +141,6 @@ pub struct ServerView {
     pub sounds: Vec<SoundView>,
     pub emojis_shareable: bool,
     pub soundboard_open: bool,
-    /// Invite links to a public server may never expire.
     pub public: bool,
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
@@ -179,7 +150,6 @@ pub struct ServerView {
 #[derive(Debug, Clone, Serialize)]
 pub struct EmojiView {
     pub name: String,
-    /// "blob@provider", fetched with fetch_expression.
     pub image: String,
 }
 
@@ -256,7 +226,6 @@ impl ServerView {
                     .member(p.id)
                     .map(|m| m.roles.iter().map(|r| r.to_string()).collect())
                     .unwrap_or_default(),
-                // Peer supplied: only well-formed values reach the webview.
                 avatar: p
                     .avatar
                     .as_deref()
@@ -299,7 +268,7 @@ impl ServerView {
             .server
             .roles
             .iter()
-            .filter(|r| r.position > 0) // the everyone role is implicit
+            .filter(|r| r.position > 0)
             .map(|r| RoleView {
                 id: r.id.to_string(),
                 name: r.name.clone(),
@@ -355,7 +324,6 @@ impl ServerView {
                 }
             })
             .collect();
-        // Owners and server managers are never held at the rules gate.
         let needs_rules = viewer.is_some_and(|v| {
             state.server.rules.is_some()
                 && v != state.server.owner
@@ -422,7 +390,6 @@ impl ServerView {
     }
 }
 
-/// The permission flags the roles UI can grant, as stable names.
 pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_server", Permissions::MANAGE_SERVER),
     ("manage_channels", Permissions::MANAGE_CHANNELS),
@@ -463,7 +430,6 @@ pub struct DmThreadView {
     pub name: String,
     pub last_message: String,
     pub last_at: String,
-    /// "inbox", "request" or "spam".
     pub kind: String,
 }
 
@@ -475,7 +441,6 @@ pub struct DmMessageView {
     pub content: String,
     pub created_at: String,
     pub outgoing: bool,
-    /// Ours and not delivered yet; it goes out when they come online.
     pub pending: bool,
 }
 
@@ -537,16 +502,13 @@ pub struct MessageView {
     pub created_at: String,
     pub edited: bool,
     pub reply_to: Option<String>,
-    /// Author and opening text of the message replied to, if still present.
     pub reply_preview: Option<ReplyPreview>,
     pub reactions: Vec<ReactionView>,
     pub attachments: Vec<AttachmentView>,
-    /// Ours and no member has received it yet.
     pub pending: bool,
     pub pinned: bool,
 }
 
-/// A pinned message with who pinned it, for the pins panel.
 #[derive(Debug, Serialize)]
 pub struct PinView {
     pub channel: String,
@@ -557,9 +519,6 @@ pub struct PinView {
     pub message: MessageView,
 }
 
-/// Pins of one channel, or of the whole server, newest first. Pins
-/// whose message is not held here (not caught up yet, or expired) are
-/// left out.
 pub fn pin_views(state: &ServerState, channel: Option<ChannelId>) -> Vec<PinView> {
     let mut pins: Vec<&commy_core::server::Pin> = state
         .server
@@ -662,7 +621,6 @@ impl MessageView {
     }
 }
 
-/// The latest messages of a channel, marking those still pending.
 pub fn message_views(state: &ServerState, channel: ChannelId, limit: usize, pending: &HashSet<MessageId>) -> Vec<MessageView> {
     state
         .page(channel, None, limit)
@@ -679,7 +637,6 @@ pub fn display_name(state: &ServerState, user: commy_core::UserId) -> String {
         .unwrap_or_else(|| "Unknown User".to_string())
 }
 
-/// Tag and color of the member's highest role that has a tag.
 pub fn member_tag(state: &ServerState, user: UserId) -> Option<(String, Option<String>)> {
     let member = state.server.member(user)?;
     state

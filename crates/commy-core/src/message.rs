@@ -4,16 +4,12 @@ use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// File shared in chat. The payload itself transfers peer to peer via
-/// iroh-blobs; messages only carry the content hash.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attachment {
-    /// iroh blob hash (blake3, hex or ticket form).
     pub blob: String,
     pub filename: String,
     pub size_bytes: u64,
     pub mime_type: String,
-    /// Hex node id of a peer known to have the blob (the uploader).
     #[serde(default)]
     pub provider: Option<String>,
 }
@@ -26,14 +22,12 @@ impl Attachment {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reaction {
-    /// Unicode emoji or custom emoji name prefixed with a colon.
     pub emoji: String,
     pub users: Vec<UserId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
-    /// Bound to the author, see [`MessageId::for_author`].
     pub id: MessageId,
     pub channel: ChannelId,
     pub author: UserId,
@@ -43,29 +37,18 @@ pub struct Message {
     pub attachments: Vec<Attachment>,
     pub reactions: Vec<Reaction>,
     pub reply_to: Option<MessageId>,
-    /// Author's signature over [`Message::signing_bytes`]. None only on
-    /// messages stored before signing existed.
     #[serde(default)]
     pub sig: Option<Signature>,
 }
 
-/// Largest [`Message::authored_size`]: what one gossip `MessageCreate`
-/// carries, the 3800 byte gossip frame less the 36 bytes of its smallest
-/// envelope (commy-net tests that the two agree). The store refuses
-/// larger messages from any path, catch-up included.
 pub const MAX_MESSAGE_BYTES: usize = 3764;
 
-/// Most distinct reactions taken with a relayed new message, and most
-/// users across all of them. Reactions are not signed, so anyone passing
-/// a message on could pad them; real use stays far below both.
 pub const MAX_RELAYED_REACTIONS: usize = 64;
 pub const MAX_RELAYED_REACTORS: usize = 2000;
 
 const MESSAGE_DOMAIN: &str = "commy-message/v1";
 const DELETE_DOMAIN: &str = "commy-delete/v1";
 
-/// Canonical form of a message for signing. Field order is part of the
-/// format; reactions are left out because anyone may add them.
 #[derive(Serialize)]
 struct SignedMessage<'a> {
     domain: &'static str,
@@ -100,12 +83,10 @@ impl Message {
         }
     }
 
-    /// Bytes the author signs: everything but reactions and the signature.
     pub fn signing_bytes(&self, server: ServerId) -> Vec<u8> {
         self.signing_bytes_with(server, &self.content, self.edited_at)
     }
 
-    /// Signing bytes of this message as it would read after an edit.
     fn signing_bytes_with(&self, server: ServerId, content: &str, edited_at: Option<DateTime<Utc>>) -> Vec<u8> {
         encode(&SignedMessage {
             domain: MESSAGE_DOMAIN,
@@ -125,12 +106,10 @@ impl Message {
         })
     }
 
-    /// Encoded size with reactions left out, so of what the author made.
     pub fn authored_size(&self) -> usize {
         encode(&self.without_reactions()).len()
     }
 
-    /// A copy of this message with no reactions.
     pub(crate) fn without_reactions(&self) -> Message {
         Message {
             id: self.id,
@@ -150,13 +129,10 @@ impl Message {
         self.sig = Some(identity.sign(&self.signing_bytes(server)));
     }
 
-    /// False when unsigned or not signed by `key`.
     pub fn verify(&self, server: ServerId, key: &IdentityKey) -> bool {
         self.sig.is_some_and(|sig| key.verify(&self.signing_bytes(server), &sig))
     }
 
-    /// Whether `sig` signs this message with `content` and `edited_at`
-    /// swapped in, as carried by [`ServerEvent::MessageEdit`].
     pub fn verify_edit(
         &self,
         server: ServerId,
@@ -168,7 +144,6 @@ impl Message {
         key.verify(&self.signing_bytes_with(server, content, Some(edited_at)), sig)
     }
 
-    /// Signed edit of this message, for the author to broadcast.
     pub fn edit_event(
         &self,
         server: ServerId,
@@ -187,7 +162,6 @@ impl Message {
         }
     }
 
-    /// Adds or removes a user's reaction, returning true if it was added.
     pub fn toggle_reaction(&mut self, emoji: &str, user: UserId) -> bool {
         if let Some(reaction) = self.reactions.iter_mut().find(|r| r.emoji == emoji) {
             if let Some(pos) = reaction.users.iter().position(|u| *u == user) {
@@ -210,20 +184,16 @@ impl Message {
     }
 }
 
-/// Signed record of a delete. Kept after the message is gone so a late
-/// copy cannot bring it back, and relayed by catch-up.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TombstoneProof {
     pub channel: ChannelId,
     pub message: MessageId,
-    /// Who deleted it: the author or someone with Manage Messages.
     pub by: UserId,
     pub at: DateTime<Utc>,
     pub sig: Signature,
 }
 
 impl TombstoneProof {
-    /// Creates a proof signed by `by`'s identity.
     pub fn sign(
         server: ServerId,
         channel: ChannelId,
@@ -245,7 +215,6 @@ impl TombstoneProof {
         key.verify(&self.signing_bytes(server), &self.sig)
     }
 
-    /// The `MessageDelete` event carrying this proof.
     pub fn into_event(self) -> ServerEvent {
         ServerEvent::MessageDelete {
             channel: self.channel,
@@ -371,7 +340,6 @@ mod tests {
         let server = ServerId::new();
         let msg = sample(&identity, server);
         let bytes = msg.signing_bytes(server);
-        // Postcard writes the string length, then the string.
         assert_eq!(bytes[0] as usize, MESSAGE_DOMAIN.len());
         assert_eq!(&bytes[1..1 + MESSAGE_DOMAIN.len()], MESSAGE_DOMAIN.as_bytes());
         let mut finer = msg.clone();

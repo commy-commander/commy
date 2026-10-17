@@ -1,11 +1,3 @@
-//! Framing for direct media connections (voice and screen share).
-//!
-//! Media never rides the gossip topic. Peers open a dedicated QUIC
-//! connection with the `commy/media/1` ALPN, send one `MediaHello` on
-//! a bidirectional stream, then exchange length-prefixed postcard
-//! frames. Voice is raw 48 kHz mono PCM for now (10 ms, 480 samples);
-//! screen share is MJPEG. Both leave room for real codecs later.
-
 use commy_core::{ChannelId, UserId};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -14,7 +6,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const MEDIA_ALPN: &[u8] = b"commy/media/1";
 
-/// Big enough for a scaled JPEG frame, small enough to bound memory.
 pub const MAX_MEDIA_FRAME: u32 = 4 * 1024 * 1024;
 
 #[derive(Debug, Error)]
@@ -27,36 +18,25 @@ pub enum MediaError {
     Io(#[from] std::io::Error),
 }
 
-/// First frame on every media stream: who is calling and why.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MediaHello {
-    /// Two-way voice for a channel both peers are connected to.
     Voice { user: UserId, channel: ChannelId },
-    /// Viewer asking the sharer to stream their screen.
     ScreenSubscribe { user: UserId, channel: ChannelId },
-    /// Viewer asking a member to stream their camera. Appended last so
-    /// the earlier variants keep their wire tags.
     CameraSubscribe { user: UserId, channel: ChannelId },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MediaPacket {
-    /// 10 ms of 48 kHz mono PCM, already noise-processed by the sender.
-    /// Older peers only; current ones send `Opus`.
     Voice { seq: u32, pcm: Vec<i16> },
-    /// One MJPEG screen frame.
     Video {
         seq: u64,
         width: u32,
         height: u32,
         jpeg: Vec<u8>,
     },
-    /// 10 ms of 48 kHz mono voice, Opus encoded. Appended last so the
-    /// earlier variants keep their wire tags.
     Opus { seq: u32, data: Vec<u8> },
 }
 
-/// Writes one length-prefixed postcard frame.
 pub async fn write_frame<W, T>(writer: &mut W, value: &T) -> Result<(), MediaError>
 where
     W: AsyncWrite + Unpin,
@@ -72,7 +52,6 @@ where
     Ok(())
 }
 
-/// Reads one frame; Ok(None) means the peer closed the stream cleanly.
 pub async fn read_frame<R, T>(reader: &mut R) -> Result<Option<T>, MediaError>
 where
     R: AsyncRead + Unpin,
@@ -119,7 +98,6 @@ mod tests {
         assert_eq!(got_hello, hello);
         let got_packet: MediaPacket = read_frame(&mut server).await.unwrap().unwrap();
         assert_eq!(got_packet, packet);
-        // Clean EOF after the sender hangs up.
         let end: Option<MediaPacket> = read_frame(&mut server).await.unwrap();
         assert!(end.is_none());
     }

@@ -1,8 +1,3 @@
-//! Local safety settings: blocked users, who may DM you, message
-//! requests, a simple DM spam filter, and reports sent to server owners.
-//! Everything here is per device; nothing is shared with peers except
-//! the report a user chooses to send.
-
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
@@ -12,12 +7,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DmPolicy {
-    /// Anyone; strangers land in Message Requests.
     #[default]
     Everyone,
-    /// Only people who share a server with you.
     ServerMembers,
-    /// Only people you already talk to.
     Accepted,
 }
 
@@ -32,7 +24,6 @@ impl DmPolicy {
     }
 }
 
-/// A report received as server owner.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Report {
     pub id: String,
@@ -45,7 +36,6 @@ pub struct Report {
     pub reported_name: String,
     pub reason: String,
     pub note: String,
-    /// Copy of the reported message so it survives deletion.
     pub excerpt: String,
     pub created_at: String,
 }
@@ -55,7 +45,6 @@ const MAX_REPORTS: usize = 200;
 const MAX_NOTE: usize = 500;
 const MAX_EXCERPT: usize = 300;
 
-/// Reports travel as a DM whose content starts with this marker.
 pub const REPORT_PREFIX: &str = "[[commy-report]]";
 
 impl Report {
@@ -63,8 +52,6 @@ impl Report {
         format!("{REPORT_PREFIX}{}", serde_json::to_string(self).unwrap_or_default())
     }
 
-    /// Parses and sanity checks a report DM. The sender must be the
-    /// reporter it claims to be.
     pub fn decode(content: &str, sender: UserId) -> Option<Self> {
         let mut report: Report = serde_json::from_str(content.strip_prefix(REPORT_PREFIX)?).ok()?;
         if report.reporter != sender.to_string() || !REPORT_REASONS.contains(&report.reason.as_str()) {
@@ -88,10 +75,8 @@ pub struct SafetySettings {
     pub blocked: Vec<UserId>,
     #[serde(default)]
     pub dm_policy: DmPolicy,
-    /// People whose DMs go straight to your inbox.
     #[serde(default)]
     pub accepted: HashSet<UserId>,
-    /// Message requests flagged as likely spam.
     #[serde(default)]
     pub spam: HashSet<UserId>,
     #[serde(default = "default_true")]
@@ -100,26 +85,20 @@ pub struct SafetySettings {
     pub reports: Vec<Report>,
     #[serde(default)]
     pub friends: HashSet<UserId>,
-    /// Friend requests we sent and are waiting on.
     #[serde(default)]
     pub friend_out: HashSet<UserId>,
-    /// Friend requests waiting for our answer.
     #[serde(default)]
     pub friend_in: HashSet<UserId>,
-    /// The last friend signal applied from each person, so a signed
-    /// signal sent to us again changes nothing.
     #[serde(default)]
     pub friend_signals: HashMap<UserId, SignalSeen>,
 }
 
-/// A friend signal that was applied: its DM id and when it was written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignalSeen {
     pub id: MessageId,
     pub at: DateTime<Utc>,
 }
 
-/// Friend requests and answers travel as DMs starting with this marker.
 pub const FRIEND_PREFIX: &str = "[[commy-friend]]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,8 +120,6 @@ impl FriendSignal {
     }
 }
 
-/// Records a friend signal from `from` before it is applied. False for a
-/// replay: the signal applied last, or one written before it.
 pub fn note_friend_signal(s: &mut SafetySettings, from: UserId, id: MessageId, at: DateTime<Utc>) -> bool {
     if let Some(last) = s.friend_signals.get(&from) {
         if last.id == id || at < last.at {
@@ -153,8 +130,6 @@ pub fn note_friend_signal(s: &mut SafetySettings, from: UserId, id: MessageId, a
     true
 }
 
-/// What a friend signal from `from` means for us, applied to our lists.
-/// Returns what to send back, if anything.
 pub fn apply_friend_signal(s: &mut SafetySettings, from: UserId, signal: FriendSignal) -> Option<FriendSignal> {
     if s.is_blocked(from) {
         return None;
@@ -162,11 +137,9 @@ pub fn apply_friend_signal(s: &mut SafetySettings, from: UserId, signal: FriendS
     match signal {
         FriendSignal::Request => {
             if s.friends.contains(&from) {
-                // They lost our acceptance; confirm again.
                 return Some(FriendSignal::Accept);
             }
             if s.friend_out.remove(&from) {
-                // We both asked: that is a yes.
                 s.friends.insert(from);
                 return Some(FriendSignal::Accept);
             }
@@ -250,7 +223,6 @@ pub enum Verdict {
     Drop,
 }
 
-/// What we know about a DM's sender when it arrives.
 pub struct Sender {
     pub blocked: bool,
     pub accepted: bool,
@@ -263,8 +235,6 @@ const REPEAT_WINDOW_SECS: i64 = 600;
 const REPEAT_LIMIT: usize = 3;
 const LINK_LIMIT: usize = 3;
 
-/// Remembers recent DMs from people you have not accepted, for rate
-/// limiting and repeat detection. In memory only.
 #[derive(Default)]
 pub struct DmFilter {
     recent: HashMap<UserId, VecDeque<(i64, u64)>>,
@@ -277,7 +247,6 @@ fn content_hash(content: &str) -> u64 {
     h.finish()
 }
 
-// "host.tld/path" without a scheme, the usual shape of invite and shortener links.
 fn is_bare_link(word: &str) -> bool {
     word.split_once('/').is_some_and(|(host, _)| {
         let tld = host.rsplit('.').next().unwrap_or("");
@@ -367,7 +336,6 @@ mod tests {
             assert_ne!(f.classify(DmPolicy::Everyone, false, &stranger(), u, &format!("m{i}"), i as i64), Verdict::Drop);
         }
         assert_eq!(f.classify(DmPolicy::Everyone, false, &stranger(), u, "again", 10), Verdict::Drop);
-        // A minute later the window has passed.
         assert_eq!(f.classify(DmPolicy::Everyone, false, &stranger(), u, "later", 100), Verdict::Request);
     }
 
@@ -444,19 +412,16 @@ mod tests {
         let a = UserId::new();
         assert_eq!(apply_friend_signal(&mut s, a, FriendSignal::Request), None);
         assert!(s.friend_in.contains(&a));
-        // Accepting is done locally; their Accept to our request also lands.
         let b = UserId::new();
         s.friend_out.insert(b);
         apply_friend_signal(&mut s, b, FriendSignal::Accept);
         assert!(s.friends.contains(&b) && !s.friend_out.contains(&b));
-        // Crossed requests become friends at once.
         let c = UserId::new();
         s.friend_out.insert(c);
         assert_eq!(apply_friend_signal(&mut s, c, FriendSignal::Request), Some(FriendSignal::Accept));
         assert!(s.friends.contains(&c));
         apply_friend_signal(&mut s, c, FriendSignal::Remove);
         assert!(!s.friends.contains(&c));
-        // Blocked people cannot send requests.
         let d = UserId::new();
         s.set_blocked(d, true);
         apply_friend_signal(&mut s, d, FriendSignal::Request);
@@ -473,10 +438,8 @@ mod tests {
         assert!(!note_friend_signal(&mut s, friend, decline, t0), "the same signal again");
         assert!(note_friend_signal(&mut s, friend, accept, t0 + chrono::Duration::seconds(5)));
         assert!(!note_friend_signal(&mut s, friend, decline, t0), "older than the last one");
-        // Each person has their own record.
         assert!(note_friend_signal(&mut s, UserId::new(), decline, t0));
 
-        // It survives a restart.
         let json = serde_json::to_string(&s).unwrap();
         let mut loaded: SafetySettings = serde_json::from_str(&json).unwrap();
         assert!(!note_friend_signal(&mut loaded, friend, accept, t0 + chrono::Duration::seconds(5)));

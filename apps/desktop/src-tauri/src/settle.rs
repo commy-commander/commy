@@ -1,9 +1,3 @@
-//! Settling our key. A key made on a signed-in device is held back while
-//! the account may still replace it (see `App::hold_key`). Once it is
-//! final, what we signed meanwhile is signed again with it before
-//! anything may go out, and only then is it announced and every server
-//! catches up with its neighbors.
-
 use crate::catchup::{every_neighbor, AppAccess};
 use crate::outbox;
 use crate::state::App;
@@ -11,15 +5,10 @@ use commy_core::{ServerId, UserProfile};
 use std::future::Future;
 use tauri::Manager;
 
-/// The network side of putting a settled key to use.
 pub trait KeyNet: AppAccess {
-    /// Announces our profile in every server we are in.
     fn announce(&self, profile: &UserProfile) -> impl Future<Output = ()> + Send;
-    /// Each server's current gossip neighbors; none while offline.
     fn neighbors(&self) -> impl Future<Output = Vec<(ServerId, Vec<[u8; 32]>)>> + Send;
-    /// Sends what waited for a server's neighbors.
     fn flush(&self, server: ServerId) -> impl Future<Output = ()> + Send;
-    /// Starts a catch-up session with one neighbor.
     fn start_session(&self, server: ServerId, peer: [u8; 32]);
 }
 
@@ -45,12 +34,8 @@ impl KeyNet for tauri::AppHandle {
     }
 }
 
-/// Our sole hold on [`App::signing`], taken to swap our key: no send
-/// signs with it meanwhile, and every one that did is applied or queued.
 pub type KeySwap<'a> = tokio::sync::RwLockWriteGuard<'a, ()>;
 
-/// Our key is final: if it was held back, it is settled (see
-/// [`settle_loaded_key`]) and put to use (see [`use_settled_key`]).
 pub async fn settle_key<N: KeyNet>(net: &N) {
     if !net.app().settle_pending() {
         return;
@@ -61,33 +46,21 @@ pub async fn settle_key<N: KeyNet>(net: &N) {
     };
     match settled {
         Ok(true) => use_settled_key(net).await,
-        // Another task settled it meanwhile and puts it to use.
         Ok(false) => {}
         Err(e) => tracing::warn!("could not load our identity key, so it stays held back: {e}"),
     }
 }
 
-/// Makes the key in the key file final without letting anything signed
-/// with the key it replaces go out. While sends are still held, it loads
-/// the key and signs again with it what we signed meanwhile (see
-/// [`outbox::resign_held`]); only then does the key settle. True when it
-/// was held back until now. A key that cannot be loaded settles nothing:
-/// it stays held back for a later try.
 pub fn settle_loaded_key(app: &App, _swap: &KeySwap<'_>) -> std::io::Result<bool> {
     settle_after_resigning(app, App::settle_key)
 }
 
-/// [`settle_loaded_key`] with its last step passed in.
 fn settle_after_resigning(app: &App, settle: impl FnOnce(&App) -> bool) -> std::io::Result<bool> {
     app.reload_identity()?;
     outbox::resign_held(app);
     Ok(settle(app))
 }
 
-/// Our key just settled, with what we signed while it was held signed
-/// with it: announces it, retries waiting DMs, and catches up every
-/// server with each of its current neighbors after sending what waited
-/// for them, since all of it was held back until now.
 pub async fn use_settled_key<N: KeyNet>(net: &N) {
     let app = net.app();
     let profile = app.profile.lock().unwrap().clone();
@@ -123,14 +96,11 @@ mod tests {
         dir
     }
 
-    /// Puts `identity` in the key file, as the server list sync does.
     fn write_key(dir: &Path, identity: &Identity) {
         let hex = data_encoding::HEXLOWER.encode(&identity.to_bytes());
         std::fs::write(dir.join(commy_core::identity::IDENTITY_FILE), hex).unwrap();
     }
 
-    /// A device holding back the key it signs with, in a server it owns
-    /// with one other member, before the account's key arrives.
     struct Device {
         app: Arc<App>,
         dir: PathBuf,
@@ -168,15 +138,12 @@ mod tests {
             self.app.profile.lock().unwrap().clone().unwrap()
         }
 
-        /// One of our messages, signed with the key we hold.
         fn post(&self, content: &str) -> Message {
             let mut message = Message::new(self.channel, self.me().id, content);
             message.sign(self.sid, &self.held);
             message
         }
 
-        /// Applies one of our events here and sends it as the app does,
-        /// with a neighbor connected; true when it went out.
         fn send(&self, event: ServerEvent) -> bool {
             self.app.servers.lock().unwrap().get_mut(&self.sid).unwrap().apply(event.clone()).unwrap();
             let delivered = outbox::may_send(&self.app, 1, &event);
@@ -184,7 +151,6 @@ mod tests {
             delivered
         }
 
-        /// The account's key reaches the key file.
         fn account_key_arrives(&self) {
             write_key(&self.dir, &self.account);
         }
@@ -196,8 +162,6 @@ mod tests {
         }
     }
 
-    /// How much of ours is signed with another key than `key`: messages
-    /// and delete proofs kept here, and queued edits and deletes.
     fn stale(app: &App, key: &IdentityKey) -> usize {
         let me = app.profile.lock().unwrap().as_ref().unwrap().id;
         let servers = app.servers.lock().unwrap();
@@ -225,8 +189,6 @@ mod tests {
         count
     }
 
-    /// Our work while the key was held: a message sent before, edited
-    /// meanwhile; one still pending; one deleted, its proof kept.
     fn work_while_held(device: &Device) {
         let sent = device.post("sent before");
         device.app.hold_key(Instant::now());
@@ -249,9 +211,6 @@ mod tests {
         Session(ServerId, [u8; 32]),
     }
 
-    /// The network as settling uses it, recording each call. Every call
-    /// first checks that the key settled and nothing of ours is signed
-    /// with another key, so nothing stale could go out through it.
     struct FakeNet {
         handle: TestHandle,
         neighbors: Vec<(ServerId, Vec<[u8; 32]>)>,
@@ -340,7 +299,6 @@ mod tests {
         let names: Vec<String> = net.handle.take_events().into_iter().map(|(name, _)| name).collect();
         assert!(names.contains(&"profile-changed".to_string()));
 
-        // Settled once: later syncs leave it alone.
         settle_key(&net).await;
         assert!(net.take_calls().is_empty());
     }
@@ -374,8 +332,6 @@ mod tests {
             sig: commy_core::Signature([0; 64]),
         };
         let settled = settle_after_resigning(&device.app, |app| {
-            // The moment it settles: all of ours already carries the new
-            // key, and until now nothing signed could go out.
             assert_eq!(app.identity().unwrap().public(), key);
             assert_eq!(stale(app, &key), 0);
             assert!(!app.key_settled() && !outbox::may_send(app, 1, &edit));
@@ -401,7 +357,6 @@ mod tests {
         let key = device.account.public();
         let net = Arc::new(fake_net(&device));
 
-        // A send signed with the held key and not applied yet.
         let sending = device.app.signing.read().await;
         let message = device.post("in flight");
         let settling = tokio::spawn({
@@ -433,7 +388,6 @@ mod tests {
         let key = device.account.public();
         let queued = |app: &App| app.outbox.lock().unwrap().clone().take_queued(sid);
 
-        // A flush waiting for the network took only what may go now.
         let network = device.app.net.lock().await;
         let flushing = tokio::spawn({
             let app = device.app.clone();
@@ -444,7 +398,6 @@ mod tests {
         assert_eq!(waiting.len(), 2, "the edit and the delete stay queued");
         assert!(!waiting.contains(&rename));
 
-        // The key settles once the flush is done.
         let settling = tokio::spawn({
             let app = device.app.clone();
             async move {
@@ -458,7 +411,6 @@ mod tests {
         flushing.await.unwrap();
         assert!(settling.await.unwrap().unwrap());
 
-        // Offline, so nothing went out; all of it carries the settled key.
         let waiting = queued(&device.app);
         assert_eq!(waiting.len(), 3);
         assert!(waiting.contains(&rename));
@@ -479,7 +431,6 @@ mod tests {
         let queued = app.outbox.lock().unwrap().clone().take_queued(device.sid);
         assert!(queued.iter().all(|e| !outbox::may_send(app, 1, e)), "what we signed still waits");
 
-        // Readable again: it settles, with our work signed again.
         std::fs::remove_dir(&path).unwrap();
         device.account_key_arrives();
         assert!(settle_loaded_key(app, &app.signing.try_write().unwrap()).unwrap());
@@ -494,7 +445,6 @@ mod tests {
         let sent = device.post("delivered");
         device.app.hold_key(Instant::now());
         assert!(device.send(ServerEvent::MessageCreate { message: sent.clone() }));
-        // A member holds it, and knows us by the key that settles.
         let mut peer = device.app.servers.lock().unwrap()[&sid].clone();
         let me = device.me().id;
         peer.profiles.get_mut(&me).unwrap().identity = Some(device.account.public());
@@ -506,7 +456,6 @@ mod tests {
         device.account_key_arrives();
         assert!(settle_loaded_key(&device.app, &device.app.signing.try_write().unwrap()).unwrap());
 
-        // Catch-up relays it as kept here...
         let state = device.app.servers.lock().unwrap()[&sid].clone();
         let (relayed, _) = commy_net::catchup::collect(&state, &[sent.id]);
         assert_eq!(relayed.len(), 1);
@@ -514,7 +463,6 @@ mod tests {
         let mut caught_up = peer.clone();
         assert_eq!(caught_up.apply(ServerEvent::MessageCreate { message: relayed[0].clone() }), Ok(true));
         assert_eq!(caught_up.message(sent.id).unwrap().content, "edited while held");
-        // ...and the queued edit goes out signed with the settled key too.
         let queued = device.app.outbox.lock().unwrap().take_queued(sid);
         assert_eq!(queued.len(), 1);
         assert_eq!(peer.apply(queued[0].clone()), Ok(true));

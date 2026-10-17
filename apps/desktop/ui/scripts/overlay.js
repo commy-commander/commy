@@ -1,8 +1,3 @@
-// In-game overlay window. Receives the voice roster and chat lines from
-// the main window and speaking updates straight from the backend. It
-// draws only who is talking (or everyone, if asked) and chat lines that
-// fade by themselves; the layout rules live in overlay-view.js.
-
 "use strict";
 
 const tauri = window.__TAURI__;
@@ -30,7 +25,6 @@ function applyConfig(config) {
   document.body.classList.toggle("right", corner.right);
   overlay.showChat = config.show_chat !== false;
   overlay.showEveryone = Boolean(config.show_everyone);
-  // Shows whenever the overlay appears or moves, so it is clear it is on and where.
   showNotice(`Overlay on · ${overlayCornerLabel(config.corner)}`);
   if (!overlay.showChat) {
     overlay.lines = [];
@@ -52,7 +46,6 @@ function showNotice(text, ms = OVERLAY_NOTICE_MS) {
   noticeTimer = setTimeout(() => notice.classList.add("hidden"), ms);
 }
 
-// The Test overlay button: a sample speaker and message, then it clears.
 function runTest() {
   overlay.testing = true;
   showNotice("Overlay test", OVERLAY_TEST_MS);
@@ -100,7 +93,6 @@ function setSpeaking(user, speaking) {
     overlay.speaking.add(user);
   } else {
     overlay.speaking.delete(user);
-    // Stay lit a moment so a short pause does not make the pill blink.
     overlay.lingering.set(user, setTimeout(() => {
       overlay.lingering.delete(user);
       renderMembers();
@@ -140,14 +132,10 @@ async function start() {
   try {
     applyConfig(await tauri.core.invoke("get_overlay_settings"));
   } catch {
-    /* defaults */
   }
-  // Ask the main window for the current roster.
   await tauri.event.emitTo("main", "overlay-hello", null);
 }
 
-// The page also runs outside the app for design previews: a hash like
-// #preview=bottom-right,everyone fills it with sample people and lines.
 if (!tauri && typeof location !== "undefined" && location.hash.startsWith("#preview")) {
   const opts = location.hash.slice(9).replace(/^=/, "").split(",");
   applyConfig({ corner: opts[0] || "top-left", show_everyone: opts.includes("everyone"), show_chat: true, opacity: 0.92 });

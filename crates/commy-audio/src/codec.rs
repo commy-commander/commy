@@ -1,14 +1,8 @@
-//! Opus voice codec for 10 ms, 48 kHz mono frames. Replaces raw PCM on
-//! the wire: about 32 kbps instead of 768 kbps per speaker, with packet
-//! loss concealment when a frame goes missing.
-
 use rusty_opus::{Application, OpusDecoder, OpusEncoder};
 
 use crate::{FRAME_SIZE, SAMPLE_RATE};
 
-/// Target bitrate for speech. Opus voice is transparent well below this.
 pub const VOICE_BITRATE: i32 = 32_000;
-/// Largest Opus packet for one frame (RFC 6716 limit).
 const MAX_PACKET: usize = 1275;
 
 pub struct VoiceEncoder {
@@ -31,8 +25,6 @@ impl VoiceEncoder {
         Self { encoder, input: vec![0.0; FRAME_SIZE], output: vec![0; MAX_PACKET] }
     }
 
-    /// Encodes one 10 ms frame. Returns None if the frame has the wrong
-    /// length or the encoder fails, in which case the frame is skipped.
     pub fn encode(&mut self, pcm: &[i16]) -> Option<Vec<u8>> {
         if pcm.len() != FRAME_SIZE {
             return None;
@@ -51,8 +43,6 @@ impl Default for VoiceEncoder {
     }
 }
 
-/// Codec output can overshoot full scale on loud speech; hard clipping
-/// there is heard as crackle. Above 0.9 the curve bends smoothly toward 1.
 fn soft_limit(x: f32) -> f32 {
     const KNEE: f32 = 0.9;
     let a = x.abs();
@@ -75,8 +65,6 @@ impl VoiceDecoder {
         Self { decoder, output: vec![0.0; FRAME_SIZE] }
     }
 
-    /// Decodes one packet to a 10 ms frame. An empty packet means the
-    /// frame was lost and is concealed. Malformed packets give silence.
     pub fn decode(&mut self, packet: &[u8]) -> Vec<i16> {
         match self.decoder.decode(packet, FRAME_SIZE, &mut self.output) {
             Ok(n) => self.output[..n.min(FRAME_SIZE)]
@@ -125,7 +113,6 @@ mod tests {
             last = dec.decode(&packet);
         }
         let avg = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64;
-        // 32 kbps at 100 frames a second is 40 bytes; PCM would be 960.
         assert!(avg < 120.0, "average packet {avg} bytes");
         assert_eq!(last.len(), FRAME_SIZE);
         let ratio = energy(&last) / energy(&tone(49));
@@ -150,7 +137,6 @@ mod tests {
         assert_eq!(soft_limit(-0.9), -0.9);
         assert!(soft_limit(1.4) < 1.0 && soft_limit(1.4) > 0.95);
         assert!(soft_limit(-3.0) >= -1.0);
-        // Monotonic, so no folding distortion.
         let mut prev = -2.0f32;
         for i in 0..400 {
             let y = soft_limit(-2.0 + i as f32 * 0.01);
@@ -194,7 +180,6 @@ mod tests {
         std::fs::write(path, out).unwrap();
     }
 
-    /// Frames whose decoded energy is far from the input's: dropouts or bursts.
     fn glitches(reference: &[i16], decoded: &[i16]) -> usize {
         reference
             .chunks(FRAME_SIZE)
@@ -206,8 +191,6 @@ mod tests {
             .count()
     }
 
-    /// Signal to noise ratio of `decoded` against `reference`, after finding
-    /// the codec delay.
     fn aligned_snr(reference: &[i16], decoded: &[i16]) -> f64 {
         let best = (0..1000usize)
             .max_by_key(|&lag| {
@@ -223,7 +206,6 @@ mod tests {
         10.0 * (sig / err.max(1.0)).log10()
     }
 
-    /// Manual timing: cargo test -p commy-audio frame_timing -- --ignored --nocapture
     #[test]
     #[ignore]
     fn frame_timing() {
@@ -243,15 +225,12 @@ mod tests {
         println!("per 10 ms frame: noise cancel {nc:?}, opus encode+decode {:?}", start.elapsed() / 500);
     }
 
-    /// Manual check against a speech recording:
-    /// SPEECH_WAV=path cargo test -p commy-audio --release speech_pipeline -- --ignored --nocapture
     #[test]
     #[ignore]
     fn speech_pipeline() {
         let path = std::env::var("SPEECH_WAV").unwrap();
         let mut speech = read_wav(&path);
         let clean = speech.clone();
-        // Some background hiss, like a real mic.
         let mut seed = 1u32;
         for s in speech.iter_mut() {
             seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
@@ -274,7 +253,6 @@ mod tests {
             }
             (processed, decoded)
         };
-        // Two seconds of hiss only, as when you stop talking.
         let mut seed = 7u32;
         let hiss: Vec<i16> = (0..FRAME_SIZE * 200)
             .map(|_| {
@@ -305,7 +283,6 @@ mod tests {
         for (nc, bitrate) in [(false, 32_000), (true, 32_000), (true, 48_000), (true, 64_000)] {
             let (processed, decoded) = run(nc, bitrate);
             println!("nc={nc} {bitrate}: snr {:.1} dB", aligned_snr(&processed, &decoded));
-            // Noise left in the pauses between words, after the codec.
             let gaps: Vec<f64> = clean
                 .chunks(FRAME_SIZE)
                 .zip(decoded.chunks(FRAME_SIZE))

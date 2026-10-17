@@ -1,8 +1,3 @@
-//! Catch-up with gossip neighbors, the app's side of `commy_net::catchup`:
-//! the store over `App.servers`, when sessions start, what happens after
-//! one, and events held until their signer's key is known. Also the one
-//! snapshot a newly joined server takes.
-
 use crate::state::App;
 use chrono::Utc;
 use commy_core::catchup::{digests, items, BucketItems};
@@ -20,76 +15,50 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
-/// The side with the higher node id waits this long, so the lower one
-/// usually starts and the two do not run the same session twice.
 pub const SECOND_START_DELAY: Duration = Duration::from_secs(15);
 
-/// A delayed start is skipped if a session with that peer for that
-/// server completed this recently.
 pub const RECENT_SESSION: Duration = Duration::from_secs(60);
 
-/// Each server catches up with one random neighbor this often.
 pub const PERIODIC_INTERVAL: Duration = Duration::from_secs(600);
 
-/// Servers that catch-up changed are saved together this long after the
-/// first change, not once per page; a session's end saves its server at once.
 pub const SAVE_DELAY: Duration = Duration::from_secs(2);
 
-/// Events held per server for an unknown author key, and for how long.
 pub const HOLD_CAP: usize = 1000;
 pub const HOLD_FOR: Duration = Duration::from_secs(15 * 60);
-/// Most bytes of events held per server, counted as sent.
 pub const HOLD_BYTES: usize = 4 * 1024 * 1024;
 
 type SessionKey = (ServerId, [u8; 32]);
 
-/// An event held until its signer's key is known: when it was held, the
-/// signer, and the event.
 pub type Held = (Instant, UserId, ServerEvent);
 
-/// Catch-up bookkeeping kept in `App.catchup`.
 #[derive(Debug, Default)]
 pub struct Catchup {
-    /// Sessions we started that are still running.
     running: HashSet<SessionKey>,
-    /// When the last session with a peer completed, either side.
     completed: HashMap<SessionKey, Instant>,
-    /// Remote message events whose signer has no known key yet, with
-    /// their size (see [`held_size`]).
     held: HashMap<ServerId, VecDeque<(Held, usize)>>,
-    /// New messages from others per channel, not yet told to the webview.
     fresh: HashMap<ServerId, HashMap<ChannelId, FreshChannel>>,
-    /// Servers changed since the webview was last told.
     dirty: HashSet<ServerId>,
-    /// Servers changed in memory and not saved yet.
     unsaved: HashSet<ServerId>,
-    /// A delayed save of `unsaved` is on its way.
     save_scheduled: bool,
 }
 
-/// What catch-up changed in one server since the last look.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Changes {
     pub changed: bool,
     pub fresh: HashMap<ChannelId, FreshChannel>,
 }
 
-/// A new message from someone else that a catch-up brought in, as much
-/// of it as the webview needs to count it and to notify about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fresh {
     pub channel: ChannelId,
     pub author: UserId,
     pub content: String,
     pub has_attachments: bool,
-    /// Unix seconds; the webview only notifies about recent messages.
     pub at: i64,
-    /// Whether the message mentions us (see [`mentions`]).
     pub mentioned: bool,
 }
 
 impl Fresh {
-    /// What `message` would mean to the member named by `names`.
     pub fn of(message: &Message, names: &[&str]) -> Self {
         Self {
             channel: message.channel,
@@ -102,8 +71,6 @@ impl Fresh {
     }
 }
 
-/// The new messages of one channel: how many, the newest one, and
-/// whether any of them mentioned us.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FreshChannel {
     pub count: u32,
@@ -111,9 +78,6 @@ pub struct FreshChannel {
     pub mentioned: bool,
 }
 
-/// Whether `content` mentions one of `names` (or everyone) as a whole
-/// word, the same rule the webview applies to live messages: "@Sam"
-/// does not ping "Samantha".
 pub fn mentions(content: &str, names: &[&str]) -> bool {
     let lower = content.to_lowercase();
     let targets = names.iter().map(|n| n.to_lowercase()).chain(["everyone".into(), "here".into()]);
@@ -132,7 +96,6 @@ pub fn mentions(content: &str, names: &[&str]) -> bool {
 }
 
 impl Catchup {
-    /// Marks a session as running; false if one with that peer already is.
     pub fn begin(&mut self, key: SessionKey) -> bool {
         self.running.insert(key)
     }
@@ -144,7 +107,6 @@ impl Catchup {
         }
     }
 
-    /// A session completed, possibly one the peer started.
     pub fn record_completed(&mut self, key: SessionKey, now: Instant) {
         self.completed.retain(|_, at| now.saturating_duration_since(*at) < RECENT_SESSION);
         self.completed.insert(key, now);
@@ -156,9 +118,6 @@ impl Catchup {
             .is_some_and(|at| now.saturating_duration_since(*at) < RECENT_SESSION)
     }
 
-    /// Holds an event until its signer's key arrives; the oldest go past
-    /// the caps (see [`trim_held`]). One already held for the same message
-    /// and kind is kept instead, or replaced by a newer edit.
     pub fn hold(&mut self, server: ServerId, signer: UserId, event: ServerEvent, now: Instant) {
         let queue = self.held.entry(server).or_default();
         if let Some(key) = hold_key(&event) {
@@ -183,15 +142,12 @@ impl Catchup {
         self.held.get(&server).map_or(0, VecDeque::len)
     }
 
-    /// [`Self::take_held`] for every signer.
     #[cfg(test)]
     pub fn take_all_held(&mut self, server: ServerId, now: Instant) -> Vec<Held> {
         let signers = self.held.get(&server).map(|q| q.iter().map(|((_, by, _), _)| *by).collect()).unwrap_or_default();
         self.take_held(server, &signers, now)
     }
 
-    /// The server's held events signed by one of `signers`, oldest first;
-    /// the others stay held. Expired ones go.
     pub fn take_held(&mut self, server: ServerId, signers: &HashSet<UserId>, now: Instant) -> Vec<Held> {
         let Some(queue) = self.held.get_mut(&server) else { return Vec::new() };
         let (taken, kept): (VecDeque<_>, VecDeque<_>) =
@@ -203,8 +159,6 @@ impl Catchup {
         taken.into_iter().map(|(held, _)| held).collect()
     }
 
-    /// Puts events still waiting back in front of any held meanwhile,
-    /// unless the same one was held again in between.
     pub fn restore_held(&mut self, server: ServerId, events: Vec<Held>) {
         if events.is_empty() {
             return;
@@ -219,7 +173,6 @@ impl Catchup {
         trim_held(queue);
     }
 
-    /// Drops held events past [`HOLD_FOR`] in every server.
     pub fn expire_held(&mut self, now: Instant) {
         for queue in self.held.values_mut() {
             queue.retain(|((at, _, _), _)| !expired(*at, now));
@@ -227,7 +180,6 @@ impl Catchup {
         self.held.retain(|_, queue| !queue.is_empty());
     }
 
-    /// Notes that a server changed, with its new messages.
     pub fn note_applied(&mut self, server: ServerId, fresh: impl IntoIterator<Item = Fresh>) {
         self.dirty.insert(server);
         self.unsaved.insert(server);
@@ -259,8 +211,6 @@ impl Catchup {
         }
     }
 
-    /// True when a server waits to be saved and no save is on its way yet;
-    /// the caller then starts one (see [`SAVE_DELAY`]).
     pub fn schedule_save(&mut self) -> bool {
         if self.unsaved.is_empty() || self.save_scheduled {
             return false;
@@ -269,18 +219,15 @@ impl Catchup {
         true
     }
 
-    /// The servers to save now; the next change schedules a save again.
     pub fn take_unsaved(&mut self) -> Vec<ServerId> {
         self.save_scheduled = false;
         self.unsaved.drain().collect()
     }
 
-    /// True when `server` waited to be saved, which the caller now does.
     pub fn take_unsaved_server(&mut self, server: ServerId) -> bool {
         self.unsaved.remove(&server)
     }
 
-    /// Everything about a server we left.
     pub fn forget_server(&mut self, server: ServerId) {
         self.held.remove(&server);
         self.fresh.remove(&server);
@@ -294,15 +241,11 @@ fn expired(at: Instant, now: Instant) -> bool {
     now.saturating_duration_since(at) >= HOLD_FOR
 }
 
-/// What a held event weighs against [`HOLD_BYTES`]: its size as sent.
-/// None when it could not be sent as one gossip event, as no valid
-/// message event can, so it is not worth holding.
 fn held_size(event: &ServerEvent) -> Option<usize> {
     let size = commy_net::protocol::gossip_size(&WirePayload::Event(event.clone()));
     (size <= commy_net::protocol::MAX_FRAME_BYTES).then_some(size)
 }
 
-/// Drops the oldest held events past [`HOLD_CAP`] or [`HOLD_BYTES`].
 fn trim_held(queue: &mut VecDeque<(Held, usize)>) {
     let mut bytes: usize = queue.iter().map(|(_, size)| size).sum();
     while queue.len() > HOLD_CAP || bytes > HOLD_BYTES {
@@ -311,8 +254,6 @@ fn trim_held(queue: &mut VecDeque<(Held, usize)>) {
     }
 }
 
-/// What makes two held events the same: their kind and message, and for
-/// a delete who made it, since each deleter's proof stands on its own.
 fn hold_key(event: &ServerEvent) -> Option<(u8, MessageId, Option<UserId>)> {
     match event {
         ServerEvent::MessageCreate { message } => Some((0, message.id, None)),
@@ -322,7 +263,6 @@ fn hold_key(event: &ServerEvent) -> Option<(u8, MessageId, Option<UserId>)> {
     }
 }
 
-/// True when `new` is an edit made after the held edit `old`.
 fn newer_edit(new: &ServerEvent, old: &ServerEvent) -> bool {
     matches!(
         (new, old),
@@ -330,13 +270,10 @@ fn newer_edit(new: &ServerEvent, old: &ServerEvent) -> bool {
     )
 }
 
-/// When to start a session with a new neighbor: at once if we have
-/// pending sends or the lower node id, otherwise after a pause.
 pub fn start_delay(ours: [u8; 32], peer: [u8; 32], pending: bool) -> Option<Duration> {
     (!pending && ours > peer).then_some(SECOND_START_DELAY)
 }
 
-/// Message events that wait for their signer's key instead of being lost.
 pub fn holdable(event: &ServerEvent) -> bool {
     matches!(
         event,
@@ -344,20 +281,15 @@ pub fn holdable(event: &ServerEvent) -> bool {
     )
 }
 
-/// Which new messages count as unread for the webview.
 #[derive(Debug, Default)]
 pub struct Unread {
     me: Option<UserId>,
-    /// Our username and display name, for mention detection.
     names: Vec<String>,
     blocked: HashSet<UserId>,
-    /// Nothing counts: history a newly joined server receives before its
-    /// first snapshot.
     silent: bool,
 }
 
 impl Unread {
-    /// Read from the app before its servers are locked.
     pub fn of(app: &App, server: ServerId) -> Self {
         let profile = app.profile.lock().unwrap().clone();
         Self {
@@ -372,14 +304,11 @@ impl Unread {
         }
     }
 
-    /// `message` as the webview will hear of it.
     fn fresh(&self, message: &Message) -> Fresh {
         let names: Vec<&str> = self.names.iter().map(String::as_str).collect();
         Fresh::of(message, &names)
     }
 
-    /// Whether a message not in `state` yet is unread once applied: someone
-    /// else wrote it, not someone we blocked, and not before we joined.
     fn counts(&self, state: &ServerState, message: &Message) -> bool {
         if self.silent
             || Some(message.author) == self.me
@@ -396,8 +325,6 @@ impl Unread {
     }
 }
 
-/// Applies one catch-up page. Returns the report, the events to hold
-/// with their signer, and the new messages that count as unread.
 pub fn apply_page(
     state: &mut ServerState,
     unread: &Unread,
@@ -420,7 +347,6 @@ pub fn apply_page(
     (report, held, fresh)
 }
 
-/// Who signed a catch-up item: a message's author, a delete's deleter.
 fn item_signer(event: &ServerEvent) -> Option<UserId> {
     match event {
         ServerEvent::MessageCreate { message } => Some(message.author),
@@ -429,16 +355,13 @@ fn item_signer(event: &ServerEvent) -> Option<UserId> {
     }
 }
 
-/// Outcome of retrying held events.
 #[derive(Debug, Default)]
 pub struct Retried {
     pub changed: bool,
     pub fresh: Vec<Fresh>,
-    /// Events whose signer is still unknown.
     pub still: Vec<Held>,
 }
 
-/// Re-applies held events in order; those still missing a key stay held.
 pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<Held>) -> Retried {
     let mut out = Retried::default();
     for (at, _, event) in events {
@@ -463,12 +386,6 @@ pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<Held>) -
     out
 }
 
-/// Applies a live event from a peer. Returns the store's answer; for a
-/// create, the message when it is new here, absent before and present
-/// after (a late copy kept out by a stored delete may return Ok(true)
-/// because its proof changed, but it is no new message); and for a join
-/// or profile, the user when it pinned their key, so what was held for
-/// it may go in.
 pub fn apply_live(
     state: &mut ServerState,
     event: ServerEvent,
@@ -489,10 +406,6 @@ pub fn apply_live(
     (applied, created, pinned)
 }
 
-/// Payload of `messages-caught-up`: new messages per channel with the
-/// newest one, so the webview can bump unread counts and show one
-/// notification per channel instead of one per message. `state` names
-/// the server, channels and authors; without it ids stand in.
 pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChannel>, state: Option<&ServerState>) -> serde_json::Value {
     let channels: serde_json::Map<String, serde_json::Value> = fresh
         .iter()
@@ -522,23 +435,14 @@ pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChann
     })
 }
 
-/// One neighbor picked by `seed`, for the periodic session.
 fn pick(neighbors: &[[u8; 32]], seed: u64) -> Option<[u8; 32]> {
     (!neighbors.is_empty()).then(|| neighbors[(seed % neighbors.len() as u64) as usize])
 }
 
-// ---------- The store ----------
-
-/// Reaches the app state and the webview from a tauri handle, or from a
-/// plain `App` in tests.
 pub trait AppAccess: Send + Sync + 'static {
     fn app(&self) -> &App;
-    /// Tells the webview something changed.
     fn emit(&self, event: &str, payload: serde_json::Value);
-    /// Saves the servers changed meanwhile after [`SAVE_DELAY`], in the
-    /// background (see [`save_unsaved`]).
     fn save_later(&self);
-    /// Starts a catch-up session with a neighbor.
     fn catch_up(&self, server: ServerId, peer: [u8; 32]);
 }
 
@@ -564,7 +468,6 @@ impl AppAccess for tauri::AppHandle {
     }
 }
 
-/// Saves every server catch-up changed since the last save.
 pub fn save_unsaved(app: &App) {
     let servers = app.catchup.lock().unwrap().take_unsaved();
     for server in servers {
@@ -572,8 +475,6 @@ pub fn save_unsaved(app: &App) {
     }
 }
 
-/// An `App` without a webview that records what it would have been told.
-/// Delayed saves run on a thread of their own.
 #[cfg(test)]
 #[derive(Clone, Default)]
 pub struct TestHandle {
@@ -588,7 +489,6 @@ impl TestHandle {
         Self { app, events: Default::default(), saves_scheduled: Default::default() }
     }
 
-    /// Events emitted since the last call, oldest first.
     pub fn take_events(&self) -> Vec<(String, serde_json::Value)> {
         std::mem::take(&mut *self.events.lock().unwrap())
     }
@@ -613,11 +513,9 @@ impl AppAccess for TestHandle {
         });
     }
 
-    /// The harness starts its sessions on NeighborUp, as the app also does.
     fn catch_up(&self, _server: ServerId, _peer: [u8; 32]) {}
 }
 
-/// [`CatchupStore`] over `App.servers`. Every call locks briefly.
 pub struct AppStore<A>(pub A);
 
 impl<A: AppAccess> AppStore<A> {
@@ -629,7 +527,6 @@ impl<A: AppAccess> AppStore<A> {
 impl<A: AppAccess> CatchupStore for AppStore<A> {
     fn local_identity(&self, server: ServerId) -> Option<(UserId, Identity)> {
         let app = self.0.app();
-        // A key that may still be replaced is not shown to anyone yet.
         if !app.key_settled() {
             return None;
         }
@@ -671,7 +568,6 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
             return;
         }
         app.catchup.lock().unwrap().note_applied(server, []);
-        // Items held for these keys can go in now.
         release_held(&self.0, server, &learned);
     }
 
@@ -681,7 +577,6 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
         let (report, held, fresh) = {
             let mut servers = app.servers.lock().unwrap();
             let Some(state) = servers.get_mut(&server) else {
-                // Left meanwhile: nothing was taken, so the peer counts none of it.
                 let rejected = messages.iter().map(|m| m.id).chain(tombstones.iter().map(|p| p.message));
                 return ApplyReport { rejected: dedup(rejected), ..Default::default() };
             };
@@ -697,7 +592,6 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
                 catchup.note_applied(server, fresh);
             }
         }
-        // Shown at once and saved soon, however the session ends.
         if !report.applied.is_empty() {
             flush(&self.0, server, false);
         }
@@ -705,25 +599,20 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
     }
 }
 
-/// Ids in their first order, each once.
 fn dedup(ids: impl IntoIterator<Item = MessageId>) -> Vec<MessageId> {
     let mut seen = HashSet::new();
     ids.into_iter().filter(|id| seen.insert(*id)).collect()
 }
 
-/// The catch-up store handed to the node.
 pub fn store(handle: &tauri::AppHandle) -> SharedCatchupStore {
     Arc::new(AppStore(handle.clone()))
 }
-
-// ---------- Scheduling ----------
 
 fn our_node(app: &App) -> Option<[u8; 32]> {
     let hex = app.node_hex.lock().unwrap().clone()?;
     data_encoding::HEXLOWER.decode(hex.as_bytes()).ok()?.try_into().ok()
 }
 
-/// A gossip neighbor came up: schedule a session with it, see [`start_delay`].
 pub fn on_neighbor_up(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32]) {
     let app = handle.state::<App>();
     let Some(ours) = our_node(&app) else { return };
@@ -731,10 +620,6 @@ pub fn on_neighbor_up(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32
     spawn_session(handle.clone(), server, peer, start_delay(ours, peer, pending), true);
 }
 
-/// Runs one session with `peer` after `delay`, at most one per server and
-/// peer at a time. A delayed one is skipped when a session with that peer
-/// completed meanwhile. With `retry`, a refusal that names a delay is
-/// tried once more after it.
 pub fn spawn_session(handle: tauri::AppHandle, server: ServerId, peer: [u8; 32], delay: Option<Duration>, retry: bool) {
     tauri::async_runtime::spawn(async move {
         if let Some(delay) = delay {
@@ -753,8 +638,6 @@ async fn run_session(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32]
     if !app.catchup.lock().unwrap().begin((server, peer)) {
         return;
     }
-    // The session future owns what it needs, so the network lock is
-    // released before it runs.
     let session = {
         let net = app.net.lock().await;
         net.as_ref().map(|node| node.catch_up(server, peer, store(handle)))
@@ -776,7 +659,6 @@ async fn run_session(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32]
         }
         Err(e) => {
             tracing::debug!("catch-up on {server} did not complete: {e:#}");
-            // Pages applied before the failure still count.
             after_session(handle, server, None);
             let wait = e.downcast_ref::<CatchupError>().and_then(CatchupError::retry_after_ms);
             if let (true, Some(ms)) = (retry, wait) {
@@ -786,15 +668,11 @@ async fn run_session(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32]
     }
 }
 
-/// A peer finished a session it started with us.
 pub fn on_caught_up(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32], report: &SessionReport) {
     handle.state::<App>().catchup.lock().unwrap().record_completed((server, peer), Instant::now());
     after_session(handle, server, Some(report));
 }
 
-/// Clears pending sends the peer confirmed it holds, then saves and
-/// announces what the session changed. A session that fails before this
-/// runs is saved by the delayed save its pages scheduled.
 pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<&SessionReport>) {
     let app = access.app();
     let mut outbox_changed = false;
@@ -818,9 +696,6 @@ pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<
     flush(access, server, outbox_changed);
 }
 
-/// Tells the webview what catch-up or released events changed in a
-/// server, `server-event` to redraw and `messages-caught-up` for unread
-/// counts, and schedules saving it (see [`SAVE_DELAY`]).
 fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
     let app = access.app();
     let (changes, save) = {
@@ -834,7 +709,6 @@ fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
         access.emit("server-event", server.to_string().into());
     }
     if !changes.fresh.is_empty() {
-        // Named with the lock held, emitted without it.
         let payload = {
             let servers = app.servers.lock().unwrap();
             caught_up_payload(server, &changes.fresh, servers.get(&server))
@@ -843,14 +717,10 @@ fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
     }
 }
 
-/// Holds a remote message event whose signer has no known key yet.
 pub fn hold(app: &App, server: ServerId, signer: UserId, event: ServerEvent) {
     app.catchup.lock().unwrap().hold(server, signer, event, Instant::now());
 }
 
-/// Retries a server's held events signed by `signers`, whose keys just
-/// became known; the rest stay held. New messages bump unread counts
-/// silently.
 pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserId]) {
     let app = access.app();
     let signers: HashSet<UserId> = signers.iter().copied().collect();
@@ -879,12 +749,6 @@ pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserI
     flush(access, server, false);
 }
 
-// ---------- The first snapshot ----------
-
-/// The snapshot we answer a newcomer's request with, none for a server
-/// still waiting for its own: what we hold there is a placeholder. While
-/// our key may still be replaced, it stays out of it, and so does what we
-/// signed with it: our messages arrive by catch-up once it settled.
 pub fn snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
     if app.awaits_snapshot(server) {
         return None;
@@ -903,11 +767,6 @@ pub fn snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
     Some(payload)
 }
 
-/// What we send when someone on `server`'s topic asks for a snapshot:
-/// ours, if we have one to give (see [`snapshot_for`]), then our own join
-/// either way, so a newcomer whose snapshot was too large to name every
-/// member still learns of each one online. Nothing for a server we are
-/// not in.
 pub fn sync_replies(app: &App, server: ServerId) -> Vec<WirePayload> {
     let Some(me) = app.profile.lock().unwrap().clone() else { return Vec::new() };
     if !app.servers.lock().unwrap().contains_key(&server) {
@@ -917,25 +776,12 @@ pub fn sync_replies(app: &App, server: ServerId) -> Vec<WirePayload> {
     snapshot_for(app, server).into_iter().chain([WirePayload::Event(join)]).collect()
 }
 
-/// Marks a server whose placeholder was just placed from a ticket as
-/// waiting for its first snapshot, and returns what to send there: our
-/// join, then a request for a snapshot. Joining asked for one already,
-/// but an answer that came before the wait was marked was dropped.
 pub fn await_snapshot(app: &App, server: ServerId, me: UserProfile) -> Vec<WirePayload> {
     app.set_awaiting_snapshot(server, true);
     let join = ServerEvent::MemberJoin { server, profile: app.announced(me) };
     vec![WirePayload::Event(join), WirePayload::SyncRequest]
 }
 
-/// Takes a `SyncResponse` that arrived on `server`'s topic. Only a server
-/// joined from a ticket that still waits for its first snapshot takes
-/// one (see `App::awaiting_snapshot`), and only a snapshot of that same
-/// server. It replaces the provisional state and trusts the keys it
-/// carries: keys pinned meanwhile are provisional, so only those it
-/// leaves out stay, and our own. What came meanwhile is kept: members,
-/// messages with their edits, and deletes. Every other state keeps its
-/// pinned keys and delete proofs; catch-up brings what it lacks. Returns
-/// true when the snapshot was taken.
 pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WirePayload) -> bool {
     let app = access.app();
     let WirePayload::SyncResponse { server: mut remote_server, members, profiles, recent_messages, voice } = payload else {
@@ -951,11 +797,9 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
     let learned: Vec<UserId>;
     {
         let mut servers = app.servers.lock().unwrap();
-        // A server left meanwhile stays gone.
         let Some(old) = servers.remove(&server) else { return false };
         let pinned: HashMap<UserId, IdentityKey> = old.profiles.values().filter_map(|p| Some((p.id, p.identity?))).collect();
         let mut state = ServerState::new(remote_server);
-        // Snapshots carry no emojis, sounds or pins; keep any announced already.
         if old.server.rules.is_some() {
             let _ = state.apply(ServerEvent::RulesSet { server, rules: old.server.rules.clone() });
         }
@@ -973,30 +817,22 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         for sound in old.server.soundboard.iter().cloned() {
             let _ = state.apply(ServerEvent::SoundAdd { server, sound });
         }
-        // Nor pins; keep those announced already.
         for pin in old.server.pins.iter().cloned() {
             let event = ServerEvent::MessagePin { server, channel: pin.channel, message: pin.message, by: pin.by, at: pin.at, pinned: true };
             let _ = state.apply(event);
         }
-        // Older apps may still name someone appearing offline; keep presence
-        // as others see it, like every other way a profile arrives.
         for profile in profiles {
             state.profiles.insert(profile.id, profile.as_seen_by_others());
         }
-        // A key pinned here that the snapshot left out stays.
         for profile in old.profiles.values().filter(|p| p.identity.is_some()) {
             let entry = state.profiles.entry(profile.id).or_insert_with(|| profile.clone());
             entry.identity = entry.identity.or(profile.identity);
         }
-        // So do members whose joins came first: a snapshot too large to
-        // name every member leaves some out.
         let heard = old.server.members.iter().filter_map(|m| old.profiles.get(&m.user));
         for profile in heard.filter(|p| Some(p.id) != me_id) {
             let profile = state.profiles.get(&profile.id).cloned().unwrap_or_else(|| profile.clone());
             let _ = state.apply(ServerEvent::MemberJoin { server, profile });
         }
-        // Keep our own profile visible, with the key we sign with, and
-        // join as startup does: the snapshot may predate our join.
         if let Some(me) = me {
             let key = me.identity;
             let entry = state.profiles.entry(me.id).or_insert_with(|| me.clone());
@@ -1011,12 +847,9 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
                 held.push((signer, event));
             }
         }
-        // The call in progress, as the peer saw it.
         for entry in voice.into_iter().filter(|v| Some(v.user) != me_id) {
             let _ = state.apply(entry.into_event());
         }
-        // Then what came while we waited, our pending messages among it,
-        // wherever its channel and signer's key hold.
         let waited = old.snapshot();
         for message in waited.messages.into_iter().flat_map(|(_, list)| list) {
             let _ = state.apply(ServerEvent::MessageCreate { message });
@@ -1036,7 +869,6 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         hold(app, server, signer, event);
     }
     app.persist_server(server);
-    // Still a newcomer here, so released history is not counted as unread.
     release_held(access, server, &learned);
     app.set_awaiting_snapshot(server, false);
     access.emit("server-event", server.to_string().into());
@@ -1044,23 +876,16 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
     true
 }
 
-/// A member as a snapshot carried them.
 fn member_of(m: commy_net::protocol::SyncMember) -> commy_core::Member {
     let joined_at = chrono::DateTime::from_timestamp_millis(m.joined_ms).unwrap_or_default();
     commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at }
 }
 
-/// The nodes a stored invite bootstraps from, or None when it is unreadable.
 pub fn invite_nodes(raw: &str) -> Option<Vec<[u8; 32]>> {
     let ticket = commy_net::ServerTicket::decode(raw).ok()?;
     Some(ticket.bootstrap.iter().map(|addr| *addr.node_id.as_bytes()).collect())
 }
 
-/// At startup, whether a server an earlier version joined still waits for
-/// its first snapshot, which that version did not record: its state is the
-/// placeholder made on joining (ours, with our profile only and no
-/// messages), and its stored invite names nodes, none of them ours, so we
-/// did not create it.
 pub fn joined_placeholder(state: &ServerState, me: UserId, invite: Option<&[[u8; 32]]>, our_node: [u8; 32]) -> bool {
     let placeholder = state.server.owner == me
         && state.profiles.keys().all(|id| *id == me)
@@ -1069,7 +894,6 @@ pub fn joined_placeholder(state: &ServerState, me: UserId, invite: Option<&[[u8;
     placeholder && joined
 }
 
-/// Marks the servers [`joined_placeholder`] finds as awaiting a snapshot.
 pub fn mark_joined_placeholders(app: &App, invites: &HashMap<ServerId, String>, our_node: [u8; 32]) {
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
     let found: Vec<ServerId> = app
@@ -1091,7 +915,6 @@ pub fn mark_joined_placeholders(app: &App, invites: &HashMap<ServerId, String>, 
     }
 }
 
-/// One session for each server and each of its neighbors.
 pub fn every_neighbor(neighbors: Vec<(ServerId, Vec<[u8; 32]>)>) -> Vec<SessionKey> {
     neighbors
         .into_iter()
@@ -1099,8 +922,6 @@ pub fn every_neighbor(neighbors: Vec<(ServerId, Vec<[u8; 32]>)>) -> Vec<SessionK
         .collect()
 }
 
-/// Every [`PERIODIC_INTERVAL`], each server catches up with one random
-/// neighbor (cheap when already in sync), and stale held events expire.
 pub async fn run_periodic(handle: tauri::AppHandle) {
     loop {
         tokio::time::sleep(PERIODIC_INTERVAL).await;
@@ -1126,7 +947,6 @@ mod tests {
     use super::*;
     use commy_core::{Server, UserProfile};
 
-    /// A member with a key, signing as themselves.
     struct Member {
         profile: UserProfile,
         identity: Identity,
@@ -1151,7 +971,6 @@ mod tests {
         }
     }
 
-    /// A server owned by `owner`, with its first text channel.
     fn server(owner: &Member) -> (ServerState, ChannelId) {
         let server = Server::new("s", owner.id());
         let channel = server.channels[0].id;
@@ -1165,15 +984,12 @@ mod tests {
         state.apply(ServerEvent::MemberJoin { server, profile: member.profile.clone() }).unwrap();
     }
 
-    /// `member` joins without a key, as an announcement made while their
-    /// key was held back.
     fn join_without_key(state: &mut ServerState, member: &Member) {
         let server = state.server.id;
         let profile = UserProfile { identity: None, ..member.profile.clone() };
         state.apply(ServerEvent::MemberJoin { server, profile }).unwrap();
     }
 
-    /// Unread counting as `member` sees it, blocking nobody.
     fn unread_for(member: &Member) -> Unread {
         Unread { me: Some(member.id()), ..Default::default() }
     }
@@ -1201,7 +1017,6 @@ mod tests {
         assert!(catchup.completed_recently(key, t0 + Duration::from_secs(59)));
         assert!(!catchup.completed_recently(key, t0 + RECENT_SESSION));
 
-        // A session the peer started counts, and does not touch ours.
         let other = (key.0, [8u8; 32]);
         assert!(catchup.begin(other));
         catchup.record_completed(other, t0);
@@ -1236,7 +1051,6 @@ mod tests {
         catchup.expire_held(later);
         assert_eq!(catchup.held_count(sid), 0);
 
-        // Restored events go in front of ones held meanwhile.
         catchup.hold(sid, who, typing(9), t0);
         catchup.restore_held(sid, vec![(t0, who, typing(1)), (t0, who, typing(2))]);
         let order: Vec<ServerEvent> = catchup.take_all_held(sid, t0).into_iter().map(|(_, _, e)| e).collect();
@@ -1249,7 +1063,6 @@ mod tests {
         let stranger = Member::new("stranger");
         let (state, channel) = server(&owner);
         let sid = state.server.id;
-        // Large as relayed messages get: full content, many reactions.
         let post = |i: usize, reactors: usize| {
             let mut message = stranger.post(&state, channel, &format!("{i:04} {}", "x".repeat(3000)));
             message.reactions.push(commy_core::Reaction { emoji: ":up".into(), users: (0..reactors).map(|_| UserId::new()).collect() });
@@ -1257,7 +1070,6 @@ mod tests {
         };
         let events: Vec<ServerEvent> = (0..800).map(|i| post(i, 300)).collect();
         let size = |e: &ServerEvent| held_size(e).unwrap();
-        // The newest that fit together.
         let mut total = 0;
         let fits = events.iter().rev().take_while(|e| {
             total += size(e);
@@ -1271,14 +1083,12 @@ mod tests {
         for event in &events {
             catchup.hold(sid, by, event.clone(), t0);
         }
-        // One too large to send is not held, and pushes nothing out.
         catchup.hold(sid, by, post(800, 5000), t0);
         let held: Vec<ServerEvent> = catchup.take_all_held(sid, t0).into_iter().map(|(_, _, e)| e).collect();
         assert!(held.iter().map(size).sum::<usize>() <= HOLD_BYTES);
         assert_eq!(held.len(), fits);
         assert_eq!(held, events[events.len() - fits..], "the oldest were dropped");
 
-        // Put back in front of newer ones, the oldest go again.
         catchup.hold(sid, by, events[0].clone(), t0);
         catchup.restore_held(sid, held.iter().map(|e| (t0, by, e.clone())).collect());
         let again: Vec<ServerEvent> = catchup.take_all_held(sid, t0).into_iter().map(|(_, _, e)| e).collect();
@@ -1302,7 +1112,6 @@ mod tests {
             at,
             mentioned: mentions(content, &["me"]),
         };
-        // The newest message is kept even when it is applied first.
         catchup.note_applied(sid, [fresh(a, "@me later", 20), fresh(b, "other", 5), fresh(a, "earlier", 10)]);
         catchup.note_applied(sid, []);
         let changes = catchup.take_changes(sid);
@@ -1356,7 +1165,6 @@ mod tests {
         let edit = first.edit_event(sid, "first, edited", Utc::now(), &newcomer.identity);
         let t0 = Instant::now();
 
-        // Their messages beat their join: the key is unknown, so they are held.
         let mut catchup = Catchup::default();
         for event in [
             ServerEvent::MessageCreate { message: first.clone() },
@@ -1382,7 +1190,6 @@ mod tests {
         assert_eq!(state.message(first.id).unwrap().content, "first, edited");
         assert!(state.has_message(second.id));
 
-        // Our own messages coming back are not unread.
         let mine = owner.post(&state, channel, "mine");
         let retried = retry_held(&mut state, &unread_for(&owner), vec![(t0, owner.id(), ServerEvent::MessageCreate { message: mine })]);
         assert!(retried.changed && retried.fresh.is_empty());
@@ -1427,14 +1234,12 @@ mod tests {
         let message = friend.post(&state, channel, "soon gone");
         let delete = TombstoneProof::sign(sid, channel, message.id, friend.id(), Utc::now(), &friend.identity);
 
-        // The delete overtook the create.
         assert_eq!(apply_live(&mut state, delete.into_event()), (Ok(true), None, None));
         let create = ServerEvent::MessageCreate { message: message.clone() };
         assert_eq!(apply_live(&mut state, create.clone()), (Ok(true), None, None), "only its proof changed");
         assert!(!state.has_message(message.id));
         assert_eq!(apply_live(&mut state, create), (Ok(false), None, None));
 
-        // A new message is news once; a newer copy of it is not.
         let fresh = friend.post(&state, channel, "hello");
         let create = ServerEvent::MessageCreate { message: fresh.clone() };
         assert_eq!(apply_live(&mut state, create.clone()), (Ok(true), Some(fresh.clone()), None));
@@ -1444,7 +1249,6 @@ mod tests {
         edited.edited_at = Some(Utc::now() + chrono::Duration::seconds(1));
         edited.sign(sid, &friend.identity);
         assert_eq!(apply_live(&mut state, ServerEvent::MessageCreate { message: edited }), (Ok(true), None, None));
-        // Other events bring no message.
         let rename = ServerEvent::ServerRename { server: sid, name: "renamed".into() };
         assert_eq!(apply_live(&mut state, rename), (Ok(true), None, None));
     }
@@ -1465,7 +1269,6 @@ mod tests {
         assert_eq!(pick(&list, 4), Some(list[1]));
     }
 
-    /// The store over a real `App`, as the node sees it.
     fn app_with(owner: &Member, state: ServerState) -> Arc<App> {
         let app = Arc::new(App::default());
         *app.profile.lock().unwrap() = Some(owner.profile.clone());
@@ -1519,7 +1322,6 @@ mod tests {
             vec![("server-event".into(), sid.to_string().into()), ("messages-caught-up".into(), caught_up)]
         );
 
-        // A message from someone whose join has not arrived waits in the queue.
         let late = Member::new("late");
         let early = late.post(&app.servers.lock().unwrap()[&sid], channel, "early");
         let report = store.apply(sid, vec![early.clone()], vec![]);
@@ -1559,8 +1361,6 @@ mod tests {
         let handle = TestHandle::new(app.clone());
         let store = AppStore(handle.clone());
 
-        // Pages applied in a session that never finishes, as when a peer's
-        // session with us fails: shown at once, not saved per page.
         let first = friend.post(&app.servers.lock().unwrap()[&sid], channel, "first page");
         let second = friend.post(&app.servers.lock().unwrap()[&sid], channel, "second page");
         store.apply(sid, vec![first.clone()], vec![]);
@@ -1571,7 +1371,6 @@ mod tests {
         assert!(!saved_has(&dir, sid, first.id), "not saved per page");
         assert_eq!(handle.saves_scheduled.load(std::sync::atomic::Ordering::SeqCst), 1, "one save for both");
 
-        // The delayed save writes both, not before its delay.
         let started = Instant::now();
         while !saved_has(&dir, sid, second.id) && started.elapsed() < SAVE_DELAY * 5 {
             std::thread::sleep(Duration::from_millis(50));
@@ -1580,7 +1379,6 @@ mod tests {
         assert!(saved_has(&dir, sid, first.id) && saved_has(&dir, sid, second.id));
         assert_eq!(app.catchup.lock().unwrap().take_changes(sid), Changes::default(), "nothing left over");
 
-        // A page that changes nothing says nothing and saves nothing.
         store.apply(sid, vec![second], vec![]);
         assert!(handle.take_events().is_empty());
         assert_eq!(handle.saves_scheduled.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -1627,14 +1425,12 @@ mod tests {
         let handle = TestHandle::new(app.clone());
         let store = AppStore(handle.clone());
 
-        // Relayed history from a member whose key we lack waits for it.
         let absent = Member::new("absent");
         join_without_key(app.servers.lock().unwrap().get_mut(&sid).unwrap(), &absent);
         let message = absent.post(&app.servers.lock().unwrap()[&sid], channel, "while you were away");
         store.apply(sid, vec![message.clone()], vec![]);
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 1);
 
-        // Their profile comes along in a later session.
         store.apply_profiles(sid, vec![absent.profile.clone()]);
         let state = app.servers.lock().unwrap()[&sid].clone();
         assert!(state.has_message(message.id));
@@ -1644,7 +1440,6 @@ mod tests {
         let caught_up = caught_up_payload(sid, &HashMap::from([(channel, fresh)]), Some(&state));
         assert!(handle.take_events().contains(&("messages-caught-up".into(), caught_up)));
 
-        // Only profiles with a key are taken, and only members' passed on.
         let unkeyed = UserProfile::new("unkeyed");
         store.apply_profiles(sid, vec![unkeyed.clone()]);
         assert!(!app.servers.lock().unwrap()[&sid].profiles.contains_key(&unkeyed.id));
@@ -1671,11 +1466,9 @@ mod tests {
         let (by_a, by_b) = (post(&a, "from a"), post(&b, "from b"));
         store.apply(sid, vec![by_a.clone(), by_b.clone()], vec![]);
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 2);
-        // b's key is known by now, though nothing named b since.
         app.servers.lock().unwrap().get_mut(&sid).unwrap().profiles.get_mut(&b.id()).unwrap().identity =
             Some(b.identity.public());
         handle.take_events();
-        // What the net loop does with a live event.
         let live = |event: ServerEvent| {
             let pinned = apply_live(app.servers.lock().unwrap().get_mut(&sid).unwrap(), event).2;
             release_held(&handle, sid, pinned.as_slice());
@@ -1683,7 +1476,6 @@ mod tests {
         };
         let has = |m: &Message| app.servers.lock().unwrap()[&sid].has_message(m.id);
 
-        // Joins and profiles that pin no key release nothing.
         let keyless = UserProfile { identity: None, ..a.profile.clone() };
         assert_eq!(live(ServerEvent::MemberJoin { server: sid, profile: keyless }), None);
         assert_eq!(live(ServerEvent::ProfileUpdate { profile: friend.profile.clone() }), None);
@@ -1691,7 +1483,6 @@ mod tests {
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 2);
         assert!(handle.take_events().is_empty());
 
-        // a's key arrives: only a's message goes in.
         assert_eq!(live(ServerEvent::ProfileUpdate { profile: a.profile.clone() }), Some(a.id()));
         assert!(has(&by_a) && !has(&by_b));
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 1);
@@ -1702,7 +1493,6 @@ mod tests {
         };
         assert!(handle.take_events().contains(&("messages-caught-up".into(), caught_up)));
 
-        // A Profiles frame that pins nothing new releases nothing either.
         store.apply_profiles(sid, vec![a.profile.clone(), b.profile.clone(), friend.profile.clone()]);
         assert!(!has(&by_b));
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 1);
@@ -1716,14 +1506,12 @@ mod tests {
         let message = owner.post(&state, channel, "hi");
         let t0 = Instant::now();
         let mut catchup = Catchup::default();
-        // Every session pushes the same message again.
         let by = owner.id();
         for _ in 0..3 {
             catchup.hold(sid, by, ServerEvent::MessageCreate { message: message.clone() }, t0);
         }
         assert_eq!(catchup.held_count(sid), 1);
 
-        // Of two edits of one message, the later one stays.
         let first = message.edit_event(sid, "one", Utc::now(), &owner.identity);
         let second = message.edit_event(sid, "two", Utc::now() + chrono::Duration::seconds(1), &owner.identity);
         catchup.hold(sid, by, second.clone(), t0);
@@ -1735,7 +1523,6 @@ mod tests {
         catchup.hold(sid, by, second.clone(), t0);
         assert_eq!(catchup.take_all_held(sid, t0), vec![(t0, by, second)]);
 
-        // Each deleter's proof is its own.
         let other = Member::new("other");
         let by_owner = TombstoneProof::sign(sid, channel, message.id, owner.id(), Utc::now(), &owner.identity);
         let by_other = TombstoneProof::sign(sid, channel, message.id, other.id(), Utc::now(), &other.identity);
@@ -1744,7 +1531,6 @@ mod tests {
         }
         assert_eq!(catchup.held_count(sid), 2);
 
-        // Restoring does not bring back one held again meanwhile.
         let again = catchup.take_all_held(sid, t0);
         catchup.hold(sid, by, by_owner.clone().into_event(), t0);
         catchup.restore_held(sid, again);
@@ -1769,7 +1555,6 @@ mod tests {
         assert!(retried.changed && state.has_message(released.id));
         assert!(retried.fresh.is_empty());
 
-        // Through the store, the blocked list comes from the safety settings.
         let sid = state.server.id;
         let app = app_with(&owner, state);
         app.safety.lock().unwrap().blocked.push(pest.id());
@@ -1816,7 +1601,6 @@ mod tests {
         let names: Vec<String> = handle.take_events().into_iter().map(|(name, _)| name).collect();
         assert_eq!(names, ["server-event"]);
 
-        // Released from the hold queue: not counted either.
         let stranger = Member::new("stranger");
         join_without_key(app.servers.lock().unwrap().get_mut(&sid).unwrap(), &stranger);
         let held = stranger.post(&app.servers.lock().unwrap()[&sid], channel, "held");
@@ -1825,7 +1609,6 @@ mod tests {
         assert!(app.servers.lock().unwrap()[&sid].has_message(held.id));
         assert!(handle.take_events().iter().all(|(name, _)| name != "messages-caught-up"));
 
-        // Once the snapshot arrived, new messages count again.
         app.set_awaiting_snapshot(sid, false);
         let live = friend.post(&app.servers.lock().unwrap()[&sid], channel, "live");
         store.apply(sid, vec![live], vec![]);
@@ -1850,14 +1633,12 @@ mod tests {
             }
         }
         let handle = TestHandle::new(app.clone());
-        // Both were pushed, the peer only took one.
         let report = SessionReport { delivered: vec![taken.id], ..Default::default() };
         after_session(&handle, sid, Some(&report));
         assert_eq!(app.outbox.lock().unwrap().pending_ids(sid), HashSet::from([refused.id]));
         assert_eq!(handle.take_events(), vec![("server-event".into(), sid.to_string().into())]);
     }
 
-    /// A snapshot as a member of `state` would answer one.
     fn snapshot_of(state: &ServerState) -> WirePayload {
         commy_net::protocol::build_sync_response(state, 50)
     }
@@ -1872,7 +1653,6 @@ mod tests {
         let hello = owner.post(&real, channel, "hello");
         real.apply(ServerEvent::MessageCreate { message: hello.clone() }).unwrap();
 
-        // Our provisional state from a ticket.
         let mut provisional = commy_core::Server::new("s", me.id());
         provisional.id = sid;
         let mut placeholder = ServerState::new(provisional);
@@ -1880,18 +1660,15 @@ mod tests {
         let app = app_with(&me, placeholder);
         let handle = TestHandle::new(app.clone());
 
-        // Not marked as waiting: nothing is replaced.
         assert!(!apply_snapshot(&handle, sid, snapshot_of(&real)));
         assert!(!app.servers.lock().unwrap()[&sid].has_message(hello.id));
 
         app.set_awaiting_snapshot(sid, true);
-        // A snapshot of another server on this topic is refused.
         let (other, _) = server(&owner);
         assert!(!apply_snapshot(&handle, sid, snapshot_of(&other)));
         assert!(app.awaits_snapshot(sid));
         assert!(handle.take_events().is_empty());
 
-        // The owner's live message beat the snapshot that brings their key.
         let early = owner.post(&real, channel, "before the snapshot");
         hold(&app, sid, owner.id(), ServerEvent::MessageCreate { message: early.clone() });
         assert!(apply_snapshot(&handle, sid, snapshot_of(&real)));
@@ -1906,15 +1683,12 @@ mod tests {
         let names: Vec<String> = handle.take_events().into_iter().map(|(name, _)| name).collect();
         assert!(names.contains(&"servers-changed".to_string()));
 
-        // From now on the state is established: a forged snapshot that
-        // claims another key for the owner changes nothing.
         let mut forged = real.clone();
         let impostor = Identity::generate();
         forged.profiles.get_mut(&owner.id()).unwrap().identity = Some(impostor.public());
         assert!(!apply_snapshot(&handle, sid, snapshot_of(&forged)));
         assert_eq!(app.servers.lock().unwrap()[&sid].identity_of(owner.id()), Some(owner.identity.public()));
 
-        // A server left while its snapshot was on the way stays gone.
         let (gone, _) = server(&owner);
         app.set_awaiting_snapshot(gone.server.id, true);
         assert!(!apply_snapshot(&handle, gone.server.id, snapshot_of(&gone)));
@@ -1927,7 +1701,6 @@ mod tests {
         let me = Member::new("me");
         let (mut real, channel) = server(&owner);
         let sid = real.server.id;
-        // Answered before our join reached the owner: we are not in it.
         let snapshot = snapshot_of(&real);
         let mut provisional = commy_core::Server::new("s", me.id());
         provisional.id = sid;
@@ -1943,7 +1716,6 @@ mod tests {
         let (user, identity) = store.local_identity(sid).expect("a member, so catch-up may run");
         assert_eq!((user, identity.public()), (me.id(), me.identity.public()));
 
-        // Our join arrives there, then a session brings what came since.
         join(&mut real, &me);
         let later = owner.post(&real, channel, "since the snapshot");
         real.apply(ServerEvent::MessageCreate { message: later.clone() }).unwrap();
@@ -1959,7 +1731,6 @@ mod tests {
         assert!(app.servers.lock().unwrap()[&sid].has_message(later.id));
     }
 
-    /// The provisional state of `me` joining server `sid` from a ticket.
     fn placeholder(me: &Member, sid: ServerId) -> ServerState {
         let mut provisional = commy_core::Server::new("s", me.id());
         provisional.id = sid;
@@ -1975,7 +1746,6 @@ mod tests {
         let (mut real, _) = server(&owner);
         join(&mut real, &me);
         let sid = real.server.id;
-        // Joined a month ago; the owner's join pinned their key since.
         let mut ours = placeholder(&me, sid);
         ours.server.members.iter_mut().for_each(|m| m.joined_at = Utc::now() - chrono::Duration::days(30));
         join(&mut ours, &owner);
@@ -1987,7 +1757,6 @@ mod tests {
             match how {
                 "session" => after_session(&handle, sid, Some(&SessionReport::default())),
                 "restart" => {
-                    // Saved by an earlier build with a window long closed.
                     let timed = HashMap::from([(sid, 0i64)]);
                     crate::persist::write_json(&dir.join("awaiting-snapshot.json"), &timed).unwrap();
                     *app.awaiting_snapshot.lock().unwrap() = crate::persist::load_awaiting(&dir);
@@ -2015,9 +1784,6 @@ mod tests {
         let sid = real.server.id;
         let hello = owner.post(&real, channel, "hello");
         real.apply(ServerEvent::MessageCreate { message: hello.clone() }).unwrap();
-        // A relayed profile planted a key for the owner here before the
-        // snapshot, so the owner's own join is refused; the friend's
-        // join pinned their real key.
         let mut ours = placeholder(&me, sid);
         let planted = UserProfile { identity: Some(Identity::generate().public()), ..owner.profile.clone() };
         ours.apply(ServerEvent::MemberJoin { server: sid, profile: planted }).unwrap();
@@ -2028,7 +1794,6 @@ mod tests {
         app.set_awaiting_snapshot(sid, true);
         let handle = TestHandle::new(app.clone());
 
-        // The snapshot's keys win, except for us; one it leaves out stays.
         let mut sent = real.clone();
         sent.profiles.get_mut(&friend.id()).unwrap().identity = None;
         sent.profiles.get_mut(&me.id()).unwrap().identity = Some(Identity::generate().public());
@@ -2040,7 +1805,6 @@ mod tests {
         assert_eq!(state.identity_of(me.id()), Some(me.identity.public()));
         assert!(state.has_message(hello.id));
 
-        // Once one is taken, a snapshot that changes a key is refused.
         let mut forged = real.clone();
         forged.profiles.get_mut(&owner.id()).unwrap().identity = Some(Identity::generate().public());
         assert!(!apply_snapshot(&handle, sid, snapshot_of(&forged)));
@@ -2059,8 +1823,6 @@ mod tests {
         for message in [&edited, &deleted] {
             real.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
         }
-        // While we wait the channel is announced, the owner joins, edits
-        // one message and deletes another, and we post one nobody has yet.
         let mut ours = placeholder(&me, sid);
         let announced = real.server.channel(channel).unwrap().clone();
         ours.apply(ServerEvent::ChannelCreate { server: sid, channel: announced }).unwrap();
@@ -2078,7 +1840,6 @@ mod tests {
         let handle = TestHandle::new(app.clone());
 
         assert!(apply_snapshot(&handle, sid, snapshot_of(&real)));
-        // What runs after any session drops pending ids we no longer hold.
         after_session(&handle, sid, None);
         let state = app.servers.lock().unwrap()[&sid].clone();
         assert_eq!(state.server.owner, owner.id());
@@ -2099,7 +1860,6 @@ mod tests {
         let app = app_with(&me, placeholder(&me, sid));
         let handle = TestHandle::new(app.clone());
         let theirs = app_with(&owner, real);
-        // What we send reaches the owner, whose snapshot reaches us.
         let deliver = |sent: Vec<WirePayload>| {
             for _ in sent.iter().filter(|p| matches!(p, WirePayload::SyncRequest)) {
                 for reply in sync_replies(&theirs, sid) {
@@ -2109,7 +1869,6 @@ mod tests {
                 }
             }
         };
-        // Joining asks first, and that answer beats the wait being marked.
         deliver(vec![WirePayload::SyncRequest]);
         assert_eq!(app.servers.lock().unwrap()[&sid].server.owner, me.id(), "dropped");
         deliver(await_snapshot(&app, sid, me.profile.clone()));
@@ -2128,7 +1887,6 @@ mod tests {
         let handle = TestHandle::new(app.clone());
         app.set_awaiting_snapshot(sid, true);
         assert!(snapshot_for(&app, sid).is_none(), "still waiting for ours");
-        // Nor once a session completed, nor after a restart.
         after_session(&handle, sid, Some(&SessionReport::default()));
         assert!(snapshot_for(&app, sid).is_none(), "after a session");
         let dir = temp_dir("handed-out");
@@ -2136,7 +1894,6 @@ mod tests {
         *app.awaiting_snapshot.lock().unwrap() = crate::persist::load_awaiting(&dir);
         std::fs::remove_dir_all(&dir).ok();
         assert!(snapshot_for(&app, sid).is_none(), "after a restart");
-        // Once a snapshot is taken, we answer with what we hold.
         assert!(apply_snapshot(&handle, sid, snapshot_of(&real)));
         let Some(WirePayload::SyncResponse { server, .. }) = snapshot_for(&app, sid) else { panic!("no snapshot") };
         assert_eq!(server.owner, owner.id());
@@ -2161,13 +1918,10 @@ mod tests {
         };
         let from_owner = replies_of(&owner, false);
         assert!(matches!(from_owner.as_slice(), [WirePayload::SyncResponse { .. }, join] if joined(join, &owner)));
-        // One still waiting for its own snapshot sends its join only.
         let from_friend = replies_of(&friend, true);
         assert!(matches!(from_friend.as_slice(), [join] if joined(join, &friend)));
         assert!(sync_replies(&app_with(&owner, real.clone()), ServerId::new()).is_empty());
 
-        // The owner's snapshot was too large to name the friend. Whether
-        // the friend's join comes first or last, we learn of them.
         let mut trimmed = from_owner[0].clone();
         if let WirePayload::SyncResponse { members, profiles, .. } = &mut trimmed {
             members.retain(|m| m.user != friend.id());
@@ -2204,10 +1958,8 @@ mod tests {
         let pin = ServerEvent::MessagePin { server: sid, channel, message: post.id, by: owner.id(), at: chrono::Utc::now(), pinned: true };
         state.apply(pin.clone()).unwrap();
         let snapshot = snapshot_for(&app_with(&owner, state), sid).unwrap();
-        // Pins are left to members who may pin to re-announce.
         let WirePayload::SyncResponse { server, .. } = &snapshot else { panic!("not a snapshot") };
         assert!(server.pins.is_empty());
-        // A pin heard before the snapshot landed is kept once it does.
         let app = app_with(&me, placeholder(&me, sid));
         app.set_awaiting_snapshot(sid, true);
         let early = app.servers.lock().unwrap().get_mut(&sid).unwrap().apply(ServerEvent::ChannelCreate {
@@ -2284,7 +2036,6 @@ mod tests {
         assert!(store.local_identity(sid).is_none());
         assert!(app.settle_key());
         assert!(store.local_identity(sid).is_some());
-        // A hold that ran out counts as settled.
         app.hold_key(Instant::now());
         assert!(store.local_identity(sid).is_some());
     }
@@ -2294,18 +2045,14 @@ mod tests {
         let me = Member::new("member");
         let owner = Member::new("owner");
         let (ours, inviter) = ([1u8; 32], [2u8; 32]);
-        // What joining leaves until the snapshot: ours, with only us in it.
         let (placeholder, channel) = server(&me);
         assert!(joined_placeholder(&placeholder, me.id(), Some(&[inviter]), ours));
 
-        // An invite of our own is a server we created; without a readable
-        // invite we cannot tell, so nothing changes.
         assert!(!joined_placeholder(&placeholder, me.id(), Some(&[ours]), ours));
         assert!(!joined_placeholder(&placeholder, me.id(), Some(&[inviter, ours]), ours));
         assert!(!joined_placeholder(&placeholder, me.id(), Some(&[]), ours));
         assert!(!joined_placeholder(&placeholder, me.id(), None, ours));
 
-        // History, someone else, or another owner: the state is real.
         let mut talked = placeholder.clone();
         talked.apply(ServerEvent::MessageCreate { message: me.post(&placeholder, channel, "hi") }).unwrap();
         assert!(!joined_placeholder(&talked, me.id(), Some(&[inviter]), ours));
@@ -2334,7 +2081,6 @@ mod tests {
         let mut own = ticket.clone();
         own.server_id = created_id;
         let invites = HashMap::from([(sid, ticket.encode()), (created_id, own.encode())]);
-        // Seen from the inviter's node, both invites are its own.
         mark_joined_placeholders(&app, &invites, theirs);
         assert!(app.awaiting_snapshot.lock().unwrap().is_empty());
         mark_joined_placeholders(&app, &HashMap::from([(sid, ticket.encode())]), [9; 32]);

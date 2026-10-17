@@ -1,10 +1,4 @@
 #!/bin/sh
-# End-to-end tests of private invite links, the message doorbell, offline
-# delivery and waking a resting device: the desktop app's own code on real iroh
-# nodes, against the account server running on a throwaway Postgres. Then the
-# edge Caddy checks.
-# Run from anywhere: sh scripts/e2e.sh   (needs Postgres binaries, Node 22, Rust)
-# An argument picks tests by name, e.g. sh scripts/e2e.sh doorbell
 
 set -e
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -21,7 +15,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Postgres refuses to run as root, so a root shell runs it as postgres
 as_db() {
 	if [ "$(id -u)" = 0 ]; then
 		runuser -u postgres -- "$@"
@@ -44,7 +37,6 @@ as_db "$pg_bin/initdb" -D "$work/pg" -A trust -U commy >/dev/null
 as_db "$pg_bin/pg_ctl" -D "$work/pg" -l "$work/pg/log" -w \
 	-o "-p $db_port -k $work/pg -c listen_addresses=127.0.0.1" start >/dev/null
 database="postgres://commy@127.0.0.1:$db_port/postgres"
-# A database from before device names were dropped: the server must start on it
 psql "$database" -q -v ON_ERROR_STOP=1 -c 'create table "linkedDevice" (
 	"id" text primary key, "nodeId" text not null unique, "name" text not null,
 	"userId" text not null, "createdAt" timestamptz not null, "lastSeenAt" timestamptz not null)'

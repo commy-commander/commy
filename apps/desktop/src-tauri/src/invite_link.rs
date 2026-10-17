@@ -1,16 +1,3 @@
-//! Shareable invite links. `https://<server>/i/<CODE>#<KEY>` (and the
-//! `commy://i/<host>/<CODE>#<KEY>` deep link its landing page opens) map a
-//! short code to a server ticket stored on that account server, so a link
-//! always resolves on the server that issued it. The ticket is sealed with
-//! KEY, which only travels in the link's fragment: browsers and this app never
-//! send a fragment to a server, so the account server cannot tell which Commy
-//! server an invite opens or who is in it. Links without a key are from
-//! older versions and still open until they expire.
-//!
-//! The creator picks how long a link lasts ([`Expiry`]). The expiry is sealed
-//! inside the invite too, so the app refuses an expired link even if the
-//! account server kept or extended its row.
-
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -27,8 +14,6 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::App;
 
-/// commy.chat, unless the build sets COMMY_DEFAULT_ACCOUNT_SERVER (test builds
-/// from pre-release tags use https://staging.commy.chat).
 pub const DEFAULT_ACCOUNT_SERVER: &str = match option_env!("COMMY_DEFAULT_ACCOUNT_SERVER") {
     Some(server) => server,
     None => "https://commy.chat",
@@ -40,8 +25,6 @@ const MAX_LINK_LEN: usize = 2048;
 const PORT_FILE: &str = "link.port";
 const HANDOFF_PREFIX: &str = "commy-link-v1 ";
 
-/// How long a new invite link lasts. `Never` is only offered for a server
-/// marked public.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expiry {
     Hour,
@@ -63,7 +46,6 @@ impl Expiry {
         })
     }
 
-    /// The account server's name for it.
     pub fn as_str(self) -> &'static str {
         match self {
             Expiry::Hour => "1h",
@@ -85,21 +67,15 @@ impl Expiry {
     }
 }
 
-/// A link made this run is shared again while at least this much of its
-/// life is left, so it never runs out right after being copied.
 const REUSE_MIN_LEFT: f64 = 0.85;
 
 static PENDING: Mutex<Option<String>> = Mutex::new(None);
-/// Links this run created, by ticket and expiry, so sharing twice gives the
-/// same link.
 static CREATED: Mutex<Option<HashMap<String, (CreatedInvite, Instant)>>> = Mutex::new(None);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteLink {
-    /// scheme://host[:port] of the server that issued the code
     pub origin: String,
     pub code: String,
-    /// The key that opens the sealed ticket. None for links from older versions.
     pub key: Option<String>,
 }
 
@@ -116,8 +92,6 @@ impl InviteLink {
     }
 }
 
-/// The account server this install uses: `COMMY_AUTH_URL`, the Settings
-/// choice, or commy.chat.
 pub fn account_server() -> String {
     crate::account::effective_server()
 }
@@ -130,7 +104,6 @@ fn origin_of(url: &Url) -> Option<String> {
     let host = url.host_str()?.to_ascii_lowercase();
     match url.scheme() {
         "https" => {}
-        // Plain http only for a dev stack on this machine
         "http" if is_loopback(&host) => {}
         _ => return None,
     }
@@ -143,7 +116,6 @@ fn origin_of(url: &Url) -> Option<String> {
     })
 }
 
-/// Lowercased `scheme://host[:port]` of a server URL, https only.
 pub fn normalize_origin(input: &str) -> Option<String> {
     origin_of(&Url::parse(input.trim()).ok()?)
 }
@@ -174,9 +146,6 @@ fn valid_key(fragment: &str) -> Option<String> {
     SealKey::from_text(fragment).ok().map(|_| fragment.to_string())
 }
 
-/// Parses `https://host/i/CODE#KEY` or `commy://i/host/CODE#KEY` (KEY is
-/// optional for older links). Anything else, including other paths,
-/// credentials, non-https servers or a malformed key, is rejected.
 pub fn parse(input: &str) -> Option<InviteLink> {
     let input = input.trim();
     if input.len() > MAX_LINK_LEN {
@@ -222,9 +191,7 @@ pub struct ResolvedInvite {
     pub host: String,
     pub server_name: String,
     pub ticket: String,
-    /// RFC 3339; None when the link never expires.
     pub expires_at: Option<String>,
-    /// False when the link points somewhere other than this install's account server
     pub trusted: bool,
     pub account_server_host: String,
 }
@@ -233,7 +200,6 @@ pub struct ResolvedInvite {
 #[serde(rename_all = "camelCase")]
 struct ResolveResponse {
     ticket: String,
-    /// Null when the row never expires.
     expires_at: Option<String>,
 }
 
@@ -244,7 +210,6 @@ struct CreateResponse {
     expires_at: Option<String>,
 }
 
-/// A new invite link and when it stops working (RFC 3339, None for never).
 #[derive(Debug, Clone, Serialize)]
 pub struct CreatedInvite {
     pub url: String,
@@ -255,9 +220,6 @@ fn parse_time(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value.trim()).ok().map(|t| t.with_timezone(&Utc))
 }
 
-/// When an invite stops working: the earlier of what the account server says
-/// and what is sealed inside. A sealed expiry that has passed is refused, so a
-/// row the server kept or extended cannot bring the link back.
 fn effective_expiry(
     server: Option<DateTime<Utc>>,
     sealed: Option<SealedExpiry>,
@@ -300,7 +262,6 @@ pub async fn resolve_invite_link(app: tauri::State<'_, App>, link: String) -> Re
     resolve(&app, &link).await
 }
 
-/// Looks up an invite link on the server that issued it and opens its ticket.
 pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, String> {
     let parsed = parse(link).ok_or("That is not a Commy invite link")?;
     let mut url = Url::parse(&format!("{}/api/auth/commy/invites/resolve", parsed.origin)).map_err(|e| e.to_string())?;
@@ -315,7 +276,6 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
         return Err(error_message(res).await);
     }
     let body: ResolveResponse = res.json().await.map_err(|_| "The invite server sent an invalid reply".to_string())?;
-    // The server name comes from the ticket itself, not from the web server
     let (raw, sealed_expiry) = open_ticket(&body.ticket, parsed.key.as_deref())?;
     let ticket = ServerTicket::decode(&raw).map_err(|_| "The invite server sent an invalid invite".to_string())?;
     let server_expiry = body.expires_at.as_deref().and_then(parse_time);
@@ -332,9 +292,6 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
     })
 }
 
-/// What an invite link seals: the ticket, the server name for the
-/// website's invite page, and when it expires (unix seconds), or that it
-/// never does. Invites sealed before expiries were chosen carry neither.
 #[derive(Serialize, Deserialize)]
 struct SealedInvite {
     #[serde(rename = "t")]
@@ -347,7 +304,6 @@ struct SealedInvite {
     permanent: bool,
 }
 
-/// The expiry sealed inside an invite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SealedExpiry {
     At(DateTime<Utc>),
@@ -364,9 +320,6 @@ fn seal_ticket(key: &SealKey, raw: &str, name: &str, expiry: SealedExpiry) -> St
     key.seal(Purpose::Invite, &payload)
 }
 
-/// The ticket a resolved invite holds, and the expiry sealed with it (None
-/// for invites from before expiries were sealed, and for older keyless
-/// links). A link with a key only accepts a sealed ticket that key opens.
 fn open_ticket(stored: &str, key: Option<&str>) -> Result<(String, Option<SealedExpiry>), String> {
     let stored = stored.trim();
     match key {
@@ -404,9 +357,6 @@ pub async fn create_invite_link(
     create(&app, &server_id, expiry).await
 }
 
-/// Stores a server's ticket, sealed, on our account server and returns
-/// the link that opens it. A link that never expires is only made for a
-/// server marked public.
 pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result<CreatedInvite, String> {
     let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
     crate::require_invite_permission(app, id)?;
@@ -426,7 +376,6 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
     if let Some((created, at)) = CREATED.lock().unwrap().as_ref().and_then(|m| m.get(&cache_key)) {
         let fresh = match expiry.length() {
             Some(length) => at.elapsed().as_secs_f64() < length.num_seconds() as f64 * (1.0 - REUSE_MIN_LEFT),
-            // Unless an older account server gave it an expiry after all
             None => created.expires_at.is_none(),
         };
         if fresh {
@@ -438,7 +387,6 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
         Some(length) => SealedExpiry::At(now + length),
         None => SealedExpiry::Never,
     };
-    // The account server only ever gets the sealed ticket; the key stays in the link
     let key = SealKey::generate();
     let res = app
         .http
@@ -454,12 +402,9 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
         return Err(error_message(res).await);
     }
     let body: CreateResponse = res.json().await.map_err(|_| "The invite server sent an invalid reply".to_string())?;
-    // Only hand out a link that points back at our own account server
     match parse(&body.url) {
         Some(link) if link.origin == origin && link.key.is_none() => {
             let url = InviteLink { key: Some(key.to_text()), ..link }.url();
-            // An account server too old to know the choice keeps its own
-            // default; the link then lasts the shorter of the two.
             let server_expiry = body.expires_at.as_deref().and_then(parse_time);
             let sealed = match sealed_expiry {
                 SealedExpiry::At(t) => Some(t),
@@ -493,21 +438,15 @@ pub fn account_server_info() -> AccountServerInfo {
     AccountServerInfo { host: host_of(&origin), is_default: origin == DEFAULT_ACCOUNT_SERVER, origin }
 }
 
-/// A link the app was launched with, handed to the UI once it is ready.
 #[tauri::command]
 pub fn take_pending_invite_link() -> Option<String> {
     PENDING.lock().unwrap().take()
 }
 
-// ---------- Launch handling ----------
-
-/// The `commy://` link in this process's arguments, if it was opened by one.
 pub fn link_from_args() -> Option<String> {
     std::env::args().skip(1).find(|a| a.starts_with("commy://") && looks_like_link(a))
 }
 
-/// Where Tauri keeps app data, computed before Tauri starts so a second
-/// launch can find the running instance. Matches `app_data_dir()`.
 pub fn default_data_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("COMMY_DATA_DIR") {
         return Some(PathBuf::from(dir));
@@ -528,7 +467,6 @@ pub fn default_data_dir() -> Option<PathBuf> {
     }
 }
 
-/// Passes a link to an already running instance. True when it took it.
 pub fn forward_to_running_instance(data_dir: &Path, link: &str) -> bool {
     let Some(port) = std::fs::read_to_string(data_dir.join(PORT_FILE))
         .ok()
@@ -558,8 +496,6 @@ fn deliver(handle: &AppHandle, link: String) {
     let _ = handle.emit("invite-link", link);
 }
 
-/// macOS delivers clicked commy:// links as an Apple Event, both at launch
-/// and while running, instead of in argv.
 pub fn on_run_event(handle: &AppHandle, event: &tauri::RunEvent) {
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
     if let tauri::RunEvent::Opened { urls } = event {
@@ -574,8 +510,6 @@ pub fn on_run_event(handle: &AppHandle, event: &tauri::RunEvent) {
     let _ = (handle, event);
 }
 
-/// Accepts links from later launches on a loopback port recorded in the
-/// data dir, and queues the link this process was started with.
 pub fn start(handle: &AppHandle, data_dir: &Path, launch_link: Option<String>) {
     if let Some(link) = launch_link {
         *PENDING.lock().unwrap() = Some(link);
@@ -627,8 +561,6 @@ impl TakeLimit for TcpStream {
     }
 }
 
-/// Registers the `commy://` scheme for this user so invite pages can open
-/// the app. Unpackaged builds have no installer to do it.
 #[cfg(windows)]
 pub fn register_scheme() {
     use windows_sys::Win32::System::Registry::{
@@ -676,7 +608,6 @@ pub fn register_scheme() {}
 mod tests {
     use super::*;
 
-    // A fixed test key: the bytes 0 to 31 as unpadded base64url
     fn test_key() -> String {
         data_encoding::BASE64URL_NOPAD.encode(&(0u8..32).collect::<Vec<_>>())
     }
@@ -713,9 +644,7 @@ mod tests {
         assert_eq!(open_ticket(&sealed, Some(&text)).unwrap(), ("commyticket".into(), Some(SealedExpiry::Never)));
         assert!(open_ticket(&sealed, None).is_err());
         assert!(open_ticket(&sealed, Some(&SealKey::generate().to_text())).is_err());
-        // A keyed link never accepts a plain ticket in place of a sealed one
         assert!(open_ticket("commyticket", Some(&text)).is_err());
-        // Older links without a key still open plain tickets
         assert_eq!(open_ticket(" commyticket ", None).unwrap(), ("commyticket".into(), None));
     }
 
@@ -730,15 +659,11 @@ mod tests {
 
         let before = at - chrono::Duration::days(1);
         let later = at + chrono::Duration::days(300);
-        // A row the server extended, or claims never expires, still ends on time
         assert_eq!(effective_expiry(Some(later), expiry, before), Ok(Some(at)));
         assert_eq!(effective_expiry(None, expiry, before), Ok(Some(at)));
-        // Once the sealed time has passed the link is refused, whatever the server says
         assert!(effective_expiry(Some(later), expiry, at).is_err());
         assert!(effective_expiry(None, expiry, later).is_err());
-        // An earlier server expiry is shown as is
         assert_eq!(effective_expiry(Some(before), expiry, before - chrono::Duration::hours(1)), Ok(Some(before)));
-        // Links that never expire, and invites from before sealed expiries
         assert_eq!(effective_expiry(None, Some(SealedExpiry::Never), later), Ok(None));
         assert_eq!(effective_expiry(Some(at), None, before), Ok(Some(at)));
     }

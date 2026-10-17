@@ -1,4 +1,3 @@
-// Run with: node --test "apps/desktop/ui/tests/**/*.test.mjs"
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -12,7 +11,6 @@ test("someone in the same server as you shows that server as mutual", () => {
   const servers = [{ id: "s1", name: "Bench", members: [member("a", "bencha"), member("b", "benchb")] }];
   const people = indexPeople(servers, "a");
   assert.deepEqual(mutualServers(people, "b"), [{ id: "s1", name: "Bench" }]);
-  // You are not in common with yourself.
   assert.equal(people.has("a"), false);
 });
 
@@ -20,13 +18,12 @@ test("servers are folded per person, in order, without repeats", () => {
   const servers = [
     { id: "s1", name: "One", members: [member("a", "me"), member("b", "pal", "offline")] },
     { id: "s2", name: "Two", members: [member("b", "pal", "idle", { custom_status: "afk" }), member("c", "other")] },
-    { id: "s2", name: "Two", members: [member("b", "pal")] }, // a stale duplicate view
+    { id: "s2", name: "Two", members: [member("b", "pal")] },
   ];
   const people = indexPeople(servers, "a");
   assert.deepEqual(mutualServers(people, "b").map(s => s.id), ["s1", "s2"]);
   assert.deepEqual(mutualServers(people, "c").map(s => s.id), ["s2"]);
   assert.deepEqual(mutualServers(people, "nobody"), []);
-  // The liveliest presence and the first status seen win.
   assert.equal(people.get("b").presence, "idle");
   assert.equal(people.get("b").custom_status, "afk");
 });

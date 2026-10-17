@@ -5,9 +5,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// A direct message between two users. DMs are not replicated through
-/// servers; they travel over a dedicated peer connection and each side
-/// keeps its own copy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DmMessage {
     pub id: MessageId,
@@ -15,12 +12,8 @@ pub struct DmMessage {
     pub to: UserId,
     pub content: String,
     pub created_at: DateTime<Utc>,
-    /// Hex node id of the device that sends it. Signed, so a copy sent on
-    /// from another node can be told apart. Empty on older messages.
     #[serde(default)]
     pub from_node: String,
-    /// Sender's signature over [`DmMessage::signing_bytes`]. None on
-    /// messages from before signing existed.
     #[serde(default)]
     pub sig: Option<Signature>,
 }
@@ -40,7 +33,6 @@ impl DmMessage {
         }
     }
 
-    /// Bytes the sender signs: every field but the signature.
     pub fn signing_bytes(&self) -> Vec<u8> {
         let fields = (
             DM_DOMAIN,
@@ -54,22 +46,17 @@ impl DmMessage {
         postcard::to_stdvec(&fields).expect("postcard encodes plain tuples")
     }
 
-    /// Signs the message as sent from `node` (hex node id), our device now.
     pub fn sign(&mut self, node: &str, identity: &Identity) {
         self.from_node = node.to_string();
         self.sig = Some(identity.sign(&self.signing_bytes()));
     }
 
-    /// False when unsigned or not signed by `key`.
     pub fn verify(&self, key: &IdentityKey) -> bool {
         self.sig
             .is_some_and(|sig| key.verify(&self.signing_bytes(), &sig))
     }
 }
 
-/// Local DM history, keyed by the other participant. Also caches the
-/// partner's last known profile so conversations survive leaving the
-/// server you met them in.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DmStore {
     conversations: HashMap<UserId, Vec<DmMessage>>,
@@ -81,9 +68,6 @@ impl DmStore {
         Self::default()
     }
 
-    /// Inserts a message into the conversation with `partner`,
-    /// deduplicating by id and keeping chronological order.
-    /// Returns false for duplicates.
     pub fn insert(&mut self, partner: UserId, message: DmMessage) -> bool {
         let list = self.conversations.entry(partner).or_default();
         if list.iter().any(|m| m.id == message.id) {
@@ -101,24 +85,18 @@ impl DmStore {
             .unwrap_or(&[])
     }
 
-    /// Drops a whole conversation, e.g. a declined message request.
     pub fn remove_conversation(&mut self, partner: UserId) -> bool {
         self.conversations.remove(&partner).is_some()
     }
 
-    /// True if we have ever sent `partner` a message.
     pub fn has_sent_to(&self, me: UserId, partner: UserId) -> bool {
         self.conversation(partner).iter().any(|m| m.from == me)
     }
 
-    /// Identity key pinned for a contact: the first one seen for them.
     pub fn pinned_key(&self, user: UserId) -> Option<IdentityKey> {
         self.contacts.get(&user).and_then(|p| p.identity)
     }
 
-    /// Caches a contact's profile, keeping the pinned key: a profile
-    /// without a key keeps the stored one, and one with a different key
-    /// is refused (returns false and changes nothing).
     pub fn remember_contact(&mut self, mut profile: UserProfile) -> bool {
         match (self.pinned_key(profile.id), profile.identity) {
             (Some(pinned), Some(key)) if pinned != key => return false,
@@ -129,7 +107,6 @@ impl DmStore {
         true
     }
 
-    /// Conversation partners, most recently active first.
     pub fn partners(&self) -> Vec<UserId> {
         let mut partners: Vec<(UserId, DateTime<Utc>)> = self
             .conversations
@@ -146,7 +123,6 @@ impl DmStore {
 mod tests {
     use super::*;
 
-    /// A sending device's node id, in hex.
     const NODE: &str = "0101010101010101010101010101010101010101010101010101010101010101";
 
     #[test]
@@ -273,7 +249,6 @@ mod tests {
         let id = profile.id;
         assert_eq!(store.pinned_key(id), None);
 
-        // A profile without a key pins nothing yet.
         assert!(store.remember_contact(profile.clone()));
         assert_eq!(store.pinned_key(id), None);
 
@@ -282,7 +257,6 @@ mod tests {
         assert!(store.remember_contact(profile.clone()));
         assert_eq!(store.pinned_key(id), Some(first));
 
-        // A keyless update keeps the pin and still refreshes the profile.
         let mut keyless = profile.clone();
         keyless.identity = None;
         keyless.display_name = Some("renamed".into());
@@ -290,7 +264,6 @@ mod tests {
         assert_eq!(store.pinned_key(id), Some(first));
         assert_eq!(store.contacts[&id].display_name.as_deref(), Some("renamed"));
 
-        // A different key is refused and changes nothing.
         let mut other = profile.clone();
         other.identity = Some(Identity::generate().public());
         other.display_name = Some("impostor".into());

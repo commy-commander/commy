@@ -1,7 +1,3 @@
-// Tracks how many bytes the iroh relay moves each month. At the warning
-// level it sends an alert; at the pause level it drops a flag file that
-// makes Caddy refuse new relay connections, so clients fall back to other
-// relays. Existing connections are left alone, and the flag clears on the 1st.
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, initialState, levelFor, loadConfig, parseMetrics, step } from "./lib.mjs";
@@ -36,7 +32,6 @@ async function alert(message) {
   console.log(`[meter] ${message}`);
   if (!cfg.webhookUrl) return;
   try {
-    // Sends both common message field names so most webhook services accept it
     await fetch(cfg.webhookUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -62,7 +57,6 @@ async function tick(state) {
   const next = step(state, await sample(), now);
   next.level = levelFor(next.total, cfg.limitBytes, cfg.warnPercent, cfg.pausePercent);
   next.updatedAt = now.toISOString();
-  // Only touch the flag on our own transitions, so a pause set by hand stays
   if (next.level === "paused") await setPaused(true);
   else if (state.level === "paused") await setPaused(false);
   if (next.level !== state.level) await alert(describe(next, cfg.limitBytes));

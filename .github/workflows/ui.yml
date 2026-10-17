@@ -1,6 +1,3 @@
-# Checks for the desktop UI (plain HTML and JavaScript, no build step):
-# the node tests of the scripts that keep their logic free of the DOM.
-
 name: UI checks
 
 on:

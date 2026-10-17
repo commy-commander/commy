@@ -17,7 +17,6 @@ import {
 } from "../src/invites.js";
 
 const ORIGIN = "http://localhost:3001";
-// What the app sends: the server ticket sealed with a key only the link carries
 const TICKET = "sealed1." + "AbCd-_0123456789".repeat(5);
 const PLAIN_TICKET = "commy" + "abcdefgh234567".repeat(5);
 const ENV = { BETTER_AUTH_SECRET: "test-secret-".repeat(4), DATABASE_URL: "postgres://unused", BETTER_AUTH_URL: ORIGIN };
@@ -31,7 +30,6 @@ function makeAuth(extraEnv = {}) {
   const call = async (method, path, { body, cookie, query } = {}) => {
     const url = new URL(`${ORIGIN}/api/auth${path}`);
     for (const [k, v] of Object.entries(query ?? {})) url.searchParams.set(k, v);
-    // The desktop app sends no Origin header, so neither do these calls unless signed in
     const headers = cookie ? { origin: ORIGIN, cookie } : {};
     if (body) headers["content-type"] = "application/json";
     const res = await auth.handler(new Request(url, { method, headers, body: body ? JSON.stringify(body) : undefined }));
@@ -138,7 +136,6 @@ test("creators pick the expiry, never included, and the row holds nothing else n
   assert.equal(row.createdBy, null);
   assert.equal(row.ticket, TICKET + "b", "only the sealed invite, nothing readable");
 
-  // Cleanup of expired rows leaves it, and it keeps resolving
   await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "c", expiresIn: "1d" } });
   const resolved = await call("GET", "/commy/invites/resolve", { query: { code: forever.json.code } });
   assert.equal(resolved.status, 200);

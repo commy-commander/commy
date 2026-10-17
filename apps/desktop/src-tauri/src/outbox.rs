@@ -1,9 +1,3 @@
-//! Offline queue. Server sends made while no member was connected wait
-//! here: our own messages as pending ids, which the next catch-up with a
-//! neighbor delivers, and other lasting events, re-broadcast when a
-//! neighbor connects. DMs to a partner who is offline wait too and are
-//! retried in order. Everything is kept in `<data>/outbox.json`.
-
 use crate::catchup::AppAccess;
 use crate::safety::{self, FriendSignal};
 use crate::state::App;
@@ -23,34 +17,25 @@ use tauri::Manager;
 
 pub const OUTBOX_FILE: &str = "outbox.json";
 
-/// Most events kept per server while offline; the oldest go first.
 pub const MAX_QUEUED: usize = 500;
 
-/// First DM retry delay. It doubles after each failed try up to the max.
 pub const DM_RETRY_FIRST: Duration = Duration::from_secs(30);
 pub const DM_RETRY_MAX: Duration = Duration::from_secs(300);
 
-/// Longest wait for one DM delivery attempt.
 pub const DM_SEND_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// How often the DM outbox looks for retries that are due.
 const DM_TICK: Duration = Duration::from_secs(5);
 
-/// Sends that have not reached anyone yet.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Outbox {
-    /// Our messages no member has received yet, per server.
     #[serde(default)]
     pending: HashMap<ServerId, Vec<MessageId>>,
-    /// Other events to re-broadcast when a neighbor connects, oldest first.
     #[serde(default)]
     queued: HashMap<ServerId, Vec<ServerEvent>>,
-    /// Our DMs not delivered yet, per partner, oldest first.
     #[serde(default)]
     dms: HashMap<UserId, Vec<MessageId>>,
 }
 
-/// Live state that means nothing later, so it is never queued.
 pub fn is_transient(event: &ServerEvent) -> bool {
     matches!(
         event,
@@ -63,8 +48,6 @@ pub fn is_transient(event: &ServerEvent) -> bool {
     )
 }
 
-/// True when `new` makes a queued `old` pointless: a newer profile or
-/// presence of the same user.
 fn supersedes(new: &ServerEvent, old: &ServerEvent) -> bool {
     match (new, old) {
         (ServerEvent::ProfileUpdate { profile: a }, ServerEvent::ProfileUpdate { profile: b }) => a.id == b.id,
@@ -82,10 +65,6 @@ impl Outbox {
         crate::persist::write_json(&dir.join(OUTBOX_FILE), self)
     }
 
-    /// Records a local event after its broadcast. Our message that reached
-    /// nobody becomes pending; any other lasting event that reached nobody
-    /// is queued, except an edit of a pending message. A delete also drops
-    /// its message from pending, delivered or not. Returns true when the outbox changed.
     pub fn note_local(&mut self, server: ServerId, event: &ServerEvent, delivered: bool) -> bool {
         let mut changed = false;
         if let ServerEvent::MessageDelete { message, .. } = event {
@@ -102,9 +81,6 @@ impl Outbox {
             list.push(message.id);
             return true;
         }
-        // An edit of a message still pending rides along with it: catch-up
-        // carries the message whole, and sent on its own the edit would
-        // reach peers before the message it changes.
         if let ServerEvent::MessageEdit { message, .. } = event {
             if self.is_pending(server, *message) {
                 return changed;
@@ -132,7 +108,6 @@ impl Outbox {
         self.pending.get(&server).is_some_and(|list| !list.is_empty())
     }
 
-    /// Forgets pending messages a peer now holds. True when any was pending.
     pub fn clear_delivered(&mut self, server: ServerId, ids: impl IntoIterator<Item = MessageId>) -> bool {
         let Some(list) = self.pending.get_mut(&server) else { return false };
         let done: HashSet<MessageId> = ids.into_iter().collect();
@@ -145,8 +120,6 @@ impl Outbox {
         changed
     }
 
-    /// Drops pending ids catch-up can never deliver: messages we no longer
-    /// hold (deleted or expired) and ones older than its window.
     pub fn prune(&mut self, state: &ServerState, now: chrono::DateTime<chrono::Utc>) -> bool {
         let server = state.server.id;
         let Some(list) = self.pending.get_mut(&server) else { return false };
@@ -160,15 +133,11 @@ impl Outbox {
         changed
     }
 
-    /// Events queued for a server, oldest first, removed from the queue.
     #[cfg(test)]
     pub fn take_queued(&mut self, server: ServerId) -> Vec<ServerEvent> {
         self.queued.remove(&server).unwrap_or_default()
     }
 
-    /// Like [`Outbox::take_queued`], but only the events `take` picks,
-    /// each with how many of those left queued were ahead of it. The rest
-    /// stay queued in order.
     pub fn take_queued_where(&mut self, server: ServerId, take: impl Fn(&ServerEvent) -> bool) -> Vec<(usize, ServerEvent)> {
         let Some(list) = self.queued.get_mut(&server) else { return Vec::new() };
         let mut taken = Vec::new();
@@ -188,10 +157,6 @@ impl Outbox {
         taken
     }
 
-    /// Puts events that still could not go out back in the queue, as
-    /// [`Outbox::take_queued_where`] took them: each behind as many of
-    /// the queued events as were ahead of it, so in front of anything
-    /// queued meanwhile.
     pub fn requeue(&mut self, server: ServerId, events: Vec<(usize, ServerEvent)>) {
         if events.is_empty() {
             return;
@@ -215,13 +180,11 @@ impl Outbox {
         self.queued.insert(server, list);
     }
 
-    /// Everything kept for a server we left. True when anything was.
     pub fn forget_server(&mut self, server: ServerId) -> bool {
         let pending = self.pending.remove(&server).is_some();
         self.queued.remove(&server).is_some() || pending
     }
 
-    /// Keeps a DM for a retry. False when it was kept already.
     pub fn add_dm(&mut self, partner: UserId, id: MessageId) -> bool {
         let list = self.dms.entry(partner).or_default();
         if list.contains(&id) {
@@ -235,7 +198,6 @@ impl Outbox {
         self.dms.get(&partner).is_some_and(|list| !list.is_empty())
     }
 
-    /// A partner's waiting DMs, oldest first.
     pub fn dm_queue(&self, partner: UserId) -> Vec<MessageId> {
         self.dms.get(&partner).cloned().unwrap_or_default()
     }
@@ -248,7 +210,6 @@ impl Outbox {
         self.dms.iter().filter(|(_, list)| !list.is_empty()).map(|(user, _)| *user).collect()
     }
 
-    /// Forgets a DM that was delivered (or no longer exists).
     pub fn dm_done(&mut self, partner: UserId, id: MessageId) -> bool {
         let Some(list) = self.dms.get_mut(&partner) else { return false };
         let before = list.len();
@@ -261,7 +222,6 @@ impl Outbox {
     }
 }
 
-/// When each partner's waiting DMs are tried next.
 #[derive(Debug, Default)]
 pub struct DmBackoff {
     next: HashMap<UserId, (Instant, Duration)>,
@@ -272,13 +232,10 @@ impl DmBackoff {
         self.next.get(&partner).is_none_or(|(at, _)| now >= *at)
     }
 
-    /// First failure for a partner: try again after [`DM_RETRY_FIRST`].
-    /// An existing schedule is kept.
     pub fn schedule(&mut self, partner: UserId, now: Instant) {
         self.next.entry(partner).or_insert((now + DM_RETRY_FIRST, DM_RETRY_FIRST));
     }
 
-    /// A try failed: wait twice as long as last time, up to [`DM_RETRY_MAX`].
     pub fn failed(&mut self, partner: UserId, now: Instant) {
         let delay = self
             .next
@@ -291,7 +248,6 @@ impl DmBackoff {
         self.next.remove(&partner);
     }
 
-    /// Makes a partner due now; a failure still backs off from the last delay.
     pub fn wake(&mut self, partner: UserId, now: Instant) {
         if let Some((at, _)) = self.next.get_mut(&partner) {
             *at = now;
@@ -299,7 +255,6 @@ impl DmBackoff {
     }
 }
 
-/// The user an event shows as online, if it is about presence at all.
 pub fn online_user(event: &ServerEvent) -> Option<(UserId, Presence)> {
     match event {
         ServerEvent::PresenceUpdate { user, presence } => Some((*user, *presence)),
@@ -310,20 +265,14 @@ pub fn online_user(event: &ServerEvent) -> Option<(UserId, Presence)> {
     }
 }
 
-/// True when every key we pinned for a sender, if any, is `key`.
 pub fn key_matches_pins(key: IdentityKey, pins: impl IntoIterator<Item = Option<IdentityKey>>) -> bool {
     pins.into_iter().flatten().all(|pinned| pinned == key)
 }
 
-/// Entries for `user` in the servers where they are a member now. An
-/// entry for anyone else may carry a key nobody checked.
 fn member_entries(servers: &HashMap<ServerId, ServerState>, user: UserId) -> impl Iterator<Item = &UserProfile> {
     servers.values().filter(move |s| s.server.is_member(user)).filter_map(move |s| s.profiles.get(&user))
 }
 
-/// Our profile of `user` to keep as a contact: from a server where they
-/// are a member now, with the key those servers pin for them, or none when
-/// they disagree.
 pub fn member_profile(servers: &HashMap<ServerId, ServerState>, user: UserId) -> Option<UserProfile> {
     let profile = member_entries(servers, user).next()?.clone();
     let mut keys = member_entries(servers, user).filter_map(|p| p.identity);
@@ -331,9 +280,6 @@ pub fn member_profile(servers: &HashMap<ServerId, ServerState>, user: UserId) ->
     Some(UserProfile { identity, ..profile })
 }
 
-/// Whether an incoming DM is signed by its sender with the key we hold
-/// for them: the one pinned for the contact once there is one, or else
-/// the one pinned in every server where they are a member now.
 pub fn dm_sender_trusted(app: &App, envelope: &DmEnvelope) -> bool {
     let Some(key) = envelope.sender.identity.filter(|_| envelope.signed_by_sender()) else {
         return false;
@@ -345,12 +291,6 @@ pub fn dm_sender_trusted(app: &App, envelope: &DmEnvelope) -> bool {
     key_matches_pins(key, member_entries(&app.servers.lock().unwrap(), user).map(|p| p.identity))
 }
 
-/// Checks an incoming DM before anything else looks at it. It must be
-/// addressed to us, name the node it came from, and be signed by its
-/// sender with the key we hold for them; the signature covers that node,
-/// so a copy sent on from another node is dropped. Returns the sender's
-/// profile to cache as a contact, with that node as theirs, or None to
-/// drop the DM.
 pub fn screen_dm(app: &App, dm: &IncomingDm) -> Option<UserProfile> {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id)?;
     let envelope = &dm.envelope;
@@ -358,27 +298,18 @@ pub fn screen_dm(app: &App, dm: &IncomingDm) -> Option<UserProfile> {
         return None;
     }
     let mut sender = envelope.sender.clone();
-    // The profile's own node is not signed; the one it came from is.
     sender.node = Some(data_encoding::HEXLOWER.encode(&dm.node));
     Some(sender)
 }
 
-/// What became of an incoming DM, for the parts that need the network.
 #[derive(Debug, PartialEq)]
 pub enum Received {
-    /// Not for us, a replayed friend signal, or filtered out.
     Dropped,
-    /// Stored, or a friend signal applied with nothing to answer.
     Taken,
-    /// A report about a member, for the caller to check and keep.
     Report { from: UserId, content: String },
-    /// A friend signal applied that asks for this answer.
     Reply { to: UserId, signal: FriendSignal },
 }
 
-/// Takes one incoming DM: screens it (see [`screen_dm`]), applies a friend
-/// signal unless it was seen before, and files a message in the inbox,
-/// the requests or spam, telling the webview.
 pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
     let app = access.app();
     let Some(sender) = screen_dm(app, &dm) else {
@@ -391,7 +322,6 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         return Received::Report { from: partner, content: message.content };
     }
     if let Some(signal) = FriendSignal::decode(&message.content) {
-        // A signed signal sent to us again must not undo a later one.
         let fresh = safety::note_friend_signal(&mut app.safety.lock().unwrap(), partner, message.id, message.created_at);
         if !fresh {
             tracing::debug!("ignored a friend signal from {partner} seen before");
@@ -458,11 +388,6 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
     Received::Taken
 }
 
-// ---------- Network glue ----------
-
-/// Whether an event carries our signature or our identity key: our
-/// messages, edits and deletes, and our own profile. Every kind is named
-/// so a new one has to be sorted here.
 pub fn needs_settled_key(event: &ServerEvent, me: Option<UserId>) -> bool {
     use ServerEvent as E;
     match event {
@@ -513,10 +438,6 @@ pub fn needs_settled_key(event: &ServerEvent, me: Option<UserId>) -> bool {
     }
 }
 
-/// True when `event` waits for our key: it is held back (it may still be
-/// replaced) and the event carries it or our signature, see
-/// [`needs_settled_key`]. Such an event is signed again first if the key
-/// is replaced; everything else goes out at once.
 fn held_for_key(app: &App, event: &ServerEvent) -> bool {
     if app.key_settled() {
         return false;
@@ -525,18 +446,11 @@ fn held_for_key(app: &App, event: &ServerEvent) -> bool {
     needs_settled_key(event, me)
 }
 
-/// Whether a local event goes out now: someone is connected, and it does
-/// not wait for our key (see [`held_for_key`]).
 pub fn may_send(app: &App, neighbors: usize, event: &ServerEvent) -> bool {
     neighbors > 0 && !held_for_key(app, event)
 }
 
-/// Broadcasts an event we already applied locally. When it may not go
-/// out yet (see [`may_send`]) or the send fails, it waits here (see
-/// [`Outbox::note_local`]). Returns true when it went out.
 pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) -> bool {
-    // Anything we send while resting brings us back into the mesh; this
-    // one waits for the first neighbor like any other.
     crate::wake::unrest(app).await;
     let delivered = {
         let net = app.net.lock().await;
@@ -559,15 +473,8 @@ pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) ->
     delivered
 }
 
-/// Re-broadcasts a server's queued events, oldest first, now that a
-/// neighbor is connected. An event leaves the queue only once it went out
-/// (see [`may_send`]); the rest stay queued for the next time, in order.
 pub async fn flush_queued(app: &App, server: ServerId) {
-    // Our key is not swapped while what it signed is out of the queue,
-    // where swapping it would sign it again. A swap under way flushes
-    // once it is done, so this one does not wait for it.
     let Ok(_signing) = app.signing.try_read() else { return };
-    // What waits for our key is not taken at all.
     let settled = app.key_settled();
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let events = app.outbox.lock().unwrap().take_queued_where(server, |e| settled || !needs_settled_key(e, me));
@@ -577,11 +484,9 @@ pub async fn flush_queued(app: &App, server: ServerId) {
     let total = events.len();
     let mut left = Vec::new();
     for (i, (_, event)) in events.iter().enumerate() {
-        // Locked per event so other sends are not held up behind a long queue.
         let sent = {
             let net = app.net.lock().await;
             match net.as_ref() {
-                // A neighbor may have left since the event that woke us.
                 Some(node) if may_send(app, node.neighbor_count(server), event) => {
                     node.broadcast(server, WirePayload::Event(event.clone())).await
                 }
@@ -597,17 +502,9 @@ pub async fn flush_queued(app: &App, server: ServerId) {
     }
     tracing::info!("re-sent {} of {total} queued events that may go now", total - left.len());
     app.outbox.lock().unwrap().requeue(server, left);
-    // Always saved: another save while the events were out of the queue
-    // left them out of the file.
     app.persist_outbox();
 }
 
-/// Signs again with `identity` what of ours in `state` it does not sign,
-/// when another key settled than the one we signed with: each of our
-/// messages, sent or pending (one edited while the key was held carries
-/// the old key), and our kept delete proofs. Messages stored before
-/// signing existed stay as they are. Ids and contents stay. True when
-/// any changed.
 pub fn resign_ours(state: &mut ServerState, me: UserId, identity: &Identity) -> bool {
     let server = state.server.id;
     let key = identity.public();
@@ -618,13 +515,11 @@ pub fn resign_ours(state: &mut ServerState, me: UserId, identity: &Identity) -> 
         message.sign(server, identity);
         changed = true;
     }
-    // Catch-up relays the proofs as kept here.
     for proof in snapshot.tombstone_proofs.iter_mut().filter(|p| p.by == me && !p.verify(server, &key)) {
         *proof = TombstoneProof::sign(server, proof.channel, proof.message, me, proof.at, identity);
         changed = true;
     }
     if changed {
-        // Rebuilt from its saved image; live state the image leaves out stays.
         let mut fresh = ServerState::from_snapshot(snapshot);
         fresh.profiles = std::mem::take(&mut state.profiles);
         fresh.voice_states = std::mem::take(&mut state.voice_states);
@@ -637,9 +532,6 @@ pub fn resign_ours(state: &mut ServerState, me: UserId, identity: &Identity) -> 
 }
 
 impl Outbox {
-    /// Signs again with `identity` our queued edits and deletes in
-    /// `state`'s server that it does not sign, as [`resign_ours`] does
-    /// for what the state keeps. True when any changed.
     pub fn resign_queued(&mut self, state: &ServerState, me: UserId, identity: &Identity) -> bool {
         let server = state.server.id;
         let key = identity.public();
@@ -667,10 +559,6 @@ impl Outbox {
     }
 }
 
-/// With the key that is about to settle loaded: signs again with it
-/// whatever of ours here another key signed, kept or still queued, see
-/// [`resign_ours`] and [`Outbox::resign_queued`]. Run before the key
-/// settles, so nothing held back goes out signed with the key it replaces.
 pub fn resign_held(app: &App) {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let (Some(me), Some(identity)) = (me, app.identity()) else { return };
@@ -692,9 +580,6 @@ pub fn resign_held(app: &App) {
     }
 }
 
-/// Sends one DM now. False when the partner has no known address, the
-/// network is not up, delivery failed, or our key may still change (the
-/// partner would pin the one we are about to drop).
 pub async fn try_send_dm(app: &App, partner: UserId, envelope: &DmEnvelope) -> bool {
     if !app.key_settled() {
         return false;
@@ -717,7 +602,6 @@ pub async fn try_send_dm(app: &App, partner: UserId, envelope: &DmEnvelope) -> b
     }
 }
 
-/// Keeps a DM we could not deliver for the outbox task to retry.
 pub fn queue_dm(app: &App, partner: UserId, id: MessageId) {
     if app.outbox.lock().unwrap().add_dm(partner, id) {
         app.dm_backoff.lock().unwrap().schedule(partner, Instant::now());
@@ -725,7 +609,6 @@ pub fn queue_dm(app: &App, partner: UserId, id: MessageId) {
     }
 }
 
-/// Retries a partner's waiting DMs right away.
 pub fn wake_dm(app: &App, partner: UserId) {
     if !app.outbox.lock().unwrap().has_dms(partner) {
         return;
@@ -734,7 +617,6 @@ pub fn wake_dm(app: &App, partner: UserId) {
     app.dm_wake.notify_one();
 }
 
-/// Retries every partner's waiting DMs right away.
 pub fn wake_all_dms(app: &App) {
     let partners = app.outbox.lock().unwrap().dm_partners();
     for partner in partners {
@@ -742,7 +624,6 @@ pub fn wake_all_dms(app: &App) {
     }
 }
 
-/// A node became a gossip neighbor: retry DMs to whoever is on it.
 pub fn wake_dms_for_node(app: &App, peer: [u8; 32]) {
     let hex = data_encoding::HEXLOWER.encode(&peer);
     let on_node = |p: &commy_core::UserProfile| p.node.as_deref() == Some(hex.as_str());
@@ -759,8 +640,6 @@ pub fn wake_dms_for_node(app: &App, peer: [u8; 32]) {
     }
 }
 
-/// Retries waiting DMs per partner, in order: every 30 seconds at first,
-/// backing off to 5 minutes, and at once when [`wake_dm`] is called.
 pub async fn run_dm_outbox(handle: tauri::AppHandle) {
     loop {
         {
@@ -780,7 +659,6 @@ pub async fn run_dm_outbox(handle: tauri::AppHandle) {
     }
 }
 
-/// Tries a partner's waiting DMs in order, stopping at the first failure.
 async fn deliver_dms(handle: &tauri::AppHandle, partner: UserId) {
     let app = handle.state::<App>();
     deliver_dms_with(handle, partner, |envelope| {
@@ -790,8 +668,6 @@ async fn deliver_dms(handle: &tauri::AppHandle, partner: UserId) {
     .await;
 }
 
-/// [`deliver_dms`] over any transport. A delivery tells the webview with
-/// `dm-sent`, not `dm-changed`: nothing arrived, ours went out.
 async fn deliver_dms_with<A, F, Fut>(access: &A, partner: UserId, send: F)
 where
     A: AppAccess,
@@ -810,17 +686,14 @@ where
     for id in queue {
         let found = app.dms.lock().unwrap().conversation(partner).iter().find(|m| m.id == id).cloned();
         let Some(mut message) = found else {
-            // The conversation was removed; nothing left to send.
             changed |= app.outbox.lock().unwrap().dm_done(partner, id);
             continue;
         };
-        // Our key and the profile naming it stay in place until it is sent.
         let _signing = app.signing.read().await;
         let (Ok(me), Some(identity)) = (crate::current_profile(app), app.identity()) else {
             failed = true;
             break;
         };
-        // Signed again with the current key and node, either may have changed.
         message.sign(&node, &identity);
         let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
         if !send(envelope).await {
@@ -857,7 +730,6 @@ mod tests {
         dir
     }
 
-    /// A server whose owner holds a key, plus a signed message of theirs.
     fn keyed_server() -> (ServerState, Identity, Message) {
         let identity = Identity::generate();
         let mut owner = UserProfile::new("owner");
@@ -953,7 +825,6 @@ mod tests {
         assert_eq!(queued.len(), MAX_QUEUED);
         assert_eq!(queued[0], rename(sid, "3"));
 
-        // Requeued events go back in front of anything queued meanwhile.
         outbox.note_local(sid, &rename(sid, "later"), false);
         outbox.requeue(sid, vec![(0, rename(sid, "first")), (0, rename(sid, "second"))]);
         assert_eq!(
@@ -976,7 +847,6 @@ mod tests {
         assert!(!outbox.clear_delivered(ServerId::new(), [b]));
         assert_eq!(outbox.pending_ids(sid), HashSet::from([b, message.id]));
 
-        // A delete drops the message from pending even when it went out.
         let delete = TombstoneProof::sign(sid, message.channel, b, message.author, chrono::Utc::now(), &identity).into_event();
         assert!(outbox.note_local(sid, &delete, true));
         assert_eq!(outbox.pending_ids(sid), HashSet::from([message.id]));
@@ -1079,7 +949,6 @@ mod tests {
         backoff.schedule(partner, t0);
         assert!(!backoff.due(partner, t0 + Duration::from_secs(29)));
         assert!(backoff.due(partner, t0 + DM_RETRY_FIRST));
-        // Scheduling again keeps the running schedule.
         backoff.schedule(partner, t0 + Duration::from_secs(10));
         assert!(backoff.due(partner, t0 + DM_RETRY_FIRST));
 
@@ -1094,7 +963,6 @@ mod tests {
         }
         assert_eq!(delays, vec![60, 120, 240, 300, 300]);
 
-        // A wake makes a waiting partner due now; a failure keeps backing off.
         backoff.failed(partner, now);
         assert!(!backoff.due(partner, now + Duration::from_secs(1)));
         backoff.wake(partner, now);
@@ -1106,7 +974,6 @@ mod tests {
         assert!(backoff.due(partner, now));
         backoff.failed(partner, now);
         assert_eq!(backoff.next[&partner].1, DM_RETRY_FIRST, "a fresh failure starts over");
-        // Waking a partner with nothing scheduled changes nothing.
         let other = UserId::new();
         backoff.wake(other, now);
         assert!(backoff.due(other, now) && !backoff.next.contains_key(&other));
@@ -1158,7 +1025,6 @@ mod tests {
         unsigned.message.sig = None;
         assert!(!dm_sender_trusted(&app, &unsigned));
 
-        // Someone else signing as the same user with another key.
         let impostor = Identity::generate();
         let mut forged = envelope.clone();
         forged.sender.identity = Some(impostor.public());
@@ -1169,7 +1035,6 @@ mod tests {
         assert!(dm_sender_trusted(&app, &envelope));
         assert!(!dm_sender_trusted(&app, &forged), "the contact pin wins");
 
-        // Without a contact pin, one in a server they are in counts.
         let app = App::default();
         let mut state = ServerState::new(Server::new("s", sender.id));
         state.profiles.insert(sender.id, sender.clone());
@@ -1178,7 +1043,6 @@ mod tests {
         assert!(!dm_sender_trusted(&app, &forged));
     }
 
-    /// A server of ours with `user` in it, as a member or not, under `key`.
     fn server_with(app: &App, user: &UserProfile, member: bool, key: IdentityKey) -> ServerId {
         let owner = if member { user.id } else { UserId::new() };
         let mut state = ServerState::new(Server::new("s", owner));
@@ -1198,22 +1062,18 @@ mod tests {
         message.sign(&hex(SENDER_NODE), &real);
         let envelope = DmEnvelope { message, sender: sender.clone() };
 
-        // Pinned for the contact; a server holds them, not as a member, under another key.
         let app = App::default();
         app.dms.lock().unwrap().remember_contact(sender.clone());
         server_with(&app, &sender, false, planted);
         assert!(dm_sender_trusted(&app, &envelope));
-        // The contact pin wins over a member entry too.
         server_with(&app, &sender, true, planted);
         assert!(dm_sender_trusted(&app, &envelope));
 
-        // No contact pin yet: the non-member entry counts for nothing.
         let app = App::default();
         server_with(&app, &sender, false, planted);
         assert!(dm_sender_trusted(&app, &envelope));
         let member = server_with(&app, &sender, true, real.public());
         assert!(dm_sender_trusted(&app, &envelope));
-        // Servers they are in that disagree are not trusted at all.
         server_with(&app, &sender, true, planted);
         assert!(!dm_sender_trusted(&app, &envelope));
         app.servers.lock().unwrap().remove(&member);
@@ -1232,12 +1092,10 @@ mod tests {
 
         let member = server_with(&app, &sender, true, real);
         assert_eq!(member_profile(&servers(&app), sender.id).unwrap().identity, Some(real));
-        // Servers they are in that disagree pin nothing.
         server_with(&app, &sender, true, planted);
         let profile = member_profile(&servers(&app), sender.id).unwrap();
         assert_eq!((profile.id, profile.identity), (sender.id, None));
 
-        // A key pinned for the contact is never replaced.
         let mut dms = commy_core::DmStore::new();
         dms.remember_contact(UserProfile { identity: Some(real), ..sender.clone() });
         app.servers.lock().unwrap().remove(&member);
@@ -1254,7 +1112,6 @@ mod tests {
         data_encoding::HEXLOWER.encode(&node)
     }
 
-    /// A keyed sender on [`SENDER_NODE`], whose profile claims `claimed`.
     fn sender_on(claimed: [u8; 32]) -> (UserProfile, Identity) {
         let identity = Identity::generate();
         let mut sender = UserProfile::new("sender");
@@ -1263,7 +1120,6 @@ mod tests {
         (sender, identity)
     }
 
-    /// A DM `sender` signed for `to` as sent from `from`, arriving from `via`.
     fn dm_from(sender: &UserProfile, identity: &Identity, to: UserId, content: &str, from: [u8; 32], via: [u8; 32]) -> IncomingDm {
         let mut message = DmMessage::new(sender.id, to, content);
         message.sign(&hex(from), identity);
@@ -1285,30 +1141,24 @@ mod tests {
         assert_eq!(screen_dm(&app, &direct), Some(sender.clone()));
         app.dms.lock().unwrap().remember_contact(sender.clone());
 
-        // Their signed DM to someone else, sent on to us: dropped.
         let someone_else = UserId::new();
         assert_eq!(screen_dm(&app, &dm_from(&sender, &identity, someone_else, "hi", SENDER_NODE, SENDER_NODE)), None);
 
-        // A real DM to us, replayed from another node: dropped, whatever
-        // node its unsigned profile claims.
         assert_eq!(screen_dm(&app, &dm_from(&sender, &identity, me.id, "hi", SENDER_NODE, OTHER_NODE)), None);
         let (mut moved, _) = sender_on(OTHER_NODE);
         moved.id = sender.id;
         moved.identity = sender.identity;
         assert_eq!(screen_dm(&app, &dm_from(&moved, &identity, me.id, "hi", SENDER_NODE, OTHER_NODE)), None);
-        // Claiming the other node in the message needs the sender's key.
         let mut renamed = dm_from(&sender, &identity, me.id, "hi", SENDER_NODE, OTHER_NODE);
         renamed.envelope.message.from_node = hex(OTHER_NODE);
         assert_eq!(screen_dm(&app, &renamed), None);
         assert_eq!(app.dms.lock().unwrap().contacts[&sender.id].node, Some(hex(SENDER_NODE)));
 
-        // Only the node it came from is cached, never the one claimed.
         let (claims_other, identity) = sender_on(OTHER_NODE);
         let fresh = app_as(&me);
         let screened = screen_dm(&fresh, &dm_from(&claims_other, &identity, me.id, "hi", SENDER_NODE, SENDER_NODE)).unwrap();
         assert_eq!(screened.node, Some(hex(SENDER_NODE)));
 
-        // Unsigned, naming no node, or before we have a profile: dropped.
         let mut unsigned = direct.clone();
         unsigned.envelope.message.sig = None;
         assert_eq!(screen_dm(&app, &unsigned), None);
@@ -1325,7 +1175,6 @@ mod tests {
         let app = Arc::new(app_as(&me));
         let handle = TestHandle::new(app.clone());
         let (sender, identity) = sender_on(SENDER_NODE);
-        // Signals written one second apart, in this order.
         let t0 = chrono::Utc::now();
         let signal = |signal: FriendSignal, second: i64| {
             let mut dm = dm_from(&sender, &identity, me.id, &signal.encode(), SENDER_NODE, SENDER_NODE);
@@ -1339,14 +1188,12 @@ mod tests {
 
         assert_eq!(receive_dm(&handle, request.clone()), Received::Taken);
         assert!(app.safety.lock().unwrap().friend_in.contains(&sender.id));
-        // The same signal sent again is ignored.
         assert_eq!(receive_dm(&handle, request.clone()), Received::Dropped);
         assert_eq!(receive_dm(&handle, accept.clone()), Received::Taken);
         assert!(app.safety.lock().unwrap().friends.contains(&sender.id));
         assert_eq!(receive_dm(&handle, remove), Received::Taken);
         assert!(!app.safety.lock().unwrap().friends.contains(&sender.id));
 
-        // Earlier signals replayed after a later one change nothing.
         app.safety.lock().unwrap().friend_out.insert(sender.id);
         assert_eq!(receive_dm(&handle, request), Received::Dropped);
         assert_eq!(receive_dm(&handle, accept), Received::Dropped);
@@ -1356,13 +1203,11 @@ mod tests {
         let names: Vec<String> = handle.take_events().into_iter().map(|(name, _)| name).collect();
         assert_eq!(names, ["friends-changed"; 3]);
 
-        // A newer signal relayed from another node never gets that far.
         let mut relayed = signal(FriendSignal::Request, 3);
         relayed.node = OTHER_NODE;
         assert_eq!(receive_dm(&handle, relayed.clone()), Received::Dropped);
         assert!(handle.take_events().is_empty());
         assert!(app.safety.lock().unwrap().friends.is_empty());
-        // From the node it names, the same one meets our own request.
         relayed.node = SENDER_NODE;
         assert_eq!(receive_dm(&handle, relayed), Received::Reply { to: sender.id, signal: FriendSignal::Accept });
         assert!(app.safety.lock().unwrap().friends.contains(&sender.id));
@@ -1377,7 +1222,6 @@ mod tests {
         app.safety.lock().unwrap().friend_out.insert(sender.id);
         let request = dm_from(&sender, &identity, me.id, &FriendSignal::Request.encode(), SENDER_NODE, SENDER_NODE);
         assert_eq!(receive_dm(&handle, request), Received::Reply { to: sender.id, signal: FriendSignal::Accept });
-        // A report is handed back to the caller.
         let report = dm_from(&sender, &identity, me.id, &format!("{}{{}}", safety::REPORT_PREFIX), SENDER_NODE, SENDER_NODE);
         assert!(matches!(receive_dm(&handle, report), Received::Report { from, .. } if from == sender.id));
     }
@@ -1431,7 +1275,6 @@ mod tests {
         flush_queued(&app, sid).await;
         assert_eq!(app.outbox.lock().unwrap().clone().take_queued(sid), vec![rename(sid, "offline")]);
 
-        // The network is up and we are on the topic, but nobody is connected.
         let (mut node, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
         tokio::time::timeout(Duration::from_secs(30), node.host_server(sid, "s")).await.unwrap().unwrap();
         *app.net.lock().await = Some(node);
@@ -1453,7 +1296,6 @@ mod tests {
         for event in [&edit, &rename(sid, "a"), &rename(sid, "b")] {
             app.outbox.lock().unwrap().note_local(sid, event, false);
         }
-        // Offline: the renames fail and stay, behind the edit that waits.
         flush_queued(&app, sid).await;
         assert_eq!(app.outbox.lock().unwrap().clone().take_queued(sid), vec![edit, rename(sid, "a"), rename(sid, "b")]);
     }
@@ -1473,7 +1315,6 @@ mod tests {
         app.outbox.lock().unwrap().add_dm(partner, message.id);
         let handle = TestHandle::new(app.clone());
 
-        // Still unreachable: kept, and nothing to tell.
         deliver_dms_with(&handle, partner, |_| async { false }).await;
         assert!(app.outbox.lock().unwrap().has_dms(partner));
         assert!(handle.take_events().is_empty());
@@ -1498,7 +1339,6 @@ mod tests {
         *app.profile.lock().unwrap() = Some(me.clone());
         *app.identity.lock().unwrap() = Some(identity.clone());
         let partner = UserId::new();
-        // Written on another node, or before the network was up.
         let mut message = DmMessage::new(me.id, partner, "queued");
         message.sign(&hex(OTHER_NODE), &identity);
         app.dms.lock().unwrap().insert(partner, message.clone());
@@ -1510,7 +1350,6 @@ mod tests {
             async { true }
         };
 
-        // No node yet: nothing can go out.
         deliver_dms_with(&handle, partner, send).await;
         assert!(sent.lock().unwrap().is_empty() && app.outbox.lock().unwrap().has_dms(partner));
 
@@ -1537,8 +1376,6 @@ mod tests {
         *app.profile.lock().unwrap() = Some(me.clone());
         app.reload_identity().unwrap();
         *app.node_hex.lock().unwrap() = Some(hex(SENDER_NODE));
-        // The hold ran out, so DMs go out with the key we have, until the
-        // account's key arrives and settles.
         app.mark_key_unsettled();
         app.hold_key(Instant::now());
         let partner = UserId::new();
@@ -1549,7 +1386,6 @@ mod tests {
         }
         write_key(&account);
 
-        // The first one waits on the wire while the key settles.
         let sent = Arc::new(Mutex::new(Vec::new()));
         let (on_wire, wired) = tokio::sync::oneshot::channel();
         let on_wire = Arc::new(Mutex::new(Some(on_wire)));
@@ -1600,7 +1436,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// Events of every kind, with `me` as the actor where one is named.
     fn signed_and_unsigned(me: &UserProfile, identity: &Identity) -> (Vec<ServerEvent>, Vec<ServerEvent>) {
         let server = Server::new("s", me.id);
         let (sid, channel) = (server.id, server.channels[0].id);
@@ -1627,7 +1462,6 @@ mod tests {
             ServerEvent::ChannelUpdate { server: sid, channel, name: "general".into(), retention_days: Some(7) },
             ServerEvent::ReactionSet { channel, message: message.id, emoji: "x".into(), user: me.id, active: true },
             ServerEvent::PresenceUpdate { user: me.id, presence: Presence::Idle },
-            // Someone else's profile names no key of ours.
             ServerEvent::ProfileUpdate { profile: UserProfile::new("member") },
             ServerEvent::VoiceModerate { server: sid, user: other, muted: true, deafened: false },
         ];
@@ -1657,7 +1491,6 @@ mod tests {
         assert!(signed.iter().all(|event| may_send(&app, 3, event)));
     }
 
-    /// Two nodes on a server's topic; the first is connected to the second.
     async fn connected_pair(sid: ServerId) -> (commy_net::CommyNode, commy_net::CommyNode) {
         let within = Duration::from_secs;
         let (mut a, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
@@ -1677,21 +1510,16 @@ mod tests {
         *app.net.lock().await = Some(a);
         app.hold_key(Instant::now() + Duration::from_secs(120));
 
-        // Someone is connected, but our key may still change.
         assert!(!broadcast_local(&app, sid, ServerEvent::MessageCreate { message: message.clone() }).await);
         assert!(app.outbox.lock().unwrap().is_pending(sid, message.id));
-        // Once it went out, an edit of it waits in the queue.
         app.outbox.lock().unwrap().clear_delivered(sid, [message.id]);
         let edit = message.edit_event(sid, "held", chrono::Utc::now(), &identity);
         assert!(!broadcast_local(&app, sid, edit.clone()).await);
-        // What carries no key of ours goes now, and so does one queued
-        // while nobody was connected, ahead of the edit that waits.
         assert!(broadcast_local(&app, sid, rename(sid, "now")).await);
         app.outbox.lock().unwrap().note_local(sid, &rename(sid, "offline"), false);
         flush_queued(&app, sid).await;
         assert_eq!(app.outbox.lock().unwrap().clone().take_queued(sid), vec![edit]);
 
-        // Settled: what waited goes out, and so does what comes next.
         app.settle_key();
         flush_queued(&app, sid).await;
         assert!(app.outbox.lock().unwrap().clone().take_queued(sid).is_empty());
@@ -1708,13 +1536,10 @@ mod tests {
         app.data_dir.set(dir.clone()).unwrap();
         let sid = ServerId::new();
         app.outbox.lock().unwrap().note_local(sid, &rename(sid, "waiting"), false);
-        // Another save while the events are out of the queue, as from a
-        // send in between, leaves them out of the file...
         let taken = app.outbox.lock().unwrap().take_queued_where(sid, |_| true);
         app.persist_outbox();
         app.outbox.lock().unwrap().requeue(sid, taken);
         assert!(Outbox::load(&dir).take_queued(sid).is_empty());
-        // ...until the next flush, which saves what it put back.
         flush_queued(&app, sid).await;
         assert_eq!(Outbox::load(&dir).take_queued(sid), vec![rename(sid, "waiting")]);
         std::fs::remove_dir_all(&dir).ok();
@@ -1739,7 +1564,6 @@ mod tests {
             message.sign(sid, identity);
             message
         };
-        // Written with the key held back: one waiting, one sent that we edited.
         let waiting = post(me.id, &held, "waiting");
         let edited = post(me.id, &held, "first");
         let theirs = post(other.id, &member, "theirs");
@@ -1749,7 +1573,6 @@ mod tests {
         let edit = edited.edit_event(sid, "second", chrono::Utc::now(), &held);
         state.apply(edit.clone()).unwrap();
         let delete = TombstoneProof::sign(sid, channel, theirs.id, me.id, chrono::Utc::now(), &held).into_event();
-        // One of ours deleted here too, its proof kept for catch-up.
         let removed = post(me.id, &held, "removed");
         state.apply(ServerEvent::MessageCreate { message: removed.clone() }).unwrap();
         state.apply(TombstoneProof::sign(sid, channel, removed.id, me.id, chrono::Utc::now(), &held).into_event()).unwrap();
@@ -1764,7 +1587,6 @@ mod tests {
             outbox.note_local(sid, &delete, false);
         }
 
-        // The key that settled is the same: nothing changes.
         *app.identity.lock().unwrap() = Some(held.clone());
         let kept = |app: &App| {
             let snapshot = app.servers.lock().unwrap()[&sid].snapshot();
@@ -1774,7 +1596,6 @@ mod tests {
         resign_held(&app);
         assert_eq!(kept(&app), before);
 
-        // Another key settled.
         *app.identity.lock().unwrap() = Some(settled.clone());
         app.servers.lock().unwrap().get_mut(&sid).unwrap().voice_states.insert(other.id, channel);
         resign_held(&app);

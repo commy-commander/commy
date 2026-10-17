@@ -1,7 +1,3 @@
-//! Per-user ed25519 identity keys. Messages and deletes are signed with
-//! them, so any member can relay history it did not write and receivers
-//! can still tell who wrote it.
-
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -9,19 +5,14 @@ use std::fmt;
 use std::io::{self, Write};
 use std::path::Path;
 
-/// File under the data dir that holds the identity secret as hex.
 pub const IDENTITY_FILE: &str = "identity.key";
 
-/// A user's identity secret. Never leaves the device except inside the
-/// account's sealed blob.
 #[derive(Clone)]
 pub struct Identity(SigningKey);
 
-/// Public half of an [`Identity`], pinned per user by every peer.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct IdentityKey(pub [u8; 32]);
 
-/// Detached ed25519 signature.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Signature(pub [u8; 64]);
 
@@ -49,13 +40,11 @@ impl Identity {
 
 impl fmt::Debug for Identity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The secret stays out of logs.
         f.debug_tuple("Identity").field(&self.public()).finish()
     }
 }
 
 impl IdentityKey {
-    /// Strict verification: rejects malleable and small-order forms.
     pub fn verify(&self, msg: &[u8], sig: &Signature) -> bool {
         let Ok(key) = VerifyingKey::from_bytes(&self.0) else { return false };
         let sig = ed25519_dalek::Signature::from_bytes(&sig.0);
@@ -99,8 +88,6 @@ impl fmt::Debug for Signature {
     }
 }
 
-/// Reads `<dir>/identity.key`, creating it when missing or corrupt.
-/// Never cached: call again after another module rewrites the file.
 pub fn load_or_create(dir: &Path) -> io::Result<Identity> {
     let path = dir.join(IDENTITY_FILE);
     match std::fs::read(&path) {
@@ -118,7 +105,6 @@ pub fn load_or_create(dir: &Path) -> io::Result<Identity> {
     Ok(identity)
 }
 
-/// Temp file then rename, so a crash never leaves a half-written key.
 fn write_secret(dir: &Path, path: &Path, contents: &str) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join(format!("{IDENTITY_FILE}.{}.tmp", to_hex(&rand::random::<[u8; 6]>())));
@@ -165,8 +151,6 @@ pub(crate) fn from_hex<const N: usize>(s: &str) -> Option<[u8; N]> {
     Some(out)
 }
 
-// Hex in human-readable formats (JSON on disk), raw bytes otherwise
-// (postcard on the wire).
 fn serialize_fixed<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
     if serializer.is_human_readable() {
         serializer.serialize_str(&to_hex(bytes))
@@ -265,7 +249,6 @@ mod tests {
     fn invalid_public_key_never_verifies() {
         let id = Identity::generate();
         let sig = id.sign(b"x");
-        // Not a valid curve point encoding.
         let bogus = IdentityKey([0xff; 32]);
         assert!(!bogus.verify(b"x", &sig));
         assert!(!IdentityKey([0; 32]).verify(b"x", &sig));
@@ -323,7 +306,6 @@ mod tests {
         let id = Identity::generate();
         let key = id.public();
         let bytes = postcard::to_stdvec(&key).unwrap();
-        // One length byte, then the key itself.
         assert_eq!(bytes.len(), 33);
         assert_eq!(&bytes[1..], &key.0);
         assert_eq!(postcard::from_bytes::<IdentityKey>(&bytes).unwrap(), key);
@@ -331,7 +313,6 @@ mod tests {
         let bytes = postcard::to_stdvec(&sig).unwrap();
         assert_eq!(bytes.len(), 65);
         assert_eq!(postcard::from_bytes::<Signature>(&bytes).unwrap(), sig);
-        // Wrong length is rejected.
         let short = postcard::to_stdvec(&serde_bytes_like(&key.0[..31])).unwrap();
         assert!(postcard::from_bytes::<IdentityKey>(&short).is_err());
     }
@@ -369,7 +350,6 @@ mod tests {
         assert_eq!(first.public(), second.public());
         let stored = std::fs::read_to_string(dir.join(IDENTITY_FILE)).unwrap();
         assert_eq!(stored, to_hex(&first.to_bytes()));
-        // No temp files are left behind.
         let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names.len(), 1);
         #[cfg(unix)]
@@ -392,7 +372,6 @@ mod tests {
         let dir = temp_dir("rewrite");
         let first = load_or_create(&dir).unwrap();
         let adopted = Identity::generate();
-        // Trailing whitespace from hand edits is tolerated.
         std::fs::write(dir.join(IDENTITY_FILE), format!("{}\n", to_hex(&adopted.to_bytes()))).unwrap();
         let now = load_or_create(&dir).unwrap();
         assert_eq!(now.public(), adopted.public());

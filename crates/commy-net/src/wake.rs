@@ -1,13 +1,4 @@
-#![allow(deprecated)] // iroh 0.28 networking layer, as elsewhere here
-//! Wake-ups for resting devices. A device that rests leaves every
-//! server's gossip mesh but keeps its relay link, so it stays reachable by
-//! node id. A member who sends a message dials it on the `commy/wake/1`
-//! ALPN and writes one byte; the device then rejoins the mesh and catches
-//! up with that member. The wake names no server and carries nothing
-//! else: the receiver works out which servers it shares with the sender
-//! from the sender's node id, which the QUIC handshake authenticates. The
-//! relay sees a few encrypted bytes between two nodes, as it does for any
-//! other peer traffic.
+#![allow(deprecated)]
 
 use crate::node::NetEvent;
 use anyhow::{Context, Result};
@@ -20,24 +11,14 @@ use tokio::sync::mpsc;
 
 pub const WAKE_ALPN: &[u8] = b"commy/wake/1";
 
-/// The whole wake, and the receiver's reply to it.
 pub const WAKE_BYTE: u8 = 1;
 
-/// How long a wake may take end to end, dial included.
 pub const WAKE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// One wake per sending node in this window reaches the app; the rest
-/// are answered and dropped.
 pub const WAKE_SPACING: Duration = Duration::from_secs(10);
 
-/// Senders remembered for [`WAKE_SPACING`], so a flood of node ids cannot
-/// grow the table without bound.
 const MAX_RECENT: usize = 4096;
 
-/// Accepts wakes and passes each sending node to the app as
-/// [`NetEvent::Wake`]. Whether the sender is anyone we know is the app's
-/// call; here we only keep one node from waking us more than once per
-/// [`WAKE_SPACING`].
 #[derive(Debug)]
 pub(crate) struct WakeAcceptor {
     pub(crate) events: mpsc::UnboundedSender<NetEvent>,
@@ -49,7 +30,6 @@ impl WakeAcceptor {
         Self { events, recent: Mutex::new(HashMap::new()) }
     }
 
-    /// True when a wake from `node` should reach the app now.
     fn admit(&self, node: [u8; 32], now: Instant) -> bool {
         let mut recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
         if recent.get(&node).is_some_and(|at| now.duration_since(*at) < WAKE_SPACING) {
@@ -66,8 +46,6 @@ impl WakeAcceptor {
     }
 }
 
-// iroh 0.28 marks its whole networking layer deprecated in favour of a
-// renamed crate; this is the same API the other acceptors use.
 #[allow(deprecated)]
 impl ProtocolHandler for WakeAcceptor {
     fn accept(self: Arc<Self>, connecting: Connecting) -> futures_lite::future::Boxed<Result<()>> {
@@ -87,16 +65,13 @@ impl ProtocolHandler for WakeAcceptor {
             if self.admit(node, Instant::now()) {
                 let _ = self.events.send(NetEvent::Wake { from: node });
             }
-            // The sender hangs up once it has our reply.
             let _ = tokio::time::timeout(Duration::from_secs(5), send.stopped()).await;
             Ok(())
         })
     }
 }
 
-/// Wakes a node: dials it (through `relay` when given, else however
-/// discovery finds it), writes the wake byte and waits for the reply.
-#[allow(deprecated)] // iroh 0.28 networking layer, as elsewhere here
+#[allow(deprecated)]
 pub(crate) async fn send(
     endpoint: iroh::net::Endpoint,
     node: iroh::net::NodeId,

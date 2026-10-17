@@ -23,59 +23,43 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
-/// Events surfaced to the application layer from the gossip plane.
 #[derive(Debug)]
 pub enum NetEvent {
-    /// A server event arrived from a peer and should be applied.
     Event {
         server: ServerId,
         sender: [u8; 32],
         event: ServerEvent,
     },
-    /// A newcomer asked for state; the app should reply with a snapshot.
     SyncRequested { server: ServerId, sender: [u8; 32] },
-    /// A peer sent us a state snapshot.
     SyncReceived {
         server: ServerId,
         payload: WirePayload,
     },
-    /// A peer wants to start a voice session with us.
     VoiceDial {
         server: ServerId,
         payload: WirePayload,
     },
-    /// A new gossip neighbor connected on a server topic. Peers use
-    /// this to re-announce themselves, request missed state and catch
-    /// up with `peer`.
     NeighborUp { server: ServerId, peer: [u8; 32] },
-    /// A peer finished a catch-up session it started with us.
     CaughtUp {
         server: ServerId,
         peer: [u8; 32],
         report: SessionReport,
     },
-    /// A device woke us (see `crate::wake`): we should rejoin the
-    /// servers we share with it and catch up.
     Wake { from: [u8; 32] },
 }
 
-/// A peer QUIC connection, re-exported for link statistics.
 pub type Connection = iroh::net::endpoint::Connection;
 
-/// One live media stream (voice or screen share) with a peer,
-/// abstracted to packet channels so the app never touches QUIC.
 #[derive(Debug)]
 pub struct MediaChannel {
     pub peer: [u8; 32],
     pub hello: MediaHello,
     pub incoming: mpsc::UnboundedReceiver<MediaPacket>,
     pub outgoing: mpsc::UnboundedSender<MediaPacket>,
-    /// The QUIC connection, for link statistics.
     pub connection: iroh::net::endpoint::Connection,
 }
 
 impl MediaChannel {
-    /// Spawns reader and writer pumps over an open bi stream.
     fn spawn(
         endpoint: iroh::net::Endpoint,
         peer: [u8; 32],
@@ -89,7 +73,6 @@ impl MediaChannel {
 
         let stats_handle = connection.clone();
         tokio::spawn(async move {
-            // Holding the connection keeps it alive for both pumps.
             let _connection = connection;
             let reader = async {
                 loop {
@@ -110,8 +93,6 @@ impl MediaChannel {
             let writer = async {
                 let mut pace = VideoPacer::default();
                 while let Some(mut packet) = out_rx.recv().await {
-                    // On a slow link, send only the newest video frame
-                    // instead of falling further behind. Audio is never skipped.
                     let mut after = None;
                     if matches!(packet, MediaPacket::Video { .. }) {
                         while let Ok(next) = out_rx.try_recv() {
@@ -157,14 +138,8 @@ impl MediaChannel {
     }
 }
 
-/// Relays carry everyone's traffic with limited bandwidth; a full-rate
-/// screen share through one starves gossip and voice. Video to a peer we
-/// only reach via a relay is held to this frame interval.
 const RELAYED_VIDEO_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// Decides per video frame whether to send it, based on how the peer is
-/// reached. The path is rechecked every couple of seconds since iroh
-/// upgrades relayed connections to direct ones once hole punching works.
 #[derive(Default)]
 struct VideoPacer {
     relayed: Option<bool>,
@@ -194,7 +169,6 @@ impl VideoPacer {
     }
 }
 
-/// Accepts inbound media connections and hands them to the app.
 #[derive(Debug)]
 struct MediaAcceptor {
     tx: mpsc::UnboundedSender<MediaChannel>,
@@ -222,26 +196,17 @@ impl ProtocolHandler for MediaAcceptor {
     }
 }
 
-/// A DM as it arrived, from the node its message names. The sender
-/// profile in the envelope is not signed; `node` is the node it came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IncomingDm {
     pub envelope: DmEnvelope,
-    /// The sending node, as the QUIC connection authenticated it.
     pub node: [u8; 32],
 }
 
-/// Accepts inbound DM connections: reads envelopes, acks each one, and
-/// forwards them to the app with the sending node. A message that names
-/// another node than the connection's is a copy sent on by someone else,
-/// and is refused.
 #[derive(Debug)]
 struct DmAcceptor {
     tx: mpsc::UnboundedSender<IncomingDm>,
 }
 
-// iroh 0.28 marks its whole networking layer deprecated in favour of a
-// renamed crate; this is the same API the other acceptors use.
 #[allow(deprecated)]
 impl ProtocolHandler for DmAcceptor {
     fn accept(
@@ -267,34 +232,21 @@ impl ProtocolHandler for DmAcceptor {
     }
 }
 
-/// The app's catch-up store, shared with the acceptor.
 pub type SharedCatchupStore = Arc<dyn CatchupStore + Send + Sync>;
 
-/// Holds the store once the app provides it after spawn.
 type StoreSlot = Arc<RwLock<Option<SharedCatchupStore>>>;
 
-/// Catch-up sessions served at once; further peers are asked to retry.
 const MAX_CATCHUP_SESSIONS: usize = 4;
 
-/// Longest a whole catch-up session may run.
 const CATCHUP_SESSION_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// How long a side waits for the other to hang up after its last frame,
-/// so that frame is not cut off.
 const CATCHUP_LINGER: Duration = Duration::from_secs(10);
 
-/// Hellos one node may have waiting to be checked at once.
 const MAX_HANDSHAKES_PER_NODE: usize = 4;
 
-/// Limits on inbound catch-up sessions. A node may have a few Hellos
-/// waiting to be checked, each of which must pass within the handshake
-/// time. Only then does a session take a slot, one per node and server,
-/// so a peer that cannot sign as a member never holds one.
 struct Inbound {
     sessions: Arc<tokio::sync::Semaphore>,
-    /// Hellos waiting to be checked, per node.
     handshakes: Mutex<HashMap<[u8; 32], usize>>,
-    /// Sessions running, per node and server.
     running: Mutex<HashSet<([u8; 32], ServerId)>>,
     handshake: Duration,
 }
@@ -309,9 +261,6 @@ impl Inbound {
         }
     }
 
-    /// Runs the responder side of a session from `peer`, or asks it to
-    /// retry when it has too many Hellos waiting, already runs a session
-    /// for that server, no store is set yet or every slot is taken.
     async fn serve<IO, S>(
         &self,
         mut io: IO,
@@ -345,8 +294,6 @@ impl Inbound {
             .map_err(|_| CatchupError::Timeout)?
     }
 
-    /// Counts a Hello from `peer` as waiting, or None when it has
-    /// [`MAX_HANDSHAKES_PER_NODE`] waiting already.
     fn begin_handshake(&self, peer: [u8; 32]) -> Option<Handshake<'_>> {
         let mut waiting = self.handshakes.lock().unwrap_or_else(|e| e.into_inner());
         let count = waiting.entry(peer).or_default();
@@ -360,11 +307,8 @@ impl Inbound {
         })
     }
 
-    /// Reserves the one session `peer` may run for `server`, or None
-    /// when it runs one.
     fn begin_session(&self, peer: [u8; 32], server: ServerId) -> Option<Running<'_>> {
         let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
-        // A guard made here and dropped would free the holder's slot.
         if !running.insert((peer, server)) {
             return None;
         }
@@ -375,7 +319,6 @@ impl Inbound {
     }
 }
 
-/// A Hello waiting to be checked, counted until dropped.
 struct Handshake<'a> {
     waiting: &'a Mutex<HashMap<[u8; 32], usize>>,
     peer: [u8; 32],
@@ -393,7 +336,6 @@ impl Drop for Handshake<'_> {
     }
 }
 
-/// A node's session for one server, freed on drop.
 struct Running<'a> {
     running: &'a Mutex<HashSet<([u8; 32], ServerId)>>,
     key: ([u8; 32], ServerId),
@@ -406,7 +348,6 @@ impl Drop for Running<'_> {
     }
 }
 
-/// Accepts inbound catch-up sessions and reports each one that completes.
 struct CatchupAcceptor {
     store: StoreSlot,
     events: mpsc::UnboundedSender<NetEvent>,
@@ -420,8 +361,6 @@ impl std::fmt::Debug for CatchupAcceptor {
     }
 }
 
-// iroh 0.28 marks its whole networking layer deprecated in favour of a
-// renamed crate; this is the same API the other acceptors use.
 #[allow(deprecated)]
 impl ProtocolHandler for CatchupAcceptor {
     fn accept(
@@ -444,7 +383,6 @@ impl ProtocolHandler for CatchupAcceptor {
                 .inbound
                 .serve(&mut io, store.as_deref(), self.local, peer)
                 .await;
-            // A peer that went quiet has nothing left to read.
             let timed_out = matches!(outcome, Err(CatchupError::Timeout));
             match outcome {
                 Ok((server, report)) => {
@@ -472,11 +410,7 @@ type TopicSink = Pin<Box<dyn Sink<GossipCommand, Error = anyhow::Error> + Send>>
 
 struct TopicHandle {
     sender: tokio::sync::Mutex<TopicSink>,
-    /// Live set of direct gossip neighbors on this topic.
     neighbors: tokio::sync::watch::Receiver<BTreeSet<[u8; 32]>>,
-    /// The task reading the topic's events. Gossip quits a topic only once
-    /// both the sink and the event stream are gone, so dropping the handle
-    /// stops it too.
     reader: tokio::task::AbortHandle,
 }
 
@@ -486,8 +420,6 @@ impl Drop for TopicHandle {
     }
 }
 
-/// Applies a gossip membership event to the neighbor set and returns
-/// the peers it brought up.
 fn track_neighbors(neighbors: &mut BTreeSet<[u8; 32]>, event: &GossipEvent) -> Vec<[u8; 32]> {
     match event {
         GossipEvent::Joined(peers) => {
@@ -507,8 +439,6 @@ fn track_neighbors(neighbors: &mut BTreeSet<[u8; 32]>, event: &GossipEvent) -> V
     }
 }
 
-/// Stable topic id derived from the server id, so invites keep working
-/// across host restarts. The id is already shared with every invitee.
 pub fn topic_for(server_id: ServerId) -> [u8; 32] {
     let uuid = server_id.0.as_bytes();
     let mut topic = [0u8; 32];
@@ -517,31 +447,19 @@ pub fn topic_for(server_id: ServerId) -> [u8; 32] {
     topic
 }
 
-/// Wraps an in-process iroh node: one gossip topic per joined server,
-/// a blob store for file transfer, and a media ALPN for voice and
-/// screen share connections.
 pub struct CommyNode {
     node: iroh::node::MemNode,
     topics: HashMap<ServerId, TopicHandle>,
     events_tx: mpsc::UnboundedSender<NetEvent>,
-    /// Entry key requests from the account's other devices, until taken.
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
     catchup_store: StoreSlot,
 }
 
 impl CommyNode {
-    /// Generates a fresh node secret key for first launch.
     pub fn generate_secret() -> [u8; 32] {
         rand::random()
     }
 
-    /// Spawns an iroh node with n0 discovery, Commy's relay first and n0's
-    /// relays as fallback (see `relays`).
-    /// Pass the persisted secret key so the node keeps the same
-    /// identity across restarts; a fresh key invalidates every invite
-    /// and DM address that peers have stored.
-    /// Returns gossip events, inbound media channels, and inbound DMs
-    /// with the node each came from.
     pub async fn spawn(
         secret: Option<[u8; 32]>,
     ) -> Result<(
@@ -560,7 +478,6 @@ impl CommyNode {
         Self::spawn_with(secret, relays).await
     }
 
-    /// [`CommyNode::spawn`] with these relays (None: iroh's defaults).
     pub async fn spawn_with(
         secret: Option<[u8; 32]>,
         relays: Option<iroh::net::relay::RelayMap>,
@@ -584,7 +501,7 @@ impl CommyNode {
         let endpoint = protocols.endpoint().clone();
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let catchup_store = StoreSlot::default();
-        #[allow(deprecated)] // iroh 0.28 networking layer, as elsewhere here
+        #[allow(deprecated)]
         let local = *endpoint.node_id().as_bytes();
         let catchup = CatchupAcceptor {
             store: catchup_store.clone(),
@@ -618,20 +535,14 @@ impl CommyNode {
         ))
     }
 
-    /// Entry key requests from other devices; the first call takes them.
     pub fn take_entry_key_requests(&mut self) -> Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>> {
         self.entry_key_requests.take()
     }
 
-    /// The iroh endpoint, for requests that must not hold the node while
-    /// they wait (see `entry_key::request`).
     pub fn endpoint(&self) -> iroh::net::Endpoint {
         self.node.endpoint().clone()
     }
 
-    /// Delivers one DM to a peer, waiting for its ack. Fails when the
-    /// peer is offline or unreachable. The future does not borrow the
-    /// node, so a caller can release a lock on it before awaiting.
     pub fn send_dm(
         &self,
         node_hex: &str,
@@ -665,8 +576,6 @@ impl CommyNode {
         }
     }
 
-    /// Gives the catch-up acceptor access to the app's servers. Until
-    /// this is called, peers that dial us for catch-up are asked to retry.
     pub fn set_catchup_store(&self, store: SharedCatchupStore) {
         *self
             .catchup_store
@@ -674,13 +583,7 @@ impl CommyNode {
             .unwrap_or_else(|e| e.into_inner()) = Some(store);
     }
 
-    /// Catches up on `server` with `peer`: dials it on the catch-up ALPN
-    /// and runs the initiator side, signing as `store.local_identity`.
-    /// The future does not borrow the node, so a caller holding the node
-    /// behind a lock can release it before awaiting. A refusal arrives as
-    /// a [`crate::CatchupError`] inside the error, see
-    /// [`crate::CatchupError::retry_after_ms`].
-    #[allow(deprecated)] // iroh 0.28 networking layer, as elsewhere here
+    #[allow(deprecated)]
     pub fn catch_up(
         &self,
         server: ServerId,
@@ -702,8 +605,6 @@ impl CommyNode {
             let mut io = tokio::io::join(recv, send);
             let session = run_initiator(&mut io, &*store, &identity, server, me, local, peer);
             let result = tokio::time::timeout(CATCHUP_SESSION_TIMEOUT, session).await;
-            // Our last frame, the `Applied` the peer waits for, must arrive
-            // before we hang up.
             let (_, mut send) = io.into_inner();
             if send.finish().is_ok() {
                 let _ = tokio::time::timeout(CATCHUP_LINGER, send.stopped()).await;
@@ -714,13 +615,10 @@ impl CommyNode {
         }
     }
 
-    /// This peer's public identity.
     pub fn node_id_bytes(&self) -> [u8; 32] {
         *self.node.node_id().as_bytes()
     }
 
-    /// How we reach a peer: ("direct" | "relay" | "mixed" | "none", relay
-    /// url, direct address).
     pub fn peer_path(&self, node_hex: &str) -> Option<(String, Option<String>, Option<String>)> {
         use iroh::net::endpoint::ConnectionType;
         let node_id = parse_node_hex(node_hex).ok()?;
@@ -734,18 +632,14 @@ impl CommyNode {
         })
     }
 
-    /// Hex form of our node id, shared in profiles for media dialing.
     pub fn node_id_hex(&self) -> String {
         data_encoding::HEXLOWER.encode(&self.node_id_bytes())
     }
 
-    /// Our dialable address, embedded into invites we create.
     pub async fn node_addr(&self) -> Result<NodeAddr> {
         self.node.net().node_addr().await.map_err(Into::into)
     }
 
-    /// Creates the gossip topic for a brand new server and returns an
-    /// invite ticket other people can use to join.
     pub async fn host_server(
         &mut self,
         server_id: ServerId,
@@ -758,11 +652,6 @@ impl CommyNode {
         Ok(ticket)
     }
 
-    /// Joins an existing server from an invite. Waits for the gossip
-    /// mesh to form before requesting state sync, because broadcasts
-    /// sent with zero neighbors are silently lost. Returns true when a
-    /// peer was reached; false means we joined the topic but nobody
-    /// was online yet (we announce again on NeighborUp).
     pub async fn join_server(&mut self, ticket: &ServerTicket) -> Result<bool> {
         let bootstrap: Vec<NodeId> = ticket.bootstrap.iter().map(|a| a.node_id).collect();
         for addr in &ticket.bootstrap {
@@ -780,7 +669,6 @@ impl CommyNode {
         Ok(connected)
     }
 
-    /// Waits until at least one gossip neighbor is up on the topic.
     pub async fn wait_for_peers(
         &self,
         server_id: ServerId,
@@ -805,7 +693,6 @@ impl CommyNode {
             && !handle.neighbors.borrow().is_empty()
     }
 
-    /// Current neighbor count for a joined server topic.
     pub fn neighbor_count(&self, server_id: ServerId) -> usize {
         self.topics
             .get(&server_id)
@@ -813,7 +700,6 @@ impl CommyNode {
             .unwrap_or(0)
     }
 
-    /// Node ids of the current gossip neighbors on a server topic.
     pub fn neighbors(&self, server_id: ServerId) -> Vec<[u8; 32]> {
         self.topics
             .get(&server_id)
@@ -828,9 +714,6 @@ impl CommyNode {
         bootstrap: Vec<NodeId>,
     ) -> Result<()> {
         let topic = TopicId::from_bytes(topic_bytes);
-        // Straight to the gossip actor, not through the node's RPC client:
-        // ending an RPC subscription panics a task in iroh 0.28, and the
-        // node shuts down on any panicked task.
         let gossip = self
             .node
             .get_protocol::<iroh_gossip::net::Gossip>(iroh_gossip::net::GOSSIP_ALPN)
@@ -912,18 +795,12 @@ impl CommyNode {
         Ok(())
     }
 
-    /// Asks gossip to dial these members on a server topic we already
-    /// joined. Used to heal the mesh when both sides restarted and the
-    /// startup dial reached nobody.
     pub async fn join_peers(&self, server_id: ServerId, peers_hex: &[String]) -> Result<usize> {
         let handle = self
             .topics
             .get(&server_id)
             .context("not joined to that server")?;
         let our_id = self.node_id_bytes();
-        // Peers usually share our home relay (same region), and dialing
-        // through it works even when no direct address is known. Without
-        // any route hint a bare id dial times out.
         let relay_hint = self
             .node_addr()
             .await
@@ -951,15 +828,12 @@ impl CommyNode {
         Ok(count)
     }
 
-    /// Broadcasts a payload to every member of a server.
     pub async fn broadcast(&self, server_id: ServerId, payload: WirePayload) -> Result<()> {
         let handle = self
             .topics
             .get(&server_id)
             .context("not joined to that server")?;
         let bytes = Envelope::new(self.node_id_bytes(), payload).encode()?;
-        // An oversized frame makes peers drop the connection outright,
-        // so refuse it here instead of breaking the mesh.
         anyhow::ensure!(
             bytes.len() <= crate::protocol::MAX_GOSSIP_BYTES,
             "message is too large to send ({} bytes, limit {})",
@@ -971,8 +845,6 @@ impl CommyNode {
         Ok(())
     }
 
-    /// Opens a direct media connection (voice or screen) to a peer
-    /// identified by its hex node id.
     pub async fn connect_media(&self, node_hex: &str, hello: MediaHello) -> Result<MediaChannel> {
         let node_id = parse_node_hex(node_hex)?;
         let connection = self
@@ -995,14 +867,6 @@ impl CommyNode {
         ))
     }
 
-    /// Stores a file in the local blob store, returning its hash for
-    /// embedding in a message attachment.
-    ///
-    /// Goes through a temp file on purpose: `add_bytes` uses a bidi
-    /// streaming RPC whose server side (quic-rpc 0.14) polls a finished
-    /// oneshot, which current tokio turns into a panic that kills the
-    /// iroh node and with it all networking. `add_from_path` is plain
-    /// server streaming and does not hit that path.
     pub async fn add_blob(&self, bytes: Vec<u8>) -> Result<String> {
         let path = std::env::temp_dir().join(format!(
             "commy-blob-{}-{}.bin",
@@ -1028,10 +892,8 @@ impl CommyNode {
         Ok(added?.hash.to_string())
     }
 
-    /// Fetches a blob by hash, trying the given provider first.
     pub async fn fetch_blob(&self, hash: &str, provider_hex: Option<&str>) -> Result<Vec<u8>> {
         let hash: iroh_blobs::Hash = hash.parse().context("invalid blob hash")?;
-        // Serve from the local store when we already have it.
         if let Ok(bytes) = self.node.blobs().read_to_bytes(hash).await {
             return Ok(bytes.to_vec());
         }
@@ -1051,24 +913,18 @@ impl CommyNode {
         self.topics.remove(&server_id);
     }
 
-    /// The relay we are reachable through, once one is picked.
     pub fn home_relay(&self) -> Option<String> {
         self.node.endpoint().home_relay().map(|r| r.to_string())
     }
 
-    /// True while we are in a server's gossip mesh.
     pub fn is_joined(&self, server_id: ServerId) -> bool {
         self.topics.contains_key(&server_id)
     }
 
-    /// Leaves every server's mesh, keeping the endpoint and its relay
-    /// link, and returns the servers left. See [`CommyNode::rejoin`].
     pub fn rest(&mut self) -> Vec<ServerId> {
         self.topics.drain().map(|(id, _)| id).collect()
     }
 
-    /// Joins a server's mesh again after [`CommyNode::rest`], dialing its
-    /// members. Nothing happens when we are already in it.
     pub async fn rejoin(&mut self, server_id: ServerId, peers_hex: &[String]) -> Result<()> {
         if self.is_joined(server_id) {
             return Ok(());
@@ -1091,9 +947,6 @@ impl CommyNode {
         self.join_topic(server_id, topic_for(server_id), ids).await
     }
 
-    /// Wakes a resting device by node id (see `crate::wake`), through our
-    /// home relay, which members usually share. The future does not
-    /// borrow the node.
     pub fn wake(&self, node_hex: &str) -> impl Future<Output = Result<()>> + Send + 'static {
         let endpoint = self.node.endpoint().clone();
         let relay = endpoint.home_relay();
@@ -1155,7 +1008,6 @@ mod tests {
             vec![*c.as_bytes()]
         );
         assert_eq!(set.len(), 3);
-        // A repeated up is announced again but counted once.
         assert_eq!(
             track_neighbors(&mut set, &GossipEvent::NeighborUp(c)),
             vec![*c.as_bytes()]
@@ -1163,12 +1015,10 @@ mod tests {
         assert_eq!(set.len(), 3);
         assert!(track_neighbors(&mut set, &GossipEvent::NeighborDown(a)).is_empty());
         assert_eq!(set, BTreeSet::from([*b.as_bytes(), *c.as_bytes()]));
-        // Down for a peer we never saw changes nothing.
         assert!(track_neighbors(&mut set, &GossipEvent::NeighborDown(a)).is_empty());
         assert_eq!(set.len(), 2);
     }
 
-    /// The owner's store and two friends' stores for one server.
     fn members() -> (
         crate::test_support::MemStore,
         crate::test_support::MemStore,
@@ -1191,7 +1041,6 @@ mod tests {
     const GUEST: [u8; 32] = [2; 32];
     const OTHER: [u8; 32] = [3; 32];
 
-    /// A full session from `guest` on `node`, served through `inbound`.
     async fn session_through<S: CatchupStore>(
         inbound: &Inbound,
         host: &S,
@@ -1209,26 +1058,22 @@ mod tests {
         )
     }
 
-    /// Hellos from `node` that `inbound` is waiting to check.
     fn waiting(inbound: &Inbound, node: [u8; 32]) -> usize {
         inbound.handshakes.lock().unwrap().get(&node).copied().unwrap_or(0)
     }
 
-    /// Waits until `inbound` waits for `count` Hellos from `node`.
     async fn until_waiting(inbound: &Inbound, node: [u8; 32], count: usize) {
         while waiting(inbound, node) < count {
             tokio::task::yield_now().await;
         }
     }
 
-    /// Waits until `inbound` runs a session from `node` for `server`.
     async fn until_running(inbound: &Inbound, node: [u8; 32], server: ServerId) {
         while !inbound.running.lock().unwrap().contains(&(node, server)) {
             tokio::task::yield_now().await;
         }
     }
 
-    /// The guest's Hello on `x`, so a session from GUEST passes admit.
     async fn say_hello(x: &mut tokio::io::DuplexStream, guest: &crate::test_support::MemStore) {
         use crate::catchup::{CatchupFrame, HelloRole};
         let hello = CatchupFrame::hello(
@@ -1249,7 +1094,6 @@ mod tests {
         let (host, guest, _) = members();
         let inbound = Inbound::new(MAX_CATCHUP_SESSIONS, HANDSHAKE_TIMEOUT);
 
-        // The guest's node opens as many sessions as allowed, silent so far.
         let (mut quiet, mut held) = (Vec::new(), Vec::new());
         for _ in 0..MAX_HANDSHAKES_PER_NODE {
             let (x, y) = tokio::io::duplex(1024);
@@ -1275,7 +1119,6 @@ mod tests {
         }
         assert_eq!(waiting(&inbound, GUEST), 0);
 
-        // Once those ended, the node may come back.
         let (rg, rh) = session_through(&inbound, &host, &guest, GUEST).await;
         assert_eq!(rg.unwrap().received.len(), 1);
         rh.unwrap();
@@ -1291,7 +1134,6 @@ mod tests {
         let host = MultiStore(vec![first, second]);
         let inbound = Inbound::new(MAX_CATCHUP_SESSIONS, HANDSHAKE_TIMEOUT);
 
-        // The guest's node runs a session for one server and goes quiet.
         let (mut x, y) = tokio::io::duplex(8 * 1024);
         say_hello(&mut x, &guest).await;
         let held = inbound.serve(y, Some(&host), HOST, GUEST);
@@ -1303,19 +1145,16 @@ mod tests {
             (same, other)
         };
         let (held, ((rs, rh), (ro, rho))) = tokio::join!(held, next);
-        // A second session for the same server waits for the first.
         assert_eq!(rs.unwrap_err().retry_after_ms(), Some(RETRY_AFTER_MS));
         assert!(matches!(
             rh.unwrap_err(),
             CatchupError::Rejected(Refusal::Busy)
         ));
-        // Another server from the same node goes ahead.
         assert_eq!(ro.unwrap().received.len(), 1);
         assert_eq!(rho.unwrap().0, guest_elsewhere.server());
         assert!(matches!(held.unwrap_err(), CatchupError::Closed));
         assert!(inbound.running.lock().unwrap().is_empty());
 
-        // Once the first ended, the same server may come back.
         let (rg, rh) = session_through(&inbound, &host, &guest, GUEST).await;
         assert_eq!(rg.unwrap().received.len(), 1);
         rh.unwrap();
@@ -1346,7 +1185,6 @@ mod tests {
     #[tokio::test]
     async fn silent_peer_holds_no_session_slot_and_is_let_go() {
         let (host, guest, _) = members();
-        // One session slot, and a short handshake so the test is quick.
         let inbound = Inbound::new(1, Duration::from_millis(200));
         let started = tokio::time::Instant::now();
         let (silent, quiet) = tokio::io::duplex(1024);
@@ -1356,12 +1194,10 @@ mod tests {
             session_through(&inbound, &host, &guest, GUEST).await
         };
         let (stalled, (rg, rh)) = tokio::join!(stalled, member);
-        // A member caught up while the silent peer was still waited for.
         assert_eq!(rg.unwrap().received.len(), 1);
         rh.unwrap();
         assert!(matches!(stalled.unwrap_err(), CatchupError::Timeout));
         assert!(started.elapsed() < Duration::from_secs(5));
-        // Its Hello no longer counts.
         assert_eq!(waiting(&inbound, OTHER), 0);
         drop(silent);
     }
@@ -1371,7 +1207,6 @@ mod tests {
         use crate::catchup::RETRY_AFTER_MS;
         let (host, guest, other) = members();
         let inbound = Inbound::new(1, HANDSHAKE_TIMEOUT);
-        // The guest says hello, then goes quiet while holding the slot.
         let (mut x, first) = tokio::io::duplex(8 * 1024);
         say_hello(&mut x, &guest).await;
         let held = inbound.serve(first, Some(&host), HOST, GUEST);
@@ -1392,8 +1227,6 @@ mod tests {
         assert!(matches!(held.unwrap_err(), CatchupError::Closed));
     }
 
-    /// Two real nodes on this machine run a session over QUIC, which
-    /// checks the acceptor wiring and that no frame is cut off at close.
     #[tokio::test]
     async fn catch_up_runs_over_quic() {
         use crate::catchup::{CatchupError, RETRY_AFTER_MS};
@@ -1415,7 +1248,6 @@ mod tests {
         let from_b = store_b.post(channel, "from b");
         let server = store_a.server();
 
-        // Until the app hands over its store, peers are asked to retry.
         let early = tokio::time::timeout(
             within(30),
             a.catch_up(server, b.node_id_bytes(), store_a.clone()),
@@ -1454,15 +1286,12 @@ mod tests {
             panic!("unexpected event {event:?}");
         };
         assert_eq!((got, peer), (server, a.node_id_bytes()));
-        // Counted only because a's `Applied` arrived before it hung up.
         assert_eq!(report.delivered, vec![from_b.id]);
         assert_eq!(report.received, vec![from_a.id]);
         a.shutdown().await.ok();
         b.shutdown().await.ok();
     }
 
-    /// A DM arrives with the node that really sent it, whatever node the
-    /// envelope's unsigned profile claims.
     #[tokio::test]
     async fn incoming_dms_carry_the_sending_node() {
         use crate::test_support::keyed_profile;
@@ -1495,8 +1324,6 @@ mod tests {
         b.shutdown().await.ok();
     }
 
-    /// A signed DM sent again from a node other than the one it names is
-    /// refused before the app sees it.
     #[tokio::test]
     async fn a_dm_sent_on_from_another_node_is_refused() {
         use crate::test_support::{identity_for, keyed_profile};
@@ -1518,12 +1345,10 @@ mod tests {
         let envelope = DmEnvelope { message, sender };
         assert!(envelope.signed_by_sender());
 
-        // The relay holds a real signed copy and sends it from its own node.
         let replay = tokio::time::timeout(within(30), relay.send_dm(&b.node_id_hex(), &envelope))
             .await
             .unwrap();
         assert!(replay.is_err(), "refused");
-        // From the node it names, the same message goes through.
         tokio::time::timeout(within(30), a.send_dm(&b.node_id_hex(), &envelope))
             .await
             .unwrap()
@@ -1548,7 +1373,6 @@ mod tests {
     }
 }
 
-/// Unique-enough suffix for staging files within one process.
 fn rand_suffix() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

@@ -1,7 +1,3 @@
-# Deploy agent: keeps web and auth on the newest image published for their tag.
-# Enable with COMPOSE_FILE=docker-compose.yml:docker-compose.agent.yml in .env and
-# WEB_IMAGE / AUTH_IMAGE pointing at GHCR tags. See DEPLOYING.md.
-
 services:
   agent:
     image: docker:27-cli

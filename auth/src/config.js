@@ -1,6 +1,3 @@
-// Turns environment variables into a validated config object. Kept free of
-// side effects so it can be unit tested without a database.
-
 const DEFAULT_PORT = 3001;
 
 function list(value) {
@@ -14,8 +11,6 @@ function stripSlash(url) {
   return url.replace(/\/+$/, "");
 }
 
-// A client id and secret pair, trimmed because pasted values often carry
-// stray spaces. Half a pair turns the feature off and says why at startup.
 function oauthClient(env, prefix, warnings, uses) {
   const clientId = (env[`${prefix}_CLIENT_ID`] ?? "").trim();
   const clientSecret = (env[`${prefix}_CLIENT_SECRET`] ?? "").trim();
@@ -27,9 +22,6 @@ function oauthClient(env, prefix, warnings, uses) {
   return null;
 }
 
-// Mail settings come either as one SMTP_URL or as separate SMTP_HOST,
-// SMTP_PORT, SMTP_USER and SMTP_PASSWORD values. The separate form avoids
-// URL-encoding passwords and app tokens.
 function smtpConfig(env, errors) {
   const host = (env.SMTP_HOST ?? "").trim();
   if (!env.SMTP_URL && !host) return null;
@@ -51,7 +43,6 @@ function smtpConfig(env, errors) {
     user = (env.SMTP_USER ?? "").trim();
     const pass = env.SMTP_PASSWORD ?? "";
     if (user && !pass) errors.push("SMTP_PASSWORD is required when SMTP_USER is set");
-    // 465 is TLS from the first byte; anything else must upgrade with STARTTLS
     const secure = env.SMTP_SECURE ? env.SMTP_SECURE === "true" : port === 465;
     transport = {
       host,
@@ -97,11 +88,9 @@ export function loadConfig(env = process.env) {
     throw new Error(`Invalid auth server configuration:\n- ${errors.join("\n- ")}`);
   }
 
-  // Optional settings that are half filled in; logged, never fatal
   const warnings = [];
   const google = oauthClient(env, "GOOGLE", warnings, "Google sign-in");
   const twitch = oauthClient(env, "TWITCH", warnings, "Twitch sign-in");
-  // IGDB signs in with a Twitch application; the sign-in app works for both
   const igdb = oauthClient(env, "IGDB", warnings, "the separate IGDB app") ?? twitch;
   const klipyKey = (env.KLIPY_API_KEY ?? "").trim() || null;
 
@@ -123,7 +112,6 @@ export function loadConfig(env = process.env) {
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
     invitesMaxPermanent: Number(env.INVITES_MAX_PERMANENT) > 0 ? Math.floor(Number(env.INVITES_MAX_PERMANENT)) : undefined,
     doorbell: env.DOORBELL !== "false",
-    // Optional Redis for doorbell rings and rate-limit counters
     redisUrl: (env.REDIS_URL ?? "").trim() || null,
     google,
     twitch,
@@ -135,8 +123,6 @@ export function loadConfig(env = process.env) {
   };
 }
 
-// One line for the startup log saying which optional parts are on, so an
-// operator can check their .env without reading the discovery document.
 export function featureSummary(config) {
   const on = (value) => (value ? "on" : "off");
   return [
@@ -152,7 +138,6 @@ export function featureSummary(config) {
   ].join(" ");
 }
 
-// Public discovery document the desktop app reads from a custom server URL.
 export function discoveryDocument(config) {
   const api = `${config.baseURL}${config.basePath}`;
   return {
@@ -192,15 +177,11 @@ export function discoveryDocument(config) {
       doorbellRing: `${api}/commy/doorbell/ring`,
       doorbellTake: `${api}/commy/doorbell/take`,
     },
-    // Searches the server runs for signed in apps with its own keys
     features: {
       gifs: Boolean(config.klipyKey),
       games: Boolean(config.igdb),
-      // GIF files and game covers load through /commy/media
       media: true,
-      // Sealed per-account items such as the server list, see vault.js
       vault: true,
-      // Content-free wake-ups for offline messages (doorbellRing, doorbellTake)
       doorbell: Boolean(config.doorbell),
     },
     invites: {

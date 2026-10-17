@@ -4,7 +4,6 @@ use iroh::net::NodeAddr;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Human-pasteable invite prefix.
 const PREFIX: &str = "commy";
 const TICKET_VERSION: u8 = 1;
 
@@ -18,15 +17,11 @@ pub enum TicketError {
     Corrupt,
 }
 
-/// Everything a peer needs to join a server: the gossip topic and at
-/// least one member to dial for bootstrap and state sync.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ServerTicket {
     pub server_id: ServerId,
     pub server_name: String,
-    /// Gossip topic the server replicates over.
     pub topic: [u8; 32],
-    /// Addresses of members that can bootstrap the newcomer.
     pub bootstrap: Vec<NodeAddr>,
 }
 
@@ -45,7 +40,6 @@ impl ServerTicket {
         }
     }
 
-    /// Encodes as `commy<base32>`; safe to paste in any chat.
     pub fn encode(&self) -> String {
         let mut bytes = vec![TICKET_VERSION];
         bytes.extend(postcard::to_stdvec(self).expect("ticket serialization cannot fail"));

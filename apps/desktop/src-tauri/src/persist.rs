@@ -1,16 +1,3 @@
-//! On-disk persistence. Everything lives under the app data dir:
-//!
-//! ```text
-//! <data>/profile.json          our identity
-//! <data>/voice.json            voice settings
-//! <data>/servers/<id>.json     one Snapshot per joined server
-//! <data>/outbox.json           sends waiting for someone to come online
-//! <data>/awaiting-snapshot.json servers joined that wait for a snapshot
-//! ```
-//!
-//! Writes go to a temp file first and are renamed into place so a
-//! crash mid-write never corrupts state.
-
 use crate::state::VoiceSettings;
 use anyhow::{Context, Result};
 use commy_core::{DmStore, ServerId, ServerState, Snapshot, UserProfile};
@@ -27,7 +14,6 @@ pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let json = serde_json::to_vec_pretty(value)?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, &json)?;
-    // Windows rename fails if the target exists.
     if path.exists() {
         fs::remove_file(path)?;
     }
@@ -86,9 +72,6 @@ pub fn load_safety(dir: &Path) -> Option<crate::safety::SafetySettings> {
     read_json(&dir.join("safety.json"))
 }
 
-/// Loads the node secret key, creating one on first launch. The key
-/// is the device's P2P identity; losing it breaks stored invites and
-/// DM addresses that peers hold.
 pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
     let path = dir.join("node.key");
     if let Ok(hex) = fs::read_to_string(&path) {
@@ -105,12 +88,10 @@ pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
     Some(key)
 }
 
-/// Servers joined that wait for their first snapshot.
 pub fn save_awaiting(dir: &Path, servers: &HashSet<ServerId>) -> Result<()> {
     write_json(&dir.join("awaiting-snapshot.json"), servers)
 }
 
-/// Earlier builds saved each with a time, which no longer counts.
 pub fn load_awaiting(dir: &Path) -> HashSet<ServerId> {
     #[derive(serde::Deserialize)]
     #[serde(untagged)]
@@ -125,8 +106,6 @@ pub fn load_awaiting(dir: &Path) -> HashSet<ServerId> {
     }
 }
 
-/// Invite tickets, kept so joined servers can be rejoined after a
-/// restart (the ticket holds the topic and bootstrap addresses).
 pub fn save_invites(dir: &Path, invites: &HashMap<ServerId, String>) -> Result<()> {
     write_json(&dir.join("invites.json"), invites)
 }
@@ -188,7 +167,6 @@ mod tests {
         let profile = UserProfile::new("commy");
         save_profile(&dir, &profile).unwrap();
         assert_eq!(load_profile(&dir).unwrap(), profile);
-        // Overwrite works (tmp+rename path with existing target).
         let mut updated = profile.clone();
         updated.custom_status = Some("building".to_string());
         save_profile(&dir, &updated).unwrap();
@@ -238,7 +216,6 @@ mod tests {
         let first = load_or_create_node_key(&dir).unwrap();
         let second = load_or_create_node_key(&dir).unwrap();
         assert_eq!(first, second);
-        // Corrupt key falls back to a fresh identity.
         fs::write(dir.join("node.key"), "not hex").unwrap();
         let third = load_or_create_node_key(&dir).unwrap();
         assert_ne!(first, third);

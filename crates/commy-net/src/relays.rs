@@ -1,19 +1,11 @@
-//! Relay servers the node uses: Commy's own relay first, with n0's public
-//! relays kept as a fallback so connections survive if ours is down or
-//! paused at its monthly bandwidth limit.
-
 use anyhow::{Context, Result};
 use iroh::net::relay::{RelayMap, RelayNode, RelayUrl};
 
-/// Fixed at build time so test builds never touch production: release
-/// builds use relay.commy.chat, test builds set COMMY_DEFAULT_RELAY (and
-/// COMMY_DEFAULT_RELAY_STUN_PORT when its STUN port is not 3478).
 pub const DEFAULT_COMMY_RELAY: &str = match option_env!("COMMY_DEFAULT_RELAY") {
     Some(url) => url,
     None => "https://relay.commy.chat:8443",
 };
 
-/// STUN port of the default relay; 0 means iroh's default (3478).
 pub const DEFAULT_COMMY_RELAY_STUN_PORT: u16 = match option_env!("COMMY_DEFAULT_RELAY_STUN_PORT") {
     Some(port) => parse_port(port),
     None => 0,
@@ -33,8 +25,6 @@ const fn parse_port(s: &str) -> u16 {
     value as u16
 }
 
-/// Our relay URLs: `COMMY_RELAY_URLS` (comma separated, `none` to use only
-/// n0's), else the default Commy relay.
 pub fn own_relays_from(var: Option<&str>) -> Vec<String> {
     match var.map(str::trim) {
         Some("none") => Vec::new(),
@@ -51,12 +41,10 @@ pub fn own_relays() -> Vec<String> {
     own_relays_from(std::env::var("COMMY_RELAY_URLS").ok().as_deref())
 }
 
-/// Own relays followed by n0's production relays, without duplicates.
 pub fn relay_map(own: &[String]) -> Result<RelayMap> {
     let mut nodes: Vec<RelayNode> = Vec::new();
     for url in own {
         let url: RelayUrl = url.parse().with_context(|| format!("invalid relay url {url}"))?;
-        // RelayUrl normalizes the host (trailing dot), so compare parsed URLs
         let is_default = DEFAULT_COMMY_RELAY.parse::<RelayUrl>().is_ok_and(|d| d == url);
         let stun_port = if is_default { DEFAULT_COMMY_RELAY_STUN_PORT } else { 0 };
         nodes.push(RelayNode { url, stun_only: false, stun_port });

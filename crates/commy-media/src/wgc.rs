@@ -1,12 +1,3 @@
-//! Windows Graphics Capture for streams on Windows.
-//!
-//! GDI window capture copies whatever is painted over the window's
-//! rectangle on screen, so a stream of a game showed the task switcher,
-//! notifications and other windows on top of it, and could not see
-//! hardware-rendered games at all. Windows Graphics Capture composes the
-//! window's own surface, the same way the system's own screen recording
-//! does, and delivers frames as the window repaints.
-
 use anyhow::{anyhow, bail, Context as _, Result};
 use image::RgbaImage;
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
@@ -21,7 +12,6 @@ use windows_capture::settings::{
 };
 use windows_capture::window::Window;
 
-/// Converts each arriving frame to RGBA and hands it to the grabber.
 struct Handler {
     frames: SyncSender<RgbaImage>,
     scratch: Vec<u8>,
@@ -36,14 +26,10 @@ impl GraphicsCaptureApiHandler for Handler {
     }
 
     fn on_frame_arrived(&mut self, frame: &mut Frame, control: InternalCaptureControl) -> Result<()> {
-        // Windows keep their own title bar out of the stream, as the GDI
-        // path cropped to the client area; games and monitors have none.
         let buffer = frame.buffer_without_title_bar().context("frame buffer")?;
         let (width, height) = (buffer.width(), buffer.height());
         let pixels = buffer.as_nopadding_buffer(&mut self.scratch).to_vec();
         let image = RgbaImage::from_raw(width, height, pixels).context("frame size mismatch")?;
-        // A full channel means the grabber is still busy with the last
-        // frame; this one is stale by the time it would be read.
         if let Err(std::sync::mpsc::TrySendError::Disconnected(_)) = self.frames.try_send(image) {
             control.stop();
         }
@@ -55,22 +41,16 @@ impl GraphicsCaptureApiHandler for Handler {
     }
 }
 
-/// A running capture of one window or monitor. Frames arrive as the
-/// source repaints; [`Capture::grab`] returns the newest one, or the
-/// previous one again when nothing has changed.
 pub struct Capture {
     control: Option<CaptureControl<Handler, anyhow::Error>>,
     frames: Receiver<RgbaImage>,
     last: Option<RgbaImage>,
 }
 
-/// The first frame takes a while to arrive; later ones repeat the last
-/// frame when the source stops repainting.
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(2);
 const REPEAT_AFTER: Duration = Duration::from_millis(250);
 
 impl Capture {
-    /// Captures the window with this handle (as the share picker lists it).
     pub fn window(hwnd: u32) -> Result<Self> {
         let window = Window::from_raw_hwnd(hwnd as usize as *mut std::ffi::c_void);
         if !window.is_valid() {
@@ -79,7 +59,6 @@ impl Capture {
         Self::start(window)
     }
 
-    /// Captures the monitor with this handle (as the share picker lists it).
     pub fn monitor(hmonitor: u32) -> Result<Self> {
         Self::start(Monitor::from_raw_hmonitor(hmonitor as usize as *mut std::ffi::c_void))
     }

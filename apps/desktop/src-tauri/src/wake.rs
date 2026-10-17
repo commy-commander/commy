@@ -1,45 +1,22 @@
-//! Resting and waking. A resting device leaves every server's mesh and
-//! keeps only its relay link and its doorbell listener. When we send a
-//! message, members who may be resting (they look idle, invisible or
-//! offline) get a wake by node id; a resting device that takes one
-//! rejoins the mesh and catches up with whoever woke it, and any other
-//! device ignores it. A wake that fails falls back to that device's
-//! doorbell.
-//!
-//! Gossip may still count a resting device as a neighbor for a while
-//! (it quits a topic only on the next event there), so who to wake is
-//! decided by presence, not by the mesh.
-//!
-//! Resting is a test setting for now: `COMMY_REST_AFTER_SECS` makes the
-//! app rest once it has been away (AFK) that long, and wake again on
-//! activity, a wake or a doorbell ring.
-
 use crate::catchup::AppAccess;
 use crate::state::App;
 use commy_core::{Presence, ServerId, UserId};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-/// One wake per device per this window from us.
 const SEND_SPACING: Duration = Duration::from_secs(30);
 
-/// Most devices one message wakes.
 const MAX_WAKES: usize = 64;
 
-/// One wake handled per server per this window.
 const HANDLE_SPACING: Duration = Duration::from_secs(10);
 
-/// After a wake, how long we stay in the mesh at the least before resting
-/// again (longer when the rest setting is longer).
 const AWAKE_AT_LEAST: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Default)]
 pub struct Rest {
     resting: bool,
     awake_until: Option<Instant>,
-    /// When we last woke each device, by node id (hex).
     woken_at: HashMap<String, Instant>,
-    /// When we last acted on a wake, per server.
     handled_at: HashMap<ServerId, Instant>,
 }
 
@@ -51,15 +28,10 @@ fn hex(bytes: &[u8]) -> String {
     data_encoding::HEXLOWER.encode(bytes)
 }
 
-/// Members who may be resting: they do not show as online or busy.
 fn may_rest(presence: Presence) -> bool {
     !matches!(presence, Presence::Online | Presence::DoNotDisturb)
 }
 
-// ---------- Sending ----------
-
-/// Devices in a server we would wake for a message: those of members who
-/// may be resting, except ours.
 pub(crate) fn targets(app: &App, server: ServerId) -> Vec<String> {
     let our_node = app.node_hex.lock().unwrap().clone();
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
@@ -94,8 +66,6 @@ pub(crate) fn targets(app: &App, server: ServerId) -> Vec<String> {
     nodes
 }
 
-/// Wakes the devices [`targets`] names that we have not woken within
-/// [`SEND_SPACING`], and returns each with whether the wake landed.
 pub(crate) async fn wake_members(app: &App, server: ServerId) -> Vec<(String, bool)> {
     let wakes = {
         let net = app.net.lock().await;
@@ -109,7 +79,6 @@ pub(crate) async fn wake_members(app: &App, server: ServerId) -> Vec<(String, bo
                 .filter(|n| rest.woken_at.insert(n.clone(), now).is_none())
                 .collect()
         };
-        // Dialing waits on the network, never on the lock.
         due.into_iter().map(|n| (n.clone(), tokio::spawn(node.wake(&n)))).collect::<Vec<_>>()
     };
     let mut out = Vec::new();
@@ -130,8 +99,6 @@ pub(crate) async fn wake_members(app: &App, server: ServerId) -> Vec<(String, bo
     out
 }
 
-/// After we send a message: wakes members who may be resting, ringing
-/// the doorbell of any device the wake does not reach.
 pub fn after_send(handle: &tauri::AppHandle, server: ServerId, message: commy_core::MessageId) {
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
@@ -145,11 +112,6 @@ pub fn after_send(handle: &tauri::AppHandle, server: ServerId, message: commy_co
     });
 }
 
-// ---------- Receiving ----------
-
-/// A device woke us: the servers we share with it that we should catch up
-/// on now. Only a resting device acts on a wake, and only on one from a
-/// device it knows as a member.
 pub(crate) fn on_wake(app: &App, from: [u8; 32]) -> Vec<ServerId> {
     if !is_resting(app) {
         return Vec::new();
@@ -195,7 +157,6 @@ pub(crate) fn on_wake(app: &App, from: [u8; 32]) -> Vec<ServerId> {
     shared
 }
 
-/// Every server we are in, with its members' devices (node hex).
 fn members_by_server(app: &App) -> Vec<(ServerId, Vec<String>)> {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let servers = app.servers.lock().unwrap();
@@ -217,8 +178,6 @@ fn members_by_server(app: &App) -> Vec<(ServerId, Vec<String>)> {
         .collect()
 }
 
-/// Leaves every server's mesh, keeping the relay link. Returns how many
-/// servers we left.
 pub(crate) async fn rest(app: &App) -> usize {
     let mut net = app.net.lock().await;
     let Some(node) = net.as_mut() else { return 0 };
@@ -228,8 +187,6 @@ pub(crate) async fn rest(app: &App) -> usize {
     left.len()
 }
 
-/// Rejoins every server's mesh after [`rest`]. Returns how many servers
-/// we rejoined; 0 when we were not resting.
 pub(crate) async fn unrest(app: &App) -> usize {
     if !app.rest.lock().unwrap().resting {
         return 0;
@@ -249,8 +206,6 @@ pub(crate) async fn unrest(app: &App) -> usize {
     joined
 }
 
-/// What `run_net_loop` does with a wake: back into the mesh, then a
-/// catch-up with the device that woke us in each server we share.
 pub fn handle_wake(handle: &tauri::AppHandle, from: [u8; 32]) {
     let servers = on_wake(handle.app(), from);
     if servers.is_empty() {
@@ -267,10 +222,6 @@ pub fn handle_wake(handle: &tauri::AppHandle, from: [u8; 32]) {
     });
 }
 
-// ---------- The rest setting ----------
-
-/// `COMMY_REST_AFTER_SECS`: rest after being away this long. Unset or 0
-/// means never rest.
 fn rest_after() -> Option<Duration> {
     std::env::var("COMMY_REST_AFTER_SECS")
         .ok()
@@ -279,7 +230,6 @@ fn rest_after() -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-/// What the rest watchdog should do.
 #[derive(Debug, PartialEq, Eq)]
 enum Step {
     Rest,
@@ -287,8 +237,6 @@ enum Step {
     Stay,
 }
 
-/// `away` is true while AFK set us idle; `busy` while we are in voice or
-/// sharing our screen, which needs the mesh.
 fn decide(resting: bool, away: bool, busy: bool, idle: Duration, after: Duration, held_awake: bool) -> Step {
     if resting {
         if !away || busy {
@@ -300,8 +248,6 @@ fn decide(resting: bool, away: bool, busy: bool, idle: Duration, after: Duration
     Step::Stay
 }
 
-/// Marks the window title while resting, so two copies on a test bench
-/// show which one rests.
 fn show_resting(handle: &tauri::AppHandle, resting: bool) {
     use tauri::Manager;
     let label = std::env::var("COMMY_INSTANCE_LABEL").ok();
@@ -313,8 +259,6 @@ fn show_resting(handle: &tauri::AppHandle, resting: bool) {
     }
 }
 
-/// Rests once we have been away for `COMMY_REST_AFTER_SECS` and wakes on
-/// activity. Does nothing without that setting.
 pub async fn run_watchdog(handle: tauri::AppHandle) {
     let Some(after) = rest_after() else { return };
     loop {

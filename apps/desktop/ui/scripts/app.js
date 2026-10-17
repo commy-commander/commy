@@ -1,54 +1,44 @@
-// Commy desktop frontend. Talks to the Rust side via Tauri invoke.
-// When opened in a plain browser (no Tauri), a mock backend provides
-// demo data so the UI can be developed and previewed standalone.
-
 "use strict";
 
-// Named IS_TAURI because Tauri's injected global API bundle already
-// defines window.isTauri, and redeclaring it kills the whole script.
 const IS_TAURI = Boolean(window.__TAURI__);
 const invoke = IS_TAURI ? window.__TAURI__.core.invoke : mockInvoke;
 
-// Surface any script failure instead of dying silently.
 window.addEventListener("error", e => {
-  try { toast(`UI error: ${e.message}`); } catch (_) { /* toast not ready */ }
+  try { toast(`UI error: ${e.message}`); } catch (_) {  }
 });
 window.addEventListener("unhandledrejection", e => {
-  try { toast(`UI error: ${e.reason}`); } catch (_) { /* toast not ready */ }
+  try { toast(`UI error: ${e.reason}`); } catch (_) {  }
 });
 
 const state = {
   user: null,
   servers: [],
-  currentServer: null, // ServerView
-  currentChannel: null, // ChannelView
+  currentServer: null,
+  currentChannel: null,
   voice: { noise_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10 },
-  voiceChannelId: null, // voice channel we are connected to
-  voiceServer: null, // { id, name, channelName } for the voice connection
-  shareSource: null, // name of the monitor or window we are streaming
+  voiceChannelId: null,
+  voiceServer: null,
+  shareSource: null,
   watchingName: null,
-  sharing: false, // we are sharing our screen
-  watchingUser: null, // user id whose screen we are viewing
-  view: "server", // "server" or "dm"
-  currentDm: null, // { user, name }
+  sharing: false,
+  watchingUser: null,
+  view: "server",
+  currentDm: null,
   micTesting: false,
-  people: new Map(), // user id -> person seen in any server
-  speaking: new Set(), // user ids currently talking in our voice channel
+  people: new Map(),
+  speaking: new Set(),
   dmThreads: [],
   showDmProfile: true,
 };
-
-// ---------- Mock backend (browser preview only) ----------
 
 const mock = {
   user: null,
   servers: {},
   messages: {},
-  dms: {}, // partner id -> { name, messages }
+  dms: {},
   voice: { noise_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10 },
 };
 
-// Tiny drawn stand-ins for uploaded pictures in the browser preview.
 function mockCrabImage() {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
@@ -119,7 +109,6 @@ function mockSeed() {
     { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages"], self_assignable: false, tag: null },
   ];
   server.game_tags = ["Rust", "Valorant"];
-  // A custom emoji and a channel banner so names and intros can be previewed.
   server.emojis = [{ name: "ferris", image: "ferris@mock" }];
   mock.expressions = { ...(mock.expressions || {}), "ferris@mock": mockCrabImage() };
   mock.serverImages = { ...(mock.serverImages || {}), "welcome-banner@mock": mockBannerImage() };
@@ -127,7 +116,6 @@ function mockSeed() {
   server.channels[1].color = "9b7bff";
   server.rules = "# Welcome\n1. Be kind to each other\n2. **No spam** or self promotion\n3. Keep it on topic, see https://commy.chat";
   server.needs_rules = true;
-  // ferris is in the General voice channel, muted, for a while now.
   const general = server.channels[3];
   general.voice_users = ["ferris"];
   general.voice_user_ids = ["m1"];
@@ -170,7 +158,6 @@ function mockSeed() {
     { id: "x4", channel: c0, author_id: "m2", author_name: "nova",
       content: "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43), created_at: new Date(Date.now() - 60e3).toISOString(), edited: false, attachments: [] },
   ];
-  // Two pins in #welcome and one announcement, for the pins panel preview.
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
     { channel: c0, message: "x1", by: "m1", at: new Date(Date.now() - 3000e3).toISOString() },
@@ -182,11 +169,9 @@ function mockSeed() {
       created_at: new Date(Date.now() - 7200e3).toISOString(), edited: false, attachments: [], reactions: [{ emoji: "\u{1F389}", count: 3, users: ["m2", "m3", "me"] }] },
   ];
   mock.pins.push({ channel: news, message: "n1", by: "m1", at: new Date(Date.now() - 7000e3).toISOString() });
-  // Doorbell: messages other members sent us that are still on their way.
   server.awaited = 2;
 }
 
-// Mock pins of a channel (or every channel), newest first, as the backend lists them.
 function mockPinViews(channelId) {
   const server = Object.values(mock.servers)[0];
   const names = new Map((server ? server.channels : []).map(c => [c.id, c.name]));
@@ -197,7 +182,6 @@ function mockPinViews(channelId) {
     .map(p => ({ ...p, message: { ...p.message, pinned: true } }));
 }
 
-// Fake screen capture for the browser preview: a labeled gradient with a clock.
 function mockFrame(label, width, height, hue) {
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -230,10 +214,8 @@ async function mockInvoke(cmd, args = {}) {
       if (!s) throw "unknown server";
       const members = [...s.members];
       if (mock.user && !members.some(m => m.id === "me")) {
-        // Like the real store: appearing offline is kept as plain offline.
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
         const me = { id: "me", name: mock.user.username, presence, custom_status: null };
-        // Mirror the real member view: own voice state shows in the list too.
         const vc = s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -245,7 +227,6 @@ async function mockInvoke(cmd, args = {}) {
         ...s, members, screen_shares: [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
         channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, ...c })),
-        // Preview mode: set mock.plainMember = true in the console to see the app as a member without any management role.
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
@@ -352,7 +333,6 @@ async function mockInvoke(cmd, args = {}) {
     case "send_dm": {
       const dm = mock.dms[args.userId];
       if (!dm) throw "no such conversation";
-      // Offline partners get the message once they are back.
       const partner = Object.values(mock.servers).flatMap(s => s.members).find(m => m.id === args.userId);
       const sent = {
         id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: args.content,
@@ -675,8 +655,6 @@ async function mockInvoke(cmd, args = {}) {
   }
 }
 
-// ---------- DOM helpers ----------
-
 const $ = id => document.getElementById(id);
 
 function el(tag, className, text) {
@@ -686,7 +664,6 @@ function el(tag, className, text) {
   return node;
 }
 
-// Inline SVG icons (Material Symbols paths, Apache 2.0).
 const ICONS = {
   speaker: "M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z",
   mic: "M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z",
@@ -761,8 +738,6 @@ function setVoiceStatus(node, name, title) {
   node.title = title;
 }
 
-// ---------- Full-screen settings layers ----------
-
 function openSettingsLayer(id, tab) {
   hideModals();
   for (const layer of document.querySelectorAll(".settings-layer")) layer.classList.add("hidden");
@@ -771,7 +746,6 @@ function openSettingsLayer(id, tab) {
   for (const range of $(id).querySelectorAll('input[type="range"]')) syncRangeFill(range);
 }
 
-// Colors the slider track up to the thumb.
 function syncRangeFill(range) {
   const min = Number(range.min || 0);
   const max = Number(range.max || 100);
@@ -805,8 +779,6 @@ async function closeSettingsLayers() {
   for (const layer of document.querySelectorAll(".settings-layer")) layer.classList.add("hidden");
 }
 
-// ---------- Appearance (stored per device) ----------
-
 const APPEARANCE_KEY = "commy.appearance";
 const APPEARANCE_DEFAULTS = { chatSize: 16, compact: false };
 
@@ -825,7 +797,7 @@ function applyAppearance(prefs) {
 
 function saveAppearance(prefs) {
   applyAppearance(prefs);
-  try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(prefs)); } catch { /* storage unavailable */ }
+  try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(prefs)); } catch {  }
 }
 
 function toast(message) {
@@ -846,11 +818,7 @@ function hideModals() {
   $("modal-backdrop").classList.add("hidden");
 }
 
-// ---------- Avatars ----------
-
-// user id -> { avatar, provider } from every server member list we load.
 const avatarDirectory = new Map();
-// blob hash -> data URL, or a pending promise.
 const avatarImages = new Map();
 
 function rememberAvatars(members) {
@@ -882,9 +850,6 @@ function loadAvatarImage(blob, provider) {
   return Promise.resolve(avatarImages.get(blob));
 }
 
-// Fills an avatar element with an image, emoji or initials, keeping
-// any badges (presence dot) already inside it.
-// Stable per-person tint so a room full of initials still reads as people.
 function paintAvatar(node, userId, name) {
   for (const child of [...node.childNodes]) {
     if (child.nodeType === Node.TEXT_NODE || child.classList?.contains("avatar-face")) child.remove();
@@ -925,8 +890,6 @@ function paintAvatar(node, userId, name) {
   return node;
 }
 
-// A span that shows how long since `sinceSecs` and keeps counting; the
-// ticker below refreshes every one of them once a second.
 function liveElapsed(sinceSecs, fmt = "clock", cls = "") {
   const node = el("span", "elapsed" + (cls ? ` ${cls}` : ""));
   node.dataset.since = String(sinceSecs || 0);
@@ -943,20 +906,15 @@ setInterval(() => {
   }
 }, 1000);
 
-// "Playing Chess for 1h 12m": the activity with how long it has run.
 function activityWithTime(person) {
   if (!person || !person.activity) return "";
   return person.activity_since ? `${person.activity} for ${elapsedWords(person.activity_since)}` : person.activity;
 }
 
-// The voice channel a member is in, if any, on the server shown.
 function voiceChannelOf(member, server) {
   return member.voice_channel && server && (server.channels || []).find(c => c.id === member.voice_channel);
 }
 
-// Small glyphs at the end of a member's name line: a speaker while they
-// are in voice, plus mic or headset struck through when they muted or
-// deafened themselves. The clock stays on the voice channel rows.
 function memberHover(member, channel) {
   const lines = [];
   if (channel) lines.push(`In voice · ${channelPlainName(channel)} · ${elapsedClock(member.voice_since)}`);
@@ -964,8 +922,6 @@ function memberHover(member, channel) {
   if (game) lines.push(game);
   return lines.join("\n");
 }
-
-// statusLine, backLine, subLine and presenceLabel live in presence.js, shared with its tests.
 
 function makeAvatar(userId, name, className = "avatar") {
   return paintAvatar(el("div", className), userId, name);
@@ -982,7 +938,6 @@ function formatTime(iso) {
   return day === "Today" ? time : `${day} at ${time}`;
 }
 
-// "Today", "Yesterday", or the date, for day dividers and timestamps.
 function dayLabel(date) {
   const today = new Date();
   const yesterday = new Date(today);
@@ -993,19 +948,12 @@ function dayLabel(date) {
   return date.toLocaleDateString([], sameYear ? { month: "long", day: "numeric" } : { year: "numeric", month: "long", day: "numeric" });
 }
 
-// ---------- Rendering ----------
-
-// The webview's own right-click menu never shows: Commy draws its own
-// menus. Text fields and selected text keep it, for copy and paste.
 document.addEventListener("contextmenu", e => {
   const editable = e.target.closest && e.target.closest("input, textarea, [contenteditable]:not([contenteditable=\"false\"])");
   const selected = window.getSelection && String(window.getSelection()).length > 0;
   if (!editable && !selected) e.preventDefault();
 });
 
-// ---------- Server rail: order, folders, drag and drop ----------
-
-// Per device: [{type:"server", id} | {type:"folder", id, name, open, servers:[id]}]
 const RAIL_KEY = "commy.railLayout";
 
 function loadRailLayout() {
@@ -1018,11 +966,9 @@ function loadRailLayout() {
 }
 
 function saveRailLayout(layout) {
-  try { localStorage.setItem(RAIL_KEY, JSON.stringify(layout)); } catch { /* session only */ }
+  try { localStorage.setItem(RAIL_KEY, JSON.stringify(layout)); } catch {  }
 }
 
-// Drops servers we left, appends new ones, and tidies folders: empty
-// folders vanish and a folder with one server unwraps.
 function normalizeRailLayout(layout, serverIds) {
   const known = new Set(serverIds);
   const seen = new Set();
@@ -1046,12 +992,10 @@ function removeFromLayout(layout, id) {
     .map(item => (item.type === "folder" ? { ...item, servers: item.servers.filter(s => s !== id) } : item));
 }
 
-// Applies one drop. `drag` is {kind:"server"|"folder", id}; `target` is
-// {kind, id, folder?} for what was dropped on; `zone` is before|after|into.
 function applyRailDrop(layout, drag, target, zone) {
   if (drag.id === target.id) return layout;
   if (drag.kind === "folder") {
-    if (target.folder) return layout; // folders cannot nest
+    if (target.folder) return layout;
     const folder = layout.find(i => i.type === "folder" && i.id === drag.id);
     let rest = layout.filter(i => i !== folder);
     const at = rest.findIndex(i => i.id === target.id);
@@ -1061,7 +1005,6 @@ function applyRailDrop(layout, drag, target, zone) {
   }
   let next = removeFromLayout(layout, drag.id);
   if (target.folder) {
-    // Target sits inside a folder: reorder or join within it.
     next = next.map(item => {
       if (item.type !== "folder" || item.id !== target.folder) return item;
       const servers = item.servers.slice();
@@ -1093,10 +1036,6 @@ function dropZone(e, node, allowInto) {
   return x < 0.25 ? "before" : x > 0.75 ? "after" : "into";
 }
 
-// Server tiles and folder heads take drops from the rail drag above.
-// (Channel rows have their own `makeDropTarget` further down; the two
-// used to share a name, and the later one won, which is how folders
-// stopped forming.)
 function makeRailDropTarget(node, target) {
   node.addEventListener("dragover", e => {
     if (!railDrag || railDrag.id === target.id) return;
@@ -1143,7 +1082,6 @@ function railServerButton(server, folderId) {
   btn.classList.toggle("muted", isServerMuted(server.id));
   const wrap = el("div", "rail-item");
   wrap.appendChild(btn);
-  // A muted server keeps its count for the channel list but stays quiet here.
   if (count && !isServerMuted(server.id)) wrap.appendChild(countBadge(count));
   btn.onclick = () => selectServer(server.id);
   btn.oncontextmenu = e => {
@@ -1191,7 +1129,6 @@ function renderServerRail() {
       for (const s of servers.slice(0, 4)) {
         const mini = el("span", "folder-mini");
         paintServerIcon(mini, s);
-        // Servers without an avatar still read as distinct colors.
         mini.style.background = serverTint(s.id);
         grid.appendChild(mini);
       }
@@ -1221,8 +1158,6 @@ function renderServerRail() {
     list.appendChild(folder);
   }
 }
-
-// ---------- Server and folder menus ----------
 
 let menuServer = null;
 let menuFolderOf = null;
@@ -1256,7 +1191,6 @@ function openServerMenu(server, x, y, folderId) {
   $("sm-mute").classList.toggle("checked", muted);
   $("sm-mute").textContent = muted ? "Unmute Server" : "Mute Server";
   $("sm-ungroup").classList.toggle("hidden", !menuFolderOf);
-  // Rules and roles live in the full server view; fetch it for the menu.
   $("sm-rules").classList.add("hidden");
   $("sm-roles").classList.add("hidden");
   $("sm-settings").textContent = "Server Settings";
@@ -1328,7 +1262,6 @@ async function confirmLeaveServer() {
   }
 }
 
-// Channel names can carry the server's custom emoji as ":name:" tokens.
 const CHANNEL_EMOJI_RE = /:([a-z0-9_]{2,32}):/g;
 
 function serverEmoji(name) {
@@ -1336,9 +1269,6 @@ function serverEmoji(name) {
   return ((server && server.emojis) || []).find(e => e.name === name) || null;
 }
 
-// Pieces of a channel name: strings and {emoji} objects. A dash that only
-// separates an emoji from the words is dropped, so ":ferris:-rust-help"
-// reads as the crab followed by "rust-help".
 function channelNameParts(name) {
   const parts = [];
   let last = 0;
@@ -1360,8 +1290,6 @@ function channelNameParts(name) {
   return parts;
 }
 
-// A channel's banner picture or colour becomes a band behind its name
-// in the list; the picture wins when both are set.
 function paintChannelBand(row, channel) {
   if (channel.banner) {
     row.classList.add("has-banner");
@@ -1383,7 +1311,6 @@ function channelNameNode(channel, cls = null) {
   return span;
 }
 
-// Plain-text name for places that cannot hold an image.
 function channelPlainName(channel) {
   return channelNameParts(channel.name).filter(p => typeof p === "string").join(" ").trim() || channel.name;
 }
@@ -1404,7 +1331,6 @@ function renderChannels() {
     const isCollapsed = collapsed.has(section.key);
     list.appendChild(sectionHeader(section, isCollapsed, canCreate));
     for (const channel of section.channels) {
-      // Collapsed sections still show where you are.
       const active = (state.currentChannel && channel.id === state.currentChannel.id) || channel.id === state.voiceChannelId;
       if (isCollapsed && !active) continue;
       const row = channel.kind === "voice" ? voiceChannelRow(channel, canCreate) : textChannelRow(channel, canCreate);
@@ -1423,7 +1349,6 @@ function renderChannels() {
   pushOverlayRoster();
 }
 
-// The mark before a channel name: a hash, or a megaphone for announcements.
 function channelMark(channel, size = 18) {
   if (channel && channel.kind === "announcement") {
     const icon = el("span", "channel-icon announce-icon");
@@ -1492,7 +1417,6 @@ function appendVoiceUsers(list, channel) {
     const since = (channel.voice_since || [])[i];
     if (since) vu.appendChild(liveElapsed(since, "clock", "voice-user-time"));
     vu.appendChild(el("span", "vs-icon")).appendChild(svgIcon("mic", 14));
-    // What they announced: their own mute and deafen state.
     const muted = (channel.voice_muted || [])[i];
     const deafened = (channel.voice_deafened || [])[i];
     if (!isMe && muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
@@ -1510,9 +1434,6 @@ function appendVoiceUsers(list, channel) {
       setVoiceStatus(vu.lastChild, "headsetOff", "Server Deafened");
     }
     if (userId && (state.voice.muted_users || []).includes(userId)) vu.classList.add("muted-for-me");
-    // Click or right-click a name for its menu: mute, volume and, with
-    // the permissions, kick and ban for others; your own voice controls
-    // on your own row.
     if (userId && !isMe) {
       vu.onclick = vu.oncontextmenu = e => {
         e.preventDefault();
@@ -1527,7 +1448,6 @@ function appendVoiceUsers(list, channel) {
         openSelfVoiceMenu(e.clientX, e.clientY);
       };
     }
-    // Our own state is drawn from our settings, so a toggle shows at once.
     if (isMe && channel.id === state.voiceChannelId) {
       if (state.voice.muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
       if (state.voice.deafened) {
@@ -1539,9 +1459,6 @@ function appendVoiceUsers(list, channel) {
   });
 }
 
-// ---------- Server avatar and banner ----------
-
-// image ref -> data URL, or a pending promise.
 const serverImages = new Map();
 
 function loadServerImage(ref) {
@@ -1561,14 +1478,12 @@ function loadServerImage(ref) {
   return Promise.resolve(serverImages.get(ref));
 }
 
-// Stable per-server color for places that show many servers at once.
 function serverTint(serverId) {
   let hash = 0;
   for (const ch of String(serverId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
   return `hsl(${Math.abs(hash) % 360} 55% 45%)`;
 }
 
-// Shows a server's avatar on a rail button or settings preview.
 function paintServerIcon(node, server) {
   node.replaceChildren(document.createTextNode(initials(server.name)));
   node.classList.remove("has-image");
@@ -1589,15 +1504,11 @@ function paintSidebarBanner() {
   const header = $("server-name-header");
   if (state.view === "server" && state.currentServer) {
     $("server-settings-btn").title = canOpenServerSettings(state.currentServer) ? "Server Settings" : "Server Info";
-    // Inviting needs a role that grants it; the button follows the server.
     $("invite-btn").classList.toggle("hidden", !state.currentServer.can_invite);
   }
   const banner = $("sidebar-banner");
   const server = state.view === "server" ? state.currentServer : null;
   const ref = server ? server.banner : null;
-  // Every server gets the banner-height header, so switching between
-  // one with a picture and one without never moves the channel list.
-  // Without a picture the slot stays the plain panel surface.
   header.classList.toggle("has-banner", Boolean(server));
   header.classList.toggle("plain", Boolean(server) && !ref);
   banner.style.backgroundImage = "";
@@ -1628,9 +1539,6 @@ function paintServerImages(server) {
   }
 }
 
-// Lets the user pick an image. In the app this is the native dialog,
-// because the webview's file input never opens a chooser in our Tauri
-// window; the browser preview falls back to the file input.
 function chooseImage(title, input) {
   if (IS_TAURI) return invoke("pick_image", { title });
   return new Promise(resolve => {
@@ -1640,7 +1548,6 @@ function chooseImage(title, input) {
   });
 }
 
-// Center-crops an image file to the target size and encodes a JPEG.
 function cropImageFile(file, width, height) {
   return new Promise((resolve, reject) => {
     const url = typeof file === "string" ? file : URL.createObjectURL(file);
@@ -1666,7 +1573,6 @@ function cropImageFile(file, width, height) {
   });
 }
 
-
 async function setServerImage(which, data) {
   if (!state.currentServer) return;
   try {
@@ -1680,9 +1586,6 @@ async function setServerImage(which, data) {
   }
 }
 
-// ---------- Sounds ----------
-
-// Files bundled in the ui folder. "none" plays nothing.
 const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3" };
 const SOUND_EVENTS = [
   { id: "message", label: "New message or mention", fallback: "notification" },
@@ -1702,7 +1605,7 @@ function soundPrefs() {
 }
 
 function saveSoundPrefs(prefs) {
-  try { localStorage.setItem(SOUND_KEY, JSON.stringify(prefs)); } catch { /* session only */ }
+  try { localStorage.setItem(SOUND_KEY, JSON.stringify(prefs)); } catch {  }
 }
 
 function soundFor(eventId) {
@@ -1711,8 +1614,6 @@ function soundFor(eventId) {
   return chosen === undefined ? event?.fallback : chosen;
 }
 
-// Plays the sound for an event, unless sounds are off or you are on
-// Do Not Disturb. `force` previews a specific sound from settings.
 function playSound(eventId, force) {
   const prefs = soundPrefs();
   const name = force || soundFor(eventId);
@@ -1720,7 +1621,7 @@ function playSound(eventId, force) {
   if (!force && (!prefs.enabled || state.user?.presence === "do_not_disturb")) return;
   const audio = new Audio(SOUND_FILES[name]);
   audio.volume = Math.max(0, Math.min(1, prefs.volume));
-  audio.play().catch(() => { /* autoplay blocked before any user input */ });
+  audio.play().catch(() => {  });
 }
 
 function renderSoundSettings() {
@@ -1761,7 +1662,6 @@ function renderSoundSettings() {
   syncRangeFill($("soundboard-volume"));
 }
 
-// Voice join and leave sounds: compare who is in our channel between renders.
 let lastVoiceRoster = null;
 
 function checkVoiceRoster() {
@@ -1782,8 +1682,6 @@ function checkVoiceRoster() {
   lastVoiceRoster = { key, ids: others };
 }
 
-// ---------- Notifications and unread ----------
-
 const NOTIFY_KEY = "commy.notify";
 
 function notifyPrefs() {
@@ -1795,17 +1693,15 @@ function notifyPrefs() {
 }
 
 function saveNotifyPrefs(prefs) {
-  try { localStorage.setItem(NOTIFY_KEY, JSON.stringify(prefs)); } catch { /* session only */ }
+  try { localStorage.setItem(NOTIFY_KEY, JSON.stringify(prefs)); } catch {  }
 }
 
-// channel id -> unread count, and DM partner id -> unread count.
 const unread = { channels: new Map(), channelServer: new Map(), dms: new Map() };
 
 function appFocused() {
   return document.visibilityState === "visible" && document.hasFocus();
 }
 
-// The rules themselves live in notify.js, shared with its tests.
 function mentionsMe(content) {
   if (!state.user) return false;
   return mentionsName(content, [state.user.username, state.user.display_name]);
@@ -1858,12 +1754,6 @@ function onMessageCreated(msg) {
   }
 }
 
-// Messages that arrived in a catch-up with a peer: unread counts per
-// channel, and for recent ones (a wake-up, a reconnect) one notification
-// per channel and a single sound, under the same rules as live messages.
-// Payload: { server, server_name, channels: { id: { count, channel_name,
-// author_name, content, has_attachments, at, mentioned } } }. An older
-// build sends a bare count per channel; that only bumps the badge.
 function onMessagesCaughtUp(payload) {
   const server = payload && payload.server;
   const channels = payload && payload.channels;
@@ -1897,7 +1787,6 @@ function onMessagesCaughtUp(payload) {
   if (state.currentServer && state.currentServer.id === server) renderChannels();
 }
 
-// A clicked notification opens the conversation it was about.
 async function openNotificationTarget(target) {
   const [kind, a, b] = String(target || "").split(":");
   try {
@@ -1916,7 +1805,6 @@ async function openNotificationTarget(target) {
 
 function onDmReceived(dm) {
   if (dm.request) {
-    // Requests wait quietly; spam is silent.
     if (state.view === "dm") renderDmThreads();
     if (!dm.spam) toast(`Message request from ${dm.name}`);
     return;
@@ -1933,8 +1821,6 @@ function onDmReceived(dm) {
     playSound("dm");
   }
 }
-
-// ---------- Camera ----------
 
 const CAMERA_KEY = "commy.cameraDevice";
 const CAMERA_FPS = 12;
@@ -1953,7 +1839,6 @@ async function openCameraStream() {
       audio: false,
     });
   } catch (e) {
-    // A saved camera that was unplugged falls back to the default one.
     if (deviceId) return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     throw e;
   }
@@ -1982,8 +1867,6 @@ async function startCamera() {
   cam.video = video;
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  // Encode at most one frame at a time so a slow machine drops frames
-  // instead of queueing them.
   cam.timer = setInterval(async () => {
     if (cam.busy || !video.videoWidth) return;
     cam.busy = true;
@@ -2000,7 +1883,7 @@ async function startCamera() {
           height: canvas.height,
         });
       }
-    } catch { /* camera stopped mid-frame */ }
+    } catch {  }
     cam.busy = false;
   }, Math.round(1000 / CAMERA_FPS));
   state.cameraOn = true;
@@ -2021,13 +1904,12 @@ async function stopCamera() {
   stopCameraTracks();
   state.cameraOn = false;
   if (server) {
-    try { await invoke("stop_camera", { serverId: server.id }); } catch { /* already off */ }
+    try { await invoke("stop_camera", { serverId: server.id }); } catch {  }
   }
   renderVoicePanel();
   if (state.currentServer) await refreshCurrentServer();
 }
 
-// Users with their camera on in our voice channel, ourselves first.
 function cameraUsersHere() {
   const server = state.currentServer;
   if (!server || !state.voiceChannelId || !state.voiceServer || server.id !== state.voiceServer.id) return [];
@@ -2047,7 +1929,6 @@ function renderCamGrid() {
   const grid = $("cam-grid");
   const users = cameraUsersHere();
   const wanted = new Set(users.map(u => u.id));
-  // Stop pulling cameras that went away.
   for (const id of [...cam.watching]) {
     if (!wanted.has(id)) {
       cam.watching.delete(id);
@@ -2100,7 +1981,6 @@ function showCameraFrame(frame) {
   tile.querySelector(".cam-wait")?.remove();
 }
 
-// Settings: camera list needs permission once before labels appear.
 async function loadCameraDevices() {
   const select = $("camera-device");
   try {
@@ -2116,7 +1996,7 @@ async function loadCameraDevices() {
       select.appendChild(opt);
     });
     select.value = devices.some(d => d.deviceId === chosen) ? chosen : "";
-  } catch { /* no media devices API */ }
+  } catch {  }
 }
 
 let previewStream = null;
@@ -2147,8 +2027,6 @@ function stopCameraPreview() {
   $("cam-preview-btn").textContent = "Test Camera";
 }
 
-// ---------- Audio devices ----------
-
 function fillDeviceSelect(select, names, chosen) {
   select.replaceChildren();
   const def = el("option", null, "Default");
@@ -2159,7 +2037,6 @@ function fillDeviceSelect(select, names, chosen) {
     opt.value = name;
     select.appendChild(opt);
   }
-  // A saved device that is unplugged stays visible so it is not lost.
   if (chosen && !names.includes(chosen)) {
     const opt = el("option", null, `${chosen} (not connected)`);
     opt.value = chosen;
@@ -2190,12 +2067,8 @@ async function saveAudioDevices() {
   }
 }
 
-// ---------- Floating menus ----------
-
-// Places a fixed-position popup next to an anchor, kept on screen.
 function placePopup(popup, anchor, prefer = "above") {
   popup.classList.remove("hidden");
-  // Anchors in the top bar open downward, whatever the caller prefers.
   if (anchor.closest && anchor.closest("#rail")) prefer = "below";
   const a = anchor.getBoundingClientRect();
   const p = popup.getBoundingClientRect();
@@ -2219,7 +2092,6 @@ function closeFloating(except) {
 let emojiPopPick = null;
 let emojiPopCustom = false;
 
-// `custom`: also offer custom emojis, picked as "<:name:ref>" tokens.
 function openEmojiPop(anchor, onPick, { custom = false } = {}) {
   emojiPopPick = onPick;
   emojiPopCustom = custom;
@@ -2250,8 +2122,6 @@ function renderEmojiPop(query) {
   }
   if (!grid.childElementCount) grid.appendChild(el("div", "dm-preview", "No matches"));
 }
-
-// ---------- Own profile popover ----------
 
 function toggleProfilePopover() {
   const pop = $("profile-pop");
@@ -2287,7 +2157,6 @@ function renderProfilePopover() {
   renderStatusExpiry();
 }
 
-// Saves status fields while keeping everything else on the profile.
 async function saveOwnProfile(changes) {
   const user = state.user;
   try {
@@ -2305,8 +2174,6 @@ async function saveOwnProfile(changes) {
   }
 }
 
-// ---------- Avatar picking ----------
-
 let avatarMenuAnchor = null;
 
 function openAvatarMenu(anchor) {
@@ -2315,8 +2182,6 @@ function openAvatarMenu(anchor) {
   placePopup($("avatar-menu"), anchor, "below");
 }
 
-// Crops the picture to a centered square and re-encodes it as a
-// 256 px JPEG so every peer downloads a small, uniform image.
 function imageFileToAvatar(file) {
   return new Promise((resolve, reject) => {
     const url = typeof file === "string" ? file : URL.createObjectURL(file);
@@ -2358,8 +2223,6 @@ async function applyAvatar(kind, data) {
   }
 }
 
-// ---------- Channel settings ----------
-
 let editingChannelId = null;
 
 function channelGear(channel) {
@@ -2390,7 +2253,6 @@ function openChannelSettings(channelId) {
   $("channel-edit-name").value = channel.name;
   const retention = String(channel.retention_days || 0);
   const select = $("channel-edit-retention");
-  // Keep custom values from other clients selectable.
   if (![...select.options].some(o => o.value === retention)) {
     const opt = el("option", null, `${retention} days`);
     opt.value = retention;
@@ -2408,7 +2270,6 @@ function openChannelSettings(channelId) {
   openSettingsLayer("channel-settings", "overview");
 }
 
-// The colour band draft in channel settings; null means no band.
 let channelColorDraft = null;
 
 function paintChannelBandPreview() {
@@ -2443,8 +2304,6 @@ async function setChannelBanner(data) {
   }
 }
 
-// Puts an emoji picked from the popover into a name field at the caret.
-// Custom emoji become ":name:" tokens the name keeps as text.
 function insertEmojiInName(input, picked) {
   const custom = parseEmojiToken(picked);
   const text = custom ? `:${custom.name}:` : picked;
@@ -2532,8 +2391,6 @@ async function confirmDeleteChannel() {
   }
 }
 
-// ---------- Create channel dialog ----------
-
 let createChannelKind = "text";
 
 let createChannelParent = null;
@@ -2558,7 +2415,6 @@ function setCreateChannelKind(kind) {
   syncCreateChannelName();
 }
 
-// Text channel names are lowercase with dashes.
 function syncCreateChannelName() {
   const input = $("create-channel-name");
   if (createChannelKind === "text" || createChannelKind === "announcement") {
@@ -2579,8 +2435,6 @@ async function saveCreateChannel() {
     if (createChannelKind === "category") {
       await invoke("create_category", { serverId: state.currentServer.id, name });
     } else {
-      // A new channel inside a category stays there; a voice channel
-      // created from a loose text section is loose too.
       await invoke("create_channel", { serverId: state.currentServer.id, name, kind: createChannelKind, parentId: createChannelParent });
     }
     hideModals();
@@ -2595,8 +2449,6 @@ async function saveCreateChannel() {
   }
 }
 
-// Speaking indicator: toggles the ring in place so it can update many
-// times a second without re-rendering lists.
 function setSpeaking(userId, speaking) {
   if (speaking) state.speaking.add(userId);
   else state.speaking.delete(userId);
@@ -2652,9 +2504,6 @@ function renderMembers() {
       meta.appendChild(nameRow);
       const hover = memberHover(member, channel);
       if (hover) row.title = hover;
-      // The line under the name is always there, so rows keep one height:
-      // the in-voice icon first, then the game, or when they are back if
-      // they are on Do Not Disturb with a return time.
       const text = backLine(member) || statusLine(member);
       const line = el("div", "user-sub" + (member.activity && !backLine(member) ? " activity" : "") + (text || channel ? "" : " empty"));
       if (channel) {
@@ -2730,18 +2579,15 @@ function renderMessages(messages) {
       lastAuthor = null;
       continue;
     }
-    // A reply always shows its header so the quote reads clearly.
     const grouped = !message.reply_to && message.author_id === lastAuthor && time - lastTime < 5 * 60e3;
     box.appendChild(buildMessageRow(message, grouped, { replies: replyCounts.get(message.id) || 0 }));
     lastAuthor = message.author_id;
     lastTime = time;
   }
-  // Stay put when re-rendering the same view while scrolled up.
   box.scrollTop = sameView && !atBottom ? prevScroll : box.scrollHeight;
   if (state.threadRoot) renderThread();
 }
 
-// The top of every channel: where you are and what it is for.
 function buildChannelIntro(channel) {
   const intro = el("div", "channel-intro");
   if (channel.banner) {
@@ -2771,7 +2617,6 @@ function dayDivider(date) {
   return row;
 }
 
-// A lone GIF or image link renders as just the picture.
 function isBareImageLink(content) {
   const text = (content || "").trim();
   if (findInviteLink(text)) return false;
@@ -2780,7 +2625,6 @@ function isBareImageLink(content) {
 
 const PENDING_TIP = "Waiting for someone to come online";
 
-// Clock shown on a message that has not reached anyone yet.
 function pendingMark() {
   const mark = el("span", "msg-pending");
   mark.title = PENDING_TIP;
@@ -2790,7 +2634,6 @@ function pendingMark() {
   return mark;
 }
 
-// Small pin next to the time of a pinned message.
 function pinnedMark() {
   const mark = el("span", "msg-pinned");
   mark.title = "Pinned";
@@ -2823,7 +2666,6 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     body.appendChild(head);
   }
   if (message.pinned) row.classList.add("pinned");
-  // Grouped rows have no header, so the clock follows the text instead.
   let inlineMark = pending && grouped;
   if (message.content) {
     if (!isBareImageLink(message.content)) {
@@ -2833,7 +2675,6 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
       inlineMark = false;
       body.appendChild(content);
     }
-    // Auto-embed pasted image and gif links.
     for (const url of extractImageUrls(message.content)) {
       body.appendChild(renderImageEmbed(url));
     }
@@ -2855,8 +2696,6 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   return row;
 }
 
-// ---------- Pinned messages ----------
-
 async function setPinned(message, pinned) {
   if (!state.currentServer || !state.currentChannel) return;
   const channel = state.currentChannel;
@@ -2874,10 +2713,6 @@ async function setPinned(message, pinned) {
   }
 }
 
-// The pin button in the chat header: shown in text and announcement
-// channels, with the channel's pin count on it.
-// The red badge counts pins this device has not looked at yet, so it
-// clears when the panel is opened; the tooltip keeps the total.
 const PINS_SEEN_KEY = "commy.pins.seen";
 let pinSyncToken = 0;
 
@@ -2890,13 +2725,12 @@ function pinsSeen(channelId) {
   }
 }
 
-// Remember these pins as looked at in this channel (only ids still pinned are kept).
 function markPinsSeen(channelId, pins) {
   try {
     const all = JSON.parse(localStorage.getItem(PINS_SEEN_KEY) || "{}");
     all[channelId] = (pins || []).map(p => p.message.id);
     localStorage.setItem(PINS_SEEN_KEY, JSON.stringify(all));
-  } catch { /* session only */ }
+  } catch {  }
 }
 
 function syncPinButton() {
@@ -2944,7 +2778,6 @@ async function renderPinsPanel() {
     toast(String(e));
   }
   list.innerHTML = "";
-  // Looking at the panel is what clears the badge.
   markPinsSeen(state.currentChannel.id, pins);
   $("pins-count").classList.add("hidden");
   $("pins-btn").title = pinButtonState({ view: state.view, channel: state.currentChannel, count: pins.length }).title;
@@ -2968,8 +2801,6 @@ function pinsEmptyState() {
   return empty;
 }
 
-// One pinned message: who wrote it, when, the first lines, and for
-// members who may pin, a way to unpin it.
 function pinRow(pin, { jump, showChannel = false } = {}) {
   const message = pin.message;
   const row = el("div", "pin-row");
@@ -3026,7 +2857,6 @@ function pinRow(pin, { jump, showChannel = false } = {}) {
   return row;
 }
 
-// Opens the pin's channel if needed and scrolls to the message.
 async function jumpToPin(pin, fromPanel = false) {
   if (!state.currentServer) return;
   if (fromPanel) closePinsPanel();
@@ -3042,7 +2872,6 @@ async function jumpToPin(pin, fromPanel = false) {
   jumpToMessage(pin.message.id);
 }
 
-// Every pin in the server, grouped by channel, from the server menu.
 async function openServerPins() {
   if (!state.currentServer) return;
   closeFloating();
@@ -3074,8 +2903,6 @@ async function renderServerPins() {
   }
 }
 
-// ---------- Replies and threads ----------
-
 function replyReference(message) {
   const ref = el("div", "reply-ref");
   const preview = message.reply_preview;
@@ -3102,7 +2929,6 @@ function jumpToMessage(id) {
   row.classList.add("flash");
 }
 
-// The thread root of a message: follow reply_to up while the parent is loaded.
 function threadRootOf(message, byId) {
   let current = message;
   const seen = new Set();
@@ -3194,8 +3020,6 @@ async function sendThreadReply() {
   }
 }
 
-// ---------- Reactions ----------
-
 function reactionPills(message) {
   const reactions = message.reactions || [];
   if (!reactions.length || state.view !== "server") return null;
@@ -3235,7 +3059,6 @@ async function setReaction(message, emoji, active) {
       emoji,
       active,
     });
-    // Keep the reader where they were instead of jumping to the bottom.
     const box = $("messages");
     const keep = box.scrollTop;
     await selectChannel(state.currentChannel);
@@ -3244,8 +3067,6 @@ async function setReaction(message, emoji, active) {
     toast(String(e));
   }
 }
-
-// ---------- Message actions ----------
 
 const HIDDEN_KEY = "commy.hiddenMessages";
 let hiddenMessages = null;
@@ -3265,15 +3086,13 @@ function isHidden(id) {
   return hiddenSet().has(id);
 }
 
-// Hiding is local to this device; nobody else is affected.
 function setHidden(id, hidden) {
   const set = hiddenSet();
   if (hidden) set.add(id);
   else set.delete(id);
   try {
-    // Cap growth: keep the most recent 2000 hides.
     localStorage.setItem(HIDDEN_KEY, JSON.stringify([...set].slice(-2000)));
-  } catch { /* storage unavailable: hide lasts this session */ }
+  } catch {  }
   renderMessages(state.renderedMessages || []);
 }
 
@@ -3337,7 +3156,6 @@ function messageActions(message, inThread = false) {
   }
   if (canDeleteMessage(message)) {
     add("trash", isOwnMessage(message) ? "Delete" : "Delete (Moderator)", e => {
-      // Shift-click skips the confirmation.
       if (e.shiftKey) deleteMessage(message);
       else openDeleteMessage(message);
     }, "danger");
@@ -3469,10 +3287,6 @@ function renderAttachment(att) {
   return box;
 }
 
-// Message text with URLs rendered as clickable links that open in
-// the system browser. Built from text nodes, never innerHTML.
-// ---------- Game overlay ----------
-
 let overlaySettings = null;
 let lastOverlayRoster = "";
 
@@ -3489,7 +3303,6 @@ function emitToOverlay(event, payload) {
   window.__TAURI__.event.emitTo("overlay", event, payload).catch(() => {});
 }
 
-// Who is in our voice channel, as the overlay draws them.
 function overlayRoster() {
   const server = state.currentServer;
   if (!state.voiceChannelId || !state.voiceServer || !server || server.id !== state.voiceServer.id) return null;
@@ -3516,7 +3329,6 @@ function overlayRoster() {
 }
 
 function pushOverlayRoster(force = false) {
-  // Keep the last roster while browsing another server.
   const roster = overlayRoster() || (state.voiceChannelId ? null : { members: [] });
   if (!roster) return;
   const key = JSON.stringify(roster);
@@ -3567,7 +3379,6 @@ async function saveOverlaySettings(changes) {
   }
 }
 
-// Turns a keydown into "Ctrl+Shift+O" style text.
 function hotkeyFromEvent(e) {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
   const parts = [];
@@ -3606,10 +3417,8 @@ function wireHotkeyInput(input, field) {
   });
 }
 
-// ---------- Voice connection details ----------
-
 let connTimer = null;
-let connLast = null; // { at, tx, rx } for rates
+let connLast = null;
 
 function quality(rtt, loss) {
   if (rtt > 250 || loss > 5) return "bad";
@@ -3666,7 +3475,6 @@ async function refreshConnPop() {
   }
   if (!stats.links.length) list.appendChild(el("div", "conn-empty", "Nobody else is connected yet."));
   $("conn-foot").textContent = `Audio: ${stats.codec}, ${stats.bitrate_kbps} kbps per person`;
-  // The signal icon follows the worst link.
   const worst = stats.links.reduce((w, l) => {
     const q = quality(l.rtt_ms, l.loss_pct);
     return q === "bad" || (q === "ok" && w === "good") ? q : w;
@@ -3692,9 +3500,6 @@ function closeConnPop() {
   connTimer = null;
 }
 
-// ---------- Profile bar quick audio ----------
-
-// A short bounce, plus a slash that draws in when turning something off.
 function animateToggle(button, off) {
   button.classList.remove("toggle-anim", "slash-in");
   void button.offsetWidth;
@@ -3739,10 +3544,6 @@ async function toggleAudioPop(which, anchor) {
   }
 }
 
-// ---------- Markdown (rules, event descriptions) ----------
-
-// A small, safe subset: headings, lists, paragraphs, bold, italics,
-// inline code and links. Builds DOM nodes; never uses innerHTML.
 function renderMarkdown(text) {
   const root = el("div", "md");
   let list = null;
@@ -3796,11 +3597,6 @@ function appendInlineMarkdown(node, text) {
   if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
 }
 
-// ---------- Images through the account server ----------
-
-// GIF files and game covers load through the signed in account server, so
-// the image hosts never see the user's address. The server keeps the same
-// list of hosts (MEDIA_HOSTS in auth/src/media.js).
 const MEDIA_HOSTS = new Set(["static.klipy.com", "images.igdb.com"]);
 
 function viaAccountServer(url) {
@@ -3810,11 +3606,8 @@ function viaAccountServer(url) {
   } catch {
     return url;
   }
-  // commy-media://localhost/ on macOS and Linux, http://commy-media.localhost/ on Windows
   return `${window.__TAURI__.core.convertFileSrc("", "commy-media")}?u=${encodeURIComponent(url)}`;
 }
-
-// ---------- IGDB ----------
 
 let integrations = { igdb_client_id: "", igdb_configured: false };
 
@@ -3822,7 +3615,6 @@ async function loadIntegrations() {
   try {
     integrations = await invoke("get_integrations");
   } catch {
-    /* keep defaults */
   }
 }
 
@@ -3861,7 +3653,6 @@ async function saveIgdb(remove) {
   }
 }
 
-// Autocomplete under the game tag input, when IGDB is set up.
 let gameSearchTimer = null;
 let gameSearchSeq = 0;
 
@@ -3872,7 +3663,6 @@ function closeGameSearch() {
 
 function queueGameSearch(query) {
   clearTimeout(gameSearchTimer);
-  // Own credentials or the account server's; with neither it finds nothing.
   if (query.trim().length < 2) {
     closeGameSearch();
     return;
@@ -3907,8 +3697,6 @@ function queueGameSearch(query) {
     box.classList.toggle("hidden", !hits.length);
   }, 300);
 }
-
-// ---------- Game tags ----------
 
 let gameTagDraft = [];
 let gameTagMetaDraft = [];
@@ -3967,7 +3755,6 @@ async function saveGameTags(tags, meta = gameTagMetaDraft) {
   }
 }
 
-// Chips, Events and Rules shortcuts at the top of the channel list.
 function renderServerExtras(list, server) {
   if (server.game_tags && server.game_tags.length) {
     const row = el("div", "sidebar-game-tags");
@@ -4009,8 +3796,6 @@ function renderServerExtras(list, server) {
   list.appendChild(el("div", "sidebar-sep"));
 }
 
-// ---------- Rules ----------
-
 const rulesPrompted = new Set();
 
 function openRules() {
@@ -4039,8 +3824,6 @@ async function acceptRules() {
   }
 }
 
-// One panel for joining a server: read the rules, then pick roles, without
-// a second dialog popping up behind the first.
 function openServerWelcome(step) {
   const server = state.currentServer;
   if (!server) return;
@@ -4068,7 +3851,6 @@ function openServerWelcome(step) {
   $("sw-next").focus();
 }
 
-// Servers we just joined that should offer the role picker once.
 const rolePromptPending = new Set();
 
 function maybePromptRoles() {
@@ -4080,11 +3862,9 @@ function maybePromptRoles() {
   openServerWelcome("roles");
 }
 
-// The composer is replaced by an accept prompt until the rules are accepted.
 function syncRulesGate() {
   const gated = state.view === "server" && Boolean(state.currentServer && state.currentServer.needs_rules);
   $("rules-gate").classList.toggle("hidden", !gated);
-  // Announcement channels take posts from announcers only; others see why.
   const lock = gated ? null : composerLock({ view: state.view, server: state.currentServer, channel: state.currentChannel });
   $("announce-gate").classList.toggle("hidden", !lock);
   if (lock) {
@@ -4099,7 +3879,6 @@ function syncRulesGate() {
   if (!gated) maybePromptRoles();
 }
 
-// Doorbell: messages someone sent us that are still on their way.
 function awaitedText(count) {
   const n = Number(count);
   if (!Number.isInteger(n) || n <= 0) return null;
@@ -4118,10 +3897,8 @@ async function syncAwaitedBar() {
     try {
       text = awaitedText(await invoke("get_awaited", { serverId }));
     } catch {
-      // Older backends lack the command; keep the bar hidden.
     }
   }
-  // A newer call or a server switch wins over this answer.
   if (seq !== awaitedSeq) return;
   $("awaited-text").textContent = text || "";
   $("awaited-bar").classList.toggle("hidden", !text);
@@ -4153,8 +3930,6 @@ async function saveRules(remove) {
     toast(String(e));
   }
 }
-
-// ---------- Events ----------
 
 const eventsView = { mode: "upcoming", month: null, day: null };
 let editingEventId = null;
@@ -4399,8 +4174,6 @@ async function saveEvent() {
   }
 }
 
-// ---------- Channel categories ----------
-
 const COLLAPSED_KEY = "commy.collapsedSections";
 
 function collapsedSections() {
@@ -4415,11 +4188,10 @@ function toggleSection(key) {
   const set = collapsedSections();
   if (set.has(key)) set.delete(key);
   else set.add(key);
-  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set])); } catch { /* session only */ }
+  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set])); } catch {  }
   renderChannels();
 }
 
-// Sidebar sections: loose text and voice channels, then each category.
 function channelSections(server, canCreate) {
   const byPos = (a, b) => (a.kind === "voice") - (b.kind === "voice") || a.position - b.position;
   const categories = server.channels.filter(c => c.kind === "category").sort((a, b) => a.position - b.position);
@@ -4446,7 +4218,6 @@ function channelSections(server, canCreate) {
 
 let dragChannel = null;
 
-// Drops a dragged channel into `section`, before `beforeId` or at the end.
 async function dropChannel(section, beforeId) {
   const server = state.currentServer;
   const moving = dragChannel;
@@ -4475,7 +4246,6 @@ async function dropCategory(beforeId) {
   let index = beforeId ? categories.findIndex(c => c.id === beforeId) : categories.length;
   if (index < 0) index = categories.length;
   categories.splice(index, 0, moving);
-  // Categories sit after loose channels; keep their positions high.
   const moves = categories.map((c, i) => ({ channel: c.id, parent: null, position: 1000 + i }));
   try {
     await invoke("move_channels", { serverId: server.id, moves });
@@ -4539,7 +4309,6 @@ function sectionHeader(section, collapsed, canCreate) {
   return header;
 }
 
-// Voice channel member counts against the limit.
 function voiceCountLabel(channel) {
   const n = channel.voice_users.length;
   if (channel.user_limit) return `${String(n).padStart(2, "0")}/${String(channel.user_limit).padStart(2, "0")}`;
@@ -4550,8 +4319,6 @@ function voiceFull(channel) {
   return Boolean(channel.user_limit) && channel.voice_users.length >= channel.user_limit
     && channel.id !== state.voiceChannelId && !(state.currentServer && state.currentServer.can_manage_channels);
 }
-
-// ---------- Roles: tags and self-assign ----------
 
 function selfAssignableRoles(server) {
   return (server && server.roles || []).filter(r => r.self_assignable);
@@ -4577,7 +4344,6 @@ function roleTagChip(tag, color) {
   return chip;
 }
 
-// Paints a banner ref (or a stable color) onto an element.
 function paintBanner(node, ref, fallbackColor) {
   node.style.backgroundImage = "";
   node.style.background = fallbackColor;
@@ -4590,15 +4356,12 @@ function paintBanner(node, ref, fallbackColor) {
   });
 }
 
-// ---------- Friends ----------
-
 let friends = { friends: [], incoming: [], outgoing: [] };
 
 async function loadFriends() {
   try {
     friends = await invoke("list_friends");
   } catch {
-    /* keep the last list */
   }
 }
 
@@ -4621,7 +4384,6 @@ async function friendAction(userId, action, name) {
   }
 }
 
-// One friend button whose label follows the current state.
 function friendButton(person, onDone) {
   const st = friendState(person.id);
   const labels = { none: "Add Friend", outgoing: "Request Sent", incoming: "Accept Friend", friend: "Friends" };
@@ -4638,7 +4400,6 @@ function friendButton(person, onDone) {
   return btn;
 }
 
-// Servers you are in that this person is not, for Invite to Server.
 function invitableServers(userId) {
   const person = state.people.get(userId);
   const shared = new Set((person ? person.servers : []).map(s => s.id));
@@ -4670,7 +4431,6 @@ async function openInviteMenu(person, anchor) {
   placeMenuAt(menu, r.right + 4, r.top);
 }
 
-// Server invite tickets inside messages get a Join card.
 const TICKET_RE = /\bcommy[a-z2-7]{40,}\b/;
 
 function inviteCard(text) {
@@ -4698,12 +4458,8 @@ function inviteCard(text) {
   return card;
 }
 
-// ---------- Full profile ----------
-
 async function openFullProfile(member) {
   closeFloating();
-  // The people index is built lazily (first on entering Direct Messages),
-  // so refresh it here or the mutual servers list comes up empty or stale.
   await refreshPeople();
   const person = { ...(state.people.get(member.id) || {}), ...member };
   paintBanner($("fp-banner"), person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
@@ -4764,9 +4520,6 @@ async function openFullProfile(member) {
   showModal("modal-profile");
 }
 
-// Block and Report for the person whose full profile is open. The same
-// flows and show/hide rules as the member card: no Report where you share
-// no server with them or they own every one you share.
 function openProfileMenu(person, x, y) {
   closeFloating();
   const menu = $("fp-menu");
@@ -4801,9 +4554,6 @@ function openProfileMenu(person, x, y) {
   placeMenuAt(menu, x, y);
 }
 
-// ---------- Member profile card ----------
-
-// Where the card's GIF button sends: a DM to this person.
 let gifTarget = null;
 
 function openMemberCard(member, anchor) {
@@ -4886,14 +4636,12 @@ function openMemberCard(member, anchor) {
   input.dataset.user = member.id;
   input.dataset.name = member.name;
   card.classList.remove("hidden");
-  // Sit to the left of the member list.
   const a = anchor.getBoundingClientRect();
   const r = card.getBoundingClientRect();
   card.style.left = `${Math.max(8, a.left - r.width - 12)}px`;
   card.style.top = `${Math.max(8, Math.min(a.top, window.innerHeight - r.height - 8))}px`;
 }
 
-// Name color and role tag for a message author in the current server.
 function decorateAuthor(node, authorId) {
   const member = state.view === "server" && state.currentServer && state.currentServer.members.find(m => m.id === authorId);
   if (!member) return;
@@ -4909,7 +4657,6 @@ function openChooseRoles() {
   showModal("modal-choose-roles");
 }
 
-// Fills a list with the server's self-assignable roles as toggles.
 function renderRolePicker(server, list) {
   const me = server.members.find(m => state.user && m.id === state.user.id);
   const held = new Set(me ? me.roles : []);
@@ -4944,7 +4691,6 @@ function renderRolePicker(server, list) {
   if (!list.childElementCount) list.appendChild(el("div", "manage-empty", "This server has no roles to pick yet"));
 }
 
-// Inline editor under a role row in Server Settings, Roles.
 function roleEditor(server, role) {
   const box = el("div", "role-editor");
   const row1 = el("div", "inline-row");
@@ -5055,17 +4801,13 @@ function roleEditor(server, role) {
   return box;
 }
 
-// ---------- Safety: blocking, reports, message requests ----------
-
 let safety = { blocked: [], dm_policy: "everyone", spam_filter: true };
-// Blocked messages the user chose to reveal this session.
 const revealedBlocked = new Set();
 
 async function loadSafety() {
   try {
     safety = await invoke("get_safety");
   } catch {
-    /* keep the last known settings */
   }
 }
 
@@ -5118,7 +4860,6 @@ async function setBlocked(userId, name, blocked) {
   }
 }
 
-// Re-renders whatever shows people or messages after a block change.
 async function afterSafetyChange() {
   if (!$("user-settings").classList.contains("hidden")) renderSafetySettings();
   if (state.view === "dm") {
@@ -5133,7 +4874,6 @@ async function afterSafetyChange() {
   }
 }
 
-// One collapsed row for a run of messages from people you blocked.
 function blockedPlaceholder(run) {
   const row = el("div", "msg-hidden blocked");
   row.appendChild(svgIcon("block", 14));
@@ -5147,10 +4887,8 @@ function blockedPlaceholder(run) {
   return row;
 }
 
-// Right-click menu on a member.
 let menuMember = null;
 
-// Servers we share with someone where a report could go to the owner.
 function reportServersFor(userId) {
   const person = state.people.get(userId);
   return (person ? person.servers : [])
@@ -5158,8 +4896,6 @@ function reportServersFor(userId) {
     .filter(s => s && s.id);
 }
 
-// Right-click menu for a person: in the member list, a voice channel or
-// a DM. Built fresh each time so it reflects permissions and settings.
 function openMemberMenu(member, x, y, { dm = false } = {}) {
   if (state.user && member.id === state.user.id) return;
   closeFloating();
@@ -5185,7 +4921,6 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
   }
   sep();
 
-  // Personal voice controls, on this device only.
   const voice = state.voice || {};
   const mutedForMe = (voice.muted_users || []).includes(member.id);
   const mute = item(mutedForMe ? "Unmute" : "Mute", () => setUserVoice(member.id, { muted: !mutedForMe }), "ctx-check" + (mutedForMe ? " checked" : ""));
@@ -5220,7 +4955,6 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
-  // Moderation, for people with the permissions.
   if (inServer && member.id !== server.owner && (server.can_mute || server.can_kick || server.can_ban)) {
     sep();
     if (server.can_mute) {
@@ -5257,7 +4991,6 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
   placeMenuAt(menu, x, y);
 }
 
-// Your own row in a voice channel: mute, deafen, your levels, disconnect.
 function openSelfVoiceMenu(x, y) {
   if (!state.user) return;
   closeFloating();
@@ -5321,7 +5054,6 @@ function openSelfVoiceMenu(x, y) {
   placeMenuAt(menu, x, y);
 }
 
-// The richest view of a person we have: the server member if present.
 function fullMember(person) {
   const fromServer = state.currentServer && state.currentServer.members.find(m => m.id === person.id);
   if (fromServer) return fromServer;
@@ -5346,7 +5078,6 @@ async function moderateVoice(member, muted, deafened) {
   }
 }
 
-// Reports go to the owner, so owners have nobody to report to.
 function reportableIn(server, userId) {
   return Boolean(server && state.user && server.owner !== state.user.id && userId !== server.owner && userId !== state.user.id);
 }
@@ -5494,7 +5225,6 @@ function onReportReceived(report) {
   }
 }
 
-// Accept, decline or block for a conversation still in Message Requests.
 function renderDmRequestBar(thread) {
   const isRequest = Boolean(thread && thread.kind !== "inbox");
   $("dm-request-bar").classList.toggle("hidden", !isRequest);
@@ -5528,9 +5258,7 @@ async function answerDmRequest(action) {
   }
 }
 
-// ---------- Timed status ----------
-
-let durationMode = null; // { kind: "presence", presence } or { kind: "status" }
+let durationMode = null;
 
 function untilFromChoice(choice) {
   if (choice === "never") return null;
@@ -5606,8 +5334,6 @@ async function applyDuration(until) {
 function renderStatusExpiry() {
   const v = state.voice || {};
   const user = state.user || {};
-  // Each presence keeps one small line. While a timed one runs, that line
-  // becomes "Until 4:40 PM" instead of stacking on the description.
   for (const btn of $("pp-presence").querySelectorAll("button")) {
     const small = btn.querySelector("small");
     if (!small) continue;
@@ -5623,19 +5349,15 @@ function renderStatusExpiry() {
   expiry.textContent = v.status_until ? `Clears at ${formatUntil(v.status_until)}` : "Clear after: Never";
 }
 
-// ---------- Custom emojis ----------
-
-// "<:name:blob@provider>" carries the image, so it renders anywhere.
 const EMOJI_TOKEN_RE = /<:([a-z0-9_]{2,32}):([A-Za-z0-9]{1,128}@[A-Za-z0-9]{1,128})>/g;
 const MAX_EMOJIS = 50;
 const MAX_SOUNDS = 24;
 const MAX_SOUND_SECONDS = 15;
-const expressionUrls = new Map(); // ref -> Promise<data URL or null>
+const expressionUrls = new Map();
 
 function expressionUrl(ref) {
   if (!expressionUrls.has(ref)) {
     expressionUrls.set(ref, invoke("fetch_expression", { blob: ref }).catch(() => {
-      // Let a later render retry, e.g. once the uploader is back online.
       setTimeout(() => expressionUrls.delete(ref), 15000);
       return null;
     }));
@@ -5660,13 +5382,11 @@ function parseEmojiToken(text) {
   return m ? { name: m[1], image: m[2] } : null;
 }
 
-// Tokens back to ":name:", for editing, previews and notifications.
 function decodeCustomEmojis(text) {
   return String(text || "").replace(EMOJI_TOKEN_RE, ":$1:");
 }
 
 function plainText(text) {
-  // Server excerpts can cut a token in half; drop the stub.
   return decodeCustomEmojis(text).replace(/<:[^>\s]*$/, "");
 }
 
@@ -5685,8 +5405,6 @@ async function loadShareableEmojis() {
   }
 }
 
-// Custom emojis usable where you are typing: this server's own, then
-// shareable ones from your other servers. DMs only get shareable ones.
 function usableCustomEmojis() {
   const here = state.view === "server" ? state.currentServer : null;
   const local = here && here.emojis && here.emojis.length ? { id: here.id, name: here.name, emojis: here.emojis } : null;
@@ -5706,7 +5424,6 @@ function findCustomEmoji(name) {
     || null;
 }
 
-// ":name:" typed or picked in the composer becomes a token on send.
 function encodeCustomEmojis(text) {
   return text.replace(/(?<![<\w]):([a-z0-9_]{2,32}):/gi, (whole, name) => {
     const e = findCustomEmoji(name.toLowerCase());
@@ -5714,8 +5431,6 @@ function encodeCustomEmojis(text) {
   });
 }
 
-// Message text: custom emoji tokens become images, the rest goes
-// through mention highlighting.
 function appendRichText(div, text) {
   EMOJI_TOKEN_RE.lastIndex = 0;
   let last = 0;
@@ -5728,7 +5443,6 @@ function appendRichText(div, text) {
   if (last < text.length) appendTextWithMentions(div, text.slice(last));
 }
 
-// Custom emoji sections for a picker grid. `onPick` gets the emoji.
 function appendCustomEmojiSections(grid, query, onPick, localOnly = false) {
   const { local, external } = usableCustomEmojis();
   const groups = [local, ...(localOnly ? [] : external)].filter(Boolean);
@@ -5752,8 +5466,6 @@ function appendCustomEmojiSections(grid, query, onPick, localOnly = false) {
   if (any) grid.appendChild(el("div", "emoji-section", "Standard"));
 }
 
-// Emoji uploads: stills and big GIFs become a 128px PNG; small GIFs are
-// kept as uploaded so they stay animated.
 async function prepareEmojiImage(src) {
   const blob = await (await fetch(src)).blob();
   if (blob.type === "image/gif" && blob.size <= 256 * 1024) {
@@ -5798,7 +5510,6 @@ function freeExpressionName(base, taken) {
   }
 }
 
-// A pending upload row: preview, editable name, Save and Cancel.
 function pendingExpressionRow(preview, name, onSave) {
   const row = el("div", "expr-row pending");
   row.appendChild(preview);
@@ -5914,8 +5625,6 @@ async function refreshExpressions() {
   if (!$("server-settings").classList.contains("hidden")) openServerSettings();
 }
 
-// ---------- Soundboard ----------
-
 const SOUNDBOARD_KEY = "commy.soundboard";
 
 function soundboardPrefs() {
@@ -5928,11 +5637,9 @@ function soundboardPrefs() {
 }
 
 function saveSoundboardPrefs(prefs) {
-  try { localStorage.setItem(SOUNDBOARD_KEY, JSON.stringify(prefs)); } catch { /* session only */ }
+  try { localStorage.setItem(SOUNDBOARD_KEY, JSON.stringify(prefs)); } catch {  }
 }
 
-// Clips bundled with the app, in every server. Ids match DEFAULT_SOUNDS
-// in expressions.rs; peers play them by name ("default:<id>").
 const DEFAULT_SOUNDS = [
   { id: "airhorn", label: "Airhorn", file: "sounds/soundboard/airhorn.mp3" },
   { id: "ba_dum_tss", label: "Ba Dum Tss", file: "sounds/soundboard/ba-dum-tss.mp3" },
@@ -5951,7 +5658,6 @@ async function playExpressionSound(ref, volume) {
   const builtin = defaultSound(ref);
   const url = builtin ? builtin.file : await expressionUrl(ref);
   if (!url) return;
-  // A few overlapping clips are fun; a wall of them is not.
   if (soundboardPlaying.size >= 3) {
     const oldest = soundboardPlaying.values().next().value;
     oldest.pause();
@@ -5962,7 +5668,6 @@ async function playExpressionSound(ref, volume) {
   soundboardPlaying.add(audio);
   const done = () => soundboardPlaying.delete(audio);
   audio.addEventListener("ended", done);
-  // Clips are capped at upload, but never let one run on.
   setTimeout(() => {
     audio.pause();
     done();
@@ -5970,7 +5675,6 @@ async function playExpressionSound(ref, volume) {
   audio.play().catch(done);
 }
 
-// Someone in our voice channel (maybe us) played a clip.
 function onSoundboardPlay(play) {
   const prefs = soundboardPrefs();
   flashSoundboardUser(play.user, defaultSound(play.name)?.label || play.name);
@@ -5978,7 +5682,6 @@ function onSoundboardPlay(play) {
   playExpressionSound(play.blob, (play.volume ?? 1) * prefs.volume);
 }
 
-// Shows the clip name next to whoever played it in the voice list.
 function flashSoundboardUser(userId, name) {
   for (const row of document.querySelectorAll(`.voice-user[data-user="${CSS.escape(userId)}"]`)) {
     row.querySelector(".sb-flash")?.remove();
@@ -5990,7 +5693,6 @@ function flashSoundboardUser(userId, name) {
   }
 }
 
-// Reads a clip's length so over-long sounds are refused before upload.
 async function audioDuration(dataUrl) {
   const buffer = await (await fetch(dataUrl)).arrayBuffer();
   const ctx = new AudioContext();
@@ -6158,10 +5860,6 @@ async function toggleSoundboardPop() {
   placePopup(pop, $("vp-soundboard"), "below");
 }
 
-// ---------- Mentions ----------
-
-// People who can be mentioned where you are: server members plus
-// @everyone and @here, or in a DM the two of you.
 function mentionCandidates() {
   if (state.view === "dm" && state.currentDm) {
     const me = state.user ? [{ id: state.user.id, name: state.user.display_name || state.user.username }] : [];
@@ -6178,8 +5876,6 @@ function mentionCandidates() {
 
 let mentionRegexCache = { key: "", re: null };
 
-// Matches "@name" for any known name, longest names first so "@Commy C"
-// wins over "@Commy".
 function mentionRegex() {
   const names = mentionCandidates().map(c => c.name).filter(Boolean);
   const key = names.join("\u0000");
@@ -6215,7 +5911,6 @@ function appendTextWithMentions(div, text) {
   if (last < text.length) div.appendChild(document.createTextNode(text.slice(last)));
 }
 
-// Live @ autocomplete for a text input.
 const mentionPop = { input: null, start: 0, items: [], index: 0 };
 
 function mentionQueryAt(input) {
@@ -6263,7 +5958,6 @@ function updateMentionPop(input) {
     };
     pop.appendChild(row);
   });
-  // Sit just above whichever composer is typing.
   const r = input.closest(".composer").getBoundingClientRect();
   pop.style.left = `${r.left}px`;
   pop.style.width = `${Math.min(r.width, 420)}px`;
@@ -6299,7 +5993,6 @@ function wireMentions(input) {
   input.addEventListener("input", () => updateMentionPop(input));
   input.addEventListener("click", () => updateMentionPop(input));
   input.addEventListener("blur", () => setTimeout(closeMentionPop, 100));
-  // Capture phase so Enter picks a name instead of sending.
   input.addEventListener("keydown", e => {
     if ($("mention-pop").classList.contains("hidden") || mentionPop.input !== input) return;
     const n = mentionPop.items.length;
@@ -6307,7 +6000,6 @@ function wireMentions(input) {
       mentionPop.index = (mentionPop.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
       updateMentionPop(input);
     } else if (e.key === "Enter" && mentionTypedInFull(input)) {
-      // "@Name" already typed out: Enter sends instead of picking again.
       closeMentionPop();
       return;
     } else if (e.key === "Enter" || e.key === "Tab") {
@@ -6324,7 +6016,6 @@ function wireMentions(input) {
 
 function buildMessageContent(text) {
   const div = el("div", "msg-content");
-  // A message that is only an invite link shows the Join card, not the raw link.
   if (looksLikeInviteLink(text)) {
     div.appendChild(inviteCard(text));
     return div;
@@ -6359,16 +6050,11 @@ function buildMessageContent(text) {
 function extractImageUrls(text) {
   const matches = text.match(/https?:\/\/[^\s<>"']+\.(?:gif|png|jpe?g|webp)(?:\?[^\s<>"']*)?/gi);
   if (matches) return matches.slice(0, 4);
-  // A message that is nothing but one link is worth trying as an
-  // image even without a file extension; onerror removes the miss.
   const lone = text.trim();
   if (findInviteLink(lone)) return [];
   return /^https?:\/\/\S+$/i.test(lone) ? [lone] : [];
 }
 
-// Source URL of an image copied from a web page, if the clipboard
-// html flavor carries one. DOMParser documents are inert: nothing
-// in the parsed markup loads or runs.
 function imageSourceFromHtml(html) {
   if (!html) return null;
   const doc = new DOMParser().parseFromString(html, "text/html");
@@ -6376,8 +6062,6 @@ function imageSourceFromHtml(html) {
   return /^https?:\/\//i.test(src) ? src : null;
 }
 
-// Images finish loading after the chat has already scrolled to the
-// bottom; re-pin it unless the user has scrolled up to read history.
 function keepScrolledOnLoad(img) {
   img.addEventListener("load", () => {
     const box = $("messages");
@@ -6388,8 +6072,6 @@ function keepScrolledOnLoad(img) {
   });
 }
 
-// An image embedded from a link someone pasted, as opposed to a file
-// they uploaded: it carries a visible source URL above the image.
 function renderImageEmbed(url) {
   const wrap = el("div", "image-embed");
   const source = el("a", "embed-source", embedSourceLabel(url));
@@ -6418,8 +6100,6 @@ function embedSourceLabel(url) {
   }
 }
 
-// Full-size overlay; for link embeds the source URL under the image
-// opens in the system browser, uploads just show the filename.
 function openLightbox(src, sourceUrl, filename) {
   $("lightbox-img").src = src;
   const source = $("lightbox-source");
@@ -6472,13 +6152,11 @@ function renderShareButton() {
   btn.classList.toggle("hidden", !inVoice);
   btn.classList.toggle("active", state.sharing);
   btn.title = state.sharing ? "Stop Sharing" : "Share Your Screen";
-  // Noise cancellation and the soundboard sit beside Share while connected.
   $("vp-nc").classList.toggle("hidden", !inVoice);
   $("vp-soundboard").classList.toggle("hidden", !inVoice);
   renderVoicePanel();
 }
 
-// Voice connection card above the user panel, with screen share controls.
 function renderVoicePanel() {
   const panel = $("voice-panel");
   const vs = state.voiceServer;
@@ -6486,7 +6164,6 @@ function renderVoicePanel() {
   if (!state.voiceChannelId || !vs) return;
 
   $("vp-where").textContent = `${vs.channelName} / ${vs.name}`;
-  // One click to stream the game you are playing.
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
     : null;
@@ -6514,7 +6191,6 @@ function renderVoicePanel() {
   $("vp-watch").classList.toggle("hidden", !state.watchingUser);
   $("vp-watch-label").textContent = state.watchingUser ? `Watching ${state.watchingName || "a stream"}` : "";
 
-  // Other people streaming in our voice server.
   const streams = $("vp-streams");
   streams.innerHTML = "";
   const server = state.currentServer && state.currentServer.id === vs.id ? state.currentServer : null;
@@ -6562,8 +6238,6 @@ function renderUserPanel() {
   $("me-avatar").replaceChildren();
   paintAvatar($("me-avatar"), state.user.id, state.user.display_name || state.user.username);
   $("me-avatar").appendChild(el("span", "presence-dot " + presence));
-  // One short line: when you are back (the dot already says Do Not Disturb),
-  // else the presence word. Mute and deafen live in the voice panel now.
   const back = backLine(state.user);
   const label = presence === "invisible" ? "Appearing offline" : (back || PRESENCE_LABELS[presence] || "Online");
   $("me-status").textContent = label;
@@ -6575,11 +6249,8 @@ function renderUserPanel() {
   setIcon($("settings-btn"), "gear");
   $("mute-btn").title = state.voice.muted ? "Unmute" : "Mute";
   $("deafen-btn").title = state.voice.deafened ? "Undeafen" : "Deafen";
-  // Our mute state also shows next to our name in the voice channel.
   if (state.currentServer && state.voiceChannelId && state.view === "server") renderChannels();
 }
-
-// ---------- Actions ----------
 
 async function refreshServers() {
   state.servers = await invoke("list_servers");
@@ -6587,7 +6258,6 @@ async function refreshServers() {
   renderServerRail();
 }
 
-// Switches the three-pane layout between server mode and DM mode.
 function setViewMode(mode) {
   state.view = mode;
   const dm = mode === "dm";
@@ -6630,10 +6300,6 @@ async function selectServer(serverId) {
   await selectChannel(firstText || null);
 }
 
-// ---------- Direct messages ----------
-
-// Everyone we share a server with, keyed by user id. DMs have no presence
-// of their own, so presence, status and mutual servers come from here.
 async function refreshPeople() {
   const views = [];
   for (const summary of state.servers) {
@@ -6644,7 +6310,6 @@ async function refreshPeople() {
     }
   }
   for (const server of views) rememberAvatars(server.members);
-  // The folding itself lives in people.js, shared with its tests.
   state.people = indexPeople(views, state.user ? state.user.id : null);
 }
 
@@ -6689,7 +6354,6 @@ async function enterDmMode() {
   }
 }
 
-// Shown when there are no conversations yet.
 function renderDmHome() {
   $("chat-hash").textContent = "@";
   $("channel-name").textContent = "Direct Messages";
@@ -6716,7 +6380,6 @@ function renderDmHome() {
   box.appendChild(empty);
 }
 
-// The first thing a new person sees: no servers yet, two ways to get one.
 function buildWelcomeHome() {
   const home = el("div", "empty-state welcome-home");
   const mark = el("img", "welcome-mark");
@@ -6838,7 +6501,6 @@ async function renderDmThreads() {
     list.appendChild(row);
   }
   if (query) {
-    // Offer to start a chat with matching people who have no thread yet.
     const known = new Set(threads.map(t => t.user));
     const extra = [...state.people.values()]
       .filter(p => !known.has(p.id) && p.name.toLowerCase().includes(query))
@@ -6875,9 +6537,6 @@ async function selectDm(userId, name) {
   renderMessages(messages.map(dmToRenderable));
 }
 
-// The conversation header and the profile panel of the open conversation:
-// presence dot, "Back at 4:40 PM", what they are doing. Redrawn whenever a
-// profile update arrives, so a return time shows without reopening the chat.
 function renderDmHeader(userId, name) {
   const presence = personPresence(userId);
   const person = state.people.get(userId);
@@ -6913,7 +6572,6 @@ function renderDmProfile(userId, name) {
   $("dm-profile-block").onclick = () => openBlock(userId, name);
 }
 
-// Stable per-user banner color so each profile looks distinct.
 function bannerColor(userId) {
   let hash = 0;
   for (const ch of String(userId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
@@ -6921,7 +6579,6 @@ function bannerColor(userId) {
   return `linear-gradient(135deg, hsl(${hue} 42% 40%), hsl(${(hue + 40) % 360} 45% 26%))`;
 }
 
-// A role colour as a soft gradient, so a profile banner never reads as a flat block.
 function roleGradient(hex) {
   const n = parseInt(String(hex).replace(/^#/, ""), 16);
   if (Number.isNaN(n)) return bannerColor(hex);
@@ -6939,7 +6596,6 @@ function roleGradient(hex) {
   return `linear-gradient(135deg, hsl(${Math.round(h)} ${Math.min(sat, 70)}% ${Math.round(l * 100)}%), hsl(${Math.round((h + 35) % 360)} ${Math.min(sat, 60)}% ${Math.max(18, Math.round(l * 100) - 24)}%))`;
 }
 
-// The start-of-history block at the top of every DM.
 function buildDmIntro() {
   const { user, name } = state.currentDm;
   const person = state.people.get(user);
@@ -7005,8 +6661,6 @@ function dmToRenderable(m) {
   };
 }
 
-// Toast for a DM sent from outside the conversation. A pending DM is kept
-// on this device and goes out once the other person is reachable.
 function dmSentToast(sent, name, done) {
   toast(sent && sent.pending ? `Will send to ${name} when they come online` : done);
 }
@@ -7061,7 +6715,6 @@ async function sendMessage() {
   const input = $("message-input");
   const content = input.value.trim();
   if (!content || !state.currentServer || !state.currentChannel) return;
-  // "/gif cats" opens the GIF picker instead of sending text.
   const gif = content.match(/^\/gif(?:\s+(.*))?$/i);
   if (gif) {
     input.value = "";
@@ -7087,8 +6740,6 @@ async function sendMessage() {
   }
 }
 
-// ---------- GIF search ----------
-
 const GIF_KEY = "commy.gif";
 const GIF_HELP = {
   klipy: 'To get a key, sign in at <a data-href="https://partner.klipy.com/api-keys">partner.klipy.com</a>, open API Keys, choose Add Platform, then Create API Key and copy it. Test keys are rate limited; use Request Production in the key menu for more.',
@@ -7096,8 +6747,6 @@ const GIF_HELP = {
 };
 const GIF_PROVIDERS = new Set(["klipy", "giphy"]);
 
-// The account server's discovery document says whether it searches GIFs.
-// Old servers do not say, so the button stays and the picker explains.
 function serverHasGifs() {
   return account.server_gifs !== false;
 }
@@ -7108,13 +6757,11 @@ function syncGifButton() {
 
 function gifSettings() {
   let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(GIF_KEY) || "{}"); } catch { /* defaults */ }
-  // Tenor was shut down; anything unknown falls back to KLIPY.
+  try { saved = JSON.parse(localStorage.getItem(GIF_KEY) || "{}"); } catch {  }
   if (!GIF_PROVIDERS.has(saved.provider)) saved = { provider: "klipy", key: "" };
   return { provider: "klipy", key: "", ...saved };
 }
 
-// KLIPY nests renditions as file.<size>.<format>.url (sizes xs, sm, md, hd).
 function klipyUrl(file, sizes) {
   for (const size of sizes) {
     const url = file?.[size]?.gif?.url;
@@ -7123,7 +6770,6 @@ function klipyUrl(file, sizes) {
   return null;
 }
 
-// Height over width of the first KLIPY rendition that reports its size.
 function klipyRatio(file, sizes) {
   for (const size of sizes) {
     const r = file?.[size]?.gif;
@@ -7132,8 +6778,6 @@ function klipyRatio(file, sizes) {
   return 0;
 }
 
-// Returns [{ preview, url, title }] from the configured provider. Without a
-// key of their own, people search through their account server's key.
 async function searchGifs(query, settings = gifSettings()) {
   if (!settings.key) {
     let hits;
@@ -7147,13 +6791,11 @@ async function searchGifs(query, settings = gifSettings()) {
   }
   const q = encodeURIComponent(query.trim());
   if (settings.provider === "klipy") {
-    // KLIPY puts the key in the path rather than the query string.
     const base = `https://api.klipy.com/api/v1/${encodeURIComponent(settings.key)}/gifs`;
     const common = "per_page=24&page=1&content_filter=medium&format_filter=gif";
     const url = q ? `${base}/search?q=${q}&${common}` : `${base}/trending?${common}`;
     const res = await fetch(url);
     const body = await res.json().catch(() => ({}));
-    // KLIPY reports problems as {result: false, errors: {message: [...]}}.
     if (!res.ok || body.result === false) {
       const reason = body?.errors?.message?.[0];
       throw new Error(reason || `KLIPY answered ${res.status}`);
@@ -7162,7 +6804,6 @@ async function searchGifs(query, settings = gifSettings()) {
     return items.map(item => ({
       preview: klipyUrl(item.file, ["sm", "xs", "md"]),
       ratio: klipyRatio(item.file, ["sm", "xs", "md"]),
-      // md is a good chat size; hd can be over 10 MB.
       url: klipyUrl(item.file, ["md", "sm", "hd"]),
       title: item.title || "GIF",
     })).filter(g => g.preview && g.url);
@@ -7194,8 +6835,6 @@ async function renderGifResults(query) {
     const gifs = await searchGifs(query, settings);
     if (token !== gifSearchToken) return;
     grid.replaceChildren();
-    // Masonry: two columns, each GIF at its own aspect ratio, placed in
-    // whichever column is shorter so the columns stay even.
     const cols = [el("div", "gif-col"), el("div", "gif-col")];
     const heights = [0, 0];
     for (const gif of gifs) {
@@ -7336,8 +6975,6 @@ async function toggleShare() {
   await openSharePicker();
 }
 
-// ---------- Share picker ----------
-
 const SHARE_QUALITY_KEY = "commy.shareQuality";
 const SHARE_QUALITY_HINTS = {
   smooth: "Best for games and video. Lower resolution, more frames.",
@@ -7351,19 +6988,18 @@ function shareQuality() {
   try {
     const saved = localStorage.getItem(SHARE_QUALITY_KEY);
     if (saved in SHARE_QUALITY_HINTS) return saved;
-  } catch { /* storage unavailable */ }
+  } catch {  }
   return "balanced";
 }
 
 function setShareQuality(quality) {
-  try { localStorage.setItem(SHARE_QUALITY_KEY, quality); } catch { /* storage unavailable */ }
+  try { localStorage.setItem(SHARE_QUALITY_KEY, quality); } catch {  }
   for (const btn of $("share-quality").querySelectorAll("button")) {
     btn.classList.toggle("active", btn.dataset.q === quality);
   }
   $("share-quality-hint").textContent = SHARE_QUALITY_HINTS[quality];
 }
 
-// Pick what to stream; also used to switch source mid-stream.
 async function openSharePicker() {
   if (!state.voiceServer) return;
   const token = ++sharePicker.token;
@@ -7381,7 +7017,6 @@ async function openSharePicker() {
   try {
     sharePicker.sources = await invoke("list_share_sources");
     if (token !== sharePicker.token) return;
-    // A game you are playing goes first and is preselected.
     const game = sharePicker.sources.find(s => s.game);
     const primary = game || sharePicker.sources.find(s => s.is_primary) || sharePicker.sources[0];
     if (primary) sharePicker.picked = primary;
@@ -7451,7 +7086,6 @@ function renderShareGrid() {
   $("share-go").disabled = !pickedVisible;
 }
 
-// Thumbnails load one at a time so the picker opens instantly.
 async function loadShareThumbs(token) {
   const ordered = [...sharePicker.sources].sort((a, b) =>
     (a.kind === sharePicker.kind ? 0 : 1) - (b.kind === sharePicker.kind ? 0 : 1));
@@ -7467,7 +7101,7 @@ async function loadShareThumbs(token) {
         img.src = sharePicker.thumbs.get(key);
         card.replaceChildren(img);
       }
-    } catch { /* window closed or protected; keep the icon */ }
+    } catch {  }
   }
 }
 
@@ -7481,7 +7115,6 @@ async function startShareWith(source, quality) {
   hideModals();
   sharePicker.token++;
   try {
-    // Switching source restarts the stream.
     if (state.sharing) await invoke("stop_screen_share", { serverId: state.voiceServer.id });
     await invoke("start_screen_share", {
       serverId: state.voiceServer.id,
@@ -7500,16 +7133,10 @@ async function startShareWith(source, quality) {
   }
 }
 
-// ---------- Own stream preview ----------
-
 let ownPreviewTimer = null;
 let ownFpsSample = null;
-// When the backend last pushed one of our own frames; the stats tick
-// only falls back to polling an image while no frames are flowing.
 let ownFrameAt = 0;
 
-// Our own frames arrive on the same event as a stream we watch, at the
-// stream's rate, so the preview and the self stage move like the real thing.
 function showOwnFrame(frame) {
   if (!state.sharing) return;
   ownFrameAt = performance.now();
@@ -7542,25 +7169,20 @@ function startOwnPreview() {
         $("stage-viewers").textContent = own.viewers === 1 ? "1 watching" : `${own.viewers} watching`;
         $("stage-viewers").classList.toggle("hidden", !own.viewers);
       }
-      // Live encode rate from the frame counter between ticks.
       const now = performance.now();
       if (ownFpsSample && own.frames >= ownFpsSample.frames) {
         const fps = Math.round((own.frames - ownFpsSample.frames) / ((now - ownFpsSample.at) / 1000));
         $("vp-live-source").textContent = [state.shareSource ? `Streaming ${state.shareSource}` : "", `${fps} fps`].filter(Boolean).join(" - ");
       }
       ownFpsSample = { frames: own.frames, at: now };
-    } catch { /* stream stopped between ticks */ }
+    } catch {  }
   };
   tick();
   ownPreviewTimer = setInterval(tick, 1000);
 }
 
-// ---------- Stage (stream viewer) ----------
-
 const stageStats = { times: [], width: 0, height: 0 };
 
-// A stream whose frames stop (sharer left, crashed or lost network) ends
-// for the viewer after a few seconds instead of freezing on the last frame.
 const STREAM_STALL_MS = 6000;
 setInterval(() => {
   if (!state.watchingUser || !stageStats.lastAt) return;
@@ -7616,7 +7238,6 @@ function toggleStageFullscreen() {
   else $("stage-view").requestFullscreen().catch(e => toast(String(e)));
 }
 
-// Shares a pasted or dropped File object into the current channel.
 async function uploadFileObject(file) {
   if (state.view !== "server" || !state.currentServer || !state.currentChannel) {
     toast("Open a server channel to share files");
@@ -7669,7 +7290,7 @@ async function stopWatching() {
   if (state.watchingUser) {
     try {
       await invoke("stop_watching", { userId: state.watchingUser });
-    } catch (e) { /* already gone */ }
+    } catch (e) {  }
   }
   state.watchingUser = null;
   state.watchingName = null;
@@ -7687,8 +7308,6 @@ async function openOwnPreview() {
   if (state.watchingUser) await stopWatching();
   openStage("self", "Your stream preview");
 }
-
-// ---------- Event wiring ----------
 
 function wireEvents() {
   $("signin-go").onclick = beginSignIn;
@@ -7813,7 +7432,6 @@ function wireEvents() {
     }
   }
 
-  // Appearance
   const appearance = loadAppearance();
   applyAppearance(appearance);
   $("chat-size").value = appearance.chatSize;
@@ -7844,7 +7462,6 @@ function wireEvents() {
     }
   };
 
-  // Emoji picker
   $("emoji-btn").onclick = () => {
     const picker = $("emoji-picker");
     const opening = picker.classList.contains("hidden");
@@ -7864,7 +7481,6 @@ function wireEvents() {
     }
   });
 
-  // Server settings
   $("server-settings-btn").onclick = () => openServerSettings();
   $("emoji-upload").onclick = uploadEmoji;
   $("sound-upload").onclick = uploadSound;
@@ -7897,7 +7513,6 @@ function wireEvents() {
   });
   $("sound-open-toggle").addEventListener("change", saveExpressionSettings);
 
-  // Soundboard
   $("vp-soundboard").replaceChildren(svgIcon("soundboard", 18));
   $("vp-soundboard").onclick = toggleSoundboardPop;
   $("soundboard-toggle").addEventListener("change", e => {
@@ -7996,7 +7611,6 @@ function wireEvents() {
   $("si-close").onclick = hideModals;
   $("si-leave").onclick = () => state.currentServer && openLeaveServer(state.currentServer.id);
 
-  // Account
   $("user-chip").onclick = e => {
     e.stopPropagation();
     toggleProfilePopover();
@@ -8094,7 +7708,6 @@ function wireEvents() {
   $("stage-view").ondblclick = toggleStageFullscreen;
   $("vp-preview").onclick = openOwnPreview;
 
-  // Share picker
   for (const tab of $("share-tabs").querySelectorAll(".share-tab")) {
     tab.onclick = () => {
       sharePicker.kind = tab.dataset.kind;
@@ -8136,7 +7749,6 @@ function wireEvents() {
     }
   });
 
-  // Profile popover
   setIcon($("pp-avatar-edit"), "pencil", 16);
   setIcon($("pp-clear"), "close", 14);
   $("pp-avatar-edit").onclick = e => {
@@ -8187,7 +7799,6 @@ function wireEvents() {
     applyDuration(Math.floor(when / 1000));
   };
 
-  // Profile card composer
   $("mc-emoji").replaceChildren(svgIcon("smile", 20));
   wireMentions($("mc-input"));
   $("mc-input").addEventListener("keydown", async e => {
@@ -8229,14 +7840,12 @@ function wireEvents() {
     }
   });
 
-  // Safety
   $("overlay-enabled").addEventListener("change", e => saveOverlaySettings({ enabled: e.target.checked }));
   $("overlay-corner").addEventListener("click", e => {
     const opt = e.target.closest(".corner-opt");
     if (opt) saveOverlaySettings({ corner: opt.dataset.corner });
   });
   $("overlay-test").addEventListener("click", async () => {
-    // Saving again also brings the overlay back if the hotkey had hidden it.
     await saveOverlaySettings({});
     setTimeout(() => emitToOverlay("overlay-test", null), 500);
   });
@@ -8281,7 +7890,6 @@ function wireEvents() {
     openUserSettings("account");
   };
 
-  // Avatar menu
   $("account-avatar-btn").onclick = e => {
     e.stopPropagation();
     openAvatarMenu(e.currentTarget);
@@ -8305,12 +7913,10 @@ function wireEvents() {
     applyAvatar("none");
   };
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
-  // Clicks outside close floating menus; clicks inside keep them open.
   document.addEventListener("mousedown", e => {
     const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
     if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn")) return;
-    // The emoji picker and mention list opened from the card keep it open.
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
   });
@@ -8318,7 +7924,6 @@ function wireEvents() {
     if (e.key === "Escape") closeFloating();
   });
 
-  // Replies and threads
   setIcon($("reply-bar-cancel"), "close", 16);
   $("reply-bar-cancel").onclick = cancelReply;
   $("awaited-icon").replaceChildren(svgIcon("clock", 16));
@@ -8333,7 +7938,6 @@ function wireEvents() {
     if (e.key === "Escape" && state.replyingTo) cancelReply();
   });
 
-  // GIFs
   syncGifButton();
   $("gif-btn").onclick = () => ($("gif-picker").classList.contains("hidden") ? openGifPicker("") : closeGifPicker());
   $("gif-search").addEventListener("input", e => {
@@ -8361,7 +7965,7 @@ function wireEvents() {
   $("gif-provider").addEventListener("change", syncGifHelp);
   $("gif-key-save").onclick = () => {
     const settings = { provider: $("gif-provider").value, key: $("gif-key").value.trim() };
-    try { localStorage.setItem(GIF_KEY, JSON.stringify(settings)); } catch { /* session only */ }
+    try { localStorage.setItem(GIF_KEY, JSON.stringify(settings)); } catch {  }
     toast(settings.key ? "GIF key saved" : "GIF key removed");
     syncGifButton();
   };
@@ -8382,7 +7986,6 @@ function wireEvents() {
   };
   fillGifSettings();
 
-  // Server and folder menus
   for (const btn of $("server-menu").querySelectorAll(".ctx-radio")) {
     btn.onclick = () => {
       if (!menuServer) return;
@@ -8511,7 +8114,6 @@ function wireEvents() {
   });
   $("rename-folder-cancel").onclick = hideModals;
 
-  // Server images
   const uploadServerImage = async which => {
     try {
       const src = await chooseImage(which === "icon" ? "Choose a server avatar" : "Choose a server banner", $("server-image-file"));
@@ -8527,7 +8129,6 @@ function wireEvents() {
   $("overview-icon-remove").onclick = () => setServerImage("icon", null);
   $("banner-remove").onclick = () => setServerImage("banner", null);
 
-  // Notifications
   $("notify-level").addEventListener("change", e => {
     const prefs = notifyPrefs();
     prefs.level = e.target.value;
@@ -8556,7 +8157,6 @@ function wireEvents() {
   });
   $("notify-test").onclick = () =>
     invoke("notify", { title: "Commy", body: "Notifications are working." }).then(() => playSound("message")).catch(e => toast(String(e)));
-  // Coming back to the window clears what you are looking at.
   window.addEventListener("focus", () => {
     if (state.view === "server" && state.currentChannel) clearChannelUnread(state.currentChannel.id);
     if (state.view === "dm" && state.currentDm) clearDmUnread(state.currentDm.user);
@@ -8565,12 +8165,11 @@ function wireEvents() {
   $("vp-camera").onclick = () => (state.cameraOn ? stopCamera() : startCamera());
   $("cam-preview-btn").onclick = toggleCameraPreview;
   $("camera-device").addEventListener("change", async e => {
-    try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch { /* per session only */ }
+    try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch {  }
     if (previewStream) {
       stopCameraPreview();
       toggleCameraPreview();
     }
-    // Switch a live camera to the new device.
     if (state.cameraOn) {
       await stopCamera();
       await startCamera();
@@ -8579,15 +8178,12 @@ function wireEvents() {
   $("input-device").addEventListener("change", saveAudioDevices);
   $("output-device").addEventListener("change", saveAudioDevices);
 
-  // Mentions
   wireMentions($("message-input"));
   wireMentions($("thread-input"));
 
-  // Message actions
   $("delete-message-go").onclick = () => pendingDelete && deleteMessage(pendingDelete);
   $("delete-message-cancel").onclick = hideModals;
   $("message-input").addEventListener("keydown", e => {
-    // Up arrow in an empty composer edits your last message.
     if (e.key !== "ArrowUp" || e.target.value || state.view !== "server") return;
     const mine = (state.renderedMessages || []).filter(m => isOwnMessage(m) && m.content && !isHidden(m.id));
     if (!mine.length) return;
@@ -8595,7 +8191,6 @@ function wireEvents() {
     startEditMessage(mine[mine.length - 1].id);
   });
 
-  // Channel settings
   $("channel-edit-name").addEventListener("input", syncChannelDirty);
   $("channel-edit-color").addEventListener("input", e => {
     channelColorDraft = e.target.value.replace(/^#/, "").toLowerCase();
@@ -8659,7 +8254,6 @@ function wireEvents() {
   $("delete-channel-go").onclick = confirmDeleteChannel;
   $("delete-channel-cancel").onclick = hideModals;
 
-  // Create channel dialog
   for (const opt of $("create-channel-kinds").querySelectorAll(".kind-option")) {
     opt.onclick = () => setCreateChannelKind(opt.dataset.kind);
   }
@@ -8673,12 +8267,10 @@ function wireEvents() {
   $("create-channel-save").onclick = saveCreateChannel;
   $("create-channel-cancel").onclick = hideModals;
 
-  // Voice panel
   $("vp-stop-share").onclick = toggleShare;
   $("vp-change-source").onclick = openSharePicker;
   $("vp-stop-watch").onclick = stopWatching;
   $("vp-disconnect").onclick = disconnectVoice;
-  // "Voice Connected" opens connection details; the channel name below it navigates.
   document.querySelector(".vp-status").title = "Connection details";
   document.querySelector(".vp-status").addEventListener("click", e => {
     e.stopPropagation();
@@ -8701,7 +8293,6 @@ function wireEvents() {
     }
   };
 
-  // Direct messages
   $("dm-search").addEventListener("input", () => renderDmThreads());
   $("dm-search").addEventListener("keydown", e => {
     if (e.key === "Escape") {
@@ -8740,11 +8331,6 @@ function wireEvents() {
     }
   });
 
-  // Paste an image or file into the composer to share it. An image
-  // copied from a web page carries its source URL in the html
-  // clipboard flavor: paste that URL so the message keeps its
-  // provenance, instead of uploading an anonymous bitmap. Images
-  // with no web source (screenshots, local files) upload as before.
   $("message-input").addEventListener("paste", e => {
     const files = Array.from(e.clipboardData?.files || []);
     if (!files.length) return;
@@ -8758,7 +8344,6 @@ function wireEvents() {
     for (const file of files) uploadFileObject(file);
   });
 
-  // Drag a file anywhere onto the chat to share it.
   const messagesBox = $("messages");
   for (const evt of ["dragover", "dragenter"]) {
     messagesBox.addEventListener(evt, e => {
@@ -8778,7 +8363,6 @@ function wireEvents() {
     hideModals();
   };
 
-  // Volume sliders apply live and persist on release.
   const volLabel = () => {
     $("output-vol-label").textContent = `${$("output-vol").value}%`;
     $("input-gain-label").textContent = `${$("input-gain").value}%`;
@@ -8798,11 +8382,9 @@ function wireEvents() {
   }
 
   $("modal-backdrop").addEventListener("mousedown", e => {
-    // Keep the username modal mandatory; others close on backdrop click.
     if (e.target === e.currentTarget && state.user && account.signed_in) hideModals();
   });
 
-  // Live updates pushed from the Rust side.
   if (IS_TAURI) {
     window.__TAURI__.event.listen("server-event", async event => {
       const serverId = event.payload;
@@ -8810,7 +8392,6 @@ function wireEvents() {
       if (state.currentServer && serverId === state.currentServer.id) {
         await refreshCurrentServer();
       }
-      // Keep mutual servers and presence current while Direct Messages is open.
       if (state.view === "dm") {
         await refreshPeople();
         await renderDmThreads();
@@ -8883,7 +8464,6 @@ function wireEvents() {
         toast("New direct message");
       }
     });
-    // One of our waiting DMs went out: redraw, nothing new arrived.
     window.__TAURI__.event.listen("dm-sent", async event => {
       if (state.view !== "dm") return;
       if (state.currentDm && event.payload === state.currentDm.user) {
@@ -8913,12 +8493,10 @@ function wireEvents() {
         renderVoicePanel();
       }
     });
-    // Our presence changed outside the account page (automatic AFK).
     window.__TAURI__.event.listen("profile-changed", event => {
       state.user = event.payload;
       renderUserPanel();
       renderVoicePanel();
-      // Expiry may have changed the presence or cleared the status.
       invoke("get_voice_settings").then(v => {
         state.voice = v;
         if (!$("profile-pop").classList.contains("hidden")) renderProfilePopover();
@@ -8945,7 +8523,7 @@ function wireEvents() {
 }
 
 async function stopMicTest() {
-  try { await invoke("stop_mic_test"); } catch (e) { /* already stopped */ }
+  try { await invoke("stop_mic_test"); } catch (e) {  }
   state.micTesting = false;
   $("mic-test-btn").textContent = "Start Test";
 }
@@ -9004,7 +8582,6 @@ function openUserSettings(tab) {
   loadIntegrations().then(renderIntegrations);
   loadAccount().then(() => {
     renderAccountSettings();
-    // The GIF help depends on what the account server offers
     $("gif-provider").dispatchEvent(new Event("change"));
   });
   $("notify-level").value = notifyPrefs().level;
@@ -9023,9 +8600,6 @@ function openUserSettings(tab) {
   openSettingsLayer("user-settings", tab);
 }
 
-// Re-opening keeps the current tab so actions inside a tab do not jump away.
-// Server Settings is for members who can manage something. Everyone else
-// gets a read-only Server Info panel so no control ever silently fails.
 function canOpenServerSettings(server) {
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   return isOwner || Boolean(server.can_manage_server || server.can_manage_channels || server.can_manage_roles ||
@@ -9293,8 +8867,6 @@ function renderMemberSettings(server) {
   }
 }
 
-// Re-render server data without resetting the selected channel or
-// losing composer focus.
 async function refreshCurrentServer() {
   const keepChannel = state.currentChannel;
   try {
@@ -9328,10 +8900,6 @@ async function refreshCurrentServer() {
   await selectChannel(state.currentServer.channels.find(c => c.kind === "text") || null);
 }
 
-// ---------- Boot ----------
-
-// Tell the backend the user is at the keyboard, at most every 30s,
-// so the AFK watchdog only moves people who are actually idle.
 function wireActivityPing() {
   let lastPing = 0;
   const ping = () => {
@@ -9349,7 +8917,7 @@ async function boot() {
   wireEvents();
   wireActivityPing();
   if (IS_TAURI) {
-    await invoke("ui_ready"); // handshake logged by the Rust side
+    await invoke("ui_ready");
   } else {
     toast("Preview mode: running on mock data, not the real backend");
   }
@@ -9366,7 +8934,6 @@ async function boot() {
   await continueBoot();
 }
 
-// Runs once signed in: pick a username if needed, then load servers.
 async function continueBoot() {
   state.user = await invoke("get_user");
   if (!state.user) {
@@ -9383,15 +8950,12 @@ async function continueBoot() {
   else await enterDmMode();
 }
 
-// ---------- Commy account ----------
-
 let account = { signed_in: false, server_host: "" };
 
 async function loadAccount() {
   try {
     account = await invoke("account_status");
   } catch {
-    /* keep the last state */
   }
   syncGifButton();
 }

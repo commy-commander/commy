@@ -1,14 +1,6 @@
-//! Custom emoji and soundboard upload rules: size limits and file type
-//! sniffing. Bytes are checked by content, never by file name.
-
-/// Emoji images are resized to 128px in the webview; animated GIFs are
-/// kept as uploaded, so the limit leaves room for those.
 pub const MAX_EMOJI_BYTES: usize = 256 * 1024;
-/// Fifteen seconds of mp3 or ogg at up to 320 kbps, with headroom.
 pub const MAX_SOUND_BYTES: usize = 1024 * 1024;
 
-/// Soundboard clips bundled with the app (ui/sounds/soundboard), available in
-/// every server. Played by name as "default:<id>".
 pub const DEFAULT_SOUNDS: &[&str] = &["airhorn", "ba_dum_tss", "cricket", "losing_horn"];
 
 pub fn is_default_sound(name: &str) -> bool {
@@ -41,8 +33,6 @@ pub fn audio_mime(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// Mime type for a stored expression blob, if it is an accepted kind
-/// within its size limit.
 pub fn expression_mime(bytes: &[u8]) -> Option<&'static str> {
     match (image_mime(bytes), audio_mime(bytes)) {
         (Some(mime), _) if bytes.len() <= MAX_EMOJI_BYTES => Some(mime),

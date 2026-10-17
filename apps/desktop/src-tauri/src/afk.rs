@@ -1,30 +1,20 @@
-//! Automatic AFK: decides when inactivity should flip our presence to
-//! Idle (shared with peers) and when activity should flip it back.
-
 use commy_core::Presence;
 
-/// Default minutes of inactivity before going AFK.
 pub const DEFAULT_TIMEOUT_MINUTES: u32 = 10;
 
-/// Longest timeout the settings allow, in minutes.
 pub const MAX_TIMEOUT_MINUTES: u32 = 240;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AfkAction {
-    /// Inactive long enough: show as Idle and move out of voice.
     GoIdle,
-    /// Activity resumed after we set Idle ourselves: back to Online.
     Restore,
     None,
 }
 
-/// Clamps a user supplied timeout; 0 means never go AFK.
 pub fn clamp_timeout_minutes(minutes: u32) -> u32 {
     minutes.min(MAX_TIMEOUT_MINUTES)
 }
 
-/// `auto_idle` is true when the current Idle presence was set by us,
-/// so a manual Idle, Do Not Disturb or Invisible is never overridden.
 pub fn decide(idle_secs: i64, timeout_secs: i64, presence: Presence, auto_idle: bool) -> AfkAction {
     let timed_out = timeout_secs > 0 && idle_secs >= timeout_secs;
     if timed_out {
@@ -37,8 +27,6 @@ pub fn decide(idle_secs: i64, timeout_secs: i64, presence: Presence, auto_idle: 
     AfkAction::None
 }
 
-/// Voice idle limit in seconds: the shorter of your own and the server's,
-/// where 0 (yours) or None (server's) means no limit. 0 if neither applies.
 pub fn voice_timeout_secs(personal_secs: i64, server_minutes: Option<u32>) -> i64 {
     let server = server_minutes.map_or(0, |m| m as i64 * 60);
     match (personal_secs > 0, server > 0) {

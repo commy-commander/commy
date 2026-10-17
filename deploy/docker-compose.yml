@@ -1,10 +1,3 @@
-# Commy self-hosted stack: website + docs, Better Auth server, Postgres, Redis
-# for the doorbell and rate limits, an iroh relay with a monthly bandwidth
-# meter, and Caddy.
-# Usage: cp .env.example .env, fill it in, then docker compose up -d --build
-# The website image is published from its own repository (commy-web); set
-# WEB_IMAGE to the tag to run, the default below is the production image.
-
 name: commy
 
 x-logging: &logging
@@ -82,8 +75,6 @@ services:
       IGDB_CLIENT_ID: ${IGDB_CLIENT_ID:-}
       IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET:-}
       DOORBELL: ${DOORBELL:-true}
-      # Doorbell rings and rate-limit counters; leave empty to keep them in
-      # Postgres and process memory and drop the redis service below
       REDIS_URL: ${REDIS_URL-redis://redis:6379}
     depends_on:
       postgres:
@@ -98,15 +89,12 @@ services:
     image: ${RELAY_IMAGE:-commy-relay:local}
     restart: unless-stopped
     ports:
-      # STUN for hole punching; relayed traffic comes in through Caddy on 443
       - "${STUN_PORT:-3478}:3478/udp"
     volumes:
       - relay_flags:/flags:ro
     networks: [edge]
     logging: *logging
 
-  # Fixes iroh-relay 0.28's upgrade response for Caddy and refuses new
-  # relay connections while the meter has paused the relay
   relay-proxy:
     build: ./relay-tools
     image: ${RELAY_TOOLS_IMAGE:-commy-relay-tools:local}
@@ -153,9 +141,6 @@ services:
     networks: [db]
     logging: *logging
 
-  # Short-lived state only: doorbell rings (random tokens and blinded ids) and
-  # rate-limit counters under keyed hashes, all with an expiry. Snapshots keep
-  # rings across a restart; the auth server caps them at 200,000.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -172,7 +157,6 @@ services:
 
 networks:
   edge:
-  # Postgres and Redis are only reachable from the auth service
   db:
     internal: true
 

@@ -1,9 +1,3 @@
-//! Optional IGDB lookups (game names and cover art). IGDB authenticates
-//! with Twitch developer credentials: a client id and secret exchanged
-//! for an app access token. Everything works without them; lookups just
-//! return nothing. Results are cached and requests are spaced to stay
-//! under IGDB's limit of 4 requests per second.
-
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -28,12 +22,10 @@ impl IgdbCredentials {
     }
 }
 
-/// One game as the app uses it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameHit {
     pub id: u64,
     pub name: String,
-    /// IGDB image id of the cover, see [`cover_url`].
     pub cover: Option<String>,
     pub year: Option<i32>,
 }
@@ -57,29 +49,22 @@ struct TokenResponse {
     expires_in: u64,
 }
 
-/// Image ids are short alphanumeric strings; anything else is dropped so
-/// a peer cannot smuggle a URL in place of a cover.
 pub fn valid_image_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 32 && id.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-/// "t_cover_small" (90x128) or "t_thumb" (90x90) sized cover.
 pub fn cover_url(image_id: &str, size: &str) -> Option<String> {
     valid_image_id(image_id).then(|| format!("https://images.igdb.com/igdb/image/upload/{size}/{image_id}.jpg"))
 }
 
-/// Lowercase letters and digits only, for comparing names.
 pub fn normalize(name: &str) -> String {
     name.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
-/// Escapes a user query for IGDB's Apicalypse `search "..."` clause.
 pub fn apicalypse_string(query: &str) -> String {
     query.chars().filter(|c| !c.is_control()).collect::<String>().replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// Hits from elsewhere (the account server) with unsafe cover ids and
-/// empty names dropped, like the ones parsed here.
 pub fn safe_hits(hits: Vec<GameHit>) -> Vec<GameHit> {
     hits.into_iter()
         .filter(|h| !h.name.trim().is_empty())
@@ -87,9 +72,6 @@ pub fn safe_hits(hits: Vec<GameHit>) -> Vec<GameHit> {
         .collect()
 }
 
-/// The hit that is clearly the same game as `name`, if any. Exact name
-/// matches only (ignoring punctuation and case), so an app called "Code"
-/// never turns into a game.
 pub fn best_match<'a>(name: &str, hits: &'a [GameHit]) -> Option<&'a GameHit> {
     let want = normalize(name);
     if want.len() < 3 {
@@ -114,18 +96,15 @@ fn to_hit(game: ApiGame) -> Option<GameHit> {
     })
 }
 
-/// Live client: token, pacing and caches. Held behind a tokio mutex.
 #[derive(Default)]
 pub struct IgdbClient {
     token: Option<(String, Instant)>,
     last_request: Option<Instant>,
     searches: HashMap<String, Vec<GameHit>>,
-    /// Activity names already resolved (None: not a known game).
     pub resolved: HashMap<String, Option<GameHit>>,
 }
 
 impl IgdbClient {
-    /// Forget the token and caches, e.g. after the credentials change.
     pub fn reset(&mut self) {
         self.token = None;
         self.searches.clear();
@@ -162,13 +141,11 @@ impl IgdbClient {
             return Err("Twitch rejected the client id or secret".into());
         }
         let token: TokenResponse = response.json().await.map_err(|_| "unexpected reply from Twitch".to_string())?;
-        // Refresh a minute early.
         let expires = Instant::now() + Duration::from_secs(token.expires_in.saturating_sub(60));
         self.token = Some((token.access_token.clone(), expires));
         Ok(token.access_token)
     }
 
-    /// Games matching `query`, best matches first.
     pub async fn search(&mut self, http: &reqwest::Client, creds: &IgdbCredentials, query: &str) -> Result<Vec<GameHit>, String> {
         let query = query.trim();
         if !creds.configured() || query.chars().count() < 2 {
@@ -208,7 +185,6 @@ impl IgdbClient {
         Ok(hits)
     }
 
-    /// Resolves a detected activity name to a game, caching misses too.
     pub async fn resolve(&mut self, http: &reqwest::Client, creds: &IgdbCredentials, name: &str) -> Option<GameHit> {
         let key = normalize(name);
         if let Some(hit) = self.resolved.get(&key) {
@@ -216,7 +192,6 @@ impl IgdbClient {
         }
         let hit = match self.search(http, creds, name).await {
             Ok(hits) => best_match(name, &hits).cloned(),
-            // Network trouble: try again next time instead of caching a miss.
             Err(_) => return None,
         };
         self.resolved.insert(key, hit.clone());

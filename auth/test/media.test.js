@@ -1,4 +1,3 @@
-// GIF and game search run with the server's keys, for signed in apps only.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { betterAuth } from "better-auth";
@@ -167,7 +166,6 @@ test("GIF search needs a session and keeps the key server side", async () => {
   assert.ok(log[0].url.startsWith(`https://api.klipy.com/api/v1/${KLIPY_KEY}/gifs/search?q=wave`));
   assert.match(log[0].url, /customer_id=[0-9a-f]{32}/);
 
-  // Trending for an empty query, and repeats come from the cache
   await call("GET", "/commy/gifs/search", { cookie });
   assert.ok(log[1].url.includes("/gifs/trending?"));
   await call("GET", "/commy/gifs/search", { cookie, query: { q: "WAVE" } });
@@ -226,14 +224,12 @@ test("images load through the server for signed in apps only", async () => {
   assert.equal(r.headers.get("x-content-type-options"), "nosniff");
   assert.equal(log[0].init.redirect, "error", "redirects never leave the allowed hosts");
 
-  // Repeats come from the cache
   await call("GET", "/commy/media", { cookie, query: { u: gif } });
   assert.equal(log.length, 1);
 
   const cover = await call("GET", "/commy/media", { cookie, query: { u: "https://images.igdb.com/igdb/image/upload/t_thumb/co1rs4.jpg" } });
   assert.equal(cover.type, "image/jpeg");
 
-  // Other hosts are refused before any request, and non-images are not passed on
   assert.equal((await call("GET", "/commy/media", { cookie, query: { u: "https://example.org/a.gif" } })).status, 400);
   const before = log.length;
   assert.equal((await call("GET", "/commy/media", { cookie, query: { u: "https://static.klipy.com/page.html" } })).status, 502);
