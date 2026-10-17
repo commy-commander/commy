@@ -50,7 +50,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -62,9 +62,11 @@ jobs:
             libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
             libxdo-dev libssl-dev clang cmake
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
