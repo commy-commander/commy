@@ -113,6 +113,22 @@ jobs:
           [ -n "$robots" ] && echo "ok   - staging is noindex" || { echo "FAIL - staging is missing X-Robots-Tag"; status=1; }
           exit $status
 
+      - name: Environments cannot reach each other
+        run: |
+          probe() {
+            if docker exec "$1" wget -qO- -T 5 "http://$2:3001/healthz" >/dev/null 2>&1; then got=reachable; else got=unreachable; fi
+            if [ "$got" = "$3" ]; then echo "ok   - $1 -> $2 is $got"; else echo "FAIL - $1 -> $2 is $got, expected $3"; return 1; fi
+          }
+          status=0
+          probe commy-dev-auth-1 commy-prod-auth unreachable || status=1
+          probe commy-dev-auth-1 commy-staging-auth unreachable || status=1
+          probe commy-staging-auth-1 commy-prod-auth unreachable || status=1
+          probe commy-prod-auth-1 commy-dev-auth unreachable || status=1
+          probe commy-edge-caddy-1 commy-prod-auth reachable || status=1
+          probe commy-edge-caddy-1 commy-staging-auth reachable || status=1
+          probe commy-edge-caddy-1 commy-dev-auth reachable || status=1
+          exit $status
+
       - name: Logs on failure
         if: failure()
         run: |

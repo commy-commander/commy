@@ -69,8 +69,12 @@ by `docker compose up -d` in that folder. Google OAuth needs each domain's
   `setup-vps.sh` starts both. Test builds never use the production relay or
   account server, and release builds never use staging.
 - `docker-compose.env.yml` turns off the per-stack Caddy and joins `web` and
-  `auth` to the shared `commy-public` network under those aliases. Each
-  environment's Postgres and Redis stay on its own private network.
+  `auth` to that environment's own Docker network (`commy-prod`, `commy-staging`
+  or `commy-dev`, named after `COMPOSE_PROJECT_NAME`) under those aliases. Only
+  the edge Caddy is on all of them, plus `commy-relay` for the relays, so a
+  container in one environment cannot reach another environment's containers.
+  `setup-vps.sh` creates the four networks. Each environment's Postgres and
+  Redis stay on its own private network.
 - `docker-compose.agent.yml` adds the agent. It mounts the checkout read only and
   the Docker socket.
 
@@ -80,6 +84,33 @@ Dockhand shows the containers the script starts (projects `commy-edge`,
 `commy-prod`, `commy-staging` and `commy-dev`), so you can read logs and restart
 them. Keep their settings in the `.env` files rather than Dockhand's environment
 editor, because the agent reads `.env` when it recreates containers.
+
+### Moving from the shared `commy-public` network
+
+Servers set up before the per-environment networks existed have every
+environment on one `commy-public` network. Move them once, environment by
+environment, without taking the site down. Name the services on every
+`docker compose up` line: a bare `up -d` would also recreate Postgres and Redis.
+
+```bash
+for env in prod staging dev; do (cd /srv/commy-$env && git pull); done
+for net in commy-prod commy-staging commy-dev commy-relay; do docker network create $net; done
+for net in commy-prod commy-staging commy-dev commy-relay; do docker network connect $net commy-edge-caddy-1; done
+for env in dev staging prod; do (cd /srv/commy-$env/deploy && docker compose up -d --build agent && docker compose up -d auth web); done
+cd /srv/commy-prod/deploy && docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml up -d relay-proxy
+cd /srv/commy-staging/deploy && RELAY_PROXY_ALIAS=commy-relay-staging-proxy STUN_PORT=3479 RELAY_MONTHLY_LIMIT_GB=500 docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d relay-proxy
+cd /srv/commy-prod/deploy/edge && docker compose up -d
+docker network inspect commy-public --format '{{range .Containers}}{{.Name}} {{end}}'
+docker network rm commy-public
+```
+
+The running edge Caddy is attached to the new networks by hand first, so it
+keeps reaching each environment while that environment's `auth` and `web` are
+recreated on their new network (the recreate restarts them, which the edge
+covers with its 15 second retry). The last `up -d` in `edge/` recreates Caddy
+on the four networks only. The inspect line should print nothing before the old
+network is removed; if it names a container, recreate that one with
+`docker compose up -d <service>` in its folder first.
 
 ## Cloudflare in front
 
@@ -177,8 +208,10 @@ AUTH_IMAGE=ghcr.io/commy-commander/commy-auth:prod
   **Promote image** workflow in the commy-web repository; run both.
 
 Changes to the compose files themselves (a new environment variable, a new
-service) are not picked up by the agent: run
-`git pull && docker compose up -d` in that environment's `deploy` folder.
+service) are not picked up by the agent: run `git pull` and then
+`docker compose up -d <service>` for the changed services in that environment's
+`deploy` folder (`docker compose up -d --build agent` after a change to the
+agent's image).
 
 ## Rolling back
 

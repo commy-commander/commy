@@ -20,4 +20,4 @@ services:
 networks:
   public:
     external: true
-    name: commy-public
+    name: commy-relay

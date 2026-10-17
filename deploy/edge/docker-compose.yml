@@ -29,7 +29,7 @@ services:
       - caddy_config:/config
       # JSON access logs for your own log tooling
       - /var/log/commy-caddy:/var/log/caddy
-    networks: [public]
+    networks: [prod, staging, dev, relay]
     logging:
       driver: json-file
       options:
@@ -37,8 +37,18 @@ services:
         max-file: "3"
 
 networks:
-  public:
-    name: commy-public
+  prod:
+    external: true
+    name: commy-prod
+  staging:
+    external: true
+    name: commy-staging
+  dev:
+    external: true
+    name: commy-dev
+  relay:
+    external: true
+    name: commy-relay
 
 volumes:
   caddy_data:

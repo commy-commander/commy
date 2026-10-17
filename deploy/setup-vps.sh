@@ -60,6 +60,9 @@ EOF
 done
 
 first="$(echo "$ENVS" | cut -d' ' -f1)"
+for net in commy-prod commy-staging commy-dev commy-relay; do
+	docker network inspect "$net" >/dev/null 2>&1 || docker network create "$net" >/dev/null
+done
 edge="$ROOT/commy-$first/deploy/edge"
 if [ ! -f "$edge/.env" ]; then
 	printf 'ACME_EMAIL=%s\nPROD_DOMAIN=%s\n' "$EMAIL" "$DOMAIN" >"$edge/.env"
