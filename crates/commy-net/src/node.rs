@@ -197,7 +197,6 @@ impl VideoPacer {
 }
 
 /// Accepts inbound media connections and hands them to the app.
-#[derive(Debug)]
 struct MediaAcceptor {
     tx: mpsc::UnboundedSender<MediaChannel>,
     endpoint: iroh::net::Endpoint,
@@ -560,20 +559,92 @@ pub struct BlobFetcher {
 }
 
 impl BlobFetcher {
-    pub async fn fetch(&self, hash: &str, provider_hex: Option<&str>) -> Result<Vec<u8>> {
+    pub async fn fetch(&self, hash: &str, provider_hex: Option<&str>, max: u64) -> Result<Vec<u8>> {
         let hash: iroh_blobs::Hash = hash.parse().context("invalid blob hash")?;
-        if let Ok(bytes) = self.blobs.read_to_bytes(hash).await {
-            return Ok(bytes.to_vec());
+        if let Ok(iroh::client::blobs::BlobStatus::Complete { size }) = self.blobs.status(hash).await {
+            check_blob_size(size, max)?;
+            if let Ok(bytes) = self.blobs.read_to_bytes(hash).await {
+                return Ok(bytes.to_vec());
+            }
         }
         let provider = provider_hex.context("blob not local and no provider known")?;
         let node_id = parse_node_hex(provider)?;
-        self.blobs
-            .download(hash, NodeAddr::new(node_id))
+        let bytes = fetch_capped(&self.endpoint, node_id, hash, max).await?;
+        if let Err(e) = stage_and_add(&self.blobs, bytes.clone()).await {
+            tracing::debug!("fetched blob was not kept locally: {e}");
+        }
+        Ok(bytes)
+    }
+}
+
+#[allow(deprecated)]
+async fn fetch_capped(endpoint: &iroh::net::Endpoint, node_id: NodeId, hash: iroh_blobs::Hash, max: u64) -> Result<Vec<u8>> {
+    use iroh_blobs::get::fsm::{self, ConnectedNext, EndBlobNext};
+    let connection = endpoint
+        .connect(NodeAddr::new(node_id), iroh_blobs::protocol::ALPN)
+        .await
+        .context("blob download failed")?;
+    let connected = fsm::start(connection, iroh_blobs::protocol::GetRequest::single(hash)).next().await?;
+    let ConnectedNext::StartRoot(start) = connected.next().await? else {
+        anyhow::bail!("blob download failed: unexpected response");
+    };
+    let (content, size) = start.next().next().await?;
+    check_blob_size(size, max)?;
+    let (end, bytes) = content.concatenate_into_vec().await?;
+    let EndBlobNext::Closing(closing) = end.next() else {
+        anyhow::bail!("blob download failed: unexpected response");
+    };
+    closing.next().await?;
+    Ok(bytes)
+}
+
+fn staging_path() -> Result<std::path::PathBuf> {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let dir = DIR.get_or_init(|| {
+        let tag = data_encoding::HEXLOWER.encode(&rand::random::<[u8; 8]>());
+        std::env::temp_dir().join(format!("commy-{}-{tag}", std::process::id()))
+    });
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir).context("could not make the blob staging directory")?;
+    Ok(dir.join(format!("{}.bin", data_encoding::HEXLOWER.encode(&rand::random::<[u8; 16]>()))))
+}
+
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    std::io::Write::write_all(&mut file, bytes)?;
+    file.sync_all()
+}
+
+async fn stage_and_add(blobs: &iroh::client::blobs::Client, bytes: Vec<u8>) -> Result<iroh_blobs::Hash> {
+    let path = staging_path()?;
+    let staged = path.clone();
+    tokio::task::spawn_blocking(move || write_private(&staged, &bytes))
+        .await
+        .context("could not stage blob")?
+        .context("could not stage blob")?;
+    let added = async {
+        blobs
+            .add_from_path(
+                path.clone(),
+                false,
+                iroh_blobs::util::SetTagOption::Auto,
+                iroh::client::blobs::WrapOption::NoWrap,
+            )
             .await?
             .await
-            .context("blob download failed")?;
-        let bytes = self.blobs.read_to_bytes(hash).await?;
-        Ok(bytes.to_vec())
     }
 }
 
@@ -595,9 +666,18 @@ impl CommyNode {
         rand::random()
     }
 
+pub const MAX_BLOB_BYTES: u64 = 20 * 1024 * 1024;
+
+pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
+    anyhow::ensure!(size <= max, "that file is larger than {} MB", max / (1024 * 1024));
+    Ok(())
+}
+
     /// Spawns an iroh node with n0 discovery, Commy's relay first and n0's
+#[allow(deprecated)]
     /// relays as fallback (see `relays`).
     /// Pass the persisted secret key so the node keeps the same
+    endpoint: iroh::net::Endpoint,
     /// identity across restarts; a fresh key invalidates every invite
     /// and DM address that peers have stored.
     /// Returns gossip events, inbound media channels, and inbound DMs
@@ -611,11 +691,15 @@ impl CommyNode {
         mpsc::UnboundedReceiver<IncomingDm>,
     )> {
         let relays = match crate::relays::relay_map(&crate::relays::own_relays()) {
+            .finish()
             Ok(map) => Some(map),
             Err(e) => {
                 tracing::warn!("using default relays: {e:#}");
                 None
             }
+    .await;
+    let _ = tokio::fs::remove_file(&path).await;
+    Ok(added?.hash)
         };
         Self::spawn_with(secret, relays).await
     }
@@ -1059,37 +1143,16 @@ impl CommyNode {
     /// iroh node and with it all networking. `add_from_path` is plain
     /// server streaming and does not hit that path.
     pub async fn add_blob(&self, bytes: Vec<u8>) -> Result<String> {
-        let path = std::env::temp_dir().join(format!(
-            "commy-blob-{}-{}.bin",
-            std::process::id(),
-            rand_suffix()
-        ));
-        tokio::fs::write(&path, &bytes).await.context("could not stage blob")?;
-        let added = async {
-            self.node
-                .blobs()
-                .add_from_path(
-                    path.clone(),
-                    false,
-                    iroh_blobs::util::SetTagOption::Auto,
-                    iroh::client::blobs::WrapOption::NoWrap,
-                )
-                .await?
-                .finish()
-                .await
-        }
-        .await;
-        let _ = tokio::fs::remove_file(&path).await;
-        Ok(added?.hash.to_string())
+        Ok(stage_and_add(self.node.blobs(), bytes).await?.to_string())
     }
 
     /// Fetches a blob by hash, trying the given provider first.
-    pub async fn fetch_blob(&self, hash: &str, provider_hex: Option<&str>) -> Result<Vec<u8>> {
-        self.blob_fetcher().fetch(hash, provider_hex).await
+    pub async fn fetch_blob(&self, hash: &str, provider_hex: Option<&str>, max: u64) -> Result<Vec<u8>> {
+        self.blob_fetcher().fetch(hash, provider_hex, max).await
     }
 
     pub fn blob_fetcher(&self) -> BlobFetcher {
-        BlobFetcher { blobs: self.node.blobs().clone() }
+        BlobFetcher { blobs: self.node.blobs().clone(), endpoint: self.node.endpoint().clone() }
     }
 
     pub fn leave_server(&mut self, server_id: ServerId) {
@@ -1593,13 +1656,30 @@ mod tests {
     }
 }
 
-/// Unique-enough suffix for staging files within one process.
-fn rand_suffix() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64)
-        .unwrap_or(0);
-    nanos ^ COUNTER.fetch_add(1, Ordering::Relaxed).rotate_left(32)
-}
+    #[test]
+    fn blob_sizes_over_the_cap_are_refused_before_any_bytes() {
+        assert!(check_blob_size(0, MAX_BLOB_BYTES).is_ok());
+        assert!(check_blob_size(MAX_BLOB_BYTES, MAX_BLOB_BYTES).is_ok());
+        let refused = check_blob_size(MAX_BLOB_BYTES + 1, MAX_BLOB_BYTES).unwrap_err();
+        assert_eq!(refused.to_string(), "that file is larger than 20 MB");
+        assert!(check_blob_size(u64::MAX, MAX_BLOB_BYTES).is_err());
+        assert!(check_blob_size(512 * 1024 * 1024, 512 * 1024 * 1024).is_ok());
+    }
+
+    #[test]
+    fn staging_files_are_private_and_unpredictable() {
+        let a = staging_path().unwrap();
+        let b = staging_path().unwrap();
+        assert_eq!(a.parent(), b.parent());
+        assert_ne!(a, b);
+        assert!(a.parent().unwrap().is_dir());
+        write_private(&a, b"x").unwrap();
+        assert!(write_private(&a, b"y").is_err(), "never overwrites");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&a).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(std::fs::metadata(a.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        std::fs::remove_file(&a).unwrap();
+    }

@@ -3460,6 +3460,7 @@ function renderAttachment(att) {
         blob: att.blob,
         filename: att.filename,
         provider: att.provider ?? null,
+        sizeBytes: att.size_bytes ?? null,
       });
       toast(path ? `Saved to ${path}` : "Download cancelled");
     } catch (e) {
@@ -6518,6 +6519,7 @@ function renderInlineImage(att) {
       blob: att.blob,
       provider: att.provider ?? null,
       mime: att.mime,
+      sizeBytes: att.size_bytes ?? null,
     })
       .then(dataUrl => {
         imagePreviewCache.set(att.blob, dataUrl);

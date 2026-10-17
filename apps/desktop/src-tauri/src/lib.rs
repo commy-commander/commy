@@ -515,6 +515,8 @@ fn may_delete(app: &App, state: &ServerState, channel: ChannelId, message: Messa
 // ---------- File sharing ----------
 
 /// Stores bytes as a blob and posts them as an attachment message.
+const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
+
 async fn send_attachment(
     app: &tauri::State<'_, App>,
     handle: &tauri::AppHandle,
@@ -523,7 +525,7 @@ async fn send_attachment(
     filename: String,
     bytes: Vec<u8>,
 ) -> CmdResult<MessageView> {
-    if bytes.len() > 512 * 1024 * 1024 {
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
         return Err("files larger than 512 MB are not supported yet".into());
     }
     let profile = current_profile(app)?;
@@ -670,7 +672,10 @@ async fn download_attachment(
     filename: String,
     provider: Option<String>,
 ) -> CmdResult<Option<String>> {
-    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
+    if let Some(size) = size_bytes {
+        commy_net::node::check_blob_size(size, MAX_ATTACHMENT_BYTES).map_err(err_to_string)?;
+    }
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), MAX_ATTACHMENT_BYTES).await?;
     let Some(target) = rfd::AsyncFileDialog::new()
         .set_file_name(&filename)
         .save_file()
@@ -706,6 +711,7 @@ async fn set_voice_channel(
             if full {
                 return Err("that voice channel is full".into());
             }
+    size_bytes: Option<u64>,
             let previous = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != sid);
             if let Some(previous) = previous {
                 leave_voice(&app, &handle, previous, &profile, &voice).await;
@@ -981,7 +987,7 @@ fn dial_voice_peer(
     });
 }
 
-async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>) -> CmdResult<Vec<u8>> {
+async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
     let fetcher = {
         let net = app.net.lock().await;
         net.as_ref().ok_or("network is not ready yet")?.blob_fetcher()
@@ -2793,7 +2799,7 @@ async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdRes
     let bytes = match cached {
         Some(bytes) => bytes,
         None => {
-            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider)).await?;
+            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider), MAX_SERVER_IMAGE_BYTES as u64).await?;
             if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
                 return Err("server image is not a valid picture".into());
             }
@@ -3856,7 +3862,7 @@ async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult
     let bytes = match cached {
         Some(bytes) => bytes,
         None => {
-            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider)).await?;
+            let bytes = fetch_blob(&app, &image.blob, Some(&image.provider), expressions::MAX_SOUND_BYTES as u64).await?;
             if expressions::expression_mime(&bytes).is_none() {
                 return Err("not a valid emoji or sound".into());
             }
@@ -4477,8 +4483,12 @@ async fn get_attachment_preview(
     {
         return Err("not an image".into());
     }
-    let bytes = fetch_blob(&app, &blob, provider.as_deref()).await?;
-    if bytes.len() > 20 * 1024 * 1024 {
+    let max = commy_net::node::MAX_BLOB_BYTES;
+    if size_bytes.is_some_and(|size| size > max) {
+        return Err("image too large to preview".into());
+    }
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
+    if bytes.len() as u64 > max {
         return Err("image too large to preview".into());
     }
     Ok(format!(
@@ -4528,6 +4538,7 @@ async fn set_muted(app: tauri::State<'_, App>, handle: tauri::AppHandle, muted: 
 /// arrivals see the call as it is.
 async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHandle) {
     let Some((sid, channel)) = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel)) else { return };
+    size_bytes: Option<u64>,
     let Ok(profile) = current_profile(app) else { return };
     let voice = app.voice.lock().unwrap().clone();
     let event = {
