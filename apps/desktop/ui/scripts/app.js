@@ -4687,6 +4687,14 @@ function openMemberCard(member, anchor) {
   $("mc-about").textContent = member.about || "";
   const actions = $("mc-actions");
   actions.replaceChildren();
+  const more = $("mc-more");
+  more.classList.toggle("hidden", isMe);
+  more.replaceChildren(svgIcon("more", 18));
+  more.onclick = e => {
+    e.stopPropagation();
+    const r = more.getBoundingClientRect();
+    openProfileMenu(member, r.right - 220, r.bottom + 6);
+  };
   const action = (icon, label, onClick, cls = "") => {
     const btn = el("button", "mc-action " + cls);
     btn.appendChild(svgIcon(icon, 16));
@@ -4701,18 +4709,6 @@ function openMemberCard(member, anchor) {
   }
   action("person", "Full Profile", () => openFullProfile(member));
   if (!isMe) {
-    action("block", isBlocked(member.id) ? "Unblock" : "Block", () => {
-      closeFloating();
-      if (isBlocked(member.id)) setBlocked(member.id, member.name, false);
-      else openBlock(member.id, member.name);
-    });
-    const targets = reportTargetsFor(member.id);
-    if (targets.length) {
-      action("flag", "Report", () => {
-        closeFloating();
-        openReport({ serverId: targets[0].id, servers: targets, userId: member.id, name: member.name });
-      }, "danger");
-    }
   }
   $("mc-composer").classList.toggle("hidden", isMe || isBlocked(member.id));
   const input = $("mc-input");
