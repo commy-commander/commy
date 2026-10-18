@@ -5,8 +5,11 @@ use std::collections::BTreeMap;
 pub struct JitterBuffer {
     frames: BTreeMap<u32, Vec<i16>>,
     next_seq: Option<u32>,
+    newest: Option<u32>,
     max_depth: usize,
 }
+
+const RESTARTED_STREAM_GAP: u32 = 50;
 
 impl Default for JitterBuffer {
     fn default() -> Self {
@@ -19,6 +22,7 @@ impl JitterBuffer {
         Self {
             frames: BTreeMap::new(),
             next_seq: None,
+            newest: None,
             max_depth: max_depth.max(2),
         }
     }
@@ -27,10 +31,18 @@ impl JitterBuffer {
         if pcm.len() != FRAME_SIZE {
             return;
         }
-        let already_played_past = self.next_seq.is_some_and(|next| seq < next);
-        if already_played_past {
-            return;
+        if self.newest.is_some_and(|newest| newest > seq && newest - seq > RESTARTED_STREAM_GAP) {
+            self.restart();
         }
+        let behind_playout = self.next_seq.is_some_and(|next| seq < next);
+        if behind_playout {
+            let fresh = self.newest.is_none_or(|newest| seq > newest);
+            if !fresh {
+                return;
+            }
+            self.next_seq = Some(seq);
+        }
+        self.newest = Some(self.newest.map_or(seq, |newest| newest.max(seq)));
         self.frames.insert(seq, pcm);
         if self.frames.len() > self.max_depth {
             self.skip_ahead_past_hopeless_lag();
@@ -42,6 +54,12 @@ impl JitterBuffer {
         let cutoff = newest.saturating_sub(self.max_depth as u32 / 2);
         self.frames.retain(|s, _| *s >= cutoff);
         self.next_seq = Some(cutoff);
+    }
+
+    fn restart(&mut self) {
+        self.frames.clear();
+        self.next_seq = None;
+        self.newest = None;
     }
 
     pub fn pop(&mut self) -> Vec<i16> {
@@ -122,6 +140,59 @@ mod tests {
         }
         let out = jb.pop();
         assert!(out[0] >= 16, "expected recent frame, got {}", out[0]);
+    }
+
+    fn play_through(jb: &mut JitterBuffer, seqs: std::ops::Range<u32>) -> Vec<i16> {
+        seqs.map(|seq| {
+            jb.push(seq, frame(7));
+            jb.pop()[0]
+        })
+        .collect()
+    }
+
+    #[test]
+    fn a_sender_who_unmutes_is_heard_again() {
+        let mut jb = JitterBuffer::default();
+        assert!(play_through(&mut jb, 0..50).iter().all(|s| *s == 7));
+        for _ in 0..300 {
+            assert_eq!(jb.pop()[0], 0);
+        }
+        assert!(play_through(&mut jb, 50..100).iter().all(|s| *s == 7));
+    }
+
+    #[test]
+    fn a_sender_whose_clock_runs_slow_stays_audible() {
+        let mut jb = JitterBuffer::default();
+        let mut heard = 0;
+        for seq in 0..10_000u32 {
+            jb.push(seq, frame(7));
+            heard += usize::from(jb.pop()[0] == 7);
+            if seq % 100 == 99 {
+                jb.pop();
+            }
+        }
+        assert!(heard > 9_800, "heard {heard} of 10000 frames");
+    }
+
+    #[test]
+    fn a_restarted_stream_is_heard() {
+        let mut jb = JitterBuffer::default();
+        play_through(&mut jb, 5_000..5_050);
+        assert!(play_through(&mut jb, 0..50).iter().all(|s| *s == 7));
+    }
+
+    #[test]
+    fn a_stall_flushes_late_frames_then_plays_on() {
+        let mut jb = JitterBuffer::default();
+        play_through(&mut jb, 0..10);
+        for _ in 0..30 {
+            jb.pop();
+        }
+        for seq in 10..40 {
+            jb.push(seq, frame(seq as i16));
+        }
+        let first = jb.pop()[0];
+        assert!(first >= 29, "expected recent speech after the stall, got {first}");
     }
 
     #[test]

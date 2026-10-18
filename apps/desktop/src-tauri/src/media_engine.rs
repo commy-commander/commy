@@ -2,7 +2,7 @@ use commy_core::{ChannelId, ServerId, UserId};
 use commy_media::{Mixer, OutputHandle, StreamGuards};
 use commy_net::media::MediaPacket;
 use commy_net::node::MediaChannel;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
@@ -26,6 +26,7 @@ pub struct VoiceSession {
     pub last_activity: Arc<std::sync::atomic::AtomicI64>,
     peers: HashMap<UserId, JoinHandle<()>>,
     links: HashMap<UserId, (commy_net::node::Connection, Arc<Mutex<JitterMeter>>)>,
+    dialing: HashSet<UserId>,
     devices: StreamGuards,
     on_speaking: SpeakingSink,
     mic_tx: mpsc::UnboundedSender<Vec<i16>>,
@@ -152,6 +153,7 @@ impl VoiceSession {
             last_activity,
             peers: HashMap::new(),
             links: HashMap::new(),
+            dialing: HashSet::new(),
             devices,
             on_speaking,
             mic_tx,
@@ -188,7 +190,15 @@ impl VoiceSession {
     }
 
     pub fn has_peer(&self, user: UserId) -> bool {
-        self.peers.contains_key(&user)
+        self.peers.get(&user).is_some_and(|task| !task.is_finished())
+    }
+
+    pub fn claim_dial(&mut self, user: UserId) -> bool {
+        !self.has_peer(user) && self.dialing.insert(user)
+    }
+
+    pub fn dial_failed(&mut self, user: UserId) {
+        self.dialing.remove(&user);
     }
 
     pub fn live_peers(&self) -> Vec<UserId> {
@@ -196,20 +206,31 @@ impl VoiceSession {
     }
 
     pub fn attach_peer(&mut self, user: UserId, media: MediaChannel) {
+        let meter = Arc::new(Mutex::new(JitterMeter::default()));
+        self.links.insert(user, (media.connection.clone(), meter.clone()));
+        let MediaChannel { incoming, outgoing, .. } = media;
+        self.pump_peer(user, incoming, outgoing, meter);
+    }
+
+    fn pump_peer(
+        &mut self,
+        user: UserId,
+        mut incoming: mpsc::UnboundedReceiver<MediaPacket>,
+        outgoing: mpsc::UnboundedSender<MediaPacket>,
+        meter: Arc<Mutex<JitterMeter>>,
+    ) {
+        self.dialing.remove(&user);
+        let key = mixer_key(user);
+        if let Some(old) = self.peers.remove(&user) {
+            old.abort();
+            self.mixer.lock().unwrap().remove_peer(key);
+        }
         let mixer = self.mixer.clone();
         let deafened = self.deafened.clone();
         let mut mic_rx = self.mic_broadcast.subscribe();
-        let key = mixer_key(user);
         let on_speaking = self.on_speaking.clone();
-        let meter = Arc::new(Mutex::new(JitterMeter::default()));
-        self.links.insert(user, (media.connection.clone(), meter.clone()));
 
         let task = tokio::spawn(async move {
-            let MediaChannel {
-                mut incoming,
-                outgoing,
-                ..
-            } = media;
             let mut decoder = commy_audio::codec::VoiceDecoder::new();
             let mut last_seq: Option<u32> = None;
             let mut detector = commy_media::SpeakingDetector::default();
@@ -275,14 +296,13 @@ impl VoiceSession {
             }
         });
 
-        if let Some(old) = self.peers.insert(user, task) {
-            old.abort();
-        }
+        self.peers.insert(user, task);
     }
 
     pub fn link_stats(&self) -> Vec<LinkStats> {
         self.links
             .iter()
+            .filter(|(user, _)| self.has_peer(**user))
             .map(|(user, (conn, meter))| {
                 let stats = conn.stats();
                 let sent = stats.path.sent_packets.max(1);
@@ -669,6 +689,85 @@ mod tests {
         let u2 = UserId::new();
         assert_eq!(mixer_key(u1), mixer_key(u1));
         assert_ne!(mixer_key(u1), mixer_key(u2));
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+
+    fn session() -> VoiceSession {
+        let (mic_tx, mic_rx) = mpsc::unbounded_channel();
+        VoiceSession::start(
+            ServerId::new(),
+            ChannelId::new(),
+            StreamGuards { mic: None, speaker: None },
+            mic_rx,
+            mic_tx,
+            false,
+            UserId::new(),
+            Arc::new(|_, _| {}),
+        )
+    }
+
+    fn link(session: &mut VoiceSession, user: UserId) -> mpsc::UnboundedSender<MediaPacket> {
+        let (in_tx, in_rx) = mpsc::unbounded_channel();
+        let (out_tx, out_rx) = mpsc::unbounded_channel();
+        std::mem::forget(out_rx);
+        session.pump_peer(user, in_rx, out_tx, Default::default());
+        in_tx
+    }
+
+    async fn until(mut done: impl FnMut() -> bool) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !done() {
+            assert!(tokio::time::Instant::now() < deadline, "timed out waiting");
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
+    fn voice(seq: u32, level: i16) -> MediaPacket {
+        MediaPacket::Voice { seq, pcm: vec![level; commy_audio::FRAME_SIZE] }
+    }
+
+    #[tokio::test]
+    async fn a_failed_dial_can_be_retried() {
+        let mut session = session();
+        let friend = UserId::new();
+        assert!(session.claim_dial(friend));
+        assert!(!session.claim_dial(friend), "one dial at a time");
+        session.dial_failed(friend);
+        assert!(session.claim_dial(friend));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_link_frees_the_peer_for_a_redial() {
+        let mut session = session();
+        let friend = UserId::new();
+        assert!(session.claim_dial(friend));
+        let wire = link(&mut session, friend);
+        assert!(session.has_peer(friend));
+        assert!(!session.claim_dial(friend));
+        drop(wire);
+        until(|| !session.has_peer(friend)).await;
+        assert!(session.claim_dial(friend));
+    }
+
+    #[tokio::test]
+    async fn a_replaced_link_is_heard_from_its_first_frame() {
+        let mut session = session();
+        let friend = UserId::new();
+        let old = link(&mut session, friend);
+        for seq in 5_000..5_005 {
+            old.send(voice(seq, 100)).unwrap();
+        }
+        let mixer = session.mixer.clone();
+        until(|| mixer.lock().unwrap().peer_count() == 1).await;
+        let new = link(&mut session, friend);
+        assert_eq!(mixer.lock().unwrap().peer_count(), 0, "the old link's audio is gone");
+        new.send(voice(0, 200)).unwrap();
+        until(|| mixer.lock().unwrap().peer_count() == 1).await;
+        assert_eq!(mixer.lock().unwrap().next_frame()[0], 200);
     }
 }
 
