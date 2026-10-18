@@ -390,12 +390,16 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
                 let holdable = catchup::holdable(&event).then(|| event.clone());
                 let held_action = action.map(|action| commy_core::SignedEvent { action, event: event.clone() });
                 let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
+                let speaker = crate::liveness::speaker(&event, action.as_ref());
                 let (applied, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
                     let Some(state) = servers.get_mut(&server) else { continue };
                     catchup::apply_live(state, event, action)
                 };
                 if applied.is_ok() {
+                    if let Some(user) = speaker {
+                        crate::liveness::heard(app, server, user, Instant::now());
+                    }
                     if let Some(user) = pinned {
                         catchup::release_held(&access, server, &[user]);
                     }
@@ -956,6 +960,59 @@ async fn a_member_starts_at_once_when_nobody_else_is_online() {
     assert_eq!(member.neighbors(server), Some(0));
 
     member.offline().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_member_whose_device_drops_away_is_shown_offline() {
+    init_logs();
+    let (mut devices, server) = community(&["ada", "grace", "linus"]).await;
+    let [viewer, gone, staying] = &mut devices[..] else { unreachable!() };
+    let (me, gone_id, staying_id) = (viewer.me().id, gone.me().id, staying.me().id);
+    wait_until("both members to show online", || {
+        viewer.presence_of(server, gone_id) == Some(Presence::Online)
+            && viewer.presence_of(server, staying_id) == Some(Presence::Online)
+    })
+    .await;
+
+    let expire = Duration::from_secs(3);
+    let sweep = |at: Instant| crate::liveness::sweep(viewer.app(), me, at, chrono::Utc::now().timestamp_millis(), expire);
+    crate::liveness::beat(gone.app()).await;
+    crate::liveness::beat(staying.app()).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    sweep(Instant::now());
+    assert_eq!(viewer.presence_of(server, gone_id), Some(Presence::Online), "a member heard from lately stays online");
+    gone.offline().await;
+    let start = Instant::now();
+    while viewer.presence_of(server, gone_id) != Some(Presence::Offline) {
+        assert!(start.elapsed() < WAIT, "timed out waiting for the dropped member to show offline");
+        crate::liveness::beat(staying.app()).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        sweep(Instant::now());
+    }
+    eprintln!("the dropped member showed offline after {:?}", start.elapsed());
+    assert_eq!(viewer.presence_of(server, staying_id), Some(Presence::Online), "a member still beating stays online");
+
+    gone.online().await;
+    wait_until("the member to show online again once back", || {
+        viewer.presence_of(server, gone_id) == Some(Presence::Online)
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_member_who_quits_is_shown_offline_at_once() {
+    init_logs();
+    let (mut devices, server) = community(&["ada", "grace"]).await;
+    let [viewer, leaving] = &mut devices[..] else { unreachable!() };
+    let leaving_id = leaving.me().id;
+    wait_until("the member to show online", || viewer.presence_of(server, leaving_id) == Some(Presence::Online)).await;
+
+    crate::liveness::farewell(leaving.app()).await;
+    leaving.offline().await;
+    wait_until("the member who quit to show offline", || {
+        viewer.presence_of(server, leaving_id) == Some(Presence::Offline)
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

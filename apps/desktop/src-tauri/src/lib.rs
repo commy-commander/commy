@@ -11,6 +11,7 @@ mod media_engine;
 mod igdb;
 mod instance;
 mod invite_link;
+mod liveness;
 mod outbox;
 mod overlay;
 mod persist;
@@ -4623,6 +4624,7 @@ async fn run_net_loop(
                 let kept = (holdable || action.is_some()).then(|| event.clone());
                 let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
                 let presence = outbox::online_user(&event);
+                let speaker = liveness::speaker(&event, action.as_ref());
                 let (applied, was_online, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
                     match servers.get_mut(&server) {
@@ -4637,6 +4639,9 @@ async fn run_net_loop(
                     }
                 };
                 if applied.is_ok() {
+                    if let Some(user) = speaker {
+                        liveness::heard(&app, server, user, std::time::Instant::now());
+                    }
                     if let Some(user) = pinned {
                         catchup::release_held(&handle, server, &[user]);
                     }
@@ -5166,6 +5171,7 @@ pub fn run() {
                             });
                         }
                         tauri::async_runtime::spawn(run_share_heartbeat(handle.clone()));
+                        tauri::async_runtime::spawn(liveness::run(handle.clone()));
                         tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
                         tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
                         tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
@@ -5328,6 +5334,7 @@ pub fn run() {
         .expect("failed to run Commy")
         .run(|handle, event| {
             if let tauri::RunEvent::Exit = event {
+                liveness::say_goodbye(&handle.state::<App>());
                 catchup::save_unsaved(&handle.state::<App>());
             }
             invite_link::on_run_event(handle, &event)
