@@ -88,8 +88,9 @@ search and the Twitch app they share.
 
 Set `ALLOW_SIGNUP=false` to close registration on a private instance, or set
 `ACCESS_CODE` to let in only people you give a code to: the website asks for it
-before showing downloads or the sign-up form, and the auth server refuses new
-accounts from anyone who has not entered it. Existing users sign in as usual.
+before showing any page except the privacy policy, and the auth server refuses
+new accounts from anyone who has not entered it. Each browser asks once, then
+remembers it for 90 days.
 Run `docker compose up -d` after any `.env` change.
 
 ## GIF search and Twitch
