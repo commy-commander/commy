@@ -191,6 +191,10 @@ impl VoiceSession {
         self.peers.contains_key(&user)
     }
 
+    pub fn live_peers(&self) -> Vec<UserId> {
+        self.peers.iter().filter(|(_, task)| !task.is_finished()).map(|(user, _)| *user).collect()
+    }
+
     pub fn attach_peer(&mut self, user: UserId, media: MediaChannel) {
         let mixer = self.mixer.clone();
         let deafened = self.deafened.clone();

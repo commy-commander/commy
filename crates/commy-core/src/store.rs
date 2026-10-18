@@ -609,8 +609,9 @@ impl ServerState {
                 self.pin_identity(&mut profile)?;
                 profile = profile.as_seen_by_others();
                 if self.server.is_member(profile.id) {
+                    let changed = self.profiles.get(&profile.id) != Some(&profile);
                     self.profiles.insert(profile.id, profile);
-                    return Ok(false);
+                    return Ok(changed);
                 }
                 if self.server.members.len() >= MAX_MEMBERS {
                     return Err(StoreError::Limit);
@@ -1653,8 +1654,14 @@ mod tests {
             Ok(true)
         );
         assert_eq!(
-            state.apply(ServerEvent::MemberJoin { server: sid, profile }),
+            state.apply(ServerEvent::MemberJoin { server: sid, profile: profile.clone() }),
             Ok(false)
+        );
+        state.apply(ServerEvent::PresenceUpdate { user: profile.id, presence: Presence::Offline }).unwrap();
+        assert_eq!(
+            state.apply(ServerEvent::MemberJoin { server: sid, profile }),
+            Ok(true),
+            "a member back online is a change"
         );
     }
 
