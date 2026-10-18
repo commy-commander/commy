@@ -4061,3 +4061,13 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .rf-swatches input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 .rf-swatches input[type="color"]::-webkit-color-swatch { border: 2px solid var(--bg-active); border-radius: 50%; }
 .rf-swatches input[type="color"]::-moz-color-swatch { border: 2px solid var(--bg-active); border-radius: 50%; }
+
+.main { --chat-gutter: max(0px, calc((100% - 1400px) / 2)); }
+.messages { padding-inline: calc(16px + var(--chat-gutter)); }
+.composer, .awaited-bar { margin-inline: calc(12px + var(--chat-gutter)); }
+
+@media (max-height: 760px) {
+  .sidebar-header.has-banner { height: 76px; padding-top: 8px; }
+  .sidebar-header.has-banner > #server-name { bottom: 8px; }
+  .channel-scroll { padding: 8px; }
+}
