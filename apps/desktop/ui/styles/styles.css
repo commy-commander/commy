@@ -3634,6 +3634,18 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .mc-action:hover { background: var(--bg-active); }
 .mc-action.on { color: var(--green); }
 .mc-action.danger { color: var(--red); }
+.member-card .mc-more {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(11, 13, 23, .55);
+  color: #fff;
+}
+.member-card .mc-more:hover { background: rgba(11, 13, 23, .8); }
 .mc-about { margin-top: 6px; font-size: 13px; line-height: 1.4; color: var(--text-normal); white-space: pre-wrap; word-wrap: break-word; }
 .mc-composer {
   display: flex;
