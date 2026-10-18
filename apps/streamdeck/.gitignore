@@ -1,0 +1,4 @@
+node_modules/
+dist/
+chat.commy.soundboard.sdPlugin/bin/
+chat.commy.soundboard.sdPlugin/logs/

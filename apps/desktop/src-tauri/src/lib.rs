@@ -19,6 +19,7 @@ mod safety;
 mod settle;
 mod state;
 mod storage;
+mod stream_deck;
 mod toast;
 mod tray;
 mod updater;
@@ -3842,7 +3843,11 @@ async fn play_soundboard(
     name: String,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let me = current_profile(&app)?;
+    play_sound_in_voice(&app, &handle, sid, name).await
+}
+
+async fn play_sound_in_voice(app: &App, handle: &tauri::AppHandle, sid: ServerId, name: String) -> CmdResult<()> {
+    let me = current_profile(app)?;
     let (channel, in_server) = {
         let session = app.voice_session.lock().unwrap();
         let s = session.as_ref().ok_or("join a voice channel first")?;
@@ -3854,10 +3859,10 @@ async fn play_soundboard(
     let view = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
+        require_permission(app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
         soundboard_play_view(state, channel, me.id, &name).ok_or("that sound no longer exists")?
     };
-    broadcast_event(&app, sid, ServerEvent::SoundboardPlay { server: sid, channel, user: me.id, name })
+    broadcast_event(app, sid, ServerEvent::SoundboardPlay { server: sid, channel, user: me.id, name })
     .await;
     let _ = handle.emit("soundboard-play", view);
     Ok(())
@@ -5043,6 +5048,7 @@ pub fn run() {
                 if let Some(creds) = persist::load_integrations(&dir) {
                     *app.igdb_creds.lock().unwrap() = creds;
                 }
+                stream_deck::load(&app, &handle);
                 if let Some(storage) = persist::load_storage(&dir) {
                     *app.storage.lock().unwrap() = storage;
                 }
@@ -5284,6 +5290,10 @@ pub fn run() {
             set_expression_settings,
             set_server_public,
             play_soundboard,
+            stream_deck::get_stream_deck,
+            stream_deck::set_stream_deck_enabled,
+            stream_deck::forget_stream_deck,
+            stream_deck::answer_stream_deck_pairing,
             fetch_expression,
             pick_sound,
             list_shareable_emojis,

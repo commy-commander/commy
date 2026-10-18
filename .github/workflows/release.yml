@@ -217,9 +217,13 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ github.ref_type == 'tag' && 90 || 7 }}
 
+  streamdeck:
+    name: Stream Deck plugin
+    uses: ./.github/workflows/streamdeck.yml
+
   publish:
     name: Publish release
-    needs: [build, macos-universal]
+    needs: [build, macos-universal, streamdeck]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
@@ -290,6 +294,7 @@ jobs:
         with:
           subject-path: |
             dist/Commy_*
+            dist/commy-soundboard.streamDeckPlugin
             dist/SHA256SUMS.txt
 
       - name: Create release
@@ -308,6 +313,7 @@ jobs:
           | Windows 10/11 | `*_x64-setup.exe` (installer) or `*_x64-portable.zip` |
           | macOS 11+ (Apple Silicon and Intel) | `*_universal.dmg` |
           | Linux x64 | `*_amd64.AppImage` or `*_amd64.deb` |
+          | Stream Deck 7.1+ (Windows and macOS) | `commy-soundboard.streamDeckPlugin` |
 
           These builds are not code signed yet. On Windows choose **More info > Run anyway**
           in SmartScreen. On macOS right click Commy.app and choose **Open** the first time,

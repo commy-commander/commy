@@ -497,6 +497,14 @@ async function mockInvoke(cmd, args = {}) {
     case "set_overlay_settings": mock.overlay = args.settings; return mock.overlay;
     case "overlay_hotkey_problems": return [];
     case "get_integrations": return mock.integrations || { igdb_client_id: "", igdb_configured: false };
+    case "get_stream_deck": return mock.streamDeck || (mock.streamDeck = { enabled: false, status: "off", decks: [] });
+    case "set_stream_deck_enabled":
+      mock.streamDeck = { ...(mock.streamDeck || { decks: [] }), enabled: args.enabled, status: args.enabled ? "listening" : "off" };
+      return mock.streamDeck;
+    case "forget_stream_deck":
+      mock.streamDeck.decks = mock.streamDeck.decks.filter(d => d.id !== args.id);
+      return mock.streamDeck;
+    case "answer_stream_deck_pairing": return null;
     case "set_igdb_credentials":
       mock.integrations = { igdb_client_id: args.clientId, igdb_configured: Boolean(args.clientId) };
       return args.clientId ? [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }] : [];
@@ -854,12 +862,14 @@ function toast(message) {
 }
 
 function showModal(id) {
+  if (id !== "modal-stream-deck") answerStreamDeckPairing(false);
   $("modal-backdrop").classList.remove("hidden");
   for (const modal of document.querySelectorAll(".modal")) modal.classList.add("hidden");
   $(id).classList.remove("hidden");
 }
 
 function hideModals() {
+  answerStreamDeckPairing(false);
   $("modal-backdrop").classList.add("hidden");
 }
 
@@ -3723,6 +3733,74 @@ async function saveIgdb(remove) {
     result.textContent = String(e);
     result.classList.add("bad");
   }
+}
+
+let streamDeck = { enabled: false, status: "off", decks: [] };
+let streamDeckPairing = null;
+
+const STREAM_DECK_STATE_LABELS = { listening: "On", starting: "Starting", busy: "Unavailable" };
+
+async function loadStreamDeck() {
+  try {
+    streamDeck = await invoke("get_stream_deck");
+  } catch {}
+}
+
+function renderStreamDeck() {
+  $("stream-deck-enabled").checked = streamDeck.enabled;
+  const label = streamDeck.enabled ? STREAM_DECK_STATE_LABELS[streamDeck.status] || "" : "";
+  $("stream-deck-state").textContent = label;
+  $("stream-deck-state").classList.toggle("on", streamDeck.enabled && streamDeck.status === "listening");
+  $("stream-deck-note").textContent = streamDeck.enabled && streamDeck.status === "busy"
+    ? "Another Commy app on this computer is already connected to Stream Deck. Close it, then turn this off and on again."
+    : "";
+  $("stream-deck-decks").replaceChildren(...streamDeck.decks.map(streamDeckRow));
+}
+
+function streamDeckRow(deck) {
+  const row = el("div", "stream-deck-deck");
+  row.appendChild(el("span", "stream-deck-deck-name", deck.name));
+  row.appendChild(el("span", "stream-deck-deck-since", `Allowed ${new Date(deck.paired_at).toLocaleDateString()}`));
+  const remove = el("button", "btn-link danger", "Remove");
+  remove.onclick = async () => {
+    try {
+      streamDeck = await invoke("forget_stream_deck", { id: deck.id });
+      renderStreamDeck();
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+  row.appendChild(remove);
+  return row;
+}
+
+async function setStreamDeckEnabled(enabled) {
+  try {
+    streamDeck = await invoke("set_stream_deck_enabled", { enabled });
+  } catch (e) {
+    toast(String(e));
+  }
+  renderStreamDeck();
+}
+
+function onStreamDeckPair(prompt) {
+  streamDeckPairing = prompt.request;
+  $("stream-deck-pair-body").textContent =
+    `${prompt.name} wants to play sounds from your soundboard. Only allow it if you just set up the Commy plugin on this computer.`;
+  showModal("modal-stream-deck");
+}
+
+function onStreamDeckPairClosed(request) {
+  if (streamDeckPairing !== request) return;
+  streamDeckPairing = null;
+  if (!$("modal-stream-deck").classList.contains("hidden")) hideModals();
+}
+
+function answerStreamDeckPairing(allow) {
+  const request = streamDeckPairing;
+  if (request === null) return;
+  streamDeckPairing = null;
+  invoke("answer_stream_deck_pairing", { request, allow }).catch(e => toast(String(e)));
 }
 
 let gameSearchTimer = null;
@@ -8519,6 +8597,12 @@ function wireEvents() {
   $("game-tag-input").addEventListener("input", e => queueGameSearch(e.target.value));
   $("game-tag-input").addEventListener("blur", () => setTimeout(closeGameSearch, 150));
   $("igdb-save").onclick = () => saveIgdb(false);
+  $("stream-deck-enabled").onchange = e => setStreamDeckEnabled(e.target.checked);
+  $("stream-deck-allow").onclick = () => {
+    answerStreamDeckPairing(true);
+    hideModals();
+  };
+  $("stream-deck-deny").onclick = hideModals;
   $("igdb-remove").onclick = () => saveIgdb(true);
   for (const link of document.querySelectorAll(".integration-steps a[data-href]")) {
     wireExternalLink(link, link.dataset.href);
@@ -8895,6 +8979,12 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
+    window.__TAURI__.event.listen("stream-deck-pair", event => onStreamDeckPair(event.payload));
+    window.__TAURI__.event.listen("stream-deck-pair-closed", event => onStreamDeckPairClosed(event.payload));
+    window.__TAURI__.event.listen("stream-deck-changed", event => {
+      streamDeck = event.payload;
+      renderStreamDeck();
+    });
     window.__TAURI__.event.listen("report-received", event => onReportReceived(event.payload));
     window.__TAURI__.event.listen("account-changed", onAccountChanged);
     window.__TAURI__.event.listen("sign-in-failed", event => showSignInError(String(event.payload)));
@@ -9078,6 +9168,7 @@ function openUserSettings(tab) {
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();
   loadIntegrations().then(renderIntegrations);
+  loadStreamDeck().then(renderStreamDeck);
   loadAccount().then(() => {
     renderAccountSettings();
     $("gif-provider").dispatchEvent(new Event("change"));

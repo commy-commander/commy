@@ -342,6 +342,15 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-stream-deck">
+      <h2>Allow Stream Deck?</h2>
+      <p id="stream-deck-pair-body"></p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="stream-deck-deny">Don't allow</button>
+        <button class="btn-primary" id="stream-deck-allow">Allow</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-leave-server">
       <h2 id="leave-server-title">Leave Server</h2>
       <p id="leave-server-body">Are you sure you want to leave? You will not be able to rejoin unless you are invited again, and your copy of its history is removed from this device.</p>
@@ -887,6 +896,25 @@
 
         <section class="settings-page" data-page="integrations">
           <h1>Integrations</h1>
+          <div class="settings-card integration-card" id="stream-deck-card">
+            <div class="integration-head">
+              <div class="integration-logo integration-logo-deck">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="3"/><rect x="5.5" y="7" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="7" width="3.5" height="3.5" rx=".8"/><rect x="15" y="7" width="3.5" height="3.5" rx=".8"/><rect x="5.5" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="15" y="13.5" width="3.5" height="3.5" rx=".8"/></svg>
+              </div>
+              <div class="integration-copy">
+                <div class="setting-title">Stream Deck <span class="integration-state" id="stream-deck-state"></span></div>
+                <div class="setting-sub">Play soundboard sounds from your Stream Deck keys. Commy only listens for it on this computer, and asks you before a Stream Deck can connect.</div>
+              </div>
+              <input type="checkbox" id="stream-deck-enabled" class="switch" aria-label="Allow Stream Deck" />
+            </div>
+            <ol class="integration-steps">
+              <li>Download <strong>commy-soundboard.streamDeckPlugin</strong> from the <a data-href="https://github.com/commy-commander/commy/releases/latest">latest Commy release</a> and open it. Stream Deck 7.1 or newer installs it.</li>
+              <li>Turn on the switch above, then drag <strong>Play sound</strong> from the Commy category onto a key.</li>
+              <li>Pick a server and a sound in the key settings, and choose <strong>Allow</strong> when Commy asks.</li>
+            </ol>
+            <div class="setting-sub stream-deck-note" id="stream-deck-note"></div>
+            <div class="stream-deck-decks" id="stream-deck-decks"></div>
+          </div>
           <div class="settings-card integration-card">
             <div class="integration-head">
               <div class="integration-logo">IGDB</div>

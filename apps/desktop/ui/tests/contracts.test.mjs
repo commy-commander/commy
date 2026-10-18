@@ -7,10 +7,11 @@ const repo = join(import.meta.dirname, "..", "..", "..", "..");
 const read = (...path) => readFileSync(join(repo, ...path), "utf8");
 const appSource = read("apps", "desktop", "ui", "scripts", "app.js");
 
-test("built-in soundboard clips use the backend's ids, since peers play them by id", () => {
+test("built-in soundboard clips use the backend's ids and labels, since peers play them by id", () => {
   const block = /const DEFAULT_SOUNDS = \[([\s\S]*?)\n\];/.exec(appSource)[1];
-  const appIds = [...block.matchAll(/id: "([^"]+)"/g)].map(m => m[1]);
-  const backend = /pub const DEFAULT_SOUNDS: &\[&str\] = &\[([^\]]*)\]/.exec(read("apps", "desktop", "src-tauri", "src", "expressions.rs"))[1];
-  const backendIds = [...backend.matchAll(/"([^"]+)"/g)].map(m => m[1]);
-  assert.deepEqual(appIds, backendIds);
+  const appSounds = [...block.matchAll(/id: "([^"]+)", label: "([^"]+)"/g)].map(m => [m[1], m[2]]);
+  const backend = /pub const DEFAULT_SOUNDS: &\[DefaultSound\] = &\[([\s\S]*?)\n\];/.exec(read("apps", "desktop", "src-tauri", "src", "expressions.rs"))[1];
+  const backendSounds = [...backend.matchAll(/id: "([^"]+)", label: "([^"]+)"/g)].map(m => [m[1], m[2]]);
+  assert.equal(appSounds.length, 4);
+  assert.deepEqual(appSounds, backendSounds);
 });

@@ -121,6 +121,7 @@ pub struct App {
     pub account: Mutex<crate::account::AccountState>,
     pub sign_in: Mutex<Option<crate::account::PendingSignIn>>,
     pub igdb_creds: Mutex<crate::igdb::IgdbCredentials>,
+    pub stream_deck: Mutex<crate::stream_deck::StreamDeck>,
     pub igdb: tokio::sync::Mutex<crate::igdb::IgdbClient>,
     pub http: reqwest::Client,
     pub identity: Mutex<Option<Identity>>,
@@ -171,6 +172,7 @@ impl Default for App {
             account: Mutex::new(crate::account::AccountState::default()),
             sign_in: Mutex::new(None),
             igdb_creds: Mutex::new(crate::igdb::IgdbCredentials::default()),
+            stream_deck: Mutex::new(crate::stream_deck::StreamDeck::default()),
             igdb: tokio::sync::Mutex::new(crate::igdb::IgdbClient::default()),
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))

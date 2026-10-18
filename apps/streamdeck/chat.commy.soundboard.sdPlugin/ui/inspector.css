@@ -1,0 +1,48 @@
+:root {
+  color-scheme: dark;
+  --ground: #2d2d2d;
+  --field: #3d3d3d;
+  --text: #d8d8d8;
+  --muted: #9a9a9a;
+}
+
+body {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--ground);
+  color: var(--text);
+  font: 12px/1.4 -apple-system, "Segoe UI", sans-serif;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 82px 1fr;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+label {
+  color: var(--muted);
+  text-align: right;
+}
+
+select {
+  width: 100%;
+  height: 26px;
+  border: 0;
+  border-radius: 3px;
+  padding: 0 6px;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+}
+
+.note {
+  margin: 4px 0 0 92px;
+  color: var(--muted);
+}
+
+.note:empty {
+  display: none;
+}

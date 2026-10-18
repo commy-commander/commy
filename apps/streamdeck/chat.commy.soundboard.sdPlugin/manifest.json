@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Name": "Commy",
+  "Version": "0.1.0.0",
+  "Author": "Commy Commander",
+  "Description": "Play sounds from your Commy soundboard in the voice channel you are in.",
+  "URL": "https://commy.chat",
+  "UUID": "chat.commy.soundboard",
+  "Category": "Commy",
+  "CategoryIcon": "imgs/plugin/category-icon",
+  "Icon": "imgs/plugin/marketplace",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 3,
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "12"
+    },
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "24"
+  },
+  "Actions": [
+    {
+      "Name": "Play sound",
+      "UUID": "chat.commy.soundboard.play",
+      "Icon": "imgs/actions/play/icon",
+      "Tooltip": "Plays a soundboard sound for everyone in your voice channel.",
+      "PropertyInspectorPath": "ui/play-sound.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/play/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ]
+    }
+  ]
+}
