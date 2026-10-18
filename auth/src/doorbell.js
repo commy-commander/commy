@@ -295,7 +295,14 @@ export const commyDoorbell = ({
       const basePath = context.options.basePath ?? "/api/auth";
       const path = new URL(request.url).pathname;
       if (!PATHS.some((p) => path === `${basePath}${p}`)) return;
-      const body = await readCapped(request, MAX_BODY_BYTES);
+      let body;
+      try {
+        body = await readCapped(request, MAX_BODY_BYTES);
+      } catch {
+        return {
+          response: Response.json({ message: "Request body was cut off" }, { status: 400 }),
+        };
+      }
       if (body === null) {
         return {
           response: Response.json({ message: "Request body is too large" }, { status: 413 }),
