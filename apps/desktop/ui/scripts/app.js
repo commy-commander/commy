@@ -673,7 +673,12 @@ async function mockInvoke(cmd, args = {}) {
       }, 125);
       return null;
     case "stop_watching": clearInterval(mock.watchTimer); return null;
-    case "create_role":
+    case "create_role": {
+      const roles = mock.servers[args.serverId].roles;
+      const id = crypto.randomUUID();
+      roles.push({ id, name: args.name.trim(), color: args.color, position: roles.length + 2, permissions: args.permissions, self_assignable: Boolean(args.selfAssignable), tag: args.tag || null });
+      return id;
+    }
     case "delete_role":
     case "set_member_role":
     case "kick_member":
@@ -4796,37 +4801,135 @@ async function removeRoleBanner(server, role) {
   }
 }
 
-function roleEditor(server, role) {
-  const box = el("div", "role-editor");
-  const row1 = el("div", "inline-row");
-  const color = el("input");
-  color.type = "color";
-  color.value = role.color ? `#${role.color}` : "#99aab5";
-  color.title = "Role color";
+const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff", "c05ccf", "ff6fa8", "99aab5"];
+
+const PERMISSION_GROUPS = [
+  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events"]],
+  ["Chat", ["manage_messages", "pin_messages", "post_announcements", "create_invites"]],
+  ["Members", ["kick_members", "ban_members", "mute_members"]],
+];
+
+function roleForm(server, role, onClose) {
+  const creating = !role;
+  const form = el("div", "role-form");
+  let color = role && role.color ? role.color : ROLE_COLORS[0];
+  let tagValue = role ? role.tag || null : null;
+  let bannerChange;
+
+  const preview = el("div", "rf-preview");
+  const previewName = el("div", "rf-preview-name");
+  const tools = el("div", "role-banner-tools");
+  const bannerBtn = el("button", "role-banner-btn");
+  bannerBtn.type = "button";
+  const bannerClear = el("button", "role-banner-btn icon");
+  bannerClear.type = "button";
+  bannerClear.title = "Remove banner";
+  bannerClear.appendChild(svgIcon("close", 14));
+  tools.append(bannerClear, bannerBtn);
+  preview.append(tools, previewName);
+
   const name = el("input");
   name.type = "text";
   name.maxLength = 50;
-  name.value = role.name;
+  name.value = role ? role.name : "";
   name.placeholder = "Role name";
-  let tagValue = role.tag || null;
+
+  const hasBanner = () => bannerChange ? true : bannerChange === undefined && Boolean(role && role.banner);
+  const paintPreview = () => {
+    const fallback = `#${color}`;
+    if (bannerChange) {
+      preview.style.background = "";
+      preview.style.backgroundImage = `url("data:image/jpeg;base64,${bannerChange}")`;
+    } else if (bannerChange === undefined && role && role.banner) {
+      paintBanner(preview, role.banner, fallback);
+    } else {
+      preview.style.backgroundImage = "";
+      preview.style.background = fallback;
+    }
+    bannerBtn.replaceChildren(svgIcon("plus", 14), el("span", null, hasBanner() ? "Change banner" : "Add banner"));
+    bannerClear.classList.toggle("hidden", !hasBanner());
+    previewName.replaceChildren();
+    if (tagValue) previewName.appendChild(roleTagChip(tagValue, color));
+    previewName.appendChild(el("span", null, name.value.trim() || "Role name"));
+  };
+  bannerBtn.onclick = async () => {
+    try {
+      const src = await chooseImage("Choose a role banner", $("server-image-file"));
+      if (!src) return;
+      bannerChange = await cropImageFile(src, 600, 240);
+      paintPreview();
+    } catch (err) {
+      toast(String(err));
+    }
+  };
+  bannerClear.onclick = () => {
+    bannerChange = null;
+    paintPreview();
+  };
+  form.appendChild(preview);
+
+  const body = el("div", "rf-body");
+  const nameWrap = el("span", "field-emoji");
+  const emojiBtn = el("button", "input-emoji-btn");
+  emojiBtn.type = "button";
+  emojiBtn.title = "Add an emoji to the name";
+  emojiBtn.appendChild(svgIcon("smilePlus", 18));
+  emojiBtn.onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName(name, picked));
+  name.addEventListener("input", paintPreview);
+  nameWrap.append(name, emojiBtn);
+  body.appendChild(el("div", "setting-title", "Name"));
+  body.appendChild(nameWrap);
+
+  body.appendChild(el("div", "setting-title", "Colour"));
+  const swatches = el("div", "rf-swatches");
+  const custom = el("input");
+  custom.type = "color";
+  custom.title = "Pick any colour";
+  const paintSwatches = () => {
+    for (const swatch of swatches.querySelectorAll(".rf-swatch")) swatch.classList.toggle("on", swatch.dataset.color === color);
+    custom.value = `#${color}`;
+  };
+  for (const value of ROLE_COLORS) {
+    const swatch = el("button", "rf-swatch");
+    swatch.type = "button";
+    swatch.dataset.color = value;
+    swatch.style.background = `#${value}`;
+    swatch.setAttribute("aria-label", `Colour ${value}`);
+    swatch.onclick = () => {
+      color = value;
+      paintSwatches();
+      paintPreview();
+    };
+    swatches.appendChild(swatch);
+  }
+  custom.oninput = () => {
+    color = custom.value.replace("#", "");
+    paintSwatches();
+    paintPreview();
+  };
+  swatches.appendChild(custom);
+  body.appendChild(swatches);
+
+  const badgeRow = el("div", "rf-badge-row");
   const tagBtn = el("button", "role-tag-pick");
   tagBtn.type = "button";
+  const clearTag = el("button", "icon-btn role-tag-clear");
+  clearTag.type = "button";
+  clearTag.title = "Remove badge";
+  clearTag.appendChild(svgIcon("close", 14));
   const paintTag = () => {
     tagBtn.replaceChildren();
     if (tagValue) {
-      tagBtn.appendChild(roleTagChip(tagValue, role.color));
-      tagBtn.title = "Change emoji";
+      tagBtn.appendChild(roleTagChip(tagValue, color));
+      tagBtn.title = "Change badge";
     } else {
       tagBtn.appendChild(svgIcon("smilePlus", 18));
-      tagBtn.appendChild(el("span", null, "Emoji"));
+      tagBtn.appendChild(el("span", null, "Badge"));
       tagBtn.title = "Pick an emoji shown next to members' names";
     }
     clearTag.classList.toggle("hidden", !tagValue);
+    paintPreview();
   };
-  const clearTag = el("button", "icon-btn role-tag-clear");
-  clearTag.type = "button";
-  clearTag.title = "Remove emoji";
-  clearTag.appendChild(svgIcon("close", 14));
   clearTag.onclick = () => {
     tagValue = null;
     paintTag();
@@ -4835,51 +4938,105 @@ function roleEditor(server, role) {
     tagValue = emoji;
     paintTag();
   }, { custom: true });
-  paintTag();
-  row1.append(color, name, tagBtn, clearTag);
-  box.appendChild(row1);
-  box.appendChild(el("div", "setting-title role-perms-title", "Permissions"));
-  box.appendChild(permissionCheckboxes(el("div", "perm-grid"), role.permissions));
+  badgeRow.append(tagBtn, clearTag, el("span", "setting-sub", "An emoji shown next to the names of members with this role."));
+  body.appendChild(badgeRow);
+
+  const labels = new Map(PERMISSION_LABELS);
+  const held = new Set(role ? role.permissions : []);
+  const permInputs = [];
+  const permRow = (value, cls) => {
+    const wrap = el("label", cls);
+    const input = el("input");
+    input.type = "checkbox";
+    input.value = value;
+    input.checked = held.has(value);
+    permInputs.push(input);
+    wrap.append(input, document.createTextNode(labels.get(value)));
+    return wrap;
+  };
+  body.appendChild(el("div", "setting-title role-perms-title", "Permissions"));
+  for (const [title, values] of PERMISSION_GROUPS) {
+    body.appendChild(el("div", "rf-group", title));
+    const grid = el("div", "perm-grid");
+    for (const value of values) grid.appendChild(permRow(value));
+    body.appendChild(grid);
+  }
+  const admin = permRow("administrator", "rf-admin");
+  admin.appendChild(el("span", "setting-sub", "Everything above, and nothing can be refused. Give it to as few people as you can."));
+  body.appendChild(admin);
+
   const pick = el("label", "role-self");
   const check = el("input");
   check.type = "checkbox";
-  check.checked = role.self_assignable;
+  check.checked = role ? role.self_assignable : false;
   pick.append(check, el("span", null, "Members can pick this role themselves (Choose Roles)"));
-  box.appendChild(pick);
+  body.appendChild(pick);
+
   const actions = el("div", "form-actions");
-  const save = el("button", "btn-primary btn-small", "Save Role");
+  const save = el("button", "btn-primary btn-small", creating ? "Create Role" : "Save Role");
   save.onclick = async () => {
+    if (!name.value.trim()) {
+      toast("Give the role a name");
+      name.focus();
+      return;
+    }
+    const permissions = permInputs.filter(input => input.checked).map(input => input.value);
     try {
-      await invoke("update_role", {
-        serverId: server.id,
-        roleId: role.id,
-        name: name.value,
-        color: color.value.replace("#", ""),
-        selfAssignable: check.checked,
-        tag: tagValue,
-        permissions: Array.from(permGrid.querySelectorAll("input:checked")).map(input => input.value),
-      });
+      let roleId = role && role.id;
+      if (creating) {
+        roleId = await invoke("create_role", {
+          serverId: server.id,
+          name: name.value,
+          color,
+          permissions,
+          tag: tagValue,
+          selfAssignable: check.checked,
+        });
+      } else {
+        await invoke("update_role", {
+          serverId: server.id,
+          roleId,
+          name: name.value,
+          color,
+          selfAssignable: check.checked,
+          tag: tagValue,
+          permissions,
+        });
+      }
+      if (bannerChange !== undefined && !(creating && bannerChange === null)) {
+        await invoke("set_role_banner", { serverId: server.id, roleId, data: bannerChange });
+      }
+      if (creating) onClose();
       await refreshCurrentServer();
       openServerSettings();
-      toast("Role saved");
+      toast(creating ? "Role created" : "Role saved");
     } catch (e) {
       toast(String(e));
     }
   };
-  const del = el("button", "btn-danger btn-small", "Delete Role");
-  del.onclick = async () => {
-    if (!confirm(`Delete role ${role.name}?`)) return;
-    try {
-      await invoke("delete_role", { serverId: server.id, roleId: role.id });
-      await refreshCurrentServer();
-      openServerSettings();
-    } catch (e) {
-      toast(String(e));
-    }
-  };
-  actions.append(del, save);
-  box.appendChild(actions);
-  return box;
+  if (creating) {
+    const cancel = el("button", "btn-secondary btn-small", "Cancel");
+    cancel.onclick = onClose;
+    actions.append(cancel, save);
+  } else {
+    const del = el("button", "btn-danger btn-small", "Delete Role");
+    del.onclick = async () => {
+      if (!confirm(`Delete role ${role.name}?`)) return;
+      try {
+        await invoke("delete_role", { serverId: server.id, roleId: role.id });
+        await refreshCurrentServer();
+        openServerSettings();
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    actions.append(del, save);
+  }
+  body.appendChild(actions);
+  form.appendChild(body);
+  paintSwatches();
+  paintTag();
+  return form;
 }
 
 let safety = { blocked: [], dm_policy: "everyone", spam_filter: true };
@@ -7914,31 +8071,14 @@ function wireEvents() {
     }
   };
   $("new-role-open").onclick = () => {
-    $("new-role-card").classList.toggle("hidden");
-    if (!$("new-role-card").classList.contains("hidden")) $("new-role-input").focus();
-  };
-  $("new-role-cancel").onclick = () => $("new-role-card").classList.add("hidden");
-  $("new-role-save").onclick = async () => {
-    if (!state.currentServer) return;
-    const name = $("new-role-input").value.trim();
-    if (!name) return;
-    const permissions = Array.from($("new-role-perms").querySelectorAll("input:checked"))
-      .map(box => box.value);
-    try {
-      await invoke("create_role", {
-        serverId: state.currentServer.id,
-        name,
-        color: $("new-role-color").value,
-        permissions,
-      });
-      $("new-role-input").value = "";
-      $("new-role-card").classList.add("hidden");
-      for (const box of $("new-role-perms").querySelectorAll("input:checked")) box.checked = false;
-      await refreshCurrentServer();
-      openServerSettings();
-    } catch (e) {
-      toast(String(e));
+    const card = $("new-role-card");
+    if (!card.classList.contains("hidden") || !state.currentServer) {
+      card.classList.add("hidden");
+      return;
     }
+    card.replaceChildren(roleForm(state.currentServer, null, () => card.classList.add("hidden")));
+    card.classList.remove("hidden");
+    card.querySelector("input[type=text]").focus();
   };
 
   $("leave-server-btn").onclick = () => state.currentServer && openLeaveServer(state.currentServer.id);
@@ -8881,19 +9021,6 @@ function insertIntoComposer(text) {
   input.setSelectionRange(next, next);
 }
 
-function permissionCheckboxes(grid, checked) {
-  for (const [value, label] of PERMISSION_LABELS) {
-    const wrap = el("label");
-    const input = el("input");
-    input.type = "checkbox";
-    input.value = value;
-    if (checked) input.checked = checked.includes(value);
-    wrap.append(input, document.createTextNode(label));
-    grid.appendChild(wrap);
-  }
-  return grid;
-}
-
 const PERMISSION_LABELS = [
   ["manage_server", "Manage Server"],
   ["manage_channels", "Manage Channels"],
@@ -9103,18 +9230,15 @@ function renderRoleSettings(server) {
     row.appendChild(label);
     const edit = el("button", "btn-secondary btn-small", "Edit");
     edit.onclick = () => {
-      const open = card.querySelector(".role-editor");
+      const open = card.querySelector(".role-form");
       if (open) open.remove();
-      else card.appendChild(roleEditor(server, role));
+      else card.appendChild(roleForm(server, role));
     };
     row.appendChild(edit);
     card.appendChild(row);
     list.appendChild(card);
   }
   if (!server.roles.length) list.appendChild(el("div", "manage-empty", "No roles yet"));
-
-  const grid = $("new-role-perms");
-  if (!grid.childElementCount) permissionCheckboxes(grid);
 }
 
 function renderMemberSettings(server) {

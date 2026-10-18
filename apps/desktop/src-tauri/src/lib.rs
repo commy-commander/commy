@@ -4337,6 +4337,7 @@ fn set_volumes(app: tauri::State<App>, output_volume: f32, input_gain: f32) -> V
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn create_role(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -4344,15 +4345,21 @@ async fn create_role(
     name: String,
     color: Option<String>,
     permissions: Vec<String>,
-) -> CmdResult<()> {
+    tag: Option<String>,
+    self_assignable: Option<bool>,
+) -> CmdResult<String> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let name = name.trim().to_string();
-    if name.is_empty() || name.len() > 50 {
+    if name.is_empty() || name.chars().count() > 50 {
         return Err("role name must be 1 to 50 characters".into());
     }
     let color = color
         .map(|c| c.trim().trim_start_matches('#').to_lowercase())
         .filter(|c| commy_core::server::valid_hex_color(c));
+    let tag = tag.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    if tag.as_deref().is_some_and(|t| !commy_core::server::valid_role_tag(t)) {
+        return Err(format!("tags can be up to {} characters", commy_core::server::MAX_ROLE_TAG_CHARS));
+    }
     let me = current_profile(&app)?;
     let role = {
         let servers = app.servers.lock().unwrap();
@@ -4373,12 +4380,14 @@ async fn create_role(
             permissions: permissions_from_names(&permissions),
             position,
             hoist: false,
-            self_assignable: false,
-            tag: None,
+            self_assignable: self_assignable.unwrap_or(false),
+            tag,
             banner: None,
         }
     };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleCreate { server: sid, role }).await
+    let id = role.id.to_string();
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleCreate { server: sid, role }).await?;
+    Ok(id)
 }
 
 #[tauri::command]
