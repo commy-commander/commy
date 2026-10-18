@@ -5,6 +5,7 @@ import pg from "pg";
 import { createAuth } from "./auth.js";
 import { discoveryDocument, featureSummary, loadConfig } from "./config.js";
 import { dropDeviceNames } from "./devices.js";
+import { createRequestHandler } from "./http.js";
 import { connectRedis } from "./redis.js";
 
 const config = loadConfig();
@@ -46,38 +47,15 @@ async function migrate(attempts = 30) {
   }, attempts);
 }
 
-const authHandler = toNodeHandler(auth);
-const discovery = JSON.stringify(discoveryDocument(config));
-
-function sendJson(res, status, body) {
-  res.writeHead(status, {
-    "content-type": "application/json",
-    "access-control-allow-origin": "*",
-    "cache-control": "public, max-age=300",
-  });
-  res.end(body);
-}
-
-const server = http.createServer(async (req, res) => {
-  const path = (req.url ?? "/").split("?")[0];
-
-  if (path === "/healthz") {
-    try {
-      await pool.query("select 1");
-    } catch {
-      return sendJson(res, 503, '{"ok":false}');
-    }
-    const redisOk = redis ? await redis.ping().catch(() => false) : null;
-    return sendJson(res, 200, JSON.stringify(redisOk === null ? { ok: true } : { ok: true, redis: redisOk }));
-  }
-  if (path === "/.well-known/commy-auth.json") {
-    return sendJson(res, 200, discovery);
-  }
-  if (path.startsWith(config.basePath)) {
-    return authHandler(req, res);
-  }
-  sendJson(res, 404, '{"error":"not_found"}');
-});
+const server = http.createServer(
+  createRequestHandler({
+    authHandler: toNodeHandler(auth),
+    basePath: config.basePath,
+    discovery: JSON.stringify(discoveryDocument(config)),
+    pool,
+    redis,
+  }),
+);
 
 await migrate();
 server.listen(config.port, "0.0.0.0", () => {
