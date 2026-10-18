@@ -1,0 +1,364 @@
+mod protocol;
+mod server;
+
+use std::sync::Arc;
+
+use commy_core::{Permissions, ServerId, ServerState};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::oneshot;
+
+use crate::expressions::{DEFAULT_SOUNDS, DEFAULT_SOUND_PREFIX};
+use crate::state::App;
+use crate::CmdResult;
+use protocol::{Settings, SoundChoice, SoundboardList, SoundboardServer};
+use server::{Backend, PairingAsk};
+
+pub const RELEASE_PORT: u16 = 47615;
+pub const TEST_BUILD_PORT: u16 = 47616;
+const SETTINGS_FILE: &str = "stream-deck.json";
+
+pub fn port() -> u16 {
+    if crate::instance::TEST_BUILD {
+        TEST_BUILD_PORT
+    } else {
+        RELEASE_PORT
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    #[default]
+    Off,
+    Starting,
+    Listening,
+    Busy,
+}
+
+#[derive(Default)]
+pub struct StreamDeck {
+    settings: Settings,
+    status: Status,
+    listener: Option<tauri::async_runtime::JoinHandle<()>>,
+    pending: Option<PendingPairing>,
+    next_request: u64,
+}
+
+struct PendingPairing {
+    request: u64,
+    answer: oneshot::Sender<bool>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct StreamDeckView {
+    enabled: bool,
+    status: Status,
+    decks: Vec<PairedDeckView>,
+}
+
+#[derive(Clone, Serialize)]
+struct PairedDeckView {
+    id: String,
+    name: String,
+    paired_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Clone, Serialize)]
+struct PairingPrompt {
+    request: u64,
+    name: String,
+}
+
+impl StreamDeck {
+    fn view(&self) -> StreamDeckView {
+        StreamDeckView {
+            enabled: self.settings.enabled,
+            status: self.status,
+            decks: self
+                .settings
+                .decks
+                .iter()
+                .map(|d| PairedDeckView { id: d.id.clone(), name: d.name.clone(), paired_at: d.paired_at })
+                .collect(),
+        }
+    }
+}
+
+pub fn load(app: &App, handle: &AppHandle) {
+    let Some(dir) = app.data_dir() else { return };
+    let Some(settings) = crate::persist::read_json::<Settings>(&dir.join(SETTINGS_FILE)) else { return };
+    let enabled = settings.enabled;
+    app.stream_deck.lock().unwrap().settings = settings;
+    if enabled {
+        start(handle);
+    }
+}
+
+fn save(app: &App, settings: &Settings) {
+    let Some(dir) = app.data_dir() else { return };
+    if let Err(e) = crate::persist::write_secret_json(&dir.join(SETTINGS_FILE), settings) {
+        tracing::warn!("could not save stream deck settings: {e}");
+    }
+}
+
+fn notify_changed(handle: &AppHandle) {
+    let view = handle.state::<App>().stream_deck.lock().unwrap().view();
+    let _ = handle.emit("stream-deck-changed", view);
+}
+
+fn start(handle: &AppHandle) {
+    {
+        let app = handle.state::<App>();
+        let mut deck = app.stream_deck.lock().unwrap();
+        if deck.listener.is_some() || deck.status == Status::Starting {
+            return;
+        }
+        deck.status = Status::Starting;
+    }
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let bound = server::bind(port()).await;
+        let app = handle.state::<App>();
+        {
+            let mut deck = app.stream_deck.lock().unwrap();
+            if !deck.settings.enabled {
+                deck.status = Status::Off;
+                return;
+            }
+            match bound {
+                _ if deck.listener.is_some() => deck.status = Status::Listening,
+                Ok(listener) => {
+                    let backend = Arc::new(AppBackend { handle: handle.clone() });
+                    deck.listener = Some(tauri::async_runtime::spawn(server::listen(listener, backend)));
+                    deck.status = Status::Listening;
+                }
+                Err(e) => {
+                    tracing::warn!("stream deck control unavailable: {e}");
+                    deck.status = Status::Busy;
+                }
+            }
+        }
+        notify_changed(&handle);
+    });
+}
+
+fn stop(deck: &mut StreamDeck) -> Option<u64> {
+    if let Some(listener) = deck.listener.take() {
+        listener.abort();
+    }
+    deck.status = Status::Off;
+    deck.pending.take().map(|p| p.request)
+}
+
+struct AppBackend {
+    handle: AppHandle,
+}
+
+impl Backend for AppBackend {
+    fn is_paired(&self, token: &str) -> bool {
+        self.handle.state::<App>().stream_deck.lock().unwrap().settings.deck_for(token).is_some()
+    }
+
+    fn ask_to_pair(&self, name: &str) -> Option<PairingAsk> {
+        let request = {
+            let app = self.handle.state::<App>();
+            let mut deck = app.stream_deck.lock().unwrap();
+            if deck.pending.is_some() {
+                return None;
+            }
+            deck.next_request += 1;
+            let request = deck.next_request;
+            let (answer, rx) = oneshot::channel();
+            deck.pending = Some(PendingPairing { request, answer });
+            PairingAsk { request, answer: rx }
+        };
+        crate::tray::show_main_window(&self.handle);
+        let _ = self.handle.emit("stream-deck-pair", PairingPrompt { request: request.request, name: name.to_string() });
+        Some(request)
+    }
+
+    fn withdraw_pairing(&self, request: u64) {
+        let app = self.handle.state::<App>();
+        let mut deck = app.stream_deck.lock().unwrap();
+        if deck.pending.as_ref().is_some_and(|p| p.request == request) {
+            deck.pending = None;
+        }
+        drop(deck);
+        let _ = self.handle.emit("stream-deck-pair-closed", request);
+    }
+
+    fn finish_pairing(&self, name: &str) -> String {
+        let app = self.handle.state::<App>();
+        let (token, settings) = {
+            let mut deck = app.stream_deck.lock().unwrap();
+            let token = deck.settings.pair(name, chrono::Utc::now()).token;
+            (token, deck.settings.clone())
+        };
+        save(&app, &settings);
+        notify_changed(&self.handle);
+        token
+    }
+
+    fn soundboards(&self) -> SoundboardList {
+        soundboard_list(&self.handle.state::<App>())
+    }
+
+    async fn play(&self, server: Option<String>, sound: String) -> Result<(), String> {
+        let app = self.handle.state::<App>();
+        let sid = match server.filter(|s| !s.is_empty()) {
+            Some(id) => id.parse::<ServerId>().map_err(|_| "unknown server".to_string())?,
+            None => voice_server(&app).ok_or("join a voice channel first")?,
+        };
+        crate::play_sound_in_voice(&app, &self.handle, sid, sound).await
+    }
+}
+
+fn voice_server(app: &App) -> Option<ServerId> {
+    app.voice_session.lock().unwrap().as_ref().map(|s| s.server)
+}
+
+fn default_choices() -> Vec<SoundChoice> {
+    DEFAULT_SOUNDS
+        .iter()
+        .map(|s| SoundChoice { name: format!("{DEFAULT_SOUND_PREFIX}{}", s.id), label: s.label.to_string(), emoji: None })
+        .collect()
+}
+
+fn server_choices(state: &ServerState, can_play: bool) -> SoundboardServer {
+    SoundboardServer {
+        id: state.server.id.to_string(),
+        name: state.server.name.clone(),
+        can_play,
+        sounds: state
+            .server
+            .soundboard
+            .iter()
+            .map(|s| SoundChoice { name: s.name.clone(), label: s.name.clone(), emoji: s.emoji.clone() })
+            .collect(),
+    }
+}
+
+fn soundboard_list(app: &App) -> SoundboardList {
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let mut servers: Vec<SoundboardServer> = {
+        let servers = app.servers.lock().unwrap();
+        servers
+            .values()
+            .map(|state| {
+                let can_play = me.is_some_and(|me| crate::our_permissions(app, state, me).allows(Permissions::USE_SOUNDBOARD));
+                server_choices(state, can_play)
+            })
+            .collect()
+    };
+    servers.sort_by_key(|s| s.name.to_lowercase());
+    SoundboardList { voice_server: voice_server(app).map(|s| s.to_string()), defaults: default_choices(), servers }
+}
+
+#[tauri::command]
+pub fn get_stream_deck(app: tauri::State<'_, App>) -> StreamDeckView {
+    app.stream_deck.lock().unwrap().view()
+}
+
+#[tauri::command]
+pub fn set_stream_deck_enabled(app: tauri::State<'_, App>, handle: AppHandle, enabled: bool) -> StreamDeckView {
+    let (settings, withdrawn) = {
+        let mut deck = app.stream_deck.lock().unwrap();
+        deck.settings.enabled = enabled;
+        let withdrawn = if enabled { None } else { stop(&mut deck) };
+        (deck.settings.clone(), withdrawn)
+    };
+    save(&app, &settings);
+    if let Some(request) = withdrawn {
+        let _ = handle.emit("stream-deck-pair-closed", request);
+    }
+    if enabled {
+        start(&handle);
+    }
+    app.stream_deck.lock().unwrap().view()
+}
+
+#[tauri::command]
+pub fn forget_stream_deck(app: tauri::State<'_, App>, id: String) -> CmdResult<StreamDeckView> {
+    let settings = {
+        let mut deck = app.stream_deck.lock().unwrap();
+        if !deck.settings.forget(&id) {
+            return Err("that Stream Deck is not connected".into());
+        }
+        deck.settings.clone()
+    };
+    save(&app, &settings);
+    Ok(app.stream_deck.lock().unwrap().view())
+}
+
+#[tauri::command]
+pub fn answer_stream_deck_pairing(app: tauri::State<'_, App>, request: u64, allow: bool) {
+    let mut deck = app.stream_deck.lock().unwrap();
+    if deck.pending.as_ref().is_some_and(|p| p.request == request) {
+        if let Some(pending) = deck.pending.take() {
+            let _ = pending.answer.send(allow);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use commy_core::server::SoundboardSound;
+    use commy_core::{Server, UserProfile};
+
+    #[test]
+    fn release_and_test_builds_use_their_own_ports() {
+        assert_ne!(RELEASE_PORT, TEST_BUILD_PORT);
+        assert!([RELEASE_PORT, TEST_BUILD_PORT].contains(&port()));
+    }
+
+    #[test]
+    fn defaults_carry_the_prefixed_name_and_label() {
+        let defaults = default_choices();
+        assert_eq!(defaults.len(), DEFAULT_SOUNDS.len());
+        assert_eq!(defaults[0].name, "default:airhorn");
+        assert_eq!(defaults[0].label, "Airhorn");
+        assert!(defaults.iter().all(|d| crate::expressions::is_default_sound(&d.name)));
+    }
+
+    #[test]
+    fn server_sounds_keep_their_emoji() {
+        let owner = UserProfile::new("owner");
+        let mut state = ServerState::new(Server::new("Friends", owner.id));
+        state.server.soundboard.push(SoundboardSound { name: "boom".into(), blob: "b".into(), volume: 1.0, emoji: Some("💥".into()) });
+        let choices = server_choices(&state, true);
+        assert_eq!(choices.name, "Friends");
+        assert!(choices.can_play);
+        assert_eq!(choices.sounds, vec![SoundChoice { name: "boom".into(), label: "boom".into(), emoji: Some("💥".into()) }]);
+    }
+
+    #[test]
+    fn a_fresh_app_lists_only_the_defaults() {
+        let app = App::default();
+        let list = soundboard_list(&app);
+        assert!(list.servers.is_empty());
+        assert_eq!(list.voice_server, None);
+        assert_eq!(list.defaults.len(), DEFAULT_SOUNDS.len());
+    }
+
+    #[test]
+    fn turning_off_drops_a_waiting_prompt() {
+        let mut deck = StreamDeck::default();
+        let (answer, _rx) = oneshot::channel();
+        deck.pending = Some(PendingPairing { request: 4, answer });
+        deck.status = Status::Listening;
+        assert_eq!(stop(&mut deck), Some(4));
+        assert_eq!(deck.status, Status::Off);
+        assert!(deck.pending.is_none());
+    }
+
+    #[test]
+    fn the_view_never_shows_tokens() {
+        let mut deck = StreamDeck::default();
+        let paired = deck.settings.pair("Desk", chrono::Utc::now());
+        let json = serde_json::to_string(&deck.view()).unwrap();
+        assert!(json.contains("Desk"));
+        assert!(!json.contains(&paired.token));
+    }
+}

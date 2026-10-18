@@ -4,10 +4,22 @@ const LONGEST_SOUND_SECS: usize = 15;
 const HIGHEST_SOUND_KBPS: usize = 320;
 const _: () = assert!(LONGEST_SOUND_SECS * HIGHEST_SOUND_KBPS * 1000 / 8 < MAX_SOUND_BYTES);
 
-pub const DEFAULT_SOUNDS: &[&str] = &["airhorn", "ba_dum_tss", "cricket", "losing_horn"];
+pub const DEFAULT_SOUND_PREFIX: &str = "default:";
+
+pub struct DefaultSound {
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+pub const DEFAULT_SOUNDS: &[DefaultSound] = &[
+    DefaultSound { id: "airhorn", label: "Airhorn" },
+    DefaultSound { id: "ba_dum_tss", label: "Ba Dum Tss" },
+    DefaultSound { id: "cricket", label: "Crickets" },
+    DefaultSound { id: "losing_horn", label: "Losing Horn" },
+];
 
 pub fn is_default_sound(name: &str) -> bool {
-    name.strip_prefix("default:").is_some_and(|id| DEFAULT_SOUNDS.contains(&id))
+    name.strip_prefix(DEFAULT_SOUND_PREFIX).is_some_and(|id| DEFAULT_SOUNDS.iter().any(|s| s.id == id))
 }
 
 pub fn image_mime(bytes: &[u8]) -> Option<&'static str> {
