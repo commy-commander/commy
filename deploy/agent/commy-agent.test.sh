@@ -191,8 +191,8 @@ VERIFY=on
 echo "sha256:new" >"$FAKE/remote"
 run_once
 check "signed image deploys" "$(images)" "sha256:new"
-check "cosign checks the pulled digest, its tag and the promote identity" "$(cat "$FAKE/cosign_calls")" \
-	"verify -a tag=dev --certificate-identity $COSIGN_IDENTITY --certificate-oidc-issuer $COSIGN_ISSUER ghcr.io/commy/commy-web@sha256:new"
+check "cosign checks the pulled digest, its tag and the website's promote identity" "$(cat "$FAKE/cosign_calls")" \
+	"verify -a tag=dev --certificate-identity $COSIGN_WEB_IDENTITY --certificate-oidc-issuer $COSIGN_ISSUER ghcr.io/commy/commy-web@sha256:new"
 
 reset
 echo "sha256:new" >"$FAKE/remote"
@@ -257,6 +257,9 @@ check "checks can be turned off for prod" "$([ -f "$FAKE/cosign_calls" ] && wc -
 unset COMPOSE_PROJECT_NAME
 VERIFY=auto
 
+check "website images are checked against the website's promote workflow" "$(identity_of ghcr.io/commy/commy-web)" "$COSIGN_WEB_IDENTITY"
+check "other images are checked against this repo's promote workflow" "$(identity_of ghcr.io/commy/commy-auth)" "$COSIGN_IDENTITY"
+check "the two identities differ" "$([ "$COSIGN_WEB_IDENTITY" != "$COSIGN_IDENTITY" ] && echo yes)" "yes"
 check "repo of a tagged image" "$(repo_of ghcr.io/commy/commy-web:prod)" "ghcr.io/commy/commy-web"
 check "repo of a registry with a port" "$(repo_of localhost:5000/commy-web:dev)" "localhost:5000/commy-web"
 check "repo of an untagged image on a registry with a port" "$(repo_of localhost:5000/commy-web)" "localhost:5000/commy-web"
