@@ -951,9 +951,30 @@ fn dial_voice_members(
             .collect()
     };
     for (user, their_hex) in targets {
-        if should_dial(&our_hex, &their_hex) {
+        if should_dial(&our_hex, &their_hex) && claim_voice_dial(app, channel, user) {
             dial_voice_peer(handle, user, their_hex, channel, me.id);
         }
+    }
+}
+
+fn claim_voice_dial(app: &App, channel: ChannelId, user: UserId) -> bool {
+    app.voice_session
+        .lock()
+        .unwrap()
+        .as_mut()
+        .is_some_and(|session| session.channel == channel && session.claim_dial(user))
+}
+
+const VOICE_REDIAL_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn run_voice_redialer(handle: tauri::AppHandle) {
+    loop {
+        tokio::time::sleep(VOICE_REDIAL_EVERY).await;
+        let app = handle.state::<App>();
+        let call = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+        let Some((sid, channel)) = call else { continue };
+        let Some(me) = app.profile.lock().unwrap().clone() else { continue };
+        dial_voice_members(&app, &handle, sid, channel, &me);
     }
 }
 
@@ -971,16 +992,15 @@ fn dial_voice_peer(
             user: our_user,
             channel,
         };
-        match dial_media(&app, &their_hex, hello).await {
-            Ok(media) => {
-                let mut session = app.voice_session.lock().unwrap();
-                if let Some(session) = session.as_mut() {
-                    if session.channel == channel {
-                        session.attach_peer(user, media);
-                    }
-                }
+        let dialed = dial_media(&app, &their_hex, hello).await;
+        let mut session = app.voice_session.lock().unwrap();
+        let Some(session) = session.as_mut().filter(|s| s.channel == channel) else { return };
+        match dialed {
+            Ok(media) => session.attach_peer(user, media),
+            Err(e) => {
+                tracing::warn!("voice dial failed, retrying shortly: {e}");
+                session.dial_failed(user);
             }
-            Err(e) => tracing::warn!("voice dial failed: {e}"),
         }
     });
 }
@@ -4766,14 +4786,7 @@ fn react_to_voice_change(
                     .and_then(|p| p.node.clone())
             };
             let Some(their_hex) = their_hex else { return };
-            let already = app
-                .voice_session
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|s| s.has_peer(user))
-                .unwrap_or(false);
-            if !already && should_dial(&our_hex, &their_hex) {
+            if should_dial(&our_hex, &their_hex) && claim_voice_dial(app, our_channel, user) {
                 dial_voice_peer(handle, user, their_hex, our_channel, me.id);
             }
         }
@@ -5170,6 +5183,7 @@ pub fn run() {
                         tauri::async_runtime::spawn(run_media_loop(handle.clone(), media));
                         tauri::async_runtime::spawn(run_dm_loop(handle.clone(), dms));
                         tauri::async_runtime::spawn(run_afk_watchdog(handle.clone()));
+                        tauri::async_runtime::spawn(run_voice_redialer(handle.clone()));
                         tauri::async_runtime::spawn(run_status_expiry(handle.clone()));
                         tauri::async_runtime::spawn(run_event_reminders(handle.clone()));
                         {
