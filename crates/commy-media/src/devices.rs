@@ -118,29 +118,87 @@ impl Drop for StreamHandle {
     }
 }
 
-fn run_stream_thread(
+#[derive(Clone)]
+pub struct StreamFault {
+    raised: Arc<AtomicBool>,
+    thread: std::thread::Thread,
+}
+
+impl StreamFault {
+    fn for_current_thread() -> Self {
+        Self {
+            raised: Arc::new(AtomicBool::new(false)),
+            thread: std::thread::current(),
+        }
+    }
+
+    pub fn raise(&self) {
+        self.raised.store(true, Ordering::Relaxed);
+        self.thread.unpark();
+    }
+
+    fn take(&self) -> bool {
+        self.raised.swap(false, Ordering::Relaxed)
+    }
+}
+
+trait AudioStream {
+    fn start(&self) -> Result<()>;
+}
+
+impl AudioStream for cpal::Stream {
+    fn start(&self) -> Result<()> {
+        Ok(self.play()?)
+    }
+}
+
+const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+const REOPEN_PAUSE: std::time::Duration = std::time::Duration::from_millis(500);
+
+fn run_stream_thread<S: AudioStream>(
     died: &'static str,
-    build: impl FnOnce() -> Result<cpal::Stream> + Send + 'static,
+    mut build: impl FnMut(StreamFault) -> Result<S> + Send + 'static,
 ) -> Result<StreamHandle> {
     let stop = Arc::new(AtomicBool::new(false));
     let (ready, ready_rx) = std::sync::mpsc::channel();
     let stopped = stop.clone();
     let thread = std::thread::spawn(move || {
-        let stream = match build() {
+        let fault = StreamFault::for_current_thread();
+        let mut stream = match build(fault.clone()) {
             Ok(stream) => {
                 let _ = ready.send(Ok(()));
-                stream
+                started(stream)
             }
             Err(e) => {
                 let _ = ready.send(Err(e));
                 return;
             }
         };
-        if let Err(e) = stream.play() {
-            tracing::error!("audio stream failed to start: {e}");
-        }
+        let mut reported = false;
         while !stopped.load(Ordering::Relaxed) {
-            std::thread::park_timeout(std::time::Duration::from_millis(200));
+            if fault.take() {
+                tracing::warn!("audio stream stopped, reopening it");
+                stream = None;
+            }
+            if stream.is_some() {
+                std::thread::park_timeout(STOP_POLL);
+                continue;
+            }
+            std::thread::park_timeout(REOPEN_PAUSE);
+            if stopped.load(Ordering::Relaxed) {
+                break;
+            }
+            match build(fault.clone()) {
+                Ok(fresh) => {
+                    stream = started(fresh);
+                    reported = false;
+                }
+                Err(e) if !reported => {
+                    tracing::warn!("audio device unavailable, retrying: {e}");
+                    reported = true;
+                }
+                Err(_) => {}
+            }
         }
         drop(stream);
     });
@@ -148,6 +206,16 @@ fn run_stream_thread(
         stop,
         thread: Some(thread),
     })
+}
+
+fn started<S: AudioStream>(stream: S) -> Option<S> {
+    match stream.start() {
+        Ok(()) => Some(stream),
+        Err(e) => {
+            tracing::error!("audio stream failed to start: {e}");
+            None
+        }
+    }
 }
 
 pub fn list_device_names(input: bool) -> Vec<String> {
@@ -190,7 +258,9 @@ pub fn start_microphone(
     tx: UnboundedSender<Vec<i16>>,
     device_name: Option<String>,
 ) -> Result<InputHandle> {
-    run_stream_thread("microphone thread died", move || {
+    run_stream_thread("microphone thread died", move |fault| {
+        let processor = processor.clone();
+        let tx = tx.clone();
         let host = cpal::default_host();
         let device = find_device(&host, true, device_name.as_deref())
             .ok_or_else(|| anyhow!("no microphone found"))?;
@@ -218,7 +288,10 @@ pub fn start_microphone(
             }
         };
 
-        let err_cb = |e| tracing::error!("microphone stream error: {e}");
+        let err_cb = move |e| {
+            tracing::error!("microphone stream error: {e}");
+            fault.raise();
+        };
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_input_stream(
                 &config.into(),
@@ -259,7 +332,8 @@ pub fn start_microphone(
 }
 
 pub fn start_playback(mixer: Arc<Mutex<Mixer>>, device_name: Option<String>) -> Result<OutputHandle> {
-    run_stream_thread("playback thread died", move || {
+    run_stream_thread("playback thread died", move |fault| {
+        let mixer = mixer.clone();
         let host = cpal::default_host();
         let device = find_device(&host, false, device_name.as_deref())
             .ok_or_else(|| anyhow!("no output device found"))?;
@@ -275,7 +349,10 @@ pub fn start_playback(mixer: Arc<Mutex<Mixer>>, device_name: Option<String>) -> 
             move |data: &mut [f32], _| {
                 shaper.fill(data, channels, || mixer.lock().unwrap().next_frame());
             },
-            |e| tracing::error!("playback stream error: {e}"),
+            move |e| {
+                tracing::error!("playback stream error: {e}");
+                fault.raise();
+            },
             None,
         )?;
         Ok(stream)
@@ -365,5 +442,63 @@ mod tests {
         assert_eq!(select_device(&names, None), None);
         assert_eq!(select_device(&names, Some("")), None);
         assert_eq!(select_device(&names, Some("Unplugged Mic")), None);
+    }
+
+    struct FakeStream;
+
+    impl AudioStream for FakeStream {
+        fn start(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn wait_for(what: &str, done: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn a_stream_that_errors_is_reopened() {
+        let faults: Arc<Mutex<Vec<StreamFault>>> = Arc::default();
+        let opened = faults.clone();
+        let handle = run_stream_thread("test", move |fault| {
+            opened.lock().unwrap().push(fault);
+            Ok(FakeStream)
+        })
+        .unwrap();
+        assert_eq!(faults.lock().unwrap().len(), 1);
+        faults.lock().unwrap()[0].raise();
+        wait_for("the reopen", || faults.lock().unwrap().len() == 2);
+        drop(handle);
+    }
+
+    #[test]
+    fn reopening_keeps_trying_until_the_device_is_back() {
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let fault_slot: Arc<Mutex<Option<StreamFault>>> = Arc::default();
+        let (counted, slot) = (attempts.clone(), fault_slot.clone());
+        let handle = run_stream_thread("test", move |fault| {
+            let attempt = counted.fetch_add(1, Ordering::SeqCst);
+            *slot.lock().unwrap() = Some(fault);
+            match attempt {
+                1 | 2 => Err(anyhow!("unplugged")),
+                _ => Ok(FakeStream),
+            }
+        })
+        .unwrap();
+        fault_slot.lock().unwrap().as_ref().unwrap().raise();
+        wait_for("the device to come back", || attempts.load(Ordering::SeqCst) == 4);
+        std::thread::sleep(REOPEN_PAUSE * 2);
+        assert_eq!(attempts.load(Ordering::SeqCst), 4);
+        drop(handle);
+    }
+
+    #[test]
+    fn a_device_that_never_opens_reports_why() {
+        let result = run_stream_thread::<FakeStream>("test", |_| Err(anyhow!("no microphone found")));
+        assert_eq!(result.err().unwrap().to_string(), "no microphone found");
     }
 }

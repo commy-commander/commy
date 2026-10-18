@@ -745,7 +745,9 @@ async fn leave_voice(
     profile: &UserProfile,
     voice: &VoiceSettings,
 ) {
+    let testing = pause_mic_test(app);
     *app.voice_session.lock().unwrap() = None;
+    resume_mic_test(app, testing);
     *app.camera.lock().unwrap() = None;
     app.camera_watches.lock().unwrap().clear();
     app.own_preview.lock().unwrap().take();
@@ -804,6 +806,7 @@ fn start_voice_session(
     voice: &VoiceSettings,
     me: UserId,
 ) {
+    let testing = pause_mic_test(app);
     let emitter = handle.clone();
     let on_speaking: media_engine::SpeakingSink = std::sync::Arc::new(move |user: UserId, speaking: bool| {
         let _ = emitter.emit(
@@ -840,6 +843,30 @@ fn start_voice_session(
     session.set_speaker(speaker);
     session.mixer.lock().unwrap().set_master(voice.output_volume);
     *slot = Some(session);
+    drop(slot);
+    resume_mic_test(app, testing);
+}
+
+fn open_mic_test(app: &App) -> anyhow::Result<MicTest> {
+    if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
+        return Ok(MicTest::within_call(session));
+    }
+    let voice = app.voice.lock().unwrap().clone();
+    MicTest::start(app.processor.clone(), voice.input_device, voice.output_device)
+}
+
+fn pause_mic_test(app: &App) -> bool {
+    app.mic_test.lock().unwrap().take().is_some()
+}
+
+fn resume_mic_test(app: &App, was_running: bool) {
+    if !was_running {
+        return;
+    }
+    match open_mic_test(app) {
+        Ok(test) => *app.mic_test.lock().unwrap() = Some(test),
+        Err(e) => tracing::warn!("mic test stopped: {e}"),
+    }
 }
 
 async fn run_afk_watchdog(handle: tauri::AppHandle) {
@@ -3397,7 +3424,9 @@ async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
     let name = forget_server_locally(app, sid).map(|s| s.server.name);
     let in_voice_there = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
     if in_voice_there {
+        let testing = pause_mic_test(app);
         *app.voice_session.lock().unwrap() = None;
+        resume_mic_test(app, testing);
         app.own_preview.lock().unwrap().take();
         *app.screen_share.lock().unwrap() = None;
     }
@@ -4291,6 +4320,7 @@ async fn set_audio_devices(
         voice.input_device = clean(input);
         voice.output_device = clean(output);
     });
+    let testing = pause_mic_test(&app);
     if let Some(session) = app.voice_session.lock().unwrap().as_mut() {
         session.switch_devices(
             app.processor.clone(),
@@ -4298,14 +4328,8 @@ async fn set_audio_devices(
             settings.output_device.clone(),
         );
     }
-    let restart_test = app.mic_test.lock().unwrap().take().is_some();
-    if restart_test {
-        let test = MicTest::start(
-            app.processor.clone(),
-            settings.input_device.clone(),
-            settings.output_device.clone(),
-        )
-        .map_err(err_to_string)?;
+    if testing {
+        let test = open_mic_test(&app).map_err(err_to_string)?;
         *app.mic_test.lock().unwrap() = Some(test);
     }
     Ok(settings)
@@ -4432,8 +4456,7 @@ async fn start_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
     if app.mic_test.lock().unwrap().is_some() {
         return Ok(());
     }
-    let voice = app.voice.lock().unwrap().clone();
-    let test = MicTest::start(app.processor.clone(), voice.input_device, voice.output_device).map_err(err_to_string)?;
+    let test = open_mic_test(&app).map_err(err_to_string)?;
     *app.mic_test.lock().unwrap() = Some(test);
     Ok(())
 }
