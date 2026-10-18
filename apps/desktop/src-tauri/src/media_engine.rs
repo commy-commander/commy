@@ -516,9 +516,12 @@ impl CameraSession {
     }
 }
 
+pub const MIC_TEST_KEY: u64 = u64::MAX;
+
 pub struct MicTest {
     _devices: StreamGuards,
     task: JoinHandle<()>,
+    call_mixer: Option<Arc<Mutex<Mixer>>>,
 }
 
 impl MicTest {
@@ -550,13 +553,43 @@ impl MicTest {
                 speaker: Some(speaker),
             },
             task,
+            call_mixer: None,
         })
+    }
+
+    pub fn within_call(session: &VoiceSession) -> Self {
+        let mixer = session.mixer.clone();
+        let mut packets = session.mic_broadcast.subscribe();
+        let task = {
+            let mixer = mixer.clone();
+            tokio::spawn(async move {
+                let mut decoder = commy_audio::codec::VoiceDecoder::new();
+                loop {
+                    match packets.recv().await {
+                        Ok((seq, packet)) => {
+                            let pcm = decoder.decode(&packet);
+                            mixer.lock().unwrap().push(MIC_TEST_KEY, seq, pcm);
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            })
+        };
+        Self {
+            _devices: StreamGuards { mic: None, speaker: None },
+            task,
+            call_mixer: Some(mixer),
+        }
     }
 }
 
 impl Drop for MicTest {
     fn drop(&mut self) {
         self.task.abort();
+        if let Some(mixer) = &self.call_mixer {
+            mixer.lock().unwrap().remove_peer(MIC_TEST_KEY);
+        }
     }
 }
 
@@ -587,6 +620,43 @@ mod tests {
             bumpy.arrived(i, start + std::time::Duration::from_millis(i as u64 * 10 + wobble));
         }
         assert!(bumpy.jitter_ms() > 3.0, "{}", bumpy.jitter_ms());
+    }
+
+    fn silent_call() -> (VoiceSession, mpsc::UnboundedSender<Vec<i16>>) {
+        let (mic_tx, mic_rx) = mpsc::unbounded_channel();
+        let session = VoiceSession::start(
+            ServerId::new(),
+            ChannelId::new(),
+            StreamGuards { mic: None, speaker: None },
+            mic_rx,
+            mic_tx.clone(),
+            false,
+            UserId::new(),
+            Arc::new(|_, _| {}),
+        );
+        (session, mic_tx)
+    }
+
+    async fn wait_for_sources(mixer: &Arc<Mutex<Mixer>>, count: usize) {
+        for _ in 0..200 {
+            if mixer.lock().unwrap().peer_count() == count {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("mixer never reached {count} sources");
+    }
+
+    #[tokio::test]
+    async fn mic_test_during_a_call_plays_the_call_mic_through_the_call_speaker() {
+        let (session, mic) = silent_call();
+        let test = MicTest::within_call(&session);
+        for _ in 0..5 {
+            mic.send(vec![1000; commy_audio::FRAME_SIZE]).unwrap();
+        }
+        wait_for_sources(&session.mixer, 1).await;
+        drop(test);
+        assert_eq!(session.mixer.lock().unwrap().peer_count(), 0);
     }
 
     #[test]
