@@ -67,6 +67,14 @@ pub fn sweep(app: &App, me: UserId, now: Instant, wall_ms: i64, expire: Duration
     changed
 }
 
+fn hear_voice_peers(app: &App, now: Instant) {
+    let voice = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.live_peers()));
+    let Some((server, peers)) = voice else { return };
+    for user in peers {
+        heard(app, server, user, now);
+    }
+}
+
 pub fn rest(app: &App) {
     app.liveness.lock().unwrap().heard.clear();
 }
@@ -128,6 +136,7 @@ pub async fn run(access: impl AppAccess) {
             beat(app).await;
         }
         let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { continue };
+        hear_voice_peers(app, Instant::now());
         for sid in sweep(app, me, Instant::now(), chrono::Utc::now().timestamp_millis(), EXPIRE) {
             tracing::info!("a member went quiet and is shown offline");
             access.emit("server-event", serde_json::json!(sid.to_string()));

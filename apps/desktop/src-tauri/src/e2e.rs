@@ -407,6 +407,7 @@ async fn pump(access: TestHandle, mut events: UnboundedReceiver<NetEvent>) {
                 match applied {
                     Ok(true) => {
                         app.persist_server(server);
+                        access.emit("server-event", serde_json::json!(server.to_string()));
                         if let Some(message) = new_message {
                             doorbell::arrived(&access, server, message.id);
                         }
@@ -1013,6 +1014,25 @@ async fn a_member_who_quits_is_shown_offline_at_once() {
         viewer.presence_of(server, leaving_id) == Some(Presence::Offline)
     })
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_member_who_restarts_is_redrawn_online() {
+    init_logs();
+    let (mut devices, server) = community(&["ada", "grace"]).await;
+    let [viewer, member] = &mut devices[..] else { unreachable!() };
+    let member_id = member.me().id;
+    wait_until("the member to show online", || viewer.presence_of(server, member_id) == Some(Presence::Online)).await;
+
+    crate::liveness::farewell(member.app()).await;
+    member.offline().await;
+    wait_until("the member who quit to show offline", || viewer.presence_of(server, member_id) == Some(Presence::Offline)).await;
+    viewer.access.take_events();
+
+    member.online().await;
+    wait_until("the member to be back online", || viewer.presence_of(server, member_id) == Some(Presence::Online)).await;
+    let redraw = ("server-event".to_string(), serde_json::json!(server.to_string()));
+    assert!(viewer.access.take_events().contains(&redraw), "the member list is redrawn when they come back");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
