@@ -1261,6 +1261,9 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .role-form .btn-danger:hover { background: var(--red); color: #fff; filter: none; }
 
 .app.dm-mode { grid-template-columns: 248px minmax(0, 1fr) auto; }
+.app.members-collapsed:not(.dm-mode):not(.thread-open) { grid-template-columns: 248px minmax(0, 1fr); }
+.app.members-collapsed #member-list { display: none; }
+#members-btn.active { color: var(--header-primary); }
 .app.dm-mode .dm-profile { grid-row: 2; }
 .rail-home.active { background: none; }
 

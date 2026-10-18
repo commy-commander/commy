@@ -6721,9 +6721,27 @@ async function refreshServers() {
   renderServerRail();
 }
 
+function readMembersPref() {
+  try {
+    return localStorage.getItem("commy.members.collapsed");
+  } catch {
+    return null;
+  }
+}
+
+function applyMembersLayout() {
+  const collapsed = membersCollapsed(readMembersPref(), window.innerWidth);
+  $("app").classList.toggle("members-collapsed", collapsed);
+  const btn = $("members-btn");
+  btn.classList.toggle("active", !collapsed);
+  btn.setAttribute("aria-pressed", String(!collapsed));
+  btn.title = collapsed ? "Show Members" : "Hide Members";
+}
+
 function setViewMode(mode) {
   state.view = mode;
   const dm = mode === "dm";
+  $("members-btn").classList.toggle("hidden", dm);
   $("member-list").classList.toggle("hidden", dm);
   $("invite-btn").classList.toggle("hidden", dm);
   $("server-settings-btn").classList.toggle("hidden", dm);
@@ -8772,6 +8790,15 @@ function wireEvents() {
       e.target.value = "";
     }
   });
+  $("members-btn").onclick = () => {
+    const collapsed = membersCollapsed(readMembersPref(), window.innerWidth);
+    try {
+      localStorage.setItem("commy.members.collapsed", collapsed ? "0" : "1");
+    } catch {}
+    applyMembersLayout();
+  };
+  window.addEventListener("resize", applyMembersLayout);
+  applyMembersLayout();
   $("dm-profile-btn").onclick = () => {
     state.showDmProfile = !state.showDmProfile;
     if (state.currentDm) renderDmProfile(state.currentDm.user, state.currentDm.name);
