@@ -264,6 +264,9 @@ the signature was still being written. Settings in that environment's `.env`:
 - `AGENT_COSIGN_IDENTITY`: the workflow identity to accept, by default
   `https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main`.
   A fork promoting its own images sets its own repository here.
+- `AGENT_COSIGN_WEB_IDENTITY`: the identity accepted for the website image,
+  which the website repository promotes and signs itself, by default
+  `https://github.com/commy-commander/commy-web/.github/workflows/promote.yml@refs/heads/main`.
 - `AGENT_COSIGN_ISSUER`: the OIDC issuer, by default GitHub Actions.
 
 To check an image by hand from any machine with cosign:

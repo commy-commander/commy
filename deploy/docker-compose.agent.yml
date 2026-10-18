@@ -16,6 +16,7 @@ services:
       AGENT_HEALTH_TIMEOUT: ${AGENT_HEALTH_TIMEOUT:-180}
       AGENT_VERIFY: ${AGENT_VERIFY:-auto}
       AGENT_COSIGN_IDENTITY: ${AGENT_COSIGN_IDENTITY:-https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main}
+      AGENT_COSIGN_WEB_IDENTITY: ${AGENT_COSIGN_WEB_IDENTITY:-https://github.com/commy-commander/commy-web/.github/workflows/promote.yml@refs/heads/main}
       AGENT_COSIGN_ISSUER: ${AGENT_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
