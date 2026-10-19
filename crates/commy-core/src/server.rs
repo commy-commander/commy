@@ -129,6 +129,8 @@ pub struct Server {
     #[serde(default)]
     pub soundboard_open: bool,
     #[serde(default)]
+    pub sounds_shareable: bool,
+    #[serde(default)]
     pub game_tags: Vec<String>,
     #[serde(default)]
     pub game_tag_meta: Vec<GameTagMeta>,
@@ -195,6 +197,7 @@ impl Server {
             banner: None,
             emojis_shareable: false,
             soundboard_open: false,
+            sounds_shareable: false,
             game_tags: vec![],
             game_tag_meta: vec![],
             rules: None,

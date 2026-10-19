@@ -2115,6 +2115,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             soundboard_open: state.server.soundboard_open,
         });
     }
+    if state.server.sounds_shareable && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::SoundSharingSet { server: sid, shareable: true });
+    }
     if state.server.public && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::PublicSet { server: sid, public: true });
     }
@@ -3213,6 +3216,7 @@ async fn update_role(
     name: String,
     color: Option<String>,
     self_assignable: bool,
+    hoist: Option<bool>,
     tag: Option<String>,
     permissions: Option<Vec<String>>,
 ) -> CmdResult<()> {
@@ -3239,7 +3243,7 @@ async fn update_role(
         let permissions = permissions
             .map(|names| permissions_from_names(&names))
             .unwrap_or(existing.permissions);
-        commy_core::server::Role { name, color, self_assignable, tag, permissions, ..existing.clone() }
+        commy_core::server::Role { name, color, self_assignable, hoist: hoist.unwrap_or(existing.hoist), tag, permissions, ..existing.clone() }
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
@@ -3850,6 +3854,21 @@ async fn set_expression_settings(
 }
 
 #[tauri::command]
+async fn set_sound_sharing(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    shareable: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change sound sharing")?;
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundSharingSet { server: sid, shareable }).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_server_public(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -3927,6 +3946,104 @@ async fn play_sound_in_voice(app: &App, handle: &tauri::AppHandle, sid: ServerId
     .await;
     let _ = handle.emit("soundboard-play", view);
     Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+struct SharedSoundView {
+    server: String,
+    server_name: String,
+    name: String,
+    blob: String,
+    volume: f32,
+    emoji: Option<String>,
+}
+
+#[tauri::command]
+fn list_shareable_sounds(app: tauri::State<'_, App>) -> Vec<SharedSoundView> {
+    let servers = app.servers.lock().unwrap();
+    let mut out: Vec<SharedSoundView> = servers
+        .values()
+        .filter(|s| s.server.sounds_shareable)
+        .flat_map(|s| {
+            s.server.soundboard.iter().map(|sound| SharedSoundView {
+                server: s.server.id.to_string(),
+                server_name: s.server.name.clone(),
+                name: sound.name.clone(),
+                blob: sound.blob.clone(),
+                volume: sound.volume,
+                emoji: sound.emoji.clone(),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.server_name.cmp(&b.server_name).then(a.name.cmp(&b.name)));
+    out
+}
+
+fn shared_sound_view(sid: ServerId, channel: ChannelId, user: UserId, name: &str, blob: &str, volume: f32) -> Option<SoundboardPlayView> {
+    commy_core::server::ImageRef::parse(blob)?;
+    Some(SoundboardPlayView {
+        server: sid.to_string(),
+        channel: channel.to_string(),
+        user: user.to_string(),
+        name: name.to_string(),
+        blob: blob.to_string(),
+        volume: volume.clamp(0.0, 2.0),
+    })
+}
+
+#[tauri::command]
+async fn play_shared_sound(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    source_server_id: String,
+    name: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let source: ServerId = source_server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let (channel, in_server) = {
+        let session = app.voice_session.lock().unwrap();
+        let s = session.as_ref().ok_or("join a voice channel first")?;
+        (s.channel, s.server == sid)
+    };
+    if !in_server {
+        return Err("join a voice channel in this server first".into());
+    }
+    let (blob, volume) = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
+        let from = servers.get(&source).ok_or("unknown server")?;
+        if !from.server.sounds_shareable {
+            return Err("that server does not share its sounds".into());
+        }
+        let sound = from.server.soundboard.iter().find(|s| s.name == name).ok_or("that sound no longer exists")?;
+        (sound.blob.clone(), sound.volume)
+    };
+    let view = shared_sound_view(sid, channel, me.id, &name, &blob, volume).ok_or("that sound cannot be played")?;
+    broadcast_event(&app, sid, ServerEvent::SharedSoundPlay { server: sid, channel, user: me.id, name, blob, volume }).await;
+    let _ = handle.emit("soundboard-play", view);
+    Ok(())
+}
+
+fn on_remote_shared_sound(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, user: UserId, name: &str, blob: &str, volume: f32) {
+    let mine = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+    if mine != Some((sid, channel)) {
+        return;
+    }
+    let allowed = {
+        let servers = app.servers.lock().unwrap();
+        servers.get(&sid).is_some_and(|state| {
+            state.voice_states.get(&user) == Some(&channel) && state.server.permissions_for(user).allows(Permissions::USE_SOUNDBOARD)
+        })
+    };
+    if !allowed {
+        return;
+    }
+    if let Some(view) = shared_sound_view(sid, channel, user, name, blob, volume) {
+        let _ = handle.emit("soundboard-play", view);
+    }
 }
 
 fn on_remote_soundboard(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, user: UserId, name: &str) {
@@ -4457,6 +4574,7 @@ async fn create_role(
     permissions: Vec<String>,
     tag: Option<String>,
     self_assignable: Option<bool>,
+    hoist: Option<bool>,
 ) -> CmdResult<String> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let name = name.trim().to_string();
@@ -4489,7 +4607,7 @@ async fn create_role(
             color,
             permissions: permissions_from_names(&permissions),
             position,
-            hoist: false,
+            hoist: hoist.unwrap_or(false),
             self_assignable: self_assignable.unwrap_or(false),
             tag,
             banner: None,
@@ -4719,6 +4837,12 @@ async fn run_net_loop(
                 if let ServerEvent::SoundboardPlay { channel, user, name, .. } = &event {
                     if remote_action_ok(&app, server, &event, action) {
                         on_remote_soundboard(&app, &handle, server, *channel, *user, name);
+                    }
+                    continue;
+                }
+                if let ServerEvent::SharedSoundPlay { channel, user, name, blob, volume, .. } = &event {
+                    if remote_action_ok(&app, server, &event, action) {
+                        on_remote_shared_sound(&app, &handle, server, *channel, *user, name, blob, *volume);
                     }
                     continue;
                 }
@@ -5382,6 +5506,9 @@ pub fn run() {
             remove_sound,
             set_sound_emoji,
             set_expression_settings,
+            set_sound_sharing,
+            list_shareable_sounds,
+            play_shared_sound,
             set_server_public,
             play_soundboard,
             stream_deck::get_stream_deck,

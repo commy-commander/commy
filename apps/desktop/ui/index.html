@@ -338,6 +338,8 @@
           <button data-expires="never" role="radio" id="invite-expiry-never"><strong>Never</strong></button>
         </div>
       </div>
+      <input id="invite-friend-search" type="text" autocomplete="off" placeholder="Search friends to invite" aria-label="Search friends to invite" />
+      <div class="people-list invite-people" id="invite-people"></div>
       <textarea id="invite-text" class="invite-field" readonly rows="3" aria-label="Invite"></textarea>
       <div class="setting-sub invite-expiry-note" id="invite-expiry-note"></div>
       <div class="invite-actions">
@@ -1411,6 +1413,13 @@
             </div>
             <input type="checkbox" id="sound-open-toggle" class="switch" />
           </label>
+          <label class="settings-card setting-row" id="sound-share-row">
+            <div>
+              <div class="setting-title">Share these sounds with your members' other servers</div>
+              <div class="setting-sub">On: members can play this server's sounds from the soundboard in any voice channel they join, in any of their servers. Only the sound plays; nothing else about this server is shown.</div>
+            </div>
+            <input type="checkbox" id="sound-share-toggle" class="switch" />
+          </label>
           <div class="expr-toolbar">
             <button class="btn-primary btn-small" id="sound-upload">Upload Sound</button>
             <span class="expr-count" id="sound-count"></span>
@@ -1642,7 +1651,7 @@
   </div>
 
   <div class="soundboard-pop hidden" id="soundboard-pop">
-    <div class="sb-head"><span>Soundboard</span><span class="sb-server" id="sb-server"></span></div>
+    <div class="sb-head"><span>Soundboard</span><button class="btn-secondary btn-small sb-add hidden" id="sb-add">Add sound</button></div>
     <div class="sb-muted hidden" id="sb-muted">You muted soundboard clips in Settings, so you will not hear them.</div>
     <div class="sb-grid" id="sb-grid"></div>
   </div>

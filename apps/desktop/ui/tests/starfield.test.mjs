@@ -15,7 +15,7 @@ test("different ids paint different skies", () => {
 
 test("the sky is a deep base with a tinted glow and no animation hooks", () => {
   const { css } = starfield("abc", "10, 20, 30");
-  assert.match(css, /rgba\(10, 20, 30, 0\.5\)/);
+  assert.match(css, /rgba\(10, 20, 30, 0\.2\)/);
   assert.match(css, /#0b0d17/);
   assert.equal((css.match(/rgba\(242,239,230/g) || []).length, 32);
 });

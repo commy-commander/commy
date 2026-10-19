@@ -170,6 +170,18 @@ pub enum ServerEvent {
         user: UserId,
         bot: bool,
     },
+    SoundSharingSet {
+        server: ServerId,
+        shareable: bool,
+    },
+    SharedSoundPlay {
+        server: ServerId,
+        channel: ChannelId,
+        user: UserId,
+        name: String,
+        blob: String,
+        volume: f32,
+    },
 }
 
 #[cfg(test)]
@@ -212,6 +224,9 @@ mod tests {
         let rules = crate::automod::AutoMod::default();
         assert_eq!(wire_tag(ServerEvent::AutoModSet { server, rules }), 48);
         assert_eq!(wire_tag(ServerEvent::BotSet { server, user, bot: true }), 49);
+        assert_eq!(wire_tag(ServerEvent::SoundSharingSet { server, shareable: true }), 50);
+        let play = ServerEvent::SharedSoundPlay { server, channel, user, name: "n".into(), blob: "b".into(), volume: 1.0 };
+        assert_eq!(wire_tag(play), 51);
     }
 
     #[test]
