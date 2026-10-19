@@ -3,16 +3,6 @@ name: Desktop release
 on:
   push:
     tags: ["v*"]
-    branches: [main]
-    paths:
-      - "Cargo.lock"
-      - "**/Cargo.toml"
-      - ".github/workflows/release.yml"
-      - ".github/actions/release-config/**"
-  pull_request:
-    paths:
-      - ".github/workflows/release.yml"
-      - ".github/actions/release-config/**"
   schedule:
     - cron: "17 4 * * 1,4"
   workflow_dispatch:
@@ -22,7 +12,7 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 env:
   TAURI_CLI_VERSION: "2.12.3"
@@ -42,11 +32,11 @@ jobs:
             rust_targets: x86_64-pc-windows-msvc
             bundles: nsis
           - name: macOS arm64
-            os: macos-26
+            os: macos-15-intel
             target: aarch64-apple-darwin
             rust_targets: aarch64-apple-darwin
           - name: macOS x64
-            os: macos-26
+            os: macos-15-intel
             target: x86_64-apple-darwin
             rust_targets: x86_64-apple-darwin
           - name: Linux x64
@@ -157,7 +147,7 @@ jobs:
   macos-universal:
     name: macOS universal
     needs: build
-    runs-on: macos-26
+    runs-on: macos-15-intel
     defaults:
       run:
         shell: bash
