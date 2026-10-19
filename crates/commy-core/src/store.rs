@@ -875,7 +875,11 @@ impl ServerState {
                 self.same_server(server)?;
                 Ok(replace(&mut self.server.public, public))
             }
-            ServerEvent::SoundboardPlay { .. } => Ok(false),
+            ServerEvent::SoundSharingSet { server, shareable } => {
+                self.same_server(server)?;
+                Ok(replace(&mut self.server.sounds_shareable, shareable))
+            }
+            ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } => Ok(false),
             ServerEvent::GameTagsSet { server, tags, meta } => {
                 self.same_server(server)?;
                 let Some(tags) = crate::server::clean_game_tags(&tags) else { return Ok(false) };

@@ -117,14 +117,14 @@ function mockSeed() {
     members: [
       { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
-      { id: "m2", name: "nova", presence: "idle", custom_status: null },
+      { id: "m2", name: "nova", presence: "idle", custom_status: null, roles: ["r2"] },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
       { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
     ],
   };
   server.roles = [
     { id: "r1", name: "Raider", color: "9b7bff", position: 2, permissions: [], self_assignable: true, tag: "RAID" },
-    { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages"], self_assignable: false, tag: null },
+    { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages"], self_assignable: false, hoist: true, tag: null },
   ];
   server.game_tags = ["Rust", "Valorant"];
   server.emojis = [{ name: "ferris", image: "ferris@mock" }, { name: "ferris_wave", image: "ferris@mock" }];
@@ -297,7 +297,7 @@ async function mockInvoke(cmd, args = {}) {
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
         channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, ...c })),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
-        emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
+        emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
         can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
@@ -570,6 +570,11 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "fetch_expression": return (mock.expressions || {})[args.blob] || null;
     case "pick_sound": return null;
+    case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
+    case "list_shareable_sounds":
+      return Object.values(mock.servers).filter(s => s.sounds_shareable)
+        .flatMap(s => (s.sounds || []).map(x => ({ server: s.id, server_name: s.name, name: x.name, blob: x.blob, volume: x.volume ?? 1, emoji: x.emoji || null })));
+    case "play_shared_sound": return null;
     case "list_shareable_emojis":
       return Object.values(mock.servers).filter(s => s.emojis_shareable)
         .flatMap(s => (s.emojis || []).map(e => ({ server: s.id, server_name: s.name, name: e.name, image: e.image })));
@@ -630,7 +635,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_channel_limit": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).user_limit = args.limit; return null;
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
-      Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, tag: args.tag });
+      Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag });
       if (args.permissions) r.permissions = args.permissions;
       return null;
     }
@@ -773,7 +778,7 @@ async function mockInvoke(cmd, args = {}) {
     case "create_role": {
       const roles = mock.servers[args.serverId].roles;
       const id = crypto.randomUUID();
-      roles.push({ id, name: args.name.trim(), color: args.color, position: roles.length + 2, permissions: args.permissions, self_assignable: Boolean(args.selfAssignable), tag: args.tag || null });
+      roles.push({ id, name: args.name.trim(), color: args.color, position: roles.length + 2, permissions: args.permissions, self_assignable: Boolean(args.selfAssignable), hoist: Boolean(args.hoist), tag: args.tag || null });
       return id;
     }
     case "delete_role":
@@ -2585,14 +2590,13 @@ function renderMembers() {
   rememberAvatars(state.currentServer.members);
   renderCamGrid();
 
-  const online = state.currentServer.members.filter(m => m.presence !== "offline" && m.presence !== "invisible");
-  const offline = state.currentServer.members.filter(m => m.presence === "offline" || m.presence === "invisible");
-
   const sharers = new Set((state.currentServer.screen_shares || []).map(s => s.user));
 
-  const group = (title, members, dim) => {
+  const group = (title, members, dim, color) => {
     if (!members.length) return;
-    list.appendChild(el("div", "member-group", `${title} - ${members.length}`));
+    const heading = el("div", "member-group", `${title} - ${members.length}`);
+    if (color) heading.style.color = `#${color}`;
+    list.appendChild(heading);
     for (const member of members) {
       const row = el("div", "member" + (dim ? " offline" : ""));
       row.dataset.user = member.id;
@@ -2650,8 +2654,7 @@ function renderMembers() {
       list.appendChild(row);
     }
   };
-  group("Online", online, false);
-  group("Offline", offline, true);
+  for (const g of groupMembers(state.currentServer.members, state.currentServer.roles)) group(g.title, g.members, !!g.dim, g.color);
 }
 
 function renderMessages(messages) {
@@ -5551,6 +5554,13 @@ function roleForm(server, role, onClose) {
   pick.append(check, el("span", null, "Members can pick this role themselves (Choose Roles)"));
   body.appendChild(pick);
 
+  const separate = el("label", "role-self");
+  const hoistCheck = el("input");
+  hoistCheck.type = "checkbox";
+  hoistCheck.checked = role ? !!role.hoist : false;
+  separate.append(hoistCheck, el("span", null, "Show members with this role in their own group in the people list"));
+  body.appendChild(separate);
+
   const actions = el("div", "form-actions");
   const save = el("button", "btn-primary btn-small", creating ? "Create Role" : "Save Role");
   save.onclick = async () => {
@@ -5570,6 +5580,7 @@ function roleForm(server, role, onClose) {
           permissions,
           tag: tagValue,
           selfAssignable: check.checked,
+          hoist: hoistCheck.checked,
         });
       } else {
         await invoke("update_role", {
@@ -5578,6 +5589,7 @@ function roleForm(server, role, onClose) {
           name: name.value,
           color,
           selfAssignable: check.checked,
+          hoist: hoistCheck.checked,
           tag: tagValue,
           permissions,
         });
@@ -6616,6 +6628,9 @@ function renderSoundboardSettings(server) {
   $("sound-open-toggle").checked = Boolean(server.soundboard_open);
   $("sound-open-toggle").disabled = !server.can_manage_server;
   $("sound-open-row").classList.toggle("readonly", !server.can_manage_server);
+  $("sound-share-toggle").checked = Boolean(server.sounds_shareable);
+  $("sound-share-toggle").disabled = !server.can_manage_server;
+  $("sound-share-row").classList.toggle("readonly", !server.can_manage_server);
   $("sound-upload").classList.toggle("hidden", !server.can_upload_sounds);
   $("sound-upload").disabled = sounds.length >= MAX_SOUNDS;
   $("sound-count").textContent = `${sounds.length} of ${MAX_SOUNDS} sounds`;
@@ -6627,29 +6642,53 @@ function renderSoundboardSettings(server) {
   builtins.replaceChildren(...DEFAULT_SOUNDS.map(s => soundRow(server, { name: s.label, blob: `default:${s.id}`, volume: 1 }, false)));
 }
 
-async function uploadSound() {
-  const server = state.currentServer;
-  if (!server) return;
+async function pickValidSound() {
   let picked;
   try {
     picked = await pickSoundFile();
   } catch (e) {
     toast(String(e));
-    return;
+    return null;
   }
-  if (!picked) return;
+  if (!picked) return null;
   const [stem, dataUrl] = picked;
   let seconds;
   try {
     seconds = await audioDuration(dataUrl);
   } catch {
     toast("Could not read that sound file");
-    return;
+    return null;
   }
   if (seconds > MAX_SOUND_SECONDS + 0.2) {
     toast(`That clip is ${seconds.toFixed(1)} seconds; sounds can be up to ${MAX_SOUND_SECONDS}`);
+    return null;
+  }
+  return [stem, dataUrl];
+}
+
+async function uploadSoundFromFlyout(server) {
+  const picked = await pickValidSound();
+  if (!picked) return;
+  const [stem, dataUrl] = picked;
+  const name = freeExpressionName(expressionName(stem, "sound"), (server.sounds || []).map(s => s.name));
+  try {
+    await invoke("add_sound", { serverId: server.id, name, data: dataUrl.split(",")[1], volume: 1, emoji: null });
+    await refreshExpressions();
+    toast(`Added ${name} to the soundboard`);
+  } catch (e) {
+    toast(String(e));
     return;
   }
+  $("soundboard-pop").classList.add("hidden");
+  toggleSoundboardPop();
+}
+
+async function uploadSound() {
+  const server = state.currentServer;
+  if (!server) return;
+  const picked = await pickValidSound();
+  if (!picked) return;
+  const [stem, dataUrl] = picked;
   const play = el("button", "icon-btn sound-preview");
   play.title = "Preview";
   play.appendChild(svgIcon("play", 18));
@@ -6699,7 +6738,9 @@ async function toggleSoundboardPop() {
   }
   const grid = $("sb-grid");
   grid.replaceChildren();
-  $("sb-server").textContent = "";
+  const canAdd = server.can_upload_sounds && (server.sounds || []).length < MAX_SOUNDS;
+  $("sb-add").classList.toggle("hidden", !canAdd);
+  $("sb-add").onclick = () => uploadSoundFromFlyout(server);
   const addButton = (name, label, emoji) => {
     const btn = el("button", "sb-sound");
     btn.appendChild(emoji ? soundEmojiNode(emoji) : svgIcon("soundboard", 14));
@@ -6726,6 +6767,33 @@ async function toggleSoundboardPop() {
     grid.appendChild(el("div", "sb-empty", server.can_upload_sounds
       ? "No server sounds yet. Add some in Server Settings under Soundboard."
       : "This server has no sounds of its own yet."));
+  }
+  let others = [];
+  try {
+    others = (await invoke("list_shareable_sounds")).filter(s => s.server !== server.id);
+  } catch {}
+  let lastServer = null;
+  for (const sound of others) {
+    if (sound.server !== lastServer) {
+      grid.appendChild(el("div", "sb-section", sound.server_name));
+      lastServer = sound.server;
+    }
+    const btn = el("button", "sb-sound");
+    btn.appendChild(sound.emoji ? soundEmojiNode(sound.emoji) : svgIcon("soundboard", 14));
+    btn.appendChild(el("span", null, sound.name));
+    btn.title = `Play ${sound.name} from ${sound.server_name} for everyone in the channel`;
+    btn.disabled = !server.can_use_soundboard;
+    btn.onclick = async () => {
+      const now = Date.now();
+      if (now < soundboardCooldown) return;
+      soundboardCooldown = now + 1500;
+      try {
+        await invoke("play_shared_sound", { serverId: server.id, sourceServerId: sound.server, name: sound.name });
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    grid.appendChild(btn);
   }
   $("sb-muted").classList.toggle("hidden", soundboardPrefs().enabled);
   pop.classList.remove("hidden");
@@ -7675,6 +7743,43 @@ function buildDmIntro() {
   return intro;
 }
 
+function renderInvitePeople() {
+  const list = $("invite-people");
+  list.innerHTML = "";
+  const server = state.currentServer;
+  if (!server) return;
+  const query = $("invite-friend-search").value;
+  const people = inviteCandidates(state.people, friends.friends.map(f => f.id), server.members.map(m => m.id), query).slice(0, 40);
+  for (const person of people) {
+    const row = el("div", "person-row invite-person");
+    row.appendChild(avatarWithPresence(person.name, person.id));
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", person.name));
+    meta.appendChild(el("div", "dm-preview", person.friend ? "Friend" : person.servers.map(s => s.name).join(", ")));
+    row.appendChild(meta);
+    const sent = state.invitedNow.has(person.id);
+    const btn = el("button", sent ? "btn-secondary btn-small" : "btn-primary btn-small", sent ? "Sent" : "Invite");
+    btn.disabled = sent;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        await invoke("open_dm", { userId: person.id });
+        const sentDm = await invoke("send_dm", { userId: person.id, content: `Come join me in ${server.name}! ${$("invite-text").value}` });
+        state.invitedNow.add(person.id);
+        btn.className = "btn-secondary btn-small";
+        btn.textContent = "Sent";
+        dmSentToast(sentDm, person.name, `Invited ${person.name} to ${server.name}`);
+      } catch (e) {
+        btn.disabled = false;
+        toast(String(e));
+      }
+    };
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+  if (!people.length) list.appendChild(el("div", "dm-list-empty", query.trim() ? "Nobody matches that name." : "Everyone you know is already here."));
+}
+
 function openNewDm() {
   $("new-dm-search").value = "";
   renderNewDmList();
@@ -8529,11 +8634,16 @@ function wireEvents() {
       const invite = await invoke("get_invite", { serverId: state.currentServer.id });
       $("invite-text").value = invite;
       resetInviteDialog();
+      $("invite-friend-search").value = "";
+      state.invitedNow = new Set();
+      renderInvitePeople();
       showModal("modal-invite");
     } catch (e) {
       toast(String(e));
     }
   };
+
+  $("invite-friend-search").addEventListener("input", renderInvitePeople);
 
   $("invite-copy").onclick = async () => {
     await navigator.clipboard.writeText($("invite-text").value);
@@ -8617,6 +8727,17 @@ function wireEvents() {
     }
   };
   $("emoji-share-toggle").addEventListener("change", saveExpressionSettings);
+  $("sound-share-toggle").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_sound_sharing", { serverId: server.id, shareable: e.target.checked });
+      await refreshExpressions();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  });
   $("server-public-toggle").addEventListener("change", async e => {
     const server = state.currentServer;
     if (!server) return;
@@ -10041,6 +10162,7 @@ function renderRoleSettings(server) {
     label.appendChild(name);
     if (role.tag) label.appendChild(roleTagChip(role.tag, role.color));
     if (role.self_assignable) label.appendChild(el("span", "kind pickable", "pickable"));
+    if (role.hoist) label.appendChild(el("span", "kind", "own group"));
     const count = role.permissions.length;
     const perms = el("span", "kind", count ? (count === 1 ? "1 permission" : `${count} permissions`) : "no permissions");
     if (count) perms.title = role.permissions.map(p => (PERMISSION_LABELS.find(([v]) => v === p) || [p, p])[1]).join(", ");

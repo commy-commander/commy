@@ -28,7 +28,7 @@ function starfield(id, glow) {
   const gy = Math.round(rand() * 60);
   const rgb = glow || "71, 87, 214";
   const stars = layers.join(", ");
-  const nebula = `radial-gradient(ellipse 70% 120% at ${gx}% ${gy}%, rgba(${rgb}, 0.5), transparent 70%)`;
+  const nebula = `radial-gradient(ellipse 60% 110% at ${gx}% ${gy}%, rgba(${rgb}, 0.2), transparent 65%)`;
   return {
     stars,
     css: `${stars}, ${nebula}, linear-gradient(160deg, #151929, #0b0d17)`,

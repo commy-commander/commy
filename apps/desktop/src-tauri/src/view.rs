@@ -84,6 +84,7 @@ pub struct RoleView {
     pub position: u32,
     pub permissions: Vec<String>,
     pub self_assignable: bool,
+    pub hoist: bool,
     pub tag: Option<String>,
     pub banner: Option<String>,
 }
@@ -149,6 +150,7 @@ pub struct ServerView {
     pub sounds: Vec<SoundView>,
     pub emojis_shareable: bool,
     pub soundboard_open: bool,
+    pub sounds_shareable: bool,
     pub public: bool,
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
@@ -262,6 +264,7 @@ impl ServerView {
                 position: r.position,
                 permissions: permission_names(r.permissions),
                 self_assignable: r.self_assignable,
+                hoist: r.hoist,
                 tag: r.tag.clone(),
                 banner: r.banner.clone(),
             })
@@ -361,6 +364,7 @@ impl ServerView {
                 .collect(),
             emojis_shareable: state.server.emojis_shareable,
             soundboard_open: state.server.soundboard_open,
+            sounds_shareable: state.server.sounds_shareable,
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS)

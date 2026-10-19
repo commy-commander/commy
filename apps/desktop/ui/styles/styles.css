@@ -3071,7 +3071,8 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   flex-direction: column;
   gap: 8px;
 }
-.sb-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 14px; font-weight: 700; color: var(--text-normal); }
+.sb-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; font-weight: 700; color: var(--text-normal); }
+.sb-add { flex: none; }
 .sb-server { font-size: 12px; font-weight: 500; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-muted { font-size: 12px; color: var(--yellow, #f0b232); }
 .sb-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; overflow-y: auto; }
@@ -3890,6 +3891,11 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .invite-link-warning { margin: 4px 0 12px; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(255, 77, 77, .35); background: rgba(255, 77, 77, .08); color: var(--text-normal); font-size: 13px; line-height: 1.45; }
 .invite-field { font-size: 13px; line-height: 1.4; word-break: break-all; resize: none; color: var(--text-normal); }
 .invite-actions { display: flex; gap: 8px; }
+#modal-invite #invite-friend-search { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+.invite-people { height: 188px; margin-bottom: 12px; }
+.invite-person { cursor: default; }
+.invite-person .dm-meta { flex: 1; min-width: 0; }
+.invite-person button { flex: none; width: 72px; }
 .invite-expiry { margin: 4px 0 12px; }
 .invite-expiry .segmented button { padding: 8px 6px; }
 .invite-expiry-note { margin: -4px 0 12px; min-height: 18px; }
