@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
-import { bearer, captcha, deviceAuthorization, magicLink } from "better-auth/plugins";
+import { passkey } from "@better-auth/passkey";
+import { bearer, captcha, deviceAuthorization, magicLink, twoFactor } from "better-auth/plugins";
 import { APIError } from "better-auth/api";
 import pg from "pg";
 import { hasAccess } from "./access.js";
@@ -8,6 +9,7 @@ import { commyDevices } from "./devices.js";
 import { commyDoorbell } from "./doorbell.js";
 import { commyInvites } from "./invites.js";
 import { commyMedia } from "./media.js";
+import { commyPasswords, commySecurityNotices, commyTwoFactorEverywhere, noticeWhenALoginIsLinked } from "./security.js";
 import { commyVault } from "./vault.js";
 import { createMailer } from "./mailer.js";
 import { redisRateLimitStorage } from "./rate-limit.js";
@@ -43,6 +45,11 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     }),
     commyMedia({ secret: config.secret, klipyKey: config.klipyKey, igdb: config.igdb, fetch }),
     commyVault(),
+    twoFactor({ issuer: config.instanceName, allowPasswordless: true }),
+    commyTwoFactorEverywhere({ baseURL: config.baseURL }),
+    passkey({ rpID: new URL(config.baseURL).hostname, rpName: config.instanceName, origin: config.baseURL }),
+    commyPasswords(),
+    commySecurityNotices({ baseURL: config.baseURL, send }),
   ];
 
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
@@ -114,14 +121,32 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
           to: user.email,
           subject: `Verify your ${config.instanceName} email`,
           heading: "Verify your email",
-          body: "Confirm this address to finish creating your account. The link expires in 24 hours.",
+          body: "Confirm this address to use it for your account. The link expires in 24 hours.",
           actionLabel: "Verify email",
           url,
         }),
     },
     socialProviders: socialProviders(config),
+    user: {
+      changeEmail: {
+        enabled: Boolean(config.smtp),
+        sendChangeEmailConfirmation: ({ user, newEmail, url }) =>
+          send({
+            to: user.email,
+            subject: `Confirm your new ${config.instanceName} email`,
+            heading: "Change your email",
+            body: `Someone asked to move this account to ${newEmail}. Confirm here and we will send a last check to the new address. The link expires in 24 hours.`,
+            actionLabel: "Confirm the change",
+            url,
+          }),
+      },
+    },
     account: {
-      accountLinking: { enabled: true, trustedProviders: PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS },
+      accountLinking: {
+        enabled: true,
+        trustedProviders: PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS,
+        allowDifferentEmails: true,
+      },
       encryptOAuthTokens: true,
     },
     databaseHooks: {
@@ -144,6 +169,11 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
           before: storeSessionWithoutIpOrUserAgent,
         },
       },
+      account: {
+        create: {
+          after: noticeWhenALoginIsLinked({ baseURL: config.baseURL, send }),
+        },
+      },
     },
     rateLimit: {
       enabled: true,
@@ -156,6 +186,10 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/sign-in/magic-link": { window: 600, max: 5 },
         "/request-password-reset": { window: 600, max: 5 },
         "/send-verification-email": { window: 600, max: 5 },
+        "/change-email": { window: 600, max: 5 },
+        "/change-password": { window: 600, max: 10 },
+        "/commy/password/set": { window: 600, max: 10 },
+        "/passkey/verify-authentication": { window: 60, max: 10 },
         "/sign-in/social": { window: 60, max: 20 },
         "/device/code": { window: 60, max: 10 },
         "/device/approve": { window: 60, max: 10 },
