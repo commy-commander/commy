@@ -1,8 +1,10 @@
 use commy_core::identity::IdentityKey;
 use commy_core::{ServerId, UserId};
 use data_encoding::BASE32_NOPAD;
-use iroh::net::NodeAddr;
+use iroh::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+use std::net::SocketAddr;
 use thiserror::Error;
 
 const PREFIX: &str = "commy";
@@ -17,6 +19,49 @@ pub enum TicketError {
     BadVersion(u8),
     #[error("invite is corrupt")]
     Corrupt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeAddr {
+    pub node_id: [u8; 32],
+    pub info: AddrInfo,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddrInfo {
+    pub relay_url: Option<String>,
+    pub direct_addresses: BTreeSet<SocketAddr>,
+}
+
+impl NodeAddr {
+    pub fn new(node: EndpointId) -> Self {
+        Self { node_id: *node.as_bytes(), info: AddrInfo::default() }
+    }
+
+    pub fn node(&self) -> Option<EndpointId> {
+        EndpointId::from_bytes(&self.node_id).ok()
+    }
+
+    pub fn endpoint_addr(&self) -> Option<EndpointAddr> {
+        let relay = self.info.relay_url.as_deref().and_then(|url| url.parse::<RelayUrl>().ok());
+        let addrs = relay
+            .map(TransportAddr::Relay)
+            .into_iter()
+            .chain(self.info.direct_addresses.iter().copied().map(TransportAddr::Ip));
+        Some(EndpointAddr::from_parts(self.node()?, addrs))
+    }
+}
+
+impl From<&EndpointAddr> for NodeAddr {
+    fn from(addr: &EndpointAddr) -> Self {
+        Self {
+            node_id: *addr.id.as_bytes(),
+            info: AddrInfo {
+                relay_url: addr.relay_urls().next().map(|url| url.to_string()),
+                direct_addresses: addr.ip_addrs().copied().collect(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -82,7 +127,7 @@ impl ServerTicket {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iroh::net::key::SecretKey;
+    use iroh::SecretKey;
 
     fn sample() -> ServerTicket {
         let node_id = SecretKey::generate().public();
@@ -148,6 +193,33 @@ mod tests {
         let encoded = format!("commy{}", BASE32_NOPAD.encode(&bytes).to_ascii_lowercase());
         let decoded = ServerTicket::decode(&encoded).unwrap();
         assert_eq!(decoded, ServerTicket { owner: None, ..ticket });
+    }
+
+    #[test]
+    fn reads_invites_made_before_the_network_upgrade() {
+        let old = "commyaiigokk7waloir3exsziqmhx4lgkuccnn5xw4ytbonsqobyha4dqobyha4dqobyha4dqobyha4dqobyha4dqobyha4dqobybnz5bzxjjwc3y7uj26tcvtd7p6txsvfywny6kn4xe7p6m3acqlpyqch3ior2ha4z2f4xxezlmmf4s4y3pnvwxsltdnbqxilr2ha2dimzpaeamaaaca7iseaa";
+        let ticket = ServerTicket::decode(old).unwrap();
+        assert_eq!(ticket.server_name, "Moonbase");
+        assert_eq!(ticket.topic, [7u8; 32]);
+        let peer = &ticket.bootstrap[0];
+        assert_eq!(peer.node(), Some(SecretKey::from_bytes(&[5u8; 32]).public()));
+        let addr = peer.endpoint_addr().unwrap();
+        assert_eq!(addr.relay_urls().next().map(|u| u.to_string()), Some("https://relay.commy.chat:8443/".to_string()));
+        assert_eq!(addr.ip_addrs().copied().collect::<Vec<_>>(), vec!["192.0.2.7:4433".parse().unwrap()]);
+        assert_eq!(ServerTicket::decode(&ticket.encode()).unwrap(), ticket);
+    }
+
+    #[test]
+    fn endpoint_addresses_survive_the_ticket() {
+        let key = SecretKey::generate().public();
+        let addr = EndpointAddr::from_parts(
+            key,
+            [
+                TransportAddr::Relay("https://relay.commy.chat:8443".parse().unwrap()),
+                TransportAddr::Ip("192.0.2.9:7".parse().unwrap()),
+            ],
+        );
+        assert_eq!(NodeAddr::from(&addr).endpoint_addr(), Some(addr));
     }
 
     #[derive(Serialize)]

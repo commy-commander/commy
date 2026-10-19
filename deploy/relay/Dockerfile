@@ -1,6 +1,6 @@
-FROM rust:1.90-slim-bookworm AS build
-ARG IROH_NET_VERSION=0.28.2
-RUN cargo install iroh-net --version "=${IROH_NET_VERSION}" --features iroh-relay --bin iroh-relay --root /out
+FROM rust:1.91-slim-bookworm AS build
+ARG IROH_RELAY_VERSION=1.3.0
+RUN cargo install iroh-relay --locked --version "=${IROH_RELAY_VERSION}" --features server --bin iroh-relay --root /out
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget && rm -rf /var/lib/apt/lists/* \

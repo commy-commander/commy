@@ -1,11 +1,9 @@
-#![allow(deprecated, reason = "iroh 0.28 deprecates its networking layer in favour of a renamed crate")]
-
-use crate::node::NetEvent;
+use crate::node::{accept_error, NetEvent};
 use anyhow::{Context, Result};
-use iroh::net::endpoint::Connecting;
-use iroh::router::ProtocolHandler;
+use iroh::endpoint::Connection;
+use iroh::protocol::{AcceptError, ProtocolHandler};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
@@ -47,33 +45,36 @@ impl WakeAcceptor {
 }
 
 impl ProtocolHandler for WakeAcceptor {
-    fn accept(self: Arc<Self>, connecting: Connecting) -> futures_lite::future::Boxed<Result<()>> {
-        Box::pin(async move {
-            let connection = connecting.await?;
-            let node = *iroh::net::endpoint::get_remote_node_id(&connection)?.as_bytes();
-            let read = async {
-                let (mut send, mut recv) = connection.accept_bi().await?;
-                let mut byte = [0u8; 1];
-                recv.read_exact(&mut byte).await?;
-                anyhow::ensure!(byte[0] == WAKE_BYTE, "unknown wake");
-                send.write_all(&[WAKE_BYTE]).await?;
-                send.finish()?;
-                anyhow::Ok(send)
-            };
-            let mut send = tokio::time::timeout(WAKE_TIMEOUT, read).await.context("wake timed out")??;
-            if self.admit(node, Instant::now()) {
-                let _ = self.events.send(NetEvent::Wake { from: node });
-            }
-            let _ = tokio::time::timeout(Duration::from_secs(5), send.stopped()).await;
-            Ok(())
-        })
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        self.answer(connection).await.map_err(accept_error)
+    }
+}
+
+impl WakeAcceptor {
+    async fn answer(&self, connection: Connection) -> Result<()> {
+        let node = *connection.remote_id().as_bytes();
+        let read = async {
+            let (mut send, mut recv) = connection.accept_bi().await?;
+            let mut byte = [0u8; 1];
+            recv.read_exact(&mut byte).await?;
+            anyhow::ensure!(byte[0] == WAKE_BYTE, "unknown wake");
+            send.write_all(&[WAKE_BYTE]).await?;
+            send.finish()?;
+            anyhow::Ok(send)
+        };
+        let send = tokio::time::timeout(WAKE_TIMEOUT, read).await.context("wake timed out")??;
+        if self.admit(node, Instant::now()) {
+            let _ = self.events.send(NetEvent::Wake { from: node });
+        }
+        let _ = tokio::time::timeout(Duration::from_secs(5), send.stopped()).await;
+        Ok(())
     }
 }
 
 pub(crate) async fn send(
-    endpoint: iroh::net::Endpoint,
-    node: iroh::net::NodeId,
-    relay: Option<iroh::net::relay::RelayUrl>,
+    endpoint: iroh::Endpoint,
+    node: iroh::EndpointId,
+    relay: Option<iroh::RelayUrl>,
 ) -> Result<()> {
     let addr = crate::node::addr_with_relay(node, relay);
     let wake = async {

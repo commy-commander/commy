@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-relay = ["iroh/test-utils"]
+test-relay = ["dep:iroh-relay"]
 
 [dependencies]
 commy-core = { workspace = true }
@@ -21,6 +21,7 @@ tracing = { workspace = true }
 iroh = { workspace = true }
 iroh-gossip = { workspace = true }
 iroh-blobs = { workspace = true }
+iroh-relay = { workspace = true, features = ["server"], optional = true }
 futures-lite = "2"
 async-channel = "2"
 futures-util = { version = "0.3", features = ["sink"] }

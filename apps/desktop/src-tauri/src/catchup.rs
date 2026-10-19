@@ -982,7 +982,7 @@ fn member_of(m: commy_net::protocol::SyncMember) -> commy_core::Member {
 
 pub fn invite_nodes(raw: &str) -> Option<Vec<[u8; 32]>> {
     let ticket = commy_net::ServerTicket::decode(raw).ok()?;
-    Some(ticket.bootstrap.iter().map(|addr| *addr.node_id.as_bytes()).collect())
+    Some(ticket.bootstrap.iter().map(|addr| addr.node_id).collect())
 }
 
 pub fn joined_placeholder(state: &ServerState, me: UserId, invite: Option<&[[u8; 32]]>, our_node: [u8; 32]) -> bool {
