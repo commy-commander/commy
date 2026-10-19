@@ -1,9 +1,9 @@
 use chrono::{DateTime, Duration, Utc};
 use commy_core::automod::moderates;
-use commy_core::{ChannelId, ChannelKind, Hold, Message, Permissions, ServerId, ServerState, UserId};
-use std::collections::{HashMap, VecDeque};
+use commy_core::{ChannelId, ChannelKind, Hold, Message, MessageId, Permissions, ServerId, ServerState, UserId};
+use std::collections::HashMap;
 
-pub const FRESH_FOR_MINUTES: i64 = 10;
+pub const REVIEW_FOR_HOURS: i64 = crate::KEEP_HOURS;
 pub const STRIKE_WINDOW_MINUTES: i64 = 60;
 pub const MAX_BAN_AFTER: u32 = 50;
 const NAME_CHARS: usize = 40;
@@ -21,10 +21,12 @@ pub enum Act {
     Note { channel: ChannelId, text: String },
 }
 
+type Strikes = Vec<(DateTime<Utc>, MessageId)>;
+
 #[derive(Debug, Default)]
 pub struct Moderator {
     policy: Policy,
-    strikes: HashMap<(ServerId, UserId), VecDeque<DateTime<Utc>>>,
+    strikes: HashMap<(ServerId, UserId), Strikes>,
 }
 
 impl Moderator {
@@ -38,7 +40,8 @@ impl Moderator {
 
     pub fn review(&mut self, state: &ServerState, me: UserId, message: &Message, now: DateTime<Utc>) -> Vec<Act> {
         let written = message.edited_at.unwrap_or(message.created_at);
-        if message.author == me || now - written > Duration::minutes(FRESH_FOR_MINUTES) {
+        let Some(joined) = state.server.member(me).map(|m| m.joined_at) else { return Vec::new() };
+        if message.author == me || written < joined || now - written > Duration::hours(REVIEW_FOR_HOURS) {
             return Vec::new();
         }
         let Some(hold) = state.hold(message) else { return Vec::new() };
@@ -50,14 +53,13 @@ impl Moderator {
         let mut acts = vec![Act::Remove { message: message.clone(), hold }];
         let mut note = format!("Removed a message from {name}: {}", hold.describe());
         if let Some(limit) = self.policy.ban_after {
-            let window = Duration::minutes(STRIKE_WINDOW_MINUTES);
             let key = (state.server.id, author);
             let list = self.strikes.entry(key).or_default();
-            list.push_back(now);
-            while list.front().is_some_and(|t| now - *t > window) {
-                list.pop_front();
+            if !list.iter().any(|(_, id)| *id == message.id) {
+                let at = list.partition_point(|(t, _)| *t <= written);
+                list.insert(at, (written, message.id));
             }
-            let count = list.len();
+            let count = busiest_hour(list);
             if count >= limit as usize && can_ban(state, me, author) {
                 self.strikes.remove(&key);
                 acts.push(Act::Ban { user: author });
@@ -86,9 +88,25 @@ impl Moderator {
     }
 
     pub fn forget(&mut self, now: DateTime<Utc>) {
-        let window = Duration::minutes(STRIKE_WINDOW_MINUTES);
-        self.strikes.retain(|_, list| list.back().is_some_and(|t| now - *t <= window));
+        let keep = Duration::hours(REVIEW_FOR_HOURS) + Duration::minutes(STRIKE_WINDOW_MINUTES);
+        self.strikes.retain(|_, list| {
+            list.retain(|(t, _)| now - *t <= keep);
+            !list.is_empty()
+        });
     }
+}
+
+fn busiest_hour(sorted: &[(DateTime<Utc>, MessageId)]) -> usize {
+    let window = Duration::minutes(STRIKE_WINDOW_MINUTES);
+    let mut start = 0;
+    let mut most = 0;
+    for (end, (t, _)) in sorted.iter().enumerate() {
+        while *t - sorted[start].0 > window {
+            start += 1;
+        }
+        most = most.max(end + 1 - start);
+    }
+    most
 }
 
 pub fn can_remove(state: &ServerState, me: UserId) -> bool {

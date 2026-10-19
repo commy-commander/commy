@@ -72,9 +72,11 @@ do there.
 
 ## What it does and does not do
 
-- It acts on new messages and edits that break the rules: anything posted or
-  edited while it is running and less than ten minutes old. It does not sweep older history, so
-  changing the rules never deletes old messages on its own.
+- It acts on messages and edits that break the rules and were written after it
+  joined the server, up to a day old. That includes ones it only learns about
+  when it starts again or reconnects and catches up with other members. It does
+  not sweep older history, so changing the rules never deletes old messages on
+  its own.
 - Messages from the owner, from anyone with Manage Messages or Manage Server,
   and from exempt roles are never touched, the same as auto moderation.
 - Removals and bans are signed by the bot and are permanent like any

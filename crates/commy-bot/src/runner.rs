@@ -1,17 +1,20 @@
 use crate::moderator::{can_ban, can_remove};
 use crate::storage::DataDir;
-use crate::{Bot, Moderator, Policy, Replica};
+use crate::{Bot, BotStore, Moderator, Outgoing, Policy, Replica};
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use commy_core::{Permissions, Presence, ServerEvent, ServerId, ServerState, UserId, UserProfile};
 use commy_net::{CommyNode, NetEvent, WirePayload};
 use std::collections::BTreeSet;
 use std::future::Future;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub const BEAT: Duration = Duration::from_secs(45);
 pub const ASK_AGAIN: Duration = Duration::from_secs(30);
 pub const SAVE_EVERY: Duration = Duration::from_secs(30);
+pub const HIGHER_NODE_WAIT: Duration = Duration::from_secs(15);
+pub const RECENT_SESSION: Duration = Duration::from_secs(60);
 const FAREWELL_LINGER: Duration = Duration::from_millis(300);
 
 pub fn require_profile(data: &DataDir) -> Result<UserProfile> {
@@ -53,6 +56,9 @@ pub async fn run(data: &DataDir, policy: Policy, relays: Option<iroh::RelayMap>,
     tokio::spawn(async move { while media.recv().await.is_some() {} });
     tokio::spawn(async move { while dms.recv().await.is_some() {} });
     let tickets: Vec<_> = bot.replicas().map(|r| r.ticket.clone()).collect();
+    let (out, mut outgoing) = tokio::sync::mpsc::unbounded_channel();
+    let store = Arc::new(BotStore::new(Arc::new(Mutex::new(bot)), out));
+    node.set_catchup_store(store.clone());
     for ticket in &tickets {
         node.rejoin_server(ticket).await.with_context(|| format!("could not join {}", ticket.server_name))?;
         tracing::info!("connecting to {}", ticket.server_name);
@@ -67,71 +73,128 @@ pub async fn run(data: &DataDir, policy: Policy, relays: Option<iroh::RelayMap>,
         tokio::select! {
             event = events.recv() => {
                 let Some(event) = event else { break };
-                if let Some(server) = handle(&mut bot, &node, event).await {
+                if let Some(server) = handle(&store, &node, event).await {
                     dirty.insert(server);
                 }
             }
+            Some(item) = outgoing.recv() => match item {
+                Outgoing::Send(server, payload) => send(&node, server, *payload).await,
+                Outgoing::Changed(server) => {
+                    dirty.insert(server);
+                }
+            },
             _ = beat.tick() => {
-                bot.tidy(Utc::now());
-                for server in joined(&bot, &node) {
-                    if let Some(payload) = bot.presence(server, Presence::Online, now_ms()) {
-                        send(&node, server, payload).await;
-                    }
+                let beats: Vec<_> = {
+                    let mut bot = store.bot();
+                    bot.tidy(Utc::now());
+                    joined(&bot, &node).into_iter().filter_map(|s| Some((s, bot.presence(s, Presence::Online, now_ms())?))).collect()
+                };
+                for (server, payload) in beats {
+                    send(&node, server, payload).await;
                 }
             }
             _ = ask.tick() => {
-                let waiting: Vec<ServerId> = bot.replicas().filter(|r| r.state.is_none()).map(|r| r.server()).collect();
+                let waiting: Vec<ServerId> = store.bot().replicas().filter(|r| r.state.is_none()).map(|r| r.server()).collect();
                 for server in waiting.into_iter().filter(|s| node.neighbor_count(*s) > 0) {
                     send(&node, server, WirePayload::SyncRequest).await;
                 }
             }
             _ = saving.tick() => {
                 for server in std::mem::take(&mut dirty) {
-                    save(data, &bot, server);
+                    save(data, &store.bot(), server);
                 }
             }
             _ = &mut stop => break,
         }
     }
-    for server in joined(&bot, &node) {
-        if let Some(payload) = bot.presence(server, Presence::Offline, now_ms()) {
-            send(&node, server, payload).await;
-        }
+    let farewells: Vec<_> = {
+        let mut bot = store.bot();
+        joined(&bot, &node).into_iter().filter_map(|s| Some((s, bot.presence(s, Presence::Offline, now_ms())?))).collect()
+    };
+    for (server, payload) in farewells {
+        send(&node, server, payload).await;
     }
     tokio::time::sleep(FAREWELL_LINGER).await;
-    for server in bot.replicas().map(|r| r.server()).collect::<Vec<_>>() {
-        save(data, &bot, server);
+    {
+        let bot = store.bot();
+        for server in bot.replicas().map(|r| r.server()).collect::<Vec<_>>() {
+            save(data, &bot, server);
+        }
     }
     node.shutdown().await
 }
 
-async fn handle(bot: &mut Bot, node: &CommyNode, event: NetEvent) -> Option<ServerId> {
+async fn handle(store: &Arc<BotStore>, node: &CommyNode, event: NetEvent) -> Option<ServerId> {
     match event {
         NetEvent::Event { server, event, action, .. } => {
             let fleeting = matches!(event, ServerEvent::PresenceUpdate { .. } | ServerEvent::TypingStart { .. });
-            for payload in bot.on_event(server, event, action, Instant::now(), Utc::now()) {
+            let out = store.bot().on_event(server, event, action, Instant::now(), Utc::now());
+            for payload in out {
                 send(node, server, payload).await;
             }
             (!fleeting).then_some(server)
         }
         NetEvent::SyncReceived { server, payload } => {
-            let out = bot.on_snapshot(server, payload, now_ms())?;
-            if let Some(state) = bot.replica(server).and_then(|r| r.state.as_ref()) {
-                tracing::info!("joined {}: {}", state.server.name, status_line(state, Some(bot.profile().id)));
-                warn_missing_permissions(bot, state);
-            }
+            let out = {
+                let mut bot = store.bot();
+                let out = bot.on_snapshot(server, payload, Instant::now(), Utc::now())?;
+                if let Some(state) = bot.replica(server).and_then(|r| r.state.as_ref()) {
+                    tracing::info!("joined {}: {}", state.server.name, status_line(state, Some(bot.profile().id)));
+                    warn_missing_permissions(&bot, state);
+                }
+                out
+            };
             for payload in out {
                 send(node, server, payload).await;
             }
+            for peer in node.neighbors(server) {
+                catch_up(store, node, server, peer);
+            }
             Some(server)
         }
-        NetEvent::NeighborUp { server, .. } => {
-            for payload in bot.announcements(server, now_ms()) {
+        NetEvent::NeighborUp { server, peer } => {
+            let out = store.bot().announcements(server, now_ms());
+            for payload in out {
                 send(node, server, payload).await;
             }
+            catch_up(store, node, server, peer);
+            None
+        }
+        NetEvent::CaughtUp { server, peer, report } => {
+            store.finish(server, peer);
+            log_session(server, &report);
             None
         }
         _ => None,
+    }
+}
+
+fn catch_up(store: &Arc<BotStore>, node: &CommyNode, server: ServerId, peer: [u8; 32]) {
+    if store.bot().replica(server).and_then(|r| r.state.as_ref()).is_none() {
+        return;
+    }
+    let wait = (node.node_id_bytes() > peer).then_some(HIGHER_NODE_WAIT);
+    let session = node.catch_up(server, peer, store.clone());
+    let store = store.clone();
+    tokio::spawn(async move {
+        if let Some(wait) = wait {
+            tokio::time::sleep(wait).await;
+        }
+        if !store.begin(server, peer, wait.map(|_| RECENT_SESSION)) {
+            return;
+        }
+        let result = session.await;
+        store.finish(server, peer);
+        match result {
+            Ok(report) => log_session(server, &report),
+            Err(e) => tracing::debug!("catch-up with a peer ended: {e:#}"),
+        }
+    });
+}
+
+fn log_session(server: ServerId, report: &commy_net::catchup::SessionReport) {
+    if !report.received.is_empty() || report.held > 0 {
+        tracing::info!("caught up on {server}: received {}, held {}", report.received.len(), report.held);
     }
 }
 
