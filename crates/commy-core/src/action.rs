@@ -113,6 +113,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::PublicSet { .. } => "public".into(),
         E::GameTagsSet { .. } => "game_tags".into(),
         E::RulesSet { .. } => "rules".into(),
+        E::AutoModSet { .. } => "automod".into(),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
         E::ExpressionSettings { .. } => "expressions".into(),
         E::EmojiAdd { emoji, .. } => format!("emoji:{}", emoji.name),
@@ -151,7 +152,7 @@ pub fn settles_authority(subject: &str) -> bool {
 
 pub fn snapshot_omits(subject: &str) -> bool {
     const OMITTED: [&str; 6] = ["emoji:", "sound:", "event:", "pin:", "channel.key:", "channel.grant:"];
-    subject == "rules" || OMITTED.iter().any(|p| subject.starts_with(p))
+    subject == "rules" || subject == "automod" || OMITTED.iter().any(|p| subject.starts_with(p))
 }
 
 pub fn relayable(event: &ServerEvent) -> bool {
@@ -212,6 +213,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::PublicSet { .. }
         | E::GameTagsSet { .. }
         | E::RulesSet { .. }
+        | E::AutoModSet { .. }
         | E::AfkChannelSet { .. }
         | E::AfkTimeoutSet { .. }
         | E::ExpressionSettings { .. } => allows(Permissions::MANAGE_SERVER),
@@ -646,6 +648,7 @@ mod tests {
         let rename = SignedEvent::sign(sid, owner, old, ServerEvent::ChannelUpdate { server: sid, channel, name: "old".into(), retention_days: None }, &identity_for(owner));
         assert_eq!(state.apply_signed(&rename), Ok(false), "what the snapshot carries stays as it said");
         assert!(snapshot_omits("rules") && snapshot_omits("pin:x") && !snapshot_omits("rules_accept:x"));
+        assert!(snapshot_omits("automod"));
     }
 
     #[test]

@@ -40,6 +40,13 @@ impl KeyHolder {
         self.with_ring(state, message.channel, |ring| channel_key::read_message(state.server.id, message, ring))?
     }
 
+    pub fn hold(&self, state: &ServerState, message: &Message) -> Option<commy_core::Hold> {
+        match self.open(state, message) {
+            Some(opened) => state.automod().hold(&state.server, state.messages(message.channel), &opened),
+            None => state.hold(message),
+        }
+    }
+
     pub fn key_ready(&self, state: &ServerState, channel: ChannelId) -> bool {
         let private = state.server.channel(channel).is_some_and(|c| c.is_private());
         !private || self.with_ring(state, channel, |ring| ring.sending_key(state, channel).is_some()).unwrap_or(false)

@@ -402,10 +402,14 @@ pub fn apply_page(
     let fresh = report
         .applied
         .iter()
-        .filter(|id| state.has_message(**id))
+        .filter(|id| shown_to_members(state, **id))
         .filter_map(|id| new.get(id).cloned())
         .collect();
     (report, held, fresh)
+}
+
+fn shown_to_members(state: &ServerState, id: MessageId) -> bool {
+    state.message(id).is_some_and(|m| state.hold(m).is_none())
 }
 
 fn item_signer(event: &ServerEvent) -> Option<UserId> {
@@ -434,7 +438,7 @@ pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<Held>) -
             Ok(true) => {
                 out.changed = true;
                 if let Some((id, fresh)) = new_message {
-                    if state.has_message(id) {
+                    if shown_to_members(state, id) {
                         out.fresh.push(fresh);
                     }
                 }

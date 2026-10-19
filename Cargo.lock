@@ -881,6 +881,7 @@ name = "commy-core"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "base64 0.22.1",
  "chrono",
  "curve25519-dalek 4.1.3",
  "data-encoding",

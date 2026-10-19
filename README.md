@@ -9,12 +9,15 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 
 ## What you can do
 
-- **Servers and channels.** Create a server, add text and voice channels,
-  group servers into folders, and invite people with a link.
+- **Servers and channels.** Create a server from scratch or a starter
+  template, add text and voice channels, group servers into folders, and
+  invite people with a link. Copy any server's channels, roles and rules as a
+  template code so others can start from the same layout.
 - **Roles and moderation.** Colored roles with fine-grained permissions,
-  kick and ban, server mute and deafen, pinned messages and announcements.
-  Channels can be limited to roles. Messages sent in a private channel are
-  encrypted so only those roles and admins can read them.
+  kick and ban, server mute and deafen, pinned messages and announcements,
+  and auto moderation that holds messages with blocked words, links, too many
+  mentions or flooding. Channels can be limited to roles. Messages sent in a
+  private channel are encrypted so only those roles and admins can read them.
 - **Rich chat.** Replies, reactions, edits, emoji (including custom server
   emoji), images and files shown inline, clickable links, and a GIF picker when the server
   operator has set up a GIF provider key.
