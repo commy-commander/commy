@@ -12,7 +12,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Servers and channels.** Create a server, add text and voice channels,
   group servers into folders, and invite people with a link.
 - **Roles and moderation.** Colored roles with fine-grained permissions,
-  kick and ban, server mute and deafen, pinned messages and announcements.
+  kick and ban, server mute and deafen, pinned messages and announcements,
+  and auto moderation that holds messages with blocked words, links, too many
+  mentions or flooding.
 - **Rich chat.** Replies, reactions, edits, emoji (including custom server
   emoji), images and files shown inline, clickable links, and a GIF picker when the server
   operator has set up a GIF provider key.

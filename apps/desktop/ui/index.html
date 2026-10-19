@@ -1210,6 +1210,7 @@
         <button class="settings-tab" data-tab="channels" id="tab-channels">Channels</button>
         <button class="settings-tab" data-tab="roles" id="tab-roles">Roles</button>
         <button class="settings-tab" data-tab="rules" id="tab-rules">Rules</button>
+        <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
         <button class="settings-tab" data-tab="emoji" id="tab-emoji">Emoji</button>
         <button class="settings-tab" data-tab="soundboard" id="tab-soundboard">Soundboard</button>
         <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
@@ -1362,6 +1363,47 @@
             <button class="btn-primary btn-small" id="rules-save">Save Rules</button>
             <button class="btn-link danger hidden" id="rules-remove">Remove Rules</button>
             <span class="expr-count" id="rules-count"></span>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="automod">
+          <h1>Auto Moderation</h1>
+          <div class="setting-sub expr-intro">Every member's Commy app checks messages against these rules, including ones already posted. A message that breaks a rule is held: members don't see it and aren't notified, and moderators see it marked in the channel so they can deal with it. The owner and anyone who can manage messages or the server are never held. Currently: <span id="automod-status">Off</span>.</div>
+          <h2 class="settings-subhead">Blocked words</h2>
+          <div class="settings-card automod-terms-card">
+            <div class="setting-sub">One word or phrase per line. Capitals and punctuation are ignored and whole words must match, so "ass" does not catch "class". End a word with * to catch every word that starts with it.</div>
+            <textarea id="automod-terms" rows="7" spellcheck="false" placeholder="free gifts&#10;scam*"></textarea>
+            <span class="expr-count" id="automod-count"></span>
+          </div>
+          <h2 class="settings-subhead">Spam</h2>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Block links</div>
+              <div class="setting-sub">Hold messages with web addresses (http, https or www.).</div>
+            </div>
+            <input type="checkbox" id="automod-links" class="switch" />
+          </label>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Mention limit</div>
+              <div class="setting-sub">Hold messages that @mention more people than this, @everyone and @here included.</div>
+            </div>
+            <select id="automod-mentions" class="compact-select"></select>
+          </div>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Flood limit</div>
+              <div class="setting-sub">When someone posts faster than this in one channel, their extra messages are held.</div>
+            </div>
+            <select id="automod-burst" class="compact-select"></select>
+          </div>
+          <h2 class="settings-subhead">Exempt roles</h2>
+          <div class="settings-card">
+            <div class="setting-sub">Members with these roles are never held.</div>
+            <div class="perm-grid automod-roles" id="automod-roles"></div>
+          </div>
+          <div class="expr-toolbar">
+            <button class="btn-primary btn-small" id="automod-save">Save</button>
           </div>
         </section>
 
@@ -1543,6 +1585,7 @@
   <script src="scripts/embeds.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/pins.js"></script>
+  <script src="scripts/automod.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>

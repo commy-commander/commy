@@ -281,9 +281,10 @@ fn get_messages(
     let sid = server_id.parse().map_err(err_to_string)?;
     let cid = channel_id.parse().map_err(err_to_string)?;
     let pending = app.outbox.lock().unwrap().pending_ids(sid);
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
-    Ok(view::message_views(state, cid, 100, &pending))
+    Ok(view::message_views(state, cid, 100, &pending, me))
 }
 
 async fn commit_message(
@@ -300,6 +301,7 @@ async fn commit_message(
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         require_rules_accepted(state, message.author)?;
         require_can_post(app, state, message.author, message.channel)?;
+        refuse_held(state.hold(&message))?;
         state.apply(event.clone()).map_err(err_to_string)?;
         MessageView::build(&message, state)
     };
@@ -436,6 +438,10 @@ async fn edit_message(
         let original = state.messages(cid).iter().find(|m| m.id == mid).ok_or("that message no longer exists")?;
         if original.author != me.id {
             return Err("you can only edit your own messages".into());
+        }
+        let rules = state.automod();
+        if !rules.exempt(&state.server, me.id) {
+            refuse_held(rules.content_hold(&content))?;
         }
         sign_edit(sid, original, content, chrono::Utc::now(), &identity)?
     };
@@ -2987,6 +2993,34 @@ fn require_can_post(app: &App, state: &ServerState, user: UserId, channel: Chann
     Ok(())
 }
 
+fn refuse_held(hold: Option<commy_core::Hold>) -> CmdResult<()> {
+    hold.map_or(Ok(()), |hold| Err(hold.refusal().into()))
+}
+
+#[tauri::command]
+async fn set_automod(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    rules: commy_core::AutoMod,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change auto moderation")?;
+    let rules = rules.tidied();
+    if !rules.valid() {
+        return Err(automod_limits());
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::AutoModSet { server: sid, rules }).await
+}
+
+fn automod_limits() -> String {
+    use commy_core::automod::{MAX_BLOCKED_TERMS, MAX_TERMS_BYTES, MAX_TERM_BYTES};
+    format!(
+        "keep it to {MAX_BLOCKED_TERMS} blocked words of up to {MAX_TERM_BYTES} characters each, {MAX_TERMS_BYTES} characters in all"
+    )
+}
+
 fn require_rules_accepted(state: &ServerState, user: UserId) -> CmdResult<()> {
     let exempt = user == state.server.owner || state.server.permissions_for(user).allows(Permissions::MANAGE_SERVER);
     if state.server.rules.is_some() && !exempt && !state.server.rules_accepted.contains(&user) {
@@ -4822,6 +4856,9 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
     let payload = {
         let servers = app.servers.lock().unwrap();
         let Some(state) = servers.get(&sid) else { return };
+        if state.hold(message).is_some() {
+            return;
+        }
         serde_json::json!({
             "server": sid.to_string(),
             "server_name": state.server.name,
@@ -5256,6 +5293,7 @@ pub fn run() {
             set_overlay_settings,
             set_game_tags,
             set_rules,
+            set_automod,
             accept_rules,
             save_event,
             delete_event,
