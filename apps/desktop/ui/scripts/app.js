@@ -1553,7 +1553,7 @@ function paintSidebarBanner() {
   header.classList.toggle("has-banner", Boolean(server));
   header.classList.toggle("plain", Boolean(server) && !ref);
   banner.style.backgroundImage = "";
-  header.style.setProperty("--slot", server ? serverColors(server.id).css : "");
+  header.style.setProperty("--slot", server ? starfield(server.id, serverColors(server.id).glow).css : "");
   if (!ref) return;
   loadServerImage(ref).then(url => {
     if (url && state.currentServer && state.currentServer.banner === ref) {
@@ -7135,8 +7135,7 @@ function renderDmProfile(userId, name) {
 }
 
 function bannerColor(userId) {
-  const hue = tintHue(userId);
-  return `linear-gradient(135deg, hsl(${hue} 42% 40%), hsl(${(hue + 40) % 360} 45% 26%))`;
+  return starfield(userId, hueGlow(tintHue(userId))).css;
 }
 
 function roleGradient(hex) {
@@ -9597,7 +9596,7 @@ async function onAccountChanged() {
 function paintAccountBanner() {
   const strip = $("account-banner");
   strip.dataset.banner = "";
-  paintProfileBanner(strip, state.user.banner, state.user.node, null, "linear-gradient(135deg, var(--accent), var(--accent-deep))");
+  paintProfileBanner(strip, state.user.banner, state.user.node, null, bannerColor(state.user.id));
   $("account-banner-upload").lastElementChild.textContent = state.user.banner ? "Change banner" : "Add banner";
   $("account-banner-remove").classList.toggle("hidden", !state.user.banner);
 }
