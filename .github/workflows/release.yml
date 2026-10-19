@@ -42,11 +42,11 @@ jobs:
             rust_targets: x86_64-pc-windows-msvc
             bundles: nsis
           - name: macOS arm64
-            os: macos-26
+            os: macos-15-intel
             target: aarch64-apple-darwin
             rust_targets: aarch64-apple-darwin
           - name: macOS x64
-            os: macos-26
+            os: macos-15-intel
             target: x86_64-apple-darwin
             rust_targets: x86_64-apple-darwin
           - name: Linux x64
@@ -157,7 +157,7 @@ jobs:
   macos-universal:
     name: macOS universal
     needs: build
-    runs-on: macos-26
+    runs-on: macos-15-intel
     defaults:
       run:
         shell: bash
