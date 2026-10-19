@@ -3477,7 +3477,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .integration-steps a:hover { text-decoration: underline; }
 .integration-steps code { background: var(--bg-darkest); padding: 1px 4px; border-radius: 3px; }
 .integration-card .field-label { margin-top: 10px; }
-.integration-card input[type="text"], .integration-card input[type="password"] { width: 100%; box-sizing: border-box; }
+.integration-card input[type="text"], .integration-card input[type="password"], .integration-card select { width: 100%; box-sizing: border-box; }
 .integration-actions { align-items: center; gap: 12px; }
 .integration-result { flex: 1; font-size: 13px; color: var(--text-muted); }
 .integration-result.ok { color: var(--green); }

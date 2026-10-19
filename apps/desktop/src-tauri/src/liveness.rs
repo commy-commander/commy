@@ -119,7 +119,9 @@ pub async fn farewell(app: &App) {
 }
 
 pub fn say_goodbye(app: &App) {
-    let _ = tauri::async_runtime::block_on(tokio::time::timeout(FAREWELL_WAIT, farewell(app)));
+    tauri::async_runtime::block_on(async {
+        let _ = tokio::time::timeout(FAREWELL_WAIT, farewell(app)).await;
+    });
 }
 
 pub async fn run(access: impl AppAccess) {
@@ -225,5 +227,15 @@ mod tests {
         assert_eq!(speaker(&beat, Some(&by(other.id))), None);
         let relayed = ServerEvent::RulesAccept { server: sid, user: friend.id };
         assert_eq!(speaker(&relayed, Some(&by(friend.id))), None);
+    }
+
+    #[test]
+    fn saying_goodbye_works_from_the_exit_handler_outside_the_runtime() {
+        let me = UserProfile::new("me");
+        let (app, _) = app_with(&[&me]);
+        *app.profile.lock().unwrap() = Some(me);
+        let started = Instant::now();
+        std::thread::spawn(move || say_goodbye(&app)).join().expect("no panic outside the runtime");
+        assert!(started.elapsed() >= FAREWELL_LINGER);
     }
 }
