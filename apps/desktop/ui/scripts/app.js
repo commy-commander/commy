@@ -96,6 +96,7 @@ function mockSeed() {
       ch(":ferris:-rust-help", "text", "Borrow checker support group"),
       ch("news", "announcement", "Patch notes and server news"),
       ch("General", "voice"),
+      ch("mod-lounge", "text", "For the moderators"),
     ],
     members: [
       { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
@@ -114,6 +115,7 @@ function mockSeed() {
   mock.serverImages = { ...(mock.serverImages || {}), "welcome-banner@mock": mockBannerImage() };
   server.channels[0].banner = "welcome-banner@mock";
   server.channels[1].color = "9b7bff";
+  server.channels[5].view_roles = ["r2"];
   server.rules = "# Welcome\n1. Be kind to each other\n2. **No spam** or self promotion\n3. Keep it on topic, see https://commy.chat";
   server.needs_rules = true;
   const general = server.channels[3];
@@ -223,7 +225,7 @@ async function mockInvoke(cmd, args = {}) {
       const members = [...s.members];
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: mock.user.username, presence, custom_status: null };
+        const me = { id: "me", name: mock.user.username, presence, custom_status: null, roles: s.myRoles || [] };
         const vc = s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -234,7 +236,14 @@ async function mockInvoke(cmd, args = {}) {
       return {
         ...s, members, screen_shares: [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
-        channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, ...c })),
+        channels: s.channels
+          .map((c, i) => {
+            const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
+            const sees = admits(c.view_roles);
+            const sendable = admits(c.send_roles);
+            return { parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], ...c, can_view: sees, can_send: sees && sendable, key_ready: sees };
+          })
+          .filter(c => c.can_view || !mock.plainMember),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
@@ -276,6 +285,12 @@ async function mockInvoke(cmd, args = {}) {
     case "pin_message": {
       mock.pins = (mock.pins || []).filter(p => p.message !== args.messageId);
       if (args.pinned) mock.pins.push({ channel: args.channelId, message: args.messageId, by: "me", at: new Date().toISOString() });
+      return null;
+    }
+    case "set_channel_access": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      c.view_roles = [...args.viewRoles];
+      c.send_roles = [...args.sendRoles];
       return null;
     }
     case "set_channel_kind": {
@@ -764,6 +779,7 @@ const ICONS = {
   uploadFile: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z",
   movie: "M4 6.47 5.76 10H20v8H4V6.47M22 4h-4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2z",
   gifBox: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H5V5h14zM9.5 13v-1h1v1a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1h-2v2zm3 1h-1v-4h1zm4-3h-2v.5H16v1h-1.5V14h-1v-4h3z",
+  lock: "M12 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6-9h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zM8.9 6a3.1 3.1 0 0 1 6.2 0v2H8.9zM18 20H6V10h12z",
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
 };
 
@@ -1417,10 +1433,22 @@ function channelMark(channel, size = 18) {
   return el("span", "hash", "#");
 }
 
+function channelLockMark(row, channel) {
+  if (!channelIsPrivate(channel)) return;
+  const mark = el("span", "channel-lock");
+  mark.appendChild(svgIcon("lock", 14));
+  mark.title = channel.can_view === false
+    ? `Only ${accessWho(state.currentServer, channel.view_roles)} can read this channel`
+    : `Only ${accessWho(state.currentServer, channel.view_roles)} can see this channel`;
+  row.appendChild(mark);
+  if (channel.can_view === false) row.classList.add("unreadable");
+}
+
 function textChannelRow(channel, canCreate) {
   const row = el("div", "channel");
   row.appendChild(channelMark(channel));
   row.appendChild(channelNameNode(channel, "channel-label"));
+  channelLockMark(row, channel);
   paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
   if (unread.channels.get(channel.id)) row.classList.add("unread");
@@ -1435,6 +1463,7 @@ function voiceChannelRow(channel, canCreate) {
   icon.appendChild(svgIcon("speaker", 18));
   row.appendChild(icon);
   row.appendChild(channelNameNode(channel, "channel-label"));
+  channelLockMark(row, channel);
   paintChannelBand(row, channel);
   const full = voiceFull(channel);
   if (channel.id === state.voiceChannelId) {
@@ -1450,6 +1479,10 @@ function voiceChannelRow(channel, canCreate) {
     row.appendChild(badge);
   }
   row.onclick = () => {
+    if (channel.can_view === false) {
+      toast(`Only ${accessWho(state.currentServer, channel.view_roles)} can join this channel`);
+      return;
+    }
     if (full) {
       toast("That voice channel is full");
       return;
@@ -2261,7 +2294,7 @@ function editingChannel() {
   return state.currentServer && state.currentServer.channels.find(c => c.id === editingChannelId);
 }
 
-function openChannelSettings(channelId) {
+function openChannelSettings(channelId, tab = "overview") {
   editingChannelId = channelId;
   const channel = editingChannel();
   if (!channel) return;
@@ -2286,7 +2319,77 @@ function openChannelSettings(channelId) {
   paintChannelBandPreview();
   syncChannelDirty();
   paintChannelBannerCard(channel);
-  openSettingsLayer("channel-settings", "overview");
+  $("channel-tab-permissions").classList.toggle("hidden", channel.kind === "category");
+  accessDraft = { view: [...(channel.view_roles || [])], send: [...(channel.send_roles || [])] };
+  paintChannelAccess();
+  openSettingsLayer("channel-settings", tab);
+}
+
+let accessDraft = null;
+
+function holdsAnyRole(server, ids) {
+  const me = state.user && state.user.id;
+  if (!me || server.owner === me) return true;
+  const mine = (server.members.find(m => m.id === me) || {}).roles || [];
+  const admin = server.roles.some(r => mine.includes(r.id) && (r.permissions || []).includes("administrator"));
+  return admin || ids.some(id => mine.includes(id));
+}
+
+function paintAccessChips(container, server, ids, onChange) {
+  container.replaceChildren();
+  const everyone = el("button", "access-chip" + (ids.length ? "" : " picked"), "Everyone");
+  everyone.type = "button";
+  everyone.onclick = () => onChange([]);
+  container.appendChild(everyone);
+  for (const role of server.roles) {
+    const chip = el("button", "access-chip" + (ids.includes(role.id) ? " picked" : ""));
+    chip.type = "button";
+    const dot = el("span", "role-dot");
+    if (role.color) dot.style.background = `#${role.color}`;
+    chip.append(dot, el("span", null, role.name));
+    chip.onclick = () => onChange(toggleAccessRole(ids, role.id));
+    container.appendChild(chip);
+  }
+}
+
+function paintChannelAccess() {
+  const channel = editingChannel();
+  const server = state.currentServer;
+  if (!channel || !server || !accessDraft) return;
+  $("channel-view-title").textContent = channel.kind === "voice" ? "Who can see and join this channel" : "Who can see this channel";
+  $("channel-send-card").classList.toggle("hidden", !holdsMessages(channel));
+  paintAccessChips($("channel-view-roles"), server, accessDraft.view, ids => {
+    accessDraft.view = ids;
+    paintChannelAccess();
+  });
+  paintAccessChips($("channel-send-roles"), server, accessDraft.send, ids => {
+    accessDraft.send = ids;
+    paintChannelAccess();
+  });
+  let note = "";
+  if (!server.roles.length) note = "Create roles in Server Settings to lock this channel to them.";
+  else if (accessDraft.view.length && !holdsAnyRole(server, accessDraft.view)) note = "You don't hold any of these roles, so you won't be able to read this channel.";
+  $("channel-access-note").textContent = note;
+  const dirty = !sameAccess(accessDraft.view, channel.view_roles) || !sameAccess(accessDraft.send, channel.send_roles);
+  $("channel-access-save-bar").classList.toggle("hidden", !dirty);
+}
+
+async function saveChannelAccess() {
+  const channel = editingChannel();
+  if (!channel || !accessDraft) return;
+  try {
+    await invoke("set_channel_access", {
+      serverId: state.currentServer.id,
+      channelId: channel.id,
+      viewRoles: accessDraft.view,
+      sendRoles: holdsMessages(channel) ? accessDraft.send : [],
+    });
+    toast(accessDraft.view.length ? `Only ${accessSummary(state.currentServer, accessDraft.view)} can see this channel now` : "Channel access saved");
+    await refreshCurrentServer();
+    openChannelSettings(channel.id, "permissions");
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 let channelColorDraft = null;
@@ -2698,6 +2801,12 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     for (const url of imageLinks(message.content)) {
       body.appendChild(renderImageEmbed(url));
     }
+  }
+  if (message.sealed) {
+    const sealed = el("div", "msg-content msg-sealed");
+    sealed.appendChild(svgIcon("lock", 14));
+    sealed.appendChild(el("span", null, "Sealed message. It opens once this channel's key reaches you."));
+    body.appendChild(sealed);
   }
   if (inlineMark) body.prepend(pendingMark());
   for (const att of message.attachments || []) {
@@ -4020,9 +4129,12 @@ function maybePromptRoles() {
 function syncRulesGate() {
   const gated = state.view === "server" && Boolean(state.currentServer && state.currentServer.needs_rules);
   $("rules-gate").classList.toggle("hidden", !gated);
-  const lock = gated ? null : composerLock({ view: state.view, server: state.currentServer, channel: state.currentChannel });
+  const where = { view: state.view, server: state.currentServer, channel: state.currentChannel };
+  const accessLock = gated ? null : channelAccessLock(where);
+  const lock = gated ? null : accessLock || composerLock(where);
   $("announce-gate").classList.toggle("hidden", !lock);
   if (lock) {
+    $("announce-gate-icon").replaceChildren(svgIcon(accessLock ? "lock" : "megaphone", 22));
     $("announce-gate-title").textContent = lock.title;
     $("announce-gate-text").textContent = lock.text;
   }
@@ -6856,7 +6968,7 @@ async function selectServer(serverId) {
   }
   setViewMode("server");
   state.currentDm = null;
-  const firstText = state.currentServer.channels.find(c => c.kind === "text");
+  const firstText = state.currentServer.channels.find(c => c.kind === "text" && c.can_view !== false);
   renderServerRail();
   renderMembers();
   await selectChannel(firstText || null);
@@ -8813,6 +8925,8 @@ function wireEvents() {
   $("pins-modal-close").onclick = hideModals;
   $("announce-gate-icon").appendChild(svgIcon("megaphone", 22));
   $("channel-edit-reset").onclick = () => openChannelSettings(editingChannelId);
+  $("channel-access-save").onclick = saveChannelAccess;
+  $("channel-access-reset").onclick = () => openChannelSettings(editingChannelId, "permissions");
   $("channel-settings-close").onclick = closeSettingsLayers;
   $("channel-delete-btn").onclick = openDeleteChannel;
   $("channel-delete-nav").onclick = openDeleteChannel;
@@ -9020,6 +9134,15 @@ function wireEvents() {
         state.currentServer = null;
         await enterDmMode();
       }
+    });
+    window.__TAURI__.event.listen("voice-left", async event => {
+      if (state.voiceServer && state.voiceServer.id === event.payload) {
+        state.voiceChannelId = null;
+        state.voiceServer = null;
+        state.sharing = false;
+        toast("You left voice because that channel is now locked to other roles");
+      }
+      await refreshCurrentServer();
     });
     window.__TAURI__.event.listen("overlay-hello", () => {
       lastOverlayRoster = "";
@@ -9462,9 +9585,9 @@ async function refreshCurrentServer() {
     if (still) {
       state.currentChannel = still;
       syncPinButton();
+      syncRulesGate();
       if (still.kind !== keepChannel.kind) {
         $("chat-hash").replaceChildren(still.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
-        syncRulesGate();
       }
       const messages = await invoke("get_messages", {
         serverId: state.currentServer.id,
@@ -9474,7 +9597,7 @@ async function refreshCurrentServer() {
       return;
     }
   }
-  await selectChannel(state.currentServer.channels.find(c => c.kind === "text") || null);
+  await selectChannel(state.currentServer.channels.find(c => c.kind === "text" && c.can_view !== false) || null);
 }
 
 function wireActivityPing() {

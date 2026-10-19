@@ -3,6 +3,7 @@ mod activity;
 mod afk;
 mod entry_list;
 mod catchup;
+mod channel_lock;
 mod doorbell;
 mod expressions;
 mod media_engine;
@@ -166,7 +167,7 @@ async fn create_server(
         Ok(())
     };
     let (state, _, signing) = own_server_state(&app, server_id, &name, hosting).await?;
-    let view = ServerView::for_viewer(&state, Some(state.server.owner));
+    let view = ServerView::for_viewer(&state, Some(state.server.owner), &channel_lock::KeyHolder::of(&app));
     app.servers.lock().unwrap().insert(server_id, state);
     drop(signing);
     app.persist_server(server_id);
@@ -256,9 +257,10 @@ fn list_servers(app: tauri::State<App>) -> Vec<ServerSummary> {
 fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView> {
     let id = server_id.parse().map_err(err_to_string)?;
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let keys = channel_lock::KeyHolder::of(&app);
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&id).ok_or("unknown server")?;
-    Ok(ServerView::for_viewer(state, me))
+    Ok(ServerView::for_viewer(state, me, &keys))
 }
 
 #[tauri::command]
@@ -281,9 +283,14 @@ fn get_messages(
     let sid = server_id.parse().map_err(err_to_string)?;
     let cid = channel_id.parse().map_err(err_to_string)?;
     let pending = app.outbox.lock().unwrap().pending_ids(sid);
+    let keys = channel_lock::KeyHolder::of(&app);
+    let me = current_profile(&app)?.id;
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
-    Ok(view::message_views(state, cid, 100, &pending))
+    if !state.server.can_view(cid, me) {
+        return Ok(Vec::new());
+    }
+    Ok(view::message_views(state, cid, 100, &pending, &keys))
 }
 
 async fn commit_message(
@@ -295,13 +302,14 @@ async fn commit_message(
     let event = ServerEvent::MessageCreate {
         message: message.clone(),
     };
+    let keys = channel_lock::KeyHolder::of(app);
     let view = {
         let mut servers = app.servers.lock().unwrap();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         require_rules_accepted(state, message.author)?;
         require_can_post(app, state, message.author, message.channel)?;
         state.apply(event.clone()).map_err(err_to_string)?;
-        MessageView::build(&message, state)
+        MessageView::build(&message, state, &keys)
     };
     let delivered = outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
@@ -311,7 +319,14 @@ async fn commit_message(
     Ok(view.with_pending(!delivered))
 }
 
-fn sign_message(app: &App, sid: ServerId, message: &mut Message) -> CmdResult<()> {
+fn seal_and_sign(app: &App, sid: ServerId, message: &mut Message) -> CmdResult<()> {
+    let keys = channel_lock::KeyHolder::of(app);
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_can_post(app, state, message.author, message.channel)?;
+        keys.seal_outgoing(state, message)?;
+    }
     message.sign(sid, &signing_key(app)?);
     Ok(())
 }
@@ -344,7 +359,7 @@ async fn send_message(
         message.reply_to = Some(target);
     }
     let _signing = app.signing.read().await;
-    sign_message(&app, sid, &mut message)?;
+    seal_and_sign(&app, sid, &mut message)?;
     if !signed_fits_one_gossip_frame(&message) {
         return Err("that message is too long to send; try splitting it up".into());
     }
@@ -369,6 +384,10 @@ async fn set_reaction(
         return Err("reactions must be a single emoji".into());
     }
     let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        require_can_view(servers.get(&sid).ok_or("unknown server")?, me.id, cid)?;
+    }
     apply_and_broadcast(
         &app,
         &handle,
@@ -428,6 +447,7 @@ async fn edit_message(
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
+    let keys = channel_lock::KeyHolder::of(&app);
     let _signing = app.signing.read().await;
     let identity = signing_key(&app)?;
     let edit = {
@@ -437,6 +457,8 @@ async fn edit_message(
         if original.author != me.id {
             return Err("you can only edit your own messages".into());
         }
+        require_can_post(&app, state, me.id, cid)?;
+        let content = keys.seal_edit(state, original, content)?;
         sign_edit(sid, original, content, chrono::Utc::now(), &identity)?
     };
     apply_and_broadcast(&app, &handle, sid, edit).await
@@ -510,7 +532,7 @@ async fn send_attachment(
         provider,
     });
     let _signing = app.signing.read().await;
-    sign_message(app, sid, &mut message)?;
+    seal_and_sign(app, sid, &mut message)?;
     commit_message(app, handle, sid, message).await
 }
 
@@ -716,6 +738,10 @@ async fn set_voice_channel(
 
     match cid {
         Some(channel) => {
+            {
+                let servers = app.servers.lock().unwrap();
+                require_can_view(servers.get(&sid).ok_or("unknown server")?, profile.id, channel)?;
+            }
             let full = app.servers.lock().unwrap().get(&sid).is_some_and(|s| voice_channel_full(&app, s, channel, profile.id));
             if full {
                 return Err("that voice channel is full".into());
@@ -1697,6 +1723,7 @@ async fn report_user(
         return Err("you cannot report yourself".into());
     }
     refuse_while_key_may_be_replaced(&app)?;
+    let keys = channel_lock::KeyHolder::of(&app);
     let (owner, excerpt) = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
@@ -1708,7 +1735,8 @@ async fn report_user(
                     .messages(cid)
                     .iter()
                     .find(|msg| msg.id == mid && msg.author == reported)
-                    .map(|msg| msg.content.clone())
+                    .and_then(|msg| keys.open(state, msg))
+                    .map(|msg| msg.content)
                     .ok_or("that message is no longer available")?
             }
             _ => String::new(),
@@ -2025,6 +2053,14 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             }
             if channel.kind == ChannelKind::Announcement {
                 events.push(ServerEvent::ChannelKindSet { server: sid, channel: channel.id, kind: channel.kind });
+            }
+            if channel.is_restricted() {
+                events.push(ServerEvent::ChannelAccessSet {
+                    server: sid,
+                    channel: channel.id,
+                    view: channel.view_roles.clone(),
+                    send: channel.send_roles.clone(),
+                });
             }
         }
     }
@@ -2979,7 +3015,20 @@ async fn accept_rules(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RulesAccept { server: sid, user: me.id }).await
 }
 
+fn require_can_view(state: &ServerState, user: UserId, channel: ChannelId) -> CmdResult<()> {
+    if state.server.can_view(channel, user) {
+        Ok(())
+    } else {
+        Err("you do not have a role that can see that channel".into())
+    }
+}
+
 fn require_can_post(app: &App, state: &ServerState, user: UserId, channel: ChannelId) -> CmdResult<()> {
+    require_can_view(state, user, channel)?;
+    let restricted = state.server.channel(channel).is_some_and(|c| c.is_restricted());
+    if restricted && !state.server.can_post_in(channel, user) {
+        return Err("only some roles can send messages in this channel".into());
+    }
     let announcement = state.server.channel(channel).is_some_and(|c| c.kind == ChannelKind::Announcement);
     if announcement && !our_permissions(app, state, user).can_announce() {
         return Err("only members allowed to post announcements can write in this channel".into());
@@ -3283,6 +3332,55 @@ async fn set_channel_kind(
 }
 
 #[tauri::command]
+async fn set_channel_access(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    view_roles: Vec<String>,
+    send_roles: Vec<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let parse = |raw: Vec<String>| raw.iter().map(|r| r.parse::<RoleId>()).collect::<Result<Vec<_>, _>>();
+    let view = parse(view_roles).map_err(err_to_string)?;
+    let send = parse(send_roles).map_err(err_to_string)?;
+    if view.len() > commy_core::server::MAX_ACCESS_ROLES || send.len() > commy_core::server::MAX_ACCESS_ROLES {
+        return Err(format!("pick at most {} roles", commy_core::server::MAX_ACCESS_ROLES));
+    }
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
+        let channel = state.server.channel(cid).ok_or("unknown channel")?;
+        if channel.kind == ChannelKind::Category {
+            return Err("categories do not hold messages to lock".into());
+        }
+        if [&view, &send].into_iter().flatten().any(|r| !state.server.roles.iter().any(|known| known.id == *r && !known.is_everyone())) {
+            return Err("that role no longer exists".into());
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelAccessSet { server: sid, channel: cid, view, send }).await?;
+    leave_unseen_voice(&app, &handle, sid).await;
+    channel_lock::tend_channel(&app, &handle, sid, cid).await;
+    Ok(())
+}
+
+async fn leave_unseen_voice(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
+    let Some(channel) = app.voice_session.lock().unwrap().as_ref().filter(|s| s.server == sid).map(|s| s.channel) else {
+        return;
+    };
+    let Ok(profile) = current_profile(app) else { return };
+    let sees = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.can_view(channel, profile.id));
+    if !sees {
+        let voice = app.voice.lock().unwrap().clone();
+        leave_voice(app, handle, sid, &profile, &voice).await;
+        let _ = handle.emit("voice-left", &sid.to_string());
+    }
+}
+
+#[tauri::command]
 async fn pin_message(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -3301,6 +3399,7 @@ async fn pin_message(
         if !our_permissions(&app, state, me.id).can_pin() {
             return Err("you do not have permission to pin messages".into());
         }
+        require_can_view(state, me.id, cid)?;
         message_author(state, cid, mid)?;
         let pins = state.server.pins.iter().filter(|p| p.channel == cid).count();
         if pinned && pins >= commy_core::server::MAX_PINS_PER_CHANNEL {
@@ -3318,9 +3417,11 @@ async fn pin_message(
 fn get_pins(app: tauri::State<App>, server_id: String, channel_id: Option<String>) -> CmdResult<Vec<view::PinView>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let keys = channel_lock::KeyHolder::of(&app);
+    let me = current_profile(&app)?.id;
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
-    Ok(view::pin_views(state, cid))
+    Ok(view::pin_views(state, cid, me, &keys))
 }
 
 #[derive(serde::Serialize)]
@@ -4465,7 +4566,9 @@ async fn set_member_role(
     } else {
         ServerEvent::RoleUnassign { server: sid, user: uid, role: rid }
     };
-    apply_and_broadcast(&app, &handle, sid, event).await
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    channel_lock::tend_server(&app, &handle, sid).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -4661,6 +4764,13 @@ async fn run_net_loop(
                     app.share_seen.lock().unwrap().insert((server, *user), std::time::Instant::now());
                 }
                 let moderation = matches!(event, ServerEvent::VoiceModerate { .. });
+                let access = matches!(
+                    event,
+                    ServerEvent::ChannelAccessSet { .. }
+                        | ServerEvent::RoleUnassign { .. }
+                        | ServerEvent::RoleDelete { .. }
+                        | ServerEvent::RoleUpdate { .. }
+                );
                 let banned_me = match &event {
                     ServerEvent::MemberBan { user, .. } => app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == *user),
                     _ => false,
@@ -4712,6 +4822,9 @@ async fn run_net_loop(
                         }
                         if moderation {
                             refresh_forced_voice(&app, &handle);
+                        }
+                        if access {
+                            leave_unseen_voice(&app, &handle, server).await;
                         }
                         if let Some((user, channel)) = voice_update {
                             react_to_voice_change(&app, &handle, server, user, channel);
@@ -4819,9 +4932,15 @@ fn react_to_voice_change(
 }
 
 fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, message: &Message) {
+    let keys = channel_lock::KeyHolder::of(app);
+    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
     let payload = {
         let servers = app.servers.lock().unwrap();
         let Some(state) = servers.get(&sid) else { return };
+        if !state.server.can_view(message.channel, me) {
+            return;
+        }
+        let Some(message) = keys.open(state, message) else { return };
         serde_json::json!({
             "server": sid.to_string(),
             "server_name": state.server.name,
@@ -5219,6 +5338,7 @@ pub fn run() {
                         tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
                         tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
                         tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
+                        tauri::async_runtime::spawn(channel_lock::run(handle.clone()));
                         tauri::async_runtime::spawn(wake::run_watchdog(handle.clone()));
                         tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
                         tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
@@ -5325,6 +5445,7 @@ pub fn run() {
             set_channel_banner,
             set_channel_color,
             set_channel_kind,
+            set_channel_access,
             pin_message,
             get_pins,
             edit_message,

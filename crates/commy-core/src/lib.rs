@@ -1,5 +1,6 @@
 pub mod action;
 pub mod catchup;
+pub mod channel_key;
 pub mod dm;
 pub mod doorbell;
 pub mod event;

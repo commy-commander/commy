@@ -46,6 +46,11 @@ pub struct ChannelView {
     pub banner: Option<String>,
     pub color: Option<String>,
     pub pins: usize,
+    pub view_roles: Vec<String>,
+    pub send_roles: Vec<String>,
+    pub can_view: bool,
+    pub can_send: bool,
+    pub key_ready: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -168,13 +173,17 @@ pub struct SoundView {
 }
 
 impl ServerView {
-    pub fn for_viewer(state: &ServerState, viewer: Option<UserId>) -> Self {
+    pub fn for_viewer(state: &ServerState, viewer: Option<UserId>, keys: &crate::channel_lock::KeyHolder) -> Self {
+        let manages_channels = viewer.is_some_and(|v| state.server.permissions_for(v).allows(Permissions::MANAGE_CHANNELS));
+        let sees = |c: ChannelId| viewer.is_some_and(|v| state.server.can_view(c, v));
         let channels = state
             .server
             .sorted_channels()
             .into_iter()
+            .filter(|c| manages_channels || sees(c.id))
             .map(|c| {
-                let voice = state.voice_members(c.id);
+                let can_view = sees(c.id);
+                let voice = if can_view { state.voice_members(c.id) } else { Vec::new() };
                 ChannelView {
                     id: c.id.to_string(),
                     name: c.name.clone(),
@@ -192,6 +201,11 @@ impl ServerView {
                     voice_since: voice.iter().map(|u| state.voice_since(*u)).collect(),
                     voice_muted: voice.iter().map(|u| state.voice_flags(*u).0).collect(),
                     voice_deafened: voice.iter().map(|u| state.voice_flags(*u).1).collect(),
+                    view_roles: c.view_roles.iter().map(|r| r.to_string()).collect(),
+                    send_roles: c.send_roles.iter().map(|r| r.to_string()).collect(),
+                    can_view,
+                    can_send: can_view && viewer.is_some_and(|v| state.server.can_post_in(c.id, v)),
+                    key_ready: can_view && keys.key_ready(state, c.id),
                 }
             })
             .collect();
@@ -267,6 +281,7 @@ impl ServerView {
         let screen_shares = state
             .screen_shares
             .iter()
+            .filter(|(_, channel)| sees(**channel))
             .map(|(user, channel)| ScreenShareView {
                 user: user.to_string(),
                 name: display_name(state, *user),
@@ -468,6 +483,7 @@ pub struct MessageView {
     pub author_id: String,
     pub author_name: String,
     pub content: String,
+    pub sealed: bool,
     pub created_at: String,
     pub edited: bool,
     pub reply_to: Option<String>,
@@ -488,12 +504,17 @@ pub struct PinView {
     pub message: MessageView,
 }
 
-pub fn pin_views(state: &ServerState, channel: Option<ChannelId>) -> Vec<PinView> {
+pub fn pin_views(
+    state: &ServerState,
+    channel: Option<ChannelId>,
+    viewer: UserId,
+    keys: &crate::channel_lock::KeyHolder,
+) -> Vec<PinView> {
     let mut pins: Vec<&commy_core::server::Pin> = state
         .server
         .pins
         .iter()
-        .filter(|p| channel.is_none_or(|c| p.channel == c))
+        .filter(|p| channel.is_none_or(|c| p.channel == c) && state.server.can_view(p.channel, viewer))
         .collect();
     pins.sort_by(|a, b| b.at.cmp(&a.at));
     pins.into_iter()
@@ -505,7 +526,7 @@ pub fn pin_views(state: &ServerState, channel: Option<ChannelId>) -> Vec<PinView
                 by: p.by.to_string(),
                 by_name: display_name(state, p.by),
                 at: p.at.to_rfc3339(),
-                message: MessageView::build(message, state),
+                message: MessageView::build(message, state, keys),
             })
         })
         .collect()
@@ -536,18 +557,24 @@ pub struct AttachmentView {
 }
 
 impl MessageView {
-    pub fn build(message: &Message, state: &ServerState) -> Self {
+    pub fn build(message: &Message, state: &ServerState, keys: &crate::channel_lock::KeyHolder) -> Self {
+        let opened = keys.open(state, message);
+        let sealed = opened.is_none();
+        let message = opened.as_ref().unwrap_or(message);
+        let (content, attachments) = if sealed { (String::new(), &[][..]) } else { (message.content.clone(), &message.attachments[..]) };
         Self {
             id: message.id.to_string(),
             channel: message.channel.to_string(),
             author_id: message.author.to_string(),
             author_name: display_name(state, message.author),
-            content: message.content.clone(),
+            content,
+            sealed,
             created_at: message.created_at.to_rfc3339(),
             edited: message.edited_at.is_some(),
             reply_to: message.reply_to.map(|id| id.to_string()),
             reply_preview: message.reply_to.and_then(|id| {
                 let original = state.message(id).filter(|m| m.channel == message.channel)?;
+                let original = keys.open(state, original)?;
                 let mut excerpt = crate::safety::truncate(&original.content, 120);
                 if excerpt.is_empty() && !original.attachments.is_empty() {
                     excerpt = "Click to see attachment".to_string();
@@ -567,8 +594,7 @@ impl MessageView {
                     users: r.users.iter().map(|u| u.to_string()).collect(),
                 })
                 .collect(),
-            attachments: message
-                .attachments
+            attachments: attachments
                 .iter()
                 .map(|a| AttachmentView {
                     filename: a.filename.clone(),
@@ -590,11 +616,17 @@ impl MessageView {
     }
 }
 
-pub fn message_views(state: &ServerState, channel: ChannelId, limit: usize, pending: &HashSet<MessageId>) -> Vec<MessageView> {
+pub fn message_views(
+    state: &ServerState,
+    channel: ChannelId,
+    limit: usize,
+    pending: &HashSet<MessageId>,
+    keys: &crate::channel_lock::KeyHolder,
+) -> Vec<MessageView> {
     state
         .page(channel, None, limit)
         .iter()
-        .map(|m| MessageView::build(m, state).with_pending(pending.contains(&m.id)))
+        .map(|m| MessageView::build(m, state, keys).with_pending(pending.contains(&m.id)))
         .collect()
 }
 
@@ -637,10 +669,11 @@ mod tests {
             state.apply(ServerEvent::MessageCreate { message }).unwrap();
         }
         let pending = HashSet::from([ids[1]]);
-        let views = message_views(&state, channel, 100, &pending);
+        let keys = crate::channel_lock::KeyHolder::default();
+        let views = message_views(&state, channel, 100, &pending, &keys);
         let flags: Vec<(&str, bool)> = views.iter().map(|v| (v.content.as_str(), v.pending)).collect();
         assert_eq!(flags, vec![("sent", false), ("waiting", true)]);
-        assert!(!MessageView::build(state.message(ids[1]).unwrap(), &state).pending);
+        assert!(!MessageView::build(state.message(ids[1]).unwrap(), &state, &keys).pending);
         let json = serde_json::to_value(&views[1]).unwrap();
         assert_eq!(json["pending"], true);
     }

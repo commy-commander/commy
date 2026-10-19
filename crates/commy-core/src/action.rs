@@ -103,6 +103,9 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ChannelBanner { channel, .. } => format!("channel.banner:{channel}"),
         E::ChannelColor { channel, .. } => format!("channel.color:{channel}"),
         E::ChannelKindSet { channel, .. } => format!("channel.kind:{channel}"),
+        E::ChannelAccessSet { channel, .. } => format!("channel.access:{channel}"),
+        E::ChannelKeyAdd { channel, key, .. } => format!("channel.key:{channel}:{}", key.id.to_hex()),
+        E::ChannelKeyGrant { channel, user, .. } => format!("channel.grant:{channel}:{user}"),
         E::AfkChannelSet { .. } => "afk_channel".into(),
         E::AfkTimeoutSet { .. } => "afk_timeout".into(),
         E::ServerRename { .. } => "name".into(),
@@ -147,7 +150,7 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 4] = ["emoji:", "sound:", "event:", "pin:"];
+    const OMITTED: [&str; 6] = ["emoji:", "sound:", "event:", "pin:", "channel.key:", "channel.grant:"];
     subject == "rules" || OMITTED.iter().any(|p| subject.starts_with(p))
 }
 
@@ -155,27 +158,46 @@ pub fn relayable(event: &ServerEvent) -> bool {
     !matches!(event, ServerEvent::MemberJoin { .. }) && subject(event).is_some_and(|s| settles_authority(&s))
 }
 
+fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
+    use ServerEvent as E;
+    match event {
+        E::VoiceState { channel, .. } => *channel,
+        E::TypingStart { channel, .. }
+        | E::ScreenShare { channel, .. }
+        | E::CameraState { channel, .. }
+        | E::ReactionToggle { channel, .. }
+        | E::ReactionSet { channel, .. }
+        | E::SoundboardPlay { channel, .. }
+        | E::MessagePin { channel, .. } => Some(*channel),
+        _ => None,
+    }
+}
+
 pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
     use ServerEvent as E;
     let perms = server.permissions_for(by);
     let allows = |p: Permissions| perms.allows(p);
     let member = server.is_member(by);
+    let sees = |event: &ServerEvent| channel_of(event).is_none_or(|channel| server.can_view(channel, by));
     match event {
         E::MessageCreate { .. } | E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
         E::MemberJoin { .. } => actor(event) == Some(by),
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
         E::ProfileUpdate { .. } => actor(event) == Some(by),
-        E::PresenceUpdate { .. }
-        | E::VoiceState { .. }
+        E::PresenceUpdate { .. } | E::RulesAccept { .. } | E::EventRsvp { .. } => member && actor(event) == Some(by),
+        E::VoiceState { .. }
         | E::TypingStart { .. }
         | E::ScreenShare { .. }
         | E::CameraState { .. }
         | E::ReactionToggle { .. }
-        | E::ReactionSet { .. }
-        | E::RulesAccept { .. }
-        | E::EventRsvp { .. } => member && actor(event) == Some(by),
-        E::SoundboardPlay { .. } => member && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD),
-        E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin(),
+        | E::ReactionSet { .. } => member && actor(event) == Some(by) && sees(event),
+        E::SoundboardPlay { .. } => {
+            member && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD) && sees(event)
+        }
+        E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin() && sees(event),
+        E::ChannelKeyAdd { channel, .. } | E::ChannelKeyGrant { channel, .. } => {
+            member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)
+        }
         E::ChannelCreate { .. }
         | E::ChannelDelete { .. }
         | E::ChannelUpdate { .. }
@@ -183,7 +205,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::ChannelLimit { .. }
         | E::ChannelBanner { .. }
         | E::ChannelColor { .. }
-        | E::ChannelKindSet { .. } => allows(Permissions::MANAGE_CHANNELS),
+        | E::ChannelKindSet { .. }
+        | E::ChannelAccessSet { .. } => allows(Permissions::MANAGE_CHANNELS),
         E::ServerRename { .. }
         | E::ServerImages { .. }
         | E::PublicSet { .. }

@@ -161,6 +161,23 @@ pub enum ServerEvent {
         channel: ChannelId,
         kind: crate::server::ChannelKind,
     },
+    ChannelAccessSet {
+        server: ServerId,
+        channel: ChannelId,
+        view: Vec<RoleId>,
+        send: Vec<RoleId>,
+    },
+    ChannelKeyAdd {
+        server: ServerId,
+        channel: ChannelId,
+        key: crate::channel_key::KeyRecord,
+    },
+    ChannelKeyGrant {
+        server: ServerId,
+        channel: ChannelId,
+        user: UserId,
+        grant: crate::channel_key::SealedKey,
+    },
 }
 
 #[cfg(test)]
@@ -200,6 +217,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::AfkChannelSet { server, channel: None }), 18);
         let kind = crate::server::ChannelKind::Text;
         assert_eq!(wire_tag(ServerEvent::ChannelKindSet { server, channel, kind }), 47);
+        assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 48);
     }
 
     #[test]
