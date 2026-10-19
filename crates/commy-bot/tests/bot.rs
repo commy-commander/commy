@@ -42,7 +42,7 @@ impl World {
         payload
     }
 
-    fn to_owner(&mut self, payloads: Vec<WirePayload>) {
+    fn deliver(&mut self, payloads: Vec<WirePayload>) {
         for payload in payloads {
             match payload {
                 WirePayload::Signed(signed) => {
@@ -74,10 +74,10 @@ impl World {
         let mut world = Self::new(policy);
         let sid = world.sid();
         let hello = world.bot.announcements(sid, Utc::now().timestamp_millis());
-        world.to_owner(hello);
+        world.deliver(hello);
         let snapshot = world.snapshot_from(world.owner);
         let out = world.bot.on_snapshot(sid, snapshot, Utc::now().timestamp_millis()).expect("owner snapshot");
-        world.to_owner(out);
+        world.deliver(out);
         world
     }
 
@@ -136,7 +136,7 @@ fn a_bot_joins_only_from_the_owners_snapshot_and_wears_the_badge() {
     let sid = world.sid();
     let hello = world.bot.announcements(sid, Utc::now().timestamp_millis());
     assert!(hello.contains(&WirePayload::SyncRequest), "asks for a snapshot until it has one");
-    world.to_owner(hello);
+    world.deliver(hello);
     assert!(world.owner_state.server.is_member(world.bot_id));
     assert!(world.owner_state.is_bot(world.bot_id), "members see the badge");
 
@@ -167,7 +167,7 @@ fn held_messages_are_removed_only_once_the_bot_may_remove_them() {
     let out = world.posted(spam.clone());
     assert_eq!(deletes(&out), vec![spam.id]);
     assert_eq!(notes(&out), vec!["Removed a message from member: blocked word".to_string()]);
-    world.to_owner(out);
+    world.deliver(out);
     assert!(!world.owner_state.has_message(spam.id), "gone for everyone");
     assert!(world.owner_state.has_message(early.id), "it does not sweep older messages");
     let note = world.owner_state.messages(world.channel).last().unwrap();
@@ -193,11 +193,11 @@ fn repeat_offenders_are_banned_when_the_bot_may_ban() {
     let first = post(&world.owner_state, world.channel, world.member, "gold");
     let out = world.posted(first);
     assert!(out.iter().all(|p| !matches!(p, WirePayload::Signed(s) if matches!(s.event, ServerEvent::MemberBan { .. }))));
-    world.to_owner(out);
+    world.deliver(out);
     let second = post(&world.owner_state, world.channel, world.member, "gold again");
     let out = world.posted(second);
     assert!(out.iter().any(|p| matches!(p, WirePayload::Signed(s) if s.event == ServerEvent::MemberBan { server: world.owner_state.server.id, user: world.member })));
-    world.to_owner(out);
+    world.deliver(out);
     assert!(world.owner_state.server.banned.contains(&world.member));
 }
 
@@ -256,7 +256,7 @@ fn rules_relayed_before_the_snapshot_still_apply_once_it_arrives() {
     let mut world = World::new(Policy::default());
     let sid = world.sid();
     let hello = world.bot.announcements(sid, Utc::now().timestamp_millis());
-    world.to_owner(hello);
+    world.deliver(hello);
     world.block("gold");
     world.promote(Permissions::MANAGE_MESSAGES);
     assert_eq!(world.bot.replica(sid).unwrap().pending(), 3, "kept until the bot has a copy of the server");
