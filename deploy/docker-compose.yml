@@ -163,7 +163,7 @@ services:
     logging: *logging
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
     command: ["redis-server", "--save", "60", "1", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
     volumes:
