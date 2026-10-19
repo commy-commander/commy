@@ -3,7 +3,7 @@
 set -e
 here="$(cd "$(dirname "$0")" && pwd)"
 work="$(mktemp -d)"
-caddy_version=2.10.2
+caddy_version=2.11.7
 port="${EDGE_TEST_PORT:-3944}"
 echo_port="${EDGE_TEST_ECHO_PORT:-3945}"
 failures=0

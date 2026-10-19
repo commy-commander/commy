@@ -4,8 +4,6 @@ mod afk;
 mod entry_list;
 mod catchup;
 mod doorbell;
-#[cfg(all(test, feature = "e2e"))]
-mod e2e;
 mod expressions;
 mod media_engine;
 mod igdb;
