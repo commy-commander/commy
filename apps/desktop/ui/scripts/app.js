@@ -102,6 +102,7 @@ function mockSeed() {
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
       { id: "m2", name: "nova", presence: "idle", custom_status: null },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
+      { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
     ],
   };
   server.roles = [
@@ -159,6 +160,8 @@ function mockSeed() {
       content: "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43), created_at: new Date(Date.now() - 60e3).toISOString(), edited: false, attachments: [] },
     { id: "x5", channel: c0, author_id: "m3", author_name: "sleepy",
       content: "free gifts for everyone who clicks", created_at: new Date(Date.now() - 30e3).toISOString(), edited: false, attachments: [], held: "blocked word" },
+    { id: "x6", channel: c0, author_id: "m4", author_name: "Tidy",
+      content: "Removed a message from sleepy: blocked word", created_at: new Date(Date.now() - 20e3).toISOString(), edited: false, attachments: [] },
   ];
   server.automod = { blocked_terms: ["free gifts", "scam*"], block_links: false, max_mentions: 5, burst: { messages: 5, seconds: 10 }, exempt_roles: ["r2"] };
   mock.messages[server.channels[1].id] = [
@@ -2517,6 +2520,7 @@ function renderMembers() {
       const meta = el("div");
       const nameRow = el("div", "member-name", member.name);
       if (member.color) nameRow.style.color = `#${member.color}`;
+      if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
       if (sharers.has(member.id)) {
         const live = el("span", "live-badge", "LIVE");
@@ -4567,6 +4571,12 @@ function soundEmojiNode(value) {
   return el("span", "sound-emoji", value);
 }
 
+function botTag() {
+  const chip = el("span", "bot-tag", "BOT");
+  chip.title = "Bot: runs on its own, not a person";
+  return chip;
+}
+
 function roleTagChip(tag, color) {
   const custom = parseEmojiToken(tag);
   if (custom) {
@@ -4823,8 +4833,9 @@ function openMemberCard(member, anchor) {
   const name = $("mc-name");
   name.textContent = member.name;
   name.style.color = member.color ? `#${member.color}` : "";
-  name.parentElement.querySelector(".role-tag")?.remove();
+  name.parentElement.querySelectorAll(".role-tag, .bot-tag").forEach(n => n.remove());
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
+  if (member.bot) name.after(botTag());
   const status = $("mc-status");
   status.replaceChildren();
   const line = subLine(member);
@@ -4871,14 +4882,12 @@ function openMemberCard(member, anchor) {
     actions.appendChild(btn);
     return btn;
   };
-  if (!isMe) {
+  if (!isMe && !member.bot) {
     actions.appendChild(friendButton(member, () => openMemberCard(member, anchor)));
     action("serverAdd", "Invite", e => openInviteMenu(member, e.currentTarget));
   }
   action("person", "Full Profile", () => openFullProfile(member));
-  if (!isMe) {
-  }
-  $("mc-composer").classList.toggle("hidden", isMe || isBlocked(member.id));
+  $("mc-composer").classList.toggle("hidden", isMe || member.bot || isBlocked(member.id));
   const input = $("mc-input");
   input.value = "";
   input.placeholder = `Message @${member.name}`;
@@ -4896,6 +4905,7 @@ function decorateAuthor(node, authorId) {
   if (!member) return;
   if (member.color) node.style.color = `#${member.color}`;
   if (member.tag) node.after(roleTagChip(member.tag, member.tag_color));
+  if (member.bot) node.after(botTag());
 }
 
 function openChooseRoles() {

@@ -73,6 +73,7 @@ pub struct MemberView {
     pub tag: Option<String>,
     pub tag_color: Option<String>,
     pub role_banner: Option<String>,
+    pub bot: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -244,6 +245,7 @@ impl ServerView {
                     tag_color: tag.as_ref().and_then(|(_, c)| c.clone()),
                     tag: tag.map(|(t, _)| t),
                     role_banner: state.server.top_role_with(p.id, |r| r.banner.is_some()).and_then(|r| r.banner.clone()),
+                    bot: state.is_bot(p.id),
                 }
             })
             .collect();
@@ -713,6 +715,24 @@ mod tests {
         assert_eq!(seen(reader), vec![("fine".to_string(), None)]);
         let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader)).remove(0);
         assert_eq!(reply.reply_preview.unwrap().excerpt, HELD_EXCERPT);
+    }
+
+    #[test]
+    fn members_who_declare_themselves_bots_carry_the_badge() {
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(Identity::generate().public());
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let bot = UserProfile::new("helper");
+        let bot_id = bot.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: bot }).unwrap();
+        state.apply(ServerEvent::BotSet { server: sid, user: bot_id, bot: true }).unwrap();
+        let view = ServerView::for_viewer(&state, Some(owner.id));
+        let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
+        assert!(badge(bot_id));
+        assert!(!badge(owner.id));
     }
 
     #[test]

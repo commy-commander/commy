@@ -5,6 +5,7 @@ members = [
     "crates/commy-net",
     "crates/commy-audio",
     "crates/commy-media",
+    "crates/commy-bot",
     "apps/desktop/src-tauri",
 ]
 
