@@ -62,7 +62,9 @@ test("discovery document points at the public URL", () => {
     emailVerification: true,
     passwordReset: true,
     emailPassword: true,
+    passkey: true,
   });
+  assert.equal(d.features.changeEmail, true);
   assert.equal(d.turnstileSiteKey, null);
   assert.equal(d.endpoints.linkChallenge, "https://chat.example.org/api/auth/commy/devices/challenge");
 });
