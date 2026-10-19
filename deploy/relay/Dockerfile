@@ -1,8 +1,8 @@
-FROM rust:1.91-slim-bookworm AS build
+FROM rust:1.91-slim-trixie AS build
 ARG IROH_RELAY_VERSION=1.3.0
 RUN cargo install iroh-relay --locked --version "=${IROH_RELAY_VERSION}" --features server --bin iroh-relay --root /out
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget && rm -rf /var/lib/apt/lists/* \
   && useradd --system --uid 10001 relay
 COPY --from=build /out/bin/iroh-relay /usr/local/bin/iroh-relay

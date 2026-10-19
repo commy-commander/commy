@@ -41,6 +41,7 @@ pub struct LinkStats {
     pub jitter_ms: f32,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
+    pub path: commy_net::LinkPath,
 }
 
 #[derive(Debug, Default)]
@@ -314,6 +315,7 @@ impl VoiceSession {
                     jitter_ms: meter.lock().unwrap().jitter_ms(),
                     tx_bytes: stats.udp_tx.bytes,
                     rx_bytes: stats.udp_rx.bytes,
+                    path: commy_net::link_path(conn),
                 }
             })
             .collect()

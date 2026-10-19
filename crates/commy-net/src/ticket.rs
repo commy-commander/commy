@@ -43,13 +43,21 @@ impl NodeAddr {
     }
 
     pub fn endpoint_addr(&self) -> Option<EndpointAddr> {
-        let relay = self.info.relay_url.as_deref().and_then(|url| url.parse::<RelayUrl>().ok());
+        let relay = self.info.relay_url.as_deref().and_then(relay_url);
         let addrs = relay
             .map(TransportAddr::Relay)
             .into_iter()
             .chain(self.info.direct_addresses.iter().copied().map(TransportAddr::Ip));
         Some(EndpointAddr::from_parts(self.node()?, addrs))
     }
+}
+
+fn relay_url(text: &str) -> Option<RelayUrl> {
+    let mut url = (*text.parse::<RelayUrl>().ok()?).clone();
+    if let Some(host) = url.host_str().and_then(|h| h.strip_suffix('.')).map(str::to_owned) {
+        url.set_host(Some(&host)).ok()?;
+    }
+    Some(url.into())
 }
 
 impl From<&EndpointAddr> for NodeAddr {
@@ -204,7 +212,8 @@ mod tests {
         let peer = &ticket.bootstrap[0];
         assert_eq!(peer.node(), Some(SecretKey::from_bytes(&[5u8; 32]).public()));
         let addr = peer.endpoint_addr().unwrap();
-        assert_eq!(addr.relay_urls().next().map(|u| u.to_string()), Some("https://relay.commy.chat:8443/".to_string()));
+        let relay: RelayUrl = "https://relay.commy.chat:8443".parse().unwrap();
+        assert_eq!(addr.relay_urls().next(), Some(&relay));
         assert_eq!(addr.ip_addrs().copied().collect::<Vec<_>>(), vec!["192.0.2.7:4433".parse().unwrap()]);
         assert_eq!(ServerTicket::decode(&ticket.encode()).unwrap(), ticket);
     }

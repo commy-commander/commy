@@ -52,6 +52,33 @@ pub enum NetEvent {
     Wake { from: [u8; 32] },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkPath {
+    pub kind: &'static str,
+    pub relay: Option<String>,
+    pub addr: Option<String>,
+}
+
+pub fn link_path(connection: &Connection) -> LinkPath {
+    let paths = connection.paths();
+    let relay = paths.iter().find_map(|p| match p.remote_addr() {
+        iroh::TransportAddr::Relay(url) => Some(url.to_string()),
+        _ => None,
+    });
+    let selected = paths.iter().find(|p| p.is_selected());
+    let addr = selected.as_ref().and_then(|p| match p.remote_addr() {
+        iroh::TransportAddr::Ip(addr) => Some(addr.to_string()),
+        _ => None,
+    });
+    let kind = match &selected {
+        Some(p) if p.is_relay() => "relay",
+        Some(_) if paths.iter().any(|p| p.is_relay()) => "mixed",
+        Some(_) => "direct",
+        None => "none",
+    };
+    LinkPath { kind, relay, addr }
+}
+
 pub(crate) fn accept_error(e: anyhow::Error) -> AcceptError {
     AcceptError::from_boxed(e.into())
 }
