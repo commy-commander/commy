@@ -1,4 +1,8 @@
-use commy_core::{action, Action, Identity, Message, ServerEvent, ServerId, ServerState, SignedEvent, StoreError, UserProfile};
+use commy_core::{
+    action, Action, Identity, Message, MessageId, ServerEvent, ServerId, ServerState, SignedEvent, StoreError,
+    TombstoneProof, UserProfile,
+};
+use commy_net::catchup::{apply_items, apply_profiles, ApplyReport};
 use commy_net::protocol::{verify_sync_response, SyncMember};
 use commy_net::{ServerTicket, WirePayload};
 use std::collections::VecDeque;
@@ -40,12 +44,18 @@ impl Replica {
             && verify_sync_response(payload, &key)
     }
 
-    pub fn accept_snapshot(&mut self, payload: WirePayload, me: &UserProfile, now_ms: i64) -> bool {
+    pub fn accept_snapshot(
+        &mut self,
+        payload: WirePayload,
+        me: &UserProfile,
+        now: Instant,
+        now_ms: i64,
+    ) -> Option<Vec<Message>> {
         if self.state.is_some() || !self.vouched(&payload, now_ms) {
-            return false;
+            return None;
         }
         let WirePayload::SyncResponse { server: mut remote, members, profiles, recent_messages, voice, at, .. } = payload else {
-            return false;
+            return None;
         };
         remote.members = members.into_iter().map(member_of).collect();
         let sid = remote.id;
@@ -59,28 +69,66 @@ impl Replica {
         if let Err(e) = state.apply(ServerEvent::MemberJoin { server: sid, profile: me.clone() }) {
             tracing::warn!("could not join {} from its snapshot: {e}", state.server.name);
         }
+        let mut fresh = Vec::new();
         for message in recent_messages {
-            let _ = state.apply(ServerEvent::MessageCreate { message });
+            let id = message.id;
+            if state.apply(ServerEvent::MessageCreate { message }) == Ok(true) {
+                fresh.push(id);
+            }
         }
         for entry in voice.into_iter().filter(|v| v.user != me.id) {
             let _ = state.apply(entry.into_event());
         }
+        let mut fresh: Vec<Message> = fresh.into_iter().filter_map(|id| state.message(id).cloned()).collect();
         self.state = Some(state);
-        let now = Instant::now();
-        let early: Vec<Pending> = self.early.drain(..).filter(|(at, ..)| now.duration_since(*at) < PENDING_FOR).collect();
-        for (at, event, action) in early {
-            self.apply(event, action, at);
-        }
-        true
+        let early: VecDeque<Pending> = self.early.drain(..).filter(|(at, ..)| now.duration_since(*at) < PENDING_FOR).collect();
+        fresh.extend(self.run(early, now));
+        Some(fresh)
     }
 
     pub fn apply(&mut self, event: ServerEvent, action: Option<Action>, now: Instant) -> Vec<Message> {
-        let mut fresh = Vec::new();
-        let Some(state) = self.state.as_mut() else {
+        if self.state.is_none() {
             keep(&mut self.early, (now, event, action));
-            return fresh;
+            return Vec::new();
+        }
+        self.run(VecDeque::from([(now, event, action)]), now)
+    }
+
+    pub fn apply_caught_up(
+        &mut self,
+        messages: Vec<Message>,
+        tombstones: Vec<TombstoneProof>,
+        now: Instant,
+    ) -> (ApplyReport, Vec<Message>) {
+        let Some(state) = self.state.as_mut() else {
+            let rejected = messages.iter().map(|m| m.id).chain(tombstones.iter().map(|p| p.message)).collect();
+            return (ApplyReport { rejected, ..ApplyReport::default() }, Vec::new());
         };
-        let mut queue = VecDeque::from([(now, event, action)]);
+        let (report, held) = apply_items(state, messages, tombstones);
+        let fresh = report.applied.iter().filter_map(|id| state.message(*id).cloned()).collect();
+        for event in held {
+            keep(&mut self.pending, (now, event, None));
+        }
+        (report, fresh)
+    }
+
+    pub fn learn_profiles(&mut self, profiles: Vec<UserProfile>, now: Instant) -> Vec<Message> {
+        let Some(state) = self.state.as_mut() else { return Vec::new() };
+        if apply_profiles(state, profiles).is_empty() {
+            return Vec::new();
+        }
+        let waiting = self.release(now);
+        self.run(waiting, now)
+    }
+
+    fn release(&mut self, now: Instant) -> VecDeque<Pending> {
+        self.pending.retain(|(at, ..)| now.duration_since(*at) < PENDING_FOR);
+        self.pending.drain(..).collect()
+    }
+
+    fn run(&mut self, mut queue: VecDeque<Pending>, now: Instant) -> Vec<Message> {
+        let mut fresh = Vec::new();
+        let Some(state) = self.state.as_mut() else { return fresh };
         while let Some((at, event, action)) = queue.pop_front() {
             let (applied, created, pinned) = apply_live(state, event.clone(), action);
             match applied {
@@ -96,6 +144,10 @@ impl Replica {
             }
         }
         fresh
+    }
+
+    pub fn has(&self, id: MessageId) -> bool {
+        self.state.as_ref().is_some_and(|s| s.has_message(id))
     }
 
     pub fn signed(&self, me: &UserProfile, identity: &Identity, event: ServerEvent, at_ms: i64) -> WirePayload {

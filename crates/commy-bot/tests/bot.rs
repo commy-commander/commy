@@ -1,13 +1,15 @@
 use chrono::{Duration, Utc};
 use commy_bot::storage::{ticket_in, DataDir};
-use commy_bot::{Bot, Moderator, Policy, Replica};
+use commy_bot::{Bot, BotStore, Moderator, Outgoing, Policy, Replica};
 use commy_core::test_support::{fixture, identity_for, join, post, post_at};
 use commy_core::{
     AutoMod, ChannelId, Identity, Message, Permissions, Role, RoleId, ServerEvent, ServerId, ServerState, SignedEvent,
     UserId, UserProfile,
 };
+use commy_net::catchup::CatchupStore;
 use commy_net::protocol::{build_sync_response, sign_sync_response};
 use commy_net::{ServerTicket, WirePayload};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 struct World {
@@ -76,7 +78,7 @@ impl World {
         let hello = world.bot.announcements(sid, Utc::now().timestamp_millis());
         world.deliver(hello);
         let snapshot = world.snapshot_from(world.owner);
-        let out = world.bot.on_snapshot(sid, snapshot, Utc::now().timestamp_millis()).expect("owner snapshot");
+        let out = world.bot.on_snapshot(sid, snapshot, Instant::now(), Utc::now()).expect("owner snapshot");
         world.deliver(out);
         world
     }
@@ -141,13 +143,12 @@ fn a_bot_joins_only_from_the_owners_snapshot_and_wears_the_badge() {
     assert!(world.owner_state.is_bot(world.bot_id), "members see the badge");
 
     let forged = world.snapshot_from(world.member);
-    assert_eq!(world.bot.on_snapshot(sid, forged, Utc::now().timestamp_millis()), None);
+    assert_eq!(world.bot.on_snapshot(sid, forged, Instant::now(), Utc::now()), None);
     let fresh = world.snapshot_from(world.owner);
-    let much_later = Utc::now().timestamp_millis() + 3_600_000;
-    assert_eq!(world.bot.on_snapshot(sid, fresh.clone(), much_later), None, "stale snapshots are refused");
-    let out = world.bot.on_snapshot(sid, fresh.clone(), Utc::now().timestamp_millis()).expect("the owner's snapshot");
+    assert_eq!(world.bot.on_snapshot(sid, fresh.clone(), Instant::now(), Utc::now() + Duration::hours(1)), None, "stale snapshots are refused");
+    let out = world.bot.on_snapshot(sid, fresh.clone(), Instant::now(), Utc::now()).expect("the owner's snapshot");
     assert!(!out.contains(&WirePayload::SyncRequest));
-    assert_eq!(world.bot.on_snapshot(sid, fresh, Utc::now().timestamp_millis()), None, "only the first one");
+    assert_eq!(world.bot.on_snapshot(sid, fresh, Instant::now(), Utc::now()), None, "only the first one");
 
     let state = world.bot.replica(sid).unwrap().state.as_ref().unwrap();
     assert!(state.server.is_member(world.member) && state.server.is_member(world.bot_id));
@@ -178,7 +179,7 @@ fn held_messages_are_removed_only_once_the_bot_may_remove_them() {
     let from_owner = post(&world.owner_state, world.channel, world.owner, "gold is exempt for the owner");
     assert!(world.posted(from_owner).is_empty());
     let replayed = post_at(&world.owner_state, world.channel, world.member, "old gold", Utc::now() - Duration::hours(1));
-    assert!(world.posted(replayed).is_empty(), "old messages arriving late are left to moderators");
+    assert!(world.posted(replayed).is_empty(), "messages from before the bot joined are left to moderators");
 
     world.bot.tidy(Utc::now() + Duration::hours(commy_bot::KEEP_HOURS + 1));
     let kept = world.bot.replica(world.sid()).unwrap().state.as_ref().unwrap();
@@ -261,7 +262,7 @@ fn rules_relayed_before_the_snapshot_still_apply_once_it_arrives() {
     world.promote(Permissions::MANAGE_MESSAGES);
     assert_eq!(world.bot.replica(sid).unwrap().pending(), 3, "kept until the bot has a copy of the server");
     let snapshot = world.snapshot_from(world.owner);
-    world.bot.on_snapshot(sid, snapshot, Utc::now().timestamp_millis()).unwrap();
+    world.bot.on_snapshot(sid, snapshot, Instant::now(), Utc::now()).unwrap();
     assert_eq!(world.bot.replica(sid).unwrap().pending(), 0);
     let spam = post(&world.owner_state, world.channel, world.member, "gold");
     assert_eq!(deletes(&world.posted(spam.clone())), vec![spam.id]);
@@ -291,4 +292,94 @@ fn edits_into_spam_are_removed_and_held_edits_replay_in_order() {
     assert!(deletes(&out).is_empty(), "the edit lands after the create, so the fixed text is what gets judged");
     let kept = world.bot.replica(sid).unwrap().state.as_ref().unwrap();
     assert_eq!(kept.message(first.id).unwrap().content, "never mind");
+}
+
+fn is_ban(payload: &WirePayload, user: UserId) -> bool {
+    matches!(payload, WirePayload::Signed(s) if matches!(s.event, ServerEvent::MemberBan { user: banned, .. } if banned == user))
+}
+
+fn drain(outgoing: &mut tokio::sync::mpsc::UnboundedReceiver<Outgoing>) -> (Vec<WirePayload>, bool) {
+    let mut sent = Vec::new();
+    let mut changed = false;
+    while let Ok(item) = outgoing.try_recv() {
+        match item {
+            Outgoing::Send(_, payload) => sent.push(*payload),
+            Outgoing::Changed(_) => changed = true,
+        }
+    }
+    (sent, changed)
+}
+
+#[test]
+fn messages_learned_through_catch_up_are_removed_and_count_toward_bans() {
+    let mut world = World::joined(Policy { log_channel: Some("general".into()), ban_after: Some(2) });
+    world.block("gold");
+    world.promote(Permissions::MANAGE_MESSAGES | Permissions::BAN_MEMBERS | Permissions::SEND_MESSAGES);
+    let sid = world.sid();
+    let older = post_at(&world.owner_state, world.channel, world.member, "old gold", Utc::now() - Duration::hours(1));
+    let first = post(&world.owner_state, world.channel, world.member, "gold");
+    let second = post(&world.owner_state, world.channel, world.member, "more gold");
+    let World { bot, member, .. } = world;
+    let (out, mut outgoing) = tokio::sync::mpsc::unbounded_channel();
+    let store = BotStore::new(Arc::new(Mutex::new(bot)), out);
+
+    let report = store.apply(sid, vec![older.clone(), first.clone()], vec![]);
+    assert_eq!(report.applied, vec![older.id, first.id]);
+    let (sent, changed) = drain(&mut outgoing);
+    assert!(changed);
+    assert_eq!(deletes(&sent), vec![first.id], "only messages written since the bot joined");
+    assert!(!sent.iter().any(|p| is_ban(p, member)));
+    assert_eq!(notes(&sent), vec!["Removed a message from member: blocked word".to_string()]);
+
+    let report = store.apply(sid, vec![first.clone(), second.clone()], vec![]);
+    assert_eq!(report.applied, vec![second.id], "a removed message stays removed");
+    let (sent, _) = drain(&mut outgoing);
+    assert_eq!(deletes(&sent), vec![second.id]);
+    assert!(sent.iter().any(|p| is_ban(p, member)), "both removals count toward --ban-after");
+
+    let bot = store.bot();
+    let state = bot.replica(sid).unwrap().state.as_ref().unwrap();
+    assert!(state.server.banned.contains(&member));
+    assert!(!state.has_message(first.id) && !state.has_message(second.id));
+    assert!(state.has_message(older.id));
+}
+
+#[test]
+fn caught_up_messages_from_unknown_keys_are_reviewed_once_the_profile_arrives() {
+    let mut world = World::joined(Policy::default());
+    world.block("gold");
+    world.promote(Permissions::MANAGE_MESSAGES);
+    let sid = world.sid();
+    let newcomer = commy_core::test_support::keyed_profile("newcomer");
+    let message = post(&world.owner_state, world.channel, newcomer.id, "gold for all");
+    let World { bot, .. } = world;
+    let (out, mut outgoing) = tokio::sync::mpsc::unbounded_channel();
+    let store = BotStore::new(Arc::new(Mutex::new(bot)), out);
+
+    let report = store.apply(sid, vec![message.clone()], vec![]);
+    assert_eq!(report.held, vec![message.id]);
+    assert!(deletes(&drain(&mut outgoing).0).is_empty());
+    store.apply_profiles(sid, vec![newcomer]);
+    assert_eq!(deletes(&drain(&mut outgoing).0), vec![message.id]);
+    assert_eq!(store.bot().replica(sid).unwrap().pending(), 0);
+}
+
+#[test]
+fn blocked_messages_in_the_first_snapshot_are_removed_if_written_after_the_bot_joined() {
+    let mut world = World::new(Policy::default());
+    let sid = world.sid();
+    let hello = world.bot.announcements(sid, Utc::now().timestamp_millis());
+    world.deliver(hello);
+    world.block("gold");
+    world.promote(Permissions::MANAGE_MESSAGES);
+    let before = post_at(&world.owner_state, world.channel, world.member, "gold before", Utc::now() - Duration::hours(1));
+    world.owner_state.apply_unsigned(ServerEvent::MessageCreate { message: before.clone() }).unwrap();
+    let spam = post(&world.owner_state, world.channel, world.member, "gold while it waited");
+    world.owner_state.apply_unsigned(ServerEvent::MessageCreate { message: spam.clone() }).unwrap();
+    let snapshot = world.snapshot_from(world.owner);
+    let out = world.bot.on_snapshot(sid, snapshot, Instant::now(), Utc::now()).unwrap();
+    assert_eq!(deletes(&out), vec![spam.id]);
+    world.deliver(out);
+    assert!(!world.owner_state.has_message(spam.id));
+    assert!(world.owner_state.has_message(before.id));
 }
