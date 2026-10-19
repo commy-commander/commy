@@ -95,6 +95,52 @@ test("emails escape user controlled values", () => {
   assert.ok(text.includes("https://x/?a=1&b=2"));
 });
 
+test("emails carry their own icon and load nothing from other servers", () => {
+  const { html, text } = renderEmail({
+    instanceName: "Commy",
+    siteUrl: "https://commy.chat",
+    heading: "Verify your email",
+    body: "Confirm this address.",
+    actionLabel: "Verify email",
+    url: "https://commy.chat/api/auth/verify-email?token=t",
+  });
+  assert.ok(html.includes('src="cid:'));
+  const remote = [...html.matchAll(/(?:src|href)="(https?:[^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(remote)], ["https://commy.chat/api/auth/verify-email?token=t"]);
+  assert.equal(/<link|@import|url\(/.test(html), false);
+  assert.match(text, /Verify email:\nhttps:\/\/commy\.chat\/api\/auth\/verify-email\?token=t/);
+  assert.match(text, /Sent by Commy from commy\.chat/);
+});
+
+test("notice emails without a link render no button", () => {
+  const { html, text } = renderEmail({
+    instanceName: "Commy",
+    siteUrl: "https://commy.chat",
+    heading: "Your password changed",
+    body: ["First.", "Second."],
+    note: "If this was you, there is nothing to do.",
+  });
+  assert.equal(html.includes("If the button"), false);
+  assert.ok(html.includes("First.") && html.includes("Second."));
+  assert.match(text, /First\.\n\nSecond\./);
+  assert.match(text, /If this was you, there is nothing to do\./);
+});
+
+test("sent mail is multipart with the inline icon, reply-to and auto-reply headers", async () => {
+  const send = createMailer({
+    instanceName: "Commy",
+    baseURL: "https://commy.chat",
+    smtp: { transport: { streamTransport: true, buffer: true }, from: "Commy <no-reply@commy.chat>", replyTo: "help@commy.chat" },
+  });
+  const info = await send({ to: "a@example.test", subject: "Sign in", heading: "Sign in", body: "b", actionLabel: "Sign in", url: "https://commy.chat/x" });
+  const raw = info.message.toString();
+  assert.match(raw, /^Reply-To: help@commy\.chat/m);
+  assert.match(raw, /^Auto-Submitted: auto-generated/m);
+  assert.match(raw, /multipart\/alternative/);
+  assert.match(raw, /Content-Id: <icon@commy>/i);
+  assert.match(raw, /^Message-ID: <[^>]+@commy\.chat>/m);
+});
+
 test("turnstile needs both keys and its site key is public", () => {
   assert.equal(loadConfig({ ...base, TURNSTILE_SITE_KEY: "site" }).turnstile, null);
   const c = loadConfig({ ...base, TURNSTILE_SITE_KEY: "site", TURNSTILE_SECRET_KEY: "secret" });

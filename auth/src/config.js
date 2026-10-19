@@ -62,7 +62,8 @@ function smtpConfig(env, errors) {
   }
 
   const fallbackFrom = user.includes("@") ? `Commy <${user}>` : "Commy <no-reply@localhost>";
-  return { transport, from: env.EMAIL_FROM || fallbackFrom };
+  const replyTo = (env.EMAIL_REPLY_TO ?? "").trim() || null;
+  return { transport, from: env.EMAIL_FROM || fallbackFrom, replyTo };
 }
 
 export function loadConfig(env = process.env) {
