@@ -69,7 +69,7 @@ impl SealKey {
         let cipher = Aes256Gcm::new_from_slice(&self.0).expect("32 byte key");
         let ciphertext = cipher
             .encrypt(
-                Nonce::from_slice(&nonce),
+                &Nonce::from(nonce),
                 Payload {
                     msg: plaintext,
                     aad: purpose.aad(),
@@ -93,10 +93,11 @@ impl SealKey {
             return Err(SealError::NotSealed);
         }
         let (nonce, ciphertext) = bytes.split_at(NONCE_LEN);
+        let nonce = Nonce::try_from(nonce).map_err(|_| SealError::NotSealed)?;
         let cipher = Aes256Gcm::new_from_slice(&self.0).expect("32 byte key");
         cipher
             .decrypt(
-                Nonce::from_slice(nonce),
+                &nonce,
                 Payload {
                     msg: ciphertext,
                     aad: purpose.aad(),

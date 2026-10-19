@@ -38,7 +38,7 @@ jobs:
           - name: Windows check
             os: windows-latest
           - name: macOS check
-            os: macos-15
+            os: macos-26
     defaults:
       run:
         shell: bash

@@ -20,6 +20,6 @@ curve25519-dalek = "4"
 aes-gcm = { workspace = true }
 data-encoding = { workspace = true }
 rand = "0.8"
-sha2 = "0.10"
-hmac = "0.12"
+sha2 = "0.11"
+hmac = "0.13"
 base64 = "0.22"
