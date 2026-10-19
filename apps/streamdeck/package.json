@@ -15,7 +15,7 @@
     "pack": "streamdeck pack chat.commy.soundboard.sdPlugin --output dist --force --no-update-check"
   },
   "dependencies": {
-    "@elgato/streamdeck": "3.0.2"
+    "@elgato/streamdeck": "3.0.3"
   },
   "devDependencies": {
     "@elgato/cli": "1.10.2",
