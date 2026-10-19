@@ -157,7 +157,10 @@ function mockSeed() {
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
     { id: "x4", channel: c0, author_id: "m2", author_name: "nova",
       content: "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43), created_at: new Date(Date.now() - 60e3).toISOString(), edited: false, attachments: [] },
+    { id: "x5", channel: c0, author_id: "m3", author_name: "sleepy",
+      content: "free gifts for everyone who clicks", created_at: new Date(Date.now() - 30e3).toISOString(), edited: false, attachments: [], held: "blocked word" },
   ];
+  server.automod = { blocked_terms: ["free gifts", "scam*"], block_links: false, max_mentions: 5, burst: { messages: 5, seconds: 10 }, exempt_roles: ["r2"] };
   mock.messages[server.channels[1].id] = [
     { id: "g1", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
       content: "clutch round from last night", created_at: new Date(Date.now() - 900e3).toISOString(), edited: false,
@@ -232,13 +235,14 @@ async function mockInvoke(cmd, args = {}) {
         members.unshift(me);
       }
       return {
-        ...s, members, screen_shares: [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
+        ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
         channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, ...c })),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
         can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
     case "create_server": {
@@ -514,6 +518,12 @@ async function mockInvoke(cmd, args = {}) {
         .filter(g => g.name.toLowerCase().includes(args.query.toLowerCase()));
     case "set_game_tags": mock.servers[args.serverId].game_tags = args.tags; mock.servers[args.serverId].game_tag_meta = args.meta || []; return null;
     case "set_rules": mock.servers[args.serverId].rules = args.rules; mock.servers[args.serverId].needs_rules = false; return null;
+    case "set_automod": {
+      const usage = termsUsage(args.rules.blocked_terms);
+      if (usage.over) throw `keep it to ${AUTOMOD_MAX_TERMS} blocked words of up to ${AUTOMOD_MAX_TERM_CHARS} characters each, ${AUTOMOD_MAX_TERMS_BYTES} characters in all`;
+      mock.servers[args.serverId].automod = { ...args.rules, blocked_terms: args.rules.blocked_terms.map(t => t.toLowerCase()) };
+      return null;
+    }
     case "accept_rules": mock.servers[args.serverId].needs_rules = false; return null;
     case "save_event": {
       const s = mock.servers[args.serverId];
@@ -1553,7 +1563,7 @@ function paintSidebarBanner() {
   header.classList.toggle("has-banner", Boolean(server));
   header.classList.toggle("plain", Boolean(server) && !ref);
   banner.style.backgroundImage = "";
-  header.style.setProperty("--slot", server ? serverColors(server.id).css : "");
+  header.style.setProperty("--slot", server ? starfield(server.id, serverColors(server.id).glow).css : "");
   if (!ref) return;
   loadServerImage(ref).then(url => {
     if (url && state.currentServer && state.currentServer.banner === ref) {
@@ -1858,7 +1868,7 @@ function onDmReceived(dm) {
 
 const CAMERA_KEY = "commy.cameraDevice";
 const CAMERA_FPS = 12;
-const cam = { stream: null, timer: null, busy: false, video: null, watching: new Set() };
+const cam = { pipe: null, timer: null, busy: false, watching: new Set() };
 
 function savedCameraId() {
   try { return localStorage.getItem(CAMERA_KEY) || ""; } catch { return ""; }
@@ -1879,9 +1889,10 @@ async function openCameraStream() {
 }
 
 async function startCamera() {
-  if (!state.voiceServer || cam.stream) return;
+  if (!state.voiceServer || cam.pipe) return;
+  let stream;
   try {
-    cam.stream = await openCameraStream();
+    stream = await openCameraStream();
   } catch (e) {
     toast(`Camera unavailable: ${e.message || e}`);
     return;
@@ -1889,33 +1900,20 @@ async function startCamera() {
   try {
     await invoke("start_camera", { serverId: state.voiceServer.id });
   } catch (e) {
-    stopCameraTracks();
+    for (const track of stream.getTracks()) track.stop();
     toast(String(e));
     return;
   }
-  const video = document.createElement("video");
-  video.muted = true;
-  video.playsInline = true;
-  video.srcObject = cam.stream;
-  await video.play().catch(() => {});
-  cam.video = video;
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
+  const pipe = createCameraPipeline(stream);
+  cam.pipe = pipe;
   cam.timer = setInterval(async () => {
-    if (cam.busy || !video.videoWidth) return;
+    if (cam.busy || !pipe.drawn || cam.pipe !== pipe) return;
     cam.busy = true;
     try {
-      const scale = Math.min(1, 640 / video.videoWidth);
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.7));
-      if (blob && cam.stream) {
-        await invoke("push_camera_frame", {
-          jpeg: await blobToBase64(blob),
-          width: canvas.width,
-          height: canvas.height,
-        });
+      const { width, height } = pipe.canvas;
+      const blob = await new Promise(r => pipe.canvas.toBlob(r, "image/jpeg", 0.7));
+      if (blob && cam.pipe === pipe) {
+        await invoke("push_camera_frame", { jpeg: await blobToBase64(blob), width, height });
       }
     } catch {}
     cam.busy = false;
@@ -1928,9 +1926,8 @@ async function startCamera() {
 function stopCameraTracks() {
   clearInterval(cam.timer);
   cam.timer = null;
-  if (cam.stream) for (const track of cam.stream.getTracks()) track.stop();
-  cam.stream = null;
-  cam.video = null;
+  stopCameraPipeline(cam.pipe);
+  cam.pipe = null;
 }
 
 async function stopCamera() {
@@ -1980,13 +1977,7 @@ function renderCamGrid() {
     if (!tile) {
       tile = el("div", "cam-tile");
       tile.dataset.user = user.id;
-      if (isMe) {
-        const video = document.createElement("video");
-        video.muted = true;
-        video.playsInline = true;
-        video.autoplay = true;
-        tile.appendChild(video);
-      } else {
+      if (!isMe) {
         tile.appendChild(el("img"));
         tile.appendChild(el("div", "cam-wait", "Connecting"));
       }
@@ -1995,8 +1986,7 @@ function renderCamGrid() {
     }
     tile.classList.toggle("speaking", state.speaking.has(user.id));
     if (isMe) {
-      const video = tile.querySelector("video");
-      if (cam.stream && video.srcObject !== cam.stream) video.srcObject = cam.stream;
+      if (cam.pipe && cam.pipe.canvas.parentNode !== tile) tile.prepend(cam.pipe.canvas);
     } else if (!cam.watching.has(user.id)) {
       cam.watching.add(user.id);
       invoke("watch_camera", { serverId: state.currentServer.id, userId: user.id }).catch(e => {
@@ -2029,19 +2019,17 @@ async function loadCameraDevices() {
   } catch {}
 }
 
-let previewStream = null;
+let previewPipe = null;
 
 async function toggleCameraPreview() {
-  const video = $("cam-preview");
-  if (previewStream) {
+  if (previewPipe) {
     stopCameraPreview();
     return;
   }
   try {
-    previewStream = await openCameraStream();
-    video.srcObject = previewStream;
-    await video.play().catch(() => {});
-    $("cam-preview-box").classList.add("live");
+    previewPipe = createCameraPipeline(await openCameraStream());
+    $("cam-stage").appendChild(previewPipe.canvas);
+    $("cam-stage").classList.add("live");
     $("cam-preview-btn").textContent = "Stop Test";
     loadCameraDevices();
   } catch (e) {
@@ -2050,11 +2038,31 @@ async function toggleCameraPreview() {
 }
 
 function stopCameraPreview() {
-  if (previewStream) for (const track of previewStream.getTracks()) track.stop();
-  previewStream = null;
-  $("cam-preview").srcObject = null;
-  $("cam-preview-box").classList.remove("live");
+  stopCameraPipeline(previewPipe);
+  previewPipe = null;
+  $("cam-stage").classList.remove("live");
   $("cam-preview-btn").textContent = "Test Camera";
+}
+
+const CAMERA_FX_NOTES = {
+  idle: "Effects run on this device. People in the call see what this preview shows.",
+  loading: "Getting background effects ready. Your picture stays blurred until then.",
+  ready: "Effects run on this device. People in the call see what this preview shows.",
+  failed: "Effects are not available here, so your whole picture is blurred. Pick Off to send it clear.",
+};
+
+function renderCameraFx(status = cameraFxStatus()) {
+  const { background, mirror } = cameraFx.settings;
+  for (const button of $("cam-bg").querySelectorAll("button")) {
+    const on = button.dataset.bg === background;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-checked", String(on));
+  }
+  $("cam-mirror").checked = mirror;
+  document.body.dataset.camMirror = mirror ? "on" : "off";
+  const note = $("cam-fx-note");
+  note.textContent = CAMERA_FX_NOTES[status];
+  note.classList.toggle("warn", status === "failed");
 }
 
 function fillDeviceSelect(select, names, chosen) {
@@ -2601,7 +2609,7 @@ function renderMessages(messages) {
     }
     const grouped = !message.reply_to && message.author_id === lastAuthor && time - lastTime < 5 * 60e3;
     box.appendChild(buildMessageRow(message, grouped, { replies: replyCounts.get(message.id) || 0 }));
-    lastAuthor = message.author_id;
+    lastAuthor = message.held ? null : message.author_id;
     lastTime = time;
   }
   box.scrollTop = sameView && !atBottom ? prevScroll : box.scrollHeight;
@@ -2664,9 +2672,21 @@ function pinnedMark() {
   return mark;
 }
 
+function heldMark(reason) {
+  const mark = el("span", "msg-held");
+  mark.title = "Members don't see this message. Auto moderation held it.";
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", heldLabel(reason));
+  mark.appendChild(svgIcon("eyeOff", 13));
+  mark.appendChild(document.createTextNode(heldLabel(reason)));
+  return mark;
+}
+
 function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {}) {
   const pending = Boolean(message.pending);
-  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : ""));
+  const held = Boolean(message.held);
+  if (held) grouped = false;
+  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : "") + (held ? " held" : ""));
   row.dataset.id = message.id;
   row.appendChild(messageActions(message, inThread));
   if (message.reply_to) row.appendChild(replyReference(message));
@@ -2683,6 +2703,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     head.appendChild(el("span", "msg-time", formatTime(message.created_at)));
     if (pending) head.appendChild(pendingMark());
     if (message.pinned) head.appendChild(pinnedMark());
+    if (held) head.appendChild(heldMark(message.held));
     body.appendChild(head);
   }
   if (message.pinned) row.classList.add("pinned");
@@ -4085,6 +4106,67 @@ async function saveRules(remove) {
   }
 }
 
+function renderAutomodSettings(server) {
+  const rules = server.automod || {};
+  $("automod-status").textContent = automodSummary(server.automod);
+  $("automod-terms").value = (rules.blocked_terms || []).join("\n");
+  syncAutomodCount();
+  $("automod-links").checked = Boolean(rules.block_links);
+  fillOptions($("automod-mentions"), mentionOptions(rules.max_mentions || 0), String(rules.max_mentions || 0));
+  fillOptions($("automod-burst"), burstOptions(rules.burst), burstKey(rules.burst));
+  const exempt = new Set(rules.exempt_roles || []);
+  const roles = [...(server.roles || [])].sort((a, b) => b.position - a.position);
+  $("automod-roles").replaceChildren(...roles.map(role => {
+    const label = el("label");
+    const box = el("input");
+    box.type = "checkbox";
+    box.value = role.id;
+    box.checked = exempt.has(role.id);
+    label.append(box, el("span", null, role.name));
+    return label;
+  }));
+}
+
+function fillOptions(select, options, value) {
+  select.replaceChildren(...options.map(o => {
+    const option = el("option", null, o.label);
+    option.value = o.value;
+    return option;
+  }));
+  select.value = value;
+}
+
+function syncAutomodCount() {
+  const usage = termsUsage(parseBlockedTerms($("automod-terms").value));
+  $("automod-count").textContent = termsUsageText(usage);
+  $("automod-count").classList.toggle("over", usage.over);
+}
+
+async function saveAutomod() {
+  const server = state.currentServer;
+  if (!server) return;
+  const exemptRoles = [...$("automod-roles").querySelectorAll("input:checked")].map(box => box.value);
+  if (exemptRoles.length > AUTOMOD_MAX_EXEMPT_ROLES) {
+    toast(`Pick up to ${AUTOMOD_MAX_EXEMPT_ROLES} exempt roles`);
+    return;
+  }
+  const rules = automodPayload({
+    termsText: $("automod-terms").value,
+    blockLinks: $("automod-links").checked,
+    mentionLimit: $("automod-mentions").value,
+    burst: $("automod-burst").value,
+    exemptRoles,
+  });
+  try {
+    await invoke("set_automod", { serverId: server.id, rules });
+    await refreshCurrentServer();
+    renderAutomodSettings(state.currentServer);
+    toast("Auto moderation saved");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 const eventsView = { mode: "upcoming", month: null, day: null };
 let editingEventId = null;
 
@@ -4647,6 +4729,9 @@ async function openFullProfile(member) {
   $("fp-about-wrap").classList.toggle("hidden", !person.about);
   $("fp-about").textContent = person.about || "";
   const servers = (state.people.get(person.id) || {}).servers || [];
+  const own = !!state.user && person.id === state.user.id;
+  $("fp-mutual-label").classList.toggle("hidden", own);
+  $("fp-servers").classList.toggle("hidden", own);
   $("fp-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
   $("fp-servers").replaceChildren(...servers.map(s => {
     const row = el("button", "dm-profile-server");
@@ -7132,8 +7217,7 @@ function renderDmProfile(userId, name) {
 }
 
 function bannerColor(userId) {
-  const hue = tintHue(userId);
-  return `linear-gradient(135deg, hsl(${hue} 42% 40%), hsl(${(hue + 40) % 360} 45% 26%))`;
+  return starfield(userId, hueGlow(tintHue(userId))).css;
 }
 
 function roleGradient(hex) {
@@ -7420,12 +7504,12 @@ async function renderGifResults(query) {
       const link = el("button", "btn-link", "Open GIF settings");
       link.onclick = () => {
         closeGifPicker();
-        openUserSettings("gifs");
+        openUserSettings("integrations");
       };
       note.appendChild(link);
     } else {
       note.textContent = settings.key
-        ? `Could not load GIFs: ${e.message}. Check your API key in Settings, then GIFs.`
+        ? `Could not load GIFs: ${e.message}. Check your API key in Settings, then Integrations.`
         : `Could not load GIFs: ${e.message}.`;
     }
     grid.replaceChildren(note);
@@ -8610,6 +8694,8 @@ function wireEvents() {
   $("rules-input").addEventListener("input", syncRulesPreview);
   $("rules-save").onclick = () => saveRules(false);
   $("rules-remove").onclick = () => saveRules(true);
+  $("automod-terms").addEventListener("input", syncAutomodCount);
+  $("automod-save").onclick = saveAutomod;
   $("rules-close").onclick = hideModals;
   $("rules-accept").onclick = acceptRules;
   $("rules-gate-open").onclick = () => openServerWelcome("rules");
@@ -8734,9 +8820,16 @@ function wireEvents() {
 
   $("vp-camera").onclick = () => (state.cameraOn ? stopCamera() : startCamera());
   $("cam-preview-btn").onclick = toggleCameraPreview;
+  for (const button of $("cam-bg").querySelectorAll("button")) {
+    button.onclick = () => updateCameraFx({ background: button.dataset.bg });
+  }
+  $("cam-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
+  onCameraFxChange(renderCameraFx);
+  renderCameraFx();
+  paintCameraSky($("cam-sky"));
   $("camera-device").addEventListener("change", async e => {
     try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch {}
-    if (previewStream) {
+    if (previewPipe) {
       stopCameraPreview();
       toggleCameraPreview();
     }
@@ -9261,6 +9354,8 @@ function openServerSettings(tab) {
   const canSounds = canEmoji || server.can_upload_sounds;
   $("tab-rules").classList.toggle("hidden", !server.can_manage_server);
   renderRulesSettings(server);
+  $("tab-automod").classList.toggle("hidden", !server.can_manage_server);
+  if (server.can_manage_server) renderAutomodSettings(server);
   renderGameTagEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
@@ -9275,6 +9370,7 @@ function openServerSettings(tab) {
     soundboard: canSounds,
     reports: isOwner,
     rules: server.can_manage_server,
+    automod: server.can_manage_server,
     members: canMembers,
   };
   renderEmojiSettings(server);
@@ -9594,7 +9690,7 @@ async function onAccountChanged() {
 function paintAccountBanner() {
   const strip = $("account-banner");
   strip.dataset.banner = "";
-  paintProfileBanner(strip, state.user.banner, state.user.node, null, "linear-gradient(135deg, var(--accent), var(--accent-deep))");
+  paintProfileBanner(strip, state.user.banner, state.user.node, null, bannerColor(state.user.id));
   $("account-banner-upload").lastElementChild.textContent = state.user.banner ? "Change banner" : "Add banner";
   $("account-banner-remove").classList.toggle("hidden", !state.user.banner);
 }

@@ -75,6 +75,9 @@ Email and password works with no extra setup. The rest are optional:
   24 hours, reset links 1 hour, and a reset signs out every other session.
   Without SMTP, accounts work unverified and password reset is unavailable (the
   emails are dropped, never logged).
+  `EMAIL_REPLY_TO` optionally sends replies to another mailbox. To keep these
+  emails out of spam, send from your own domain through your mail provider and
+  publish the SPF, DKIM and DMARC records it gives you for that domain.
 
 Every redirect URI follows the site's public URL, so a staging copy on
 `staging.<DOMAIN>` needs its own redirect URIs added to the same Google client

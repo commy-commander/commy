@@ -12,7 +12,8 @@ function serverColors(serverId) {
   let hash = 0;
   for (const ch of String(serverId)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
   const [from, to] = SERVER_COLORS[Math.abs(hash) % SERVER_COLORS.length];
-  return { from, to, css: `linear-gradient(160deg, ${from}, ${to})` };
+  const hexRgb = hex => { const n = parseInt(hex.slice(1), 16); return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`; };
+  return { from, to, css: `linear-gradient(160deg, ${from}, ${to})`, glow: hexRgb(from) };
 }
 
 function serverTint(serverId) {

@@ -1,4 +1,5 @@
 use crate::action::{self, SignedEvent};
+use crate::automod::{AutoMod, Hold};
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
@@ -97,6 +98,16 @@ pub struct ServerState {
     action_floor: i64,
     signed_actions: HashMap<String, SignedEvent>,
     local_floor: Option<DateTime<Utc>>,
+    reaction_marks: HashMap<MessageId, Vec<ReactionMark>>,
+    automod: AutoMod,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReactionMark {
+    pub user: UserId,
+    pub emoji: String,
+    pub at: i64,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +127,10 @@ pub struct Snapshot {
     pub action_floor: i64,
     #[serde(default)]
     pub signed_actions: Vec<SignedEvent>,
+    #[serde(default)]
+    pub reaction_marks: Vec<(MessageId, ReactionMark)>,
+    #[serde(default)]
+    pub automod: AutoMod,
 }
 
 impl ServerState {
@@ -142,6 +157,8 @@ impl ServerState {
             action_floor: 0,
             signed_actions: HashMap::new(),
             local_floor: None,
+            reaction_marks: HashMap::new(),
+            automod: AutoMod::default(),
         }
     }
 
@@ -166,6 +183,13 @@ impl ServerState {
             action_times: self.action_times.iter().map(|(s, t)| (s.clone(), *t)).collect(),
             action_floor: self.action_floor,
             signed_actions: self.signed_actions.values().cloned().collect(),
+            reaction_marks: self
+                .reaction_marks
+                .iter()
+                .filter(|(id, _)| self.index.contains_key(id))
+                .flat_map(|(id, marks)| marks.iter().map(|m| (*id, m.clone())))
+                .collect(),
+            automod: self.automod.clone(),
         }
     }
 
@@ -199,8 +223,14 @@ impl ServerState {
             });
             slot.extend(list);
         }
+        for (id, mark) in snapshot.reaction_marks {
+            if state.index.contains_key(&id) {
+                state.mark_reaction(id, mark.user, &mark.emoji, mark.at, mark.active);
+            }
+        }
         state.action_times = snapshot.action_times.into_iter().collect();
         state.action_floor = snapshot.action_floor;
+        state.automod = snapshot.automod;
         for signed in snapshot.signed_actions {
             if let Some(subject) = action::subject(&signed.event) {
                 if state.action_times.get(&subject) == Some(&signed.action.at) {
@@ -311,6 +341,25 @@ impl ServerState {
         self.messages.get(channel)?.iter().rev().find(|m| m.id == id)
     }
 
+    pub fn reaction_marks(&self, id: MessageId) -> &[ReactionMark] {
+        self.reaction_marks.get(&id).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn reaction_mark(&self, id: MessageId, user: UserId, emoji: &str) -> Option<&ReactionMark> {
+        self.reaction_marks(id).iter().find(|m| m.user == user && m.emoji == emoji)
+    }
+
+    pub fn mark_reaction(&mut self, id: MessageId, user: UserId, emoji: &str, at: i64, active: bool) {
+        let marks = self.reaction_marks.entry(id).or_default();
+        match marks.iter_mut().find(|m| m.user == user && m.emoji == emoji) {
+            Some(mark) => {
+                mark.at = at;
+                mark.active = active;
+            }
+            None => marks.push(ReactionMark { user, emoji: emoji.to_string(), at, active }),
+        }
+    }
+
     pub fn has_message(&self, id: MessageId) -> bool {
         self.message(id).is_some()
     }
@@ -377,6 +426,14 @@ impl ServerState {
 
     pub fn messages(&self, channel: ChannelId) -> &[Message] {
         self.messages.get(&channel).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    pub fn automod(&self) -> &AutoMod {
+        &self.automod
+    }
+
+    pub fn hold(&self, message: &Message) -> Option<Hold> {
+        self.automod.hold(&self.server, self.messages(message.channel), message)
     }
 
     pub fn page(&self, channel: ChannelId, before: Option<MessageId>, limit: usize) -> &[Message] {
@@ -578,6 +635,8 @@ impl ServerState {
                     return Err(StoreError::Limit);
                 }
                 msg.toggle_reaction(&emoji, user);
+                let active = msg.reactions.iter().any(|r| r.emoji == emoji && r.users.contains(&user));
+                self.mark_reaction(message, user, &emoji, Utc::now().timestamp_millis(), active);
                 Ok(true)
             }
             ServerEvent::ReactionSet {
@@ -599,6 +658,7 @@ impl ServerState {
                     return Err(StoreError::Limit);
                 }
                 msg.toggle_reaction(&emoji, user);
+                self.mark_reaction(message, user, &emoji, Utc::now().timestamp_millis(), active);
                 Ok(true)
             }
             ServerEvent::MemberJoin { server, mut profile } => {
@@ -815,6 +875,13 @@ impl ServerState {
                     return Ok(false);
                 }
                 Ok(replace(&mut self.server.rules, rules))
+            }
+            ServerEvent::AutoModSet { server, rules } => {
+                self.same_server(server)?;
+                if !rules.valid() {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.automod, rules))
             }
             ServerEvent::RulesAccept { server, user } => {
                 self.same_server(server)?;
@@ -2575,6 +2642,35 @@ mod tests {
         assert_eq!(state.apply(ServerEvent::RulesAccept { server: sid, user: owner }), Ok(true));
         assert_eq!(state.apply(ServerEvent::RulesAccept { server: sid, user: owner }), Ok(false));
         assert_eq!(state.apply(ServerEvent::RulesAccept { server: sid, user: UserId::new() }), Ok(false), "non-members");
+    }
+
+    #[test]
+    fn auto_moderation_rules_hold_messages_and_survive_a_restart() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let member = join(&mut state, "member");
+        let message = post(&state, channel, member, "buy cheap gold");
+        create(&mut state, &message).unwrap();
+        assert_eq!(state.hold(&message), None);
+        let rules = crate::AutoMod { blocked_terms: vec!["gold".into()], ..Default::default() };
+        let signed = crate::SignedEvent::sign(sid, owner, 1_000, ServerEvent::AutoModSet { server: sid, rules: rules.clone() }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&signed), Ok(true));
+        assert_eq!(state.hold(&message), Some(crate::Hold::BlockedTerm), "older messages are held too");
+        assert!(state.has_message(message.id), "held, not deleted");
+        let restored = reload(&state);
+        assert_eq!(restored.automod(), &rules);
+        assert_eq!(restored.signed_actions(), vec![&signed]);
+        let mut older_build = serde_json::to_value(state.snapshot()).unwrap();
+        older_build.as_object_mut().unwrap().remove("automod");
+        let without: crate::Snapshot = serde_json::from_value(older_build).unwrap();
+        assert!(ServerState::from_snapshot(without).automod().is_off(), "snapshots from before auto moderation load");
+        let untidy = crate::AutoMod { blocked_terms: vec!["Gold".into()], ..Default::default() };
+        assert_eq!(state.apply(ServerEvent::AutoModSet { server: sid, rules: untidy }), Ok(false));
+        let by_member = crate::SignedEvent::sign(sid, member, 2_000, ServerEvent::AutoModSet { server: sid, rules: Default::default() }, &identity_for(member));
+        assert_eq!(state.apply_signed(&by_member), Err(StoreError::NotAllowed));
+        let off = crate::SignedEvent::sign(sid, owner, 3_000, ServerEvent::AutoModSet { server: sid, rules: Default::default() }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&off), Ok(true));
+        assert_eq!(state.hold(&message), None);
     }
 
     #[test]

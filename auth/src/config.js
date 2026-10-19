@@ -62,7 +62,8 @@ function smtpConfig(env, errors) {
   }
 
   const fallbackFrom = user.includes("@") ? `Commy <${user}>` : "Commy <no-reply@localhost>";
-  return { transport, from: env.EMAIL_FROM || fallbackFrom };
+  const replyTo = (env.EMAIL_REPLY_TO ?? "").trim() || null;
+  return { transport, from: env.EMAIL_FROM || fallbackFrom, replyTo };
 }
 
 export function loadConfig(env = process.env) {
@@ -162,6 +163,7 @@ export function discoveryDocument(config) {
       emailVerification: Boolean(config.smtp),
       passwordReset: Boolean(config.smtp),
       emailPassword: true,
+      passkey: true,
     },
     turnstileSiteKey: config.turnstile?.siteKey ?? null,
     deviceAuthorization: {
@@ -193,6 +195,8 @@ export function discoveryDocument(config) {
       media: true,
       vault: true,
       doorbell: Boolean(config.doorbell),
+      twoFactor: true,
+      changeEmail: Boolean(config.smtp),
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,

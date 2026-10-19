@@ -1,6 +1,6 @@
 use crate::state::App;
 use chrono::Utc;
-use commy_core::catchup::{digests, items, BucketItems};
+use commy_core::catchup::{apply_reaction_changes, digests, items, reaction_changes, BucketItems, ReactionChange};
 use commy_core::{
     Action, BucketDigest, BucketKey, ChannelId, Identity, IdentityKey, Message, MessageId, ServerEvent,
     ServerId, ServerState, SignedEvent, StoreError, TombstoneProof, UserId, UserProfile,
@@ -396,10 +396,14 @@ pub fn apply_page(
     let fresh = report
         .applied
         .iter()
-        .filter(|id| state.has_message(**id))
+        .filter(|id| shown_to_members(state, **id))
         .filter_map(|id| new.get(id).cloned())
         .collect();
     (report, held, fresh)
+}
+
+fn shown_to_members(state: &ServerState, id: MessageId) -> bool {
+    state.message(id).is_some_and(|m| state.hold(m).is_none())
 }
 
 fn item_signer(event: &ServerEvent) -> Option<UserId> {
@@ -428,7 +432,7 @@ pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<Held>) -
             Ok(true) => {
                 out.changed = true;
                 if let Some((id, fresh)) = new_message {
-                    if state.has_message(id) {
+                    if shown_to_members(state, id) {
                         out.fresh.push(fresh);
                     }
                 }
@@ -657,6 +661,24 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
         }
         report
     }
+
+    fn reaction_changes(&self, server: ServerId, user: UserId) -> Vec<ReactionChange> {
+        self.with_state(server, |s| reaction_changes(s, user, Utc::now())).unwrap_or_default()
+    }
+
+    fn apply_reaction_changes(&self, server: ServerId, user: UserId, changes: Vec<ReactionChange>) -> usize {
+        let app = self.0.app();
+        let changed = {
+            let mut servers = app.servers.lock().unwrap();
+            let Some(state) = servers.get_mut(&server) else { return 0 };
+            apply_reaction_changes(state, user, changes, Utc::now())
+        };
+        if changed > 0 {
+            app.catchup.lock().unwrap().note_applied(server, []);
+            flush(&self.0, server, false);
+        }
+        changed
+    }
 }
 
 fn dedup(ids: impl IntoIterator<Item = MessageId>) -> Vec<MessageId> {
@@ -710,10 +732,11 @@ async fn run_session(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32]
     match result {
         Ok(report) => {
             tracing::info!(
-                "caught up on {server}: delivered {}, received {}, held {}",
+                "caught up on {server}: delivered {}, received {}, held {}, reactions {}",
                 report.delivered.len(),
                 report.received.len(),
-                report.held
+                report.held,
+                report.reactions
             );
             after_session(handle, server, Some(&report));
         }
@@ -1692,6 +1715,31 @@ mod tests {
         let (report, _, fresh) = apply_page(&mut state, &unread_for(&newcomer), vec![older.clone(), new.clone()], vec![]);
         assert_eq!(report.applied.len(), 2);
         assert_eq!(fresh, vec![Fresh::of(&new, &[])], "only the message after our join");
+    }
+
+    #[test]
+    fn reactions_from_catch_up_are_drawn_and_offered_back() {
+        let owner = Member::new("owner");
+        let friend = Member::new("friend");
+        let (mut state, channel) = server(&owner);
+        join(&mut state, &friend);
+        let held = owner.post(&state, channel, "held by both");
+        state.apply(ServerEvent::MessageCreate { message: held.clone() }).unwrap();
+        let sid = state.server.id;
+        let app = app_with(&owner, state);
+        let handle = TestHandle::new(app.clone());
+        let store = AppStore(handle.clone());
+
+        let change = |emoji: &str, active| ReactionChange { message: held.id, emoji: emoji.into(), at: 1_000, active };
+        assert_eq!(store.apply_reaction_changes(sid, friend.id(), vec![change("👍", true)]), 1);
+        let reactions = app.servers.lock().unwrap()[&sid].message(held.id).unwrap().reactions.clone();
+        assert_eq!(reactions[0].users, vec![friend.id()]);
+        assert_eq!(handle.take_events(), vec![("server-event".into(), sid.to_string().into())]);
+
+        assert_eq!(store.apply_reaction_changes(sid, friend.id(), vec![change("👍", true)]), 0);
+        assert!(handle.take_events().is_empty(), "nothing to redraw");
+        assert_eq!(store.reaction_changes(sid, friend.id()), vec![change("👍", true)]);
+        assert!(store.reaction_changes(sid, owner.id()).is_empty());
     }
 
     #[test]

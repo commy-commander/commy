@@ -1,4 +1,5 @@
 pub mod action;
+pub mod automod;
 pub mod catchup;
 pub mod dm;
 pub mod doorbell;
@@ -15,6 +16,7 @@ pub mod user;
 pub mod test_support;
 
 pub use action::{Action, SignedEvent};
+pub use automod::{AutoMod, Hold};
 pub use catchup::{BucketDigest, BucketKey};
 pub use dm::{DmMessage, DmStore};
 pub use event::ServerEvent;
@@ -23,5 +25,5 @@ pub use ids::{ChannelId, MessageId, RoleId, ServerId, UserId};
 pub use message::{Attachment, Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES};
 pub use permissions::Permissions;
 pub use server::{Channel, ChannelKind, Member, Role, Server, SoundboardSound};
-pub use store::{ServerState, Snapshot, StoreError};
+pub use store::{ReactionMark, ServerState, Snapshot, StoreError};
 pub use user::{Avatar, Presence, UserProfile};

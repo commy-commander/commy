@@ -1,6 +1,7 @@
 use commy_core::server::Rsvp;
 use commy_core::{
-    ChannelId, ChannelKind, DmMessage, DmStore, Message, MessageId, Permissions, Presence, ServerState, UserId,
+    AutoMod, ChannelId, ChannelKind, DmMessage, DmStore, Hold, Message, MessageId, Permissions, Presence, ServerState,
+    UserId,
 };
 use std::collections::HashSet;
 use serde::Serialize;
@@ -151,6 +152,7 @@ pub struct ServerView {
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
     pub can_use_soundboard: bool,
+    pub automod: Option<AutoMod>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -362,6 +364,7 @@ impl ServerView {
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS)
                 || (state.server.soundboard_open && viewer.is_some_and(|v| state.server.is_member(v))),
             can_use_soundboard: perms.allows(Permissions::USE_SOUNDBOARD),
+            automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
         }
     }
 }
@@ -476,6 +479,7 @@ pub struct MessageView {
     pub attachments: Vec<AttachmentView>,
     pub pending: bool,
     pub pinned: bool,
+    pub held: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -552,6 +556,9 @@ impl MessageView {
                 if excerpt.is_empty() && !original.attachments.is_empty() {
                     excerpt = "Click to see attachment".to_string();
                 }
+                if state.hold(original).is_some() {
+                    excerpt = HELD_EXCERPT.to_string();
+                }
                 Some(ReplyPreview {
                     author_id: original.author.to_string(),
                     author_name: display_name(state, original.author),
@@ -581,7 +588,13 @@ impl MessageView {
                 .collect(),
             pending: false,
             pinned: state.server.is_pinned(message.id),
+            held: None,
         }
+    }
+
+    fn with_hold(mut self, hold: Option<Hold>) -> Self {
+        self.held = hold.map(|h| h.describe().to_string());
+        self
     }
 
     pub fn with_pending(mut self, pending: bool) -> Self {
@@ -590,11 +603,24 @@ impl MessageView {
     }
 }
 
-pub fn message_views(state: &ServerState, channel: ChannelId, limit: usize, pending: &HashSet<MessageId>) -> Vec<MessageView> {
+const HELD_EXCERPT: &str = "Held by auto moderation";
+
+pub fn message_views(
+    state: &ServerState,
+    channel: ChannelId,
+    limit: usize,
+    pending: &HashSet<MessageId>,
+    viewer: Option<UserId>,
+) -> Vec<MessageView> {
+    let reviews_held = viewer.is_some_and(|v| commy_core::automod::moderates(&state.server, v));
     state
         .page(channel, None, limit)
         .iter()
-        .map(|m| MessageView::build(m, state).with_pending(pending.contains(&m.id)))
+        .filter_map(|m| {
+            let hold = state.hold(m);
+            let hidden = hold.is_some() && !reviews_held && Some(m.author) != viewer;
+            (!hidden).then(|| MessageView::build(m, state).with_pending(pending.contains(&m.id)).with_hold(hold))
+        })
         .collect()
 }
 
@@ -637,12 +663,56 @@ mod tests {
             state.apply(ServerEvent::MessageCreate { message }).unwrap();
         }
         let pending = HashSet::from([ids[1]]);
-        let views = message_views(&state, channel, 100, &pending);
+        let views = message_views(&state, channel, 100, &pending, Some(owner.id));
         let flags: Vec<(&str, bool)> = views.iter().map(|v| (v.content.as_str(), v.pending)).collect();
         assert_eq!(flags, vec![("sent", false), ("waiting", true)]);
         assert!(!MessageView::build(state.message(ids[1]).unwrap(), &state).pending);
         let json = serde_json::to_value(&views[1]).unwrap();
         assert_eq!(json["pending"], true);
+    }
+
+    #[test]
+    fn held_messages_show_only_to_moderators_and_their_author() {
+        let owner_key = Identity::generate();
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(owner_key.public());
+        let server = Server::new("s", owner.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let mut keys = Vec::new();
+        for name in ["author", "reader"] {
+            let identity = Identity::generate();
+            let mut profile = UserProfile::new(name);
+            profile.identity = Some(identity.public());
+            keys.push((profile.id, identity));
+            state.apply(ServerEvent::MemberJoin { server: sid, profile }).unwrap();
+        }
+        let [(author, author_key), (reader, _)] = <[_; 2]>::try_from(keys).ok().unwrap();
+        let mut post = |text: &str, reply_to| {
+            let mut message = Message::new(channel, author, text);
+            message.reply_to = reply_to;
+            message.sign(sid, &author_key);
+            let id = message.id;
+            state.apply(ServerEvent::MessageCreate { message }).unwrap();
+            id
+        };
+        let bad = post("cheap gold here", None);
+        post("fine", Some(bad));
+        let rules = AutoMod { blocked_terms: vec!["gold".into()], ..AutoMod::default() };
+        state.apply(ServerEvent::AutoModSet { server: sid, rules }).unwrap();
+        let seen = |viewer| {
+            message_views(&state, channel, 100, &HashSet::new(), Some(viewer))
+                .into_iter()
+                .map(|v| (v.content, v.held))
+                .collect::<Vec<_>>()
+        };
+        let all = vec![("cheap gold here".to_string(), Some("blocked word".to_string())), ("fine".to_string(), None)];
+        assert_eq!(seen(owner.id), all);
+        assert_eq!(seen(author), all);
+        assert_eq!(seen(reader), vec![("fine".to_string(), None)]);
+        let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader)).remove(0);
+        assert_eq!(reply.reply_preview.unwrap().excerpt, HELD_EXCERPT);
     }
 
     #[test]
