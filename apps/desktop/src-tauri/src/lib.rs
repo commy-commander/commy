@@ -18,6 +18,7 @@ mod settle;
 mod state;
 mod storage;
 mod stream_deck;
+mod templates;
 mod toast;
 mod tray;
 mod updater;
@@ -40,6 +41,7 @@ use commy_core::{
     UserProfile, MAX_MESSAGE_BYTES,
 };
 use commy_core::server::Role;
+use commy_core::template::{text_channel_name, MAX_RETENTION_DAYS};
 use commy_media::screen::{SourceKind, StreamQuality};
 use view::permissions_from_names;
 use commy_media::StreamGuards;
@@ -126,10 +128,6 @@ fn clean_server_name(name: &str) -> CmdResult<String> {
     Ok(name.to_string())
 }
 
-fn text_channel_name(name: &str) -> String {
-    name.trim().to_lowercase().replace(' ', "-")
-}
-
 fn check_channel_name(name: String) -> CmdResult<String> {
     if name.is_empty() || name.len() > 50 {
         return Err("channel name must be 1 to 50 characters".into());
@@ -144,8 +142,10 @@ async fn create_server(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
     name: String,
+    template: Option<String>,
 ) -> CmdResult<ServerView> {
     let name = clean_server_name(&name)?;
+    let template = templates::resolve(template.as_deref())?;
     current_profile(&app)?;
     account::require_account(&app)?;
 
@@ -165,7 +165,8 @@ async fn create_server(
         }
         Ok(())
     };
-    let (state, _, signing) = own_server_state(&app, server_id, &name, hosting).await?;
+    let (state, _, signing) =
+        own_server_state_from(&app, server_id, hosting, |owner| template.build(&name, owner)).await?;
     let view = ServerView::for_viewer(&state, Some(state.server.owner));
     app.servers.lock().unwrap().insert(server_id, state);
     drop(signing);
@@ -233,10 +234,19 @@ async fn own_server_state<'a>(
     name: &str,
     connect: impl std::future::Future<Output = CmdResult<()>>,
 ) -> CmdResult<(ServerState, UserProfile, tokio::sync::RwLockReadGuard<'a, ()>)> {
+    own_server_state_from(app, id, connect, |owner| commy_core::Server::new(name, owner)).await
+}
+
+async fn own_server_state_from<'a>(
+    app: &'a App,
+    id: ServerId,
+    connect: impl std::future::Future<Output = CmdResult<()>>,
+    make: impl FnOnce(UserId) -> commy_core::Server,
+) -> CmdResult<(ServerState, UserProfile, tokio::sync::RwLockReadGuard<'a, ()>)> {
     connect.await?;
     let signing = app.signing.read().await;
     let profile = current_profile(app)?;
-    let mut server = commy_core::Server::new(name, profile.id);
+    let mut server = make(profile.id);
     server.id = id;
     let mut state = ServerState::new(server);
     state.profiles.insert(profile.id, profile.clone());
@@ -2093,7 +2103,6 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     events
 }
 
-const MAX_RETENTION_DAYS: u32 = 365;
 
 #[tauri::command]
 async fn update_channel(
@@ -5331,6 +5340,9 @@ pub fn run() {
             init_user,
             get_user,
             create_server,
+            templates::list_server_templates,
+            templates::preview_server_template,
+            templates::export_server_template,
             join_server,
             list_servers,
             get_server,
