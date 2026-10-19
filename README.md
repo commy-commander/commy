@@ -13,6 +13,8 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   group servers into folders, and invite people with a link.
 - **Roles and moderation.** Colored roles with fine-grained permissions,
   kick and ban, server mute and deafen, pinned messages and announcements.
+  Channels can be limited to roles. Messages sent in a private channel are
+  encrypted so only those roles and admins can read them.
 - **Rich chat.** Replies, reactions, edits, emoji (including custom server
   emoji), images and files shown inline, clickable links, and a GIF picker when the server
   operator has set up a GIF provider key.
