@@ -253,7 +253,7 @@ request ties two tokens together.
 
 ## Redis
 
-The stack runs a small Redis (`redis:7-alpine`, 128 MB cap, reachable only
+The stack runs a small Redis (`redis:8-alpine`, 128 MB cap, reachable only
 from the auth server) for the two kinds of state that are short-lived and hot:
 
 - **Doorbell rings:** random tokens and blinded ids with their arrival time,

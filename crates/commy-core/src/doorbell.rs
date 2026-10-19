@@ -1,7 +1,7 @@
 use crate::identity::{to_hex, IdentityKey, Signature};
 use crate::ids::{MessageId, ServerId, UserId};
 use chrono::{DateTime, Utc};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 pub type DoorbellKey = [u8; 32];
