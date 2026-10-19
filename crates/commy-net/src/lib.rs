@@ -1,8 +1,6 @@
 pub mod catchup;
 pub mod dm;
 pub mod entry_key;
-#[cfg(feature = "test-relay")]
-pub mod local_relay;
 pub mod media;
 pub mod node;
 pub mod protocol;
