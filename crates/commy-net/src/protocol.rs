@@ -724,6 +724,22 @@ mod tests {
     }
 
     #[test]
+    fn the_largest_auto_moderation_rules_fit_one_signed_frame() {
+        use commy_core::automod::{AutoMod, Burst, MAX_BLOCKED_TERMS, MAX_EXEMPT_ROLES, MAX_TERMS_BYTES};
+        let sid = ServerId::new();
+        let term_bytes = MAX_TERMS_BYTES / MAX_BLOCKED_TERMS;
+        let rules = AutoMod {
+            blocked_terms: (0..MAX_BLOCKED_TERMS).map(|i| format!("{i:0>term_bytes$}")).collect(),
+            block_links: true,
+            max_mentions: Some(50),
+            burst: Some(Burst { messages: 30, seconds: 300 }),
+            exempt_roles: (0..MAX_EXEMPT_ROLES).map(|_| commy_core::RoleId::new()).collect(),
+        };
+        assert!(rules.valid());
+        assert!(signed_size(sid, &ServerEvent::AutoModSet { server: sid, rules }) <= MAX_GOSSIP_BYTES);
+    }
+
+    #[test]
     fn sync_response_leaves_out_expressions() {
         use commy_core::server::{CustomEmoji, SoundboardSound};
         let owner = UserId::new();

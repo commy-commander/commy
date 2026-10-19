@@ -161,6 +161,10 @@ pub enum ServerEvent {
         channel: ChannelId,
         kind: crate::server::ChannelKind,
     },
+    AutoModSet {
+        server: ServerId,
+        rules: crate::automod::AutoMod,
+    },
 }
 
 #[cfg(test)]
@@ -200,6 +204,8 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::AfkChannelSet { server, channel: None }), 18);
         let kind = crate::server::ChannelKind::Text;
         assert_eq!(wire_tag(ServerEvent::ChannelKindSet { server, channel, kind }), 47);
+        let rules = crate::automod::AutoMod::default();
+        assert_eq!(wire_tag(ServerEvent::AutoModSet { server, rules }), 48);
     }
 
     #[test]

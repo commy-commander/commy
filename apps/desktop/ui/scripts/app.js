@@ -157,7 +157,10 @@ function mockSeed() {
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
     { id: "x4", channel: c0, author_id: "m2", author_name: "nova",
       content: "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43), created_at: new Date(Date.now() - 60e3).toISOString(), edited: false, attachments: [] },
+    { id: "x5", channel: c0, author_id: "m3", author_name: "sleepy",
+      content: "free gifts for everyone who clicks", created_at: new Date(Date.now() - 30e3).toISOString(), edited: false, attachments: [], held: "blocked word" },
   ];
+  server.automod = { blocked_terms: ["free gifts", "scam*"], block_links: false, max_mentions: 5, burst: { messages: 5, seconds: 10 }, exempt_roles: ["r2"] };
   mock.messages[server.channels[1].id] = [
     { id: "g1", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
       content: "clutch round from last night", created_at: new Date(Date.now() - 900e3).toISOString(), edited: false,
@@ -239,6 +242,7 @@ async function mockInvoke(cmd, args = {}) {
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
         can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
     case "create_server": {
@@ -514,6 +518,12 @@ async function mockInvoke(cmd, args = {}) {
         .filter(g => g.name.toLowerCase().includes(args.query.toLowerCase()));
     case "set_game_tags": mock.servers[args.serverId].game_tags = args.tags; mock.servers[args.serverId].game_tag_meta = args.meta || []; return null;
     case "set_rules": mock.servers[args.serverId].rules = args.rules; mock.servers[args.serverId].needs_rules = false; return null;
+    case "set_automod": {
+      const usage = termsUsage(args.rules.blocked_terms);
+      if (usage.over) throw `keep it to ${AUTOMOD_MAX_TERMS} blocked words of up to ${AUTOMOD_MAX_TERM_CHARS} characters each, ${AUTOMOD_MAX_TERMS_BYTES} characters in all`;
+      mock.servers[args.serverId].automod = { ...args.rules, blocked_terms: args.rules.blocked_terms.map(t => t.toLowerCase()) };
+      return null;
+    }
     case "accept_rules": mock.servers[args.serverId].needs_rules = false; return null;
     case "save_event": {
       const s = mock.servers[args.serverId];
@@ -2599,7 +2609,7 @@ function renderMessages(messages) {
     }
     const grouped = !message.reply_to && message.author_id === lastAuthor && time - lastTime < 5 * 60e3;
     box.appendChild(buildMessageRow(message, grouped, { replies: replyCounts.get(message.id) || 0 }));
-    lastAuthor = message.author_id;
+    lastAuthor = message.held ? null : message.author_id;
     lastTime = time;
   }
   box.scrollTop = sameView && !atBottom ? prevScroll : box.scrollHeight;
@@ -2662,9 +2672,21 @@ function pinnedMark() {
   return mark;
 }
 
+function heldMark(reason) {
+  const mark = el("span", "msg-held");
+  mark.title = "Members don't see this message. Auto moderation held it.";
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", heldLabel(reason));
+  mark.appendChild(svgIcon("eyeOff", 13));
+  mark.appendChild(document.createTextNode(heldLabel(reason)));
+  return mark;
+}
+
 function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {}) {
   const pending = Boolean(message.pending);
-  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : ""));
+  const held = Boolean(message.held);
+  if (held) grouped = false;
+  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : "") + (held ? " held" : ""));
   row.dataset.id = message.id;
   row.appendChild(messageActions(message, inThread));
   if (message.reply_to) row.appendChild(replyReference(message));
@@ -2681,6 +2703,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     head.appendChild(el("span", "msg-time", formatTime(message.created_at)));
     if (pending) head.appendChild(pendingMark());
     if (message.pinned) head.appendChild(pinnedMark());
+    if (held) head.appendChild(heldMark(message.held));
     body.appendChild(head);
   }
   if (message.pinned) row.classList.add("pinned");
@@ -4078,6 +4101,67 @@ async function saveRules(remove) {
     await refreshCurrentServer();
     renderRulesSettings(state.currentServer);
     toast(remove ? "Rules removed" : "Rules saved");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function renderAutomodSettings(server) {
+  const rules = server.automod || {};
+  $("automod-status").textContent = automodSummary(server.automod);
+  $("automod-terms").value = (rules.blocked_terms || []).join("\n");
+  syncAutomodCount();
+  $("automod-links").checked = Boolean(rules.block_links);
+  fillOptions($("automod-mentions"), mentionOptions(rules.max_mentions || 0), String(rules.max_mentions || 0));
+  fillOptions($("automod-burst"), burstOptions(rules.burst), burstKey(rules.burst));
+  const exempt = new Set(rules.exempt_roles || []);
+  const roles = [...(server.roles || [])].sort((a, b) => b.position - a.position);
+  $("automod-roles").replaceChildren(...roles.map(role => {
+    const label = el("label");
+    const box = el("input");
+    box.type = "checkbox";
+    box.value = role.id;
+    box.checked = exempt.has(role.id);
+    label.append(box, el("span", null, role.name));
+    return label;
+  }));
+}
+
+function fillOptions(select, options, value) {
+  select.replaceChildren(...options.map(o => {
+    const option = el("option", null, o.label);
+    option.value = o.value;
+    return option;
+  }));
+  select.value = value;
+}
+
+function syncAutomodCount() {
+  const usage = termsUsage(parseBlockedTerms($("automod-terms").value));
+  $("automod-count").textContent = termsUsageText(usage);
+  $("automod-count").classList.toggle("over", usage.over);
+}
+
+async function saveAutomod() {
+  const server = state.currentServer;
+  if (!server) return;
+  const exemptRoles = [...$("automod-roles").querySelectorAll("input:checked")].map(box => box.value);
+  if (exemptRoles.length > AUTOMOD_MAX_EXEMPT_ROLES) {
+    toast(`Pick up to ${AUTOMOD_MAX_EXEMPT_ROLES} exempt roles`);
+    return;
+  }
+  const rules = automodPayload({
+    termsText: $("automod-terms").value,
+    blockLinks: $("automod-links").checked,
+    mentionLimit: $("automod-mentions").value,
+    burst: $("automod-burst").value,
+    exemptRoles,
+  });
+  try {
+    await invoke("set_automod", { serverId: server.id, rules });
+    await refreshCurrentServer();
+    renderAutomodSettings(state.currentServer);
+    toast("Auto moderation saved");
   } catch (e) {
     toast(String(e));
   }
@@ -8610,6 +8694,8 @@ function wireEvents() {
   $("rules-input").addEventListener("input", syncRulesPreview);
   $("rules-save").onclick = () => saveRules(false);
   $("rules-remove").onclick = () => saveRules(true);
+  $("automod-terms").addEventListener("input", syncAutomodCount);
+  $("automod-save").onclick = saveAutomod;
   $("rules-close").onclick = hideModals;
   $("rules-accept").onclick = acceptRules;
   $("rules-gate-open").onclick = () => openServerWelcome("rules");
@@ -9268,6 +9354,8 @@ function openServerSettings(tab) {
   const canSounds = canEmoji || server.can_upload_sounds;
   $("tab-rules").classList.toggle("hidden", !server.can_manage_server);
   renderRulesSettings(server);
+  $("tab-automod").classList.toggle("hidden", !server.can_manage_server);
+  if (server.can_manage_server) renderAutomodSettings(server);
   renderGameTagEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
@@ -9282,6 +9370,7 @@ function openServerSettings(tab) {
     soundboard: canSounds,
     reports: isOwner,
     rules: server.can_manage_server,
+    automod: server.can_manage_server,
     members: canMembers,
   };
   renderEmojiSettings(server);
