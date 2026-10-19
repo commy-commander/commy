@@ -232,7 +232,7 @@ async function mockInvoke(cmd, args = {}) {
         members.unshift(me);
       }
       return {
-        ...s, members, screen_shares: [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
+        ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
         channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, ...c })),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
@@ -1858,7 +1858,7 @@ function onDmReceived(dm) {
 
 const CAMERA_KEY = "commy.cameraDevice";
 const CAMERA_FPS = 12;
-const cam = { stream: null, timer: null, busy: false, video: null, watching: new Set() };
+const cam = { pipe: null, timer: null, busy: false, watching: new Set() };
 
 function savedCameraId() {
   try { return localStorage.getItem(CAMERA_KEY) || ""; } catch { return ""; }
@@ -1879,9 +1879,10 @@ async function openCameraStream() {
 }
 
 async function startCamera() {
-  if (!state.voiceServer || cam.stream) return;
+  if (!state.voiceServer || cam.pipe) return;
+  let stream;
   try {
-    cam.stream = await openCameraStream();
+    stream = await openCameraStream();
   } catch (e) {
     toast(`Camera unavailable: ${e.message || e}`);
     return;
@@ -1889,33 +1890,20 @@ async function startCamera() {
   try {
     await invoke("start_camera", { serverId: state.voiceServer.id });
   } catch (e) {
-    stopCameraTracks();
+    for (const track of stream.getTracks()) track.stop();
     toast(String(e));
     return;
   }
-  const video = document.createElement("video");
-  video.muted = true;
-  video.playsInline = true;
-  video.srcObject = cam.stream;
-  await video.play().catch(() => {});
-  cam.video = video;
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
+  const pipe = createCameraPipeline(stream);
+  cam.pipe = pipe;
   cam.timer = setInterval(async () => {
-    if (cam.busy || !video.videoWidth) return;
+    if (cam.busy || !pipe.drawn || cam.pipe !== pipe) return;
     cam.busy = true;
     try {
-      const scale = Math.min(1, 640 / video.videoWidth);
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.7));
-      if (blob && cam.stream) {
-        await invoke("push_camera_frame", {
-          jpeg: await blobToBase64(blob),
-          width: canvas.width,
-          height: canvas.height,
-        });
+      const { width, height } = pipe.canvas;
+      const blob = await new Promise(r => pipe.canvas.toBlob(r, "image/jpeg", 0.7));
+      if (blob && cam.pipe === pipe) {
+        await invoke("push_camera_frame", { jpeg: await blobToBase64(blob), width, height });
       }
     } catch {}
     cam.busy = false;
@@ -1928,9 +1916,8 @@ async function startCamera() {
 function stopCameraTracks() {
   clearInterval(cam.timer);
   cam.timer = null;
-  if (cam.stream) for (const track of cam.stream.getTracks()) track.stop();
-  cam.stream = null;
-  cam.video = null;
+  stopCameraPipeline(cam.pipe);
+  cam.pipe = null;
 }
 
 async function stopCamera() {
@@ -1980,13 +1967,7 @@ function renderCamGrid() {
     if (!tile) {
       tile = el("div", "cam-tile");
       tile.dataset.user = user.id;
-      if (isMe) {
-        const video = document.createElement("video");
-        video.muted = true;
-        video.playsInline = true;
-        video.autoplay = true;
-        tile.appendChild(video);
-      } else {
+      if (!isMe) {
         tile.appendChild(el("img"));
         tile.appendChild(el("div", "cam-wait", "Connecting"));
       }
@@ -1995,8 +1976,7 @@ function renderCamGrid() {
     }
     tile.classList.toggle("speaking", state.speaking.has(user.id));
     if (isMe) {
-      const video = tile.querySelector("video");
-      if (cam.stream && video.srcObject !== cam.stream) video.srcObject = cam.stream;
+      if (cam.pipe && cam.pipe.canvas.parentNode !== tile) tile.prepend(cam.pipe.canvas);
     } else if (!cam.watching.has(user.id)) {
       cam.watching.add(user.id);
       invoke("watch_camera", { serverId: state.currentServer.id, userId: user.id }).catch(e => {
@@ -2029,19 +2009,17 @@ async function loadCameraDevices() {
   } catch {}
 }
 
-let previewStream = null;
+let previewPipe = null;
 
 async function toggleCameraPreview() {
-  const video = $("cam-preview");
-  if (previewStream) {
+  if (previewPipe) {
     stopCameraPreview();
     return;
   }
   try {
-    previewStream = await openCameraStream();
-    video.srcObject = previewStream;
-    await video.play().catch(() => {});
-    $("cam-preview-box").classList.add("live");
+    previewPipe = createCameraPipeline(await openCameraStream());
+    $("cam-stage").appendChild(previewPipe.canvas);
+    $("cam-stage").classList.add("live");
     $("cam-preview-btn").textContent = "Stop Test";
     loadCameraDevices();
   } catch (e) {
@@ -2050,11 +2028,31 @@ async function toggleCameraPreview() {
 }
 
 function stopCameraPreview() {
-  if (previewStream) for (const track of previewStream.getTracks()) track.stop();
-  previewStream = null;
-  $("cam-preview").srcObject = null;
-  $("cam-preview-box").classList.remove("live");
+  stopCameraPipeline(previewPipe);
+  previewPipe = null;
+  $("cam-stage").classList.remove("live");
   $("cam-preview-btn").textContent = "Test Camera";
+}
+
+const CAMERA_FX_NOTES = {
+  idle: "Effects run on this device. People in the call see what this preview shows.",
+  loading: "Getting background effects ready. Your picture stays blurred until then.",
+  ready: "Effects run on this device. People in the call see what this preview shows.",
+  failed: "Effects are not available here, so your whole picture is blurred. Pick Off to send it clear.",
+};
+
+function renderCameraFx(status = cameraFxStatus()) {
+  const { background, mirror } = cameraFx.settings;
+  for (const button of $("cam-bg").querySelectorAll("button")) {
+    const on = button.dataset.bg === background;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-checked", String(on));
+  }
+  $("cam-mirror").checked = mirror;
+  document.body.dataset.camMirror = mirror ? "on" : "off";
+  const note = $("cam-fx-note");
+  note.textContent = CAMERA_FX_NOTES[status];
+  note.classList.toggle("warn", status === "failed");
 }
 
 function fillDeviceSelect(select, names, chosen) {
@@ -8736,9 +8734,16 @@ function wireEvents() {
 
   $("vp-camera").onclick = () => (state.cameraOn ? stopCamera() : startCamera());
   $("cam-preview-btn").onclick = toggleCameraPreview;
+  for (const button of $("cam-bg").querySelectorAll("button")) {
+    button.onclick = () => updateCameraFx({ background: button.dataset.bg });
+  }
+  $("cam-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
+  onCameraFxChange(renderCameraFx);
+  renderCameraFx();
+  paintCameraSky($("cam-sky"));
   $("camera-device").addEventListener("change", async e => {
     try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch {}
-    if (previewStream) {
+    if (previewPipe) {
       stopCameraPreview();
       toggleCameraPreview();
     }
