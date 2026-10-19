@@ -1,7 +1,7 @@
 use crate::media::{read_frame, read_frame_capped, write_frame, MediaError, MAX_MEDIA_FRAME};
 use commy_core::catchup::{
     bucket_digest, cap, current_window, day_number, lacking_from, mismatched, BucketItems, Listing,
-    CATCHUP_MAX_ITEMS,
+    ReactionChange, CATCHUP_MAX_ITEMS,
 };
 use commy_core::{
     BucketDigest, BucketKey, Identity, IdentityKey, Message, MessageId, Presence, ServerEvent,
@@ -77,6 +77,7 @@ pub enum CatchupFrame {
         held: Vec<MessageId>,
         rejected: Vec<MessageId>,
     },
+    Reactions(Vec<ReactionChange>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +150,7 @@ pub struct SessionReport {
     pub peer_had: Vec<MessageId>,
     pub received: Vec<MessageId>,
     pub held: usize,
+    pub reactions: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +246,12 @@ pub trait CatchupStore {
         messages: Vec<Message>,
         tombstones: Vec<TombstoneProof>,
     ) -> ApplyReport;
+    fn reaction_changes(&self, _server: ServerId, _user: UserId) -> Vec<ReactionChange> {
+        Vec::new()
+    }
+    fn apply_reaction_changes(&self, _server: ServerId, _user: UserId, _changes: Vec<ReactionChange>) -> usize {
+        0
+    }
 }
 
 pub fn check_peer(state: &ServerState, user: UserId, key: &IdentityKey) -> PeerCheck {
@@ -372,11 +380,13 @@ where
     if s != server {
         return Err(CatchupError::Unexpected);
     }
-    let checked = check_signed(&reply, HelloRole::Responder, local_node, remote_node)
-        .and_then(|(server, user, key)| check_standing(store, server, user, &key));
-    if let Err(refusal) = checked {
-        return Err(refuse(&mut io, refusal).await);
-    }
+    let checked = check_signed(&reply, HelloRole::Responder, local_node, remote_node).and_then(
+        |(server, user, key)| check_standing(store, server, user, &key).map(|_| user),
+    );
+    let peer_user = match checked {
+        Ok(user) => user,
+        Err(refusal) => return Err(refuse(&mut io, refusal).await),
+    };
 
     let ours = fit_digests(store.digests(server));
     let sent: HashMap<BucketKey, BucketDigest> = ours.iter().map(|d| (d.key, *d)).collect();
@@ -412,9 +422,13 @@ where
 
     let wanted: HashSet<MessageId> = we_want.into_iter().collect();
     let got = receive_pages(&mut io, store, server, |id, _| wanted.contains(&id)).await?;
-    if let Err(e) = send(&mut io, &got.verdict()).await {
-        tracing::debug!("catch-up peer left before our Applied: {e}");
-    }
+    let reactions = match send(&mut io, &got.verdict()).await {
+        Ok(()) => trade_reactions(&mut io, store, server, me, peer_user, true).await,
+        Err(e) => {
+            tracing::debug!("catch-up peer left before our Applied: {e}");
+            0
+        }
+    };
 
     let pushed_set: HashSet<MessageId> = pushed.iter().copied().collect();
     let peer_had: Vec<MessageId> = initiator_peer_had(&settled, &sent, &mine, &peer)
@@ -426,6 +440,7 @@ where
         peer_had,
         received: got.applied,
         held: got.held.len(),
+        reactions,
     })
 }
 
@@ -449,6 +464,7 @@ where
 pub struct Admitted {
     pub server: ServerId,
     me: UserId,
+    peer: UserId,
     identity: Identity,
 }
 
@@ -470,13 +486,14 @@ where
         |(server, user, key)| {
             let local = store.local_identity(server).ok_or(Refusal::NotInServer)?;
             check_standing(store, server, user, &key)?;
-            Ok((server, local))
+            Ok((server, user, local))
         },
     );
     match checked {
-        Ok((server, (me, identity))) => Ok(Admitted {
+        Ok((server, peer, (me, identity))) => Ok(Admitted {
             server,
             me,
+            peer,
             identity,
         }),
         Err(refusal) => Err(refuse(io, refusal).await),
@@ -497,6 +514,7 @@ where
     let Admitted {
         server,
         me,
+        peer,
         identity,
     } = admitted;
     let reply = CatchupFrame::hello(
@@ -576,6 +594,10 @@ where
             None
         }
     };
+    let reactions = match verdict {
+        Some(_) => trade_reactions(&mut io, store, server, me, peer, false).await,
+        None => 0,
+    };
 
     let mut known = verified(&settled, &matched);
     if want_complete {
@@ -594,8 +616,47 @@ where
             peer_had,
             received: got.applied,
             held: got.held.len(),
+            reactions,
         },
     ))
+}
+
+async fn trade_reactions<IO, S>(
+    io: &mut IO,
+    store: &S,
+    server: ServerId,
+    me: UserId,
+    peer: UserId,
+    first: bool,
+) -> usize
+where
+    IO: AsyncRead + AsyncWrite + Unpin,
+    S: CatchupStore + ?Sized,
+{
+    let ours = CatchupFrame::Reactions(store.reaction_changes(server, me));
+    if first {
+        if let Err(e) = send(io, &ours).await {
+            tracing::debug!("catch-up peer left before our reactions: {e}");
+            return 0;
+        }
+    }
+    let theirs = match read(io).await {
+        Ok(CatchupFrame::Reactions(changes)) => store.apply_reaction_changes(server, peer, changes),
+        Ok(other) => {
+            tracing::debug!("catch-up peer sent {other:?} instead of reactions");
+            return 0;
+        }
+        Err(e) => {
+            tracing::debug!("catch-up peer sent no reactions: {e}");
+            return 0;
+        }
+    };
+    if !first {
+        if let Err(e) = send(io, &ours).await {
+            tracing::debug!("catch-up peer left before our reactions: {e}");
+        }
+    }
+    theirs
 }
 
 fn check_signed(
@@ -1283,6 +1344,41 @@ mod tests {
                 sorted(vec![old.id, new.id])
             );
             assert_eq!(sorted(report.delivered), sorted(report.peer_had));
+        }
+    }
+
+    fn reactors(store: &MemStore, id: MessageId, emoji: &str) -> Vec<UserId> {
+        store.with(|s| {
+            let message = s.message(id).unwrap();
+            message.reactions.iter().find(|r| r.emoji == emoji).map(|r| r.users.clone()).unwrap_or_default()
+        })
+    }
+
+    #[tokio::test]
+    async fn reactions_made_while_a_member_was_away_reach_them() {
+        for a_dials in [true, false] {
+            let (a, b, channel) = pair();
+            let held = a.post(channel, "held by both");
+            b.add(&held);
+            let react = |store: &MemStore, emoji: &str, active: bool| {
+                let user = store.me;
+                let event = ServerEvent::ReactionSet { channel, message: held.id, emoji: emoji.into(), user, active };
+                store.with(|s| s.apply(event).unwrap());
+            };
+            react(&b, "👋", true);
+            let (ra, rb) = either_way(&a, &b, a_dials).await;
+            assert_eq!((ra.reactions, rb.reactions), (1, 0));
+            react(&a, "👍", true);
+            react(&b, ":party:", true);
+            react(&b, "👋", false);
+
+            let (ra, rb) = either_way(&a, &b, a_dials).await;
+            assert_eq!((ra.reactions, rb.reactions), (2, 1));
+            for store in [&a, &b] {
+                assert_eq!(reactors(store, held.id, "👍"), vec![a.me]);
+                assert_eq!(reactors(store, held.id, ":party:"), vec![b.me]);
+                assert!(reactors(store, held.id, "👋").is_empty());
+            }
         }
     }
 
@@ -2288,7 +2384,10 @@ mod tests {
             };
             send(&mut y, &push).await.unwrap();
             send(&mut y, &CatchupFrame::Done).await.unwrap();
-            read(&mut y).await.unwrap()
+            let applied = read(&mut y).await.unwrap();
+            assert!(matches!(read(&mut y).await.unwrap(), CatchupFrame::Reactions(_)));
+            send(&mut y, &CatchupFrame::Reactions(vec![])).await.unwrap();
+            applied
         };
         let (ra, last) = tokio::join!(
             run_initiator(x, &a, &a.identity, server, a.me, NODE_A, NODE_B),
@@ -2329,7 +2428,10 @@ mod tests {
             assert_eq!(read(&mut y).await.unwrap(), CatchupFrame::Done);
             send(&mut y, &applied_nothing()).await.unwrap();
             send(&mut y, &CatchupFrame::Done).await.unwrap();
-            read(&mut y).await.unwrap()
+            let applied = read(&mut y).await.unwrap();
+            assert!(matches!(read(&mut y).await.unwrap(), CatchupFrame::Reactions(_)));
+            send(&mut y, &CatchupFrame::Reactions(vec![])).await.unwrap();
+            applied
         };
         let (ra, last) = tokio::join!(
             run_initiator(x, &a, &a.identity, server, a.me, NODE_A, NODE_B),

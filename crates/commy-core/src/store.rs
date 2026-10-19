@@ -97,6 +97,15 @@ pub struct ServerState {
     action_floor: i64,
     signed_actions: HashMap<String, SignedEvent>,
     local_floor: Option<DateTime<Utc>>,
+    reaction_marks: HashMap<MessageId, Vec<ReactionMark>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReactionMark {
+    pub user: UserId,
+    pub emoji: String,
+    pub at: i64,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +125,8 @@ pub struct Snapshot {
     pub action_floor: i64,
     #[serde(default)]
     pub signed_actions: Vec<SignedEvent>,
+    #[serde(default)]
+    pub reaction_marks: Vec<(MessageId, ReactionMark)>,
 }
 
 impl ServerState {
@@ -142,6 +153,7 @@ impl ServerState {
             action_floor: 0,
             signed_actions: HashMap::new(),
             local_floor: None,
+            reaction_marks: HashMap::new(),
         }
     }
 
@@ -166,6 +178,12 @@ impl ServerState {
             action_times: self.action_times.iter().map(|(s, t)| (s.clone(), *t)).collect(),
             action_floor: self.action_floor,
             signed_actions: self.signed_actions.values().cloned().collect(),
+            reaction_marks: self
+                .reaction_marks
+                .iter()
+                .filter(|(id, _)| self.index.contains_key(id))
+                .flat_map(|(id, marks)| marks.iter().map(|m| (*id, m.clone())))
+                .collect(),
         }
     }
 
@@ -198,6 +216,11 @@ impl ServerState {
                 new
             });
             slot.extend(list);
+        }
+        for (id, mark) in snapshot.reaction_marks {
+            if state.index.contains_key(&id) {
+                state.mark_reaction(id, mark.user, &mark.emoji, mark.at, mark.active);
+            }
         }
         state.action_times = snapshot.action_times.into_iter().collect();
         state.action_floor = snapshot.action_floor;
@@ -309,6 +332,25 @@ impl ServerState {
     pub fn message(&self, id: MessageId) -> Option<&Message> {
         let channel = self.index.get(&id)?;
         self.messages.get(channel)?.iter().rev().find(|m| m.id == id)
+    }
+
+    pub fn reaction_marks(&self, id: MessageId) -> &[ReactionMark] {
+        self.reaction_marks.get(&id).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn reaction_mark(&self, id: MessageId, user: UserId, emoji: &str) -> Option<&ReactionMark> {
+        self.reaction_marks(id).iter().find(|m| m.user == user && m.emoji == emoji)
+    }
+
+    pub fn mark_reaction(&mut self, id: MessageId, user: UserId, emoji: &str, at: i64, active: bool) {
+        let marks = self.reaction_marks.entry(id).or_default();
+        match marks.iter_mut().find(|m| m.user == user && m.emoji == emoji) {
+            Some(mark) => {
+                mark.at = at;
+                mark.active = active;
+            }
+            None => marks.push(ReactionMark { user, emoji: emoji.to_string(), at, active }),
+        }
     }
 
     pub fn has_message(&self, id: MessageId) -> bool {
@@ -578,6 +620,8 @@ impl ServerState {
                     return Err(StoreError::Limit);
                 }
                 msg.toggle_reaction(&emoji, user);
+                let active = msg.reactions.iter().any(|r| r.emoji == emoji && r.users.contains(&user));
+                self.mark_reaction(message, user, &emoji, Utc::now().timestamp_millis(), active);
                 Ok(true)
             }
             ServerEvent::ReactionSet {
@@ -599,6 +643,7 @@ impl ServerState {
                     return Err(StoreError::Limit);
                 }
                 msg.toggle_reaction(&emoji, user);
+                self.mark_reaction(message, user, &emoji, Utc::now().timestamp_millis(), active);
                 Ok(true)
             }
             ServerEvent::MemberJoin { server, mut profile } => {

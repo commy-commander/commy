@@ -3,7 +3,7 @@ use crate::catchup::{
     PeerCheck,
 };
 use chrono::Utc;
-use commy_core::catchup::{digests, items, BucketItems};
+use commy_core::catchup::{apply_reaction_changes, digests, items, reaction_changes, BucketItems, ReactionChange};
 pub use commy_core::test_support::{
     fixture, identity_for, join, join_moderator, keyed_profile, post, post_at, proof as proof_at,
 };
@@ -121,6 +121,14 @@ impl CatchupStore for MemStore {
         self.held.lock().unwrap().extend(held);
         report
     }
+
+    fn reaction_changes(&self, _: ServerId, user: UserId) -> Vec<ReactionChange> {
+        self.with(|s| reaction_changes(s, user, Utc::now()))
+    }
+
+    fn apply_reaction_changes(&self, _: ServerId, user: UserId, changes: Vec<ReactionChange>) -> usize {
+        self.with(|s| apply_reaction_changes(s, user, changes, Utc::now()))
+    }
 }
 
 pub struct MultiStore(pub Vec<MemStore>);
@@ -180,5 +188,16 @@ impl CatchupStore for MultiStore {
         self.of(server)
             .map(|s| s.apply(server, messages, tombstones))
             .unwrap_or_default()
+    }
+
+    fn reaction_changes(&self, server: ServerId, user: UserId) -> Vec<ReactionChange> {
+        self.of(server)
+            .map(|s| s.reaction_changes(server, user))
+            .unwrap_or_default()
+    }
+
+    fn apply_reaction_changes(&self, server: ServerId, user: UserId, changes: Vec<ReactionChange>) -> usize {
+        self.of(server)
+            .map_or(0, |s| s.apply_reaction_changes(server, user, changes))
     }
 }
