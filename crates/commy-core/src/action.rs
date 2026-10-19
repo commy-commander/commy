@@ -71,7 +71,8 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::SoundboardPlay { user, .. }
         | E::RulesAccept { user, .. }
         | E::EventRsvp { user, .. }
-        | E::DoorbellSet { user, .. } => Some(*user),
+        | E::DoorbellSet { user, .. }
+        | E::BotSet { user, .. } => Some(*user),
         E::MessagePin { by, .. } => Some(*by),
         _ => None,
     }
@@ -111,6 +112,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::GameTagsSet { .. } => "game_tags".into(),
         E::RulesSet { .. } => "rules".into(),
         E::AutoModSet { .. } => "automod".into(),
+        E::BotSet { user, .. } => format!("bot:{user}"),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
         E::ExpressionSettings { .. } => "expressions".into(),
         E::EmojiAdd { emoji, .. } => format!("emoji:{}", emoji.name),
@@ -148,7 +150,7 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 4] = ["emoji:", "sound:", "event:", "pin:"];
+    const OMITTED: [&str; 5] = ["emoji:", "sound:", "event:", "pin:", "bot:"];
     subject == "rules" || subject == "automod" || OMITTED.iter().any(|p| subject.starts_with(p))
 }
 
@@ -166,6 +168,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::MemberJoin { .. } => actor(event) == Some(by),
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
         E::ProfileUpdate { .. } => actor(event) == Some(by),
+        E::BotSet { .. } => member && actor(event) == Some(by),
         E::PresenceUpdate { .. }
         | E::VoiceState { .. }
         | E::TypingStart { .. }

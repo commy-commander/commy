@@ -42,11 +42,11 @@ jobs:
             rust_targets: x86_64-pc-windows-msvc
             bundles: nsis
           - name: macOS arm64
-            os: macos-15
+            os: macos-26
             target: aarch64-apple-darwin
             rust_targets: aarch64-apple-darwin
           - name: macOS x64
-            os: macos-15
+            os: macos-26
             target: x86_64-apple-darwin
             rust_targets: x86_64-apple-darwin
           - name: Linux x64
@@ -157,7 +157,7 @@ jobs:
   macos-universal:
     name: macOS universal
     needs: build
-    runs-on: macos-15
+    runs-on: macos-26
     defaults:
       run:
         shell: bash
@@ -278,7 +278,9 @@ jobs:
             }' > latest.json
           jq . latest.json
 
-      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.6.1
 
       - name: Sign the checksums
         working-directory: dist

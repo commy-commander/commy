@@ -29,7 +29,7 @@ commy-net = { workspace = true }
 commy-audio = { workspace = true }
 commy-media = { workspace = true }
 chrono = { workspace = true }
-rfd = "0.14"
+rfd = "0.17"
 base64 = "0.22"
 mime_guess = "2"
 data-encoding = { workspace = true }
