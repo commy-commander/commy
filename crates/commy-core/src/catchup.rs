@@ -1,6 +1,7 @@
-use crate::ids::{ChannelId, MessageId};
+use crate::event::ServerEvent;
+use crate::ids::{ChannelId, MessageId, UserId};
 use crate::message::{Message, TombstoneProof};
-use crate::store::{ServerState, TOMBSTONE_KEEP_DAYS};
+use crate::store::{ReactionMark, ServerState, MAX_ACTION_AHEAD_MS, TOMBSTONE_KEEP_DAYS};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -10,6 +11,7 @@ use std::ops::RangeInclusive;
 pub const CATCHUP_DAYS: u32 = 30;
 pub const TOMBSTONE_DAYS: u32 = TOMBSTONE_KEEP_DAYS as u32;
 pub const CATCHUP_MAX_ITEMS: usize = 5000;
+pub const MAX_REACTION_CHANGES: usize = 2000;
 
 const DAY_MS: i64 = 86_400_000;
 const DOMAIN: &[u8] = b"commy-catchup/v1";
@@ -288,6 +290,70 @@ pub fn cap(ids: &mut Vec<MessageId>) -> usize {
     let dropped = ids.len().saturating_sub(CATCHUP_MAX_ITEMS);
     ids.truncate(CATCHUP_MAX_ITEMS);
     dropped
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReactionChange {
+    pub message: MessageId,
+    pub emoji: String,
+    pub at: i64,
+    pub active: bool,
+}
+
+fn covered_messages(state: &ServerState, now: DateTime<Utc>) -> impl Iterator<Item = &Message> {
+    state.server.channels.iter().flat_map(move |c| covered(state, c.id, now))
+}
+
+pub fn reaction_changes(state: &ServerState, user: UserId, now: DateTime<Utc>) -> Vec<ReactionChange> {
+    let mut out = Vec::new();
+    for m in covered_messages(state, now) {
+        let marks = state.reaction_marks(m.id).iter().filter(|mark| mark.user == user);
+        out.extend(marks.map(|mark| ReactionChange {
+            message: m.id,
+            emoji: mark.emoji.clone(),
+            at: mark.at,
+            active: mark.active,
+        }));
+        let unmarked = m
+            .reactions
+            .iter()
+            .filter(|r| r.users.contains(&user) && state.reaction_mark(m.id, user, &r.emoji).is_none());
+        out.extend(unmarked.map(|r| ReactionChange { message: m.id, emoji: r.emoji.clone(), at: 0, active: true }));
+    }
+    out.sort_unstable_by_key(|c| std::cmp::Reverse(c.at));
+    out.truncate(MAX_REACTION_CHANGES);
+    out
+}
+
+pub fn apply_reaction_changes(
+    state: &mut ServerState,
+    user: UserId,
+    changes: Vec<ReactionChange>,
+    now: DateTime<Utc>,
+) -> usize {
+    if changes.len() > MAX_REACTION_CHANGES {
+        return 0;
+    }
+    let latest = now.timestamp_millis().saturating_add(MAX_ACTION_AHEAD_MS);
+    let channels: HashMap<MessageId, ChannelId> = covered_messages(state, now).map(|m| (m.id, m.channel)).collect();
+    let mut changed = 0;
+    for c in changes {
+        let Some(&channel) = channels.get(&c.message) else { continue };
+        let newer = |m: &ReactionMark| c.at > m.at || (c.at == m.at && m.active && !c.active);
+        if c.at > latest || state.reaction_mark(c.message, user, &c.emoji).is_some_and(|m| !newer(m)) {
+            continue;
+        }
+        let event = ServerEvent::ReactionSet { channel, message: c.message, emoji: c.emoji.clone(), user, active: c.active };
+        match state.apply(event) {
+            Ok(true) => changed += 1,
+            Ok(false) => {}
+            Err(_) => continue,
+        }
+        if crate::server::valid_reaction(&c.emoji) {
+            state.mark_reaction(c.message, user, &c.emoji, c.at, c.active);
+        }
+    }
+    changed
 }
 
 #[cfg(test)]
@@ -971,5 +1037,115 @@ mod tests {
         assert!(lower_first, "the lower signature has the higher version");
         let far = at("far", Some(DateTime::<Utc>::MAX_UTC));
         assert!(message_version(&far) > message_version(&later));
+    }
+
+    fn react(state: &mut ServerState, message: &Message, user: UserId, emoji: &str, active: bool) {
+        let event = ServerEvent::ReactionSet { channel: message.channel, message: message.id, emoji: emoji.into(), user, active };
+        state.apply(event).unwrap();
+    }
+
+    fn reactors(state: &ServerState, id: MessageId, emoji: &str) -> Vec<UserId> {
+        let message = state.message(id).unwrap();
+        message.reactions.iter().find(|r| r.emoji == emoji).map(|r| r.users.clone()).unwrap_or_default()
+    }
+
+    fn two_replicas() -> (ServerState, ServerState, Message, UserId) {
+        let (mut a, channel, owner) = fixture();
+        let friend = join(&mut a, "friend");
+        let message = post(&a, channel, owner, "hello");
+        a.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
+        let b = ServerState::from_snapshot(a.snapshot());
+        (a, b, message, friend)
+    }
+
+    #[test]
+    fn reactions_made_while_a_member_was_away_reach_them() {
+        let (mut a, mut b, message, friend) = two_replicas();
+        react(&mut a, &message, friend, "👍", true);
+        react(&mut a, &message, friend, ":party:", true);
+        let now = Utc::now();
+        assert_eq!(apply_reaction_changes(&mut b, friend, reaction_changes(&a, friend, now), now), 2);
+        assert_eq!(reactors(&b, message.id, "👍"), vec![friend]);
+        assert_eq!(reactors(&b, message.id, ":party:"), vec![friend]);
+        assert_eq!(apply_reaction_changes(&mut b, friend, reaction_changes(&a, friend, now), now), 0, "nothing moves twice");
+    }
+
+    #[test]
+    fn a_reaction_taken_back_while_a_member_was_away_goes_for_them_too() {
+        let (mut a, mut b, message, friend) = two_replicas();
+        react(&mut a, &message, friend, "👍", true);
+        react(&mut b, &message, friend, "👍", true);
+        b.mark_reaction(message.id, friend, "👍", 1_000, true);
+        a.mark_reaction(message.id, friend, "👍", 1_000, true);
+        react(&mut a, &message, friend, "👍", false);
+        let now = Utc::now();
+        assert_eq!(apply_reaction_changes(&mut b, friend, reaction_changes(&a, friend, now), now), 1);
+        assert!(reactors(&b, message.id, "👍").is_empty());
+        assert_eq!(apply_reaction_changes(&mut a, friend, reaction_changes(&b, friend, now), now), 0, "the older add stays lost");
+        assert!(reactors(&a, message.id, "👍").is_empty());
+    }
+
+    #[test]
+    fn a_stale_device_never_undoes_a_newer_change() {
+        let (mut laptop, mut desktop, message, friend) = two_replicas();
+        react(&mut laptop, &message, friend, "👍", true);
+        laptop.mark_reaction(message.id, friend, "👍", 1_000, true);
+        react(&mut desktop, &message, friend, ":party:", true);
+        let now = Utc::now();
+        let mut other = ServerState::from_snapshot(desktop.snapshot());
+        react(&mut desktop, &message, friend, ":party:", false);
+        apply_reaction_changes(&mut other, friend, reaction_changes(&desktop, friend, now), now);
+        assert!(reactors(&other, message.id, ":party:").is_empty());
+        let stale = vec![ReactionChange { message: message.id, emoji: ":party:".into(), at: 2_000, active: true }];
+        assert_eq!(apply_reaction_changes(&mut other, friend, stale, now), 0);
+        assert!(reactors(&other, message.id, ":party:").is_empty());
+        assert_eq!(apply_reaction_changes(&mut other, friend, reaction_changes(&laptop, friend, now), now), 1);
+        assert_eq!(reactors(&other, message.id, "👍"), vec![friend]);
+    }
+
+    #[test]
+    fn reactions_from_before_marks_travel_as_the_oldest_change() {
+        let (mut a, mut b, mut message, friend) = two_replicas();
+        message.reactions.push(crate::message::Reaction { emoji: "👍".into(), users: vec![friend] });
+        let mut fresh = ServerState::from_snapshot(a.snapshot());
+        let relayed = Message { id: MessageId::for_author(message.author), ..message.clone() };
+        let relayed = crate::test_support::signed(&fresh, relayed);
+        fresh.apply(ServerEvent::MessageCreate { message: relayed.clone() }).unwrap();
+        a.apply(ServerEvent::MessageCreate { message: Message { reactions: vec![], ..relayed.clone() } }).unwrap();
+        b.apply(ServerEvent::MessageCreate { message: Message { reactions: vec![], ..relayed.clone() } }).unwrap();
+        let now = Utc::now();
+        let changes = reaction_changes(&fresh, friend, now);
+        assert_eq!(changes, vec![ReactionChange { message: relayed.id, emoji: "👍".into(), at: 0, active: true }]);
+        assert_eq!(apply_reaction_changes(&mut a, friend, changes.clone(), now), 1);
+        react(&mut b, &relayed, friend, "👍", true);
+        react(&mut b, &relayed, friend, "👍", false);
+        assert_eq!(apply_reaction_changes(&mut b, friend, changes, now), 0);
+        assert!(reactors(&b, relayed.id, "👍").is_empty());
+    }
+
+    #[test]
+    fn reaction_changes_are_bounded() {
+        let (a, mut b, message, friend) = two_replicas();
+        let now = Utc::now();
+        let one = |at, emoji: &str| ReactionChange { message: message.id, emoji: emoji.into(), at, active: true };
+        let ahead = now.timestamp_millis() + MAX_ACTION_AHEAD_MS + 1;
+        assert_eq!(apply_reaction_changes(&mut b, friend, vec![one(ahead, "👍")], now), 0);
+        assert_eq!(apply_reaction_changes(&mut b, friend, vec![one(5, "not an emoji")], now), 0);
+        assert!(b.reaction_marks(message.id).is_empty());
+        let flood = (0..=MAX_REACTION_CHANGES).map(|i| one(i as i64, "👍")).collect();
+        assert_eq!(apply_reaction_changes(&mut b, friend, flood, now), 0);
+        let unknown = ReactionChange { message: MessageId::new(), ..one(5, "👍") };
+        assert_eq!(apply_reaction_changes(&mut b, friend, vec![unknown], now), 0);
+        assert!(reaction_changes(&a, friend, now).is_empty());
+    }
+
+    #[test]
+    fn reaction_marks_survive_a_restart() {
+        let (mut a, _, message, friend) = two_replicas();
+        react(&mut a, &message, friend, "👍", true);
+        react(&mut a, &message, friend, "👍", false);
+        let restored = ServerState::from_snapshot(serde_json::from_str(&serde_json::to_string(&a.snapshot()).unwrap()).unwrap());
+        assert_eq!(restored.reaction_marks(message.id), a.reaction_marks(message.id));
+        assert!(!restored.reaction_mark(message.id, friend, "👍").unwrap().active);
     }
 }

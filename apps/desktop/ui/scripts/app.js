@@ -4645,6 +4645,9 @@ async function openFullProfile(member) {
   $("fp-about-wrap").classList.toggle("hidden", !person.about);
   $("fp-about").textContent = person.about || "";
   const servers = (state.people.get(person.id) || {}).servers || [];
+  const own = !!state.user && person.id === state.user.id;
+  $("fp-mutual-label").classList.toggle("hidden", own);
+  $("fp-servers").classList.toggle("hidden", own);
   $("fp-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
   $("fp-servers").replaceChildren(...servers.map(s => {
     const row = el("button", "dm-profile-server");
@@ -7418,12 +7421,12 @@ async function renderGifResults(query) {
       const link = el("button", "btn-link", "Open GIF settings");
       link.onclick = () => {
         closeGifPicker();
-        openUserSettings("gifs");
+        openUserSettings("integrations");
       };
       note.appendChild(link);
     } else {
       note.textContent = settings.key
-        ? `Could not load GIFs: ${e.message}. Check your API key in Settings, then GIFs.`
+        ? `Could not load GIFs: ${e.message}. Check your API key in Settings, then Integrations.`
         : `Could not load GIFs: ${e.message}.`;
     }
     grid.replaceChildren(note);

@@ -627,15 +627,15 @@
         <div class="settings-nav-group">User Settings</div>
         <button class="settings-tab" data-tab="account">Profile</button>
         <button class="settings-tab" data-tab="commy-account">Commy Account</button>
-        <div class="settings-nav-group">App Settings</div>
-        <button class="settings-tab" data-tab="voice">Voice &amp; Video</button>
-        <button class="settings-tab" data-tab="appearance">Appearance</button>
         <button class="settings-tab" data-tab="privacy">Privacy &amp; Safety</button>
+        <div class="settings-nav-group">Voice &amp; Video</div>
+        <button class="settings-tab" data-tab="voice">Voice &amp; Camera</button>
         <button class="settings-tab" data-tab="overlay">Game Overlay</button>
-        <button class="settings-tab" data-tab="integrations">Integrations</button>
+        <div class="settings-nav-group">App Settings</div>
+        <button class="settings-tab" data-tab="appearance">Appearance</button>
         <button class="settings-tab" data-tab="notifications">Notifications</button>
+        <button class="settings-tab" data-tab="integrations">Integrations</button>
         <button class="settings-tab" data-tab="storage">Storage</button>
-        <button class="settings-tab" data-tab="gifs">GIFs</button>
         <button class="settings-tab" data-tab="updates">Updates</button>
       </div>
     </nav>
@@ -730,7 +730,7 @@
         </section>
 
         <section class="settings-page" data-page="voice">
-          <h1>Voice &amp; Video</h1>
+          <h1>Voice &amp; Camera</h1>
           <div class="settings-card device-grid">
             <label class="field-label">Input Device
               <select id="input-device"><option value="">Default</option></select>
@@ -807,26 +807,6 @@
           </div>
         </section>
 
-        <section class="settings-page" data-page="gifs">
-          <h1>GIFs</h1>
-          <div class="settings-card">
-            <label class="field-label">Provider
-              <select id="gif-provider">
-                <option value="klipy">KLIPY (recommended)</option>
-                <option value="giphy">GIPHY</option>
-              </select>
-            </label>
-            <label class="field-label">Your own API key (optional)
-              <input id="gif-key" type="password" autocomplete="off" spellcheck="false" placeholder="Leave blank to use the built-in search" />
-            </label>
-            <div class="setting-sub" id="gif-key-help"></div>
-            <div class="form-actions">
-              <button class="btn-secondary btn-small" id="gif-key-test">Test Key</button>
-              <button class="btn-primary btn-small" id="gif-key-save">Save</button>
-            </div>
-          </div>
-          <div class="setting-sub">Without a key, searches go through your Commy account server, which never shares its key with the app. A key of your own is stored only on this device and is never sent to other members. Type <strong>/gif</strong> in the message box or click the GIF button to search.</div>
-        </section>
 
         <section class="settings-page" data-page="storage">
           <h1>Storage</h1>
@@ -911,6 +891,31 @@
 
         <section class="settings-page" data-page="integrations">
           <h1>Integrations</h1>
+          <div class="settings-card integration-card" id="gif-card">
+            <div class="integration-head">
+              <div class="integration-logo integration-logo-deck">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M8.5 10.2H7.2a1.2 1.2 0 0 0-1.2 1.2v1.2a1.2 1.2 0 0 0 1.2 1.2h1.3v-1.2H7.8M11.5 10v4M14.2 14v-4h2.3M14.2 12h1.8"/></svg>
+              </div>
+              <div class="integration-copy">
+                <div class="setting-title">GIFs</div>
+                <div class="setting-sub">Type <strong>/gif</strong> in the message box or click the GIF button to search. Without a key, searches go through your Commy account server, which never shares its key with the app. A key of your own is stored only on this device and is never sent to other members.</div>
+              </div>
+            </div>
+            <label class="field-label">Provider
+              <select id="gif-provider">
+                <option value="klipy">KLIPY (recommended)</option>
+                <option value="giphy">GIPHY</option>
+              </select>
+            </label>
+            <label class="field-label">Your own API key (optional)
+              <input id="gif-key" type="password" autocomplete="off" spellcheck="false" placeholder="Leave blank to use the built-in search" />
+            </label>
+            <div class="setting-sub" id="gif-key-help"></div>
+            <div class="form-actions">
+              <button class="btn-secondary btn-small" id="gif-key-test">Test Key</button>
+              <button class="btn-primary btn-small" id="gif-key-save">Save</button>
+            </div>
+          </div>
           <div class="settings-card integration-card" id="stream-deck-card">
             <div class="integration-head">
               <div class="integration-logo integration-logo-deck">
@@ -1278,7 +1283,7 @@
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">AFK Channel</div>
-              <div class="setting-sub">Members in voice who go idle are moved here automatically. Each person picks how long that takes under Settings, then Voice &amp; Video.</div>
+              <div class="setting-sub">Members in voice who go idle are moved here automatically. Each person picks how long that takes under Settings, then Voice &amp; Camera.</div>
             </div>
             <select id="afk-channel-select" class="compact-select"></select>
           </div>
