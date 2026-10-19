@@ -29,6 +29,7 @@ const state = {
   speaking: new Set(),
   dmThreads: [],
   showDmProfile: true,
+  historyAnchor: null,
 };
 
 const mock = {
@@ -38,6 +39,22 @@ const mock = {
   dms: {},
   voice: { noise_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10 },
 };
+
+function mockSearch({ serverId, terms, from, mentions, channelId }) {
+  const server = mock.servers[serverId];
+  const named = server.members.find(m => m.id === mentions);
+  const hits = server.channels
+    .filter(c => holdsMessages(c) && (!channelId || c.id === channelId))
+    .flatMap(c => (mock.messages[c.id] || []).map(message => ({ channel: c.id, channel_name: c.name, message })))
+    .filter(({ message }) => {
+      const text = message.content.toLowerCase();
+      if (from && message.author_id !== from) return false;
+      if (mentions && !(named && mentionsName(message.content, [named.name]))) return false;
+      return terms.every(t => text.includes(t.toLowerCase()));
+    })
+    .sort((a, b) => Date.parse(b.message.created_at) - Date.parse(a.message.created_at));
+  return { total: hits.length, hits: hits.slice(0, 50) };
+}
 
 function mockCrabImage() {
   const c = document.createElement("canvas");
@@ -102,6 +119,7 @@ function mockSeed() {
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
       { id: "m2", name: "nova", presence: "idle", custom_status: null },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
+      { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
     ],
   };
   server.roles = [
@@ -157,7 +175,12 @@ function mockSeed() {
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
     { id: "x4", channel: c0, author_id: "m2", author_name: "nova",
       content: "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43), created_at: new Date(Date.now() - 60e3).toISOString(), edited: false, attachments: [] },
+    { id: "x5", channel: c0, author_id: "m3", author_name: "sleepy",
+      content: "free gifts for everyone who clicks", created_at: new Date(Date.now() - 30e3).toISOString(), edited: false, attachments: [], held: "blocked word" },
+    { id: "x6", channel: c0, author_id: "m4", author_name: "Tidy",
+      content: "Removed a message from sleepy: blocked word", created_at: new Date(Date.now() - 20e3).toISOString(), edited: false, attachments: [] },
   ];
+  server.automod = { blocked_terms: ["free gifts", "scam*"], block_links: false, max_mentions: 5, burst: { messages: 5, seconds: 10 }, exempt_roles: ["r2"] };
   mock.messages[server.channels[1].id] = [
     { id: "g1", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
       content: "clutch round from last night", created_at: new Date(Date.now() - 900e3).toISOString(), edited: false,
@@ -208,6 +231,44 @@ function mockFrame(label, width, height, hue) {
   return canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
 }
 
+function mockTemplateView(id, title, blurb, layout, roles = [], hasRules = false) {
+  const channels = [];
+  for (const [category, entries] of layout) {
+    const parent = category ? channels.push({ name: category, kind: "category", category: null }) - 1 : null;
+    for (const entry of entries) {
+      const [kind, name] = entry.startsWith("v:") ? ["voice", entry.slice(2)] : entry.startsWith("a:") ? ["announcement", entry.slice(2)] : ["text", entry];
+      channels.push({ name, kind, category: parent });
+    }
+  }
+  return { id, title, blurb, name: title, channels, roles: roles.map(([name, color]) => ({ name, color })), has_rules: hasRules };
+}
+
+function mockTemplates() {
+  return [
+    mockTemplateView("fresh", "Start fresh", "A chat channel and a voice room", [[null, ["general", "v:General", "v:AFK"]]]),
+    mockTemplateView("friends", "Friends", "Photos, memes and plans", [[null, ["general", "photos", "memes", "plans", "v:Hangout", "v:Gaming", "v:Movie Night", "v:AFK"]]]),
+    mockTemplateView("gaming", "Gaming group", "Squads, clips and a lobby", [
+      [null, ["general", "looking-for-group", "clips", "strategy", "v:Lobby", "v:Squad 1", "v:Squad 2", "v:Streaming", "v:AFK"]],
+      ["News", ["a:announcements", "patch-notes"]],
+    ], [["Squad Lead", "5b8cff"], ["Streamer", "a970ff"]]),
+    mockTemplateView("community", "Community", "Welcome area and moderators", [
+      [null, ["welcome", "a:announcements", "introductions", "general", "off-topic", "media", "help", "v:Lounge", "v:Events", "v:AFK"]],
+      ["Staff", ["mod-chat"]],
+    ], [["Moderator", "3ddc97"], ["Event Host", "ff9f43"], ["Events Ping", "5b8cff"]], true),
+    mockTemplateView("study", "Study group", "Focus rooms and resources", [
+      [null, ["general", "resources", "homework-help", "focus-log", "v:Study Room", "v:Quiet Room", "v:Break Room", "v:AFK"]],
+    ], [["Tutor", "3ddc97"]]),
+  ];
+}
+
+function mockTemplateFromCode(code) {
+  try {
+    return JSON.parse(atob(code.trim().slice("commy-template:".length)));
+  } catch (_) {
+    throw "that is not a server template code";
+  }
+}
+
 async function mockInvoke(cmd, args = {}) {
   switch (cmd) {
     case "get_user": return mock.user;
@@ -232,26 +293,39 @@ async function mockInvoke(cmd, args = {}) {
         members.unshift(me);
       }
       return {
-        ...s, members, screen_shares: [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
+        ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
         channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, ...c })),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
         can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
     case "create_server": {
+      const template = looksLikeTemplateCode(args.template || "") ? mockTemplateFromCode(args.template)
+        : mockTemplates().find(t => t.id === (args.template || "fresh"));
+      const ids = template.channels.map(() => crypto.randomUUID());
       const server = {
         id: crypto.randomUUID(), name: args.name, owner: "me",
-        channels: [
-          { id: crypto.randomUUID(), name: "general", kind: "text", topic: null, voice_users: [] },
-          { id: crypto.randomUUID(), name: "General", kind: "voice", topic: null, voice_users: [] },
-        ],
+        channels: template.channels.map((c, i) => ({ id: ids[i], name: c.name, kind: c.kind, topic: null, parent: c.category == null ? null : ids[c.category], position: i, voice_users: [] })),
+        roles: template.roles.map((r, i) => ({ id: crypto.randomUUID(), name: r.name, color: r.color, position: i + 1, permissions: [] })),
+        rules: template.has_rules ? "Be kind." : null,
         members: [],
       };
       mock.servers[server.id] = server;
       return server;
+    }
+    case "list_server_templates": return mockTemplates();
+    case "preview_server_template": return { ...mockTemplateFromCode(args.code), id: null };
+    case "export_server_template": {
+      const s = mock.servers[args.serverId];
+      const index = new Map(s.channels.map((c, i) => [c.id, i]));
+      const view = { title: s.name, blurb: "", name: s.name, has_rules: Boolean(s.rules),
+        channels: s.channels.map(c => ({ name: c.name, kind: c.kind, category: c.parent ? index.get(c.parent) ?? null : null })),
+        roles: (s.roles || []).filter(r => r.position).map(r => ({ name: r.name, color: r.color || null })) };
+      return "commy-template:" + btoa(JSON.stringify(view));
     }
     case "join_server": throw "joining requires the desktop app";
     case "get_invite": return "commy" + "x".repeat(80) + " (mock invite, browser preview)";
@@ -271,7 +345,14 @@ async function mockInvoke(cmd, args = {}) {
       return { server_name: "Pixel Pioneers", host, trusted: host === "commy.chat", account_server_host: "commy.chat",
         expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock" };
     }
-    case "get_messages": return (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+    case "get_messages": {
+      const all = (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+      if (!args.around) return all.slice(-100);
+      const at = all.findIndex(m => m.id === args.around);
+      if (at === -1) throw "that message is no longer on this device";
+      return all.slice(Math.max(0, at - 50), at + 51);
+    }
+    case "search_messages": return mockSearch(args);
     case "get_pins": return mockPinViews(args.channelId || null);
     case "pin_message": {
       mock.pins = (mock.pins || []).filter(p => p.message !== args.messageId);
@@ -514,6 +595,12 @@ async function mockInvoke(cmd, args = {}) {
         .filter(g => g.name.toLowerCase().includes(args.query.toLowerCase()));
     case "set_game_tags": mock.servers[args.serverId].game_tags = args.tags; mock.servers[args.serverId].game_tag_meta = args.meta || []; return null;
     case "set_rules": mock.servers[args.serverId].rules = args.rules; mock.servers[args.serverId].needs_rules = false; return null;
+    case "set_automod": {
+      const usage = termsUsage(args.rules.blocked_terms);
+      if (usage.over) throw `keep it to ${AUTOMOD_MAX_TERMS} blocked words of up to ${AUTOMOD_MAX_TERM_CHARS} characters each, ${AUTOMOD_MAX_TERMS_BYTES} characters in all`;
+      mock.servers[args.serverId].automod = { ...args.rules, blocked_terms: args.rules.blocked_terms.map(t => t.toLowerCase()) };
+      return null;
+    }
     case "accept_rules": mock.servers[args.serverId].needs_rules = false; return null;
     case "save_event": {
       const s = mock.servers[args.serverId];
@@ -766,6 +853,10 @@ const ICONS = {
   uploadFile: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z",
   movie: "M4 6.47 5.76 10H20v8H4V6.47M22 4h-4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2z",
   gifBox: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H5V5h14zM9.5 13v-1h1v1a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1h-2v2zm3 1h-1v-4h1zm4-3h-2v.5H16v1h-1.5V14h-1v-4h3z",
+  people: "M16.5 13c-1.2 0-3.07.34-4.5 1-1.43-.67-3.3-1-4.5-1C5.33 13 1 14.08 1 16.25V19h22v-2.75c0-2.17-4.33-3.25-6.5-3.25zm-4 4.5h-10v-1.25c0-.54 2.56-1.75 5-1.75s5 1.21 5 1.75v1.25zm9 0H14v-1.25c0-.46-.2-.86-.52-1.22.88-.3 1.96-.53 3.02-.53 2.44 0 5 1.21 5 1.75v1.25zM7.5 12c1.93 0 3.5-1.57 3.5-3.5S9.43 5 7.5 5 4 6.57 4 8.5 5.57 12 7.5 12zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 5.5c1.93 0 3.5-1.57 3.5-3.5S18.43 5 16.5 5 13 6.57 13 8.5s1.57 3.5 3.5 3.5zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z",
+  gamepad: "M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H3V8h18v8zM6 15h2v-2h2v-2H8V9H6v2H4v2h2v2zm8.5-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
+  paste: "M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z",
+  search: "M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z",
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
 };
 
@@ -1426,7 +1517,10 @@ function textChannelRow(channel, canCreate) {
   paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
   if (unread.channels.get(channel.id)) row.classList.add("unread");
-  row.onclick = () => selectChannel(channel);
+  row.onclick = () => {
+    state.historyAnchor = null;
+    selectChannel(channel);
+  };
   if (canCreate) row.appendChild(channelGear(channel));
   return row;
 }
@@ -1860,7 +1954,7 @@ function onDmReceived(dm) {
 
 const CAMERA_KEY = "commy.cameraDevice";
 const CAMERA_FPS = 12;
-const cam = { stream: null, timer: null, busy: false, video: null, watching: new Set() };
+const cam = { pipe: null, timer: null, busy: false, watching: new Set() };
 
 function savedCameraId() {
   try { return localStorage.getItem(CAMERA_KEY) || ""; } catch { return ""; }
@@ -1881,9 +1975,10 @@ async function openCameraStream() {
 }
 
 async function startCamera() {
-  if (!state.voiceServer || cam.stream) return;
+  if (!state.voiceServer || cam.pipe) return;
+  let stream;
   try {
-    cam.stream = await openCameraStream();
+    stream = await openCameraStream();
   } catch (e) {
     toast(`Camera unavailable: ${e.message || e}`);
     return;
@@ -1891,33 +1986,20 @@ async function startCamera() {
   try {
     await invoke("start_camera", { serverId: state.voiceServer.id });
   } catch (e) {
-    stopCameraTracks();
+    for (const track of stream.getTracks()) track.stop();
     toast(String(e));
     return;
   }
-  const video = document.createElement("video");
-  video.muted = true;
-  video.playsInline = true;
-  video.srcObject = cam.stream;
-  await video.play().catch(() => {});
-  cam.video = video;
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
+  const pipe = createCameraPipeline(stream);
+  cam.pipe = pipe;
   cam.timer = setInterval(async () => {
-    if (cam.busy || !video.videoWidth) return;
+    if (cam.busy || !pipe.drawn || cam.pipe !== pipe) return;
     cam.busy = true;
     try {
-      const scale = Math.min(1, 640 / video.videoWidth);
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.7));
-      if (blob && cam.stream) {
-        await invoke("push_camera_frame", {
-          jpeg: await blobToBase64(blob),
-          width: canvas.width,
-          height: canvas.height,
-        });
+      const { width, height } = pipe.canvas;
+      const blob = await new Promise(r => pipe.canvas.toBlob(r, "image/jpeg", 0.7));
+      if (blob && cam.pipe === pipe) {
+        await invoke("push_camera_frame", { jpeg: await blobToBase64(blob), width, height });
       }
     } catch {}
     cam.busy = false;
@@ -1930,9 +2012,8 @@ async function startCamera() {
 function stopCameraTracks() {
   clearInterval(cam.timer);
   cam.timer = null;
-  if (cam.stream) for (const track of cam.stream.getTracks()) track.stop();
-  cam.stream = null;
-  cam.video = null;
+  stopCameraPipeline(cam.pipe);
+  cam.pipe = null;
 }
 
 async function stopCamera() {
@@ -1982,13 +2063,7 @@ function renderCamGrid() {
     if (!tile) {
       tile = el("div", "cam-tile");
       tile.dataset.user = user.id;
-      if (isMe) {
-        const video = document.createElement("video");
-        video.muted = true;
-        video.playsInline = true;
-        video.autoplay = true;
-        tile.appendChild(video);
-      } else {
+      if (!isMe) {
         tile.appendChild(el("img"));
         tile.appendChild(el("div", "cam-wait", "Connecting"));
       }
@@ -1997,8 +2072,7 @@ function renderCamGrid() {
     }
     tile.classList.toggle("speaking", state.speaking.has(user.id));
     if (isMe) {
-      const video = tile.querySelector("video");
-      if (cam.stream && video.srcObject !== cam.stream) video.srcObject = cam.stream;
+      if (cam.pipe && cam.pipe.canvas.parentNode !== tile) tile.prepend(cam.pipe.canvas);
     } else if (!cam.watching.has(user.id)) {
       cam.watching.add(user.id);
       invoke("watch_camera", { serverId: state.currentServer.id, userId: user.id }).catch(e => {
@@ -2031,19 +2105,17 @@ async function loadCameraDevices() {
   } catch {}
 }
 
-let previewStream = null;
+let previewPipe = null;
 
 async function toggleCameraPreview() {
-  const video = $("cam-preview");
-  if (previewStream) {
+  if (previewPipe) {
     stopCameraPreview();
     return;
   }
   try {
-    previewStream = await openCameraStream();
-    video.srcObject = previewStream;
-    await video.play().catch(() => {});
-    $("cam-preview-box").classList.add("live");
+    previewPipe = createCameraPipeline(await openCameraStream());
+    $("cam-stage").appendChild(previewPipe.canvas);
+    $("cam-stage").classList.add("live");
     $("cam-preview-btn").textContent = "Stop Test";
     loadCameraDevices();
   } catch (e) {
@@ -2052,11 +2124,31 @@ async function toggleCameraPreview() {
 }
 
 function stopCameraPreview() {
-  if (previewStream) for (const track of previewStream.getTracks()) track.stop();
-  previewStream = null;
-  $("cam-preview").srcObject = null;
-  $("cam-preview-box").classList.remove("live");
+  stopCameraPipeline(previewPipe);
+  previewPipe = null;
+  $("cam-stage").classList.remove("live");
   $("cam-preview-btn").textContent = "Test Camera";
+}
+
+const CAMERA_FX_NOTES = {
+  idle: "Effects run on this device. People in the call see what this preview shows.",
+  loading: "Getting background effects ready. Your picture stays blurred until then.",
+  ready: "Effects run on this device. People in the call see what this preview shows.",
+  failed: "Effects are not available here, so your whole picture is blurred. Pick Off to send it clear.",
+};
+
+function renderCameraFx(status = cameraFxStatus()) {
+  const { background, mirror } = cameraFx.settings;
+  for (const button of $("cam-bg").querySelectorAll("button")) {
+    const on = button.dataset.bg === background;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-checked", String(on));
+  }
+  $("cam-mirror").checked = mirror;
+  document.body.dataset.camMirror = mirror ? "on" : "off";
+  const note = $("cam-fx-note");
+  note.textContent = CAMERA_FX_NOTES[status];
+  note.classList.toggle("warn", status === "failed");
 }
 
 function fillDeviceSelect(select, names, chosen) {
@@ -2109,6 +2201,7 @@ function closeFloating(except) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
+  if (except !== "search-pop") closeSearchPop();
 }
 
 let emojiPopPick = null;
@@ -2511,6 +2604,7 @@ function renderMembers() {
       const meta = el("div");
       const nameRow = el("div", "member-name", member.name);
       if (member.color) nameRow.style.color = `#${member.color}`;
+      if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
       if (sharers.has(member.id)) {
         const live = el("span", "live-badge", "LIVE");
@@ -2603,8 +2697,11 @@ function renderMessages(messages) {
     }
     const grouped = !message.reply_to && message.author_id === lastAuthor && time - lastTime < 5 * 60e3;
     box.appendChild(buildMessageRow(message, grouped, { replies: replyCounts.get(message.id) || 0 }));
-    lastAuthor = message.author_id;
+    lastAuthor = message.held ? null : message.author_id;
     lastTime = time;
+  }
+  if (state.view === "server" && state.historyAnchor && state.currentChannel && state.historyAnchor.channel === state.currentChannel.id) {
+    box.appendChild(historyPill());
   }
   box.scrollTop = sameView && !atBottom ? prevScroll : box.scrollHeight;
   if (state.threadRoot) renderThread();
@@ -2666,9 +2763,21 @@ function pinnedMark() {
   return mark;
 }
 
+function heldMark(reason) {
+  const mark = el("span", "msg-held");
+  mark.title = "Members don't see this message. Auto moderation held it.";
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", heldLabel(reason));
+  mark.appendChild(svgIcon("eyeOff", 13));
+  mark.appendChild(document.createTextNode(heldLabel(reason)));
+  return mark;
+}
+
 function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {}) {
   const pending = Boolean(message.pending);
-  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : ""));
+  const held = Boolean(message.held);
+  if (held) grouped = false;
+  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : "") + (held ? " held" : ""));
   row.dataset.id = message.id;
   row.appendChild(messageActions(message, inThread));
   if (message.reply_to) row.appendChild(replyReference(message));
@@ -2685,6 +2794,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     head.appendChild(el("span", "msg-time", formatTime(message.created_at)));
     if (pending) head.appendChild(pendingMark());
     if (message.pinned) head.appendChild(pinnedMark());
+    if (held) head.appendChild(heldMark(message.held));
     body.appendChild(head);
   }
   if (message.pinned) row.classList.add("pinned");
@@ -2926,6 +3036,273 @@ async function renderServerPins() {
   }
 }
 
+const searchUi = { token: 0, timer: 0, items: [], index: -1 };
+const SEARCH_DEBOUNCE_MS = 180;
+
+function searchContext() {
+  const server = state.currentServer;
+  if (!server) return { members: [], channels: [] };
+  return {
+    members: server.members.map(m => ({ id: m.id, name: m.name })),
+    channels: server.channels.filter(holdsMessages).map(c => ({ id: c.id, name: channelPlainName(c) })),
+  };
+}
+
+function syncSearchBox() {
+  const visible = state.view === "server" && Boolean(state.currentServer);
+  $("search-box").classList.toggle("hidden", !visible);
+  if (!visible) closeSearchPop();
+}
+
+function resetSearch() {
+  clearTimeout(searchUi.timer);
+  searchUi.token++;
+  $("search-input").value = "";
+  $("search-box").classList.remove("has-text");
+  closeSearchPop();
+}
+
+function closeSearchPop() {
+  $("search-pop").classList.add("hidden");
+  $("search-box").classList.remove("open");
+}
+
+function openSearchPop() {
+  if (!state.currentServer) return;
+  closeFloating("search-pop");
+  $("search-pop").classList.remove("hidden");
+  $("search-box").classList.add("open");
+}
+
+function focusSearch() {
+  if ($("search-box").classList.contains("hidden")) return;
+  const input = $("search-input");
+  input.focus();
+  input.select();
+}
+
+function setSearchHead(title, sub) {
+  $("search-pop-title").textContent = title;
+  $("search-pop-sub").textContent = sub || "";
+}
+
+function setSearchItems(rows) {
+  const list = $("search-list");
+  list.replaceChildren(...rows);
+  searchUi.items = rows.filter(r => r.dataset.pick === "1");
+  searchUi.index = -1;
+  list.scrollTop = 0;
+}
+
+function moveSearchSelection(step) {
+  const items = searchUi.items;
+  if (!items.length) return;
+  searchUi.index = (searchUi.index + step + items.length) % items.length;
+  items.forEach((row, i) => row.classList.toggle("active", i === searchUi.index));
+  items[searchUi.index].scrollIntoView({ block: "nearest" });
+}
+
+function pickableRow(row, onPick) {
+  row.dataset.pick = "1";
+  row.setAttribute("role", "option");
+  row.addEventListener("mousedown", e => e.preventDefault());
+  row.onclick = onPick;
+  return row;
+}
+
+function renderSearchHints() {
+  setSearchHead("Search this server", "Runs on this device, over the history it keeps");
+  const rows = SEARCH_FILTERS.map(filter => {
+    const row = el("button", "mention-row search-filter-row");
+    row.type = "button";
+    row.append(el("span", "search-filter-key", `${filter.key}:`), el("span", "mention-hint", filter.hint));
+    return pickableRow(row, () => {
+      const input = $("search-input");
+      const next = applySearchFilter(input.value, filter.key);
+      input.value = next.text;
+      input.focus();
+      input.setSelectionRange(next.caret, next.caret);
+      onSearchInput();
+    });
+  });
+  const tips = [["\"exact words\"", "words in this order"], ["@name", "same as mentions:"]].map(([key, hint]) => {
+    const row = el("div", "mention-row search-tip-row");
+    row.append(el("span", "search-filter-key", key), el("span", "mention-hint", hint));
+    return row;
+  });
+  setSearchItems([el("div", "mention-head", "Filters"), ...rows, el("div", "mention-head search-tips-head", "Also works"), ...tips]);
+}
+
+function renderSearchSuggestions(token, items) {
+  setSearchHead(token.kind === "member" ? "Members" : "Channels", "");
+  const rows = items.map(item => {
+    const row = el("button", "mention-row");
+    row.type = "button";
+    if (token.kind === "member") row.append(makeAvatar(item.id, item.name, "avatar avatar-sm"), el("span", "mention-name", item.name));
+    else row.append(el("span", "mention-at", "#"), el("span", "mention-name", item.name));
+    return pickableRow(row, () => {
+      const input = $("search-input");
+      const next = applySearchSuggestion(input.value, token, item);
+      input.value = next.text;
+      input.focus();
+      input.setSelectionRange(next.caret, next.caret);
+      onSearchInput();
+    });
+  });
+  setSearchItems(rows);
+  if (rows.length) moveSearchSelection(1);
+}
+
+function searchNote(title, text) {
+  const empty = el("div", "pins-empty search-empty");
+  const mark = el("div", "pins-empty-mark");
+  mark.appendChild(svgIcon("search", 26));
+  empty.append(mark, el("strong", null, title));
+  if (text) empty.appendChild(el("span", null, text));
+  return empty;
+}
+
+function highlightedExcerpt(message, terms) {
+  const text = searchExcerpt(pinExcerpt(message, plainText), terms);
+  const node = el("div", "pin-text search-text");
+  if (!text) {
+    node.classList.add("muted");
+    return node;
+  }
+  for (const part of highlightParts(text, terms)) {
+    node.appendChild(part.hit ? el("mark", "search-hit", part.text) : document.createTextNode(part.text));
+  }
+  return node;
+}
+
+function searchResultRow(hit, terms) {
+  const message = hit.message;
+  const row = el("div", "pin-row search-row");
+  row.dataset.id = message.id;
+  row.appendChild(makeAvatar(message.author_id, message.author_name, "avatar avatar-sm"));
+  const body = el("div", "pin-body");
+  const head = el("div", "pin-head");
+  const author = el("span", "pin-author", message.author_name);
+  decorateAuthor(author, message.author_id);
+  const channel = state.currentServer.channels.find(c => c.id === hit.channel);
+  head.append(author, el("span", "pin-time", formatTime(message.created_at)), el("span", "pin-channel", `#${channel ? channelPlainName(channel) : hit.channel_name}`));
+  body.append(head, highlightedExcerpt(message, terms));
+  row.appendChild(body);
+  return pickableRow(row, () => openSearchHit(hit));
+}
+
+function renderSearchResults(query, results) {
+  const hits = results.hits.filter(h => !isBlocked(h.message.author_id));
+  const total = results.total - (results.hits.length - hits.length);
+  setSearchHead(searchSummary(total, hits.length), query.channel ? `In #${query.channel.name}` : "Newest first, across this server");
+  if (!hits.length) {
+    setSearchItems([searchNote("No messages found", "Search covers what this device keeps. Older history may have rolled off in Settings > Storage.")]);
+    return;
+  }
+  const terms = [...query.terms];
+  if (query.mentions) terms.push(`@${query.mentions.name}`);
+  setSearchItems(hits.map(hit => searchResultRow(hit, terms)));
+}
+
+async function runSearch() {
+  clearTimeout(searchUi.timer);
+  if (!state.currentServer) return;
+  const query = parseSearch($("search-input").value, searchContext());
+  const token = ++searchUi.token;
+  if (query.unknown.length) {
+    setSearchHead("Search this server", "");
+    setSearchItems([searchNote(unknownFilterText(query.unknown), "Pick a name from the list as you type.")]);
+    return;
+  }
+  if (searchIsEmpty(query)) return renderSearchHints();
+  const serverId = state.currentServer.id;
+  let results;
+  try {
+    results = await invoke("search_messages", { serverId, ...searchArgs(query) });
+  } catch (e) {
+    if (token === searchUi.token) setSearchItems([searchNote("Search did not finish", String(e))]);
+    return;
+  }
+  if (token !== searchUi.token || !state.currentServer || state.currentServer.id !== serverId) return;
+  renderSearchResults(query, results);
+}
+
+function onSearchInput() {
+  const input = $("search-input");
+  $("search-box").classList.toggle("has-text", input.value.length > 0);
+  openSearchPop();
+  const token = searchToken(input.value, input.selectionStart ?? input.value.length);
+  const items = searchSuggestions(token, searchContext());
+  clearTimeout(searchUi.timer);
+  if (token && items.length) {
+    searchUi.token++;
+    renderSearchSuggestions(token, items);
+    return;
+  }
+  if (!input.value.trim()) {
+    searchUi.token++;
+    renderSearchHints();
+    return;
+  }
+  searchUi.timer = setTimeout(runSearch, SEARCH_DEBOUNCE_MS);
+}
+
+function onSearchKeydown(e) {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if ($("search-pop").classList.contains("hidden")) onSearchInput();
+    moveSearchSelection(e.key === "ArrowDown" ? 1 : -1);
+  } else if (e.key === "Enter" || (e.key === "Tab" && searchUi.index >= 0 && searchUi.items[searchUi.index].classList.contains("mention-row"))) {
+    e.preventDefault();
+    const picked = searchUi.items[searchUi.index];
+    if (picked) picked.click();
+    else {
+      openSearchPop();
+      runSearch();
+    }
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!$("search-pop").classList.contains("hidden")) closeSearchPop();
+    else e.target.blur();
+  }
+}
+
+async function openSearchHit(hit) {
+  closeSearchPop();
+  $("search-input").blur();
+  if (!state.currentServer) return;
+  const channel = state.currentServer.channels.find(c => c.id === hit.channel);
+  if (!channel) {
+    toast("That channel is gone");
+    return;
+  }
+  if (!state.currentChannel || state.currentChannel.id !== channel.id) await selectChannel(channel);
+  await jumpToMessage(hit.message.id);
+}
+
+function wireSearch() {
+  const input = $("search-input");
+  $("search-box-icon").appendChild(svgIcon("search", 16));
+  setIcon($("search-clear"), "close", 14);
+  input.addEventListener("input", onSearchInput);
+  input.addEventListener("focus", onSearchInput);
+  input.addEventListener("keydown", onSearchKeydown);
+  $("search-clear").addEventListener("mousedown", e => e.preventDefault());
+  $("search-clear").onclick = () => {
+    input.value = "";
+    input.focus();
+    onSearchInput();
+  };
+  document.addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f" && $("modal-backdrop").classList.contains("hidden")) {
+      if ($("search-box").classList.contains("hidden")) return;
+      e.preventDefault();
+      focusSearch();
+    }
+  });
+}
+
 function replyReference(message) {
   const ref = el("div", "reply-ref");
   const preview = message.reply_preview;
@@ -2940,10 +3317,62 @@ function replyReference(message) {
   return ref;
 }
 
-function jumpToMessage(id) {
-  const row = $("messages").querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+function messageRow(id) {
+  return $("messages").querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+}
+
+async function fetchChannelMessages(channel) {
+  const anchored = state.historyAnchor && state.historyAnchor.channel === channel.id ? state.historyAnchor.message : null;
+  if (!anchored) state.historyAnchor = null;
+  const args = { serverId: state.currentServer.id, channelId: channel.id };
+  if (!anchored) return invoke("get_messages", args);
+  try {
+    return await invoke("get_messages", { ...args, around: anchored });
+  } catch {
+    state.historyAnchor = null;
+    return invoke("get_messages", args);
+  }
+}
+
+async function showMessageInHistory(id) {
+  const channel = state.currentChannel;
+  if (state.view !== "server" || !channel || !state.currentServer) return null;
+  if (state.historyAnchor) {
+    state.historyAnchor = null;
+    $("messages").dataset.view = "";
+    renderMessages(await fetchChannelMessages(channel));
+    const row = messageRow(id);
+    if (row) return row;
+  }
+  state.historyAnchor = { channel: channel.id, message: id };
+  const messages = await fetchChannelMessages(channel);
+  if (state.currentChannel !== channel) return null;
+  renderMessages(messages);
+  return messageRow(id);
+}
+
+function historyPill() {
+  const pill = el("div", "history-pill");
+  pill.setAttribute("role", "status");
+  pill.appendChild(el("span", null, "Viewing older messages"));
+  const back = el("button", "btn-primary btn-small", "Jump to present");
+  back.onclick = jumpToPresent;
+  pill.appendChild(back);
+  return pill;
+}
+
+async function jumpToPresent() {
+  state.historyAnchor = null;
+  if (state.view !== "server" || !state.currentChannel) return;
+  $("messages").dataset.view = "";
+  renderMessages(await fetchChannelMessages(state.currentChannel));
+}
+
+async function jumpToMessage(id) {
+  let row = messageRow(id);
+  if (!row) row = await showMessageInHistory(id).catch(() => null);
   if (!row) {
-    toast("That message is not loaded");
+    toast("That message is no longer on this device");
     return;
   }
   row.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -4087,6 +4516,67 @@ async function saveRules(remove) {
   }
 }
 
+function renderAutomodSettings(server) {
+  const rules = server.automod || {};
+  $("automod-status").textContent = automodSummary(server.automod);
+  $("automod-terms").value = (rules.blocked_terms || []).join("\n");
+  syncAutomodCount();
+  $("automod-links").checked = Boolean(rules.block_links);
+  fillOptions($("automod-mentions"), mentionOptions(rules.max_mentions || 0), String(rules.max_mentions || 0));
+  fillOptions($("automod-burst"), burstOptions(rules.burst), burstKey(rules.burst));
+  const exempt = new Set(rules.exempt_roles || []);
+  const roles = [...(server.roles || [])].sort((a, b) => b.position - a.position);
+  $("automod-roles").replaceChildren(...roles.map(role => {
+    const label = el("label");
+    const box = el("input");
+    box.type = "checkbox";
+    box.value = role.id;
+    box.checked = exempt.has(role.id);
+    label.append(box, el("span", null, role.name));
+    return label;
+  }));
+}
+
+function fillOptions(select, options, value) {
+  select.replaceChildren(...options.map(o => {
+    const option = el("option", null, o.label);
+    option.value = o.value;
+    return option;
+  }));
+  select.value = value;
+}
+
+function syncAutomodCount() {
+  const usage = termsUsage(parseBlockedTerms($("automod-terms").value));
+  $("automod-count").textContent = termsUsageText(usage);
+  $("automod-count").classList.toggle("over", usage.over);
+}
+
+async function saveAutomod() {
+  const server = state.currentServer;
+  if (!server) return;
+  const exemptRoles = [...$("automod-roles").querySelectorAll("input:checked")].map(box => box.value);
+  if (exemptRoles.length > AUTOMOD_MAX_EXEMPT_ROLES) {
+    toast(`Pick up to ${AUTOMOD_MAX_EXEMPT_ROLES} exempt roles`);
+    return;
+  }
+  const rules = automodPayload({
+    termsText: $("automod-terms").value,
+    blockLinks: $("automod-links").checked,
+    mentionLimit: $("automod-mentions").value,
+    burst: $("automod-burst").value,
+    exemptRoles,
+  });
+  try {
+    await invoke("set_automod", { serverId: server.id, rules });
+    await refreshCurrentServer();
+    renderAutomodSettings(state.currentServer);
+    toast("Auto moderation saved");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 const eventsView = { mode: "upcoming", month: null, day: null };
 let editingEventId = null;
 
@@ -4487,6 +4977,12 @@ function soundEmojiNode(value) {
   return el("span", "sound-emoji", value);
 }
 
+function botTag() {
+  const chip = el("span", "bot-tag", "BOT");
+  chip.title = "Bot: runs on its own, not a person";
+  return chip;
+}
+
 function roleTagChip(tag, color) {
   const custom = parseEmojiToken(tag);
   if (custom) {
@@ -4743,8 +5239,9 @@ function openMemberCard(member, anchor) {
   const name = $("mc-name");
   name.textContent = member.name;
   name.style.color = member.color ? `#${member.color}` : "";
-  name.parentElement.querySelector(".role-tag")?.remove();
+  name.parentElement.querySelectorAll(".role-tag, .bot-tag").forEach(n => n.remove());
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
+  if (member.bot) name.after(botTag());
   const status = $("mc-status");
   status.replaceChildren();
   const line = subLine(member);
@@ -4791,14 +5288,12 @@ function openMemberCard(member, anchor) {
     actions.appendChild(btn);
     return btn;
   };
-  if (!isMe) {
+  if (!isMe && !member.bot) {
     actions.appendChild(friendButton(member, () => openMemberCard(member, anchor)));
     action("serverAdd", "Invite", e => openInviteMenu(member, e.currentTarget));
   }
   action("person", "Full Profile", () => openFullProfile(member));
-  if (!isMe) {
-  }
-  $("mc-composer").classList.toggle("hidden", isMe || isBlocked(member.id));
+  $("mc-composer").classList.toggle("hidden", isMe || member.bot || isBlocked(member.id));
   const input = $("mc-input");
   input.value = "";
   input.placeholder = `Message @${member.name}`;
@@ -4816,6 +5311,7 @@ function decorateAuthor(node, authorId) {
   if (!member) return;
   if (member.color) node.style.color = `#${member.color}`;
   if (member.tag) node.after(roleTagChip(member.tag, member.tag_color));
+  if (member.bot) node.after(botTag());
 }
 
 function openChooseRoles() {
@@ -6846,16 +7342,20 @@ function setViewMode(mode) {
   if (dm) $("share-btn").classList.add("hidden");
   else renderShareButton();
   syncPinButton();
+  syncSearchBox();
   syncRulesGate();
 }
 
 async function selectServer(serverId) {
+  const previous = state.currentServer && state.currentServer.id;
   try {
     state.currentServer = await invoke("get_server", { serverId });
   } catch (e) {
     toast(String(e));
     return;
   }
+  if (previous !== serverId) resetSearch();
+  state.historyAnchor = null;
   setViewMode("server");
   state.currentDm = null;
   const firstText = state.currentServer.channels.find(c => c.kind === "text");
@@ -7264,11 +7764,7 @@ async function selectChannel(channel) {
   $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
   syncPinButton();
   if (!channel) return renderMessages([]);
-  const messages = await invoke("get_messages", {
-    serverId: state.currentServer.id,
-    channelId: channel.id,
-  });
-  renderMessages(messages);
+  renderMessages(await fetchChannelMessages(channel));
 }
 
 async function sendMessage() {
@@ -7285,6 +7781,7 @@ async function sendMessage() {
   input.value = "";
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
   $("messages").dataset.view = "";
+  state.historyAnchor = null;
   cancelReply();
   try {
     await invoke("send_message", {
@@ -7959,16 +8456,47 @@ function wireEvents() {
   });
 
   $("add-server-btn").onclick = () => showModal("modal-add-server");
+  $("create-server-open").onclick = () => openCreateServer();
+  $("create-server-back").onclick = () => showModal("modal-add-server");
+  $("template-code-input").addEventListener("input", readTemplateCode);
+  $("template-code-change").onclick = () => {
+    templatePicker.preview = null;
+    templatePicker.code = null;
+    $("template-code-input").value = "";
+    renderTemplatePreview();
+    $("template-code-input").focus();
+  };
+  $("create-name-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") $("create-server-save").click();
+  });
 
   $("create-server-save").onclick = async () => {
     const name = $("create-name-input").value.trim();
-    if (!name) return;
+    const template = chosenTemplate();
+    if (!name) return $("create-name-input").focus();
+    if (!template) return $("template-code-input").focus();
+    const save = $("create-server-save");
+    if (save.disabled) return;
+    save.disabled = true;
     try {
-      const server = await invoke("create_server", { name });
+      const server = await invoke("create_server", { name, template });
       hideModals();
       $("create-name-input").value = "";
       await refreshServers();
       await selectServer(server.id);
+    } catch (e) {
+      toast(String(e));
+    } finally {
+      save.disabled = false;
+    }
+  };
+
+  $("server-template-copy").onclick = async () => {
+    if (!state.currentServer) return;
+    try {
+      const code = await invoke("export_server_template", { serverId: state.currentServer.id });
+      await navigator.clipboard.writeText(code);
+      toast("Template code copied. Anyone can paste it under Create a Server.");
     } catch (e) {
       toast(String(e));
     }
@@ -7977,6 +8505,10 @@ function wireEvents() {
   $("join-server-save").onclick = async () => {
     const ticket = $("join-ticket-input").value.trim();
     if (!ticket) return;
+    if (looksLikeTemplateCode(ticket)) {
+      $("join-ticket-input").value = "";
+      return openCreateServer(ticket);
+    }
     if (looksLikeInviteLink(ticket)) {
       $("join-ticket-input").value = "";
       return openInviteLink(ticket);
@@ -8487,9 +9019,9 @@ function wireEvents() {
   };
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "composer-menu"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
-    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #attach-btn")) return;
+    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
   });
@@ -8614,6 +9146,8 @@ function wireEvents() {
   $("rules-input").addEventListener("input", syncRulesPreview);
   $("rules-save").onclick = () => saveRules(false);
   $("rules-remove").onclick = () => saveRules(true);
+  $("automod-terms").addEventListener("input", syncAutomodCount);
+  $("automod-save").onclick = saveAutomod;
   $("rules-close").onclick = hideModals;
   $("rules-accept").onclick = acceptRules;
   $("rules-gate-open").onclick = () => openServerWelcome("rules");
@@ -8746,9 +9280,16 @@ function wireEvents() {
 
   $("vp-camera").onclick = () => (state.cameraOn ? stopCamera() : startCamera());
   $("cam-preview-btn").onclick = toggleCameraPreview;
+  for (const button of $("cam-bg").querySelectorAll("button")) {
+    button.onclick = () => updateCameraFx({ background: button.dataset.bg });
+  }
+  $("cam-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
+  onCameraFxChange(renderCameraFx);
+  renderCameraFx();
+  paintCameraSky($("cam-sky"));
   $("camera-device").addEventListener("change", async e => {
     try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch {}
-    if (previewStream) {
+    if (previewPipe) {
       stopCameraPreview();
       toggleCameraPreview();
     }
@@ -8819,6 +9360,7 @@ function wireEvents() {
     }
   };
   $("pins-btn").onclick = togglePinsPanel;
+  wireSearch();
   $("pins-all").onclick = openServerPins;
   $("pins-modal-close").onclick = hideModals;
   $("announce-gate-icon").appendChild(svgIcon("megaphone", 22));
@@ -9246,6 +9788,147 @@ function openServerInfo(server) {
   showModal("modal-server-info");
 }
 
+const TEMPLATE_TILE_ICONS = { fresh: "plus", friends: "people", gaming: "gamepad", community: "megaphone", study: "book", code: "paste" };
+const templatePicker = { list: [], choice: "fresh", code: null, preview: null };
+
+async function openCreateServer(code = "") {
+  try {
+    if (!templatePicker.list.length) templatePicker.list = await invoke("list_server_templates");
+  } catch (e) {
+    return toast(String(e));
+  }
+  Object.assign(templatePicker, { choice: code ? "code" : "fresh", code: null, preview: null });
+  $("template-code-input").value = code;
+  $("create-name-input").value = "";
+  renderTemplateGrid();
+  renderTemplatePreview();
+  showModal("modal-create-server");
+  if (code) await readTemplateCode();
+  else $("create-name-input").focus();
+}
+
+function renderTemplateGrid() {
+  const tiles = [
+    ...templatePicker.list.map(t => ({ id: t.id, title: t.title, blurb: t.blurb })),
+    { id: "code", title: "Use a template code", blurb: "Copy another server's layout" },
+  ];
+  $("template-grid").replaceChildren(...tiles.map(tile => {
+    const button = document.createElement("button");
+    button.className = "template-tile";
+    button.setAttribute("role", "radio");
+    button.dataset.template = tile.id;
+    const icon = document.createElement("span");
+    icon.className = "template-tile-icon";
+    icon.appendChild(svgIcon(TEMPLATE_TILE_ICONS[tile.id] || "plus", 20));
+    const title = document.createElement("span");
+    title.className = "template-tile-title";
+    title.textContent = tile.title;
+    const blurb = document.createElement("span");
+    blurb.className = "template-tile-blurb";
+    blurb.textContent = tile.blurb;
+    button.append(icon, title, blurb);
+    button.onclick = () => selectTemplate(tile.id);
+    return button;
+  }));
+  markChosenTile();
+}
+
+function markChosenTile() {
+  for (const tile of $("template-grid").children) {
+    tile.setAttribute("aria-checked", String(tile.dataset.template === templatePicker.choice));
+  }
+}
+
+function selectTemplate(id) {
+  templatePicker.choice = id;
+  markChosenTile();
+  renderTemplatePreview();
+  if (id === "code" && !templatePicker.preview) $("template-code-input").focus();
+}
+
+function chosenTemplate() {
+  return templatePicker.choice === "code" ? templatePicker.code : templatePicker.choice;
+}
+
+function templateChip(name, kind) {
+  const chip = document.createElement("span");
+  chip.className = "template-chip";
+  if (kind === "voice") chip.appendChild(svgIcon("speaker", 14));
+  else if (kind === "announcement") chip.appendChild(svgIcon("megaphone", 14));
+  else {
+    const hash = document.createElement("span");
+    hash.className = "template-hash";
+    hash.textContent = "#";
+    chip.appendChild(hash);
+  }
+  chip.append(name);
+  return chip;
+}
+
+function templateRoleChip(role) {
+  const chip = document.createElement("span");
+  chip.className = "template-chip";
+  const dot = document.createElement("span");
+  dot.className = "template-role-dot";
+  if (role.color) dot.style.background = `#${role.color}`;
+  chip.append(dot, role.name);
+  return chip;
+}
+
+function templateGroupNode(label, chips) {
+  const group = document.createElement("div");
+  group.className = "template-group";
+  const name = document.createElement("div");
+  name.className = "template-group-name";
+  name.textContent = label;
+  name.title = name.textContent;
+  const list = document.createElement("div");
+  list.className = "template-group-chips";
+  list.append(...chips);
+  group.append(name, list);
+  return group;
+}
+
+function renderTemplatePreview() {
+  const fromCode = templatePicker.choice === "code";
+  const template = fromCode ? templatePicker.preview : templatePicker.list.find(t => t.id === templatePicker.choice);
+  $("template-code-entry").classList.toggle("hidden", Boolean(!fromCode || template));
+  $("template-preview-view").classList.toggle("hidden", !template);
+  $("template-code-change").classList.toggle("hidden", !fromCode);
+  $("create-server-save").disabled = !template;
+  if (!template) return;
+  $("template-preview-summary").textContent = templateSummary(template);
+  const groups = templateGroups(template).map(g => templateGroupNode(g.category, g.channels.map(c => templateChip(c.name, c.kind))));
+  if (template.roles.length) groups.push(templateGroupNode("Roles", template.roles.map(templateRoleChip)));
+  $("template-preview-body").replaceChildren(...groups);
+  $("template-preview-body").scrollTop = 0;
+}
+
+async function readTemplateCode() {
+  const input = $("template-code-input");
+  const note = $("template-code-note");
+  const code = input.value.trim();
+  note.classList.remove("error");
+  note.textContent = "Ask a server admin to copy it from Server Settings, then Overview.";
+  templatePicker.preview = null;
+  templatePicker.code = null;
+  if (code && !looksLikeTemplateCode(code)) {
+    note.classList.add("error");
+    note.textContent = "Template codes start with commy-template:";
+  } else if (code) {
+    try {
+      const preview = await invoke("preview_server_template", { code });
+      if (input.value.trim() !== code) return;
+      Object.assign(templatePicker, { preview, code });
+      if (!$("create-name-input").value.trim()) $("create-name-input").value = preview.name;
+    } catch (e) {
+      note.classList.add("error");
+      note.textContent = String(e);
+    }
+  }
+  renderTemplatePreview();
+}
+
 function openServerSettings(tab) {
   if (!state.currentServer) return;
   const server = state.currentServer;
@@ -9261,6 +9944,7 @@ function openServerSettings(tab) {
   $("server-public-toggle").checked = Boolean(server.public);
   $("server-public-toggle").disabled = !server.can_manage_server;
   $("server-public-row").classList.toggle("readonly", !server.can_manage_server);
+  $("server-template-section").classList.toggle("hidden", !server.can_manage_server);
   const afkSelect = $("afk-channel-select");
   fillVoiceChannelSelect(afkSelect, "No AFK channel", server, server.afk_channel || "");
   afkSelect.disabled = !server.can_manage_server;
@@ -9274,6 +9958,8 @@ function openServerSettings(tab) {
   const canSounds = canEmoji || server.can_upload_sounds;
   $("tab-rules").classList.toggle("hidden", !server.can_manage_server);
   renderRulesSettings(server);
+  $("tab-automod").classList.toggle("hidden", !server.can_manage_server);
+  if (server.can_manage_server) renderAutomodSettings(server);
   renderGameTagEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
@@ -9288,6 +9974,7 @@ function openServerSettings(tab) {
     soundboard: canSounds,
     reports: isOwner,
     rules: server.can_manage_server,
+    automod: server.can_manage_server,
     members: canMembers,
   };
   renderEmojiSettings(server);
@@ -9477,11 +10164,7 @@ async function refreshCurrentServer() {
         $("chat-hash").replaceChildren(still.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
         syncRulesGate();
       }
-      const messages = await invoke("get_messages", {
-        serverId: state.currentServer.id,
-        channelId: still.id,
-      });
-      renderMessages(messages);
+      renderMessages(await fetchChannelMessages(still));
       return;
     }
   }

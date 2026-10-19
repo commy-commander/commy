@@ -83,8 +83,13 @@ pub struct FreshChannel {
 }
 
 pub fn mentions(content: &str, names: &[&str]) -> bool {
+    let everyone: Vec<&str> = names.iter().copied().chain(["everyone", "here"]).collect();
+    names_mentioned(content, &everyone)
+}
+
+pub fn names_mentioned(content: &str, names: &[&str]) -> bool {
     let lower = content.to_lowercase();
-    let targets = names.iter().map(|n| n.to_lowercase()).chain(["everyone".into(), "here".into()]);
+    let targets = names.iter().map(|n| n.to_lowercase());
     for name in targets.filter(|n| !n.is_empty()) {
         let mut from = 0;
         let needle = format!("@{name}");
@@ -396,10 +401,14 @@ pub fn apply_page(
     let fresh = report
         .applied
         .iter()
-        .filter(|id| state.has_message(**id))
+        .filter(|id| shown_to_members(state, **id))
         .filter_map(|id| new.get(id).cloned())
         .collect();
     (report, held, fresh)
+}
+
+fn shown_to_members(state: &ServerState, id: MessageId) -> bool {
+    state.message(id).is_some_and(|m| state.hold(m).is_none())
 }
 
 fn item_signer(event: &ServerEvent) -> Option<UserId> {
@@ -428,7 +437,7 @@ pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<Held>) -
             Ok(true) => {
                 out.changed = true;
                 if let Some((id, fresh)) = new_message {
-                    if state.has_message(id) {
+                    if shown_to_members(state, id) {
                         out.fresh.push(fresh);
                     }
                 }
@@ -935,6 +944,9 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         for profile in heard.filter(|p| Some(p.id) != me_id) {
             let profile = state.profiles.get(&profile.id).cloned().unwrap_or_else(|| profile.clone());
             let _ = state.apply(ServerEvent::MemberJoin { server, profile });
+        }
+        for user in old.bots() {
+            let _ = state.apply(ServerEvent::BotSet { server, user, bot: true });
         }
         if let Some(me) = me {
             let key = me.identity;

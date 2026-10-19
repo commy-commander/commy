@@ -119,8 +119,20 @@
           <button class="icon-btn hidden" id="dm-profile-btn" title="Hide User Profile">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"/></svg>
           </button>
+          <label class="search-box hidden" id="search-box">
+            <span class="search-box-icon" id="search-box-icon"></span>
+            <input id="search-input" type="text" placeholder="Search" autocomplete="off" spellcheck="false" aria-label="Search messages in this server" aria-controls="search-pop" />
+            <button class="search-clear" id="search-clear" type="button" title="Clear Search" aria-label="Clear Search"></button>
+          </label>
         </div>
       </header>
+      <section class="search-pop hidden" id="search-pop" role="dialog" aria-label="Search Results">
+        <header class="search-pop-head">
+          <span class="search-pop-title" id="search-pop-title">Search this server</span>
+          <span class="search-pop-sub" id="search-pop-sub"></span>
+        </header>
+        <div class="search-list" id="search-list" role="listbox"></div>
+      </section>
       <section class="pins-pop hidden" id="pins-pop" role="dialog" aria-label="Pinned Messages">
         <header class="pins-pop-head">
           <span class="pins-pop-title">Pinned Messages</span>
@@ -281,11 +293,36 @@
     <div class="modal hidden" id="modal-add-server">
       <h2>Add a Server</h2>
       <p>Create your own server, or join a friend's with an invite.</p>
-      <input id="create-name-input" type="text" maxlength="100" placeholder="New server name" />
-      <button class="btn-primary" id="create-server-save">Create Server</button>
+      <button class="btn-primary" id="create-server-open">Create a Server</button>
       <div class="modal-divider">OR</div>
       <input id="join-ticket-input" type="text" placeholder="Paste an invite link or commy... invite" />
       <button class="btn-secondary" id="join-server-save">Join Server</button>
+    </div>
+
+    <div class="modal modal-template hidden" id="modal-create-server">
+      <h2>Create a Server</h2>
+      <p>Pick a starting point. You can change every channel and role later.</p>
+      <div class="template-grid" id="template-grid" role="radiogroup" aria-label="Server template"></div>
+      <div class="template-preview" id="template-preview">
+        <div class="template-preview-view" id="template-preview-view">
+          <div class="template-preview-head">
+            <span class="template-preview-summary" id="template-preview-summary"></span>
+            <button class="btn-link hidden" id="template-code-change">Use another code</button>
+          </div>
+          <div class="template-preview-body" id="template-preview-body"></div>
+        </div>
+        <div class="template-code-entry hidden" id="template-code-entry">
+          <textarea id="template-code-input" spellcheck="false" placeholder="Paste a commy-template: code" aria-label="Template code"></textarea>
+          <div class="setting-sub template-code-note" id="template-code-note">Ask a server admin to copy it from Server Settings, then Overview.</div>
+        </div>
+      </div>
+      <label class="field-label">Server Name
+        <input id="create-name-input" type="text" maxlength="100" placeholder="New server name" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="create-server-back">Back</button>
+        <button class="btn-primary" id="create-server-save">Create Server</button>
+      </div>
     </div>
 
     <div class="modal hidden" id="modal-invite">
@@ -629,7 +666,7 @@
         <button class="settings-tab" data-tab="commy-account">Commy Account</button>
         <button class="settings-tab" data-tab="privacy">Privacy &amp; Safety</button>
         <div class="settings-nav-group">Voice &amp; Video</div>
-        <button class="settings-tab" data-tab="voice">Voice &amp; Audio</button>
+        <button class="settings-tab" data-tab="voice">Voice &amp; Camera</button>
         <button class="settings-tab" data-tab="overlay">Game Overlay</button>
         <div class="settings-nav-group">App Settings</div>
         <button class="settings-tab" data-tab="appearance">Appearance</button>
@@ -730,7 +767,7 @@
         </section>
 
         <section class="settings-page" data-page="voice">
-          <h1>Voice &amp; Audio</h1>
+          <h1>Voice &amp; Camera</h1>
           <div class="settings-card device-grid">
             <label class="field-label">Input Device
               <select id="input-device"><option value="">Default</option></select>
@@ -739,12 +776,27 @@
               <select id="output-device"><option value="">Default</option></select>
             </label>
           </div>
-          <div class="settings-card setting-row">
-            <label class="field-label grow">Camera
-              <select id="camera-device"><option value="">Default</option></select>
-            </label>
-            <div class="cam-preview" id="cam-preview-box">
-              <video id="cam-preview" muted playsinline></video>
+          <h2 class="settings-subhead">Camera</h2>
+          <div class="settings-card camera-card">
+            <div class="cam-stage" id="cam-stage">
+              <canvas class="cam-sky" id="cam-sky" aria-hidden="true"></canvas>
+              <div class="cam-stage-idle" id="cam-stage-idle">Your camera is off</div>
+            </div>
+            <div class="camera-controls">
+              <label class="field-label">Camera
+                <select id="camera-device"><option value="">Default</option></select>
+              </label>
+              <div class="field-label" id="cam-bg-label">Background</div>
+              <div class="segmented cam-bg" id="cam-bg" role="radiogroup" aria-labelledby="cam-bg-label">
+                <button data-bg="off" role="radio"><strong>Off</strong></button>
+                <button data-bg="blur" role="radio"><strong>Blur</strong></button>
+                <button data-bg="stars" role="radio"><strong>Stars</strong></button>
+              </div>
+              <label class="setting-row cam-mirror-row">
+                <span class="setting-title">Mirror my video</span>
+                <input type="checkbox" id="cam-mirror" class="switch" />
+              </label>
+              <div class="setting-sub cam-fx-note" id="cam-fx-note"></div>
               <button class="btn-secondary btn-small" id="cam-preview-btn">Test Camera</button>
             </div>
           </div>
@@ -1217,6 +1269,7 @@
         <button class="settings-tab" data-tab="channels" id="tab-channels">Channels</button>
         <button class="settings-tab" data-tab="roles" id="tab-roles">Roles</button>
         <button class="settings-tab" data-tab="rules" id="tab-rules">Rules</button>
+        <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
         <button class="settings-tab" data-tab="emoji" id="tab-emoji">Emoji</button>
         <button class="settings-tab" data-tab="soundboard" id="tab-soundboard">Soundboard</button>
         <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
@@ -1275,7 +1328,7 @@
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">AFK Channel</div>
-              <div class="setting-sub">Members in voice who go idle are moved here automatically. Each person picks how long that takes under Settings, then Voice &amp; Audio.</div>
+              <div class="setting-sub">Members in voice who go idle are moved here automatically. Each person picks how long that takes under Settings, then Voice &amp; Camera.</div>
             </div>
             <select id="afk-channel-select" class="compact-select"></select>
           </div>
@@ -1292,6 +1345,16 @@
               <option value="30">30 minutes</option>
               <option value="60">1 hour</option>
             </select>
+          </div>
+          <div id="server-template-section">
+            <h2 class="settings-subhead">Template</h2>
+            <div class="settings-card setting-row">
+              <div>
+                <div class="setting-title">Server template</div>
+                <div class="setting-sub">Copy this server's channels, categories, roles, rules and AFK setup as a code anyone can use to start a new server. Messages, members, invites, emoji, sounds and images are never included.</div>
+              </div>
+              <button class="btn-secondary btn-small" id="server-template-copy">Copy Template Code</button>
+            </div>
           </div>
         </section>
 
@@ -1369,6 +1432,47 @@
             <button class="btn-primary btn-small" id="rules-save">Save Rules</button>
             <button class="btn-link danger hidden" id="rules-remove">Remove Rules</button>
             <span class="expr-count" id="rules-count"></span>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="automod">
+          <h1>Auto Moderation</h1>
+          <div class="setting-sub expr-intro">Every member's Commy app checks messages against these rules, including ones already posted. A message that breaks a rule is held: members don't see it and aren't notified, and moderators see it marked in the channel so they can deal with it. The owner and anyone who can manage messages or the server are never held. Currently: <span id="automod-status">Off</span>.</div>
+          <h2 class="settings-subhead">Blocked words</h2>
+          <div class="settings-card automod-terms-card">
+            <div class="setting-sub">One word or phrase per line. Capitals and punctuation are ignored and whole words must match, so "ass" does not catch "class". End a word with * to catch every word that starts with it.</div>
+            <textarea id="automod-terms" rows="7" spellcheck="false" placeholder="free gifts&#10;scam*"></textarea>
+            <span class="expr-count" id="automod-count"></span>
+          </div>
+          <h2 class="settings-subhead">Spam</h2>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Block links</div>
+              <div class="setting-sub">Hold messages with web addresses (http, https or www.).</div>
+            </div>
+            <input type="checkbox" id="automod-links" class="switch" />
+          </label>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Mention limit</div>
+              <div class="setting-sub">Hold messages that @mention more people than this, @everyone and @here included.</div>
+            </div>
+            <select id="automod-mentions" class="compact-select"></select>
+          </div>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Flood limit</div>
+              <div class="setting-sub">When someone posts faster than this in one channel, their extra messages are held.</div>
+            </div>
+            <select id="automod-burst" class="compact-select"></select>
+          </div>
+          <h2 class="settings-subhead">Exempt roles</h2>
+          <div class="settings-card">
+            <div class="setting-sub">Members with these roles are never held.</div>
+            <div class="perm-grid automod-roles" id="automod-roles"></div>
+          </div>
+          <div class="expr-toolbar">
+            <button class="btn-primary btn-small" id="automod-save">Save</button>
           </div>
         </section>
 
@@ -1550,6 +1654,8 @@
   <script src="scripts/embeds.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/pins.js"></script>
+  <script src="scripts/automod.js"></script>
+  <script src="scripts/search.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>
@@ -1558,6 +1664,9 @@
   <script src="scripts/layout.js"></script>
   <script src="scripts/tint.js"></script>
   <script src="scripts/updates.js"></script>
+  <script src="scripts/server-templates.js"></script>
+  <script src="scripts/camera-fx.js"></script>
+  <script src="scripts/camera-pipeline.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
   <script src="scripts/entry-list.js"></script>

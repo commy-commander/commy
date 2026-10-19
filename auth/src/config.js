@@ -163,6 +163,7 @@ export function discoveryDocument(config) {
       emailVerification: Boolean(config.smtp),
       passwordReset: Boolean(config.smtp),
       emailPassword: true,
+      passkey: true,
     },
     turnstileSiteKey: config.turnstile?.siteKey ?? null,
     deviceAuthorization: {
@@ -194,6 +195,8 @@ export function discoveryDocument(config) {
       media: true,
       vault: true,
       doorbell: Boolean(config.doorbell),
+      twoFactor: true,
+      changeEmail: Boolean(config.smtp),
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,
