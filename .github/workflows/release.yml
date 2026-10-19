@@ -3,16 +3,6 @@ name: Desktop release
 on:
   push:
     tags: ["v*"]
-    branches: [main]
-    paths:
-      - "Cargo.lock"
-      - "**/Cargo.toml"
-      - ".github/workflows/release.yml"
-      - ".github/actions/release-config/**"
-  pull_request:
-    paths:
-      - ".github/workflows/release.yml"
-      - ".github/actions/release-config/**"
   schedule:
     - cron: "17 4 * * 1,4"
   workflow_dispatch:
@@ -22,7 +12,7 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  cancel-in-progress: false
 
 env:
   TAURI_CLI_VERSION: "2.12.3"
