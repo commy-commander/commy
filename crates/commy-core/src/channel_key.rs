@@ -96,20 +96,20 @@ fn encode<T: Serialize>(value: &T) -> Vec<u8> {
 fn seal(key: &[u8; 32], nonce: [u8; 12], aad: &[u8], plain: &[u8]) -> Vec<u8> {
     let cipher = Aes256Gcm::new_from_slice(key).expect("32 byte key");
     cipher
-        .encrypt(Nonce::from_slice(&nonce), Payload { msg: plain, aad })
+        .encrypt(&Nonce::from(nonce), Payload { msg: plain, aad })
         .expect("in-memory encryption cannot fail")
 }
 
 fn unseal(key: &[u8; 32], nonce: [u8; 12], aad: &[u8], sealed: &[u8]) -> Option<Vec<u8>> {
     let cipher = Aes256Gcm::new_from_slice(key).expect("32 byte key");
-    cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: sealed, aad }).ok()
+    cipher.decrypt(&Nonce::from(nonce), Payload { msg: sealed, aad }).ok()
 }
 
 fn wrapping_key(shared: &[u8; 32], info: &[u8]) -> [u8; 32] {
-    let mut extract = <Hmac<Sha256> as Mac>::new_from_slice(GRANT_DOMAIN.as_bytes()).expect("any key length");
+    let mut extract = <Hmac<Sha256> as KeyInit>::new_from_slice(GRANT_DOMAIN.as_bytes()).expect("any key length");
     extract.update(shared);
     let prk = extract.finalize().into_bytes();
-    let mut expand = <Hmac<Sha256> as Mac>::new_from_slice(&prk).expect("any key length");
+    let mut expand = <Hmac<Sha256> as KeyInit>::new_from_slice(&prk).expect("any key length");
     expand.update(info);
     expand.update(&[1]);
     expand.finalize().into_bytes().into()
