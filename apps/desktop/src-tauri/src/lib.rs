@@ -14,6 +14,7 @@ mod outbox;
 mod overlay;
 mod persist;
 mod safety;
+mod search;
 mod settle;
 mod state;
 mod storage;
@@ -287,14 +288,39 @@ fn get_messages(
     app: tauri::State<App>,
     server_id: String,
     channel_id: String,
+    around: Option<String>,
 ) -> CmdResult<Vec<MessageView>> {
     let sid = server_id.parse().map_err(err_to_string)?;
     let cid = channel_id.parse().map_err(err_to_string)?;
+    let around: Option<MessageId> = around.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let pending = app.outbox.lock().unwrap().pending_ids(sid);
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
+    if let Some(id) = around {
+        return view::message_views_around(state, cid, id, &pending, me).ok_or_else(|| "that message is no longer on this device".to_string());
+    }
     Ok(view::message_views(state, cid, 100, &pending, me))
+}
+
+#[tauri::command]
+fn search_messages(
+    app: tauri::State<App>,
+    server_id: String,
+    terms: Vec<String>,
+    from: Option<String>,
+    mentions: Option<String>,
+    channel_id: Option<String>,
+) -> CmdResult<search::SearchResults> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let from: Option<UserId> = from.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let mentions: Option<UserId> = mentions.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let channel: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let query = search::SearchQuery::new(&terms, from, mentions, channel);
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    Ok(search::search(state, &query, me, search::MAX_HITS))
 }
 
 async fn commit_message(
@@ -5377,6 +5403,7 @@ pub fn run() {
             set_channel_kind,
             pin_message,
             get_pins,
+            search_messages,
             edit_message,
             delete_message,
             list_audio_devices,

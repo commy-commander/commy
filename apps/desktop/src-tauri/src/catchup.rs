@@ -83,8 +83,13 @@ pub struct FreshChannel {
 }
 
 pub fn mentions(content: &str, names: &[&str]) -> bool {
+    let everyone: Vec<&str> = names.iter().copied().chain(["everyone", "here"]).collect();
+    names_mentioned(content, &everyone)
+}
+
+pub fn names_mentioned(content: &str, names: &[&str]) -> bool {
     let lower = content.to_lowercase();
-    let targets = names.iter().map(|n| n.to_lowercase()).chain(["everyone".into(), "here".into()]);
+    let targets = names.iter().map(|n| n.to_lowercase());
     for name in targets.filter(|n| !n.is_empty()) {
         let mut from = 0;
         let needle = format!("@{name}");

@@ -119,8 +119,20 @@
           <button class="icon-btn hidden" id="dm-profile-btn" title="Hide User Profile">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"/></svg>
           </button>
+          <label class="search-box hidden" id="search-box">
+            <span class="search-box-icon" id="search-box-icon"></span>
+            <input id="search-input" type="text" placeholder="Search" autocomplete="off" spellcheck="false" aria-label="Search messages in this server" aria-controls="search-pop" />
+            <button class="search-clear" id="search-clear" type="button" title="Clear Search" aria-label="Clear Search"></button>
+          </label>
         </div>
       </header>
+      <section class="search-pop hidden" id="search-pop" role="dialog" aria-label="Search Results">
+        <header class="search-pop-head">
+          <span class="search-pop-title" id="search-pop-title">Search this server</span>
+          <span class="search-pop-sub" id="search-pop-sub"></span>
+        </header>
+        <div class="search-list" id="search-list" role="listbox"></div>
+      </section>
       <section class="pins-pop hidden" id="pins-pop" role="dialog" aria-label="Pinned Messages">
         <header class="pins-pop-head">
           <span class="pins-pop-title">Pinned Messages</span>
@@ -1636,6 +1648,7 @@
   <script src="scripts/notify.js"></script>
   <script src="scripts/pins.js"></script>
   <script src="scripts/automod.js"></script>
+  <script src="scripts/search.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>

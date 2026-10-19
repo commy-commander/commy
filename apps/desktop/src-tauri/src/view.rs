@@ -592,7 +592,7 @@ impl MessageView {
         }
     }
 
-    fn with_hold(mut self, hold: Option<Hold>) -> Self {
+    pub fn with_hold(mut self, hold: Option<Hold>) -> Self {
         self.held = hold.map(|h| h.describe().to_string());
         self
     }
@@ -612,16 +612,44 @@ pub fn message_views(
     pending: &HashSet<MessageId>,
     viewer: Option<UserId>,
 ) -> Vec<MessageView> {
+    visible_views(state, state.page(channel, None, limit), pending, viewer)
+}
+
+pub fn sees_message(state: &ServerState, viewer: Option<UserId>) -> impl Fn(&Message) -> bool + '_ {
     let reviews_held = viewer.is_some_and(|v| commy_core::automod::moderates(&state.server, v));
-    state
-        .page(channel, None, limit)
+    move |m| reviews_held || Some(m.author) == viewer || state.hold(m).is_none()
+}
+
+pub fn held_view(state: &ServerState, message: &Message) -> MessageView {
+    MessageView::build(message, state).with_hold(state.hold(message))
+}
+
+fn visible_views(state: &ServerState, messages: &[Message], pending: &HashSet<MessageId>, viewer: Option<UserId>) -> Vec<MessageView> {
+    let sees = sees_message(state, viewer);
+    messages
         .iter()
-        .filter_map(|m| {
-            let hold = state.hold(m);
-            let hidden = hold.is_some() && !reviews_held && Some(m.author) != viewer;
-            (!hidden).then(|| MessageView::build(m, state).with_pending(pending.contains(&m.id)).with_hold(hold))
-        })
+        .filter(|m| sees(m))
+        .map(|m| held_view(state, m).with_pending(pending.contains(&m.id)))
         .collect()
+}
+
+pub const AROUND_EACH_SIDE: usize = 50;
+
+pub fn message_views_around(
+    state: &ServerState,
+    channel: ChannelId,
+    around: MessageId,
+    pending: &HashSet<MessageId>,
+    viewer: Option<UserId>,
+) -> Option<Vec<MessageView>> {
+    let all = state.messages(channel);
+    let at = all.iter().position(|m| m.id == around)?;
+    if !sees_message(state, viewer)(&all[at]) {
+        return None;
+    }
+    let start = at.saturating_sub(AROUND_EACH_SIDE);
+    let end = (at + AROUND_EACH_SIDE + 1).min(all.len());
+    Some(visible_views(state, &all[start..end], pending, viewer))
 }
 
 pub fn display_name(state: &ServerState, user: commy_core::UserId) -> String {
@@ -713,6 +741,37 @@ mod tests {
         assert_eq!(seen(reader), vec![("fine".to_string(), None)]);
         let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader)).remove(0);
         assert_eq!(reply.reply_preview.unwrap().excerpt, HELD_EXCERPT);
+        let around = |viewer| message_views_around(&state, channel, bad, &HashSet::new(), Some(viewer)).map(|v| v.len());
+        assert_eq!(around(owner.id), Some(2));
+        assert_eq!(around(reader), None);
+    }
+
+    #[test]
+    fn a_window_around_an_old_message_holds_it_and_its_neighbours() {
+        let identity = Identity::generate();
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(identity.public());
+        let server = Server::new("s", owner.id);
+        let channel = server.channels[0].id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let mut ids = Vec::new();
+        for i in 0..300 {
+            let mut message = Message::new(channel, owner.id, format!("m{i}"));
+            message.created_at = chrono::Utc::now() - chrono::Duration::minutes(300 - i);
+            message.sign(state.server.id, &identity);
+            ids.push(message.id);
+            state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        }
+        let none = HashSet::new();
+        let middle = message_views_around(&state, channel, ids[120], &none, Some(owner.id)).unwrap();
+        assert_eq!(middle.len(), 2 * AROUND_EACH_SIDE + 1);
+        assert_eq!((middle[0].content.as_str(), middle[AROUND_EACH_SIDE].content.as_str()), ("m70", "m120"));
+        let first = message_views_around(&state, channel, ids[3], &none, Some(owner.id)).unwrap();
+        assert_eq!((first[0].content.as_str(), first.len()), ("m0", 3 + AROUND_EACH_SIDE + 1));
+        let last = message_views_around(&state, channel, ids[299], &none, Some(owner.id)).unwrap();
+        assert_eq!(last.last().unwrap().content, "m299");
+        assert!(message_views_around(&state, channel, MessageId::for_author(owner.id), &none, Some(owner.id)).is_none());
     }
 
     #[test]
