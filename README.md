@@ -9,8 +9,10 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 
 ## What you can do
 
-- **Servers and channels.** Create a server, add text and voice channels,
-  group servers into folders, and invite people with a link.
+- **Servers and channels.** Create a server from scratch or a starter
+  template, add text and voice channels, group servers into folders, and
+  invite people with a link. Copy any server's channels, roles and rules as a
+  template code so others can start from the same layout.
 - **Roles and moderation.** Colored roles with fine-grained permissions,
   kick and ban, server mute and deafen, pinned messages and announcements.
 - **Rich chat.** Replies, reactions, edits, emoji (including custom server

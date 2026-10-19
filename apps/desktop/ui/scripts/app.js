@@ -208,6 +208,44 @@ function mockFrame(label, width, height, hue) {
   return canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
 }
 
+function mockTemplateView(id, title, blurb, layout, roles = [], hasRules = false) {
+  const channels = [];
+  for (const [category, entries] of layout) {
+    const parent = category ? channels.push({ name: category, kind: "category", category: null }) - 1 : null;
+    for (const entry of entries) {
+      const [kind, name] = entry.startsWith("v:") ? ["voice", entry.slice(2)] : entry.startsWith("a:") ? ["announcement", entry.slice(2)] : ["text", entry];
+      channels.push({ name, kind, category: parent });
+    }
+  }
+  return { id, title, blurb, name: title, channels, roles: roles.map(([name, color]) => ({ name, color })), has_rules: hasRules };
+}
+
+function mockTemplates() {
+  return [
+    mockTemplateView("fresh", "Start fresh", "A chat channel and a voice room", [[null, ["general", "v:General", "v:AFK"]]]),
+    mockTemplateView("friends", "Friends", "Photos, memes and plans", [[null, ["general", "photos", "memes", "plans", "v:Hangout", "v:Gaming", "v:Movie Night", "v:AFK"]]]),
+    mockTemplateView("gaming", "Gaming group", "Squads, clips and a lobby", [
+      [null, ["general", "looking-for-group", "clips", "strategy", "v:Lobby", "v:Squad 1", "v:Squad 2", "v:Streaming", "v:AFK"]],
+      ["News", ["a:announcements", "patch-notes"]],
+    ], [["Squad Lead", "5b8cff"], ["Streamer", "a970ff"]]),
+    mockTemplateView("community", "Community", "Welcome area and moderators", [
+      [null, ["welcome", "a:announcements", "introductions", "general", "off-topic", "media", "help", "v:Lounge", "v:Events", "v:AFK"]],
+      ["Staff", ["mod-chat"]],
+    ], [["Moderator", "3ddc97"], ["Event Host", "ff9f43"], ["Events Ping", "5b8cff"]], true),
+    mockTemplateView("study", "Study group", "Focus rooms and resources", [
+      [null, ["general", "resources", "homework-help", "focus-log", "v:Study Room", "v:Quiet Room", "v:Break Room", "v:AFK"]],
+    ], [["Tutor", "3ddc97"]]),
+  ];
+}
+
+function mockTemplateFromCode(code) {
+  try {
+    return JSON.parse(atob(code.trim().slice("commy-template:".length)));
+  } catch (_) {
+    throw "that is not a server template code";
+  }
+}
+
 async function mockInvoke(cmd, args = {}) {
   switch (cmd) {
     case "get_user": return mock.user;
@@ -242,16 +280,28 @@ async function mockInvoke(cmd, args = {}) {
       };
     }
     case "create_server": {
+      const template = looksLikeTemplateCode(args.template || "") ? mockTemplateFromCode(args.template)
+        : mockTemplates().find(t => t.id === (args.template || "fresh"));
+      const ids = template.channels.map(() => crypto.randomUUID());
       const server = {
         id: crypto.randomUUID(), name: args.name, owner: "me",
-        channels: [
-          { id: crypto.randomUUID(), name: "general", kind: "text", topic: null, voice_users: [] },
-          { id: crypto.randomUUID(), name: "General", kind: "voice", topic: null, voice_users: [] },
-        ],
+        channels: template.channels.map((c, i) => ({ id: ids[i], name: c.name, kind: c.kind, topic: null, parent: c.category == null ? null : ids[c.category], position: i, voice_users: [] })),
+        roles: template.roles.map((r, i) => ({ id: crypto.randomUUID(), name: r.name, color: r.color, position: i + 1, permissions: [] })),
+        rules: template.has_rules ? "Be kind." : null,
         members: [],
       };
       mock.servers[server.id] = server;
       return server;
+    }
+    case "list_server_templates": return mockTemplates();
+    case "preview_server_template": return { ...mockTemplateFromCode(args.code), id: null };
+    case "export_server_template": {
+      const s = mock.servers[args.serverId];
+      const index = new Map(s.channels.map((c, i) => [c.id, i]));
+      const view = { title: s.name, blurb: "", name: s.name, has_rules: Boolean(s.rules),
+        channels: s.channels.map(c => ({ name: c.name, kind: c.kind, category: c.parent ? index.get(c.parent) ?? null : null })),
+        roles: (s.roles || []).filter(r => r.position).map(r => ({ name: r.name, color: r.color || null })) };
+      return "commy-template:" + btoa(JSON.stringify(view));
     }
     case "join_server": throw "joining requires the desktop app";
     case "get_invite": return "commy" + "x".repeat(80) + " (mock invite, browser preview)";
@@ -764,6 +814,9 @@ const ICONS = {
   uploadFile: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z",
   movie: "M4 6.47 5.76 10H20v8H4V6.47M22 4h-4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2z",
   gifBox: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H5V5h14zM9.5 13v-1h1v1a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1h-2v2zm3 1h-1v-4h1zm4-3h-2v.5H16v1h-1.5V14h-1v-4h3z",
+  people: "M16.5 13c-1.2 0-3.07.34-4.5 1-1.43-.67-3.3-1-4.5-1C5.33 13 1 14.08 1 16.25V19h22v-2.75c0-2.17-4.33-3.25-6.5-3.25zm-4 4.5h-10v-1.25c0-.54 2.56-1.75 5-1.75s5 1.21 5 1.75v1.25zm9 0H14v-1.25c0-.46-.2-.86-.52-1.22.88-.3 1.96-.53 3.02-.53 2.44 0 5 1.21 5 1.75v1.25zM7.5 12c1.93 0 3.5-1.57 3.5-3.5S9.43 5 7.5 5 4 6.57 4 8.5 5.57 12 7.5 12zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 5.5c1.93 0 3.5-1.57 3.5-3.5S18.43 5 16.5 5 13 6.57 13 8.5s1.57 3.5 3.5 3.5zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z",
+  gamepad: "M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H3V8h18v8zM6 15h2v-2h2v-2H8V9H6v2H4v2h2v2zm8.5-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
+  paste: "M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z",
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
 };
 
@@ -7958,16 +8011,47 @@ function wireEvents() {
   });
 
   $("add-server-btn").onclick = () => showModal("modal-add-server");
+  $("create-server-open").onclick = () => openCreateServer();
+  $("create-server-back").onclick = () => showModal("modal-add-server");
+  $("template-code-input").addEventListener("input", readTemplateCode);
+  $("template-code-change").onclick = () => {
+    templatePicker.preview = null;
+    templatePicker.code = null;
+    $("template-code-input").value = "";
+    renderTemplatePreview();
+    $("template-code-input").focus();
+  };
+  $("create-name-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") $("create-server-save").click();
+  });
 
   $("create-server-save").onclick = async () => {
     const name = $("create-name-input").value.trim();
-    if (!name) return;
+    const template = chosenTemplate();
+    if (!name) return $("create-name-input").focus();
+    if (!template) return $("template-code-input").focus();
+    const save = $("create-server-save");
+    if (save.disabled) return;
+    save.disabled = true;
     try {
-      const server = await invoke("create_server", { name });
+      const server = await invoke("create_server", { name, template });
       hideModals();
       $("create-name-input").value = "";
       await refreshServers();
       await selectServer(server.id);
+    } catch (e) {
+      toast(String(e));
+    } finally {
+      save.disabled = false;
+    }
+  };
+
+  $("server-template-copy").onclick = async () => {
+    if (!state.currentServer) return;
+    try {
+      const code = await invoke("export_server_template", { serverId: state.currentServer.id });
+      await navigator.clipboard.writeText(code);
+      toast("Template code copied. Anyone can paste it under Create a Server.");
     } catch (e) {
       toast(String(e));
     }
@@ -7976,6 +8060,10 @@ function wireEvents() {
   $("join-server-save").onclick = async () => {
     const ticket = $("join-ticket-input").value.trim();
     if (!ticket) return;
+    if (looksLikeTemplateCode(ticket)) {
+      $("join-ticket-input").value = "";
+      return openCreateServer(ticket);
+    }
     if (looksLikeInviteLink(ticket)) {
       $("join-ticket-input").value = "";
       return openInviteLink(ticket);
@@ -9236,6 +9324,147 @@ function openServerInfo(server) {
   showModal("modal-server-info");
 }
 
+const TEMPLATE_TILE_ICONS = { fresh: "plus", friends: "people", gaming: "gamepad", community: "megaphone", study: "book", code: "paste" };
+const templatePicker = { list: [], choice: "fresh", code: null, preview: null };
+
+async function openCreateServer(code = "") {
+  try {
+    if (!templatePicker.list.length) templatePicker.list = await invoke("list_server_templates");
+  } catch (e) {
+    return toast(String(e));
+  }
+  Object.assign(templatePicker, { choice: code ? "code" : "fresh", code: null, preview: null });
+  $("template-code-input").value = code;
+  $("create-name-input").value = "";
+  renderTemplateGrid();
+  renderTemplatePreview();
+  showModal("modal-create-server");
+  if (code) await readTemplateCode();
+  else $("create-name-input").focus();
+}
+
+function renderTemplateGrid() {
+  const tiles = [
+    ...templatePicker.list.map(t => ({ id: t.id, title: t.title, blurb: t.blurb })),
+    { id: "code", title: "Use a template code", blurb: "Copy another server's layout" },
+  ];
+  $("template-grid").replaceChildren(...tiles.map(tile => {
+    const button = document.createElement("button");
+    button.className = "template-tile";
+    button.setAttribute("role", "radio");
+    button.dataset.template = tile.id;
+    const icon = document.createElement("span");
+    icon.className = "template-tile-icon";
+    icon.appendChild(svgIcon(TEMPLATE_TILE_ICONS[tile.id] || "plus", 20));
+    const title = document.createElement("span");
+    title.className = "template-tile-title";
+    title.textContent = tile.title;
+    const blurb = document.createElement("span");
+    blurb.className = "template-tile-blurb";
+    blurb.textContent = tile.blurb;
+    button.append(icon, title, blurb);
+    button.onclick = () => selectTemplate(tile.id);
+    return button;
+  }));
+  markChosenTile();
+}
+
+function markChosenTile() {
+  for (const tile of $("template-grid").children) {
+    tile.setAttribute("aria-checked", String(tile.dataset.template === templatePicker.choice));
+  }
+}
+
+function selectTemplate(id) {
+  templatePicker.choice = id;
+  markChosenTile();
+  renderTemplatePreview();
+  if (id === "code" && !templatePicker.preview) $("template-code-input").focus();
+}
+
+function chosenTemplate() {
+  return templatePicker.choice === "code" ? templatePicker.code : templatePicker.choice;
+}
+
+function templateChip(name, kind) {
+  const chip = document.createElement("span");
+  chip.className = "template-chip";
+  if (kind === "voice") chip.appendChild(svgIcon("speaker", 14));
+  else if (kind === "announcement") chip.appendChild(svgIcon("megaphone", 14));
+  else {
+    const hash = document.createElement("span");
+    hash.className = "template-hash";
+    hash.textContent = "#";
+    chip.appendChild(hash);
+  }
+  chip.append(name);
+  return chip;
+}
+
+function templateRoleChip(role) {
+  const chip = document.createElement("span");
+  chip.className = "template-chip";
+  const dot = document.createElement("span");
+  dot.className = "template-role-dot";
+  if (role.color) dot.style.background = `#${role.color}`;
+  chip.append(dot, role.name);
+  return chip;
+}
+
+function templateGroupNode(label, chips) {
+  const group = document.createElement("div");
+  group.className = "template-group";
+  const name = document.createElement("div");
+  name.className = "template-group-name";
+  name.textContent = label;
+  name.title = name.textContent;
+  const list = document.createElement("div");
+  list.className = "template-group-chips";
+  list.append(...chips);
+  group.append(name, list);
+  return group;
+}
+
+function renderTemplatePreview() {
+  const fromCode = templatePicker.choice === "code";
+  const template = fromCode ? templatePicker.preview : templatePicker.list.find(t => t.id === templatePicker.choice);
+  $("template-code-entry").classList.toggle("hidden", Boolean(!fromCode || template));
+  $("template-preview-view").classList.toggle("hidden", !template);
+  $("template-code-change").classList.toggle("hidden", !fromCode);
+  $("create-server-save").disabled = !template;
+  if (!template) return;
+  $("template-preview-summary").textContent = templateSummary(template);
+  const groups = templateGroups(template).map(g => templateGroupNode(g.category, g.channels.map(c => templateChip(c.name, c.kind))));
+  if (template.roles.length) groups.push(templateGroupNode("Roles", template.roles.map(templateRoleChip)));
+  $("template-preview-body").replaceChildren(...groups);
+  $("template-preview-body").scrollTop = 0;
+}
+
+async function readTemplateCode() {
+  const input = $("template-code-input");
+  const note = $("template-code-note");
+  const code = input.value.trim();
+  note.classList.remove("error");
+  note.textContent = "Ask a server admin to copy it from Server Settings, then Overview.";
+  templatePicker.preview = null;
+  templatePicker.code = null;
+  if (code && !looksLikeTemplateCode(code)) {
+    note.classList.add("error");
+    note.textContent = "Template codes start with commy-template:";
+  } else if (code) {
+    try {
+      const preview = await invoke("preview_server_template", { code });
+      if (input.value.trim() !== code) return;
+      Object.assign(templatePicker, { preview, code });
+      if (!$("create-name-input").value.trim()) $("create-name-input").value = preview.name;
+    } catch (e) {
+      note.classList.add("error");
+      note.textContent = String(e);
+    }
+  }
+  renderTemplatePreview();
+}
+
 function openServerSettings(tab) {
   if (!state.currentServer) return;
   const server = state.currentServer;
@@ -9251,6 +9480,7 @@ function openServerSettings(tab) {
   $("server-public-toggle").checked = Boolean(server.public);
   $("server-public-toggle").disabled = !server.can_manage_server;
   $("server-public-row").classList.toggle("readonly", !server.can_manage_server);
+  $("server-template-section").classList.toggle("hidden", !server.can_manage_server);
   const afkSelect = $("afk-channel-select");
   fillVoiceChannelSelect(afkSelect, "No AFK channel", server, server.afk_channel || "");
   afkSelect.disabled = !server.can_manage_server;
