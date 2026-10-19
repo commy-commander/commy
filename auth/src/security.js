@@ -111,6 +111,38 @@ const NOTICES = {
   },
 };
 
+const SOCIAL_NAMES = { google: "Google", twitch: "Twitch" };
+
+function noticeMail(baseURL, to, subject, body) {
+  return {
+    to,
+    subject,
+    heading: subject,
+    body: `${body} If this was not you, reset your password and review your account now.`,
+    actionLabel: "Review your account",
+    url: `${baseURL}/account`,
+  };
+}
+
+function warnMailFailed(err) {
+  console.warn(`[mail] security notice failed: ${err?.code ?? err?.message ?? err}`);
+}
+
+export function noticeWhenALoginIsLinked({ baseURL, send }) {
+  return async (account, ctx) => {
+    const provider = SOCIAL_NAMES[account.providerId];
+    if (!provider || !ctx) return;
+    const internal = ctx.context.internalAdapter;
+    const accounts = await internal.findAccounts(account.userId);
+    if (accounts.length < 2) return;
+    const user = await internal.findUserById(account.userId);
+    if (!user?.email) return;
+    await send(
+      noticeMail(baseURL, user.email, `A ${provider} sign-in was linked`, `This account can now sign in with ${provider}.`),
+    ).catch(warnMailFailed);
+  };
+}
+
 function succeeded(returned) {
   return returned && !(returned instanceof Error) && !(returned instanceof Response && !returned.ok);
 }
@@ -125,14 +157,7 @@ export const commySecurityNotices = ({ baseURL, send }) => ({
           const user = ctx.context.session?.user;
           if (!user?.email || !succeeded(ctx.context.returned)) return;
           const notice = NOTICES[ctx.path];
-          await send({
-            to: user.email,
-            subject: notice.subject,
-            heading: notice.subject,
-            body: `${notice.body} If this was not you, reset your password and review your account now.`,
-            actionLabel: "Review your account",
-            url: `${baseURL}/account`,
-          }).catch((err) => console.warn(`[mail] security notice failed: ${err?.code ?? err?.message ?? err}`));
+          await send(noticeMail(baseURL, user.email, notice.subject, notice.body)).catch(warnMailFailed);
         }),
       },
     ],

@@ -5,7 +5,7 @@ import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { buildAuthOptions } from "../src/auth.js";
 import { loadConfig } from "../src/config.js";
-import { safeReturnPath } from "../src/security.js";
+import { noticeWhenALoginIsLinked, safeReturnPath } from "../src/security.js";
 
 const ORIGIN = "http://localhost:3001";
 const PASSWORD = "correct horse battery";
@@ -265,4 +265,25 @@ test("return paths stay on this site", () => {
   assert.equal(safeReturnPath("https://evil.example/account", ORIGIN), "/account");
   assert.equal(safeReturnPath("//evil.example/x", ORIGIN), "/account");
   assert.equal(safeReturnPath(undefined, ORIGIN), "/account");
+});
+
+test("linking a social login to an existing account sends a notice", async () => {
+  const sent = [];
+  const notice = noticeWhenALoginIsLinked({ baseURL: ORIGIN, send: async (mail) => sent.push(mail) });
+  const ctxWith = (accounts) => ({
+    context: {
+      internalAdapter: {
+        findAccounts: async () => accounts,
+        findUserById: async () => ({ email: "me@example.test" }),
+      },
+    },
+  });
+  await notice({ userId: "u1", providerId: "twitch" }, ctxWith([{ providerId: "twitch" }]));
+  assert.equal(sent.length, 0, "a brand new account gets no notice");
+  await notice({ userId: "u1", providerId: "credential" }, ctxWith([{}, {}]));
+  assert.equal(sent.length, 0);
+  await notice({ userId: "u1", providerId: "twitch" }, ctxWith([{ providerId: "credential" }, { providerId: "twitch" }]));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, "me@example.test");
+  assert.match(sent[0].subject, /Twitch sign-in was linked/);
 });

@@ -9,7 +9,7 @@ import { commyDevices } from "./devices.js";
 import { commyDoorbell } from "./doorbell.js";
 import { commyInvites } from "./invites.js";
 import { commyMedia } from "./media.js";
-import { commyPasswords, commySecurityNotices, commyTwoFactorEverywhere } from "./security.js";
+import { commyPasswords, commySecurityNotices, commyTwoFactorEverywhere, noticeWhenALoginIsLinked } from "./security.js";
 import { commyVault } from "./vault.js";
 import { createMailer } from "./mailer.js";
 import { redisRateLimitStorage } from "./rate-limit.js";
@@ -142,7 +142,11 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
       },
     },
     account: {
-      accountLinking: { enabled: true, trustedProviders: PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS },
+      accountLinking: {
+        enabled: true,
+        trustedProviders: PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS,
+        allowDifferentEmails: true,
+      },
       encryptOAuthTokens: true,
     },
     databaseHooks: {
@@ -163,6 +167,11 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
       session: {
         create: {
           before: storeSessionWithoutIpOrUserAgent,
+        },
+      },
+      account: {
+        create: {
+          after: noticeWhenALoginIsLinked({ baseURL: config.baseURL, send }),
         },
       },
     },
