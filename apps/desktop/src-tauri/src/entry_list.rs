@@ -17,6 +17,7 @@ const KEY_FILE: &str = "entry-key.json";
 const LOCAL_FILE: &str = "entry-list.json";
 const VAULT_ITEM: &str = "servers";
 const NO_VAULT: &str = "Your account server cannot keep a server list yet.";
+const SIGNED_OUT: &str = "Your account server signed this device out.";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
@@ -325,6 +326,9 @@ async fn reach(request: reqwest::RequestBuilder) -> Result<reqwest::Response, St
 }
 
 fn answered(res: &reqwest::Response) -> Result<(), String> {
+    if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(SIGNED_OUT.to_string());
+    }
     if !res.status().is_success() {
         return Err(format!("Your account server answered {}", res.status()));
     }
@@ -411,6 +415,10 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
         let item = match fetch(&app, &s).await {
             Ok(Fetched::Item(item)) => item,
             Ok(Fetched::Unsupported) => return finish(handle, "unsupported", NO_VAULT, 0, false).await,
+            Err(e) if e == SIGNED_OUT => {
+                crate::account::verify_saved_session(handle.clone()).await;
+                return Err(e);
+            }
             Err(e) => {
                 set_status(handle, "error", e.clone(), 0, load_key(&dir, &s.server, &s.account).is_some());
                 return Err(e);

@@ -37,6 +37,18 @@ export async function dropDeviceNames(pool) {
 
 const MODEL = "linkedDevice";
 
+async function endDeviceSession(adapter, userId, sessionId, currentSessionId) {
+  if (!sessionId || sessionId === currentSessionId) return false;
+  await adapter.deleteMany({
+    model: "session",
+    where: [
+      { field: "id", value: sessionId },
+      { field: "userId", value: userId },
+    ],
+  });
+  return true;
+}
+
 export const commyDevices = ({ secret, serverUrl }) => ({
   id: "commy-devices",
   schema: {
@@ -51,6 +63,7 @@ export const commyDevices = ({ secret, serverUrl }) => ({
         },
         createdAt: { type: "date", required: true },
         lastSeenAt: { type: "date", required: true },
+        sessionId: { type: "string", required: false },
       },
     },
   },
@@ -105,6 +118,7 @@ export const commyDevices = ({ secret, serverUrl }) => ({
           throw new APIError("FORBIDDEN", { message: "Could not verify that this app holds the node key" });
         }
         const now = new Date();
+        const sessionId = ctx.context.session.session.id;
         const adapter = ctx.context.adapter;
 
         const existing = await adapter.findOne({ model: MODEL, where: [{ field: "nodeId", value: nodeId }] });
@@ -118,14 +132,14 @@ export const commyDevices = ({ secret, serverUrl }) => ({
           const updated = await adapter.update({
             model: MODEL,
             where: [{ field: "id", value: existing.id }],
-            update: { userId, lastSeenAt: now },
+            update: { userId, lastSeenAt: now, sessionId },
           });
           return ctx.json({ device: toPublicDevice(updated ?? { ...existing, userId, lastSeenAt: now }) });
         }
 
         const created = await adapter.create({
           model: MODEL,
-          data: { nodeId, userId, createdAt: now, lastSeenAt: now },
+          data: { nodeId, userId, createdAt: now, lastSeenAt: now, sessionId },
         });
         return ctx.json({ device: toPublicDevice(created) });
       },
@@ -140,14 +154,16 @@ export const commyDevices = ({ secret, serverUrl }) => ({
       },
       async (ctx) => {
         const userId = ctx.context.session.user.id;
-        await ctx.context.adapter.deleteMany({
-          model: MODEL,
-          where: [
-            { field: "id", value: ctx.body.id },
-            { field: "userId", value: userId },
-          ],
-        });
-        return ctx.json({ success: true });
+        const adapter = ctx.context.adapter;
+        const owned = [
+          { field: "id", value: ctx.body.id },
+          { field: "userId", value: userId },
+        ];
+        const device = await adapter.findOne({ model: MODEL, where: owned });
+        if (!device) return ctx.json({ success: true, signedOut: false });
+        await adapter.deleteMany({ model: MODEL, where: owned });
+        const signedOut = await endDeviceSession(adapter, userId, device.sessionId, ctx.context.session.session.id);
+        return ctx.json({ success: true, signedOut });
       },
     ),
   },
