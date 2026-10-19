@@ -316,6 +316,4 @@ run against fake `docker`, `iptables`, `ufw` and `curl` commands, so they need
 nothing installed. `sh deploy/agent/integration.test.sh` runs the agent against
 a real Docker engine with Compose v2 and a local registry.
 `sh deploy/edge/edge.test.sh` checks the edge Caddyfile in a real Caddy, which it
-downloads unless `CADDY` names one. `sh scripts/e2e.sh` runs the end to end tests
-(it needs the Postgres server binaries, Node 22 and Rust) and then the edge
-check; give it a test name such as `doorbell` to run only the matching tests.
+downloads unless `CADDY` names one.
