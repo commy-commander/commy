@@ -508,12 +508,8 @@ pub fn topic_for(server_id: ServerId) -> [u8; 32] {
     topic
 }
 
-pub(crate) fn addr_with_relay(node: EndpointId, relay: Option<RelayUrl>) -> EndpointAddr {
-    let addr = EndpointAddr::new(node);
-    match relay {
-        Some(relay) => addr.with_relay_url(relay),
-        None => addr,
-    }
+pub(crate) fn addr_via_relays(node: EndpointId, relays: &[RelayUrl]) -> EndpointAddr {
+    EndpointAddr::from_parts(node, relays.iter().cloned().map(iroh::TransportAddr::Relay))
 }
 
 pub const MEDIA_DIAL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -608,6 +604,7 @@ pub struct CommyNode {
     gossip: Gossip,
     blobs: MemStore,
     lookup: MemoryLookup,
+    relays: Vec<RelayUrl>,
     topics: HashMap<ServerId, TopicHandle>,
     events_tx: mpsc::UnboundedSender<NetEvent>,
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
@@ -653,10 +650,10 @@ impl CommyNode {
         let (dm_tx, dm_rx) = mpsc::unbounded_channel();
         let (entry_key_tx, entry_key_rx) = mpsc::unbounded_channel();
         let lookup = MemoryLookup::new();
-        let mut builder = Endpoint::builder(iroh::endpoint::presets::N0).address_lookup(lookup.clone());
-        if let Some(map) = relays {
-            builder = builder.relay_mode(iroh::RelayMode::Custom(map));
-        }
+        let relay_mode = relays.map_or_else(iroh::endpoint::default_relay_mode, iroh::RelayMode::Custom);
+        let relays = relay_mode.relay_map().urls();
+        let builder = Endpoint::builder(iroh::endpoint::presets::N0).address_lookup(lookup.clone());
+        let mut builder = builder.relay_mode(relay_mode);
         if let Some(bytes) = secret {
             builder = builder.secret_key(iroh::SecretKey::from_bytes(&bytes));
         }
@@ -682,12 +679,14 @@ impl CommyNode {
             .accept(CATCHUP_ALPN, catchup)
             .accept(crate::wake::WAKE_ALPN, crate::wake::WakeAcceptor::new(events_tx.clone()))
             .spawn();
+        let _ = tokio::time::timeout(ADDRESS_WAIT, router.endpoint().online()).await;
         Ok((
             Self {
                 router,
                 gossip,
                 blobs,
                 lookup,
+                relays,
                 topics: HashMap::new(),
                 events_tx,
                 entry_key_requests: Some(entry_key_rx),
@@ -787,16 +786,7 @@ impl CommyNode {
 
     pub async fn node_addr(&self) -> Result<crate::ticket::NodeAddr> {
         let endpoint = self.router.endpoint();
-        let reachable = async {
-            loop {
-                let addr = endpoint.addr();
-                if addr.ip_addrs().next().is_some() || addr.relay_urls().next().is_some() {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        };
-        let _ = tokio::time::timeout(ADDRESS_WAIT, reachable).await;
+        let _ = tokio::time::timeout(ADDRESS_WAIT, endpoint.online()).await;
         Ok(crate::ticket::NodeAddr::from(&endpoint.addr()))
     }
 
@@ -971,7 +961,7 @@ impl CommyNode {
             .topics
             .get(&server_id)
             .context("not joined to that server")?;
-        let ids = self.add_peers(peers_hex, self.home_relay_url());
+        let ids = self.add_peers(peers_hex);
         if ids.is_empty() {
             return Ok(0);
         }
@@ -1036,11 +1026,11 @@ impl CommyNode {
         if self.is_joined(server_id) {
             return Ok(());
         }
-        let ids = self.add_peers(peers_hex, self.home_relay_url());
+        let ids = self.add_peers(peers_hex);
         self.join_topic(server_id, topic_for(server_id), ids).await
     }
 
-    fn add_peers(&self, peers_hex: &[String], relay: Option<RelayUrl>) -> Vec<EndpointId> {
+    fn add_peers(&self, peers_hex: &[String]) -> Vec<EndpointId> {
         let our_id = self.node_id_bytes();
         let mut ids = Vec::new();
         for hex in peers_hex {
@@ -1048,9 +1038,7 @@ impl CommyNode {
             if *id.as_bytes() == our_id {
                 continue;
             }
-            if self.lookup.get_endpoint_info(id).is_none() {
-                self.learn(addr_with_relay(id, relay.clone()));
-            }
+            self.learn(addr_via_relays(id, &self.relays));
             ids.push(id);
         }
         ids
@@ -1058,9 +1046,9 @@ impl CommyNode {
 
     pub fn wake(&self, node_hex: &str) -> impl Future<Output = Result<()>> + Send + 'static {
         let endpoint = self.endpoint();
-        let relay = self.home_relay_url();
+        let relays = self.relays.clone();
         let node = parse_node_hex(node_hex);
-        async move { crate::wake::send(endpoint, node?, relay).await }
+        async move { crate::wake::send(endpoint, node?, &relays).await }
     }
 
     pub async fn shutdown(self) -> Result<()> {

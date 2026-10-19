@@ -74,9 +74,9 @@ impl WakeAcceptor {
 pub(crate) async fn send(
     endpoint: iroh::Endpoint,
     node: iroh::EndpointId,
-    relay: Option<iroh::RelayUrl>,
+    relays: &[iroh::RelayUrl],
 ) -> Result<()> {
-    let addr = crate::node::addr_with_relay(node, relay);
+    let addr = crate::node::addr_via_relays(node, relays);
     let wake = async {
         let connection = endpoint.connect(addr, WAKE_ALPN).await.context("device is unreachable")?;
         let (mut send, mut recv) = connection.open_bi().await?;
