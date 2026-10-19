@@ -1,31 +1,11 @@
 use anyhow::{Context, Result};
-use iroh::net::relay::{RelayMap, RelayNode, RelayUrl};
+use iroh::{RelayConfig, RelayMap, RelayUrl};
+use std::sync::Arc;
 
 pub const DEFAULT_COMMY_RELAY: &str = match option_env!("COMMY_DEFAULT_RELAY") {
     Some(url) => url,
     None => "https://relay.commy.chat:8443",
 };
-
-pub const DEFAULT_COMMY_RELAY_STUN_PORT: u16 = match option_env!("COMMY_DEFAULT_RELAY_STUN_PORT") {
-    Some(port) => parse_port(port),
-    None => USE_IROH_DEFAULT_STUN_PORT,
-};
-
-const USE_IROH_DEFAULT_STUN_PORT: u16 = 0;
-
-const fn parse_port(s: &str) -> u16 {
-    let bytes = s.as_bytes();
-    assert!(!bytes.is_empty() && bytes.len() <= 5, "COMMY_DEFAULT_RELAY_STUN_PORT must be a port number");
-    let mut value: u32 = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        assert!(bytes[i].is_ascii_digit(), "COMMY_DEFAULT_RELAY_STUN_PORT must be a port number");
-        value = value * 10 + (bytes[i] - b'0') as u32;
-        i += 1;
-    }
-    assert!(value <= 65535, "COMMY_DEFAULT_RELAY_STUN_PORT must be a port number");
-    value as u16
-}
 
 pub fn own_relays_from(var: Option<&str>) -> Vec<String> {
     match var.map(str::trim) {
@@ -44,19 +24,17 @@ pub fn own_relays() -> Vec<String> {
 }
 
 pub fn relay_map(own: &[String]) -> Result<RelayMap> {
-    let mut nodes: Vec<RelayNode> = Vec::new();
+    let map = RelayMap::empty();
     for url in own {
         let url: RelayUrl = url.parse().with_context(|| format!("invalid relay url {url}"))?;
-        let is_default = DEFAULT_COMMY_RELAY.parse::<RelayUrl>().is_ok_and(|d| d == url);
-        let stun_port = if is_default { DEFAULT_COMMY_RELAY_STUN_PORT } else { USE_IROH_DEFAULT_STUN_PORT };
-        nodes.push(RelayNode { url, stun_only: false, stun_port });
+        map.insert(url.clone(), Arc::new(RelayConfig::new(url, None)));
     }
-    for node in iroh::net::defaults::prod::default_relay_map().nodes() {
-        if !nodes.iter().any(|n| n.url == node.url) {
-            nodes.push((**node).clone());
+    for node in iroh::defaults::prod::default_relay_map().relays::<Vec<Arc<RelayConfig>>>() {
+        if !map.contains(&node.url) {
+            map.insert(node.url.clone(), node);
         }
     }
-    RelayMap::from_nodes(nodes)
+    Ok(map)
 }
 
 #[cfg(test)]
@@ -70,20 +48,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_stun_ports() {
-        assert_eq!(parse_port("3479"), 3479);
-        assert_eq!(parse_port("65535"), 65535);
-    }
-
-    #[test]
-    fn default_relay_gets_its_stun_port() {
+    fn our_relay_has_no_address_discovery_port() {
         let map = relay_map(&[DEFAULT_COMMY_RELAY.to_string(), "https://other.example".to_string()]).unwrap();
-        let port = |url: &str| {
-            let url: RelayUrl = url.parse().unwrap();
-            map.nodes().find(|n| n.url == url).map(|n| n.stun_port)
-        };
-        assert_eq!(port(DEFAULT_COMMY_RELAY), Some(DEFAULT_COMMY_RELAY_STUN_PORT));
-        assert_eq!(port("https://other.example"), Some(0));
+        for url in [DEFAULT_COMMY_RELAY, "https://other.example"] {
+            assert!(map.get(&url.parse().unwrap()).is_some_and(|r| r.quic.is_none()));
+        }
     }
 
     #[test]
@@ -97,19 +66,19 @@ mod tests {
 
     #[test]
     fn own_relays_come_first_with_n0_fallback() {
-        let n0 = iroh::net::defaults::prod::default_relay_map();
+        let n0 = iroh::defaults::prod::default_relay_map();
         let map = relay_map(&[DEFAULT_COMMY_RELAY.to_string()]).unwrap();
         assert_eq!(map.len(), n0.len() + 1);
-        assert!(map.contains_node(&DEFAULT_COMMY_RELAY.parse().unwrap()));
-        for node in n0.nodes() {
-            assert!(map.contains_node(&node.url));
+        assert!(map.contains(&DEFAULT_COMMY_RELAY.parse().unwrap()));
+        for url in n0.urls::<Vec<RelayUrl>>() {
+            assert!(map.contains(&url));
         }
     }
 
     #[test]
     fn duplicates_and_bad_urls() {
-        let n0_url = iroh::net::defaults::prod::default_relay_map().nodes().next().unwrap().url.to_string();
-        let n0_len = iroh::net::defaults::prod::default_relay_map().len();
+        let n0_url = iroh::defaults::prod::default_relay_map().urls::<Vec<RelayUrl>>()[0].to_string();
+        let n0_len = iroh::defaults::prod::default_relay_map().len();
         assert_eq!(relay_map(&[n0_url]).unwrap().len(), n0_len);
         assert!(relay_map(&["not a url".to_string()]).is_err());
         assert_eq!(relay_map(&[]).unwrap().len(), n0_len);

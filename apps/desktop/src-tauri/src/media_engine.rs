@@ -41,6 +41,7 @@ pub struct LinkStats {
     pub jitter_ms: f32,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
+    pub path: commy_net::LinkPath,
 }
 
 #[derive(Debug, Default)]
@@ -305,14 +306,16 @@ impl VoiceSession {
             .filter(|(user, _)| self.has_peer(**user))
             .map(|(user, (conn, meter))| {
                 let stats = conn.stats();
-                let sent = stats.path.sent_packets.max(1);
+                let sent = stats.udp_tx.datagrams.max(1);
+                let rtt = conn.paths().iter().find(|p| p.is_selected()).map(|p| p.rtt()).unwrap_or_default();
                 LinkStats {
                     user: *user,
-                    rtt_ms: conn.rtt().as_secs_f32() * 1000.0,
-                    loss_pct: stats.path.lost_packets as f32 * 100.0 / sent as f32,
+                    rtt_ms: rtt.as_secs_f32() * 1000.0,
+                    loss_pct: stats.lost_packets as f32 * 100.0 / sent as f32,
                     jitter_ms: meter.lock().unwrap().jitter_ms(),
                     tx_bytes: stats.udp_tx.bytes,
                     rx_bytes: stats.udp_rx.bytes,
+                    path: commy_net::link_path(conn),
                 }
             })
             .collect()

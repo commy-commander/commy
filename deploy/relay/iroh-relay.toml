@@ -1,7 +1,5 @@
 enable_relay = true
 http_bind_addr = "[::]:3340"
-enable_stun = true
-stun_bind_addr = "[::]:3478"
 enable_metrics = true
 metrics_bind_addr = "[::]:9090"
 

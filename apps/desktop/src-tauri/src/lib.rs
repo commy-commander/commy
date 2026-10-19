@@ -3358,25 +3358,19 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
             .map(|s| servers.get(&sid).map(|st| view::display_name(st, s.user)).unwrap_or_else(|| "Someone".into()))
             .collect()
     };
-    let names: Vec<(String, Option<String>)> =
-        names.into_iter().zip(&stats).map(|(name, s)| (name, node_hex_for_user(&app, s.user))).collect();
-    let net = app.net.lock().await;
     let links = stats
         .into_iter()
         .zip(names)
-        .map(|(s, (name, hex))| {
-            let (path, relay, addr) = hex
-                .and_then(|h| net.as_ref().and_then(|n| n.peer_path(&h)))
-                .unwrap_or_else(|| ("none".into(), None, None));
+        .map(|(s, name)| {
             LinkView {
                 user: s.user.to_string(),
                 name,
                 rtt_ms: s.rtt_ms,
                 loss_pct: s.loss_pct,
                 jitter_ms: s.jitter_ms,
-                path,
-                relay,
-                addr,
+                path: s.path.kind.into(),
+                relay: s.path.relay,
+                addr: s.path.addr,
                 tx_bytes: s.tx_bytes,
                 rx_bytes: s.rx_bytes,
             }

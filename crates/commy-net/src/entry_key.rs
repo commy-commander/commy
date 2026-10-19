@@ -1,13 +1,11 @@
-use std::sync::Arc;
-
 use anyhow::{Context, Result};
-use iroh::net::endpoint::Connecting;
-use iroh::router::ProtocolHandler;
+use iroh::endpoint::Connection;
+use iroh::protocol::{AcceptError, ProtocolHandler};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::media::{read_frame, write_frame};
-use iroh::net::NodeAddr;
+use crate::node::accept_error;
 
 pub const ENTRY_KEY_ALPN: &[u8] = b"commy/entry-key/1";
 
@@ -42,52 +40,54 @@ pub(crate) struct EntryKeyAcceptor {
 }
 
 impl ProtocolHandler for EntryKeyAcceptor {
-    fn accept(self: Arc<Self>, connecting: Connecting) -> futures_lite::future::Boxed<Result<()>> {
-        let tx = self.tx.clone();
-        Box::pin(async move {
-            let connection = connecting.await?;
-            let peer = iroh::net::endpoint::get_remote_node_id(&connection)?;
-            let (mut send, mut recv) = connection.accept_bi().await?;
-            let request: EntryKeyRequest = read_frame(&mut recv)
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        self.answer(connection).await.map_err(accept_error)
+    }
+}
+
+impl EntryKeyAcceptor {
+    async fn answer(&self, connection: Connection) -> Result<()> {
+        let peer = connection.remote_id();
+        let (mut send, mut recv) = connection.accept_bi().await?;
+        let request: EntryKeyRequest = read_frame(&mut recv)
+            .await
+            .map_err(|e| anyhow::anyhow!("bad entry key request: {e}"))?
+            .context("peer closed before asking")?;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let reply = if self.tx
+            .send(EntryKeyAsk {
+                peer: *peer.as_bytes(),
+                request,
+                reply: reply_tx,
+            })
+            .is_ok()
+        {
+            tokio::time::timeout(ANSWER_TIMEOUT, reply_rx)
                 .await
-                .map_err(|e| anyhow::anyhow!("bad entry key request: {e}"))?
-                .context("peer closed before asking")?;
-            let (reply_tx, reply_rx) = oneshot::channel();
-            let reply = if tx
-                .send(EntryKeyAsk {
-                    peer: *peer.as_bytes(),
-                    request,
-                    reply: reply_tx,
-                })
-                .is_ok()
-            {
-                tokio::time::timeout(ANSWER_TIMEOUT, reply_rx)
-                    .await
-                    .ok()
-                    .and_then(|r| r.ok())
-                    .unwrap_or(EntryKeyReply::Denied)
-            } else {
-                EntryKeyReply::Unknown
-            };
-            write_frame(&mut send, &reply)
-                .await
-                .map_err(|e| anyhow::anyhow!("entry key reply failed: {e}"))?;
-            send.finish()?;
-            let _ = tokio::time::timeout(REPLY_DELIVERY_GRACE, connection.closed()).await;
-            Ok(())
-        })
+                .ok()
+                .and_then(|r| r.ok())
+                .unwrap_or(EntryKeyReply::Denied)
+        } else {
+            EntryKeyReply::Unknown
+        };
+        write_frame(&mut send, &reply)
+            .await
+            .map_err(|e| anyhow::anyhow!("entry key reply failed: {e}"))?;
+        send.finish()?;
+        let _ = tokio::time::timeout(REPLY_DELIVERY_GRACE, connection.closed()).await;
+        Ok(())
     }
 }
 
 pub async fn request(
-    endpoint: iroh::net::Endpoint,
+    endpoint: iroh::Endpoint,
     node_hex: &str,
     request: &EntryKeyRequest,
 ) -> Result<EntryKeyReply> {
     let node_id = crate::node::parse_node_hex(node_hex)?;
     let connection = tokio::time::timeout(
         std::time::Duration::from_secs(20),
-        endpoint.connect(NodeAddr::new(node_id), ENTRY_KEY_ALPN),
+        endpoint.connect(node_id, ENTRY_KEY_ALPN),
     )
     .await
     .context("device did not answer in time")?
