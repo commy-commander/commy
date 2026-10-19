@@ -654,7 +654,7 @@
         <button class="settings-tab" data-tab="commy-account">Commy Account</button>
         <button class="settings-tab" data-tab="privacy">Privacy &amp; Safety</button>
         <div class="settings-nav-group">Voice &amp; Video</div>
-        <button class="settings-tab" data-tab="voice">Voice &amp; Audio</button>
+        <button class="settings-tab" data-tab="voice">Voice &amp; Camera</button>
         <button class="settings-tab" data-tab="overlay">Game Overlay</button>
         <div class="settings-nav-group">App Settings</div>
         <button class="settings-tab" data-tab="appearance">Appearance</button>
@@ -755,7 +755,7 @@
         </section>
 
         <section class="settings-page" data-page="voice">
-          <h1>Voice &amp; Audio</h1>
+          <h1>Voice &amp; Camera</h1>
           <div class="settings-card device-grid">
             <label class="field-label">Input Device
               <select id="input-device"><option value="">Default</option></select>
@@ -764,12 +764,27 @@
               <select id="output-device"><option value="">Default</option></select>
             </label>
           </div>
-          <div class="settings-card setting-row">
-            <label class="field-label grow">Camera
-              <select id="camera-device"><option value="">Default</option></select>
-            </label>
-            <div class="cam-preview" id="cam-preview-box">
-              <video id="cam-preview" muted playsinline></video>
+          <h2 class="settings-subhead">Camera</h2>
+          <div class="settings-card camera-card">
+            <div class="cam-stage" id="cam-stage">
+              <canvas class="cam-sky" id="cam-sky" aria-hidden="true"></canvas>
+              <div class="cam-stage-idle" id="cam-stage-idle">Your camera is off</div>
+            </div>
+            <div class="camera-controls">
+              <label class="field-label">Camera
+                <select id="camera-device"><option value="">Default</option></select>
+              </label>
+              <div class="field-label" id="cam-bg-label">Background</div>
+              <div class="segmented cam-bg" id="cam-bg" role="radiogroup" aria-labelledby="cam-bg-label">
+                <button data-bg="off" role="radio"><strong>Off</strong></button>
+                <button data-bg="blur" role="radio"><strong>Blur</strong></button>
+                <button data-bg="stars" role="radio"><strong>Stars</strong></button>
+              </div>
+              <label class="setting-row cam-mirror-row">
+                <span class="setting-title">Mirror my video</span>
+                <input type="checkbox" id="cam-mirror" class="switch" />
+              </label>
+              <div class="setting-sub cam-fx-note" id="cam-fx-note"></div>
               <button class="btn-secondary btn-small" id="cam-preview-btn">Test Camera</button>
             </div>
           </div>
@@ -1293,7 +1308,7 @@
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">AFK Channel</div>
-              <div class="setting-sub">Members in voice who go idle are moved here automatically. Each person picks how long that takes under Settings, then Voice &amp; Audio.</div>
+              <div class="setting-sub">Members in voice who go idle are moved here automatically. Each person picks how long that takes under Settings, then Voice &amp; Camera.</div>
             </div>
             <select id="afk-channel-select" class="compact-select"></select>
           </div>
@@ -1582,10 +1597,13 @@
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>
   <script src="scripts/server-colors.js"></script>
+  <script src="scripts/starfield.js"></script>
   <script src="scripts/layout.js"></script>
   <script src="scripts/tint.js"></script>
   <script src="scripts/updates.js"></script>
   <script src="scripts/server-templates.js"></script>
+  <script src="scripts/camera-fx.js"></script>
+  <script src="scripts/camera-pipeline.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
   <script src="scripts/entry-list.js"></script>

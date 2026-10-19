@@ -23,7 +23,7 @@ before(() => {
     BETTER_AUTH_URL: ORIGIN,
   });
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
-  db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], doorbellRing: [] };
+  db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], doorbellRing: [], twoFactor: [], passkey: [] };
   options.database = memoryAdapter(db);
   options.rateLimit = { enabled: false };
   auth = betterAuth(options);
@@ -156,7 +156,7 @@ test("desktop sign in, prove key, link, list, transfer and remove", { timeout: 3
   assert.equal(again.status, 200, JSON.stringify(again.json));
   assert.equal(again.json.device.name, "Commy desktop", "the name an app sends is not kept");
   for (const row of db.linkedDevice) {
-    assert.deepEqual(Object.keys(row).sort(), ["createdAt", "id", "lastSeenAt", "nodeId", "userId"]);
+    assert.deepEqual(Object.keys(row).sort(), ["createdAt", "id", "lastSeenAt", "nodeId", "sessionId", "userId"]);
   }
 
   const list = await call("GET", "/commy/devices", { cookie });
@@ -174,4 +174,32 @@ test("desktop sign in, prove key, link, list, transfer and remove", { timeout: 3
 
   await call("POST", "/commy/devices/remove", { cookie: bob, body: { id: bobs.json.devices[0].id } });
   assert.equal((await call("GET", "/commy/devices", { cookie: bob })).json.devices.length, 0);
+});
+
+test("removing a device signs that app out and keeps the website signed in", { timeout: 30000 }, async () => {
+  const cookie = await signUp("dana@example.test");
+  const token = await desktopSignIn(cookie);
+  const reg = await link({ token }, nodeKey(), "Laptop");
+  assert.equal(reg.status, 200, JSON.stringify(reg.json));
+  assert.equal((await call("GET", "/get-session", { token })).json.user.email, "dana@example.test");
+
+  const removed = await call("POST", "/commy/devices/remove", { cookie, body: { id: reg.json.device.id } });
+  assert.equal(removed.status, 200, JSON.stringify(removed.json));
+  assert.equal(removed.json.signedOut, true);
+  assert.equal((await call("GET", "/get-session", { token })).json, null, "the app's token stops working");
+  assert.equal((await call("GET", "/commy/devices", { token })).status, 401);
+  assert.equal((await call("GET", "/get-session", { cookie })).json.user.email, "dana@example.test");
+});
+
+test("a device cannot sign out a session that belongs to someone else", { timeout: 30000 }, async () => {
+  const erin = await signUp("erin@example.test");
+  const frank = await signUp("frank@example.test");
+  const erinToken = await desktopSignIn(erin);
+  const key = nodeKey();
+  await link({ token: erinToken }, key, "Shared");
+  const moved = await link({ cookie: frank }, key, "Shared");
+  assert.equal(moved.status, 200, JSON.stringify(moved.json));
+  await call("POST", "/commy/devices/remove", { cookie: frank, body: { id: moved.json.device.id } });
+  assert.equal((await call("GET", "/get-session", { cookie: frank })).json.user.email, "frank@example.test");
+  assert.equal((await call("GET", "/get-session", { token: erinToken })).json.user.email, "erin@example.test");
 });
