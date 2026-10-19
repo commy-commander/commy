@@ -29,6 +29,7 @@ const state = {
   speaking: new Set(),
   dmThreads: [],
   showDmProfile: true,
+  historyAnchor: null,
 };
 
 const mock = {
@@ -38,6 +39,22 @@ const mock = {
   dms: {},
   voice: { noise_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10 },
 };
+
+function mockSearch({ serverId, terms, from, mentions, channelId }) {
+  const server = mock.servers[serverId];
+  const named = server.members.find(m => m.id === mentions);
+  const hits = server.channels
+    .filter(c => holdsMessages(c) && (!channelId || c.id === channelId))
+    .flatMap(c => (mock.messages[c.id] || []).map(message => ({ channel: c.id, channel_name: c.name, message })))
+    .filter(({ message }) => {
+      const text = message.content.toLowerCase();
+      if (from && message.author_id !== from) return false;
+      if (mentions && !(named && mentionsName(message.content, [named.name]))) return false;
+      return terms.every(t => text.includes(t.toLowerCase()));
+    })
+    .sort((a, b) => Date.parse(b.message.created_at) - Date.parse(a.message.created_at));
+  return { total: hits.length, hits: hits.slice(0, 50) };
+}
 
 function mockCrabImage() {
   const c = document.createElement("canvas");
@@ -325,7 +342,14 @@ async function mockInvoke(cmd, args = {}) {
       return { server_name: "Pixel Pioneers", host, trusted: host === "commy.chat", account_server_host: "commy.chat",
         expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock" };
     }
-    case "get_messages": return (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+    case "get_messages": {
+      const all = (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+      if (!args.around) return all.slice(-100);
+      const at = all.findIndex(m => m.id === args.around);
+      if (at === -1) throw "that message is no longer on this device";
+      return all.slice(Math.max(0, at - 50), at + 51);
+    }
+    case "search_messages": return mockSearch(args);
     case "get_pins": return mockPinViews(args.channelId || null);
     case "pin_message": {
       mock.pins = (mock.pins || []).filter(p => p.message !== args.messageId);
@@ -827,6 +851,7 @@ const ICONS = {
   people: "M16.5 13c-1.2 0-3.07.34-4.5 1-1.43-.67-3.3-1-4.5-1C5.33 13 1 14.08 1 16.25V19h22v-2.75c0-2.17-4.33-3.25-6.5-3.25zm-4 4.5h-10v-1.25c0-.54 2.56-1.75 5-1.75s5 1.21 5 1.75v1.25zm9 0H14v-1.25c0-.46-.2-.86-.52-1.22.88-.3 1.96-.53 3.02-.53 2.44 0 5 1.21 5 1.75v1.25zM7.5 12c1.93 0 3.5-1.57 3.5-3.5S9.43 5 7.5 5 4 6.57 4 8.5 5.57 12 7.5 12zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 5.5c1.93 0 3.5-1.57 3.5-3.5S18.43 5 16.5 5 13 6.57 13 8.5s1.57 3.5 3.5 3.5zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z",
   gamepad: "M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H3V8h18v8zM6 15h2v-2h2v-2H8V9H6v2H4v2h2v2zm8.5-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
   paste: "M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z",
+  search: "M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z",
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
 };
 
@@ -1487,7 +1512,10 @@ function textChannelRow(channel, canCreate) {
   paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
   if (unread.channels.get(channel.id)) row.classList.add("unread");
-  row.onclick = () => selectChannel(channel);
+  row.onclick = () => {
+    state.historyAnchor = null;
+    selectChannel(channel);
+  };
   if (canCreate) row.appendChild(channelGear(channel));
   return row;
 }
@@ -2168,6 +2196,7 @@ function closeFloating(except) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
+  if (except !== "search-pop") closeSearchPop();
 }
 
 let emojiPopPick = null;
@@ -2665,6 +2694,9 @@ function renderMessages(messages) {
     lastAuthor = message.held ? null : message.author_id;
     lastTime = time;
   }
+  if (state.view === "server" && state.historyAnchor && state.currentChannel && state.historyAnchor.channel === state.currentChannel.id) {
+    box.appendChild(historyPill());
+  }
   box.scrollTop = sameView && !atBottom ? prevScroll : box.scrollHeight;
   if (state.threadRoot) renderThread();
 }
@@ -2998,6 +3030,273 @@ async function renderServerPins() {
   }
 }
 
+const searchUi = { token: 0, timer: 0, items: [], index: -1 };
+const SEARCH_DEBOUNCE_MS = 180;
+
+function searchContext() {
+  const server = state.currentServer;
+  if (!server) return { members: [], channels: [] };
+  return {
+    members: server.members.map(m => ({ id: m.id, name: m.name })),
+    channels: server.channels.filter(holdsMessages).map(c => ({ id: c.id, name: channelPlainName(c) })),
+  };
+}
+
+function syncSearchBox() {
+  const visible = state.view === "server" && Boolean(state.currentServer);
+  $("search-box").classList.toggle("hidden", !visible);
+  if (!visible) closeSearchPop();
+}
+
+function resetSearch() {
+  clearTimeout(searchUi.timer);
+  searchUi.token++;
+  $("search-input").value = "";
+  $("search-box").classList.remove("has-text");
+  closeSearchPop();
+}
+
+function closeSearchPop() {
+  $("search-pop").classList.add("hidden");
+  $("search-box").classList.remove("open");
+}
+
+function openSearchPop() {
+  if (!state.currentServer) return;
+  closeFloating("search-pop");
+  $("search-pop").classList.remove("hidden");
+  $("search-box").classList.add("open");
+}
+
+function focusSearch() {
+  if ($("search-box").classList.contains("hidden")) return;
+  const input = $("search-input");
+  input.focus();
+  input.select();
+}
+
+function setSearchHead(title, sub) {
+  $("search-pop-title").textContent = title;
+  $("search-pop-sub").textContent = sub || "";
+}
+
+function setSearchItems(rows) {
+  const list = $("search-list");
+  list.replaceChildren(...rows);
+  searchUi.items = rows.filter(r => r.dataset.pick === "1");
+  searchUi.index = -1;
+  list.scrollTop = 0;
+}
+
+function moveSearchSelection(step) {
+  const items = searchUi.items;
+  if (!items.length) return;
+  searchUi.index = (searchUi.index + step + items.length) % items.length;
+  items.forEach((row, i) => row.classList.toggle("active", i === searchUi.index));
+  items[searchUi.index].scrollIntoView({ block: "nearest" });
+}
+
+function pickableRow(row, onPick) {
+  row.dataset.pick = "1";
+  row.setAttribute("role", "option");
+  row.addEventListener("mousedown", e => e.preventDefault());
+  row.onclick = onPick;
+  return row;
+}
+
+function renderSearchHints() {
+  setSearchHead("Search this server", "Runs on this device, over the history it keeps");
+  const rows = SEARCH_FILTERS.map(filter => {
+    const row = el("button", "mention-row search-filter-row");
+    row.type = "button";
+    row.append(el("span", "search-filter-key", `${filter.key}:`), el("span", "mention-hint", filter.hint));
+    return pickableRow(row, () => {
+      const input = $("search-input");
+      const next = applySearchFilter(input.value, filter.key);
+      input.value = next.text;
+      input.focus();
+      input.setSelectionRange(next.caret, next.caret);
+      onSearchInput();
+    });
+  });
+  const tips = [["\"exact words\"", "words in this order"], ["@name", "same as mentions:"]].map(([key, hint]) => {
+    const row = el("div", "mention-row search-tip-row");
+    row.append(el("span", "search-filter-key", key), el("span", "mention-hint", hint));
+    return row;
+  });
+  setSearchItems([el("div", "mention-head", "Filters"), ...rows, el("div", "mention-head search-tips-head", "Also works"), ...tips]);
+}
+
+function renderSearchSuggestions(token, items) {
+  setSearchHead(token.kind === "member" ? "Members" : "Channels", "");
+  const rows = items.map(item => {
+    const row = el("button", "mention-row");
+    row.type = "button";
+    if (token.kind === "member") row.append(makeAvatar(item.id, item.name, "avatar avatar-sm"), el("span", "mention-name", item.name));
+    else row.append(el("span", "mention-at", "#"), el("span", "mention-name", item.name));
+    return pickableRow(row, () => {
+      const input = $("search-input");
+      const next = applySearchSuggestion(input.value, token, item);
+      input.value = next.text;
+      input.focus();
+      input.setSelectionRange(next.caret, next.caret);
+      onSearchInput();
+    });
+  });
+  setSearchItems(rows);
+  if (rows.length) moveSearchSelection(1);
+}
+
+function searchNote(title, text) {
+  const empty = el("div", "pins-empty search-empty");
+  const mark = el("div", "pins-empty-mark");
+  mark.appendChild(svgIcon("search", 26));
+  empty.append(mark, el("strong", null, title));
+  if (text) empty.appendChild(el("span", null, text));
+  return empty;
+}
+
+function highlightedExcerpt(message, terms) {
+  const text = searchExcerpt(pinExcerpt(message, plainText), terms);
+  const node = el("div", "pin-text search-text");
+  if (!text) {
+    node.classList.add("muted");
+    return node;
+  }
+  for (const part of highlightParts(text, terms)) {
+    node.appendChild(part.hit ? el("mark", "search-hit", part.text) : document.createTextNode(part.text));
+  }
+  return node;
+}
+
+function searchResultRow(hit, terms) {
+  const message = hit.message;
+  const row = el("div", "pin-row search-row");
+  row.dataset.id = message.id;
+  row.appendChild(makeAvatar(message.author_id, message.author_name, "avatar avatar-sm"));
+  const body = el("div", "pin-body");
+  const head = el("div", "pin-head");
+  const author = el("span", "pin-author", message.author_name);
+  decorateAuthor(author, message.author_id);
+  const channel = state.currentServer.channels.find(c => c.id === hit.channel);
+  head.append(author, el("span", "pin-time", formatTime(message.created_at)), el("span", "pin-channel", `#${channel ? channelPlainName(channel) : hit.channel_name}`));
+  body.append(head, highlightedExcerpt(message, terms));
+  row.appendChild(body);
+  return pickableRow(row, () => openSearchHit(hit));
+}
+
+function renderSearchResults(query, results) {
+  const hits = results.hits.filter(h => !isBlocked(h.message.author_id));
+  const total = results.total - (results.hits.length - hits.length);
+  setSearchHead(searchSummary(total, hits.length), query.channel ? `In #${query.channel.name}` : "Newest first, across this server");
+  if (!hits.length) {
+    setSearchItems([searchNote("No messages found", "Search covers what this device keeps. Older history may have rolled off in Settings > Storage.")]);
+    return;
+  }
+  const terms = [...query.terms];
+  if (query.mentions) terms.push(`@${query.mentions.name}`);
+  setSearchItems(hits.map(hit => searchResultRow(hit, terms)));
+}
+
+async function runSearch() {
+  clearTimeout(searchUi.timer);
+  if (!state.currentServer) return;
+  const query = parseSearch($("search-input").value, searchContext());
+  const token = ++searchUi.token;
+  if (query.unknown.length) {
+    setSearchHead("Search this server", "");
+    setSearchItems([searchNote(unknownFilterText(query.unknown), "Pick a name from the list as you type.")]);
+    return;
+  }
+  if (searchIsEmpty(query)) return renderSearchHints();
+  const serverId = state.currentServer.id;
+  let results;
+  try {
+    results = await invoke("search_messages", { serverId, ...searchArgs(query) });
+  } catch (e) {
+    if (token === searchUi.token) setSearchItems([searchNote("Search did not finish", String(e))]);
+    return;
+  }
+  if (token !== searchUi.token || !state.currentServer || state.currentServer.id !== serverId) return;
+  renderSearchResults(query, results);
+}
+
+function onSearchInput() {
+  const input = $("search-input");
+  $("search-box").classList.toggle("has-text", input.value.length > 0);
+  openSearchPop();
+  const token = searchToken(input.value, input.selectionStart ?? input.value.length);
+  const items = searchSuggestions(token, searchContext());
+  clearTimeout(searchUi.timer);
+  if (token && items.length) {
+    searchUi.token++;
+    renderSearchSuggestions(token, items);
+    return;
+  }
+  if (!input.value.trim()) {
+    searchUi.token++;
+    renderSearchHints();
+    return;
+  }
+  searchUi.timer = setTimeout(runSearch, SEARCH_DEBOUNCE_MS);
+}
+
+function onSearchKeydown(e) {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if ($("search-pop").classList.contains("hidden")) onSearchInput();
+    moveSearchSelection(e.key === "ArrowDown" ? 1 : -1);
+  } else if (e.key === "Enter" || (e.key === "Tab" && searchUi.index >= 0 && searchUi.items[searchUi.index].classList.contains("mention-row"))) {
+    e.preventDefault();
+    const picked = searchUi.items[searchUi.index];
+    if (picked) picked.click();
+    else {
+      openSearchPop();
+      runSearch();
+    }
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!$("search-pop").classList.contains("hidden")) closeSearchPop();
+    else e.target.blur();
+  }
+}
+
+async function openSearchHit(hit) {
+  closeSearchPop();
+  $("search-input").blur();
+  if (!state.currentServer) return;
+  const channel = state.currentServer.channels.find(c => c.id === hit.channel);
+  if (!channel) {
+    toast("That channel is gone");
+    return;
+  }
+  if (!state.currentChannel || state.currentChannel.id !== channel.id) await selectChannel(channel);
+  await jumpToMessage(hit.message.id);
+}
+
+function wireSearch() {
+  const input = $("search-input");
+  $("search-box-icon").appendChild(svgIcon("search", 16));
+  setIcon($("search-clear"), "close", 14);
+  input.addEventListener("input", onSearchInput);
+  input.addEventListener("focus", onSearchInput);
+  input.addEventListener("keydown", onSearchKeydown);
+  $("search-clear").addEventListener("mousedown", e => e.preventDefault());
+  $("search-clear").onclick = () => {
+    input.value = "";
+    input.focus();
+    onSearchInput();
+  };
+  document.addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f" && $("modal-backdrop").classList.contains("hidden")) {
+      if ($("search-box").classList.contains("hidden")) return;
+      e.preventDefault();
+      focusSearch();
+    }
+  });
+}
+
 function replyReference(message) {
   const ref = el("div", "reply-ref");
   const preview = message.reply_preview;
@@ -3012,10 +3311,62 @@ function replyReference(message) {
   return ref;
 }
 
-function jumpToMessage(id) {
-  const row = $("messages").querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+function messageRow(id) {
+  return $("messages").querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+}
+
+async function fetchChannelMessages(channel) {
+  const anchored = state.historyAnchor && state.historyAnchor.channel === channel.id ? state.historyAnchor.message : null;
+  if (!anchored) state.historyAnchor = null;
+  const args = { serverId: state.currentServer.id, channelId: channel.id };
+  if (!anchored) return invoke("get_messages", args);
+  try {
+    return await invoke("get_messages", { ...args, around: anchored });
+  } catch {
+    state.historyAnchor = null;
+    return invoke("get_messages", args);
+  }
+}
+
+async function showMessageInHistory(id) {
+  const channel = state.currentChannel;
+  if (state.view !== "server" || !channel || !state.currentServer) return null;
+  if (state.historyAnchor) {
+    state.historyAnchor = null;
+    $("messages").dataset.view = "";
+    renderMessages(await fetchChannelMessages(channel));
+    const row = messageRow(id);
+    if (row) return row;
+  }
+  state.historyAnchor = { channel: channel.id, message: id };
+  const messages = await fetchChannelMessages(channel);
+  if (state.currentChannel !== channel) return null;
+  renderMessages(messages);
+  return messageRow(id);
+}
+
+function historyPill() {
+  const pill = el("div", "history-pill");
+  pill.setAttribute("role", "status");
+  pill.appendChild(el("span", null, "Viewing older messages"));
+  const back = el("button", "btn-primary btn-small", "Jump to present");
+  back.onclick = jumpToPresent;
+  pill.appendChild(back);
+  return pill;
+}
+
+async function jumpToPresent() {
+  state.historyAnchor = null;
+  if (state.view !== "server" || !state.currentChannel) return;
+  $("messages").dataset.view = "";
+  renderMessages(await fetchChannelMessages(state.currentChannel));
+}
+
+async function jumpToMessage(id) {
+  let row = messageRow(id);
+  if (!row) row = await showMessageInHistory(id).catch(() => null);
   if (!row) {
-    toast("That message is not loaded");
+    toast("That message is no longer on this device");
     return;
   }
   row.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -6979,16 +7330,20 @@ function setViewMode(mode) {
   if (dm) $("share-btn").classList.add("hidden");
   else renderShareButton();
   syncPinButton();
+  syncSearchBox();
   syncRulesGate();
 }
 
 async function selectServer(serverId) {
+  const previous = state.currentServer && state.currentServer.id;
   try {
     state.currentServer = await invoke("get_server", { serverId });
   } catch (e) {
     toast(String(e));
     return;
   }
+  if (previous !== serverId) resetSearch();
+  state.historyAnchor = null;
   setViewMode("server");
   state.currentDm = null;
   const firstText = state.currentServer.channels.find(c => c.kind === "text");
@@ -7397,11 +7752,7 @@ async function selectChannel(channel) {
   $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
   syncPinButton();
   if (!channel) return renderMessages([]);
-  const messages = await invoke("get_messages", {
-    serverId: state.currentServer.id,
-    channelId: channel.id,
-  });
-  renderMessages(messages);
+  renderMessages(await fetchChannelMessages(channel));
 }
 
 async function sendMessage() {
@@ -7418,6 +7769,7 @@ async function sendMessage() {
   input.value = "";
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
   $("messages").dataset.view = "";
+  state.historyAnchor = null;
   cancelReply();
   try {
     await invoke("send_message", {
@@ -8655,9 +9007,9 @@ function wireEvents() {
   };
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "composer-menu"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
-    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #attach-btn")) return;
+    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
   });
@@ -8988,6 +9340,7 @@ function wireEvents() {
     }
   };
   $("pins-btn").onclick = togglePinsPanel;
+  wireSearch();
   $("pins-all").onclick = openServerPins;
   $("pins-modal-close").onclick = hideModals;
   $("announce-gate-icon").appendChild(svgIcon("megaphone", 22));
@@ -9790,11 +10143,7 @@ async function refreshCurrentServer() {
         $("chat-hash").replaceChildren(still.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
         syncRulesGate();
       }
-      const messages = await invoke("get_messages", {
-        serverId: state.currentServer.id,
-        channelId: still.id,
-      });
-      renderMessages(messages);
+      renderMessages(await fetchChannelMessages(still));
       return;
     }
   }
