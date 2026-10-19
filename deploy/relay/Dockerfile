@@ -1,4 +1,4 @@
-FROM rust:1.90-slim-bookworm AS build
+FROM rust:1.99-slim-bookworm AS build
 ARG IROH_NET_VERSION=0.28.2
 RUN cargo install iroh-net --version "=${IROH_NET_VERSION}" --features iroh-relay --bin iroh-relay --root /out
 
