@@ -649,6 +649,8 @@ async function mockInvoke(cmd, args = {}) {
     case "set_unread": mock.unread = args.count; return null;
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
+    case "get_autostart": return !!mock.autostart;
+    case "set_autostart": mock.autostart = args.enabled; return mock.autostart;
     case "stop_camera": mock.cameraOn = false; return null;
     case "push_camera_frame": return 1;
     case "watch_camera": return null;
@@ -8704,6 +8706,14 @@ function wireEvents() {
       toast(String(err));
     }
   });
+  $("autostart-toggle").addEventListener("change", async e => {
+    try {
+      e.target.checked = await invoke("set_autostart", { enabled: e.target.checked });
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(String(err));
+    }
+  });
   $("auto-update-toggle").addEventListener("change", async e => {
     try {
       state.voice = await invoke("set_auto_update", { enabled: e.target.checked });
@@ -9177,6 +9187,7 @@ function openUserSettings(tab) {
   });
   $("notify-level").value = notifyPrefs().level;
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
+  invoke("get_autostart").then(on => { $("autostart-toggle").checked = on; }).catch(() => {});
   $("output-vol").value = Math.round((state.voice.output_volume ?? 1) * 100);
   $("input-gain").value = Math.round((state.voice.input_gain ?? 1) * 100);
   $("output-vol-label").textContent = `${$("output-vol").value}%`;

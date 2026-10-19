@@ -4854,6 +4854,24 @@ fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
 }
 
 #[tauri::command]
+fn get_autostart(handle: tauri::AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    handle.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+fn set_autostart(handle: tauri::AppHandle, enabled: bool) -> CmdResult<bool> {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = handle.autolaunch();
+    if enabled {
+        launcher.enable().map_err(|e| e.to_string())?;
+    } else {
+        launcher.disable().map_err(|e| e.to_string())?;
+    }
+    Ok(launcher.is_enabled().unwrap_or(enabled))
+}
+
+#[tauri::command]
 fn set_auto_update(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bool) -> VoiceSettings {
     let settings = app.update_voice(|voice| voice.auto_update = enabled);
     if enabled {
@@ -4965,6 +4983,10 @@ pub fn run() {
         })
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|handle, shortcut, event| {
@@ -5005,8 +5027,15 @@ pub fn run() {
             }
             updater::init(&handle);
             updater::start(&handle);
-            if let Err(e) = tray::build(&handle) {
-                tracing::warn!("tray icon unavailable: {e}");
+            match tray::build(&handle) {
+                Ok(()) => {
+                    if std::env::args().any(|arg| arg == "--minimized") {
+                        if let Some(window) = tauri_app.get_webview_window("main") {
+                            let _ = window.hide();
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("tray icon unavailable: {e}"),
             }
             let toast_icon = tauri_app.path().app_data_dir().ok().and_then(|dir| {
                 std::fs::create_dir_all(&dir).ok()?;
@@ -5339,6 +5368,8 @@ pub fn run() {
             notify,
             set_unread,
             set_close_to_tray,
+            get_autostart,
+            set_autostart,
             set_auto_update,
             get_update_status,
             check_for_updates,
