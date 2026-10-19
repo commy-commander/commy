@@ -100,6 +100,7 @@ pub struct ServerState {
     local_floor: Option<DateTime<Utc>>,
     reaction_marks: HashMap<MessageId, Vec<ReactionMark>>,
     automod: AutoMod,
+    bots: BTreeSet<UserId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +132,8 @@ pub struct Snapshot {
     pub reaction_marks: Vec<(MessageId, ReactionMark)>,
     #[serde(default)]
     pub automod: AutoMod,
+    #[serde(default)]
+    pub bots: Vec<UserId>,
 }
 
 impl ServerState {
@@ -159,6 +162,7 @@ impl ServerState {
             local_floor: None,
             reaction_marks: HashMap::new(),
             automod: AutoMod::default(),
+            bots: BTreeSet::new(),
         }
     }
 
@@ -190,6 +194,7 @@ impl ServerState {
                 .flat_map(|(id, marks)| marks.iter().map(|m| (*id, m.clone())))
                 .collect(),
             automod: self.automod.clone(),
+            bots: self.bots.iter().copied().collect(),
         }
     }
 
@@ -231,6 +236,7 @@ impl ServerState {
         state.action_times = snapshot.action_times.into_iter().collect();
         state.action_floor = snapshot.action_floor;
         state.automod = snapshot.automod;
+        state.bots = snapshot.bots.into_iter().filter(|user| state.server.is_member(*user)).collect();
         for signed in snapshot.signed_actions {
             if let Some(subject) = action::subject(&signed.event) {
                 if state.action_times.get(&subject) == Some(&signed.action.at) {
@@ -430,6 +436,14 @@ impl ServerState {
 
     pub fn automod(&self) -> &AutoMod {
         &self.automod
+    }
+
+    pub fn is_bot(&self, user: UserId) -> bool {
+        self.bots.contains(&user)
+    }
+
+    pub fn bots(&self) -> impl Iterator<Item = UserId> + '_ {
+        self.bots.iter().copied()
     }
 
     pub fn hold(&self, message: &Message) -> Option<Hold> {
@@ -693,6 +707,7 @@ impl ServerState {
                 self.voice_states.remove(&user);
                 self.voice_since.remove(&user);
                 self.voice_flags.remove(&user);
+                self.bots.remove(&user);
                 Ok(self.server.members.len() != before)
             }
             ServerEvent::PresenceUpdate { user, presence } => {
@@ -883,6 +898,13 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.automod, rules))
             }
+            ServerEvent::BotSet { server, user, bot } => {
+                self.same_server(server)?;
+                if !bot {
+                    return Ok(self.bots.remove(&user));
+                }
+                Ok(self.server.is_member(user) && self.bots.insert(user))
+            }
             ServerEvent::RulesAccept { server, user } => {
                 self.same_server(server)?;
                 if self.server.rules_accepted.contains(&user) || !self.server.is_member(user) {
@@ -993,6 +1015,7 @@ impl ServerState {
                 self.voice_since.remove(&user);
                 self.voice_flags.remove(&user);
                 self.screen_shares.remove(&user);
+                self.bots.remove(&user);
                 Ok(true)
             }
             ServerEvent::AfkTimeoutSet { server, minutes } => {
@@ -2671,6 +2694,31 @@ mod tests {
         let off = crate::SignedEvent::sign(sid, owner, 3_000, ServerEvent::AutoModSet { server: sid, rules: Default::default() }, &identity_for(owner));
         assert_eq!(state.apply_signed(&off), Ok(true));
         assert_eq!(state.hold(&message), None);
+    }
+
+    #[test]
+    fn members_mark_only_themselves_as_bots() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let bot = join(&mut state, "bot");
+        let declare = |by, at, user, bot| crate::SignedEvent::sign(sid, by, at, ServerEvent::BotSet { server: sid, user, bot }, &identity_for(by));
+        assert_eq!(state.apply_signed(&declare(owner, 1_000, bot, true)), Err(StoreError::NotAllowed), "nobody else can label a member");
+        assert_eq!(state.apply_unsigned(ServerEvent::BotSet { server: sid, user: bot, bot: true }), Err(StoreError::Unsigned));
+        let own = declare(bot, 2_000, bot, true);
+        assert_eq!(state.apply_signed(&own), Ok(true));
+        assert!(state.is_bot(bot) && !state.is_bot(owner));
+        assert_eq!(state.apply_signed(&own), Ok(false), "redelivery");
+        assert!(state.signed_actions().contains(&&own), "relayed to members who missed it");
+        let restored = reload(&state);
+        assert!(restored.is_bot(bot));
+        let mut older_build = serde_json::to_value(state.snapshot()).unwrap();
+        older_build.as_object_mut().unwrap().remove("bots");
+        let without: crate::Snapshot = serde_json::from_value(older_build).unwrap();
+        assert_eq!(ServerState::from_snapshot(without).bots().count(), 0, "snapshots from before bot badges load");
+        assert!(crate::action::snapshot_omits("bot:x"), "owner snapshots do not carry the badge, so its action stays fresh");
+        state.apply(ServerEvent::MemberLeave { server: sid, user: bot }).unwrap();
+        assert!(!state.is_bot(bot));
+        assert_eq!(state.apply(ServerEvent::BotSet { server: sid, user: bot, bot: true }), Ok(false), "only members");
     }
 
     #[test]

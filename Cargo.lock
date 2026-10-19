@@ -877,6 +877,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "commy-bot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "commy-core",
+ "commy-net",
+ "data-encoding",
+ "iroh",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "commy-core"
 version = "0.1.0"
 dependencies = [

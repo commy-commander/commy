@@ -3426,6 +3426,23 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   vertical-align: 2px;
   white-space: nowrap;
 }
+.bot-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 0 5px;
+  height: 16px;
+  border-radius: 6px;
+  background: var(--header-primary);
+  color: var(--bg-darkest);
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  line-height: 1;
+  vertical-align: 2px;
+  white-space: nowrap;
+}
 .kind.pickable { color: var(--green); }
 .role-self { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-muted); cursor: pointer; }
 .role-self input { accent-color: var(--accent); margin: 0; }

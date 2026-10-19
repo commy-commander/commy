@@ -1,0 +1,27 @@
+[package]
+name = "commy-bot"
+description = "Headless Commy member that runs moderation on a server it was invited to"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "commy-bot"
+path = "src/main.rs"
+
+[dependencies]
+commy-core = { workspace = true }
+commy-net = { workspace = true }
+iroh = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+data-encoding = { workspace = true }
+rand = "0.8"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+commy-core = { workspace = true, features = ["test-support"] }
