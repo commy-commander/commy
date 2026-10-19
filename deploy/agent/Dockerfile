@@ -1,2 +1,2 @@
-FROM docker:27-cli
+FROM docker:29-cli
 RUN apk add --no-cache cosign

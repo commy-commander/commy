@@ -11,6 +11,7 @@ updates:
     directories:
       - /auth
       - /deploy/relay-tools
+      - /apps/streamdeck
     schedule:
       interval: weekly
     groups:
@@ -31,5 +32,14 @@ updates:
       - /deploy/agent
       - /deploy/relay
       - /deploy/relay-tools
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker-compose
+    directories:
+      - /deploy
+      - /deploy/edge
     schedule:
       interval: weekly

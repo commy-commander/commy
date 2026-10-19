@@ -6,7 +6,7 @@ runs all of them on one machine with Docker Compose:
 
 | Service    | Image                 | Role                                                  |
 |------------|-----------------------|-------------------------------------------------------|
-| `caddy`    | `caddy:2.10-alpine`   | Public entry on ports 80/443, automatic HTTPS         |
+| `caddy`    | `caddy:2.11-alpine`   | Public entry on ports 80/443, automatic HTTPS         |
 | `web`      | `ghcr.io/commy-commander/commy-web` | Website and docs (Next.js, own repository) |
 | `auth`     | built from `../auth`  | Better Auth server: accounts, desktop sign-in, devices |
 | `postgres` | `postgres:16-alpine`  | Auth database, private network only                   |
