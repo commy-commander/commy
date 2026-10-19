@@ -8638,6 +8638,8 @@ function wireEvents() {
       state.invitedNow = new Set();
       renderInvitePeople();
       showModal("modal-invite");
+      await refreshPeople();
+      renderInvitePeople();
     } catch (e) {
       toast(String(e));
     }
