@@ -4355,6 +4355,20 @@ h3.md-heading { font-size: 1.1em; }
 .invite-card-sub { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .friend-request .icon-btn { width: 28px; height: 28px; flex: none; }
+.friend-note { height: 16px; line-height: 16px; }
+.add-friend-who { display: flex; align-items: center; gap: 10px; }
+.add-friend-who .avatar { flex: none; }
+.add-friend-who input { flex: 1; min-width: 0; }
+.modal input#add-friend-username[readonly] { color: var(--text-muted); cursor: default; }
+.add-friend-count {
+  height: 16px;
+  line-height: 16px;
+  margin-top: -6px;
+  font-size: 12px;
+  text-align: right;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
 .friend-yes:hover { color: var(--green); }
 .friend-no:hover { color: var(--red); }
 

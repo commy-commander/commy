@@ -282,9 +282,11 @@ fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView
     let id = server_id.parse().map_err(err_to_string)?;
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let keys = channel_lock::KeyHolder::of(&app);
+    let friends = app.safety.lock().unwrap().friends.clone();
+    let contacts = app.dms.lock().unwrap().contacts.clone();
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&id).ok_or("unknown server")?;
-    Ok(ServerView::for_viewer(state, me, &keys))
+    Ok(ServerView::for_viewer(state, me, &keys).with_friend_details(&friends, &contacts))
 }
 
 #[tauri::command]
@@ -2074,12 +2076,17 @@ fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
     views
 }
 
-async fn send_friend_signal(app: &App, to: UserId, signal: safety::FriendSignal) -> CmdResult<()> {
+async fn send_friend_signal(app: &App, to: UserId, signal: safety::FriendSignal, note: Option<String>) -> CmdResult<()> {
     let _signing = app.signing.read().await;
     let me = current_profile(app)?;
     refuse_while_key_may_be_replaced(app)?;
     let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
-    send_signed_dm(app, &me, to, &hex, signal.encode(), "they are offline right now; try again later").await
+    let message = DmMessage::new(me.id, to, signal.encode());
+    let me = match signal {
+        safety::FriendSignal::Remove | safety::FriendSignal::Decline => me.without_details(),
+        safety::FriendSignal::Request | safety::FriendSignal::Accept => me,
+    };
+    send_direct_dm(app, &me, &hex, message, "they are offline right now; try again later", note).await
 }
 
 async fn send_signed_dm(
@@ -2090,12 +2097,20 @@ async fn send_signed_dm(
     content: String,
     offline: &str,
 ) -> CmdResult<()> {
-    send_direct_dm(app, me, hex, DmMessage::new(me.id, to, content), offline).await
+    send_direct_dm(app, me, hex, DmMessage::new(me.id, to, content), offline, None).await
 }
 
-async fn send_direct_dm(app: &App, me: &UserProfile, hex: &str, mut message: DmMessage, offline: &str) -> CmdResult<()> {
+async fn send_direct_dm(
+    app: &App,
+    me: &UserProfile,
+    hex: &str,
+    mut message: DmMessage,
+    offline: &str,
+    note: Option<String>,
+) -> CmdResult<()> {
     sign_dm(app, &mut message)?;
-    let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
+    let sender = app.profile_for(me, message.to);
+    let envelope = DmEnvelope::new(message, sender).with_note(note);
     let send = {
         let net = app.net.lock().await;
         net.as_ref().ok_or("network is not ready yet")?.send_dm(hex, &envelope)
@@ -2104,17 +2119,24 @@ async fn send_direct_dm(app: &App, me: &UserProfile, hex: &str, mut message: DmM
 }
 
 #[derive(serde::Serialize)]
+struct FriendRequestView {
+    id: String,
+    name: String,
+    note: Option<String>,
+}
+
+#[derive(serde::Serialize)]
 struct FriendsView {
     friends: Vec<BlockedUserView>,
-    incoming: Vec<BlockedUserView>,
+    incoming: Vec<FriendRequestView>,
     outgoing: Vec<BlockedUserView>,
 }
 
 #[tauri::command]
 fn list_friends(app: tauri::State<'_, App>) -> FriendsView {
-    let (friends, incoming, outgoing) = {
+    let (friends, incoming, outgoing, notes) = {
         let s = app.safety.lock().unwrap();
-        (s.friends.clone(), s.friend_in.clone(), s.friend_out.clone())
+        (s.friends.clone(), s.friend_in.clone(), s.friend_out.clone(), s.friend_notes.clone())
     };
     let view = |set: std::collections::HashSet<UserId>| {
         let mut list: Vec<BlockedUserView> =
@@ -2122,11 +2144,21 @@ fn list_friends(app: tauri::State<'_, App>) -> FriendsView {
         list.sort_by_key(|v| v.name.to_lowercase());
         list
     };
-    FriendsView { friends: view(friends), incoming: view(incoming), outgoing: view(outgoing) }
+    let incoming = view(incoming)
+        .into_iter()
+        .map(|v| FriendRequestView { note: v.id.parse().ok().and_then(|id| notes.get(&id).cloned()), id: v.id, name: v.name })
+        .collect();
+    FriendsView { friends: view(friends), incoming, outgoing: view(outgoing) }
 }
 
 #[tauri::command]
-async fn friend_action(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_id: String, action: String) -> CmdResult<()> {
+async fn friend_action(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    user_id: String,
+    action: String,
+    note: Option<String>,
+) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     if Some(user) == app.profile.lock().unwrap().as_ref().map(|p| p.id) {
         return Err("you cannot friend yourself".into());
@@ -2141,9 +2173,22 @@ async fn friend_action(app: tauri::State<'_, App>, handle: tauri::AppHandle, use
     if signal == safety::FriendSignal::Request && app.safety.lock().unwrap().is_blocked(user) {
         return Err("unblock them first".into());
     }
-    send_friend_signal(&app, user, signal).await?;
+    let note = match (signal, note.as_deref()) {
+        (safety::FriendSignal::Request, Some(raw)) => {
+            if raw.trim().is_empty() {
+                None
+            } else {
+                Some(safety::clean_friend_note(raw).ok_or_else(|| {
+                    format!("a note can be up to {} characters", safety::MAX_FRIEND_NOTE_CHARS)
+                })?)
+            }
+        }
+        _ => None,
+    };
+    send_friend_signal(&app, user, signal, note).await?;
     {
         let mut s = app.safety.lock().unwrap();
+        s.friend_notes.remove(&user);
         match signal {
             safety::FriendSignal::Request => {
                 if s.friend_in.remove(&user) {
@@ -2182,6 +2227,7 @@ struct SafetyView {
     blocked: Vec<BlockedUserView>,
     dm_policy: safety::DmPolicy,
     spam_filter: bool,
+    profile_policy: safety::ProfilePolicy,
 }
 
 fn known_name(app: &App, user: UserId) -> String {
@@ -2191,9 +2237,9 @@ fn known_name(app: &App, user: UserId) -> String {
 
 #[tauri::command]
 fn get_safety(app: tauri::State<'_, App>) -> SafetyView {
-    let (blocked, dm_policy, spam_filter) = {
+    let (blocked, dm_policy, spam_filter, profile_policy) = {
         let s = app.safety.lock().unwrap();
-        (s.blocked.clone(), s.dm_policy, s.spam_filter)
+        (s.blocked.clone(), s.dm_policy, s.spam_filter, s.profile_policy)
     };
     SafetyView {
         blocked: blocked
@@ -2202,6 +2248,7 @@ fn get_safety(app: tauri::State<'_, App>) -> SafetyView {
             .collect(),
         dm_policy,
         spam_filter,
+        profile_policy,
     }
 }
 
@@ -2227,6 +2274,31 @@ fn set_dm_settings(app: tauri::State<'_, App>, policy: String, spam_filter: bool
         s.spam_filter = spam_filter;
     }
     app.persist_safety();
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_profile_privacy(app: tauri::State<'_, App>, handle: tauri::AppHandle, policy: String) -> CmdResult<()> {
+    let policy = safety::ProfilePolicy::parse(&policy).ok_or("unknown profile setting")?;
+    let changed = {
+        let mut s = app.safety.lock().unwrap();
+        let changed = s.profile_policy != policy;
+        s.profile_policy = policy;
+        changed
+    };
+    if !changed {
+        return Ok(());
+    }
+    app.persist_safety();
+    let me = current_profile(&app)?;
+    announce_profile(&app, &handle, &me).await;
+    let pronouns = app.voice.lock().unwrap().pronouns.clone().filter(|_| policy.shows_details_to_servers());
+    let server_ids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    for sid in server_ids {
+        let event = ServerEvent::PronounsSet { server: sid, user: me.id, pronouns: pronouns.clone() };
+        let _ = apply_and_broadcast(&app, &handle, sid, event).await;
+    }
+    let _ = handle.emit("servers-changed", ());
     Ok(())
 }
 
@@ -2439,10 +2511,7 @@ async fn post_dm(
     if !app.dms.lock().unwrap().apply(partner, message.clone()) {
         return Err(if message.is_post() { "message not sent" } else { "nothing to change" }.into());
     }
-    let envelope = DmEnvelope {
-        message: message.clone(),
-        sender: me.as_seen_by_others(),
-    };
+    let envelope = DmEnvelope::new(message.clone(), app.profile_for(me, partner));
     let waiting = app.outbox.lock().unwrap().has_dms(partner);
     let delivered = !waiting && outbox::try_send_dm(app, partner, &envelope).await;
 
@@ -2690,7 +2759,8 @@ async fn rename_server(
 }
 
 fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
-    let pronouns = app.voice.lock().unwrap().pronouns.clone();
+    let shows_pronouns = app.safety.lock().unwrap().profile_policy.shows_details_to_servers();
+    let pronouns = app.voice.lock().unwrap().pronouns.clone().filter(|_| shows_pronouns);
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
     let perms = our_permissions(app, state, me);
@@ -3220,6 +3290,9 @@ async fn set_pronouns(
         })?),
     };
     let settings = app.update_voice(|voice| voice.pronouns = cleaned.clone());
+    if !app.safety.lock().unwrap().profile_policy.shows_details_to_servers() {
+        return Ok(settings);
+    }
     let server_ids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
     for sid in server_ids {
         let event = ServerEvent::PronounsSet { server: sid, user: me.id, pronouns: cleaned.clone() };
@@ -7034,7 +7107,7 @@ async fn run_dm_loop(
         match outbox::receive_dm(&handle, dm) {
             outbox::Received::Report { from, content } => receive_report(&app, &handle, from, &content),
             outbox::Received::Reply { to, signal } => {
-                let _ = send_friend_signal(&app, to, signal).await;
+                let _ = send_friend_signal(&app, to, signal, None).await;
             }
             outbox::Received::Call { from, call, signal } => calls::on_signal(&app, &handle, from, call, signal).await,
             outbox::Received::GroupInvite { from, ticket } => join_group(&app, &handle, from, &ticket).await,
@@ -7464,6 +7537,7 @@ pub fn run() {
             set_status_expiry,
             set_blocked,
             set_dm_settings,
+            set_profile_privacy,
             accept_dm_request,
             decline_dm_request,
             report_user,

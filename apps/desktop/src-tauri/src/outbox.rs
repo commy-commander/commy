@@ -320,6 +320,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         tracing::warn!("dropped a DM not for us, not from the node it names, or not signed by its sender");
         return Received::Dropped;
     };
+    let note = dm.envelope.note;
     let message = dm.envelope.message;
     let partner = sender.id;
     if message.content.starts_with(safety::REPORT_PREFIX) {
@@ -329,7 +330,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         let reply = {
             let mut safety = app.safety.lock().unwrap();
             safety::note_friend_signal(&mut safety, partner, message.id, message.created_at)
-                .then(|| safety::apply_friend_signal(&mut safety, partner, signal))
+                .then(|| safety::apply_friend_signal(&mut safety, partner, signal, note.as_deref()))
         };
         let Some(reply) = reply else {
             tracing::debug!("ignored a friend signal from {partner} seen before");
@@ -338,9 +339,10 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         app.dms.lock().unwrap().remember_contact(sender.clone());
         app.persist_dms();
         app.persist_safety();
+        let note = app.safety.lock().unwrap().friend_notes.get(&partner).cloned();
         access.emit(
             "friends-changed",
-            serde_json::json!({ "user": partner.to_string(), "name": sender.visible_name(), "signal": signal }),
+            serde_json::json!({ "user": partner.to_string(), "name": sender.visible_name(), "signal": signal, "note": note }),
         );
         return reply.map_or(Received::Taken, |signal| Received::Reply { to: partner, signal });
     }
@@ -712,7 +714,7 @@ where
             break;
         };
         message.sign(&node, &identity);
-        let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
+        let envelope = DmEnvelope::new(message, app.profile_for(&me, partner));
         if !send(envelope).await {
             failed = true;
             break;
@@ -1047,7 +1049,7 @@ mod tests {
         sender.identity = Some(identity.public());
         let mut message = commy_core::DmMessage::new(sender.id, UserId::new(), "hi");
         message.sign(&hex(SENDER_NODE), &identity);
-        let envelope = DmEnvelope { message, sender: sender.clone() };
+        let envelope = DmEnvelope::new(message, sender.clone());
         assert!(dm_sender_trusted(&app, &envelope), "first key seen is trusted");
 
         let mut unsigned = envelope.clone();
@@ -1089,7 +1091,7 @@ mod tests {
         sender.identity = Some(real.public());
         let mut message = DmMessage::new(sender.id, UserId::new(), "hi");
         message.sign(&hex(SENDER_NODE), &real);
-        let envelope = DmEnvelope { message, sender: sender.clone() };
+        let envelope = DmEnvelope::new(message, sender.clone());
 
         let app = App::default();
         app.dms.lock().unwrap().remember_contact(sender.clone());
@@ -1152,7 +1154,7 @@ mod tests {
     fn dm_from(sender: &UserProfile, identity: &Identity, to: UserId, content: &str, from: [u8; 32], via: [u8; 32]) -> IncomingDm {
         let mut message = DmMessage::new(sender.id, to, content);
         message.sign(&hex(from), identity);
-        IncomingDm { envelope: DmEnvelope { message, sender: sender.clone() }, node: via }
+        IncomingDm { envelope: DmEnvelope::new(message, sender.clone()), node: via }
     }
 
     fn app_as(me: &UserProfile) -> App {
@@ -1193,7 +1195,7 @@ mod tests {
         assert_eq!(screen_dm(&app, &unsigned), None);
         let mut unnamed = DmMessage::new(sender.id, me.id, "hi");
         unnamed.sign("", &identity);
-        let unnamed = IncomingDm { envelope: DmEnvelope { message: unnamed, sender: sender.clone() }, node: SENDER_NODE };
+        let unnamed = IncomingDm { envelope: DmEnvelope::new(unnamed, sender.clone()), node: SENDER_NODE };
         assert_eq!(screen_dm(&app, &unnamed), None);
         assert_eq!(screen_dm(&App::default(), &direct), None);
     }
@@ -1209,7 +1211,7 @@ mod tests {
         let control = |action: DmAction, content: &str| {
             let mut message = DmMessage::acting(sender.id, me.id, action, content);
             message.sign(&node, &identity);
-            IncomingDm { envelope: DmEnvelope { message, sender: sender.clone() }, node: SENDER_NODE }
+            IncomingDm { envelope: DmEnvelope::new(message, sender.clone()), node: SENDER_NODE }
         };
 
         let hello = dm_from(&sender, &identity, me.id, "first", SENDER_NODE, SENDER_NODE);
@@ -1245,7 +1247,7 @@ mod tests {
         let (stranger, stranger_key) = sender_on(OTHER_NODE);
         let mut cold = DmMessage::acting(stranger.id, me.id, DmAction::Call { call, signal: CallSignal::Ring }, "");
         cold.sign(&hex(OTHER_NODE), &stranger_key);
-        let cold = IncomingDm { envelope: DmEnvelope { message: cold, sender: stranger.clone() }, node: OTHER_NODE };
+        let cold = IncomingDm { envelope: DmEnvelope::new(cold, stranger.clone()), node: OTHER_NODE };
         assert_eq!(receive_dm(&handle, cold), Received::Dropped, "strangers cannot ring us");
         let notices = handle.take_events().into_iter().filter(|(name, _)| name == "dm-received").count();
         assert_eq!(notices, 1, "control messages never notify");
@@ -1293,6 +1295,27 @@ mod tests {
         relayed.node = SENDER_NODE;
         assert_eq!(receive_dm(&handle, relayed), Received::Reply { to: sender.id, signal: FriendSignal::Accept });
         assert!(app.safety.lock().unwrap().friends.contains(&sender.id));
+    }
+
+    #[test]
+    fn a_friend_request_brings_its_note_along() {
+        let me = UserProfile::new("me");
+        let app = Arc::new(app_as(&me));
+        let handle = TestHandle::new(app.clone());
+        let (sender, identity) = sender_on(SENDER_NODE);
+        let mut request = dm_from(&sender, &identity, me.id, &FriendSignal::Request.encode(), SENDER_NODE, SENDER_NODE);
+        request.envelope.note = Some("  we met at\nthe raid  ".into());
+        assert_eq!(receive_dm(&handle, request), Received::Taken);
+        assert_eq!(app.safety.lock().unwrap().friend_notes[&sender.id], "we met at the raid");
+        let (_, payload) = handle.take_events().into_iter().find(|(name, _)| name == "friends-changed").unwrap();
+        assert_eq!(payload["note"], "we met at the raid");
+
+        let mut accept = dm_from(&sender, &identity, me.id, &FriendSignal::Accept.encode(), SENDER_NODE, SENDER_NODE);
+        accept.envelope.message.created_at += chrono::Duration::seconds(1);
+        accept.envelope.message.sign(&hex(SENDER_NODE), &identity);
+        app.safety.lock().unwrap().friend_out.insert(sender.id);
+        assert_eq!(receive_dm(&handle, accept), Received::Taken);
+        assert!(app.safety.lock().unwrap().friend_notes.is_empty());
     }
 
     #[test]

@@ -26,6 +26,47 @@ impl DmPolicy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfilePolicy {
+    #[default]
+    Everyone,
+    SharedServers,
+    Friends,
+}
+
+impl ProfilePolicy {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "everyone" => Some(Self::Everyone),
+            "shared_servers" => Some(Self::SharedServers),
+            "friends" => Some(Self::Friends),
+            _ => None,
+        }
+    }
+
+    pub fn shows_details_to(self, friend: bool, shares_server: bool) -> bool {
+        match self {
+            Self::Everyone => true,
+            Self::SharedServers => friend || shares_server,
+            Self::Friends => friend,
+        }
+    }
+
+    pub fn shows_details_to_servers(self) -> bool {
+        self != Self::Friends
+    }
+}
+
+pub const MAX_FRIEND_NOTE_CHARS: usize = 200;
+
+pub fn clean_friend_note(raw: &str) -> Option<String> {
+    let text: String = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text: String = text.chars().filter(|c| !c.is_control()).take(MAX_FRIEND_NOTE_CHARS).collect();
+    let text = text.trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Report {
     pub id: String,
@@ -93,6 +134,10 @@ pub struct SafetySettings {
     pub friend_in: HashSet<UserId>,
     #[serde(default)]
     pub friend_signals: HashMap<UserId, SignalSeen>,
+    #[serde(default)]
+    pub profile_policy: ProfilePolicy,
+    #[serde(default)]
+    pub friend_notes: HashMap<UserId, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,10 +177,11 @@ pub fn note_friend_signal(s: &mut SafetySettings, from: UserId, id: MessageId, a
     true
 }
 
-pub fn apply_friend_signal(s: &mut SafetySettings, from: UserId, signal: FriendSignal) -> Option<FriendSignal> {
+pub fn apply_friend_signal(s: &mut SafetySettings, from: UserId, signal: FriendSignal, note: Option<&str>) -> Option<FriendSignal> {
     if s.is_blocked(from) {
         return None;
     }
+    s.friend_notes.remove(&from);
     match signal {
         FriendSignal::Request => {
             if s.friends.contains(&from) {
@@ -146,6 +192,9 @@ pub fn apply_friend_signal(s: &mut SafetySettings, from: UserId, signal: FriendS
                 return Some(FriendSignal::Accept);
             }
             s.friend_in.insert(from);
+            if let Some(note) = note.and_then(clean_friend_note) {
+                s.friend_notes.insert(from, note);
+            }
             None
         }
         FriendSignal::Accept => {
@@ -178,6 +227,8 @@ impl Default for SafetySettings {
             friend_out: HashSet::new(),
             friend_in: HashSet::new(),
             friend_signals: HashMap::new(),
+            profile_policy: ProfilePolicy::default(),
+            friend_notes: HashMap::new(),
         }
     }
 }
@@ -203,6 +254,11 @@ impl SafetySettings {
         self.friends.remove(&user);
         self.friend_in.remove(&user);
         self.friend_out.remove(&user);
+        self.friend_notes.remove(&user);
+    }
+
+    pub fn shows_details_to(&self, viewer: UserId, shares_server: bool) -> bool {
+        self.profile_policy.shows_details_to(self.friends.contains(&viewer), shares_server)
     }
 
     pub fn add_report(&mut self, report: Report) -> bool {
@@ -452,22 +508,73 @@ mod tests {
     fn friend_requests_flow() {
         let mut s = SafetySettings::default();
         let a = UserId::new();
-        assert_eq!(apply_friend_signal(&mut s, a, FriendSignal::Request), None);
+        assert_eq!(apply_friend_signal(&mut s, a, FriendSignal::Request, None), None);
         assert!(s.friend_in.contains(&a));
         let b = UserId::new();
         s.friend_out.insert(b);
-        apply_friend_signal(&mut s, b, FriendSignal::Accept);
+        apply_friend_signal(&mut s, b, FriendSignal::Accept, None);
         assert!(s.friends.contains(&b) && !s.friend_out.contains(&b));
         let c = UserId::new();
         s.friend_out.insert(c);
-        assert_eq!(apply_friend_signal(&mut s, c, FriendSignal::Request), Some(FriendSignal::Accept));
+        assert_eq!(apply_friend_signal(&mut s, c, FriendSignal::Request, None), Some(FriendSignal::Accept));
         assert!(s.friends.contains(&c));
-        apply_friend_signal(&mut s, c, FriendSignal::Remove);
+        apply_friend_signal(&mut s, c, FriendSignal::Remove, None);
         assert!(!s.friends.contains(&c));
         let d = UserId::new();
         s.set_blocked(d, true);
-        apply_friend_signal(&mut s, d, FriendSignal::Request);
+        apply_friend_signal(&mut s, d, FriendSignal::Request, None);
         assert!(!s.friend_in.contains(&d));
+    }
+
+    #[test]
+    fn a_request_note_stays_with_the_request_and_no_longer() {
+        let mut s = SafetySettings::default();
+        let a = UserId::new();
+        let long = "x".repeat(MAX_FRIEND_NOTE_CHARS + 50);
+        assert_eq!(apply_friend_signal(&mut s, a, FriendSignal::Request, Some(&format!("  we met\nat the raid  {long}"))), None);
+        let note = s.friend_notes[&a].clone();
+        assert!(note.starts_with("we met at the raid x"));
+        assert_eq!(note.chars().count(), MAX_FRIEND_NOTE_CHARS);
+        apply_friend_signal(&mut s, a, FriendSignal::Remove, None);
+        assert!(s.friend_notes.is_empty(), "declined, withdrawn or accepted requests drop their note");
+
+        let b = UserId::new();
+        apply_friend_signal(&mut s, b, FriendSignal::Request, Some("hello"));
+        s.friend_in.remove(&b);
+        s.friends.insert(b);
+        apply_friend_signal(&mut s, b, FriendSignal::Accept, Some("ignored on accept"));
+        assert!(s.friend_notes.is_empty());
+
+        let c = UserId::new();
+        apply_friend_signal(&mut s, c, FriendSignal::Request, Some(" \t\n "));
+        assert!(s.friend_in.contains(&c) && !s.friend_notes.contains_key(&c), "blank notes are no note");
+        s.set_blocked(c, true);
+        assert!(!s.friend_in.contains(&c));
+        assert_eq!(clean_friend_note("a\u{7}b  c"), Some("ab c".into()));
+    }
+
+    #[test]
+    fn profile_policy_decides_who_sees_details() {
+        let mut s = SafetySettings::default();
+        let friend = UserId::new();
+        let member = UserId::new();
+        let stranger = UserId::new();
+        s.friends.insert(friend);
+        for (policy, expect) in [
+            (ProfilePolicy::Everyone, [true, true, true]),
+            (ProfilePolicy::SharedServers, [true, true, false]),
+            (ProfilePolicy::Friends, [true, false, false]),
+        ] {
+            s.profile_policy = policy;
+            assert_eq!(s.shows_details_to(friend, false), expect[0], "{policy:?} friend");
+            assert_eq!(s.shows_details_to(member, true), expect[1], "{policy:?} member");
+            assert_eq!(s.shows_details_to(stranger, false), expect[2], "{policy:?} stranger");
+        }
+        assert!(!ProfilePolicy::Friends.shows_details_to_servers());
+        assert!(ProfilePolicy::SharedServers.shows_details_to_servers());
+        assert_eq!(ProfilePolicy::parse("shared_servers"), Some(ProfilePolicy::SharedServers));
+        assert_eq!(ProfilePolicy::parse("nope"), None);
+        assert_eq!(serde_json::to_string(&ProfilePolicy::SharedServers).unwrap(), "\"shared_servers\"");
     }
 
     #[test]
@@ -507,6 +614,7 @@ mod tests {
     fn settings_default_from_empty_json() {
         let s: SafetySettings = serde_json::from_str("{}").unwrap();
         assert!(s.spam_filter && s.blocked.is_empty() && s.dm_policy == DmPolicy::Everyone);
+        assert!(s.profile_policy == ProfilePolicy::Everyone && s.friend_notes.is_empty());
         assert!(SafetySettings::default().spam_filter, "new installs filter spam");
     }
 }

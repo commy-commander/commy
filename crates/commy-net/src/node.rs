@@ -3,7 +3,7 @@ use crate::catchup::{
     CATCHUP_ALPN, HANDSHAKE_TIMEOUT,
 };
 use crate::dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
-use crate::media::{read_frame, write_frame, MediaHello, MediaPacket, MEDIA_ALPN};
+use crate::media::{read_frame, read_frame_bytes, write_frame, MediaError, MediaHello, MediaPacket, MAX_MEDIA_FRAME, MEDIA_ALPN};
 use crate::protocol::{Envelope, WirePayload};
 use crate::ticket::ServerTicket;
 use anyhow::{Context, Result};
@@ -293,7 +293,7 @@ impl DmAcceptor {
             let envelope = if self.legacy {
                 read_frame::<_, LegacyDmEnvelope>(&mut recv).await.map(|frame| frame.map(LegacyDmEnvelope::upgrade))
             } else {
-                read_frame::<_, DmEnvelope>(&mut recv).await
+                read_dm_frame(&mut recv).await
             };
             let Some(envelope) = envelope.map_err(|e| anyhow::anyhow!("bad dm frame: {e}"))? else {
                 return Ok(());
@@ -304,6 +304,13 @@ impl DmAcceptor {
                 .map_err(|e| anyhow::anyhow!("dm ack failed: {e}"))?;
         }
     }
+}
+
+async fn read_dm_frame<R: AsyncRead + Unpin>(recv: &mut R) -> Result<Option<DmEnvelope>, MediaError> {
+    let Some(bytes) = read_frame_bytes(recv, MAX_MEDIA_FRAME).await? else {
+        return Ok(None);
+    };
+    DmEnvelope::decode(&bytes).map(Some).ok_or(MediaError::Malformed)
 }
 
 pub type SharedCatchupStore = Arc<dyn CatchupStore + Send + Sync>;
@@ -1432,7 +1439,7 @@ mod tests {
         sender.node = Some(data_encoding::HEXLOWER.encode(&[9u8; 32]));
         let mut message = DmMessage::new(sender.id, UserId::new(), "hi");
         message.from_node = a.node_id_hex();
-        let envelope = DmEnvelope { message, sender };
+        let envelope = DmEnvelope::new(message, sender);
         tokio::time::timeout(within(30), a.send_dm(&b.node_id_hex(), &envelope))
             .await
             .unwrap()
@@ -1465,7 +1472,7 @@ mod tests {
         let sender = keyed_profile("sender");
         let mut message = DmMessage::new(sender.id, UserId::new(), "for you only");
         message.sign(&a.node_id_hex(), &identity_for(sender.id));
-        let envelope = DmEnvelope { message, sender };
+        let envelope = DmEnvelope::new(message, sender);
         assert!(envelope.signed_by_sender());
 
         let replay = tokio::time::timeout(within(30), relay.send_dm(&b.node_id_hex(), &envelope))
