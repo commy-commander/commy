@@ -183,6 +183,7 @@ export function discoveryDocument(config) {
       resolveInvite: `${api}/commy/invites/resolve`,
       gifSearch: `${api}/commy/gifs/search`,
       gameSearch: `${api}/commy/games/search`,
+      emojiSearch: `${api}/commy/emojis/search`,
       media: `${api}/commy/media`,
       vault: `${api}/commy/vault`,
       vaultPut: `${api}/commy/vault/put`,
@@ -192,6 +193,7 @@ export function discoveryDocument(config) {
     features: {
       gifs: Boolean(config.klipyKey),
       games: Boolean(config.igdb),
+      emojis: true,
       media: true,
       vault: true,
       doorbell: Boolean(config.doorbell),

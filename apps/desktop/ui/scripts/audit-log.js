@@ -5,7 +5,7 @@ const AUDIT_FILTERS = [
   ["roles", "Roles"],
   ["members", "Members"],
   ["messages", "Messages"],
-  ["expressions", "Emoji and sounds"],
+  ["expressions", "Emoji, stickers and sounds"],
   ["events", "Events"],
   ["invites", "Invites"],
 ];
@@ -52,6 +52,11 @@ const AUDIT_GROUP_OF = {
   invite_create: "invites",
   invite_revoke: "invites",
   invite_background: "invites",
+  sticker_add: "expressions",
+  sticker_remove: "expressions",
+  emoticon_add: "expressions",
+  emoticon_remove: "expressions",
+  expression_sharing: "expressions",
   channel_access: "channels",
 };
 
@@ -115,6 +120,11 @@ function describeAudit(entry) {
     case "voice_moderate": return VOICE_MODERATION_WORDS[detail] ? [`${VOICE_MODERATION_WORDS[detail]} `, member] : ["lifted the server mute on ", member];
     case "emoji_add": return ["added the emoji ", auditStrong(`:${label || "emoji"}:`)];
     case "emoji_remove": return ["removed the emoji ", auditStrong(`:${label || "emoji"}:`)];
+    case "sticker_add": return ["added the sticker ", named("a sticker")];
+    case "sticker_remove": return ["removed the sticker ", named("a sticker")];
+    case "emoticon_add": return ["added the emoticon ", auditStrong(`:${label || "emoticon"}`)];
+    case "emoticon_remove": return ["removed the emoticon ", auditStrong(`:${label || "emoticon"}`)];
+    case "expression_sharing": return [detail ? `let members use this server's ${detail} in other servers and DMs` : "stopped sharing this server's stickers and emoticons"];
     case "sound_add": return ["added the sound ", named("a sound")];
     case "sound_remove": return ["removed the sound ", named("a sound")];
     case "event_create": return ["scheduled the event ", named("an event")];

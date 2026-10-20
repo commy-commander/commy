@@ -204,6 +204,27 @@ pub enum ServerEvent {
         server: ServerId,
         background: Option<String>,
     },
+    StickerAdd {
+        server: ServerId,
+        sticker: crate::server::Sticker,
+    },
+    StickerRemove {
+        server: ServerId,
+        name: String,
+    },
+    EmoticonAdd {
+        server: ServerId,
+        emoticon: crate::server::Emoticon,
+    },
+    EmoticonRemove {
+        server: ServerId,
+        name: String,
+    },
+    ExpressionSharingSet {
+        server: ServerId,
+        stickers: bool,
+        emoticons: bool,
+    },
     ChannelAccessSet {
         server: ServerId,
         channel: ChannelId,
@@ -271,7 +292,9 @@ mod tests {
         let revoke = ServerEvent::InviteRevoke { server, origin: "o".into(), code: "c".into(), creator: user };
         assert_eq!(wire_tag(revoke), 55);
         assert_eq!(wire_tag(ServerEvent::InviteBackgroundSet { server, background: None }), 56);
-        assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 57);
+        let sharing = ServerEvent::ExpressionSharingSet { server, stickers: true, emoticons: false };
+        assert_eq!(wire_tag(sharing), 61);
+        assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 62);
     }
 
     #[test]

@@ -608,6 +608,8 @@ impl ServerState {
             }
             E::EventDelete { event, .. } | E::EventRsvp { event, .. } => server.events.iter().any(|e| e.id == *event),
             E::EmojiRemove { name, .. } => server.emojis.iter().any(|e| e.name == *name),
+            E::StickerRemove { name, .. } => server.stickers.iter().any(|s| s.name == *name),
+            E::EmoticonRemove { name, .. } => server.emoticons.iter().any(|e| e.name == *name),
             E::SoundRemove { name, .. } => server.soundboard.iter().any(|s| s.name == *name),
             E::MessagePin { message, .. } | E::ReactionSet { message, .. } | E::ReactionToggle { message, .. } => {
                 self.has_message(*message)
@@ -1002,6 +1004,41 @@ impl ServerState {
                 Ok(replace(&mut self.invite_background, background))
             }
             ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } => Ok(false),
+            ServerEvent::StickerAdd { server, sticker } => {
+                self.same_server(server)?;
+                if !crate::server::valid_expression_name(&sticker.name)
+                    || crate::server::ImageRef::parse(&sticker.blob).is_none()
+                {
+                    return Ok(false);
+                }
+                Ok(upsert_by(&mut self.server.stickers, sticker, crate::server::MAX_STICKERS, |a, b| a.name == b.name))
+            }
+            ServerEvent::StickerRemove { server, name } => {
+                self.same_server(server)?;
+                let before = self.server.stickers.len();
+                self.server.stickers.retain(|s| s.name != name);
+                Ok(self.server.stickers.len() != before)
+            }
+            ServerEvent::EmoticonAdd { server, emoticon } => {
+                self.same_server(server)?;
+                let clean = crate::server::clean_emoticon(&emoticon.text);
+                if !crate::server::valid_expression_name(&emoticon.name) || clean.as_deref() != Some(emoticon.text.as_str()) {
+                    return Ok(false);
+                }
+                Ok(upsert_by(&mut self.server.emoticons, emoticon, crate::server::MAX_EMOTICONS, |a, b| a.name == b.name))
+            }
+            ServerEvent::EmoticonRemove { server, name } => {
+                self.same_server(server)?;
+                let before = self.server.emoticons.len();
+                self.server.emoticons.retain(|e| e.name != name);
+                Ok(self.server.emoticons.len() != before)
+            }
+            ServerEvent::ExpressionSharingSet { server, stickers, emoticons } => {
+                self.same_server(server)?;
+                let a = replace(&mut self.server.stickers_shareable, stickers);
+                let b = replace(&mut self.server.emoticons_shareable, emoticons);
+                Ok(a | b)
+            }
             ServerEvent::GameTagsSet { server, tags, meta } => {
                 self.same_server(server)?;
                 let Some(tags) = crate::server::clean_game_tags(&tags) else { return Ok(false) };
@@ -2607,6 +2644,41 @@ mod tests {
         state.apply(ServerEvent::RoleUnassign { server: sid, user: plain, role: rid }).unwrap();
         let later = Utc::now() + chrono::Duration::seconds(1);
         assert_eq!(state.apply(edit(&state, &allowed, "Patch day, 6pm", later)), Ok(true));
+    }
+
+    #[test]
+    fn stickers_and_emoticons_add_replace_remove_cap_and_share() {
+        use crate::server::{Emoticon, Sticker, MAX_EMOTICONS, MAX_STICKERS};
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let sticker = |name: &str, blob: &str| ServerEvent::StickerAdd { server: sid, sticker: Sticker { name: name.into(), blob: blob.into() } };
+        let emoticon = |name: &str, text: &str| ServerEvent::EmoticonAdd { server: sid, emoticon: Emoticon { name: name.into(), text: text.into() } };
+        assert_eq!(state.apply(sticker("wave", "aa@bb")), Ok(true));
+        assert_eq!(state.apply(sticker("wave", "aa@bb")), Ok(false));
+        assert_eq!(state.apply(sticker("wave", "cc@bb")), Ok(true));
+        assert_eq!(state.apply(sticker("Bad Name", "aa@bb")), Ok(false));
+        assert_eq!(state.apply(sticker("bad_ref", "nope")), Ok(false));
+        for i in 0..MAX_STICKERS + 3 {
+            state.apply(sticker(&format!("s{i}"), "aa@bb")).unwrap();
+        }
+        assert_eq!(state.server.stickers.len(), MAX_STICKERS);
+        assert_eq!(state.apply(ServerEvent::StickerRemove { server: sid, name: "wave".into() }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::StickerRemove { server: sid, name: "wave".into() }), Ok(false));
+
+        assert_eq!(state.apply(emoticon("shrug", "¯\\_(ツ)_/¯")), Ok(true));
+        assert_eq!(state.apply(emoticon("flip", " padded ")), Ok(false));
+        assert_eq!(state.apply(emoticon("flip", "two\nlines")), Ok(false));
+        assert_eq!(state.apply(emoticon("flip", "")), Ok(false));
+        for i in 0..MAX_EMOTICONS + 3 {
+            state.apply(emoticon(&format!("e{i}"), ":)")).unwrap();
+        }
+        assert_eq!(state.server.emoticons.len(), MAX_EMOTICONS);
+        assert_eq!(state.apply(ServerEvent::EmoticonRemove { server: sid, name: "shrug".into() }), Ok(true));
+
+        let share = ServerEvent::ExpressionSharingSet { server: sid, stickers: true, emoticons: false };
+        assert_eq!(state.apply(share.clone()), Ok(true));
+        assert_eq!(state.apply(share), Ok(false));
+        assert!(state.server.stickers_shareable && !state.server.emoticons_shareable);
     }
 
     #[test]

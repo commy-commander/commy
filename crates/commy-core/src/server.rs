@@ -120,6 +120,18 @@ pub struct CustomEmoji {
     pub blob: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sticker {
+    pub name: String,
+    pub blob: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Emoticon {
+    pub name: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Server {
     pub id: ServerId,
@@ -172,6 +184,14 @@ pub struct Server {
     pub public: bool,
     #[serde(default)]
     pub pins: Vec<Pin>,
+    #[serde(default)]
+    pub stickers: Vec<Sticker>,
+    #[serde(default)]
+    pub emoticons: Vec<Emoticon>,
+    #[serde(default)]
+    pub stickers_shareable: bool,
+    #[serde(default)]
+    pub emoticons_shareable: bool,
 }
 
 impl Server {
@@ -229,6 +249,10 @@ impl Server {
             afk_timeout_minutes: None,
             public: false,
             pins: vec![],
+            stickers: vec![],
+            emoticons: vec![],
+            stickers_shareable: false,
+            emoticons_shareable: false,
         }
     }
 
@@ -617,6 +641,10 @@ mod image_ref_tests {
 
 pub const MAX_EMOJIS: usize = 50;
 pub const MAX_SOUNDS: usize = 24;
+pub const MAX_STICKERS: usize = 30;
+pub const MAX_EMOTICONS: usize = 50;
+pub const MAX_EMOTICON_CHARS: usize = 64;
+const MAX_EMOTICON_BYTES: usize = 256;
 
 pub fn valid_expression_name(name: &str) -> bool {
     (2..=32).contains(&name.len())
@@ -632,6 +660,40 @@ pub fn parse_emoji_token(token: &str) -> Option<(String, ImageRef)> {
 
 pub fn emoji_token(name: &str, image: &str) -> String {
     format!("<:{name}:{image}>")
+}
+
+pub fn parse_sticker_token(token: &str) -> Option<(String, ImageRef)> {
+    let inner = token.strip_prefix("<sticker:")?.strip_suffix('>')?;
+    let (name, image) = inner.split_once(':')?;
+    let image = ImageRef::parse(image)?;
+    valid_expression_name(name).then(|| (name.to_string(), image))
+}
+
+pub fn sticker_token(name: &str, image: &str) -> String {
+    format!("<sticker:{name}:{image}>")
+}
+
+pub fn image_tokens(content: &str) -> Vec<(usize, usize, ImageRef)> {
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(start) = content[from..].find('<').map(|i| from + i) {
+        let Some(end) = content[start..].find('>').map(|i| start + i + 1) else { break };
+        let token = &content[start..end];
+        if let Some((_, image)) = parse_emoji_token(token).or_else(|| parse_sticker_token(token)) {
+            found.push((start, end, image));
+            from = end;
+        } else {
+            from = start + 1;
+        }
+    }
+    found
+}
+
+pub fn clean_emoticon(text: &str) -> Option<String> {
+    let text = text.trim();
+    let chars = text.chars().count();
+    let fits = (1..=MAX_EMOTICON_CHARS).contains(&chars) && text.len() <= MAX_EMOTICON_BYTES;
+    (fits && !text.chars().any(char::is_control)).then(|| text.to_string())
 }
 
 pub fn valid_reaction(emoji: &str) -> bool {
@@ -658,6 +720,35 @@ mod expression_tests {
         for bad in ["<:party:ab12>", "<:Party:a@b>", ":party:a@b>", "<:party:a@b", "<::a@b>"] {
             assert!(parse_emoji_token(bad).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn sticker_tokens_roundtrip_and_stay_apart_from_emojis() {
+        let token = sticker_token("wave", "ab12@cd34");
+        let (name, image) = parse_sticker_token(&token).unwrap();
+        assert_eq!(name, "wave");
+        assert_eq!(image.encode(), "ab12@cd34");
+        assert!(parse_emoji_token(&token).is_none());
+        assert!(parse_sticker_token(&emoji_token("wave", "ab12@cd34")).is_none());
+        for bad in ["<sticker:wave:ab12>", "<sticker:Wave:a@b>", "<sticker::a@b>", "sticker:wave:a@b>"] {
+            assert!(parse_sticker_token(bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn image_tokens_finds_emojis_and_stickers_in_text() {
+        let text = format!("a <b {} c {} <:x:", emoji_token("gg", "aa@bb"), sticker_token("hi", "cc@dd"));
+        let found: Vec<String> = image_tokens(&text).into_iter().map(|(s, e, i)| format!("{}={}", &text[s..e], i.blob)).collect();
+        assert_eq!(found, vec!["<:gg:aa@bb>=aa", "<sticker:hi:cc@dd>=cc"]);
+    }
+
+    #[test]
+    fn emoticons_are_short_single_line_text() {
+        assert_eq!(clean_emoticon("  ¯\\_(ツ)_/¯ ").as_deref(), Some("¯\\_(ツ)_/¯"));
+        assert_eq!(clean_emoticon("(╯°□°)╯︵ ┻━┻").as_deref(), Some("(╯°□°)╯︵ ┻━┻"));
+        assert!(clean_emoticon("   ").is_none());
+        assert!(clean_emoticon("two\nlines").is_none());
+        assert!(clean_emoticon(&"x".repeat(MAX_EMOTICON_CHARS + 1)).is_none());
     }
 
     #[test]
