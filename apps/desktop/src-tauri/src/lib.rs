@@ -4419,13 +4419,15 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
         let session = session.as_ref().ok_or("not in voice")?;
         (session.link_stats(), session.server)
     };
-    let names: Vec<String> = {
+    let server_names: Vec<Option<String>> = {
         let servers = app.servers.lock().unwrap();
-        stats
-            .iter()
-            .map(|s| servers.get(&sid).map(|st| view::display_name(st, s.user)).unwrap_or_else(|| "Someone".into()))
-            .collect()
+        stats.iter().map(|s| servers.get(&sid).map(|st| view::display_name(st, s.user))).collect()
     };
+    let names: Vec<String> = stats
+        .iter()
+        .zip(server_names)
+        .map(|(s, name)| name.unwrap_or_else(|| known_name(&app, s.user)))
+        .collect();
     let links = stats
         .into_iter()
         .zip(names)
