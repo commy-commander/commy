@@ -15,7 +15,7 @@ const state = {
   servers: [],
   currentServer: null,
   currentChannel: null,
-  voice: { noise_cancellation: true, echo_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10 },
+  voice: { noise_cancellation: true, echo_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
   voiceChannelId: null,
   voiceServer: null,
   shareSource: null,
@@ -37,7 +37,7 @@ const mock = {
   servers: {},
   messages: {},
   dms: {},
-  voice: { noise_cancellation: true, echo_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10 },
+  voice: { noise_cancellation: true, echo_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
 };
 
 function mockSearch({ serverId, terms, from, mentions, channelId }) {
@@ -1029,11 +1029,13 @@ async function mockInvoke(cmd, args = {}) {
         { kind: "window", id: 12, name: "Spotify", is_primary: false },
       ];
     case "share_source_preview": return mockFrame(`Source ${args.sourceId}`, 360, 203, args.sourceId * 47);
-    case "start_screen_share": mock.share = { name: `Source ${args.sourceId}`, hue: args.sourceId * 47 }; return null;
+    case "start_screen_share": mock.share = { name: `Source ${args.sourceId}`, hue: args.sourceId * 47, audio: args.audio }; return null;
+    case "share_audio_supported": return true;
+    case "set_stream_volume": mock.voice.stream_volume = args.volume; return mock.voice;
     case "stop_screen_share": mock.share = null; return null;
     case "own_share_frame":
       if (!mock.share) throw "not sharing";
-      return { width: 1280, height: 720, jpeg: mockFrame(mock.share.name, 640, 360, mock.share.hue), viewers: 2 };
+      return { width: 1280, height: 720, jpeg: mockFrame(mock.share.name, 640, 360, mock.share.hue), viewers: 2, audio: Boolean(mock.share.audio) };
     case "watch_screen":
       clearInterval(mock.watchTimer);
       mock.watchTimer = setInterval(() => {
@@ -9985,7 +9987,21 @@ const SHARE_QUALITY_HINTS = {
   sharp: "Best for code and documents. Crisp text, fewer frames.",
 };
 
-const sharePicker = { sources: [], kind: "monitor", picked: null, thumbs: new Map(), token: 0 };
+const sharePicker = { sources: [], kind: "monitor", picked: null, thumbs: new Map(), token: 0, audioSupported: null };
+
+function shareAudioWanted(supported = true) {
+  let saved = null;
+  try { saved = localStorage.getItem(SHARE_AUDIO_KEY); } catch {}
+  return shareAudioChoice(saved, supported);
+}
+
+async function renderShareAudioRow() {
+  if (sharePicker.audioSupported === null) {
+    try { sharePicker.audioSupported = Boolean(await invoke("share_audio_supported")); } catch { sharePicker.audioSupported = false; }
+  }
+  $("share-audio-row").classList.toggle("hidden", !sharePicker.audioSupported);
+  $("share-audio").checked = shareAudioWanted(sharePicker.audioSupported);
+}
 
 function shareQuality() {
   try {
@@ -10011,6 +10027,7 @@ async function openSharePicker() {
   sharePicker.thumbs.clear();
   sharePicker.kind = "monitor";
   setShareQuality(shareQuality());
+  renderShareAudioRow();
   $("share-go").textContent = state.sharing ? "Switch Stream" : "Go Live";
   const list = $("share-source-list");
   list.innerHTML = "";
@@ -10111,10 +10128,10 @@ async function loadShareThumbs(token) {
 function goLive() {
   const source = sharePicker.picked;
   if (!source || source.kind !== sharePicker.kind) return;
-  startShareWith(source, shareQuality());
+  startShareWith(source, shareQuality(), shareAudioWanted(sharePicker.audioSupported === true));
 }
 
-async function startShareWith(source, quality) {
+async function startShareWith(source, quality, audio = shareAudioWanted()) {
   hideModals();
   sharePicker.token++;
   try {
@@ -10124,11 +10141,12 @@ async function startShareWith(source, quality) {
       sourceKind: source.kind,
       sourceId: source.id,
       quality,
+      audio,
     });
     state.sharing = true;
     state.shareSource = source.name;
     state.shareQuality = quality;
-    toast(`You are live: ${source.name}`);
+    toast(liveToastText(source.name, audio));
     renderShareButton();
     startOwnPreview();
   } catch (e) {
@@ -10175,7 +10193,7 @@ function startOwnPreview() {
       const now = performance.now();
       if (ownFpsSample && own.frames >= ownFpsSample.frames) {
         const fps = Math.round((own.frames - ownFpsSample.frames) / ((now - ownFpsSample.at) / 1000));
-        $("vp-live-source").textContent = [state.shareSource ? `Streaming ${state.shareSource}` : "", `${fps} fps`].filter(Boolean).join(" - ");
+        $("vp-live-source").textContent = liveSourceText(state.shareSource, own.audio, fps);
       }
       ownFpsSample = { frames: own.frames, at: now };
     } catch {}
@@ -10207,6 +10225,22 @@ function openStage(mode, label) {
   $("video-pane").classList.remove("hidden");
   $("video-pane").classList.toggle("self", mode === "self");
   $("video-close").title = mode === "self" ? "Close Preview" : "Stop Watching";
+  renderStageVolume(streamVolumePercent(state.voice));
+}
+
+function renderStageVolume(percent) {
+  const range = $("stage-volume-range");
+  range.value = String(percent);
+  syncRangeFill(range);
+  $("stage-volume").title = streamVolumeTitle(percent);
+}
+
+async function setStreamVolume(percent) {
+  try {
+    state.voice = await invoke("set_stream_volume", { volume: streamVolumeGain(percent) });
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function closeStage() {
@@ -10801,6 +10835,12 @@ function wireEvents() {
   setIcon($("video-close"), "close", 20);
   setIcon($("stage-focus"), "expand", 20);
   setIcon($("stage-fullscreen"), "fullscreen", 20);
+  setIcon($("stage-volume-icon"), "speaker", 18);
+  $("stage-volume-range").oninput = () => renderStageVolume(Number($("stage-volume-range").value));
+  $("stage-volume-range").onchange = () => setStreamVolume(Number($("stage-volume-range").value));
+  $("share-audio").onchange = () => {
+    try { localStorage.setItem(SHARE_AUDIO_KEY, shareAudioSaveValue($("share-audio").checked)); } catch {}
+  };
   $("stage-focus").onclick = toggleStageFocus;
   $("stage-fullscreen").onclick = toggleStageFullscreen;
   $("stage-view").ondblclick = toggleStageFullscreen;

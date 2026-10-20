@@ -166,6 +166,10 @@
             <div class="stage-chip stage-stats" id="stage-stats"></div>
           </div>
           <div class="stage-controls">
+            <label class="stage-chip stage-volume" id="stage-volume" title="Stream volume 100%">
+              <span class="stage-volume-icon" id="stage-volume-icon"></span>
+              <input type="range" id="stage-volume-range" min="0" max="200" value="100" aria-label="Stream volume" />
+            </label>
             <button class="stage-btn" id="stage-focus" title="Focus Mode"></button>
             <button class="stage-btn" id="stage-fullscreen" title="Fullscreen"></button>
             <button class="stage-btn danger" id="video-close" title="Stop Watching"></button>
@@ -771,6 +775,13 @@
         </div>
         <div class="setting-sub" id="share-quality-hint"></div>
       </div>
+      <label class="setting-row share-audio-row hidden" id="share-audio-row">
+        <div>
+          <div class="setting-title">Share audio</div>
+          <div class="setting-sub">Viewers hear what your computer plays, alongside your voice.</div>
+        </div>
+        <input type="checkbox" id="share-audio" class="switch" aria-label="Share audio" />
+      </label>
       <div class="modal-actions">
         <button class="btn-secondary" id="share-cancel">Cancel</button>
         <button class="btn-primary" id="share-go" disabled>Go Live</button>
@@ -2003,6 +2014,7 @@
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
   <script src="scripts/voice-input.js"></script>
+  <script src="scripts/stream-audio.js"></script>
   <script src="scripts/typing.js"></script>
   <script src="scripts/message-link.js"></script>
   <script src="scripts/emoji.js"></script>

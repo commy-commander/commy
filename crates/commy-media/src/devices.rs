@@ -268,11 +268,9 @@ pub fn start_microphone(
         let config = device
             .default_input_config()
             .context("no default input config")?;
-        let sample_rate = config.sample_rate().0;
-        let channels = config.channels();
-        let mut assembler = FrameAssembler::new(sample_rate, channels);
+        let mut assembler = FrameAssembler::new(config.sample_rate().0, config.channels());
 
-        let mut data_cb = move |data: &[f32], latency: Option<std::time::Duration>| {
+        let data_cb = move |data: &[f32], latency: Option<std::time::Duration>| {
             assembler.push(data);
             let mut processor = processor.lock().unwrap();
             processor.note_capture_latency(latency);
@@ -280,58 +278,100 @@ pub fn start_microphone(
                 let processed = processor.process(&frame);
                 if let Ok(processed) = processed {
                     if processed.should_transmit {
-                        let pcm: Vec<i16> = processed
-                            .samples
-                            .iter()
-                            .map(|s| (s * 32767.0) as i16)
-                            .collect();
-                        let _ = tx.send(pcm);
+                        let _ = tx.send(pcm16(&processed.samples));
                     }
                 }
             }
         };
-
         let err_cb = move |e| {
             tracing::error!("microphone stream error: {e}");
             fault.raise();
         };
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => device.build_input_stream(
+        open_input_stream(&device, config, data_cb, err_cb)
+    })
+}
+
+pub fn pcm16(samples: &[f32]) -> Vec<i16> {
+    samples.iter().map(|s| (s * 32767.0) as i16).collect()
+}
+
+pub fn system_audio_supported() -> bool {
+    cfg!(windows)
+}
+
+#[cfg(windows)]
+pub fn start_system_audio(tx: UnboundedSender<Vec<i16>>) -> Result<InputHandle> {
+    run_stream_thread("system audio thread died", move |fault| {
+        let tx = tx.clone();
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .ok_or_else(|| anyhow!("no output device to capture from"))?;
+        let config = device
+            .default_output_config()
+            .context("no default output config")?;
+        let mut assembler = FrameAssembler::new(config.sample_rate().0, config.channels());
+        let data_cb = move |data: &[f32], _: Option<std::time::Duration>| {
+            assembler.push(data);
+            while let Some(frame) = assembler.next_frame() {
+                let _ = tx.send(pcm16(&frame));
+            }
+        };
+        let err_cb = move |e| {
+            tracing::error!("system audio stream error: {e}");
+            fault.raise();
+        };
+        open_input_stream(&device, config, data_cb, err_cb)
+    })
+}
+
+#[cfg(not(windows))]
+pub fn start_system_audio(_tx: UnboundedSender<Vec<i16>>) -> Result<InputHandle> {
+    Err(anyhow!("system audio capture is not available on this platform"))
+}
+
+fn open_input_stream(
+    device: &cpal::Device,
+    config: cpal::SupportedStreamConfig,
+    mut data_cb: impl FnMut(&[f32], Option<std::time::Duration>) + Send + 'static,
+    err_cb: impl Fn(cpal::StreamError) + Send + 'static,
+) -> Result<cpal::Stream> {
+    let stream = match config.sample_format() {
+        cpal::SampleFormat::F32 => device.build_input_stream(
+            &config.into(),
+            move |data: &[f32], info| data_cb(data, capture_latency(info)),
+            err_cb,
+            None,
+        )?,
+        cpal::SampleFormat::I16 => {
+            let mut floats: Vec<f32> = Vec::new();
+            device.build_input_stream(
                 &config.into(),
-                move |data: &[f32], info| data_cb(data, capture_latency(info)),
+                move |data: &[i16], info| {
+                    floats.clear();
+                    floats.extend(data.iter().map(|s| *s as f32 / 32768.0));
+                    data_cb(&floats, capture_latency(info));
+                },
                 err_cb,
                 None,
-            )?,
-            cpal::SampleFormat::I16 => {
-                let mut floats: Vec<f32> = Vec::new();
-                device.build_input_stream(
-                    &config.into(),
-                    move |data: &[i16], info| {
-                        floats.clear();
-                        floats.extend(data.iter().map(|s| *s as f32 / 32768.0));
-                        data_cb(&floats, capture_latency(info));
-                    },
-                    err_cb,
-                    None,
-                )?
-            }
-            cpal::SampleFormat::U16 => {
-                let mut floats: Vec<f32> = Vec::new();
-                device.build_input_stream(
-                    &config.into(),
-                    move |data: &[u16], info| {
-                        floats.clear();
-                        floats.extend(data.iter().map(|s| (*s as f32 - 32768.0) / 32768.0));
-                        data_cb(&floats, capture_latency(info));
-                    },
-                    err_cb,
-                    None,
-                )?
-            }
-            other => return Err(anyhow!("unsupported input format {other:?}")),
-        };
-        Ok(stream)
-    })
+            )?
+        }
+        cpal::SampleFormat::U16 => {
+            let mut floats: Vec<f32> = Vec::new();
+            device.build_input_stream(
+                &config.into(),
+                move |data: &[u16], info| {
+                    floats.clear();
+                    floats.extend(data.iter().map(|s| (*s as f32 - 32768.0) / 32768.0));
+                    data_cb(&floats, capture_latency(info));
+                },
+                err_cb,
+                None,
+            )?
+        }
+        other => return Err(anyhow!("unsupported input format {other:?}")),
+    };
+    Ok(stream)
 }
 
 fn capture_latency(info: &cpal::InputCallbackInfo) -> Option<std::time::Duration> {
@@ -453,6 +493,21 @@ mod tests {
             vec![0i16; FRAME_SIZE]
         });
         assert!((1..=3).contains(&calls), "pulled {calls} frames");
+    }
+
+    #[test]
+    fn pcm16_scales_and_saturates() {
+        assert_eq!(pcm16(&[0.0, 0.5, -0.5]), vec![0, 16383, -16383]);
+        assert_eq!(pcm16(&[2.0, -2.0]), vec![i16::MAX, i16::MIN]);
+    }
+
+    #[test]
+    fn system_audio_is_only_offered_where_loopback_capture_exists() {
+        assert_eq!(system_audio_supported(), cfg!(windows));
+        if !system_audio_supported() {
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            assert!(start_system_audio(tx).is_err());
+        }
     }
 
     #[test]

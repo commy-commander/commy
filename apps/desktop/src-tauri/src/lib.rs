@@ -32,7 +32,7 @@ mod view;
 mod voice_keys;
 mod wake;
 
-use media_engine::{should_dial, CameraSession, MicTest, ScreenShareSession, ScreenWatch, VoiceSession};
+use media_engine::{should_dial, CameraSession, MicTest, ScreenShareSession, ScreenWatch, StreamAudioSink, VoiceSession};
 use state::{App, VoiceSettings};
 use tauri::{Emitter, Manager};
 use view::{
@@ -1448,6 +1448,7 @@ struct OwnShareView {
     jpeg: Option<String>,
     viewers: usize,
     frames: u64,
+    audio: bool,
 }
 
 #[tauri::command]
@@ -1461,6 +1462,7 @@ fn own_share_frame(app: tauri::State<App>) -> CmdResult<OwnShareView> {
         jpeg: frame.map(|f| base64::engine::general_purpose::STANDARD.encode(&f.jpeg)),
         viewers: session.viewer_count(),
         frames: session.frames_encoded(),
+        audio: session.shares_audio(),
     })
 }
 
@@ -1472,6 +1474,7 @@ async fn start_screen_share(
     source_kind: Option<String>,
     source_id: Option<u32>,
     quality: Option<String>,
+    audio: Option<bool>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
@@ -1479,11 +1482,12 @@ async fn start_screen_share(
 
     let source = parse_source(source_kind.as_deref(), source_id);
     let quality = StreamQuality::from_name(quality.as_deref().unwrap_or(""));
-    let session = ScreenShareSession::start(sid, channel, quality.fps(), quality.max_width(), source);
+    let share_audio = audio.unwrap_or(true) && commy_media::system_audio_supported();
+    let session = ScreenShareSession::start(sid, channel, quality.fps(), quality.max_width(), source, share_audio);
     let (preview_tx, preview_rx) = tokio::sync::mpsc::unbounded_channel();
     session.add_subscriber(preview_tx);
     let emitter = handle.clone();
-    let preview = ScreenWatch::from_frames(profile.id, preview_rx, None, move |user, seq, width, height, jpeg| {
+    let preview = ScreenWatch::from_frames(profile.id, preview_rx, None, None, move |user, seq, width, height, jpeg| {
         let _ = emitter.emit("video-frame", video_frame_payload(user, Some(seq), width, height, &jpeg));
     });
     *app.own_preview.lock().unwrap() = Some(preview);
@@ -1570,11 +1574,48 @@ async fn watch_screen(
     .await?;
 
     let emitter = handle.clone();
-    let watch = ScreenWatch::start(user, media, move |user, seq, width, height, jpeg| {
+    let audio = stream_audio_sink(&app, user);
+    let watch = ScreenWatch::start(user, media, audio, move |user, seq, width, height, jpeg| {
         let _ = emitter.emit("video-frame", video_frame_payload(user, Some(seq), width, height, &jpeg));
     });
     app.watches.lock().unwrap().insert(user, watch);
     Ok(())
+}
+
+fn stream_audio_sink(app: &App, sharer: UserId) -> Option<StreamAudioSink> {
+    let voice = app.voice.lock().unwrap().clone();
+    let gain = voice.stream_gain(app.forced_deaf.load(std::sync::atomic::Ordering::Relaxed));
+    if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
+        return Some(StreamAudioSink::in_call(session.mixer.clone(), sharer, gain));
+    }
+    match StreamAudioSink::standalone(sharer, gain, voice.output_volume, voice.output_device.clone()) {
+        Ok(sink) => Some(sink),
+        Err(e) => {
+            tracing::warn!("watching without stream audio: {e}");
+            None
+        }
+    }
+}
+
+fn apply_stream_volume(app: &App) {
+    let voice = app.voice.lock().unwrap().clone();
+    let gain = voice.stream_gain(app.forced_deaf.load(std::sync::atomic::Ordering::Relaxed));
+    for watch in app.watches.lock().unwrap().values() {
+        watch.set_stream_volume(gain);
+        watch.set_master_volume(voice.output_volume);
+    }
+}
+
+#[tauri::command]
+fn share_audio_supported() -> bool {
+    commy_media::system_audio_supported()
+}
+
+#[tauri::command]
+fn set_stream_volume(app: tauri::State<App>, volume: f32) -> VoiceSettings {
+    let snapshot = app.update_voice(|voice| voice.stream_volume = volume.clamp(0.0, 2.0));
+    apply_stream_volume(&app);
+    snapshot
 }
 
 fn video_frame_payload(user: UserId, seq: Option<u64>, width: u32, height: u32, jpeg: &[u8]) -> serde_json::Value {
@@ -1668,7 +1709,7 @@ async fn watch_camera(
     };
     let media = dial_media(&app, &their_hex, MediaHello::CameraSubscribe { user: profile.id, channel }).await?;
     let emitter = handle.clone();
-    let watch = ScreenWatch::start(user, media, move |user, _seq, width, height, jpeg| {
+    let watch = ScreenWatch::start(user, media, None, move |user, _seq, width, height, jpeg| {
         let _ = emitter.emit("camera-frame", video_frame_payload(user, None, width, height, &jpeg));
     });
     app.camera_watches.lock().unwrap().insert(user, watch);
@@ -5791,6 +5832,7 @@ fn set_volumes(app: tauri::State<App>, output_volume: f32, input_gain: f32) -> V
             .unwrap()
             .set_master(snapshot.output_volume);
     }
+    apply_stream_volume(&app);
     snapshot
 }
 
@@ -6013,6 +6055,7 @@ fn apply_voice_gates(app: &App) {
     if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
         session.deafened.store(deaf, std::sync::atomic::Ordering::Relaxed);
     }
+    apply_stream_volume(app);
 }
 
 fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
@@ -6449,7 +6492,8 @@ async fn run_media_loop(
                 let share = app.screen_share.lock().unwrap();
                 match share.as_ref() {
                     Some(s) if s.channel == channel => {
-                        s.add_subscriber(media.outgoing.clone());
+                        let MediaChannel { incoming, outgoing, .. } = media;
+                        s.add_viewer(outgoing, incoming);
                         tracing::info!("viewer {} subscribed to our screen", user);
                     }
                     _ => tracing::debug!("screen subscribe while not sharing"),
@@ -6967,6 +7011,8 @@ pub fn run() {
             get_attachment_video,
             start_screen_share,
             stop_screen_share,
+            share_audio_supported,
+            set_stream_volume,
             watch_screen,
             stop_watching,
             get_voice_settings,

@@ -31,7 +31,8 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   soundboard with per-server clips.
 - **Screen and game streaming.** Share a whole monitor or a single window with
   a Sharp, Balanced or Smooth quality preset. Windows uses Windows Graphics
-  Capture, so games stream cleanly.
+  Capture, so games stream cleanly, and can send what your computer plays
+  along with the picture; viewers set their own stream volume.
 - **Direct messages.** Private conversations between two people, delivered
   straight to their devices, with offline messages that arrive when the other
   person comes back.
