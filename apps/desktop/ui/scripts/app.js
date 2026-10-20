@@ -9254,7 +9254,7 @@ function renderDmHome() {
 function buildWelcomeHome() {
   const home = el("div", "empty-state welcome-home");
   const mark = el("img", "welcome-mark");
-  mark.src = "images/commy_v2.png";
+  mark.src = "images/commy_v3_noback.png";
   mark.alt = "";
   mark.draggable = false;
   home.appendChild(mark);
@@ -12433,8 +12433,8 @@ async function renderIconPickers() {
         const img = el("img");
         img.alt = "";
         img.draggable = false;
-        img.src = choice.custom ? iconState.custom[target] : "images/commy_v2.png";
-        if (choice.filter) img.style.filter = choice.filter;
+        img.src = choice.custom ? iconState.custom[target] : choice.image;
+        if (choice.tile) art.style.background = choice.tile;
         art.appendChild(img);
       }
       tile.append(art, el("span", "icon-label", choice.label));
