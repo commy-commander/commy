@@ -59,7 +59,11 @@ pub enum StoreError {
     Limit,
     #[error("that member is timed out")]
     TimedOut,
+    #[error("that thread is locked")]
+    ThreadLocked,
 }
+
+const MAX_THREAD_DEPTH: usize = 64;
 
 pub const TOMBSTONE_KEEP_DAYS: i64 = 60;
 
@@ -704,7 +708,8 @@ impl ServerState {
             | E::ReactionSet { message, .. }
             | E::ReactionToggle { message, .. }
             | E::PollVote { message, .. }
-            | E::PollClose { message, .. } => self.has_message(*message),
+            | E::PollClose { message, .. }
+            | E::ThreadSet { root: message, .. } => self.has_message(*message),
             _ => true,
         }
     }
@@ -1283,6 +1288,37 @@ impl ServerState {
                 }
                 Ok(replace(&mut target.slow_mode, seconds))
             }
+            ServerEvent::ThreadSet { server, channel, root, name, archived, locked, by } => {
+                self.same_server(server)?;
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                if self.index.get(&root).is_some_and(|c| *c != channel) {
+                    return Err(StoreError::WrongChannel);
+                }
+                if self.deleted_messages.contains(&root) || self.tombstones.contains_key(&root) {
+                    return Ok(false);
+                }
+                if name.as_deref().is_some_and(|n| !crate::server::valid_thread_name(n)) {
+                    return Ok(false);
+                }
+                let target = self.server.channel_mut(channel).ok_or(StoreError::UnknownChannel)?;
+                if !matches!(target.kind, ChannelKind::Text | ChannelKind::Announcement) {
+                    return Ok(false);
+                }
+                let thread = crate::server::Thread { name, archived, locked, by };
+                if thread.is_plain() {
+                    return Ok(target.threads.remove(&root).is_some());
+                }
+                if target.threads.get(&root).is_some_and(|t| t.same_settings(&thread)) {
+                    return Ok(false);
+                }
+                if !target.threads.contains_key(&root) && target.threads.len() >= crate::server::MAX_THREADS_PER_CHANNEL {
+                    return Err(StoreError::Limit);
+                }
+                target.threads.insert(root, thread);
+                Ok(true)
+            }
             ServerEvent::VoiceModerate { server, user, muted, deafened } => {
                 self.same_server(server)?;
                 if user == self.server.owner {
@@ -1619,6 +1655,39 @@ impl ServerState {
         self.slow_mode_wait(message.channel, message.author, message.created_at).is_some()
     }
 
+    pub fn thread_root_of(&self, channel: ChannelId, id: MessageId) -> MessageId {
+        let list = self.messages(channel);
+        let mut current = id;
+        for _ in 0..MAX_THREAD_DEPTH {
+            let Some(parent) = list.iter().rev().find(|m| m.id == current).and_then(|m| m.reply_to) else { break };
+            if !list.iter().any(|m| m.id == parent) {
+                break;
+            }
+            current = parent;
+        }
+        current
+    }
+
+    pub fn thread_of(&self, channel: ChannelId, root: MessageId) -> Option<&crate::server::Thread> {
+        self.server.channel(channel)?.threads.get(&root)
+    }
+
+    fn thread_locked_for(&self, message: &Message, root: MessageId) -> bool {
+        self.thread_of(message.channel, root).is_some_and(|t| t.locked)
+            && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::MANAGE_MESSAGES)
+    }
+
+    fn reopen_thread(&mut self, channel: ChannelId, root: MessageId) {
+        let Some(target) = self.server.channel_mut(channel) else { return };
+        let Some(thread) = target.threads.get_mut(&root) else { return };
+        if thread.archived {
+            thread.archived = false;
+            if thread.is_plain() {
+                target.threads.remove(&root);
+            }
+        }
+    }
+
     fn create_message(&mut self, mut message: Message) -> Result<bool, StoreError> {
         if !message.id.is_bound_to(message.author) {
             return Err(StoreError::UnboundMessageId);
@@ -1647,6 +1716,10 @@ impl ServerState {
                 Some(c) if c.kind == ChannelKind::Announcement => return Err(StoreError::NotAnnouncer),
                 _ => {}
             }
+        }
+        let thread_root = message.reply_to.filter(|_| !held).map(|parent| self.thread_root_of(message.channel, parent));
+        if thread_root.is_some_and(|root| self.thread_locked_for(&message, root)) {
+            return Err(StoreError::ThreadLocked);
         }
         if !held
             && message.attachments.iter().any(Attachment::is_plain_file)
@@ -1705,8 +1778,12 @@ impl ServerState {
             .ok_or(StoreError::UnknownChannel)?;
         message.reactions = relayed_reactions(std::mem::take(&mut message.reactions));
         self.index.insert(message.id, message.channel);
+        let channel = message.channel;
         let pos = list.partition_point(|m| m.created_at <= message.created_at);
         list.insert(pos, message);
+        if let Some(root) = thread_root {
+            self.reopen_thread(channel, root);
+        }
         Ok(true)
     }
 
@@ -1803,6 +1880,9 @@ impl ServerState {
             self.server.pins.retain(|p| p.message != proof.message);
             self.ballots.remove(&proof.message);
             self.closed_polls.remove(&proof.message);
+            if let Some(target) = self.server.channel_mut(channel) {
+                target.threads.remove(&proof.message);
+            }
             self.store_proof(proof, Some(author));
             return Ok(true);
         }
@@ -3508,6 +3588,68 @@ mod tests {
         assert_eq!(state.slow_mode_wait(channel, owner, Utc::now()), None);
         assert_eq!(state.apply(slow(channel, 0)), Ok(true));
         assert_eq!(state.slow_mode_wait(channel, member, Utc::now()), None);
+    }
+
+    #[test]
+    fn threads_are_named_archived_and_locked_by_their_starter_or_a_moderator() {
+        use crate::action::authorized;
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let starter = join(&mut state, "starter");
+        let other = join(&mut state, "other");
+        let moderator = join_moderator(&mut state, "mod");
+        let root = post(&state, channel, starter, "where should we meet");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: root.clone() }), Ok(true));
+        let set = |by, name: Option<&str>, archived, locked| ServerEvent::ThreadSet {
+            server: sid,
+            channel,
+            root: root.id,
+            name: name.map(str::to_string),
+            archived,
+            locked,
+            by,
+        };
+        let rename = |by| set(by, Some("meetup"), false, false);
+        assert!(authorized(&state.server, starter, &rename(starter)), "the root author names their thread");
+        assert!(authorized(&state.server, owner, &rename(owner)));
+        assert!(authorized(&state.server, moderator, &rename(moderator)));
+        assert!(!authorized(&state.server, other, &rename(other)), "a plain member cannot");
+        assert!(!authorized(&state.server, other, &rename(starter)), "nor pretend to be the author");
+        assert!(!authorized(&state.server, UserId::new(), &rename(UserId::new())), "stranger");
+        assert_eq!(state.apply(rename(starter)), Ok(true));
+        assert_eq!(state.apply(rename(starter)), Ok(false), "unchanged");
+        assert_eq!(state.thread_of(channel, root.id).and_then(|t| t.name.clone()).as_deref(), Some("meetup"));
+        assert_eq!(state.apply(set(starter, Some(&"x".repeat(101)), false, false)), Ok(false), "name too long");
+        assert_eq!(state.apply(set(starter, None, false, false)), Ok(true), "back to plain forgets the entry");
+        assert!(state.thread_of(channel, root.id).is_none());
+        let voice = state.server.channels.iter().find(|c| c.kind == ChannelKind::Voice).unwrap().id;
+        let elsewhere = ServerEvent::ThreadSet { server: sid, channel: voice, root: root.id, name: None, archived: false, locked: true, by: owner };
+        assert_eq!(state.apply(elsewhere), Err(StoreError::WrongChannel));
+        assert_eq!(state.apply(set(moderator, Some("meetup"), false, true)), Ok(true), "locked");
+        let reply = |state: &ServerState, author, to: MessageId, text: &str| {
+            signed(state, Message { reply_to: Some(to), ..Message::new(channel, author, text) })
+        };
+        let blocked = reply(&state, other, root.id, "friday?");
+        assert!(!authorized(&state.server, other, &ServerEvent::MessageCreate { message: blocked.clone() }));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: blocked }), Err(StoreError::ThreadLocked));
+        let allowed = reply(&state, moderator, root.id, "settled: friday");
+        assert!(authorized(&state.server, moderator, &ServerEvent::MessageCreate { message: allowed.clone() }));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: allowed.clone() }), Ok(true));
+        let nested = reply(&state, other, allowed.id, "ok");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: nested }), Err(StoreError::ThreadLocked), "deeper replies too");
+        assert_eq!(state.messages(channel).len(), 2);
+        assert_eq!(state.apply(set(moderator, Some("meetup"), true, false)), Ok(true), "archived and unlocked");
+        let revived = reply(&state, other, allowed.id, "one more thing");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: revived }), Ok(true));
+        let thread = state.thread_of(channel, root.id).unwrap();
+        assert!(!thread.archived, "a reply reopens an archived thread");
+        assert_eq!(thread.name.as_deref(), Some("meetup"));
+        let restored = ServerState::from_snapshot(state.snapshot());
+        assert_eq!(restored.thread_of(channel, root.id), state.thread_of(channel, root.id));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: root.clone() }), Ok(false));
+        let gone = delete(&state, &root, starter);
+        assert_eq!(state.apply(gone), Ok(true));
+        assert!(state.thread_of(channel, root.id).is_none(), "deleting the root forgets the thread");
     }
 
     #[test]

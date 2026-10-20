@@ -27,10 +27,11 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   for everyone ([crates/commy-bot](crates/commy-bot/README.md)).
   Channels can be limited to roles. Messages sent in a private channel are
   encrypted so only those roles and admins can read them.
-- **Rich chat.** Replies, reactions, edits, emoji (including custom server
-  emoji), images and files shown inline, voice messages recorded from the
-  composer and played back in place, clickable links, polls with a closing
-  time, and a GIF picker when the server operator has set up a GIF provider key.
+- **Rich chat.** Replies, reactions, edits, named threads that can be
+  archived or locked, emoji (including custom server emoji), images and
+  files shown inline, voice messages recorded from the composer and played
+  back in place, clickable links, polls with a closing time, and a GIF
+  picker when the server operator has set up a GIF provider key.
 - **Message search.** Search a server by keyword, phrase, author, mention or
   channel. Search runs on your device over the history it keeps, and a result
   jumps straight to the message, even weeks back.

@@ -73,9 +73,30 @@ pub struct ChannelView {
     pub send_roles: Vec<String>,
     pub slow_mode: u32,
     pub sensitive: bool,
+    pub threads: Vec<ThreadView>,
     pub can_view: bool,
     pub can_send: bool,
     pub key_ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ThreadView {
+    pub root: String,
+    pub name: Option<String>,
+    pub archived: bool,
+    pub locked: bool,
+    pub by: String,
+}
+
+impl ThreadView {
+    fn list(channel: &commy_core::server::Channel, state: &ServerState) -> Vec<ThreadView> {
+        channel
+            .threads
+            .iter()
+            .filter(|(root, _)| state.has_message(**root))
+            .map(|(root, t)| ThreadView { root: root.to_string(), name: t.name.clone(), archived: t.archived, locked: t.locked, by: t.by.to_string() })
+            .collect()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -276,6 +297,7 @@ impl ServerView {
                     send_roles: c.send_roles.iter().map(|r| r.to_string()).collect(),
                     slow_mode: c.slow_mode,
                     sensitive: c.sensitive,
+                    threads: if can_view { ThreadView::list(c, state) } else { Vec::new() },
                     can_view,
                     can_send: can_view && viewer.is_some_and(|v| state.server.can_post_in(c.id, v)),
                     key_ready: can_view && keys.key_ready(state, c.id),
