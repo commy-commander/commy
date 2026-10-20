@@ -1,10 +1,17 @@
+pub mod actions;
+pub mod bridge;
+pub mod compat;
+pub mod handler;
 pub mod moderator;
 pub mod replica;
 pub mod runner;
 pub mod storage;
 pub mod store;
+pub mod webhook;
 
-pub use moderator::{Act, Moderator, Policy};
+pub use actions::ActError;
+pub use handler::{Act, BotEvent, Ctx, Handler};
+pub use moderator::{Moderator, Policy};
 pub use replica::Replica;
 pub use store::{BotStore, Outgoing};
 
@@ -23,13 +30,19 @@ pub struct Bot {
     profile: UserProfile,
     replicas: BTreeMap<ServerId, Replica>,
     moderator: Moderator,
+    handlers: Vec<Box<dyn Handler>>,
 }
 
 impl Bot {
     pub fn new(identity: Identity, mut profile: UserProfile, moderator: Moderator) -> Self {
         profile.presence = Presence::Online;
         profile.identity = Some(identity.public());
-        Self { identity, profile, replicas: BTreeMap::new(), moderator }
+        Self { identity, profile, replicas: BTreeMap::new(), moderator, handlers: Vec::new() }
+    }
+
+    pub fn with(mut self, handler: impl Handler + 'static) -> Self {
+        self.handlers.push(Box::new(handler));
+        self
     }
 
     pub fn add(&mut self, replica: Replica) {
@@ -145,51 +158,40 @@ impl Bot {
         self.review(server, fresh, wall)
     }
 
-    fn review(&mut self, server: ServerId, fresh: Vec<Message>, wall: DateTime<Utc>) -> Vec<WirePayload> {
-        let me = self.profile.clone();
-        let Some(replica) = self.replicas.get_mut(&server) else { return Vec::new() };
+    fn review(&mut self, server: ServerId, events: Vec<BotEvent>, wall: DateTime<Utc>) -> Vec<WirePayload> {
+        let me = self.profile.id;
         let mut out = Vec::new();
         let mut seen = HashSet::new();
-        for id in fresh.into_iter().map(|m| m.id).filter(|id| seen.insert(*id)) {
-            let acts = match replica.state.as_ref().and_then(|s| Some((s, s.message(id)?))) {
-                Some((state, message)) => match readable(state, me.id, &self.identity, message) {
-                    Some(opened) => self.moderator.review(state, me.id, &opened, wall),
-                    None => continue,
-                },
-                None => continue,
+        for event in events {
+            let acts = {
+                let Some(state) = self.replicas.get(&server).and_then(|r| r.state.as_ref()) else { return out };
+                let Some(event) = current(state, me, &self.identity, event, &mut seen) else { continue };
+                let ctx = Ctx { server, state, me, now: wall };
+                let mut acts = self.moderator.handle(&ctx, &event);
+                for handler in &mut self.handlers {
+                    acts.extend(handler.handle(&ctx, &event));
+                }
+                acts
             };
             for act in acts {
-                let name = replica.name().to_string();
-                let payload = match act {
-                    Act::Remove { message, hold } => {
-                        tracing::info!("removed a message in {name}: {}", hold.describe());
-                        let proof = TombstoneProof::sign(server, message.channel, message.id, me.id, wall, &self.identity);
-                        WirePayload::Event(proof.into_event())
-                    }
-                    Act::Ban { user } => {
-                        tracing::info!("banned {user} from {name}");
-                        replica.signed(&me, &self.identity, ServerEvent::MemberBan { server, user }, wall.timestamp_millis())
-                    }
-                    Act::Note { channel, text } => {
-                        let mut note = Message::new(channel, me.id, text);
-                        let Some(state) = replica.state.as_ref() else { continue };
-                        if !seal_note(state, me.id, &self.identity, &mut note) {
-                            tracing::info!("skipped a note in {name}: the bot cannot write in that channel yet");
-                            continue;
-                        }
-                        note.sign(server, &self.identity);
-                        WirePayload::Event(ServerEvent::MessageCreate { message: note })
-                    }
-                };
-                replica.apply_own(&payload);
-                out.push(payload);
+                match self.perform(server, act, wall) {
+                    Ok(payload) => out.push(payload),
+                    Err(e) => tracing::warn!("{}: {e}", self.replicas.get(&server).map_or("", |r| r.name())),
+                }
             }
         }
         out
     }
 
+    pub fn readable(&self, state: &ServerState, message: &Message) -> Option<Message> {
+        readable(state, self.profile.id, &self.identity, message)
+    }
+
     pub fn tidy(&mut self, wall: DateTime<Utc>) {
-        self.moderator.forget(wall);
+        self.moderator.tidy(wall);
+        for handler in &mut self.handlers {
+            handler.tidy(wall);
+        }
         let floor = wall - chrono::Duration::hours(KEEP_HOURS);
         for state in self.replicas.values_mut().filter_map(|r| r.state.as_mut()) {
             state.prune_expired(wall);
@@ -198,21 +200,30 @@ impl Bot {
     }
 }
 
-fn readable(state: &ServerState, me: UserId, identity: &Identity, message: &Message) -> Option<Message> {
+fn current(state: &ServerState, me: UserId, identity: &Identity, event: BotEvent, seen: &mut HashSet<commy_core::MessageId>) -> Option<BotEvent> {
+    match &event {
+        BotEvent::ReactionAdd { user, .. } | BotEvent::ReactionRemove { user, .. } if *user == me => return None,
+        _ => {}
+    }
+    let Some(message) = event.message() else { return Some(event) };
+    let joined = state.server.member(me)?.joined_at;
+    if !seen.insert(message.id) || message.author == me {
+        return None;
+    }
+    let message = readable(state, me, identity, state.message(message.id)?)?;
+    if handler::written(&message) < joined {
+        return None;
+    }
+    Some(match event {
+        BotEvent::MessageUpdate(_) => BotEvent::MessageUpdate(message),
+        _ => BotEvent::MessageCreate(message),
+    })
+}
+
+pub(crate) fn readable(state: &ServerState, me: UserId, identity: &Identity, message: &Message) -> Option<Message> {
     if !channel_key::is_sealed(&message.content) {
         return Some(message.clone());
     }
     let ring = Keyring::unlock(state, message.channel, me, identity);
     channel_key::read_message(state.server.id, message, &ring)
-}
-
-fn seal_note(state: &ServerState, me: UserId, identity: &Identity, note: &mut Message) -> bool {
-    let Some(channel) = state.server.channel(note.channel) else { return false };
-    if !channel.is_private() {
-        return true;
-    }
-    let ring = Keyring::unlock(state, note.channel, me, identity);
-    let Some((key, secret)) = ring.sending_key(state, note.channel) else { return false };
-    channel_key::seal_message(state.server.id, note, key, secret);
-    true
 }

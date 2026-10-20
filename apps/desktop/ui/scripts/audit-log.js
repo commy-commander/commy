@@ -7,6 +7,7 @@ const AUDIT_FILTERS = [
   ["messages", "Messages"],
   ["expressions", "Emoji and sounds"],
   ["events", "Events"],
+  ["invites", "Invites"],
 ];
 
 const AUDIT_GROUP_OF = {
@@ -48,6 +49,9 @@ const AUDIT_GROUP_OF = {
   message_pin: "messages",
   message_unpin: "messages",
   message_delete: "messages",
+  invite_create: "invites",
+  invite_revoke: "invites",
+  invite_background: "invites",
   channel_access: "channels",
 };
 
@@ -119,6 +123,9 @@ function describeAudit(entry) {
     case "message_pin": return ["pinned a message in ", channel];
     case "message_unpin": return ["unpinned a message in ", channel];
     case "message_delete": return detail ? ["deleted a message by ", member, " in ", auditStrong(detail)] : ["deleted a message by ", member];
+    case "invite_create": return ["created the invite ", named("a link")];
+    case "invite_revoke": return detail ? ["revoked the invite ", named("a link"), " made by ", auditStrong(detail)] : ["revoked the invite ", named("a link")];
+    case "invite_background": return [detail === "removed" ? "removed the invite background" : "changed the invite background"];
     default: return ["made a change"];
   }
 }

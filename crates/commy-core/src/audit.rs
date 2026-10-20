@@ -48,6 +48,9 @@ pub enum AuditKind {
     MessagePin,
     MessageUnpin,
     MessageDelete,
+    InviteCreate,
+    InviteRevoke,
+    InviteBackground,
     ChannelAccess,
 }
 
@@ -219,6 +222,12 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             let kind = if *pinned { K::MessagePin } else { K::MessageUnpin };
             (kind, Some(message.to_string()), channel_name(state, *id), None)
         }
+        E::InviteTrack { invite, .. } => (K::InviteCreate, Some(invite.creator.to_string()), Some(clip(&invite.code)), None),
+        E::InviteRevoke { code, creator, .. } => {
+            let (target, made_by) = member(creator);
+            (K::InviteRevoke, target, Some(clip(code)), made_by)
+        }
+        E::InviteBackgroundSet { background, .. } => (K::InviteBackground, None, None, set_or_removed(background.is_some())),
         _ => return None,
     })
 }

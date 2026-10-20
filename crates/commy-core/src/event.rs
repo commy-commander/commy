@@ -190,6 +190,20 @@ pub enum ServerEvent {
     ServerDelete {
         server: ServerId,
     },
+    InviteTrack {
+        server: ServerId,
+        invite: crate::invites::TrackedInvite,
+    },
+    InviteRevoke {
+        server: ServerId,
+        origin: String,
+        code: String,
+        creator: UserId,
+    },
+    InviteBackgroundSet {
+        server: ServerId,
+        background: Option<String>,
+    },
     ChannelAccessSet {
         server: ServerId,
         channel: ChannelId,
@@ -254,7 +268,10 @@ mod tests {
         assert_eq!(wire_tag(play), 51);
         assert_eq!(wire_tag(ServerEvent::PronounsSet { server, user, pronouns: None }), 52);
         assert_eq!(wire_tag(ServerEvent::ServerDelete { server }), 53);
-        assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 54);
+        let revoke = ServerEvent::InviteRevoke { server, origin: "o".into(), code: "c".into(), creator: user };
+        assert_eq!(wire_tag(revoke), 55);
+        assert_eq!(wire_tag(ServerEvent::InviteBackgroundSet { server, background: None }), 56);
+        assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 57);
     }
 
     #[test]

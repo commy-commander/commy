@@ -1,5 +1,7 @@
+use crate::bridge::{self, Bridge, Tap};
 use crate::moderator::{can_ban, can_remove};
 use crate::storage::DataDir;
+use crate::webhook::{self, Webhooks};
 use crate::{Bot, BotStore, Moderator, Outgoing, Policy, Replica};
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
@@ -7,6 +9,7 @@ use commy_core::{Permissions, Presence, ServerEvent, ServerId, ServerState, User
 use commy_net::{CommyNode, NetEvent, WirePayload};
 use std::collections::BTreeSet;
 use std::future::Future;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -16,6 +19,19 @@ pub const SAVE_EVERY: Duration = Duration::from_secs(30);
 pub const HIGHER_NODE_WAIT: Duration = Duration::from_secs(15);
 pub const RECENT_SESSION: Duration = Duration::from_secs(60);
 const FAREWELL_LINGER: Duration = Duration::from_millis(300);
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Setup {
+    pub policy: Policy,
+    pub bridge: Option<u16>,
+    pub webhooks: Option<SocketAddr>,
+}
+
+impl From<Policy> for Setup {
+    fn from(policy: Policy) -> Self {
+        Self { policy, ..Self::default() }
+    }
+}
 
 pub fn require_profile(data: &DataDir) -> Result<UserProfile> {
     data.profile()?.context("no bot in this folder yet; start with: commy-bot init NAME")
@@ -32,7 +48,7 @@ pub fn status_line(state: &ServerState, me: Option<UserId>) -> String {
     }
 }
 
-pub async fn run(data: &DataDir, policy: Policy, relays: Option<iroh::RelayMap>, stop: impl Future<Output = ()>) -> Result<()> {
+pub async fn run(data: &DataDir, setup: Setup, relays: Option<iroh::RelayMap>, stop: impl Future<Output = ()>) -> Result<()> {
     let profile = require_profile(data)?;
     let identity = data.identity()?;
     if profile.identity != Some(identity.public()) {
@@ -43,7 +59,11 @@ pub async fn run(data: &DataDir, policy: Policy, relays: Option<iroh::RelayMap>,
     if servers.is_empty() {
         bail!("no servers yet; add one with: commy-bot join INVITE");
     }
-    let mut bot = Bot::new(identity, profile, Moderator::new(policy));
+    let mut bot = Bot::new(identity, profile, Moderator::new(setup.policy));
+    let (taps, _) = tokio::sync::broadcast::channel(bridge::EVENT_BACKLOG);
+    if setup.bridge.is_some() {
+        bot = bot.with(Tap::new(taps.clone()));
+    }
     for (ticket, state) in servers {
         bot.add(Replica::new(ticket, state));
     }
@@ -59,6 +79,22 @@ pub async fn run(data: &DataDir, policy: Policy, relays: Option<iroh::RelayMap>,
     let (out, mut outgoing) = tokio::sync::mpsc::unbounded_channel();
     let store = Arc::new(BotStore::new(Arc::new(Mutex::new(bot)), out));
     node.set_catchup_store(store.clone());
+    if let Some(port) = setup.bridge {
+        let token = data.bridge_token(false)?;
+        let listener = tokio::net::TcpListener::bind(bridge::loopback(port))
+            .await
+            .with_context(|| format!("could not open the bridge on 127.0.0.1:{port}"))?;
+        tracing::info!("bridge listening on 127.0.0.1:{port}; the token is in {}", data.root().join(crate::storage::TOKEN_FILE).display());
+        tokio::spawn(bridge::listen(listener, Arc::new(Bridge::new(store.clone(), token, taps.clone()))));
+    }
+    if let Some(addr) = setup.webhooks {
+        let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("could not open webhooks on {addr}"))?;
+        if !addr.ip().is_loopback() {
+            tracing::warn!("webhooks listen on {addr}, reachable beyond this machine; anyone with a webhook URL can post");
+        }
+        tracing::info!("webhooks listening on http://{addr}");
+        tokio::spawn(webhook::listen(listener, Arc::new(Webhooks::new(store.clone(), DataDir::new(data.root())))));
+    }
     for ticket in &tickets {
         node.rejoin_server(ticket).await.with_context(|| format!("could not join {}", ticket.server_name))?;
         tracing::info!("connecting to {}", ticket.server_name);

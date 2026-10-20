@@ -1,0 +1,11 @@
+{
+  "name": "commy-bot-client",
+  "version": "0.1.0",
+  "description": "Write Commy bots in JavaScript on top of commy-bot's local bridge",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": "./index.mjs",
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "node --test" }
+}

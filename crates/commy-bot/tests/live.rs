@@ -102,7 +102,7 @@ async fn a_running_bot_joins_wears_its_badge_and_removes_held_messages() {
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let policy = Policy { log_channel: Some("general".into()), ban_after: None };
     let runner = tokio::spawn(async move {
-        let result = run(&data, policy, Some(RelayMap::empty()), async {
+        let result = run(&data, policy.into(), Some(RelayMap::empty()), async {
             let _ = stopped.await;
         })
         .await;

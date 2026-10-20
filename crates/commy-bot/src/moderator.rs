@@ -1,6 +1,7 @@
+use crate::handler::{written, Act, BotEvent, Ctx, Handler};
 use chrono::{DateTime, Duration, Utc};
 use commy_core::automod::moderates;
-use commy_core::{ChannelId, ChannelKind, Hold, Message, MessageId, Permissions, ServerId, ServerState, UserId};
+use commy_core::{ChannelId, ChannelKind, Message, MessageId, Permissions, ServerId, ServerState, UserId};
 use std::collections::HashMap;
 
 pub const REVIEW_FOR_HOURS: i64 = crate::KEEP_HOURS;
@@ -12,13 +13,6 @@ const NAME_CHARS: usize = 40;
 pub struct Policy {
     pub ban_after: Option<u32>,
     pub log_channel: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Act {
-    Remove { message: Message, hold: Hold },
-    Ban { user: UserId },
-    Note { channel: ChannelId, text: String },
 }
 
 type Strikes = Vec<(DateTime<Utc>, MessageId)>;
@@ -39,7 +33,7 @@ impl Moderator {
     }
 
     pub fn review(&mut self, state: &ServerState, me: UserId, message: &Message, now: DateTime<Utc>) -> Vec<Act> {
-        let written = message.edited_at.unwrap_or(message.created_at);
+        let written = written(message);
         let Some(joined) = state.server.member(me).map(|m| m.joined_at) else { return Vec::new() };
         if message.author == me || written < joined || now - written > Duration::hours(REVIEW_FOR_HOURS) {
             return Vec::new();
@@ -50,7 +44,8 @@ impl Moderator {
         }
         let author = message.author;
         let name = display_name(state, author);
-        let mut acts = vec![Act::Remove { message: message.clone(), hold }];
+        tracing::info!("removing a message in {}: {}", state.server.name, hold.describe());
+        let mut acts = vec![Act::Remove { message: message.id }];
         let mut note = format!("Removed a message from {name}: {}", hold.describe());
         if let Some(limit) = self.policy.ban_after {
             let key = (state.server.id, author);
@@ -70,7 +65,7 @@ impl Moderator {
             }
         }
         if let Some(channel) = self.log_channel(state, me) {
-            acts.push(Act::Note { channel, text: note });
+            acts.push(Act::Send { channel, content: note, reply_to: None });
         }
         acts
     }
@@ -93,6 +88,19 @@ impl Moderator {
             list.retain(|(t, _)| now - *t <= keep);
             !list.is_empty()
         });
+    }
+}
+
+impl Handler for Moderator {
+    fn handle(&mut self, ctx: &Ctx, event: &BotEvent) -> Vec<Act> {
+        match event.message() {
+            Some(message) => self.review(ctx.state, ctx.me, message, ctx.now),
+            None => Vec::new(),
+        }
+    }
+
+    fn tidy(&mut self, now: DateTime<Utc>) {
+        self.forget(now);
     }
 }
 

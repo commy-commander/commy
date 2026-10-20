@@ -1,6 +1,6 @@
 [package]
 name = "commy-bot"
-description = "Headless Commy member that runs moderation on a server it was invited to"
+description = "Headless Commy member that runs bots and integrations on servers it was invited to"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,6 +20,10 @@ anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 data-encoding = { workspace = true }
+thiserror = { workspace = true }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 rand = "0.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
