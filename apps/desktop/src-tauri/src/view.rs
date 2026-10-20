@@ -102,6 +102,7 @@ pub struct MemberView {
     pub tag_color: Option<String>,
     pub role_banner: Option<String>,
     pub bot: bool,
+    pub can_mention_everyone: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,6 +116,7 @@ pub struct RoleView {
     pub hoist: bool,
     pub tag: Option<String>,
     pub banner: Option<String>,
+    pub mentionable: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -313,6 +315,7 @@ impl ServerView {
                     tag: tag.map(|(t, _)| t),
                     role_banner: state.server.top_role_with(p.id, |r| r.banner.is_some()).and_then(|r| r.banner.clone()),
                     bot: state.is_bot(p.id),
+                    can_mention_everyone: state.server.can_mention_everyone(p.id),
                 }
             })
             .collect();
@@ -332,6 +335,7 @@ impl ServerView {
                 hoist: r.hoist,
                 tag: r.tag.clone(),
                 banner: r.banner.clone(),
+                mentionable: r.mentionable,
             })
             .collect();
         roles.sort_by_key(|r| std::cmp::Reverse(r.position));
@@ -497,6 +501,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_events", Permissions::MANAGE_EVENTS),
     ("create_invites", Permissions::CREATE_INVITES),
     ("view_audit_log", Permissions::VIEW_AUDIT_LOG),
+    ("mention_everyone", Permissions::MENTION_EVERYONE),
     ("administrator", Permissions::ADMINISTRATOR),
 ];
 

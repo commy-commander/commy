@@ -27,8 +27,8 @@ function messageNotice({ author_name, channel_name, server_name, content, has_at
 
 function mentionsName(content, names) {
   if (!content) return false;
-  const escaped = [...names, "everyone", "here"].filter(Boolean)
-    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const escaped = names.filter(Boolean).map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!escaped.length) return false;
   return new RegExp(`@(${escaped.join("|")})(?![\\p{L}\\p{N}_])`, "iu").test(content);
 }
 

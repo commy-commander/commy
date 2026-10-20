@@ -34,6 +34,7 @@ impl Permissions {
     pub const ADD_EMOJIS: Permissions = Permissions(1 << 24);
     pub const ADD_STICKERS: Permissions = Permissions(1 << 25);
     pub const ADD_EMOTICONS: Permissions = Permissions(1 << 26);
+    pub const MENTION_EVERYONE: Permissions = Permissions(1 << 27);
 
     pub fn default_member() -> Permissions {
         Self::VIEW_CHANNELS
@@ -84,6 +85,10 @@ impl Permissions {
 
     pub fn can_view_audit_log(self) -> bool {
         self.allows(Self::VIEW_AUDIT_LOG) || self.allows(Self::MANAGE_SERVER)
+    }
+
+    pub fn can_mention_everyone(self) -> bool {
+        self.allows(Self::MENTION_EVERYONE)
     }
 }
 
@@ -147,6 +152,15 @@ mod tests {
         assert!(!p.can_pin());
         assert!(!p.can_announce());
         assert!(!p.can_view_audit_log());
+        assert!(!p.can_mention_everyone());
+    }
+
+    #[test]
+    fn mentioning_everyone_is_its_own_permission() {
+        assert!(Permissions::MENTION_EVERYONE.can_mention_everyone());
+        assert!(Permissions::ADMINISTRATOR.can_mention_everyone());
+        assert!(!Permissions::MANAGE_MESSAGES.can_mention_everyone());
+        assert!(!Permissions::MANAGE_SERVER.can_mention_everyone());
     }
 
     #[test]

@@ -152,8 +152,8 @@ function mockSeed() {
     ],
   };
   server.roles = [
-    { id: "r1", name: "Raider", color: "9b7bff", position: 2, permissions: [], self_assignable: true, tag: "RAID" },
-    { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages"], self_assignable: false, hoist: true, tag: null },
+    { id: "r1", name: "Raider", color: "9b7bff", position: 2, permissions: [], self_assignable: true, tag: "RAID", mentionable: true },
+    { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages", "mention_everyone"], self_assignable: false, hoist: true, tag: null, mentionable: false },
   ];
   server.game_tags = ["Rust", "Valorant"];
   server.emojis = [{ name: "ferris", image: "ferris@mock" }, { name: "ferris_wave", image: "ferris@mock" }];
@@ -389,7 +389,7 @@ async function mockInvoke(cmd, args = {}) {
       const members = [...s.members];
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: mock.user.username, presence, custom_status: null, roles: s.myRoles || [] };
+        const me = { id: "me", name: mock.user.username, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
         const vc = s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -887,7 +887,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_channel_limit": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).user_limit = args.limit; return null;
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
-      Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag });
+      Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag, mentionable: Boolean(args.mentionable) });
       if (args.permissions) r.permissions = args.permissions;
       return null;
     }
@@ -1034,7 +1034,7 @@ async function mockInvoke(cmd, args = {}) {
     case "create_role": {
       const roles = mock.servers[args.serverId].roles;
       const id = crypto.randomUUID();
-      roles.push({ id, name: args.name.trim(), color: args.color, position: roles.length + 2, permissions: args.permissions, self_assignable: Boolean(args.selfAssignable), hoist: Boolean(args.hoist), tag: args.tag || null });
+      roles.push({ id, name: args.name.trim(), color: args.color, position: roles.length + 2, permissions: args.permissions, self_assignable: Boolean(args.selfAssignable), hoist: Boolean(args.hoist), tag: args.tag || null, mentionable: Boolean(args.mentionable) });
       return id;
     }
     case "delete_role":
@@ -2204,9 +2204,19 @@ function appFocused() {
   return document.visibilityState === "visible" && document.hasFocus();
 }
 
+function myMentionNames() {
+  return state.user ? [state.user.username, state.user.display_name] : [];
+}
+
 function mentionsMe(content) {
   if (!state.user) return false;
-  return mentionsName(content, [state.user.username, state.user.display_name]);
+  return mentionsName(content, myMentionNames());
+}
+
+function messageMentionsMeIn(serverId, authorId, content) {
+  if (!state.user) return false;
+  const server = state.currentServer && state.currentServer.id === serverId ? state.currentServer : null;
+  return messageMentionsMe({ content, server, authorId, me: { id: state.user.id, names: myMentionNames() } });
 }
 
 function totalUnread() {
@@ -2292,7 +2302,8 @@ function onMessageCreated(msg) {
   }
   const level = levelForServer(notifyPrefs(), msg.server);
   const announcement = Boolean(msg.announcement);
-  if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned: mentionsMe(msg.content), announcement })) {
+  const mentioned = typeof msg.mentioned === "boolean" ? msg.mentioned : messageMentionsMeIn(msg.server, msg.author, msg.content);
+  if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement })) {
     const notice = messageNotice(msg, plainText);
     invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
     playSound("message");
@@ -3360,7 +3371,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   let inlineMark = pending && grouped;
   if (message.content) {
     if (!isBareImageLink(message.content)) {
-      const content = buildMessageContent(message.content);
+      const content = buildMessageContent(message.content, message.author_id);
       if (message.edited) appendAfterText(content, el("span", "edited", " (edited)"));
       if (inlineMark) appendAfterText(content, pendingMark());
       inlineMark = false;
@@ -4029,7 +4040,7 @@ async function sendThreadReply() {
     await invoke("send_message", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
-      content: encodeCustomEmojis(content),
+      content: encodeOutgoing(content),
       replyTo: state.threadRoot,
       previewUrl: await previewUrlFor(content),
     });
@@ -4235,7 +4246,7 @@ function startEditMessage(id) {
   const content = body.querySelector(".msg-content");
   const editor = el("div", "msg-editor");
   const input = el("textarea");
-  input.value = decodeCustomEmojis(message.content);
+  input.value = decodeRoleMentions(decodeCustomEmojis(message.content), currentRoles());
   input.rows = Math.min(8, input.value.split("\n").length);
   editor.appendChild(input);
   const hint = el("div", "msg-editor-hint");
@@ -4252,7 +4263,7 @@ function startEditMessage(id) {
       openDeleteMessage(message);
       return;
     }
-    if (encodeCustomEmojis(text) === message.content) return finish();
+    if (encodeOutgoing(text) === message.content) return finish();
     try {
       if (inDmView()) {
         await invoke("edit_dm", { userId: state.currentDm.user, messageId: message.id, content: encodeCustomEmojis(text) });
@@ -4263,7 +4274,7 @@ function startEditMessage(id) {
         serverId: state.currentServer.id,
         channelId: state.currentChannel.id,
         messageId: message.id,
-        content: encodeCustomEmojis(text),
+        content: encodeOutgoing(text),
       });
       await selectChannel(state.currentChannel);
     } catch (e) {
@@ -6182,7 +6193,7 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
-  ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "create_invites"]],
+  ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "mention_everyone", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members"]],
 ];
 
@@ -6356,6 +6367,18 @@ function roleForm(server, role, onClose) {
   separate.append(hoistCheck, el("span", null, "Show members with this role in their own group in the people list"));
   body.appendChild(separate);
 
+  const pingRow = el("label", "rf-mention");
+  const pingText = el("div", "rf-mention-text");
+  pingText.append(
+    el("div", "setting-title", "Allow anyone to mention this role"),
+    el("div", "setting-sub", "Off means only members allowed to mention everyone can notify the people holding it."),
+  );
+  const pingCheck = el("input", "switch");
+  pingCheck.type = "checkbox";
+  pingCheck.checked = role ? Boolean(role.mentionable) : false;
+  pingRow.append(pingText, pingCheck);
+  body.appendChild(pingRow);
+
   const actions = el("div", "form-actions");
   const save = el("button", "btn-primary btn-small", creating ? "Create Role" : "Save Role");
   save.onclick = async () => {
@@ -6376,6 +6399,7 @@ function roleForm(server, role, onClose) {
           tag: tagValue,
           selfAssignable: check.checked,
           hoist: hoistCheck.checked,
+          mentionable: pingCheck.checked,
         });
       } else {
         await invoke("update_role", {
@@ -6387,6 +6411,7 @@ function roleForm(server, role, onClose) {
           hoist: hoistCheck.checked,
           tag: tagValue,
           permissions,
+          mentionable: pingCheck.checked,
         });
       }
       if (bannerChange !== undefined && !(creating && bannerChange === null)) {
@@ -6754,7 +6779,7 @@ function openReport(target) {
   preview.classList.toggle("hidden", !target.excerpt);
   if (target.excerpt) {
     preview.appendChild(el("div", "msg-author", target.name));
-    preview.appendChild(buildMessageContent(target.excerpt));
+    preview.appendChild(buildMessageContent(target.excerpt, target.userId));
   }
   showModal("modal-report");
 }
@@ -6818,7 +6843,7 @@ async function renderReportSettings(server) {
     card.appendChild(head);
     if (report.excerpt) {
       const quote = el("div", "report-excerpt");
-      quote.appendChild(buildMessageContent(report.excerpt));
+      quote.appendChild(buildMessageContent(report.excerpt, report.reported));
       card.appendChild(quote);
     }
     if (report.note) card.appendChild(el("div", "report-note", report.note));
@@ -7035,8 +7060,17 @@ function decodeCustomEmojis(text) {
   return String(text || "").replace(EMOJI_TOKEN_RE, ":$1:");
 }
 
+function currentRoles() {
+  return (state.currentServer && state.currentServer.roles) || [];
+}
+
 function plainText(text) {
-  return stripMarkdown(decodeCustomEmojis(text).replace(/<:[^>\s]*$/, ""));
+  return stripMarkdown(decodeRoleMentions(decodeCustomEmojis(text), currentRoles()).replace(/<:[^>\s]*$/, ""));
+}
+
+function encodeOutgoing(text) {
+  const members = state.currentServer ? state.currentServer.members.map(m => m.name) : [];
+  return encodeRoleMentions(encodeCustomEmojis(text), currentRoles(), members);
 }
 
 function isEmojiOnly(text) {
@@ -7779,24 +7813,39 @@ async function toggleSoundboardPop() {
   placePopup(pop, $("vp-soundboard"), "below");
 }
 
-function mentionCandidates() {
+const EVERYONE_CANDIDATES = [
+  { id: "everyone", name: "everyone", special: "Notify everyone in this server", rank: 2 },
+  { id: "here", name: "here", special: "Notify everyone online", rank: 2 },
+];
+
+function mentionPeople() {
   if (state.view === "dm" && state.currentDm) {
     const me = state.user ? [{ id: state.user.id, name: state.user.display_name || state.user.username }] : [];
     return [{ id: state.currentDm.user, name: state.currentDm.name }, ...me];
   }
   if (!state.currentServer) return [];
-  const members = state.currentServer.members.map(m => ({ id: m.id, name: m.name, presence: m.presence }));
-  return [
-    ...members,
-    { id: "everyone", name: "everyone", special: "Notify everyone in this server" },
-    { id: "here", name: "here", special: "Notify everyone online" },
-  ];
+  return state.currentServer.members.map(m => ({ id: m.id, name: m.name, presence: m.presence, rank: 0 }));
+}
+
+function mentionNames() {
+  const people = mentionPeople().map(c => c.name);
+  return state.view === "dm" ? people : [...people, ...EVERYONE_MENTIONS];
+}
+
+function mentionCandidates() {
+  const people = mentionPeople();
+  if (state.view === "dm" || !state.currentServer || !state.user) return people;
+  const server = state.currentServer;
+  const roles = mentionableRoles(server, state.user.id)
+    .map(r => ({ id: r.id, name: r.name, color: r.color, role: true, special: `Notify members with ${r.name}`, rank: 1 }));
+  const everyone = memberCanMentionEveryone(server, state.user.id) ? EVERYONE_CANDIDATES : [];
+  return [...people, ...roles, ...everyone];
 }
 
 let mentionRegexCache = { key: "", re: null };
 
 function mentionRegex() {
-  const names = mentionCandidates().map(c => c.name).filter(Boolean);
+  const names = mentionNames().filter(Boolean);
   const key = names.join("\u0000");
   if (mentionRegexCache.key !== key) {
     const escaped = [...new Set(names)]
@@ -7810,20 +7859,61 @@ function mentionRegex() {
   return mentionRegexCache.re;
 }
 
+const renderingMessage = { author: null };
+
+function senderMayMentionEveryone() {
+  return state.view === "server" && memberCanMentionEveryone(state.currentServer, renderingMessage.author);
+}
+
+function roleMentionPill(role, forMe) {
+  const pill = el("span", "mention role" + (forMe ? " me" : ""), `@${role.name}`);
+  if (role.color) {
+    pill.style.setProperty("--role-color", `#${role.color}`);
+    pill.style.setProperty("--role-tint", roleTint(role.color));
+  }
+  return pill;
+}
+
+function roleTint(hex) {
+  const n = parseInt(hex, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, .18)`;
+}
+
+function appendRoleMention(div, roleId) {
+  const server = state.view === "server" ? state.currentServer : null;
+  const role = roleById(server, roleId);
+  if (!role || !roleMentionAllowed(server, renderingMessage.author, role)) {
+    div.appendChild(document.createTextNode(role ? `@${role.name}` : UNKNOWN_ROLE_MENTION));
+    return;
+  }
+  const mine = state.user ? (serverMember(server, state.user.id) || {}).roles || [] : [];
+  div.appendChild(roleMentionPill(role, mine.includes(role.id)));
+}
+
 function appendTextWithMentions(div, text) {
+  for (const part of splitRoleMentions(text)) {
+    if (part.role !== undefined) appendRoleMention(div, part.role);
+    else appendNameMentions(div, part.text);
+  }
+}
+
+function appendNameMentions(div, text) {
   const re = mentionRegex();
   if (!re) {
     div.appendChild(document.createTextNode(text));
     return;
   }
-  const myNames = state.user ? [state.user.username, state.user.display_name].filter(Boolean).map(n => n.toLowerCase()) : [];
+  const myNames = myMentionNames().filter(Boolean).map(n => n.toLowerCase());
+  const everyoneAllowed = senderMayMentionEveryone();
   re.lastIndex = 0;
   let last = 0;
   let m;
   while ((m = re.exec(text))) {
-    if (m.index > last) div.appendChild(document.createTextNode(text.slice(last, m.index)));
     const name = m[1].toLowerCase();
-    const forMe = myNames.includes(name) || name === "everyone" || name === "here";
+    const everyone = isEveryoneMention(name);
+    if (everyone && !everyoneAllowed) continue;
+    if (m.index > last) div.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const forMe = myNames.includes(name) || everyone;
     div.appendChild(el("span", "mention" + (forMe ? " me" : ""), m[0]));
     last = m.index + m[0].length;
   }
@@ -7838,7 +7928,7 @@ function mentionSuggestions(query) {
     .sort((a, b) => {
       const ap = a.name.toLowerCase().startsWith(query) ? 0 : 1;
       const bp = b.name.toLowerCase().startsWith(query) ? 0 : 1;
-      return ap - bp || (a.special ? 1 : 0) - (b.special ? 1 : 0) || a.name.localeCompare(b.name);
+      return ap - bp || (a.rank || 0) - (b.rank || 0) || a.name.localeCompare(b.name);
     })
     .slice(0, SUGGEST_LIMIT)
     .map(c => ({ ...c, kind: "mention" }));
@@ -7862,7 +7952,8 @@ function suggestionsFor(token, input) {
 function suggestHeading(token) {
   if (token.kind === "command") return "Commands";
   if (token.kind === "emoji") return `Emoji matching :${token.query}`;
-  return token.query ? `Members matching @${token.query}` : "Members";
+  const what = state.view === "dm" ? "Members" : "Members and roles";
+  return token.query ? `${what} matching @${token.query}` : what;
 }
 
 function commandHint(item) {
@@ -7884,6 +7975,8 @@ function suggestionRow(item) {
     row.append(el("span", "mention-at", "/"), el("span", "mention-name", `/${item.name}`));
     if (item.args) row.appendChild(el("span", "suggest-args", item.args));
     row.appendChild(el("span", "mention-hint", commandHint(item)));
+  } else if (item.role) {
+    row.append(el("span", "mention-at", "@"), roleMentionPill(item, false), el("span", "mention-hint", item.special));
   } else if (item.special) {
     row.append(el("span", "mention-at", "@"), el("span", "mention-name", `@${item.name}`), el("span", "mention-hint", item.special));
   } else {
@@ -7988,7 +8081,7 @@ function appendAfterText(content, mark) {
   else content.appendChild(mark);
 }
 
-function buildMessageContent(text) {
+function buildMessageContent(text, authorId = null) {
   const div = el("div", "msg-content");
   const sticker = parseStickerToken(text);
   if (sticker) {
@@ -8000,7 +8093,9 @@ function buildMessageContent(text) {
     div.appendChild(inviteCard(text));
     return div;
   }
+  renderingMessage.author = authorId;
   renderBlocks(div, parseMessage(text));
+  renderingMessage.author = null;
   if (isEmojiOnly(text)) div.classList.add("jumbo");
   const invite = inviteCard(text);
   if (invite) div.appendChild(invite);
@@ -9226,14 +9321,15 @@ async function sendMessage() {
   try {
     const previewUrl = await previewUrlFor(content);
     clearLinkDraft();
+    const outgoing = encodeOutgoing(content);
     await invoke("send_message", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
-      content: encodeCustomEmojis(content),
+      content: outgoing,
       replyTo,
       previewUrl,
     });
-    pushOverlayChat(state.user.id, state.user.display_name || state.user.username, encodeCustomEmojis(content), false);
+    pushOverlayChat(state.user.id, state.user.display_name || state.user.username, outgoing, false);
     await selectChannel(state.currentChannel);
   } catch (e) {
     input.value = content;
@@ -11755,6 +11851,7 @@ const PERMISSION_LABELS = [
   ["add_emoticons", "Add Emoticons"],
   ["use_external_emojis", "Use Other Servers' Emojis and Stickers"],
   ["post_announcements", "Post Announcements"],
+  ["mention_everyone", "Mention Everyone and Any Role"],
   ["manage_expressions", "Manage Expressions"],
   ["manage_events", "Manage Events"],
   ["manage_roles", "Manage Roles"],
@@ -12477,6 +12574,7 @@ function renderRoleSettings(server) {
     label.appendChild(name);
     if (role.tag) label.appendChild(roleTagChip(role.tag, role.color));
     if (role.self_assignable) label.appendChild(el("span", "kind pickable", "pickable"));
+    if (role.mentionable) label.appendChild(el("span", "kind", "anyone can mention"));
     if (role.hoist) label.appendChild(el("span", "kind", "own group"));
     const count = role.permissions.length;
     const perms = el("span", "kind", count ? (count === 1 ? "1 permission" : `${count} permissions`) : "no permissions");
