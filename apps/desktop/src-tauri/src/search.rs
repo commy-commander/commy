@@ -83,9 +83,15 @@ impl<'a> Matcher<'a> {
 
 fn searchable_text(message: &Message) -> String {
     let mut text = message.content.to_lowercase();
-    for attachment in &message.attachments {
+    for attachment in message.files() {
         text.push('\n');
         text.push_str(&attachment.filename.to_lowercase());
+    }
+    for (preview, _) in message.link_previews() {
+        for part in [&preview.site, &preview.title, &preview.description] {
+            text.push('\n');
+            text.push_str(&part.to_lowercase());
+        }
     }
     text
 }

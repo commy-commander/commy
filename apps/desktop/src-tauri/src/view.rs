@@ -141,6 +141,7 @@ pub struct ServerView {
     pub can_invite: bool,
     pub can_pin: bool,
     pub can_post_announcements: bool,
+    pub can_view_audit_log: bool,
     pub game_tags: Vec<String>,
     pub game_tag_meta: Vec<commy_core::server::GameTagMeta>,
     pub rules: Option<String>,
@@ -354,6 +355,7 @@ impl ServerView {
             can_invite: perms.allows(Permissions::CREATE_INVITES),
             can_pin: perms.can_pin(),
             can_post_announcements: perms.can_announce(),
+            can_view_audit_log: perms.can_view_audit_log(),
             game_tags: state.server.game_tags.clone(),
             game_tag_meta: state.server.game_tag_meta.clone(),
             rules: state.server.rules.clone(),
@@ -416,6 +418,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("manage_events", Permissions::MANAGE_EVENTS),
     ("create_invites", Permissions::CREATE_INVITES),
+    ("view_audit_log", Permissions::VIEW_AUDIT_LOG),
     ("administrator", Permissions::ADMINISTRATOR),
 ];
 
@@ -512,9 +515,48 @@ pub struct MessageView {
     pub reply_preview: Option<ReplyPreview>,
     pub reactions: Vec<ReactionView>,
     pub attachments: Vec<AttachmentView>,
+    pub previews: Vec<LinkPreviewView>,
     pub pending: bool,
     pub pinned: bool,
     pub held: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LinkPreviewView {
+    pub url: String,
+    pub site: String,
+    pub title: String,
+    pub description: String,
+    pub image: Option<PreviewImageView>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviewImageView {
+    pub blob: String,
+    pub provider: Option<String>,
+    pub mime: String,
+    pub size_bytes: u64,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl LinkPreviewView {
+    fn build(preview: commy_core::LinkPreview, carrier: &commy_core::Attachment) -> Self {
+        Self {
+            image: preview.image.map(|image| PreviewImageView {
+                blob: carrier.blob.clone(),
+                provider: carrier.provider.clone(),
+                mime: image.mime,
+                size_bytes: carrier.size_bytes,
+                width: image.width,
+                height: image.height,
+            }),
+            url: preview.url,
+            site: preview.site,
+            title: preview.title,
+            description: preview.description,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -599,7 +641,7 @@ impl MessageView {
                 let stored = state.message(id).filter(|m| m.channel == message.channel)?;
                 let original = keys.open(state, stored)?;
                 let mut excerpt = crate::safety::truncate(&original.content, 120);
-                if excerpt.is_empty() && !original.attachments.is_empty() {
+                if excerpt.is_empty() && original.files().next().is_some() {
                     excerpt = "Click to see attachment".to_string();
                 }
                 if keys.hold(state, stored).is_some() {
@@ -622,6 +664,7 @@ impl MessageView {
                 .collect(),
             attachments: attachments
                 .iter()
+                .filter(|a| !a.is_link_preview())
                 .map(|a| AttachmentView {
                     filename: a.filename.clone(),
                     size_bytes: a.size_bytes,
@@ -631,6 +674,7 @@ impl MessageView {
                     provider: a.provider.clone(),
                 })
                 .collect(),
+            previews: message.link_previews().take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
             pending: false,
             pinned: state.server.is_pinned(message.id),
             held: None,

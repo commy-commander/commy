@@ -40,7 +40,7 @@ impl KeyHolder {
         let mut opened =
             self.with_ring(state, message.channel, |ring| channel_key::read_message(state.server.id, message, ring))??;
         if !state.server.permissions_for(opened.author).allows(Permissions::ATTACH_FILES) {
-            opened.attachments.clear();
+            opened.attachments.retain(|a| !a.carries_a_file());
         }
         Some(opened)
     }
