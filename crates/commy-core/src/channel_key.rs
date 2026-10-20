@@ -182,7 +182,9 @@ impl ChannelKeys {
     }
 
     pub fn newest(&self) -> Option<&KeyRecord> {
-        self.keys.iter().max_by_key(|k| (k.at, k.id))
+        let heads = self.heads();
+        let current = self.keys.iter().filter(|k| heads.contains(&k.id)).max_by_key(|k| (k.at, k.id));
+        current.or_else(|| self.keys.iter().max_by_key(|k| (k.at, k.id)))
     }
 
     pub fn heads(&self) -> Vec<KeyId> {
@@ -509,6 +511,20 @@ mod tests {
         settle(&mut state, channel, stayer);
         let fresh = Keyring::unlock(&state, channel, newcomer, &identity_for(newcomer));
         assert_eq!(read_message(server, &before, &fresh).unwrap().content, "before", "history reaches new readers");
+    }
+
+    #[test]
+    fn a_rotation_from_a_slow_clock_still_replaces_the_old_key() {
+        let (mut state, channel, owner) = fixture();
+        let server = state.server.id;
+        private_channel(&mut state, channel);
+        let mut ring = settle(&mut state, channel, owner);
+        let old = state.channel_keys(channel).unwrap().newest().unwrap().clone();
+        let record = ring.rotate(server, channel, &[old.id], old.at - 60_000);
+        let new = record.id;
+        state.apply(ServerEvent::ChannelKeyAdd { server, channel, key: record }).unwrap();
+        assert_eq!(state.channel_keys(channel).unwrap().newest().unwrap().id, new);
+        assert_eq!(ring.sending_key(&state, channel).unwrap().0, new);
     }
 
     #[test]
