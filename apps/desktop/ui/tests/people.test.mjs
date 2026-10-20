@@ -43,3 +43,15 @@ test("a group conversation lists its people but is never a mutual server", () =>
   assert.equal(people.has("c"), true);
   assert.deepEqual(mutualServers(people, "c"), []);
 });
+
+test("a game keeps its own cover and start time, taken from the server that reported it", () => {
+  const servers = [
+    { id: "s1", name: "One", members: [member("b", "pal")] },
+    { id: "s2", name: "Two", members: [member("b", "pal", "online", { activity: "Playing Celeste", activity_cover: "co3byy", activity_since: 100 })] },
+    { id: "s3", name: "Three", members: [member("b", "pal", "online", { activity: "Playing Portal 2", activity_cover: "co1rs4", activity_since: 200 })] },
+  ];
+  const pal = indexPeople(servers, "a").get("b");
+  assert.equal(pal.activity, "Playing Celeste");
+  assert.equal(pal.activity_cover, "co3byy");
+  assert.equal(pal.activity_since, 100);
+});

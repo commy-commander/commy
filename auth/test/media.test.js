@@ -12,6 +12,7 @@ import {
   emojiggCategory,
   emojiggSearch,
   igdbResults,
+  steamOf,
   klipyResults,
   klipyStickerResults,
   mediaHost,
@@ -73,7 +74,7 @@ function fakeFetch(log) {
     if (u === "https://emoji.gg/api/") return Response.json(emojiggBody);
     if (u.startsWith("https://id.twitch.tv/")) return Response.json({ access_token: "twitch-token", expires_in: 3600 });
     if (u.startsWith("https://api.igdb.com/")) {
-      return Response.json([{ id: 72, name: "Portal 2", cover: { image_id: "co1rs4" }, first_release_date: 1303171200 }]);
+      return Response.json([{ id: 72, name: "Portal 2", cover: { image_id: "co1rs4" }, first_release_date: 1303171200, external_games: [{ external_game_source: 1, uid: "620" }] }]);
     }
     if (u.startsWith("https://static.klipy.com/") && u.endsWith(".gif")) {
       return new Response(GIF_BYTES, { headers: { "content-type": "image/gif" } });
@@ -185,15 +186,33 @@ test("emoji search needs a session and loads the catalog once", async () => {
 
 test("IGDB results drop unsafe cover ids and unnamed games", () => {
   const results = igdbResults([
-    { id: 7, name: " Celeste ", cover: { image_id: "co3byy" }, first_release_date: 1516665600 },
-    { id: 8, name: "Evil", cover: { image_id: "../x" } },
+    {
+      id: 7,
+      name: " Celeste ",
+      cover: { image_id: "co3byy" },
+      first_release_date: 1516665600,
+      external_games: [
+        { external_game_source: 5, uid: "gog-celeste", url: "https://www.gog.com/game/celeste" },
+        { external_game_source: 1, uid: "504230" },
+      ],
+    },
+    { id: 8, name: "Evil", cover: { image_id: "../x" }, external_games: [{ external_game_source: 1, uid: "12; rm" }] },
     { id: 9 },
   ]);
   assert.deepEqual(results, [
-    { id: 7, name: "Celeste", cover: "co3byy", year: 2018 },
-    { id: 8, name: "Evil", cover: null, year: null },
+    { id: 7, name: "Celeste", cover: "co3byy", year: 2018, steam: 504230 },
+    { id: 8, name: "Evil", cover: null, year: null, steam: null },
   ]);
   assert.deepEqual(igdbResults({}), []);
+});
+
+test("the Steam store id comes from the Steam entry, or a Steam store link", () => {
+  assert.equal(steamOf([{ url: "https://store.steampowered.com/app/367520/Hollow_Knight/" }]), 367520);
+  assert.equal(steamOf([{ external_game_source: 1, uid: "0" }]), null);
+  assert.equal(steamOf([{ external_game_source: 1, uid: "99999999999" }]), null);
+  assert.equal(steamOf([{ url: "https://store.steampowered.com.evil.test/app/9" }]), null);
+  assert.equal(steamOf([{ url: "https://store.steampowered.com/bundle/9" }]), null);
+  assert.equal(steamOf(null), null);
 });
 
 test("queries are cleaned and escaped", () => {
@@ -298,12 +317,13 @@ test("game search reuses the Twitch app token", async () => {
 
   const r = await call("GET", "/commy/games/search", { cookie, query: { q: "portal" } });
   assert.equal(r.status, 200, JSON.stringify(r.json));
-  assert.deepEqual(r.json.results, [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }]);
+  assert.deepEqual(r.json.results, [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011, steam: 620 }]);
   await call("GET", "/commy/games/search", { cookie, query: { q: "half life" } });
   assert.equal(log.filter((l) => l.url.startsWith("https://id.twitch.tv/")).length, 1, "one token for both searches");
   const igdb = log.find((l) => l.url.startsWith("https://api.igdb.com/"));
   assert.equal(igdb.init.headers["Client-ID"], "tw");
   assert.match(igdb.init.body, /^search "portal";/);
+  assert.match(igdb.init.body, /external_games\.external_game_source,external_games\.uid/);
 
   const short = await call("GET", "/commy/games/search", { cookie, query: { q: "p" } });
   assert.deepEqual(short.json.results, []);
