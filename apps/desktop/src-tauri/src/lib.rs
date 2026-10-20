@@ -423,6 +423,7 @@ async fn send_message(
     content: String,
     reply_to: Option<String>,
     preview_url: Option<String>,
+    tts: Option<bool>,
 ) -> CmdResult<MessageView> {
     let content = clean_message(&content)?;
     let sid = server_id.parse().map_err(err_to_string)?;
@@ -430,6 +431,12 @@ async fn send_message(
     let profile = current_profile(&app)?;
     let content = expressions_for_server(&app, sid, profile.id, content).await?;
     let mut message = Message::new(cid, profile.id, content);
+    if tts.unwrap_or(false) {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, profile.id, Permissions::SEND_TTS_MESSAGES, "send text-to-speech messages here")?;
+        message.mark_tts();
+    }
     if let Some(raw) = reply_to {
         let target: MessageId = raw.parse().map_err(err_to_string)?;
         let exists = {
@@ -445,13 +452,12 @@ async fn send_message(
     }
     let card = preview_card(&app, sid, &message, preview_url.as_deref()).await;
     let carries_card = card.is_some();
+    let draft = message.clone();
     message.attachments.extend(card);
     let _signing = app.signing.read().await;
-    let draft = message.clone();
     seal_and_sign(&app, sid, &mut message)?;
     if carries_card && !signed_fits_one_gossip_frame(&message) {
         message = draft;
-        message.attachments.clear();
         seal_and_sign(&app, sid, &mut message)?;
     }
     if !signed_fits_one_gossip_frame(&message) {
@@ -7211,6 +7217,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "content": message.content,
             "has_attachments": message.files().next().is_some(),
             "voice_message": commy_core::message::only_a_voice_message(&message.content, message.attachments.iter()),
+            "tts": message.speaks_for(state.server.permissions_for(message.author)),
         })
     };
     let _ = handle.emit("message-created", payload);

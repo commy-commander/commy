@@ -4721,6 +4721,23 @@ h3.md-heading { font-size: 1.1em; }
   cursor: default;
 }
 .msg-held svg { color: var(--text-faint); }
+.msg-tts {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  width: 62px;
+  height: 16px;
+  box-sizing: border-box;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--text-muted);
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.msg-tts svg { color: var(--accent); flex-shrink: 0; }
+.tts-preview-row { padding-top: 10px; margin-top: 8px; border-top: 1px solid var(--line); }
 .msg.held { box-shadow: inset 3px 0 0 var(--text-faint); }
 .msg.held .msg-body > :not(.msg-head) { opacity: .55; }
 
