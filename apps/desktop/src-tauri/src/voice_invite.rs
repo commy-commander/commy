@@ -7,26 +7,6 @@ use crate::{
 use commy_core::{ChannelId, ChannelKind, DmMessage, Message, ServerId, ServerState, UserId, VoiceInvite};
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct VoiceInviteView {
-    pub server: String,
-    pub channel: String,
-    pub invite_link: Option<String>,
-    pub server_name: String,
-    pub channel_name: String,
-}
-
-impl VoiceInviteView {
-    pub fn of(invite: VoiceInvite) -> Self {
-        Self {
-            server: invite.server.to_string(),
-            channel: invite.channel.to_string(),
-            invite_link: invite.invite_link,
-            server_name: invite.server_name,
-            channel_name: invite.channel_name,
-        }
-    }
-}
 
 #[derive(Debug, Serialize)]
 pub struct VoicePresenceUser {
@@ -41,14 +21,6 @@ pub struct VoicePresenceView {
     pub user_limit: u32,
     pub can_view: bool,
     pub users: Vec<VoicePresenceUser>,
-}
-
-pub fn excerpt(invite: &VoiceInvite) -> String {
-    if invite.channel_name.is_empty() {
-        "Invite to a voice call".to_string()
-    } else {
-        format!("Invite to a call in {}", invite.channel_name)
-    }
 }
 
 fn invite_from(state: &ServerState, sid: ServerId, cid: ChannelId, me: UserId) -> CmdResult<VoiceInvite> {
@@ -176,17 +148,10 @@ pub fn presence_of(state: &ServerState, cid: ChannelId, me: Option<UserId>) -> C
     })
 }
 
-pub fn dm_view_of(message: &DmMessage) -> Option<VoiceInviteView> {
-    message.voice_invite().map(VoiceInviteView::of)
-}
-
-pub fn view_of(message: &Message) -> Option<VoiceInviteView> {
-    message.voice_invite().map(VoiceInviteView::of)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use commy_view::voice_invite::{dm_view_of, excerpt, view_of};
     use commy_core::{Server, ServerEvent, UserProfile};
 
     fn state_with_voice() -> (ServerState, UserId, ChannelId) {

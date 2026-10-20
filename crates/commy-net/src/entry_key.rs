@@ -62,7 +62,7 @@ impl EntryKeyAcceptor {
             })
             .is_ok()
         {
-            tokio::time::timeout(ANSWER_TIMEOUT, reply_rx)
+            n0_future::time::timeout(ANSWER_TIMEOUT, reply_rx)
                 .await
                 .ok()
                 .and_then(|r| r.ok())
@@ -74,7 +74,7 @@ impl EntryKeyAcceptor {
             .await
             .map_err(|e| anyhow::anyhow!("entry key reply failed: {e}"))?;
         send.finish()?;
-        let _ = tokio::time::timeout(REPLY_DELIVERY_GRACE, connection.closed()).await;
+        let _ = n0_future::time::timeout(REPLY_DELIVERY_GRACE, connection.closed()).await;
         Ok(())
     }
 }
@@ -85,7 +85,7 @@ pub async fn request(
     request: &EntryKeyRequest,
 ) -> Result<EntryKeyReply> {
     let node_id = crate::node::parse_node_hex(node_hex)?;
-    let connection = tokio::time::timeout(
+    let connection = n0_future::time::timeout(
         std::time::Duration::from_secs(20),
         endpoint.connect(node_id, ENTRY_KEY_ALPN),
     )
@@ -96,7 +96,7 @@ pub async fn request(
     write_frame(&mut send, request)
         .await
         .map_err(|e| anyhow::anyhow!("entry key request failed: {e}"))?;
-    let reply = tokio::time::timeout(
+    let reply = n0_future::time::timeout(
         ANSWER_TIMEOUT + std::time::Duration::from_secs(10),
         read_frame::<_, EntryKeyReply>(&mut recv),
     )

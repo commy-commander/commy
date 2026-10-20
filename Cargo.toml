@@ -6,7 +6,9 @@ members = [
     "crates/commy-audio",
     "crates/commy-media",
     "crates/commy-bot",
+    "crates/commy-view",
     "apps/desktop/src-tauri",
+    "apps/web",
 ]
 
 [workspace.package]
@@ -34,6 +36,7 @@ iroh-blobs = "0.103"
 
 commy-core = { path = "crates/commy-core" }
 commy-net = { path = "crates/commy-net" }
+commy-view = { path = "crates/commy-view" }
 commy-audio = { path = "crates/commy-audio" }
 commy-media = { path = "crates/commy-media" }
 

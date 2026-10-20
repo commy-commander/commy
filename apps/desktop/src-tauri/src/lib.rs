@@ -11,6 +11,7 @@ mod directory;
 mod doorbell;
 mod expressions;
 mod media_engine;
+mod mirror;
 mod igdb;
 mod instance;
 mod invite_link;
@@ -32,7 +33,7 @@ mod templates;
 mod toast;
 mod tray;
 mod updater;
-mod view;
+use commy_view as view;
 mod voice_keys;
 mod voice_message;
 mod voice_invite;
@@ -180,7 +181,7 @@ async fn create_server(
     };
     let (state, _, signing) =
         own_server_state_from(&app, server_id, hosting, |owner| template.build(&name, owner)).await?;
-    let view = ServerView::for_viewer(&state, Some(state.server.owner), &channel_lock::KeyHolder::of(&app));
+    let view = ServerView::for_viewer(&state, Some(state.server.owner), &channel_lock::holder_of(&app));
     app.servers.lock().unwrap().insert(server_id, state);
     drop(signing);
     app.persist_server(server_id);
@@ -282,7 +283,7 @@ fn list_servers(app: tauri::State<App>) -> Vec<ServerSummary> {
 fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView> {
     let id = server_id.parse().map_err(err_to_string)?;
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let keys = channel_lock::KeyHolder::of(&app);
+    let keys = channel_lock::holder_of(&app);
     let friends = app.safety.lock().unwrap().friends.clone();
     let contacts = app.dms.lock().unwrap().contacts.clone();
     let servers = app.servers.lock().unwrap();
@@ -312,7 +313,7 @@ fn get_messages(
     let cid = channel_id.parse().map_err(err_to_string)?;
     let around: Option<MessageId> = around.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let pending = app.outbox.lock().unwrap().pending_ids(sid);
-    let keys = channel_lock::KeyHolder::of(&app);
+    let keys = channel_lock::holder_of(&app);
     let me = current_profile(&app)?.id;
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
@@ -340,7 +341,7 @@ fn search_messages(
     let mentions: Option<UserId> = mentions.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let channel: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let query = search::SearchQuery::new(&terms, from, mentions, channel);
-    let keys = channel_lock::KeyHolder::of(&app);
+    let keys = channel_lock::holder_of(&app);
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
@@ -364,7 +365,7 @@ async fn commit_message(
     let event = ServerEvent::MessageCreate {
         message: message.clone(),
     };
-    let keys = channel_lock::KeyHolder::of(app);
+    let keys = channel_lock::holder_of(app);
     let view = {
         let mut servers = app.servers.lock().unwrap();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
@@ -386,7 +387,7 @@ async fn commit_message(
 }
 
 fn seal_and_sign(app: &App, sid: ServerId, message: &mut Message) -> CmdResult<()> {
-    let keys = channel_lock::KeyHolder::of(app);
+    let keys = channel_lock::holder_of(app);
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
@@ -722,7 +723,7 @@ async fn edit_message(
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let content = expressions_for_server(&app, sid, me.id, content).await?;
-    let keys = channel_lock::KeyHolder::of(&app);
+    let keys = channel_lock::holder_of(&app);
     let _signing = app.signing.read().await;
     let identity = signing_key(&app)?;
     let edit = {
@@ -2355,7 +2356,7 @@ async fn report_user(
         return Err("you cannot report yourself".into());
     }
     refuse_while_key_may_be_replaced(&app)?;
-    let keys = channel_lock::KeyHolder::of(&app);
+    let keys = channel_lock::holder_of(&app);
     let (owner, excerpt) = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
@@ -4837,7 +4838,7 @@ async fn set_thread(
 fn get_pins(app: tauri::State<App>, server_id: String, channel_id: Option<String>) -> CmdResult<Vec<view::PinView>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
-    let keys = channel_lock::KeyHolder::of(&app);
+    let keys = channel_lock::holder_of(&app);
     let me = current_profile(&app)?.id;
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
@@ -7267,7 +7268,7 @@ fn react_to_voice_change(
 }
 
 fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, message: &Message) {
-    let keys = channel_lock::KeyHolder::of(app);
+    let keys = channel_lock::holder_of(app);
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
     let payload = {
         let servers = app.servers.lock().unwrap();
@@ -7609,6 +7610,9 @@ pub fn run() {
                         if let Some(asks) = node.take_entry_key_requests() {
                             tauri::async_runtime::spawn(entry_list::run_entry_key_requests(handle.clone(), asks));
                         }
+                        if let Some(asks) = node.take_mirror_requests() {
+                            tauri::async_runtime::spawn(mirror::run_mirror_requests(handle.clone(), asks));
+                        }
 
                         let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
                         let stored_invites = app
@@ -7616,6 +7620,7 @@ pub fn run() {
                             .map(|d| persist::load_invites(d))
                             .unwrap_or_default();
                         catchup::mark_joined_placeholders(&app, &stored_invites, node.node_id_bytes());
+                        catchup::release_own_servers(&app, &stored_invites);
                         let awaiting = app.awaiting_snapshot.lock().unwrap().clone();
                         let to_restore: Vec<(ServerId, String, bool)> = {
                             let servers = app.servers.lock().unwrap();

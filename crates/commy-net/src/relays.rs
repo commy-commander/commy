@@ -23,18 +23,43 @@ pub fn own_relays() -> Vec<String> {
     own_relays_from(std::env::var("COMMY_RELAY_URLS").ok().as_deref())
 }
 
+pub const FALLBACK_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub fn relay_map(own: &[String]) -> Result<RelayMap> {
     let map = RelayMap::empty();
     for url in own {
         let url: RelayUrl = url.parse().with_context(|| format!("invalid relay url {url}"))?;
         map.insert(url.clone(), Arc::new(RelayConfig::new(url, None)));
     }
-    for node in iroh::defaults::prod::default_relay_map().relays::<Vec<Arc<RelayConfig>>>() {
-        if !map.contains(&node.url) {
-            map.insert(node.url.clone(), node);
-        }
+    if map.is_empty() {
+        return Ok(iroh::defaults::prod::default_relay_map());
     }
     Ok(map)
+}
+
+pub fn fallback_relays(own: &RelayMap) -> Vec<Arc<RelayConfig>> {
+    iroh::defaults::prod::default_relay_map()
+        .relays::<Vec<Arc<RelayConfig>>>()
+        .into_iter()
+        .filter(|node| !own.contains(&node.url))
+        .collect()
+}
+
+pub async fn fall_back_when_unreachable(endpoint: iroh::Endpoint, fallback: Vec<Arc<RelayConfig>>) {
+    loop {
+        n0_future::time::sleep(FALLBACK_AFTER).await;
+        if endpoint.is_closed() {
+            return;
+        }
+        if endpoint.addr().relay_urls().next().is_some() {
+            continue;
+        }
+        tracing::warn!("Commy's relay is out of reach, adding the public fallback relays");
+        for node in fallback {
+            endpoint.insert_relay(node.url.clone(), node).await;
+        }
+        return;
+    }
 }
 
 #[cfg(test)]
@@ -65,22 +90,22 @@ mod tests {
     }
 
     #[test]
-    fn own_relays_come_first_with_n0_fallback() {
+    fn only_commy_relays_until_they_fail() {
         let n0 = iroh::defaults::prod::default_relay_map();
         let map = relay_map(&[DEFAULT_COMMY_RELAY.to_string()]).unwrap();
-        assert_eq!(map.len(), n0.len() + 1);
-        assert!(map.contains(&DEFAULT_COMMY_RELAY.parse().unwrap()));
-        for url in n0.urls::<Vec<RelayUrl>>() {
-            assert!(map.contains(&url));
-        }
+        assert_eq!(map.urls::<Vec<RelayUrl>>(), vec![DEFAULT_COMMY_RELAY.parse::<RelayUrl>().unwrap()]);
+        let fallback = fallback_relays(&map);
+        assert_eq!(fallback.len(), n0.len());
+        assert!(fallback.iter().all(|node| n0.contains(&node.url)));
+        assert_eq!(relay_map(&[]).unwrap().len(), n0.len());
     }
 
     #[test]
     fn duplicates_and_bad_urls() {
         let n0_url = iroh::defaults::prod::default_relay_map().urls::<Vec<RelayUrl>>()[0].to_string();
-        let n0_len = iroh::defaults::prod::default_relay_map().len();
-        assert_eq!(relay_map(&[n0_url]).unwrap().len(), n0_len);
+        let map = relay_map(&[n0_url.clone(), n0_url]).unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(fallback_relays(&map).len(), iroh::defaults::prod::default_relay_map().len() - 1);
         assert!(relay_map(&["not a url".to_string()]).is_err());
-        assert_eq!(relay_map(&[]).unwrap().len(), n0_len);
     }
 }

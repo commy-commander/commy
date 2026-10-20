@@ -1,4 +1,7 @@
-use crate::channel_lock::KeyHolder;
+pub mod keys;
+pub mod voice_invite;
+
+use crate::keys::KeyHolder;
 use commy_core::server::Rsvp;
 use commy_core::{
     AutoMod, ChannelId, ChannelKind, DmMessage, DmStore, Hold, Message, MessageId, Permissions, Presence, ServerState,
@@ -8,6 +11,14 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 
 const EVERYONE_ROLE_POSITION: u32 = 0;
+
+pub fn truncate(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
+pub fn valid_image_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 32 && id.chars().all(|c| c.is_ascii_alphanumeric())
+}
 
 #[derive(Debug, Serialize)]
 pub struct ServerSummary {
@@ -158,7 +169,7 @@ fn forum_posts(state: &ServerState, channel: &commy_core::Channel, keys: &KeyHol
             let root = by_id.get(id)?;
             let created_at = root.created_at.timestamp_millis();
             let (replies, last_reply) = stats.get(id).copied().unwrap_or((0, 0));
-            let excerpt = keys.open(state, root).map(|m| crate::safety::truncate(&m.content, POST_EXCERPT_CHARS)).unwrap_or_default();
+            let excerpt = keys.open(state, root).map(|m| truncate(&m.content, POST_EXCERPT_CHARS)).unwrap_or_default();
             Some(ForumPostView {
                 message: id.to_string(),
                 title: post.title.clone(),
@@ -351,7 +362,7 @@ impl ServerView {
                 continue;
             };
             if member.about.is_none() {
-                member.about = contact.about.as_deref().map(|a| crate::safety::truncate(a, commy_core::user::MAX_ABOUT_CHARS));
+                member.about = contact.about.as_deref().map(|a| truncate(a, commy_core::user::MAX_ABOUT_CHARS));
             }
             if member.banner.is_none() {
                 member.banner = contact.banner.clone().filter(|b| commy_core::user::valid_banner(b));
@@ -448,12 +459,12 @@ impl ServerView {
                         .activity
                         .clone()
                         .filter(|_| p.presence.is_visible_online()),
-                    about: p.about.as_deref().map(|a| crate::safety::truncate(a, commy_core::user::MAX_ABOUT_CHARS)),
+                    about: p.about.as_deref().map(|a| truncate(a, commy_core::user::MAX_ABOUT_CHARS)),
                     pronouns: state.server.pronouns.get(&p.id).cloned(),
                     activity_cover: p
                         .activity_cover
                         .clone()
-                        .filter(|c| p.activity.is_some() && crate::igdb::valid_image_id(c)),
+                        .filter(|c| p.activity.is_some() && valid_image_id(c)),
                     activity_since: p.activity_since.filter(|_| p.activity.is_some() && p.presence.is_visible_online()),
                     voice_channel: state.voice_states.get(&p.id).map(|c| c.to_string()),
                     voice_since: state.voice_since(p.id),
@@ -729,7 +740,7 @@ fn dm_author_name(msg_from: UserId, me: UserId, dms: &DmStore) -> String {
 }
 
 pub fn dm_excerpt(msg: &DmMessage) -> String {
-    let excerpt = crate::safety::truncate(&msg.content, 120);
+    let excerpt = truncate(&msg.content, 120);
     if excerpt.is_empty() {
         if let Some(invite) = msg.voice_invite() {
             return crate::voice_invite::excerpt(&invite);
@@ -798,7 +809,7 @@ pub fn dm_thread_views(dms: &DmStore, me: UserId) -> Vec<DmThreadView> {
                 last_message: last
                     .map(|m| {
                         let prefix = if m.from == me { "You: " } else { "" };
-                        format!("{prefix}{}", crate::safety::truncate(&dm_excerpt(m), 60))
+                        format!("{prefix}{}", truncate(&dm_excerpt(m), 60))
                     })
                     .unwrap_or_default(),
                 last_at: last
@@ -995,10 +1006,10 @@ impl MessageView {
             reply_preview: message.reply_to.and_then(|id| {
                 let stored = state.message(id).filter(|m| m.channel == message.channel)?;
                 let original = keys.open(state, stored)?;
-                let mut excerpt = crate::safety::truncate(&original.content, 120);
+                let mut excerpt = truncate(&original.content, 120);
                 if excerpt.is_empty() {
                     if let Some(poll) = original.poll() {
-                        excerpt = crate::safety::truncate(&poll.question, 120);
+                        excerpt = truncate(&poll.question, 120);
                     } else if let Some(invite) = original.voice_invite() {
                         excerpt = crate::voice_invite::excerpt(&invite);
                     } else if original.files().next().is_some() {

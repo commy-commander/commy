@@ -303,8 +303,9 @@ proxy keeps its own), and `/healthz` reports `"redis":false`.
 ## iroh relay
 
 The stack runs its own [iroh](https://iroh.computer) relay at
-`https://relay.<DOMAIN>:8443`. Apps use it first and keep n0's public relays as
-a fallback. Relays help peers find each other and carry traffic only when a
+`https://relay.<DOMAIN>:8443`. Apps use only this relay while it answers, which
+keeps them reachable from the web app. If it stays out of reach for 30 seconds,
+apps add n0's public relays as a fallback. Relays help peers find each other and carry traffic only when a
 direct connection is impossible, always end to end encrypted.
 
 - **DNS:** an A record for `relay.<DOMAIN>`, DNS only (not proxied) in
@@ -324,7 +325,7 @@ direct connection is impossible, always end to end encrypted.
 - **Apps:** `COMMY_RELAY_URLS=https://relay.example.org:8443` points a build at
   another relay, `none` uses only n0's.
 
-The relay must run the same iroh version as the app (`IROH_NET_VERSION` in
+The relay must run the same iroh version as the app (`IROH_RELAY_VERSION` in
 `relay/Dockerfile`), so the two are upgraded together.
 
 ## What the operator can see
