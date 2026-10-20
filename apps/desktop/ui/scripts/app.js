@@ -298,7 +298,7 @@ async function mockInvoke(cmd, args = {}) {
         channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, ...c })),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
-        can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
+        can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
@@ -570,6 +570,16 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "fetch_expression": return (mock.expressions || {})[args.blob] || null;
     case "pick_sound": return null;
+    case "set_upload_access": {
+      const srv = mock.servers[args.serverId];
+      srv.uploads_restricted = args.restricted;
+      for (const r of srv.roles || []) {
+        const has = (r.permissions || []).includes("attach_files");
+        const want = args.restricted && args.roleIds.includes(r.id);
+        if (args.restricted && want !== has) r.permissions = want ? [...(r.permissions || []), "attach_files"] : r.permissions.filter(x => x !== "attach_files");
+      }
+      return null;
+    }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
     case "list_shareable_sounds":
       return Object.values(mock.servers).filter(s => s.sounds_shareable)
@@ -5387,7 +5397,7 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events"]],
-  ["Chat", ["manage_messages", "pin_messages", "post_announcements", "create_invites"]],
+  ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members"]],
 ];
 
@@ -7396,6 +7406,7 @@ function setViewMode(mode) {
   if (dm) paintSidebarBanner();
   $("dm-search").classList.toggle("hidden", !dm);
   $("attach-btn").classList.toggle("hidden", dm);
+  syncAttachAccess();
   $("home-btn").classList.toggle("active", dm);
   $("app").classList.toggle("dm-mode", dm);
   if (dm) $("cam-grid").classList.add("hidden");
@@ -8052,6 +8063,10 @@ function openGifPicker(query = "", target = null) {
 
 function toggleComposerMenu() {
   const menu = $("composer-menu");
+  if (state.view === "server" && !canAttachHere()) {
+    toast("You can't send files or images in this server");
+    return;
+  }
   if (!menu.classList.contains("hidden")) {
     menu.classList.add("hidden");
     return;
@@ -8431,6 +8446,10 @@ function toggleStageFullscreen() {
 async function uploadFileObject(file) {
   if (state.view !== "server" || !state.currentServer || !state.currentChannel) {
     toast("Open a server channel to share files");
+    return;
+  }
+  if (!canAttachHere()) {
+    toast("You can't send files or images in this server");
     return;
   }
   if (file.size > 512 * 1024 * 1024) {
@@ -9820,6 +9839,7 @@ const PERMISSION_LABELS = [
   ["manage_channels", "Manage Channels"],
   ["manage_messages", "Manage Messages"],
   ["pin_messages", "Pin Messages"],
+  ["attach_files", "Send Files and Images"],
   ["post_announcements", "Post Announcements"],
   ["manage_expressions", "Manage Expressions"],
   ["manage_events", "Manage Events"],
@@ -10130,7 +10150,67 @@ function openServerSettings(tab) {
   openSettingsLayer("server-settings", current);
 }
 
+function renderUploadAccess(server) {
+  const box = $("upload-access");
+  box.innerHTML = "";
+  const restricted = Boolean(server.uploads_restricted);
+  const save = async (nextRestricted, ids) => {
+    try {
+      await invoke("set_upload_access", { serverId: server.id, restricted: nextRestricted, roleIds: ids });
+      await refreshCurrentServer();
+      openServerSettings();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  };
+  const allowedIds = () => server.roles.filter(r => (r.permissions || []).includes("attach_files")).map(r => r.id);
+  box.appendChild(el("div", "setting-title", "Who can send files and images"));
+  box.appendChild(el("div", "setting-sub", "Applies to attachments, pasted images and dropped files in every channel. Text, links and GIFs are not affected. The owner and anyone with Administrator can always send them."));
+  const seg = el("div", "segmented upload-seg");
+  for (const [label, hint, value] of [["Anyone", "Every member", false], ["Only selected roles", "Pick the roles below", true]]) {
+    const b = el("button", value === restricted ? "active" : "");
+    b.type = "button";
+    b.disabled = !server.can_manage_roles;
+    b.append(el("strong", null, label), el("span", null, hint));
+    b.onclick = () => {
+      if (value !== restricted) save(value, allowedIds());
+    };
+    seg.appendChild(b);
+  }
+  box.appendChild(seg);
+  const picks = el("div", "upload-roles" + (restricted ? "" : " off"));
+  if (!server.roles.length) picks.appendChild(el("div", "setting-sub", "Create a role first, then pick it here."));
+  for (const role of server.roles) {
+    const row = el("label", "role-self");
+    const check = el("input");
+    check.type = "checkbox";
+    check.checked = restricted && (role.permissions || []).includes("attach_files");
+    check.disabled = !restricted || !server.can_manage_roles;
+    check.onchange = () => {
+      const ids = new Set(allowedIds());
+      if (check.checked) ids.add(role.id);
+      else ids.delete(role.id);
+      save(true, [...ids]);
+    };
+    row.append(check, el("span", null, role.name));
+    picks.appendChild(row);
+  }
+  box.appendChild(picks);
+}
+
+function canAttachHere() {
+  return !state.currentServer || state.currentServer.can_attach_files !== false;
+}
+
+function syncAttachAccess() {
+  const locked = state.view === "server" && !canAttachHere();
+  $("attach-btn").classList.toggle("locked", locked);
+  $("attach-btn").title = locked ? "You can't send files or images in this server" : "Attach";
+}
+
 function renderRoleSettings(server) {
+  renderUploadAccess(server);
   const list = $("manage-role-list");
   list.innerHTML = "";
   for (const role of server.roles) {
@@ -10278,6 +10358,7 @@ async function refreshCurrentServer() {
   renderChannels();
   syncRulesGate();
   syncAwaitedBar();
+  syncAttachAccess();
   renderEvents();
   if (keepChannel) {
     const still = state.currentServer.channels.find(c => c.id === keepChannel.id);

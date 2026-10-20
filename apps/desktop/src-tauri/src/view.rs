@@ -151,6 +151,8 @@ pub struct ServerView {
     pub emojis_shareable: bool,
     pub soundboard_open: bool,
     pub sounds_shareable: bool,
+    pub uploads_restricted: bool,
+    pub can_attach_files: bool,
     pub public: bool,
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
@@ -365,6 +367,13 @@ impl ServerView {
             emojis_shareable: state.server.emojis_shareable,
             soundboard_open: state.server.soundboard_open,
             sounds_shareable: state.server.sounds_shareable,
+            uploads_restricted: state
+                .server
+                .roles
+                .iter()
+                .find(|r| r.position == EVERYONE_ROLE_POSITION)
+                .is_some_and(|r| !r.permissions.contains(Permissions::ATTACH_FILES)),
+            can_attach_files: perms.allows(Permissions::ATTACH_FILES),
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS)
@@ -380,6 +389,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_channels", Permissions::MANAGE_CHANNELS),
     ("manage_messages", Permissions::MANAGE_MESSAGES),
     ("pin_messages", Permissions::PIN_MESSAGES),
+    ("attach_files", Permissions::ATTACH_FILES),
     ("post_announcements", Permissions::POST_ANNOUNCEMENTS),
     ("manage_roles", Permissions::MANAGE_ROLES),
     ("kick_members", Permissions::KICK_MEMBERS),

@@ -43,6 +43,8 @@ pub enum StoreError {
     PinLimit,
     #[error("only members allowed to post announcements can write in that channel")]
     NotAnnouncer,
+    #[error("members without the send files permission cannot attach files here")]
+    NoUploads,
     #[error("the signer may not do that here")]
     NotAllowed,
     #[error("unsigned event from a member whose key is known")]
@@ -1226,6 +1228,12 @@ impl ServerState {
         {
             return Err(StoreError::NotAnnouncer);
         }
+        if !held
+            && !message.attachments.is_empty()
+            && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::ATTACH_FILES)
+        {
+            return Err(StoreError::NoUploads);
+        }
         if !held {
             if let Some(changed) = self.bind_proofs(&message) {
                 return Ok(changed);
@@ -2388,6 +2396,52 @@ mod tests {
         state.apply(ServerEvent::RoleUnassign { server: sid, user: plain, role: rid }).unwrap();
         let later = Utc::now() + chrono::Duration::seconds(1);
         assert_eq!(state.apply(edit(&state, &allowed, "Patch day, 6pm", later)), Ok(true));
+    }
+
+    #[test]
+    fn attachments_need_the_send_files_permission() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let plain = join(&mut state, "plain");
+        let with_file = |state: &ServerState, author| {
+            let mut m = Message::new(channel, author, "look");
+            m.attachments.push(crate::message::Attachment {
+                blob: "abc".into(),
+                filename: "cat.png".into(),
+                size_bytes: 10,
+                mime_type: "image/png".into(),
+                provider: None,
+            });
+            crate::test_support::signed(state, m)
+        };
+        let first = with_file(&state, plain);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first.clone() }), Ok(true));
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.remove(Permissions::ATTACH_FILES);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        let blocked = with_file(&state, plain);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: blocked }), Err(StoreError::NoUploads));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first }), Ok(false), "held messages stay");
+        let text = post(&state, channel, plain, "words are fine");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: text }), Ok(true));
+        let owners = with_file(&state, owner);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: owners }), Ok(true));
+        let role = Role {
+            id: RoleId::new(),
+            name: "artists".into(),
+            color: None,
+            permissions: Permissions::ATTACH_FILES,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+        };
+        let rid = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: plain, role: rid }).unwrap();
+        let allowed = with_file(&state, plain);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: allowed }), Ok(true));
     }
 
     #[test]
