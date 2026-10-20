@@ -468,6 +468,11 @@ async function mockInvoke(cmd, args = {}) {
     case "check_for_updates": mock.update = { ...mock.update, phase: "up_to_date", checked_at: Math.floor(Date.now() / 1000) }; return mock.update;
     case "restart_to_update": return null;
     case "set_noise_cancellation": mock.voice.noise_cancellation = args.enabled; return mock.voice;
+    case "set_input_mode": Object.assign(mock.voice, { input_mode: args.mode, talk_key: args.talkKey, talk_release_ms: args.releaseMs }); return mock.voice;
+    case "set_voice_hotkeys": Object.assign(mock.voice, { mute_hotkey: args.mute, deafen_hotkey: args.deafen }); return mock.voice;
+    case "set_sensitivity": Object.assign(mock.voice, { auto_sensitivity: args.auto, sensitivity_db: args.thresholdDb }); return mock.voice;
+    case "voice_hotkey_problems": return [];
+    case "mic_level": return mock.micTesting ? -55 + 25 * Math.sin(Date.now() / 400) : -100;
     case "set_muted": mock.voice.muted = args.muted; return mock.voice;
     case "set_deafened":
       mock.voice.deafened = args.deafened;
@@ -588,9 +593,8 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "audit_log": return mockAuditLog();
-    case "start_mic_test":
-    case "stop_mic_test":
-      return null;
+    case "start_mic_test": mock.micTesting = true; return null;
+    case "stop_mic_test": mock.micTesting = false; return null;
     case "set_afk_timeout": mock.voice.afk_timeout_minutes = args.minutes; return mock.voice;
     case "set_share_activity": mock.voice.share_activity = args.enabled; return mock.voice;
     case "list_audio_devices": return { inputs: ["Microphone (Realtek Audio)", "Headset Mic (HyperX Cloud)"], outputs: ["Speakers (Realtek Audio)", "Headphones (HyperX Cloud)"] };
@@ -1075,6 +1079,7 @@ function openSettingsLayerId() {
 
 async function closeSettingsLayers() {
   if (state.micTesting) await stopMicTest();
+  stopMicMeter();
   stopCameraPreview();
   for (const layer of document.querySelectorAll(".settings-layer")) layer.classList.add("hidden");
 }
@@ -4184,6 +4189,107 @@ async function saveOverlaySettings(changes) {
   }
 }
 
+const MIC_METER_INTERVAL_MS = 80;
+let micMeterTimer = null;
+
+function renderVoiceInputSettings() {
+  const v = voiceInputState(state.voice);
+  const card = $("input-mode").closest(".settings-card");
+  card.dataset.mode = v.mode;
+  for (const button of $("input-mode").querySelectorAll("button")) {
+    const on = button.dataset.mode === v.mode;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-checked", String(on));
+  }
+  $("input-mode-note").textContent = inputModeCopy(v.mode).text;
+  $("talk-key").value = v.talkKey;
+  const release = $("talk-release");
+  if (!release.options.length) {
+    for (const [ms, label] of TALK_RELEASE_OPTIONS) release.appendChild(new Option(label, String(ms)));
+  }
+  release.value = String(v.releaseMs);
+  $("sensitivity-auto").checked = v.auto;
+  $("sensitivity-label").textContent = sensitivityLabel(v.auto, v.thresholdDb);
+  $("sensitivity-block").classList.toggle("auto", v.auto);
+  $("mic-meter").classList.toggle("auto", v.auto);
+  $("sensitivity-db").value = String(Math.round(v.thresholdDb));
+  syncRangeFill($("sensitivity-db"));
+  $("mic-meter-mark").style.left = `${meterPercent(v.thresholdDb)}%`;
+  $("mute-key").value = v.muteKey;
+  $("deafen-key").value = v.deafenKey;
+  renderUserPanel();
+  invoke("voice_hotkey_problems").then(taken => {
+    const warn = $("voice-hotkey-warning");
+    warn.textContent = taken.length ? `${taken.join(" and ")} ${taken.length === 1 ? "is" : "are"} already used by another app. Pick a different combination.` : "";
+    warn.classList.toggle("hidden", !taken.length);
+  }).catch(() => {});
+}
+
+async function saveVoiceInput(command, args) {
+  try {
+    state.voice = await invoke(command, args);
+  } catch (e) {
+    toast(String(e));
+  }
+  renderVoiceInputSettings();
+}
+
+function wireVoiceInputSettings() {
+  for (const button of $("input-mode").querySelectorAll("button")) {
+    button.onclick = () => {
+      const v = voiceInputState(state.voice);
+      saveVoiceInput("set_input_mode", { mode: button.dataset.mode, talkKey: v.talkKey, releaseMs: v.releaseMs });
+    };
+  }
+  wireHotkeyInput($("talk-key"), combo => {
+    const v = voiceInputState(state.voice);
+    saveVoiceInput("set_input_mode", { mode: v.mode, talkKey: combo, releaseMs: v.releaseMs });
+  });
+  $("talk-release").addEventListener("change", e => {
+    const v = voiceInputState(state.voice);
+    saveVoiceInput("set_input_mode", { mode: v.mode, talkKey: v.talkKey, releaseMs: Number(e.target.value) });
+  });
+  $("sensitivity-auto").addEventListener("change", e => {
+    saveVoiceInput("set_sensitivity", { auto: e.target.checked, thresholdDb: voiceInputState(state.voice).thresholdDb });
+  });
+  $("sensitivity-db").addEventListener("input", e => {
+    const db = Number(e.target.value);
+    $("sensitivity-label").textContent = sensitivityLabel(false, db);
+    $("mic-meter-mark").style.left = `${meterPercent(db)}%`;
+  });
+  $("sensitivity-db").addEventListener("change", e => {
+    saveVoiceInput("set_sensitivity", { auto: false, thresholdDb: Number(e.target.value) });
+  });
+  wireHotkeyInput($("mute-key"), combo => saveVoiceInput("set_voice_hotkeys", { mute: combo, deafen: voiceInputState(state.voice).deafenKey }), { clearable: true });
+  wireHotkeyInput($("deafen-key"), combo => saveVoiceInput("set_voice_hotkeys", { mute: voiceInputState(state.voice).muteKey, deafen: combo }), { clearable: true });
+}
+
+function startMicMeter() {
+  stopMicMeter();
+  micMeterTimer = setInterval(async () => {
+    let db = SILENCE_DB;
+    try {
+      db = await invoke("mic_level");
+    } catch {}
+    const listening = state.micTesting || Boolean(state.voiceChannelId);
+    const v = voiceInputState(state.voice);
+    $("mic-meter-fill").style.width = `${listening ? meterPercent(db) : 0}%`;
+    $("mic-meter").dataset.state = meterState(db, v.auto, v.thresholdDb, listening);
+    $("mic-meter-note").classList.toggle("hidden", listening);
+  }, MIC_METER_INTERVAL_MS);
+}
+
+function stopMicMeter() {
+  clearInterval(micMeterTimer);
+  micMeterTimer = null;
+}
+
+function setTalking(talking) {
+  state.talking = talking;
+  $("mute-btn").classList.toggle("talking", talking && !state.voice.muted);
+  renderUserPanel();
+}
+
 function hotkeyFromEvent(e) {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
   const parts = [];
@@ -4199,7 +4305,7 @@ function hotkeyFromEvent(e) {
   return parts.join("+");
 }
 
-function wireHotkeyInput(input, field) {
+function wireHotkeyInput(input, onPick, { clearable = false } = {}) {
   input.addEventListener("focus", () => {
     input.dataset.prev = input.value;
     input.value = "Press keys...";
@@ -4213,12 +4319,19 @@ function wireHotkeyInput(input, field) {
       input.blur();
       return;
     }
+    if (clearable && (e.key === "Backspace" || e.key === "Delete")) {
+      input.value = "";
+      input.dataset.prev = "";
+      input.blur();
+      onPick("");
+      return;
+    }
     const combo = hotkeyFromEvent(e);
     if (!combo) return;
     input.value = combo;
     input.dataset.prev = combo;
     input.blur();
-    saveOverlaySettings({ [field]: combo });
+    onPick(combo);
   });
 }
 
@@ -7957,7 +8070,10 @@ function renderUserPanel() {
   setIcon($("mute-btn"), state.voice.muted ? "micOff" : "mic");
   setIcon($("deafen-btn"), state.voice.deafened ? "headsetOff" : "headset");
   setIcon($("settings-btn"), "gear");
-  $("mute-btn").title = state.voice.muted ? "Unmute" : "Mute";
+  const v = voiceInputState(state.voice);
+  const talkTitle = talkKeyTitle(v.mode, v.talkKey, Boolean(state.talking));
+  $("mute-btn").title = state.voice.muted ? "Unmute" : talkTitle || "Mute";
+  $("mute-btn").classList.toggle("talking", Boolean(state.talking) && !state.voice.muted);
   $("deafen-btn").title = state.voice.deafened ? "Undeafen" : "Deafen";
   if (state.currentServer && state.voiceChannelId && state.view === "server") renderChannels();
 }
@@ -9853,8 +9969,9 @@ function wireEvents() {
   });
   $("overlay-opacity").addEventListener("change", e => saveOverlaySettings({ opacity: Number(e.target.value) / 100 }));
   $("overlay-chat").addEventListener("change", e => saveOverlaySettings({ show_chat: e.target.checked }));
-  wireHotkeyInput($("overlay-toggle-key"), "toggle_hotkey");
-  wireHotkeyInput($("overlay-chat-key"), "chat_hotkey");
+  wireHotkeyInput($("overlay-toggle-key"), combo => saveOverlaySettings({ toggle_hotkey: combo }));
+  wireHotkeyInput($("overlay-chat-key"), combo => saveOverlaySettings({ chat_hotkey: combo }));
+  wireVoiceInputSettings();
   $("dm-policy").addEventListener("change", saveDmSettings);
   $("keep-default").addEventListener("change", e => setHistoryWindow(null, e.target.value));
   $("spam-filter-toggle").addEventListener("change", saveDmSettings);
@@ -10584,6 +10701,12 @@ function wireEvents() {
     window.__TAURI__.event.listen("dm-received", event => onDmReceived(event.payload));
     window.__TAURI__.event.listen("notification-clicked", event => openNotificationTarget(event.payload));
     window.__TAURI__.event.listen("tray-toggle-mute", () => $("mute-btn").click());
+    window.__TAURI__.event.listen("voice-settings-changed", event => {
+      state.voice = event.payload;
+      renderUserPanel();
+      toast(state.voice.deafened ? "Deafened" : state.voice.muted ? "Muted" : "Unmuted");
+    });
+    window.__TAURI__.event.listen("talk-key", event => setTalking(Boolean(event.payload)));
     window.__TAURI__.event.listen("voice-speaking", event => {
       setSpeaking(event.payload.user, Boolean(event.payload.speaking));
     });
@@ -11071,6 +11194,8 @@ function openUserSettings(tab) {
   $("input-gain").value = Math.round((state.voice.input_gain ?? 1) * 100);
   $("output-vol-label").textContent = `${$("output-vol").value}%`;
   $("input-gain-label").textContent = `${$("input-gain").value}%`;
+  renderVoiceInputSettings();
+  startMicMeter();
   $("account-display-name").value = state.user.display_name || "";
   $("account-status").value = state.user.custom_status || "";
   $("account-presence").value = state.user.presence || "online";

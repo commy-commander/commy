@@ -3768,6 +3768,41 @@ h3.md-heading { font-size: 1.1em; }
 .corner-opt[data-corner="bottom-left"] { bottom: 5px; left: 5px; }
 .corner-opt[data-corner="bottom-right"] { bottom: 5px; right: 5px; }
 .hotkey-warning { color: var(--yellow); margin-top: 10px; }
+.input-mode button { padding: 9px 8px; }
+.input-mode button.active span { color: rgba(255, 255, 255, .75); }
+.settings-card .talk-only, .settings-card .voice-only { display: none; }
+.settings-card[data-mode="push_to_talk"] .talk-only { display: flex; }
+.settings-card[data-mode="voice_activity"] .voice-only { display: block; }
+#sensitivity-block { display: none; flex-direction: column; gap: 8px; }
+.settings-card[data-mode="voice_activity"] #sensitivity-block { display: flex; }
+.mic-meter {
+  position: relative;
+  height: 10px;
+  border-radius: 6px;
+  background: var(--bg-darkest);
+  overflow: hidden;
+}
+.mic-meter-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 6px;
+  background: var(--text-faint);
+  transition: width 90ms linear;
+}
+.mic-meter[data-state="open"] .mic-meter-fill { background: var(--green); }
+.mic-meter[data-state="quiet"] .mic-meter-fill { background: var(--yellow); }
+.mic-meter-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--header-primary);
+  left: 55%;
+}
+.mic-meter.auto .mic-meter-mark { display: none; }
+#sensitivity-block.auto input[type="range"] { opacity: .4; pointer-events: none; }
+#mute-btn.talking { color: var(--green); }
 
 .integration-head { display: flex; gap: 14px; align-items: flex-start; }
 .integration-logo { flex: none; width: 52px; height: 52px; border-radius: 10px; background: #9147ff; color: #fff; font-weight: 800; font-size: 14px; display: flex; align-items: center; justify-content: center; letter-spacing: .03em; }

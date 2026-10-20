@@ -14,19 +14,43 @@ pub enum AudioError {
     BadFrameSize(usize),
 }
 
+pub const SILENCE_DB: f32 = -100.0;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProcessedFrame {
     pub samples: Vec<f32>,
     pub voice_probability: f32,
     pub should_transmit: bool,
+    pub input_level_db: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Sensitivity {
+    Automatic,
+    Threshold(f32),
 }
 
 pub struct VoiceProcessor {
     denoiser: Box<DenoiseState<'static>>,
     noise_cancellation: bool,
     muted: bool,
+    push_to_talk: bool,
+    talk_key_down: bool,
     input_gain: f32,
+    sensitivity: Sensitivity,
+    last_level_db: f32,
     gate: VoiceGate,
+}
+
+pub fn level_db(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return SILENCE_DB;
+    }
+    let mean_square = samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32;
+    if mean_square <= 0.0 {
+        return SILENCE_DB;
+    }
+    (10.0 * mean_square.log10()).max(SILENCE_DB)
 }
 
 impl Default for VoiceProcessor {
@@ -41,7 +65,11 @@ impl VoiceProcessor {
             denoiser: DenoiseState::new(),
             noise_cancellation: true,
             muted: false,
+            push_to_talk: false,
+            talk_key_down: false,
             input_gain: 1.0,
+            sensitivity: Sensitivity::Automatic,
+            last_level_db: SILENCE_DB,
             gate: VoiceGate::default(),
         }
     }
@@ -66,44 +94,88 @@ impl VoiceProcessor {
         self.input_gain = gain.clamp(0.0, 4.0);
     }
 
+    pub fn set_push_to_talk(&mut self, enabled: bool) {
+        self.push_to_talk = enabled;
+        if !enabled {
+            self.talk_key_down = false;
+        }
+    }
+
+    pub fn push_to_talk(&self) -> bool {
+        self.push_to_talk
+    }
+
+    pub fn set_talk_key_down(&mut self, down: bool) {
+        self.talk_key_down = down;
+    }
+
+    pub fn set_sensitivity(&mut self, sensitivity: Sensitivity) {
+        self.sensitivity = sensitivity;
+    }
+
+    pub fn sensitivity(&self) -> Sensitivity {
+        self.sensitivity
+    }
+
+    pub fn last_level_db(&self) -> f32 {
+        self.last_level_db
+    }
+
+    fn held_closed(&self) -> bool {
+        self.muted || (self.push_to_talk && !self.talk_key_down)
+    }
+
+    fn gate_opens(&self, level: f32, vad: Option<f32>) -> bool {
+        match (self.sensitivity, vad) {
+            (Sensitivity::Threshold(db), _) => level >= db,
+            (Sensitivity::Automatic, Some(vad)) => vad >= VoiceGate::OPEN_AT,
+            (Sensitivity::Automatic, None) => true,
+        }
+    }
+
     pub fn process(&mut self, input: &[f32]) -> Result<ProcessedFrame, AudioError> {
         if input.len() != FRAME_SIZE {
             return Err(AudioError::BadFrameSize(input.len()));
         }
 
-        if self.muted {
+        let mut scaled = [0.0f32; FRAME_SIZE];
+        let mut gained = [0.0f32; FRAME_SIZE];
+        for ((dst, raw), src) in scaled.iter_mut().zip(gained.iter_mut()).zip(input) {
+            *raw = (src * self.input_gain).clamp(-1.0, 1.0);
+            *dst = *raw * RNNOISE_I16_FULL_SCALE;
+        }
+        let input_level_db = level_db(&gained);
+        self.last_level_db = input_level_db;
+
+        if self.held_closed() {
             return Ok(ProcessedFrame {
                 samples: vec![0.0; FRAME_SIZE],
                 voice_probability: 0.0,
                 should_transmit: false,
+                input_level_db,
             });
         }
 
-        let mut scaled = [0.0f32; FRAME_SIZE];
-        for (dst, src) in scaled.iter_mut().zip(input) {
-            *dst = (src * self.input_gain).clamp(-1.0, 1.0) * RNNOISE_I16_FULL_SCALE;
+        let (mut samples, vad) = if self.noise_cancellation {
+            let mut denoised = [0.0f32; FRAME_SIZE];
+            let vad = self.denoiser.process_frame(&mut denoised, &scaled);
+            let samples = denoised
+                .iter()
+                .map(|s| (s / RNNOISE_I16_FULL_SCALE).clamp(-1.0, 1.0))
+                .collect();
+            (samples, Some(vad))
+        } else {
+            (gained.to_vec(), None)
+        };
+        let open = self.gate_opens(input_level_db, vad);
+        if vad.is_some() || self.sensitivity != Sensitivity::Automatic {
+            self.gate.apply(&mut samples, open);
         }
-
-        if !self.noise_cancellation {
-            let samples = scaled.iter().map(|s| s / RNNOISE_I16_FULL_SCALE).collect();
-            return Ok(ProcessedFrame {
-                samples,
-                voice_probability: 0.0,
-                should_transmit: true,
-            });
-        }
-
-        let mut denoised = [0.0f32; FRAME_SIZE];
-        let vad = self.denoiser.process_frame(&mut denoised, &scaled);
-        let mut samples: Vec<f32> = denoised
-            .iter()
-            .map(|s| (s / RNNOISE_I16_FULL_SCALE).clamp(-1.0, 1.0))
-            .collect();
-        self.gate.apply(&mut samples, vad);
         Ok(ProcessedFrame {
             samples,
-            voice_probability: vad,
+            voice_probability: vad.unwrap_or(0.0),
             should_transmit: true,
+            input_level_db,
         })
     }
 }
@@ -125,8 +197,8 @@ impl VoiceGate {
     const HOLD_FRAMES: u32 = 30;
     const RELEASE_PER_FRAME: f32 = 0.25;
 
-    pub fn apply(&mut self, samples: &mut [f32], voice_probability: f32) {
-        if voice_probability >= Self::OPEN_AT {
+    pub fn apply(&mut self, samples: &mut [f32], open: bool) {
+        if open {
             self.hold = Self::HOLD_FRAMES;
         } else {
             self.hold = self.hold.saturating_sub(1);
@@ -155,25 +227,72 @@ mod tests {
         let mut gate = VoiceGate::default();
         let frame = || vec![0.1f32; FRAME_SIZE];
         let mut f = frame();
-        gate.apply(&mut f, 0.9);
+        gate.apply(&mut f, true);
         assert!(f.iter().all(|s| (*s - 0.1).abs() < 1e-6));
         for _ in 0..VoiceGate::HOLD_FRAMES - 1 {
             let mut f = frame();
-            gate.apply(&mut f, 0.0);
+            gate.apply(&mut f, false);
             assert!((f[FRAME_SIZE - 1] - 0.1).abs() < 1e-6);
         }
         let mut faded = Vec::new();
         for _ in 0..6 {
             let mut f = frame();
-            gate.apply(&mut f, 0.0);
+            gate.apply(&mut f, false);
             faded.extend(f);
         }
         assert!(faded.windows(2).all(|w| (w[0] - w[1]).abs() < 0.001), "no clicks");
         assert_eq!(*faded.last().unwrap(), 0.0);
         assert!(!gate.is_open());
         let mut f = frame();
-        gate.apply(&mut f, 0.8);
+        gate.apply(&mut f, true);
         assert!((f[FRAME_SIZE - 1] - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn push_to_talk_sends_only_while_the_key_is_down() {
+        let mut p = VoiceProcessor::new();
+        p.set_noise_cancellation(false);
+        p.set_push_to_talk(true);
+        let frame = sine_frame(440.0, 0.5);
+        let held = p.process(&frame).unwrap();
+        assert!(!held.should_transmit);
+        assert!(held.input_level_db > -20.0, "the meter still reads while the key is up");
+        p.set_talk_key_down(true);
+        assert!(p.process(&frame).unwrap().should_transmit);
+        p.set_talk_key_down(false);
+        assert!(!p.process(&frame).unwrap().should_transmit);
+        p.set_push_to_talk(false);
+        assert!(p.process(&frame).unwrap().should_transmit);
+    }
+
+    #[test]
+    fn a_manual_threshold_gates_on_level_even_without_noise_cancellation() {
+        let mut p = VoiceProcessor::new();
+        p.set_noise_cancellation(false);
+        p.set_sensitivity(Sensitivity::Threshold(-20.0));
+        let quiet = sine_frame(440.0, 0.01);
+        let loud = sine_frame(440.0, 0.5);
+        for _ in 0..(VoiceGate::HOLD_FRAMES + 10) {
+            p.process(&quiet).unwrap();
+        }
+        let out = p.process(&quiet).unwrap();
+        assert!(out.should_transmit);
+        assert!(out.samples.iter().all(|s| *s == 0.0), "below the threshold the gate is shut");
+        assert!(out.input_level_db < -30.0);
+        let out = p.process(&loud).unwrap();
+        assert!(out.samples.iter().any(|s| s.abs() > 0.1), "above the threshold voice passes");
+        assert!(p.last_level_db() > -15.0);
+        p.set_sensitivity(Sensitivity::Automatic);
+        let out = p.process(&quiet).unwrap();
+        assert!(out.samples.iter().any(|s| *s != 0.0), "automatic without noise cancellation passes everything");
+    }
+
+    #[test]
+    fn level_is_in_decibels_full_scale() {
+        assert_eq!(level_db(&[0.0; 10]), SILENCE_DB);
+        assert_eq!(level_db(&[]), SILENCE_DB);
+        assert!((level_db(&[1.0; 10]) - 0.0).abs() < 1e-4);
+        assert!((level_db(&[0.1; 10]) + 20.0).abs() < 1e-3);
     }
 
     fn sine_frame(freq: f32, amplitude: f32) -> Vec<f32> {

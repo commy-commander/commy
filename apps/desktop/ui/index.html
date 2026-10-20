@@ -890,6 +890,58 @@
               <input type="range" id="output-vol" min="0" max="200" value="100" />
             </div>
           </div>
+          <h2 class="settings-subhead">Input Mode</h2>
+          <div class="settings-card">
+            <div class="segmented input-mode" id="input-mode" role="radiogroup" aria-label="Input mode">
+              <button data-mode="voice_activity" role="radio"><strong>Voice Activity</strong><span>Opens when you speak</span></button>
+              <button data-mode="push_to_talk" role="radio"><strong>Push to Talk</strong><span>Hold a key to talk</span></button>
+            </div>
+            <div class="setting-sub" id="input-mode-note"></div>
+            <div class="setting-row talk-only" id="talk-key-row">
+              <div>
+                <div class="setting-title">Push to talk key</div>
+                <div class="setting-sub">Works while a game has focus. Click the box and press a new combination.</div>
+              </div>
+              <input id="talk-key" class="hotkey-input" type="text" readonly aria-label="Push to talk key" />
+            </div>
+            <div class="setting-row talk-only" id="talk-release-row">
+              <div>
+                <div class="setting-title">Release delay</div>
+                <div class="setting-sub">Keeps your mic open for a moment after you let go, so the end of a sentence is not cut off.</div>
+              </div>
+              <select id="talk-release" class="compact-select" aria-label="Release delay"></select>
+            </div>
+            <div class="voice-only" id="sensitivity-block">
+              <div class="setting-row">
+                <div>
+                  <div class="setting-title">Input Sensitivity <span id="sensitivity-label">Automatic</span></div>
+                  <div class="setting-sub">Automatic listens for a voice. Turn it off to open the mic by loudness instead.</div>
+                </div>
+                <input type="checkbox" id="sensitivity-auto" class="switch" aria-label="Automatic sensitivity" />
+              </div>
+              <div class="mic-meter" id="mic-meter" aria-hidden="true">
+                <div class="mic-meter-fill" id="mic-meter-fill"></div>
+                <div class="mic-meter-mark" id="mic-meter-mark"></div>
+              </div>
+              <input type="range" id="sensitivity-db" min="-100" max="0" value="-45" aria-label="Sensitivity threshold" />
+              <div class="setting-sub" id="mic-meter-note">Start a mic test or join a voice channel to see your level.</div>
+            </div>
+          </div>
+          <h2 class="settings-subhead">Voice Hotkeys</h2>
+          <div class="settings-card">
+            <div class="setting-row">
+              <div>
+                <div class="setting-title">Mute or unmute</div>
+                <div class="setting-sub">Works in any app. Click the box and press a combination, or Backspace to clear it.</div>
+              </div>
+              <input id="mute-key" class="hotkey-input" type="text" readonly placeholder="None" aria-label="Mute hotkey" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-title">Deafen or undeafen</div>
+              <input id="deafen-key" class="hotkey-input" type="text" readonly placeholder="None" aria-label="Deafen hotkey" />
+            </div>
+            <div class="setting-sub hotkey-warning hidden" id="voice-hotkey-warning"></div>
+          </div>
           <h2 class="settings-subhead">Mic Test</h2>
           <div class="settings-card setting-row">
             <div>
@@ -1868,6 +1920,7 @@
   <div class="mention-pop hidden" id="mention-pop" role="listbox"></div>
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
+  <script src="scripts/voice-input.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>
