@@ -332,6 +332,12 @@ pub enum ServerEvent {
         user: UserId,
         raised: bool,
     },
+    BotCommandsSet {
+        server: ServerId,
+        bot: UserId,
+        commands: Vec<crate::command::BotCommand>,
+        by: UserId,
+    },
 }
 
 #[cfg(test)]
@@ -404,6 +410,7 @@ mod tests {
         assert_eq!(wire_tag(post), 77);
         assert_eq!(wire_tag(ServerEvent::StageSet { server, channel, user, speaker: true, by: user }), 78);
         assert_eq!(wire_tag(ServerEvent::HandRaise { server, channel, user, raised: true }), 79);
+        assert_eq!(wire_tag(ServerEvent::BotCommandsSet { server, bot: user, commands: vec![], by: user }), 80);
     }
 
     #[test]

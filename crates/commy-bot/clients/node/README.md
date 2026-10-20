@@ -32,11 +32,12 @@ is not on 47620.
 | `messageDelete` | `{ id, channel, server }` |
 | `messageReactionAdd`, `messageReactionRemove` | `{ emoji, messageId, channel, server }`, the `Member` who reacted |
 | `memberJoin`, `memberLeave` | a `Member` |
+| `commandInvoked` | the `Message` that used a slash command, then `{ name, options }` |
 | `close`, `error`, `warn` | |
 
 ## Objects
 
-- `Client`: `user`, `servers`, `server(nameOrId)`, `command(name, run)`, `login(options)`, `destroy()`, `refresh(serverId)`.
+- `Client`: `user`, `servers`, `server(nameOrId)`, `command(name, run)`, `slashCommand(name, run)`, `registerCommands(server, commands)`, `login(options)`, `destroy()`, `refresh(serverId)`.
 - `Server`: `id`, `name`, `channels`, `roles`, `members`, `channel(nameOrId)`, `role(nameOrId)`, `member(id)`.
 - `Channel`: `id`, `name`, `kind`, `send(textOrOptions)`.
 - `Message`: `id`, `content`, `author`, `member`, `channel`, `server`, `createdAt`, `editedAt`, `replyTo`, `mentions`, `attachments`, `reactions`, `late`, `reply()`, `edit()`, `delete()`, `react(emoji)`, `unreact(emoji)`.

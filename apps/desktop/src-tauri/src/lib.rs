@@ -408,6 +408,28 @@ async fn commit_message(
     Ok(view.with_pending(!delivered))
 }
 
+fn command_marker(app: &App, sid: ServerId, used: commy_core::CommandUse) -> CmdResult<commy_core::Attachment> {
+    let used = used.tidy().ok_or("that command's options do not fit")?;
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    if !state.is_bot(used.bot) || !state.server.is_current_member(used.bot) {
+        return Err("that bot is not in this server".into());
+    }
+    let command = state.command_of(&used).ok_or("that bot has no such command, or an option does not fit")?;
+    for (name, value) in &used.options {
+        let Some(option) = command.option(name) else { continue };
+        let known = match option.kind {
+            commy_core::OptionKind::User => value.parse::<UserId>().is_ok_and(|u| state.server.is_current_member(u)),
+            commy_core::OptionKind::Channel => value.parse::<ChannelId>().is_ok_and(|c| state.server.channel(c).is_some()),
+            _ => true,
+        };
+        if !known {
+            return Err(format!("{name} needs a member or channel of this server"));
+        }
+    }
+    Ok(used.into_attachment())
+}
+
 fn seal_and_sign(app: &App, sid: ServerId, message: &mut Message) -> CmdResult<()> {
     let keys = channel_lock::holder_of(app);
     {
@@ -447,6 +469,7 @@ async fn send_message(
     reply_to: Option<String>,
     preview_url: Option<String>,
     tts: Option<bool>,
+    command: Option<commy_core::CommandUse>,
 ) -> CmdResult<MessageView> {
     let content = clean_message(&content)?;
     let sid = server_id.parse().map_err(err_to_string)?;
@@ -459,6 +482,9 @@ async fn send_message(
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(&app, state, profile.id, Permissions::SEND_TTS_MESSAGES, "send text-to-speech messages here")?;
         message.mark_tts();
+    }
+    if let Some(used) = command {
+        message.attachments.push(command_marker(&app, sid, used)?);
     }
     if let Some(raw) = reply_to {
         let target: MessageId = raw.parse().map_err(err_to_string)?;

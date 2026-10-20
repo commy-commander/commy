@@ -10,14 +10,14 @@ pub mod store;
 pub mod webhook;
 
 pub use actions::ActError;
-pub use handler::{Act, BotEvent, Ctx, Handler};
+pub use handler::{Act, BotEvent, CommandInvoked, Ctx, Handler};
 pub use moderator::{Moderator, Policy};
 pub use replica::Replica;
 pub use store::{BotStore, Outgoing};
 
 use chrono::{DateTime, Utc};
 use commy_core::channel_key::{self, Keyring};
-use commy_core::{Action, Identity, Message, Presence, ServerEvent, ServerId, ServerState, TombstoneProof, UserId, UserProfile};
+use commy_core::{Action, BotCommand, Identity, Message, Presence, ServerEvent, ServerId, ServerState, TombstoneProof, UserId, UserProfile};
 use commy_net::catchup::ApplyReport;
 use commy_net::WirePayload;
 use std::collections::{BTreeMap, HashSet};
@@ -31,13 +31,14 @@ pub struct Bot {
     replicas: BTreeMap<ServerId, Replica>,
     moderator: Moderator,
     handlers: Vec<Box<dyn Handler>>,
+    commands: BTreeMap<ServerId, Vec<BotCommand>>,
 }
 
 impl Bot {
     pub fn new(identity: Identity, mut profile: UserProfile, moderator: Moderator) -> Self {
         profile.presence = Presence::Online;
         profile.identity = Some(identity.public());
-        Self { identity, profile, replicas: BTreeMap::new(), moderator, handlers: Vec::new() }
+        Self { identity, profile, replicas: BTreeMap::new(), moderator, handlers: Vec::new(), commands: BTreeMap::new() }
     }
 
     pub fn with(mut self, handler: impl Handler + 'static) -> Self {
@@ -69,16 +70,27 @@ impl Bot {
         &self.moderator
     }
 
+    pub fn commands(&self, server: ServerId) -> &[BotCommand] {
+        self.commands.get(&server).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn register_commands(&mut self, server: ServerId, commands: Vec<BotCommand>, wall: DateTime<Utc>) -> Result<WirePayload, ActError> {
+        self.perform(server, Act::SetCommands { commands }, wall)
+    }
+
     pub fn announcements(&mut self, server: ServerId, now_ms: i64) -> Vec<WirePayload> {
         let me = self.profile.as_seen_by_others();
         let Some(replica) = self.replicas.get_mut(&server).filter(|r| !r.banned(me.id)) else { return Vec::new() };
+        let commands = self.commands.get(&server).filter(|c| !c.is_empty()).cloned();
         let events = [
-            ServerEvent::MemberJoin { server, profile: me.clone() },
-            ServerEvent::BotSet { server, user: me.id, bot: true },
-            ServerEvent::PresenceUpdate { user: me.id, presence: Presence::Online },
+            Some(ServerEvent::MemberJoin { server, profile: me.clone() }),
+            Some(ServerEvent::BotSet { server, user: me.id, bot: true }),
+            commands.map(|commands| ServerEvent::BotCommandsSet { server, bot: me.id, commands, by: me.id }),
+            Some(ServerEvent::PresenceUpdate { user: me.id, presence: Presence::Online }),
         ];
         let mut out: Vec<WirePayload> = events
             .into_iter()
+            .flatten()
             .map(|event| {
                 let payload = replica.signed(&me, &self.identity, event, now_ms);
                 replica.apply_own(&payload);
@@ -168,8 +180,12 @@ impl Bot {
                 let Some(event) = current(state, me, &self.identity, event, &mut seen) else { continue };
                 let ctx = Ctx { server, state, me, now: wall };
                 let mut acts = self.moderator.handle(&ctx, &event);
+                let invoked = invocation(state, me, &event).map(BotEvent::CommandInvoked);
                 for handler in &mut self.handlers {
                     acts.extend(handler.handle(&ctx, &event));
+                    if let Some(invoked) = &invoked {
+                        acts.extend(handler.handle(&ctx, invoked));
+                    }
                 }
                 acts
             };
@@ -218,6 +234,16 @@ fn current(state: &ServerState, me: UserId, identity: &Identity, event: BotEvent
         BotEvent::MessageUpdate(_) => BotEvent::MessageUpdate(message),
         _ => BotEvent::MessageCreate(message),
     })
+}
+
+fn invocation(state: &ServerState, me: UserId, event: &BotEvent) -> Option<CommandInvoked> {
+    let BotEvent::MessageCreate(message) = event else { return None };
+    let used = message.command_use().filter(|u| u.bot == me)?;
+    let command = state.command_of(&used)?;
+    if !state.server.can_post_in(message.channel, message.author) {
+        return None;
+    }
+    Some(CommandInvoked { message: message.clone(), command: command.name.clone(), options: used.options })
 }
 
 pub(crate) fn readable(state: &ServerState, me: UserId, identity: &Identity, message: &Message) -> Option<Message> {

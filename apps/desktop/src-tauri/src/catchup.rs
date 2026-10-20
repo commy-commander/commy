@@ -1001,6 +1001,7 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         for user in old.bots() {
             let _ = state.apply(ServerEvent::BotSet { server, user, bot: true });
         }
+        state.carry_bot_commands(&old);
         if let Some(me) = me {
             let key = me.identity;
             let entry = state.profiles.entry(me.id).or_insert_with(|| me.clone());

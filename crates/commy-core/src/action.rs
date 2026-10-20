@@ -85,6 +85,7 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::ForumTagsSet { by, .. }
         | E::ForumPost { by, .. }
         | E::StageSet { by, .. } => Some(*by),
+        E::BotCommandsSet { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -136,6 +137,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::OnboardingSet { .. } => "onboarding".into(),
         E::AutoModSet { .. } => "automod".into(),
         E::BotSet { user, .. } => format!("bot:{user}"),
+        E::BotCommandsSet { bot, .. } => format!("bot_commands:{bot}"),
         E::PronounsSet { user, .. } => format!("pronouns:{user}"),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
         E::ExpressionSettings { .. } => "expressions".into(),
@@ -191,8 +193,8 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 13] = [
-        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:", "channel.key:", "channel.grant:", "timeout:", "vote:", "poll:",
+    const OMITTED: [&str; 14] = [
+        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "bot_commands:", "invite:", "channel.key:", "channel.grant:", "timeout:", "vote:", "poll:",
     ];
     const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
     SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
@@ -248,6 +250,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
         E::ProfileUpdate { .. } => actor(event) == Some(by),
         E::BotSet { .. } | E::PronounsSet { .. } => member && actor(event) == Some(by),
+        E::BotCommandsSet { bot, .. } => member && *bot == by && actor(event) == Some(by),
         E::PresenceUpdate { .. } | E::RulesAccept { .. } | E::EventRsvp { .. } => member && actor(event) == Some(by),
         E::VoiceState { .. } | E::ScreenShare { .. } | E::CameraState { .. } => member && actor(event) == Some(by) && sees(event),
         E::TypingStart { .. } | E::ReactionToggle { .. } | E::ReactionSet { .. } => {

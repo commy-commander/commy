@@ -26,7 +26,7 @@ impl Attachment {
     }
 
     pub fn is_card(&self) -> bool {
-        self.is_link_preview() || self.is_poll() || self.is_voice_invite() || self.is_tts_marker()
+        self.is_link_preview() || self.is_poll() || self.is_voice_invite() || self.is_tts_marker() || self.is_command()
     }
 
     pub fn tts_marker() -> Self {

@@ -326,6 +326,34 @@ pub struct ServerView {
     pub can_use_soundboard: bool,
     pub automod: Option<AutoMod>,
     pub onboarding: Option<commy_core::Onboarding>,
+    pub commands: Vec<BotCommandsView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BotCommandsView {
+    pub bot: String,
+    pub bot_name: String,
+    pub commands: Vec<commy_core::BotCommand>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CommandUseView {
+    pub bot: String,
+    pub bot_name: String,
+    pub name: String,
+    pub options: std::collections::BTreeMap<String, String>,
+}
+
+impl CommandUseView {
+    fn build(message: &Message, state: &ServerState) -> Option<Self> {
+        let used = message.command_use()?;
+        Some(Self {
+            bot: used.bot.to_string(),
+            bot_name: display_name(state, used.bot),
+            name: used.command,
+            options: used.options,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -643,6 +671,11 @@ impl ServerView {
             onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {
                 o.tidied(|r| commy_core::onboarding::grantable(&state.server.roles, r))
             }),
+            commands: state
+                .bot_commands()
+                .filter(|(bot, _)| state.server.is_current_member(*bot))
+                .map(|(bot, commands)| BotCommandsView { bot: bot.to_string(), bot_name: display_name(state, bot), commands: commands.to_vec() })
+                .collect(),
         }
     }
 }
@@ -838,6 +871,7 @@ pub struct MessageView {
     pub previews: Vec<LinkPreviewView>,
     pub poll: Option<PollView>,
     pub tts: bool,
+    pub command: Option<CommandUseView>,
     pub pending: bool,
     pub pinned: bool,
     pub held: Option<String>,
@@ -1049,6 +1083,7 @@ impl MessageView {
             previews: message.link_previews().take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
             poll: (!sealed).then(|| PollView::build(message, state, keys.user())).flatten(),
             tts: !sealed && message.speaks_for(state.server.permissions_for(message.author)),
+            command: (!sealed).then(|| CommandUseView::build(message, state)).flatten(),
             pending: false,
             pinned: state.server.is_pinned(message.id),
             held: None,
@@ -1271,6 +1306,35 @@ mod tests {
         let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
         assert!(badge(bot_id));
         assert!(!badge(owner.id));
+    }
+
+    #[test]
+    fn registered_commands_and_their_uses_show_in_views() {
+        use commy_core::command::{BotCommand, CommandUse};
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(Identity::generate().public());
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let channel = server.channels[0].id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let bot = UserProfile::new("Tidy");
+        let bot_id = bot.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: bot }).unwrap();
+        state.apply(ServerEvent::BotSet { server: sid, user: bot_id, bot: true }).unwrap();
+        let roll = BotCommand { name: "roll".into(), description: "Roll dice".into(), options: vec![] };
+        state.apply(ServerEvent::BotCommandsSet { server: sid, bot: bot_id, commands: vec![roll.clone()], by: bot_id }).unwrap();
+        let view = ServerView::for_viewer(&state, Some(owner.id), &KeyHolder::default());
+        assert_eq!(view.commands.len(), 1);
+        assert_eq!((view.commands[0].bot_name.as_str(), &view.commands[0].commands), ("Tidy", &vec![roll]));
+        let mut message = Message::new(channel, owner.id, "/roll 20");
+        message.attachments.push(CommandUse::new(bot_id, "roll").with("sides", "20").into_attachment());
+        let shown = MessageView::build(&message, &state, &KeyHolder::default());
+        let used = shown.command.unwrap();
+        assert_eq!((used.bot_name.as_str(), used.name.as_str(), used.options.get("sides").map(String::as_str)), ("Tidy", "roll", Some("20")));
+        assert!(shown.attachments.is_empty(), "the marker is not shown as a file");
+        state.apply(ServerEvent::MemberLeave { server: sid, user: bot_id }).unwrap();
+        assert!(ServerView::for_viewer(&state, Some(owner.id), &KeyHolder::default()).commands.is_empty());
     }
 
     #[test]

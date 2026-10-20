@@ -3,6 +3,7 @@ use crate::Bot;
 use chrono::{DateTime, Duration, Utc};
 use commy_core::channel_key::{self, Keyring};
 use commy_core::server::valid_reaction;
+use commy_core::command::{valid_commands, MAX_COMMANDS, MAX_DESCRIPTION_CHARS, MAX_NAME_CHARS, MAX_OPTIONS};
 use commy_core::{
     action, Identity, Message, Permissions, ServerEvent, ServerId, ServerState, SignedEvent, TombstoneProof, UserId,
 };
@@ -47,6 +48,8 @@ pub enum ActError {
     BadEmoji,
     #[error("the server did not accept that: {0}")]
     Refused(String),
+    #[error("commands need unique lowercase names of up to {MAX_NAME_CHARS} letters, digits and dashes, descriptions of up to {MAX_DESCRIPTION_CHARS} characters, at most {MAX_OPTIONS} options with required ones first, and at most {MAX_COMMANDS} commands")]
+    BadCommands,
 }
 
 impl Act {
@@ -58,6 +61,7 @@ impl Act {
             Act::Kick { .. } => "Kick Members",
             Act::Ban { .. } => "Ban Members",
             Act::AddRole { .. } | Act::RemoveRole { .. } => "Manage Roles",
+            Act::SetCommands { .. } => "membership",
         }
     }
 }
@@ -133,6 +137,12 @@ impl Bot {
             Act::RemoveRole { user, role } => {
                 signed(ServerEvent::RoleUnassign { server, user: member(state, user)?, role: known_role(state, role)? })
             }
+            Act::SetCommands { commands } => {
+                if !valid_commands(&commands) {
+                    return Err(ActError::BadCommands);
+                }
+                signed(ServerEvent::BotCommandsSet { server, bot: me, commands, by: me })
+            }
         };
         if gossip_size(&payload) > MAX_GOSSIP_BYTES {
             return Err(ActError::TooLong);
@@ -148,6 +158,9 @@ impl Bot {
             _ => Ok(false),
         };
         applied.map_err(|e| ActError::Refused(e.to_string()))?;
+        if let WirePayload::Signed(SignedEvent { event: ServerEvent::BotCommandsSet { commands, .. }, .. }) = &payload {
+            self.commands.insert(server, commands.clone());
+        }
         Ok(payload)
     }
 }

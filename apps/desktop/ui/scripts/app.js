@@ -371,6 +371,14 @@ function mockSeed() {
       content: "Removed a message from sleepy: blocked word", created_at: new Date(Date.now() - 20e3).toISOString(), edited: false, attachments: [] },
   ];
   server.automod = { blocked_terms: ["free gifts", "scam*"], block_links: false, max_mentions: 5, burst: { messages: 5, seconds: 10 }, exempt_roles: ["r2"] };
+  server.commands = [{ bot: "m4", bot_name: "Tidy", commands: [
+    { name: "remind", description: "Remind a member about something later", options: [
+      { name: "who", description: "Who to remind", required: true, kind: "user" },
+      { name: "minutes", description: "How many minutes from now", required: true, kind: "integer" },
+      { name: "note", description: "What to say", required: false, kind: "string" },
+    ] },
+    { name: "roll", description: "Roll some dice", options: [{ name: "sides", description: "How many sides", required: false, kind: "integer" }] },
+  ] }];
   mock.messages[server.channels[1].id] = [
     { id: "g0", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
       content: "<sticker:party:party@mock>", created_at: new Date(Date.now() - 1200e3).toISOString(), edited: false, attachments: [] },
@@ -389,6 +397,12 @@ function mockSeed() {
       attachments: [{ filename: VOICE_MESSAGE_FILENAME, size_bytes: 61440, is_image: false, mime: VOICE_MESSAGE_MIME, blob: "voice@mock", provider: null }] },
     { id: "g8", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
       content: "raid starts in five, grab your potions", created_at: new Date(Date.now() - 240e3).toISOString(), edited: false, attachments: [], tts: true },
+    { id: "c1", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
+      content: "/roll 20", created_at: new Date(Date.now() - 240e3).toISOString(), edited: false, attachments: [],
+      command: { bot: "m4", bot_name: "Tidy", name: "roll", options: { sides: "20" } } },
+    { id: "c2", channel: server.channels[1].id, author_id: "m4", author_name: "Tidy",
+      content: "nova rolled a 14 on a 20-sided die", created_at: new Date(Date.now() - 239e3).toISOString(), edited: false, attachments: [],
+      reply_to: "c1", reply_preview: { author_id: "m2", author_name: "nova", excerpt: "/roll 20" } },
   ];
   mock.messages[server.channels[1].id].push(
     { id: "vi1", channel: server.channels[1].id, author_id: "m2", author_name: "nova", content: "",
@@ -880,6 +894,12 @@ async function mockInvoke(cmd, args = {}) {
         reply_to: args.replyTo || null,
         reply_preview: (() => { const o = (mock.messages[args.channelId] || []).find(m => m.id === args.replyTo); return o ? { author_id: o.author_id, author_name: o.author_name, excerpt: o.content.slice(0, 120) } : null; })(),
       };
+      if (args.command) {
+        const server = Object.values(mock.servers).find(s => s.channels.some(c => c.id === args.channelId));
+        const group = ((server && server.commands) || []).find(g => g.bot === args.command.bot);
+        if (!group || !group.commands.some(c => c.name === args.command.command)) throw "that bot has no such command, or an option does not fit";
+        msg.command = { bot: args.command.bot, bot_name: group.bot_name, name: args.command.command, options: args.command.options || {} };
+      }
       (mock.messages[args.channelId] ||= []).push(msg);
       return msg;
     }
@@ -5153,7 +5173,12 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   }
   if (message.pinned) row.classList.add("pinned");
   let inlineMark = pending && grouped;
-  if (message.content) {
+  if (message.command) {
+    const line = renderCommandUse(message);
+    if (inlineMark) line.appendChild(pendingMark());
+    inlineMark = false;
+    body.appendChild(line);
+  } else if (message.content) {
     if (!isBareImageLink(message.content)) {
       const content = buildMessageContent(message.content, message.author_id);
       if (message.edited) appendAfterText(content, el("span", "edited", " (edited)"));
@@ -11149,9 +11174,24 @@ function suggestionsFor(token, input) {
   if (token.kind === "mention") return mentionSuggestions(token.query);
   if (token.kind === "emoji") return emojiSuggestions(token.query, emojiGroupsHere(), EMOJI_DATA);
   if (token.kind === "command" && suggestPop.commandInputs.has(input)) {
-    return commandSuggestions(token, { gifs: Boolean(gifSettings().key) || serverHasGifs(), tts: state.view === "server" && canSendTtsHere() });
+    const available = { gifs: Boolean(gifSettings().key) || serverHasGifs(), tts: state.view === "server" && canSendTtsHere() };
+    return commandSuggestions(token, available, slashCatalogHere());
   }
   return [];
+}
+
+function slashCatalogHere() {
+  return state.view === "server" && state.currentServer ? slashCatalog(state.currentServer) : [];
+}
+
+function slashUsageNode(item) {
+  const span = el("span", "suggest-args suggest-usage");
+  const at = item.args === null ? -1 : slashOptionAt(item.entry, item.args);
+  item.entry.options.forEach((option, i) => {
+    const word = el("span", "suggest-opt" + (i === at ? " on" : ""), option.required ? `<${option.name}>` : `[${option.name}]`);
+    span.appendChild(word);
+  });
+  return span;
 }
 
 function suggestHeading(token) {
@@ -11163,6 +11203,7 @@ function suggestHeading(token) {
 
 function commandHint(item) {
   if (item.name === TTS_COMMAND) return ttsCommandHint(item);
+  if (item.bot) return item.args === null ? item.entry.description : slashHint(item.entry, item.args).text;
   if (!item.available) return "GIF search is not set up";
   return item.args ? "Search GIFs" : "Search for a GIF";
 }
@@ -11177,6 +11218,12 @@ function suggestionRow(item) {
     row.append(el("span", "mention-name", `:${item.name}`), el("span", "suggest-face", item.text), el("span", "mention-hint", item.server));
   } else if (item.kind === "standard") {
     row.append(el("span", "suggest-glyph", item.emoji), el("span", "mention-name", item.name));
+  } else if (item.kind === "command" && item.bot) {
+    row.classList.add("slash-row");
+    row.append(el("span", "mention-at", "/"), el("span", "mention-name", `/${item.name}`));
+    if (item.entry.options.length) row.appendChild(slashUsageNode(item));
+    row.appendChild(el("span", "mention-hint", commandHint(item)));
+    row.title = `${item.entry.bot_name}: ${item.entry.description}`;
   } else if (item.kind === "command") {
     row.append(el("span", "mention-at", "/"), el("span", "mention-name", `/${item.name}`));
     if (item.args) row.appendChild(el("span", "suggest-args", item.args));
@@ -11192,7 +11239,8 @@ function suggestionRow(item) {
 }
 
 function updateSuggestPop(input) {
-  const token = suggestTokenAt(input.value, input.selectionStart);
+  const names = suggestPop.commandInputs.has(input) ? slashNames(slashCatalogHere()) : [];
+  const token = suggestTokenAt(input.value, input.selectionStart, names);
   const items = token ? suggestionsFor(token, input) : [];
   if (!items.length) {
     closeSuggestPop();
@@ -11235,8 +11283,12 @@ function pickSuggestion(i) {
   const item = suggestPop.items[i];
   const input = suggestPop.input;
   if (!item || !input) return;
-  if (item.kind === "command" && item.ready) {
+  if (item.kind === "command" && item.ready && !item.bot) {
     runComposerCommand(input, item);
+    return;
+  }
+  if (item.kind === "command" && item.bot && item.args !== null) {
+    closeSuggestPop();
     return;
   }
   const caret = input.selectionStart ?? input.value.length;
@@ -11255,6 +11307,11 @@ function mentionTypedInFull() {
   return !!(token && token.kind === "mention" && item && item.name.toLowerCase() === token.query);
 }
 
+function slashTypedInFull() {
+  const item = suggestPop.items[suggestPop.index];
+  return !!(item && item.kind === "command" && item.bot && item.args !== null);
+}
+
 function wireSuggestions(input, { commands = false } = {}) {
   if (commands) suggestPop.commandInputs.add(input);
   input.addEventListener("input", () => updateSuggestPop(input));
@@ -11266,7 +11323,7 @@ function wireSuggestions(input, { commands = false } = {}) {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       suggestPop.index = (suggestPop.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
       updateSuggestPop(input);
-    } else if (e.key === "Enter" && mentionTypedInFull()) {
+    } else if (e.key === "Enter" && (mentionTypedInFull() || slashTypedInFull())) {
       closeSuggestPop();
       return;
     } else if (e.key === "Enter" || e.key === "Tab") {
@@ -11312,6 +11369,23 @@ function buildMessageContent(text, authorId = null) {
   const linked = parseMessageLink(text);
   if (linked) div.appendChild(jumpCard(linked));
   return div;
+}
+
+function renderCommandUse(message) {
+  const used = message.command;
+  const line = el("div", "cmd-use");
+  line.append(el("span", "cmd-use-badge", "/"), el("span", "cmd-use-label", "used"), el("span", "cmd-use-name", `/${used.name}`));
+  const entry = slashCatalogHere().find(c => c.name === used.name && c.bot === used.bot) || null;
+  const channelName = id => ((state.currentServer && state.currentServer.channels) || []).find(c => c.id === id)?.name || null;
+  for (const chip of slashChips(used, entry, { memberName: id => avatarNameFor(id), channelName })) {
+    const pill = el("span", "cmd-use-chip");
+    pill.append(el("span", "cmd-use-chip-name", chip.name), el("span", "cmd-use-chip-value", chip.value));
+    pill.title = `${chip.name}: ${chip.value}`;
+    line.appendChild(pill);
+  }
+  line.appendChild(el("span", "cmd-use-bot", `to ${used.bot_name || "a bot"}`));
+  line.title = message.content || `/${used.name}`;
+  return line;
 }
 
 function jumpCard(target) {
@@ -13011,6 +13085,14 @@ async function sendMessage() {
     return;
   }
   stopSpeaking();
+  let command = null;
+  const slash = matchSlashCommand(content, slashCatalogHere());
+  if (slash) {
+    const { members, channels } = state.currentServer;
+    const parsed = parseSlashOptions(slash.entry, slash.rest, { members, channels });
+    if (parsed.problem) return toast(parsed.problem);
+    command = { bot: slash.entry.bot, command: slash.entry.name, options: parsed.options };
+  }
   input.value = "";
   fitComposer(input);
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
@@ -13021,9 +13103,9 @@ async function sendMessage() {
   readState.held = null;
   cancelReply();
   try {
-    const previewUrl = await previewUrlFor(content);
+    const previewUrl = command ? null : await previewUrlFor(content);
     clearLinkDraft();
-    const outgoing = encodeOutgoing(content);
+    const outgoing = command ? content : encodeOutgoing(content);
     await invoke("send_message", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
@@ -13031,6 +13113,7 @@ async function sendMessage() {
       replyTo,
       previewUrl,
       tts,
+      command,
     });
     pushOverlayChat(state.user.id, state.user.display_name || state.user.username, outgoing, false);
     noteSlowSend(state.currentChannel.id, 0);

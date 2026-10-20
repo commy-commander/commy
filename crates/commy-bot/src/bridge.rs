@@ -2,7 +2,7 @@ use crate::compat::{self, Embed};
 use crate::handler::{Act, BotEvent, Ctx, Handler};
 use crate::{Bot, BotStore};
 use chrono::Utc;
-use commy_core::{ChannelKind, Message, MessageId, ServerId, ServerState, UserId};
+use commy_core::{BotCommand, ChannelKind, Message, MessageId, ServerId, ServerState, UserId};
 use commy_net::WirePayload;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -105,6 +105,13 @@ pub enum Request {
         nonce: Value,
         server: String,
     },
+    SetCommands {
+        #[serde(default)]
+        nonce: Value,
+        server: String,
+        #[serde(default)]
+        commands: Vec<BotCommand>,
+    },
 }
 
 impl Request {
@@ -120,7 +127,8 @@ impl Request {
             | Request::Ban { nonce, .. }
             | Request::AddRole { nonce, .. }
             | Request::RemoveRole { nonce, .. }
-            | Request::Server { nonce, .. } => nonce.clone(),
+            | Request::Server { nonce, .. }
+            | Request::SetCommands { nonce, .. } => nonce.clone(),
         }
     }
 }
@@ -166,6 +174,13 @@ pub fn event_json(ctx: &Ctx, event: &BotEvent) -> Value {
         }
         BotEvent::MemberJoin(user) => json!({"type": "member_join", "server": server, "member": member_json(ctx.state, *user)}),
         BotEvent::MemberLeave(user) => json!({"type": "member_leave", "server": server, "user": user.to_string()}),
+        BotEvent::CommandInvoked(invoked) => json!({
+            "type": "command_invoked",
+            "server": server,
+            "command": invoked.command,
+            "options": invoked.options,
+            "message": message_json(ctx, &invoked.message),
+        }),
     }
 }
 
@@ -349,6 +364,7 @@ fn resolve(bot: &Bot, request: Request) -> Result<Resolved, String> {
             let (id, state) = find(&server)?;
             (id, Act::RemoveRole { user: user(state, &who)?, role: role(state, &which)? })
         }
+        Request::SetCommands { server, commands, .. } => (find(&server)?.0, Act::SetCommands { commands }),
     };
     Ok(Resolved::Act(act.0, act.1))
 }

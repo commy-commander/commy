@@ -3,8 +3,9 @@ use commy_bot::bridge::{self, Bridge, Tap};
 use commy_bot::storage::DataDir;
 use commy_bot::webhook::{Webhook, Webhooks};
 use commy_bot::{Act, ActError, BotEvent, BotStore, Ctx, Outgoing, Policy};
-use commy_core::test_support::post;
-use commy_core::{Permissions, ServerEvent, UserId};
+use commy_core::command::{BotCommand, CommandOption, CommandUse, OptionKind};
+use commy_core::test_support::{post, signed};
+use commy_core::{Message, Permissions, ServerEvent, UserId};
 use commy_net::WirePayload;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -57,6 +58,101 @@ fn a_handler_answers_commands_and_greets_newcomers() {
     let newcomer = commy_core::test_support::keyed_profile("newcomer");
     let out = world.by(newcomer.id, ServerEvent::MemberJoin { server: sid, profile: newcomer.clone() });
     assert_eq!(sent(&out).iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), vec!["welcome newcomer"]);
+}
+
+fn dice() -> Vec<BotCommand> {
+    vec![
+        BotCommand {
+            name: "roll".into(),
+            description: "Roll some dice".into(),
+            options: vec![CommandOption { name: "sides".into(), description: "How many sides".into(), required: false, kind: OptionKind::Integer }],
+        },
+        BotCommand {
+            name: "poke".into(),
+            description: "Poke a member".into(),
+            options: vec![CommandOption { name: "who".into(), description: "The member".into(), required: true, kind: OptionKind::User }],
+        },
+    ]
+}
+
+fn dice_bot(ctx: &Ctx, event: &BotEvent) -> Vec<Act> {
+    match event {
+        BotEvent::Ready => vec![Act::SetCommands { commands: dice() }],
+        BotEvent::CommandInvoked(used) if used.command == "roll" => {
+            let sides = used.option("sides").and_then(|s| s.parse::<u32>().ok()).unwrap_or(6);
+            vec![used.reply(format!("{} rolled a {sides}-sided die", ctx.name_of(used.message.author)))]
+        }
+        BotEvent::CommandInvoked(used) => vec![used.reply(format!("poked {}", used.option("who").unwrap_or("nobody")))],
+        _ => Vec::new(),
+    }
+}
+
+fn used(world: &World, author: UserId, text: &str, marker: CommandUse) -> Message {
+    let mut message = Message::new(world.channel, author, text);
+    message.attachments.push(marker.into_attachment());
+    signed(&world.owner_state, message)
+}
+
+#[test]
+fn slash_commands_are_registered_on_ready_and_invocations_reach_handlers() {
+    let mut world = World::joined_with(Policy::default(), |bot| bot.with(dice_bot));
+    let sid = world.sid();
+    assert_eq!(world.owner_state.commands_of(world.bot_id), dice().as_slice(), "members learn the list from the signed event");
+    assert_eq!(world.bot.commands(sid), dice().as_slice());
+    let hello = world.bot.announcements(sid, Utc::now().timestamp_millis());
+    assert!(
+        hello.iter().any(|p| matches!(p, WirePayload::Signed(s) if matches!(&s.event, ServerEvent::BotCommandsSet { commands, .. } if *commands == dice()))),
+        "the list rides along whenever the bot says hello, so newcomers get it"
+    );
+
+    let roll = used(&world, world.member, "/roll 20", CommandUse::new(world.bot_id, "roll").with("sides", "20"));
+    let out = world.posted(roll.clone());
+    let replies = sent(&out);
+    assert_eq!(replies.len(), 1);
+    assert_eq!((replies[0].content.as_str(), replies[0].reply_to), ("member rolled a 20-sided die", Some(roll.id)));
+    world.deliver(out);
+
+    let bare = used(&world, world.member, "/roll", CommandUse::new(world.bot_id, "roll"));
+    assert_eq!(sent(&world.posted(bare)).iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), vec!["member rolled a 6-sided die"]);
+
+    let wrong_type = used(&world, world.member, "/roll d20", CommandUse::new(world.bot_id, "roll").with("sides", "d20"));
+    assert!(sent(&world.posted(wrong_type)).is_empty(), "options that do not fit the command are not invocations");
+    let missing = used(&world, world.member, "/poke", CommandUse::new(world.bot_id, "poke"));
+    assert!(sent(&world.posted(missing)).is_empty(), "a required option is needed");
+    let unknown = used(&world, world.member, "/dance", CommandUse::new(world.bot_id, "dance"));
+    assert!(sent(&world.posted(unknown)).is_empty());
+    let other_bot = used(&world, world.member, "/roll", CommandUse::new(UserId::new(), "roll"));
+    assert!(sent(&world.posted(other_bot)).is_empty(), "commands of other bots are left alone");
+    let plain = post(&world.owner_state, world.channel, world.member, "/roll 20");
+    assert!(sent(&world.posted(plain)).is_empty(), "plain text is not an invocation without the marker");
+
+    let poke = used(&world, world.member, "/poke @owner", CommandUse::new(world.bot_id, "poke").with("who", world.owner.to_string()));
+    assert_eq!(sent(&world.posted(poke)).iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), vec![format!("poked {}", world.owner)]);
+
+    let mut bad = dice();
+    bad[0].name = "Roll".into();
+    assert_eq!(world.bot.register_commands(sid, bad, Utc::now()), Err(ActError::BadCommands));
+    let cleared = world.bot.register_commands(sid, Vec::new(), Utc::now()).unwrap();
+    world.deliver(vec![cleared]);
+    assert!(world.owner_state.commands_of(world.bot_id).is_empty());
+    assert!(world.bot.commands(sid).is_empty());
+}
+
+#[test]
+fn only_the_bot_itself_sets_its_commands() {
+    let mut world = World::joined(Policy::default());
+    let sid = world.sid();
+    let by = world.member;
+    let forged = commy_core::SignedEvent::sign(
+        sid,
+        by,
+        Utc::now().timestamp_millis(),
+        ServerEvent::BotCommandsSet { server: sid, bot: world.bot_id, commands: dice(), by },
+        &commy_core::test_support::identity_for(by),
+    );
+    assert_eq!(world.owner_state.apply_signed(&forged), Err(commy_core::StoreError::NotAllowed));
+    world.bot.on_event(sid, forged.event.clone(), Some(forged.action), Instant::now(), Utc::now());
+    assert!(world.bot.replica(sid).unwrap().state.as_ref().unwrap().commands_of(world.bot_id).is_empty());
 }
 
 #[test]

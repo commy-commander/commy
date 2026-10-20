@@ -74,6 +74,7 @@ pub enum AuditKind {
     ForumTags,
     ForumPostEdit,
     StageSpeaker,
+    BotCommands,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -345,6 +346,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
                 return None;
             }
             (K::ForumPostEdit, Some(message.to_string()), channel_name(state, *id), Some(clip(title)))
+        }
+        E::BotCommandsSet { bot, commands, .. } => {
+            let (target, label) = member(bot);
+            (K::BotCommands, target, label, Some(commands.len().to_string()))
         }
         _ => return None,
     })

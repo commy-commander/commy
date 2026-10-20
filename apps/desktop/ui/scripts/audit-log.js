@@ -75,6 +75,7 @@ const AUDIT_GROUP_OF = {
   channel_access: "channels",
   channel_sensitive: "channels",
   voice_status_set: "channels",
+  bot_commands: "server",
 };
 
 const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", stage: "stage channel", announcement: "announcement channel", category: "category", forum: "forum channel" };
@@ -170,6 +171,7 @@ function describeAudit(entry) {
     case "invite_create": return ["created the invite ", named("a link")];
     case "invite_revoke": return detail ? ["revoked the invite ", named("a link"), " made by ", auditStrong(detail)] : ["revoked the invite ", named("a link")];
     case "invite_background": return [detail === "removed" ? "removed the invite background" : "changed the invite background"];
+    case "bot_commands": return count > 0 ? [`registered ${auditCount(count, "slash command", "slash commands")}`] : ["removed its slash commands"];
     default: return ["made a change"];
   }
 }

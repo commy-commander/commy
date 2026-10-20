@@ -36,6 +36,31 @@ test("a slash at the start asks for commands, with what follows as the search", 
   assert.deepEqual(suggestTokenAt("/me hi @no", 10), { kind: "mention", start: 7, query: "no" });
 });
 
+test("bot command names make the slash token a command even with arguments, unless a mention is being typed", () => {
+  const names = ["roll", "remind", "roll-d20"];
+  assert.deepEqual(suggestTokenAt("/roll 20", 8, names), { kind: "command", start: 0, query: "roll", args: "20" });
+  assert.deepEqual(suggestTokenAt("/roll-d20 ", 10, names), { kind: "command", start: 0, query: "roll-d20", args: "" });
+  assert.deepEqual(suggestTokenAt("/remind @no", 11, names), { kind: "mention", start: 8, query: "no" });
+  assert.deepEqual(suggestTokenAt("/remind @nova 10", 16, names), { kind: "command", start: 0, query: "remind", args: "@nova 10" });
+  assert.equal(suggestTokenAt("/dance now", 10, names), null);
+  assert.deepEqual(suggestTokenAt("/ro", 3, names), { kind: "command", start: 0, query: "ro", args: null });
+});
+
+test("bot commands join the command list with their entry and typed arguments", () => {
+  const catalog = [
+    { bot: "b1", bot_name: "Tidy", name: "remind", description: "Remind someone", options: [{ name: "who", required: true, kind: "user" }] },
+    { bot: "b1", bot_name: "Tidy", name: "roll", description: "Roll dice", options: [] },
+  ];
+  const partial = commandSuggestions({ kind: "command", start: 0, query: "r", args: null }, {}, catalog);
+  assert.deepEqual(partial.map(i => [i.name, i.bot, i.args, i.ready]), [["remind", true, null, false], ["roll", true, null, false]]);
+  assert.equal(partial[0].entry.description, "Remind someone");
+  const typed = commandSuggestions({ kind: "command", start: 0, query: "roll", args: "20" }, {}, catalog);
+  assert.deepEqual(typed.map(i => [i.name, i.args, i.ready]), [["roll", "20", true]]);
+  const both = commandSuggestions({ kind: "command", start: 0, query: "", args: null }, { gifs: true }, catalog);
+  assert.deepEqual(both.map(i => `${i.name}${i.bot ? "*" : ""}`), ["gif", "tts", "remind*", "roll*"]);
+  assert.equal(suggestionInsert(typed[0]), "/roll ");
+});
+
 test("custom emoji come first, this server before others, one per name", () => {
   const list = emojiSuggestions("fer", [here, elsewhere], STANDARD);
   assert.deepEqual(list.map(e => [e.kind, e.name, e.server]), [
