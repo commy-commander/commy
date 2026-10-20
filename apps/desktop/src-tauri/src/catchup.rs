@@ -88,26 +88,13 @@ pub struct FreshChannel {
 }
 
 pub fn mentions(content: &str, names: &[&str]) -> bool {
-    let everyone: Vec<&str> = names.iter().copied().chain(["everyone", "here"]).collect();
-    names_mentioned(content, &everyone)
+    names_mentioned(content, names)
 }
 
-pub fn names_mentioned(content: &str, names: &[&str]) -> bool {
-    let lower = content.to_lowercase();
-    let targets = names.iter().map(|n| n.to_lowercase());
-    for name in targets.filter(|n| !n.is_empty()) {
-        let mut from = 0;
-        let needle = format!("@{name}");
-        while let Some(pos) = lower[from..].find(&needle) {
-            let end = from + pos + 1 + name.len();
-            let boundary = lower[end..].chars().next().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
-            if boundary {
-                return true;
-            }
-            from = end;
-        }
-    }
-    false
+pub use commy_core::mention::names_mentioned;
+
+pub fn mention_names(profile: &commy_core::UserProfile) -> Vec<String> {
+    [Some(profile.username.clone()), profile.display_name.clone()].into_iter().flatten().collect()
 }
 
 impl Catchup {
@@ -364,6 +351,7 @@ pub struct Unread {
     names: Vec<String>,
     blocked: HashSet<UserId>,
     silent: bool,
+    keys: crate::channel_lock::KeyHolder,
 }
 
 impl Unread {
@@ -371,19 +359,23 @@ impl Unread {
         let profile = app.profile.lock().unwrap().clone();
         Self {
             me: profile.as_ref().map(|p| p.id),
-            names: profile
-                .iter()
-                .flat_map(|p| [Some(p.username.clone()), p.display_name.clone()])
-                .flatten()
-                .collect(),
+            names: profile.as_ref().map(mention_names).unwrap_or_default(),
             blocked: app.safety.lock().unwrap().blocked.iter().copied().collect(),
             silent: app.awaits_snapshot(server),
+            keys: crate::channel_lock::holder_of(app),
         }
     }
 
-    fn fresh(&self, message: &Message) -> Fresh {
+    fn fresh(&self, state: &ServerState, message: &Message) -> Fresh {
         let names: Vec<&str> = self.names.iter().map(String::as_str).collect();
-        Fresh::of(message, &names)
+        let Some(opened) = self.keys.open(state, message) else {
+            return Fresh::of(&Message { content: String::new(), ..message.clone() }, &names);
+        };
+        let mut fresh = Fresh::of(&opened, &names);
+        fresh.mentioned = self
+            .me
+            .is_some_and(|me| state.server.mentioned_by(opened.author, &opened.content, me, &names));
+        fresh
     }
 
     fn counts(&self, state: &ServerState, message: &Message) -> bool {
@@ -391,6 +383,7 @@ impl Unread {
             || Some(message.author) == self.me
             || self.blocked.contains(&message.author)
             || state.has_message(message.id)
+            || self.me.is_none_or(|me| !state.server.can_view(message.channel, me))
         {
             return false;
         }
@@ -411,7 +404,7 @@ pub fn apply_page(
     let new: HashMap<MessageId, Fresh> = messages
         .iter()
         .filter(|m| unread.counts(state, m))
-        .map(|m| (m.id, unread.fresh(m)))
+        .map(|m| (m.id, unread.fresh(state, m)))
         .collect();
     let (report, held) = apply_items(state, messages, tombstones);
     let held = held.into_iter().filter_map(|event| Some((item_signer(&event)?, event))).collect();
@@ -447,7 +440,7 @@ pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<Held>) -
     let mut out = Retried::default();
     for (at, _, event) in events {
         let new_message = match &event {
-            ServerEvent::MessageCreate { message } if unread.counts(state, message) => Some((message.id, unread.fresh(message))),
+            ServerEvent::MessageCreate { message } if unread.counts(state, message) => Some((message.id, unread.fresh(state, message))),
             _ => None,
         };
         match state.apply(event.clone()) {
@@ -482,8 +475,7 @@ pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChann
                 "announcement": found.is_some_and(|c| c.kind == commy_core::ChannelKind::Announcement),
                 "author": latest.author.to_string(),
                 "author_name": state
-                    .and_then(|s| s.profiles.get(&latest.author))
-                    .map(|p| p.visible_name().to_string())
+                    .and_then(|s| crate::view::known_name_of(s, latest.author))
                     .unwrap_or_else(|| "Someone".into()),
                 "content": latest.content,
                 "has_attachments": latest.has_attachments,
@@ -1065,7 +1057,7 @@ fn snapshot_vouched(app: &App, server: ServerId, payload: &WirePayload) -> bool 
 
 fn member_of(m: commy_net::protocol::SyncMember) -> commy_core::Member {
     let joined_at = chrono::DateTime::from_timestamp_millis(m.joined_ms).unwrap_or_default();
-    commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at }
+    commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at, timeout: None }
 }
 
 pub fn invite_nodes(raw: &str) -> Option<Vec<[u8; 32]>> {
@@ -1318,8 +1310,8 @@ mod tests {
         assert!(mentions("hey @sam, lunch?", &["sam"]));
         assert!(mentions("HEY @Sam", &["sam"]));
         assert!(!mentions("hey @samantha", &["sam"]));
-        assert!(mentions("@everyone look", &[]));
-        assert!(mentions("ping @here", &["x"]));
+        assert!(!mentions("@everyone look", &[]), "everyone and here depend on who sent them");
+        assert!(!mentions("ping @here", &["x"]));
         assert!(!mentions("mail sam@example.org", &["sam"]));
         assert!(!mentions("@", &[""]));
         assert!(mentions("@Sam Smith is here", &["Sam Smith"]));

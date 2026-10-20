@@ -12,6 +12,7 @@ const AUDIT_FILTERS = [
 
 const AUDIT_GROUP_OF = {
   server_rename: "server",
+  owner_transfer: "server",
   server_images: "server",
   server_public: "server",
   game_tags: "server",
@@ -27,6 +28,7 @@ const AUDIT_GROUP_OF = {
   channel_retention: "channels",
   channel_move: "channels",
   channel_limit: "channels",
+  channel_slow_mode: "channels",
   channel_banner: "channels",
   channel_color: "channels",
   channel_kind: "channels",
@@ -39,6 +41,9 @@ const AUDIT_GROUP_OF = {
   member_ban: "members",
   member_unban: "members",
   voice_moderate: "members",
+  member_timeout: "members",
+  member_timeout_clear: "members",
+  member_nickname: "members",
   emoji_add: "expressions",
   emoji_remove: "expressions",
   sound_add: "expressions",
@@ -57,6 +62,7 @@ const AUDIT_GROUP_OF = {
   emoticon_add: "expressions",
   emoticon_remove: "expressions",
   expression_sharing: "expressions",
+  channel_access: "channels",
 };
 
 const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", announcement: "announcement channel", category: "category" };
@@ -88,6 +94,7 @@ function describeAudit(entry) {
   const named = fallback => auditStrong(label || fallback);
   const count = Number(detail);
   switch (entry.kind) {
+    case "owner_transfer": return ["handed the server to ", member];
     case "server_rename": return label ? ["renamed the server from ", auditStrong(label), " to ", auditStrong(detail || "")] : ["renamed the server to ", auditStrong(detail || "")];
     case "server_images": return [`changed the server ${detail || "images"}`];
     case "server_public": return [detail === "on" ? "made the server public" : "made the server private"];
@@ -104,9 +111,11 @@ function describeAudit(entry) {
     case "channel_retention": return detail ? ["set messages in ", channel, ` to disappear after ${auditCount(count, "day", "days")}`] : ["turned off disappearing messages in ", channel];
     case "channel_move": return ["moved the channel ", channel];
     case "channel_limit": return count > 0 ? [`set a limit of ${auditCount(count, "person", "people")} in `, channel] : ["removed the people limit in ", channel];
+    case "channel_slow_mode": return count > 0 ? [`set slow mode to ${auditCount(count, "second", "seconds")} in `, channel] : ["turned off slow mode in ", channel];
     case "channel_banner": return [detail === "removed" ? "removed the banner of " : "changed the banner of ", channel];
     case "channel_color": return [detail ? "changed the color of " : "removed the color of ", channel];
     case "channel_kind": return ["turned ", channel, ` into a ${CHANNEL_KIND_WORDS[detail] || "channel"}`];
+    case "channel_access": return detail === "private" ? ["made ", channel, " private"] : detail === "send" ? ["limited who can send in ", channel] : ["opened ", channel, " to everyone"];
     case "role_create": return ["created the role ", role];
     case "role_update": return ["updated the role ", role];
     case "role_delete": return label ? ["deleted the role ", role] : ["deleted a role"];
@@ -116,6 +125,9 @@ function describeAudit(entry) {
     case "member_ban": return ["banned ", member];
     case "member_unban": return ["unbanned ", member];
     case "voice_moderate": return VOICE_MODERATION_WORDS[detail] ? [`${VOICE_MODERATION_WORDS[detail]} `, member] : ["lifted the server mute on ", member];
+    case "member_timeout": return detail ? ["timed out ", member, ` for ${detail}`] : ["timed out ", member];
+    case "member_timeout_clear": return ["removed the timeout on ", member];
+    case "member_nickname": return detail ? ["changed ", member, "'s nickname to ", auditStrong(detail)] : ["cleared ", member, "'s nickname"];
     case "emoji_add": return ["added the emoji ", auditStrong(`:${label || "emoji"}:`)];
     case "emoji_remove": return ["removed the emoji ", auditStrong(`:${label || "emoji"}:`)];
     case "sticker_add": return ["added the sticker ", named("a sticker")];

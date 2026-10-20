@@ -52,9 +52,29 @@ pub fn window_title(test_build: bool, label: Option<&str>) -> Option<String> {
     }
 }
 
+pub fn server_window_title(base: &str, server: Option<&str>) -> String {
+    let name: String = server.unwrap_or("").chars().filter(|c| !c.is_control()).take(80).collect();
+    let name = name.trim();
+    if name.is_empty() {
+        base.to_string()
+    } else {
+        format!("{name} - {base}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_window_title_leads_with_the_active_server() {
+        assert_eq!(server_window_title("Commy", None), "Commy");
+        assert_eq!(server_window_title("Commy", Some("  ")), "Commy");
+        assert_eq!(server_window_title("Commy", Some("Pixel Club")), "Pixel Club - Commy");
+        assert_eq!(server_window_title("Commy (test build)", Some("Pixel\nClub")), "PixelClub - Commy (test build)");
+        let long = "x".repeat(200);
+        assert_eq!(server_window_title("Commy", Some(&long)).chars().count(), 80 + " - Commy".len());
+    }
 
     #[test]
     fn test_builds_get_their_own_data_dir() {

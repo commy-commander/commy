@@ -16,7 +16,8 @@ pub use replica::Replica;
 pub use store::{BotStore, Outgoing};
 
 use chrono::{DateTime, Utc};
-use commy_core::{Action, Identity, Message, Presence, ServerEvent, ServerId, TombstoneProof, UserProfile};
+use commy_core::channel_key::{self, Keyring};
+use commy_core::{Action, Identity, Message, Presence, ServerEvent, ServerId, ServerState, TombstoneProof, UserId, UserProfile};
 use commy_net::catchup::ApplyReport;
 use commy_net::WirePayload;
 use std::collections::{BTreeMap, HashSet};
@@ -164,7 +165,7 @@ impl Bot {
         for event in events {
             let acts = {
                 let Some(state) = self.replicas.get(&server).and_then(|r| r.state.as_ref()) else { return out };
-                let Some(event) = current(state, me, event, &mut seen) else { continue };
+                let Some(event) = current(state, me, &self.identity, event, &mut seen) else { continue };
                 let ctx = Ctx { server, state, me, now: wall };
                 let mut acts = self.moderator.handle(&ctx, &event);
                 for handler in &mut self.handlers {
@@ -182,6 +183,10 @@ impl Bot {
         out
     }
 
+    pub fn readable(&self, state: &ServerState, message: &Message) -> Option<Message> {
+        readable(state, self.profile.id, &self.identity, message)
+    }
+
     pub fn tidy(&mut self, wall: DateTime<Utc>) {
         self.moderator.tidy(wall);
         for handler in &mut self.handlers {
@@ -195,7 +200,7 @@ impl Bot {
     }
 }
 
-fn current(state: &commy_core::ServerState, me: commy_core::UserId, event: BotEvent, seen: &mut HashSet<commy_core::MessageId>) -> Option<BotEvent> {
+fn current(state: &ServerState, me: UserId, identity: &Identity, event: BotEvent, seen: &mut HashSet<commy_core::MessageId>) -> Option<BotEvent> {
     match &event {
         BotEvent::ReactionAdd { user, .. } | BotEvent::ReactionRemove { user, .. } if *user == me => return None,
         _ => {}
@@ -205,7 +210,7 @@ fn current(state: &commy_core::ServerState, me: commy_core::UserId, event: BotEv
     if !seen.insert(message.id) || message.author == me {
         return None;
     }
-    let message = state.message(message.id)?.clone();
+    let message = readable(state, me, identity, state.message(message.id)?)?;
     if handler::written(&message) < joined {
         return None;
     }
@@ -213,4 +218,12 @@ fn current(state: &commy_core::ServerState, me: commy_core::UserId, event: BotEv
         BotEvent::MessageUpdate(_) => BotEvent::MessageUpdate(message),
         _ => BotEvent::MessageCreate(message),
     })
+}
+
+pub(crate) fn readable(state: &ServerState, me: UserId, identity: &Identity, message: &Message) -> Option<Message> {
+    if !channel_key::is_sealed(&message.content) {
+        return Some(message.clone());
+    }
+    let ring = Keyring::unlock(state, message.channel, me, identity);
+    channel_key::read_message(state.server.id, message, &ring)
 }

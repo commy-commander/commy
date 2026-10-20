@@ -75,7 +75,7 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::DoorbellSet { user, .. }
         | E::BotSet { user, .. }
         | E::PronounsSet { user, .. } => Some(*user),
-        E::MessagePin { by, .. } => Some(*by),
+        E::MessagePin { by, .. } | E::MemberTimeout { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -103,9 +103,13 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ChannelUpdate { channel, .. } => format!("channel.name:{channel}"),
         E::ChannelLayout { channel, .. } => format!("channel.layout:{channel}"),
         E::ChannelLimit { channel, .. } => format!("channel.limit:{channel}"),
+        E::ChannelSlowMode { channel, .. } => format!("channel.slow_mode:{channel}"),
         E::ChannelBanner { channel, .. } => format!("channel.banner:{channel}"),
         E::ChannelColor { channel, .. } => format!("channel.color:{channel}"),
         E::ChannelKindSet { channel, .. } => format!("channel.kind:{channel}"),
+        E::ChannelAccessSet { channel, .. } => format!("channel.access:{channel}"),
+        E::ChannelKeyAdd { channel, key, .. } => format!("channel.key:{channel}:{}", key.id.to_hex()),
+        E::ChannelKeyGrant { channel, user, .. } => format!("channel.grant:{channel}:{user}"),
         E::AfkChannelSet { .. } => "afk_channel".into(),
         E::AfkTimeoutSet { .. } => "afk_timeout".into(),
         E::ServerRename { .. } => "name".into(),
@@ -125,6 +129,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::EmoticonAdd { emoticon, .. } => format!("emoticon:{}", emoticon.name),
         E::EmoticonRemove { name, .. } => format!("emoticon:{name}"),
         E::ServerDelete { .. } => "deleted".into(),
+        E::OwnerTransfer { .. } => "owner".into(),
         E::InviteTrack { invite, .. } => format!("invite:{}", invite.id()),
         E::InviteRevoke { origin, code, .. } => format!("invite:{}", crate::invites::invite_id(origin, code)),
         E::InviteBackgroundSet { .. } => "invite_background".into(),
@@ -139,6 +144,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::RoleDelete { role, .. } => format!("role:{role}"),
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => format!("role:{role}:{user}"),
         E::VoiceModerate { user, .. } => format!("voice_moderate:{user}"),
+        E::MemberTimeout { user, .. } => format!("timeout:{user}"),
+        E::MemberNickname { user, .. } => format!("nickname:{user}"),
         E::MessagePin { message, .. } => format!("pin:{message}"),
         E::ReactionToggle { message, emoji, user, .. } | E::ReactionSet { message, emoji, user, .. } => {
             format!("reaction:{message}:{emoji}:{user}")
@@ -164,7 +171,7 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 8] = ["emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:"];
+    const OMITTED: [&str; 11] = ["emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:", "channel.key:", "channel.grant:", "timeout:"];
     const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
     SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
 }
@@ -177,38 +184,57 @@ fn may_add(perms: Permissions, member: bool, kind: Permissions, taken: bool) -> 
     perms.allows(Permissions::MANAGE_EXPRESSIONS) || (member && !taken && perms.allows(kind))
 }
 
+fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
+    use ServerEvent as E;
+    match event {
+        E::VoiceState { channel, .. } => *channel,
+        E::TypingStart { channel, .. }
+        | E::ScreenShare { channel, .. }
+        | E::CameraState { channel, .. }
+        | E::ReactionToggle { channel, .. }
+        | E::ReactionSet { channel, .. }
+        | E::SoundboardPlay { channel, .. }
+        | E::SharedSoundPlay { channel, .. }
+        | E::MessagePin { channel, .. } => Some(*channel),
+        _ => None,
+    }
+}
+
 pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
     use ServerEvent as E;
     let perms = server.permissions_for(by);
     let allows = |p: Permissions| perms.allows(p);
     let member = server.is_member(by);
+    let sees = |event: &ServerEvent| channel_of(event).is_none_or(|channel| server.can_view(channel, by));
+    let speaks = !server.is_timed_out(by, chrono::Utc::now());
     match event {
         E::MessageCreate { .. } | E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
         E::MemberJoin { .. } => actor(event) == Some(by),
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
         E::ProfileUpdate { .. } => actor(event) == Some(by),
         E::BotSet { .. } | E::PronounsSet { .. } => member && actor(event) == Some(by),
-        E::PresenceUpdate { .. }
-        | E::VoiceState { .. }
-        | E::TypingStart { .. }
-        | E::ScreenShare { .. }
-        | E::CameraState { .. }
-        | E::ReactionToggle { .. }
-        | E::ReactionSet { .. }
-        | E::RulesAccept { .. }
-        | E::EventRsvp { .. } => member && actor(event) == Some(by),
-        E::SoundboardPlay { .. } | E::SharedSoundPlay { .. } => {
-            member && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD)
+        E::PresenceUpdate { .. } | E::RulesAccept { .. } | E::EventRsvp { .. } => member && actor(event) == Some(by),
+        E::VoiceState { .. } | E::ScreenShare { .. } | E::CameraState { .. } => member && actor(event) == Some(by) && sees(event),
+        E::TypingStart { .. } | E::ReactionToggle { .. } | E::ReactionSet { .. } => {
+            member && speaks && actor(event) == Some(by) && sees(event)
         }
-        E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin(),
+        E::SoundboardPlay { .. } | E::SharedSoundPlay { .. } => {
+            member && speaks && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD) && sees(event)
+        }
+        E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin() && sees(event),
+        E::ChannelKeyAdd { channel, .. } | E::ChannelKeyGrant { channel, .. } => {
+            member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)
+        }
         E::ChannelCreate { .. }
         | E::ChannelDelete { .. }
         | E::ChannelUpdate { .. }
         | E::ChannelLayout { .. }
         | E::ChannelLimit { .. }
+        | E::ChannelSlowMode { .. }
         | E::ChannelBanner { .. }
         | E::ChannelColor { .. }
-        | E::ChannelKindSet { .. } => allows(Permissions::MANAGE_CHANNELS),
+        | E::ChannelKindSet { .. }
+        | E::ChannelAccessSet { .. } => allows(Permissions::MANAGE_CHANNELS),
         E::ServerRename { .. }
         | E::ServerImages { .. }
         | E::PublicSet { .. }
@@ -252,8 +278,15 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
             allows(Permissions::MANAGE_EVENTS) || server.events.iter().any(|e| e.id == *event && e.creator == by)
         }
         E::VoiceModerate { .. } => allows(Permissions::MUTE_MEMBERS) || allows(Permissions::DEAFEN_MEMBERS),
+        E::MemberNickname { user, .. } => {
+            let own = *user == by && allows(Permissions::CHANGE_NICKNAME);
+            let others = *user != server.owner && allows(Permissions::MANAGE_NICKNAMES);
+            member && (own || others)
+        }
         E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
+        E::MemberTimeout { user, .. } => *user != by && actor(event) == Some(by) && allows(Permissions::TIME_OUT_MEMBERS),
         E::ServerDelete { .. } => by == server.owner,
+        E::OwnerTransfer { user, .. } => by == server.owner && *user != by && server.is_member(*user),
         E::InviteTrack { invite, .. } => member && invite.creator == by && allows(Permissions::CREATE_INVITES),
         E::InviteRevoke { creator, .. } => allows(Permissions::MANAGE_SERVER) || (member && *creator == by),
         E::InviteBackgroundSet { .. } => allows(Permissions::MANAGE_SERVER),
@@ -279,6 +312,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable,
+            mentionable: false,
             tag: None,
             banner: None,
         }
@@ -376,6 +410,7 @@ mod tests {
             ServerEvent::RoleDelete { server: sid, role: rid },
             ServerEvent::MemberLeave { server: sid, user: admin },
             ServerEvent::VoiceModerate { server: sid, user: plain, muted: true, deafened: false },
+            ServerEvent::MemberNickname { server: sid, user: admin, nickname: Some("Ad".into()) },
         ];
         for event in &events {
             assert!(authorized(&state.server, owner, event), "{event:?}");
@@ -383,6 +418,28 @@ mod tests {
             assert!(!authorized(&state.server, plain, event), "{event:?}");
             assert!(!authorized(&state.server, UserId::new(), event), "stranger {event:?}");
         }
+    }
+
+    #[test]
+    fn only_the_owner_hands_the_server_over_and_only_to_a_member() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let admin = join(&mut state, "admin");
+        let plain = join(&mut state, "plain");
+        let admin_role = role(Permissions::ADMINISTRATOR, false);
+        let rid = admin_role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: admin_role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: admin, role: rid }).unwrap();
+        let transfer = |user| ServerEvent::OwnerTransfer { server: sid, user };
+        assert!(authorized(&state.server, owner, &transfer(plain)));
+        assert!(!authorized(&state.server, admin, &transfer(admin)), "administrators cannot take the server");
+        assert!(!authorized(&state.server, owner, &transfer(owner)));
+        assert!(!authorized(&state.server, owner, &transfer(UserId::new())), "only to a member");
+        assert_eq!(state.apply(transfer(plain)), Ok(true));
+        assert_eq!(state.server.owner, plain);
+        assert_eq!(state.apply(transfer(plain)), Ok(false));
+        assert!(authorized(&state.server, plain, &ServerEvent::ServerDelete { server: sid }));
+        assert!(!authorized(&state.server, owner, &ServerEvent::ServerDelete { server: sid }), "the old owner is a member now");
     }
 
     #[test]
@@ -409,6 +466,31 @@ mod tests {
         assert!(authorized(&state.server, owner, &pin(owner)));
         assert!(!authorized(&state.server, a, &pin(a)), "no pin permission");
         assert!(!authorized(&state.server, owner, &pin(a)), "pins name their pinner");
+    }
+
+    #[test]
+    fn nicknames_are_your_own_unless_you_manage_them() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        let nick = |user| ServerEvent::MemberNickname { server: sid, user, nickname: Some("Nick".into()) };
+        assert!(authorized(&state.server, a, &nick(a)), "members may rename themselves");
+        assert!(!authorized(&state.server, a, &nick(b)));
+        assert!(!authorized(&state.server, a, &nick(owner)));
+        assert!(authorized(&state.server, owner, &nick(a)));
+        assert!(authorized(&state.server, owner, &nick(owner)));
+        assert!(!authorized(&state.server, UserId::new(), &nick(a)), "strangers");
+        let managers = role(Permissions::MANAGE_NICKNAMES, false);
+        let rid = managers.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: managers }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: b, role: rid }).unwrap();
+        assert!(authorized(&state.server, b, &nick(a)));
+        assert!(!authorized(&state.server, b, &nick(owner)), "only the owner renames the owner");
+        let everyone = state.server.roles.iter_mut().find(|r| r.is_everyone()).unwrap();
+        everyone.permissions.remove(Permissions::CHANGE_NICKNAME);
+        assert!(!authorized(&state.server, a, &nick(a)), "no change nickname permission");
+        assert!(authorized(&state.server, b, &nick(b)), "managing covers one's own");
     }
 
     #[test]

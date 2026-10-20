@@ -11,6 +11,7 @@ const MAX_DETAIL_CHARS: usize = 120;
 #[serde(rename_all = "snake_case")]
 pub enum AuditKind {
     ServerRename,
+    OwnerTransfer,
     ServerImages,
     ServerPublic,
     GameTags,
@@ -26,6 +27,7 @@ pub enum AuditKind {
     ChannelRetention,
     ChannelMove,
     ChannelLimit,
+    ChannelSlowMode,
     ChannelBanner,
     ChannelColor,
     ChannelKind,
@@ -56,6 +58,10 @@ pub enum AuditKind {
     EmoticonAdd,
     EmoticonRemove,
     ExpressionSharing,
+    ChannelAccess,
+    MemberTimeout,
+    MemberTimeoutClear,
+    MemberNickname,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,12 +105,30 @@ pub fn member_name(state: &ServerState, user: UserId) -> Option<String> {
     Some(clip(&name))
 }
 
+fn account_name(state: &ServerState, user: UserId) -> Option<String> {
+    state.profiles.get(&user).map(|p| clip(p.visible_name()))
+}
+
 fn channel_name(state: &ServerState, channel: crate::ids::ChannelId) -> Option<String> {
     state.server.channel(channel).map(|c| clip(&c.name))
 }
 
 fn role_name(state: &ServerState, role: crate::ids::RoleId) -> Option<String> {
     state.server.roles.iter().find(|r| r.id == role).map(|r| clip(&r.name))
+}
+
+pub fn duration_words(secs: i64) -> String {
+    const UNITS: [(i64, &str, &str); 5] = [
+        (7 * 86_400, "week", "weeks"),
+        (86_400, "day", "days"),
+        (3_600, "hour", "hours"),
+        (60, "minute", "minutes"),
+        (1, "second", "seconds"),
+    ];
+    let secs = secs.max(1);
+    let (size, one, many) = UNITS.iter().copied().find(|(size, _, _)| secs % size == 0 && secs >= *size).unwrap_or(UNITS[4]);
+    let n = secs / size;
+    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 fn voice_detail(muted: bool, deafened: bool) -> &'static str {
@@ -126,6 +150,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
     let channel = |id: &crate::ids::ChannelId| (Some(id.to_string()), channel_name(state, *id));
     Some(match event {
         E::ServerRename { name, .. } => (K::ServerRename, None, Some(clip(&server.name)), Some(clip(name))),
+        E::OwnerTransfer { user, .. } => {
+            let (target, label) = member(user);
+            (K::OwnerTransfer, target, label, None)
+        }
         E::ServerImages { icon, banner, .. } => {
             let changed = [("icon", *icon != server.icon), ("banner", *banner != server.banner)];
             let names: Vec<&str> = changed.iter().filter(|(_, c)| *c).map(|(n, _)| *n).collect();
@@ -167,6 +195,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             let (target, label) = channel(id);
             (K::ChannelLimit, target, label, Some(user_limit.to_string()))
         }
+        E::ChannelSlowMode { channel: id, seconds, .. } => {
+            let (target, label) = channel(id);
+            (K::ChannelSlowMode, target, label, Some(seconds.to_string()))
+        }
         E::ChannelBanner { channel: id, banner, .. } => {
             let (target, label) = channel(id);
             (K::ChannelBanner, target, label, set_or_removed(banner.is_some()))
@@ -179,6 +211,11 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             let (target, label) = channel(id);
             let kind = serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(str::to_string));
             (K::ChannelKind, target, label, kind)
+        }
+        E::ChannelAccessSet { channel: id, view, send, .. } => {
+            let (target, label) = channel(id);
+            let detail = if !view.is_empty() { "private" } else if !send.is_empty() { "send" } else { "open" };
+            (K::ChannelAccess, target, label, Some(detail.into()))
         }
         E::RoleCreate { role, .. } => (K::RoleCreate, Some(role.id.to_string()), Some(clip(&role.name)), None),
         E::RoleUpdate { role, .. } => (K::RoleUpdate, Some(role.id.to_string()), Some(clip(&role.name)), None),
@@ -203,6 +240,19 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::VoiceModerate { user, muted, deafened, .. } => {
             let (target, label) = member(user);
             (K::VoiceModerate, target, label, Some(voice_detail(*muted, *deafened).into()))
+        }
+        E::MemberTimeout { user, at, until, .. } => {
+            let (target, label) = member(user);
+            match until {
+                Some(until) => {
+                    let length = until.signed_duration_since(*at).num_seconds();
+                    (K::MemberTimeout, target, label, Some(duration_words(length)))
+                }
+                None => (K::MemberTimeoutClear, target, label, None),
+            }
+        }
+        E::MemberNickname { user, nickname, .. } => {
+            (K::MemberNickname, Some(user.to_string()), account_name(state, *user), nickname.as_deref().map(clip))
         }
         E::EmojiAdd { emoji, .. } => (K::EmojiAdd, None, Some(clip(&emoji.name)), None),
         E::EmojiRemove { name, .. } => (K::EmojiRemove, None, Some(clip(name)), None),
@@ -285,6 +335,17 @@ mod tests {
     }
 
     #[test]
+    fn durations_read_in_the_largest_whole_unit() {
+        assert_eq!(duration_words(60), "1 minute");
+        assert_eq!(duration_words(600), "10 minutes");
+        assert_eq!(duration_words(3_600), "1 hour");
+        assert_eq!(duration_words(86_400), "1 day");
+        assert_eq!(duration_words(7 * 86_400), "1 week");
+        assert_eq!(duration_words(90), "90 seconds");
+        assert_eq!(duration_words(0), "1 second");
+    }
+
+    #[test]
     fn the_log_keeps_order_drops_copies_and_forgets_the_oldest() {
         let mut log = Vec::new();
         assert!(record(&mut log, entry(20, 2)));
@@ -335,6 +396,34 @@ mod tests {
     }
 
     #[test]
+    fn locking_a_channel_to_roles_is_logged() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let sign = |at, event| SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        let crew = Role {
+            id: crate::ids::RoleId::new(),
+            name: "crew".into(),
+            color: None,
+            permissions: Permissions::NONE,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        };
+        let role = crew.id;
+        assert_eq!(state.apply_signed(&sign(1_000, ServerEvent::RoleCreate { server: sid, role: crew })), Ok(true));
+        let lock = ServerEvent::ChannelAccessSet { server: sid, channel, view: vec![role], send: vec![] };
+        assert_eq!(state.apply_signed(&sign(2_000, lock)), Ok(true));
+        let open = ServerEvent::ChannelAccessSet { server: sid, channel, view: vec![], send: vec![role] };
+        assert_eq!(state.apply_signed(&sign(3_000, open)), Ok(true));
+        let access: Vec<Option<&str>> =
+            state.audit_log().iter().filter(|e| e.kind == AuditKind::ChannelAccess).map(|e| e.detail.as_deref()).collect();
+        assert_eq!(access, vec![Some("private"), Some("send")]);
+    }
+
+    #[test]
     fn live_state_self_service_and_no_ops_stay_out_of_the_log() {
         let (mut state, channel, owner) = fixture();
         let sid = state.server.id;
@@ -347,6 +436,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: true,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -377,6 +467,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -390,6 +481,26 @@ mod tests {
         assert_eq!(log[1].detail.as_deref(), Some("mods"));
         assert_eq!(log[1].label.as_deref(), Some("sam"));
         assert_eq!(log[2].kind, AuditKind::MemberKick);
+    }
+
+    #[test]
+    fn nickname_changes_name_the_account_and_the_new_nickname() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "sam");
+        let sign = |at, event| SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        let rename = |nickname: Option<&str>| ServerEvent::MemberNickname { server: sid, user, nickname: nickname.map(Into::into) };
+        state.apply_signed(&sign(1_000, rename(Some("Sammy")))).unwrap();
+        state.apply_signed(&sign(2_000, rename(Some("Sammy")))).unwrap();
+        state.apply_signed(&sign(3_000, rename(None))).unwrap();
+        let log = state.audit_log();
+        assert_eq!(log.len(), 2, "a repeat changes nothing");
+        assert_eq!(log[0].kind, AuditKind::MemberNickname);
+        assert_eq!(log[0].target.as_deref(), Some(user.to_string().as_str()));
+        assert_eq!(log[0].label.as_deref(), Some("sam"));
+        assert_eq!(log[0].detail.as_deref(), Some("Sammy"));
+        assert_eq!(log[1].label.as_deref(), Some("sam"), "the account name, not the nickname being cleared");
+        assert_eq!(log[1].detail, None);
     }
 
     #[test]

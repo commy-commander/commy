@@ -50,6 +50,7 @@ pub fn join_moderator(state: &mut ServerState, username: &str) -> UserId {
         position: 1,
         hoist: false,
         self_assignable: false,
+        mentionable: false,
         tag: None,
         banner: None,
     };

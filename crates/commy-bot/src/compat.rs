@@ -93,10 +93,6 @@ pub fn to_commy(text: &str, state: &ServerState) -> String {
 
 fn translate(token: &str, state: &ServerState) -> Option<String> {
     let inner = token.strip_prefix('<')?.strip_suffix('>')?;
-    if let Some(role) = inner.strip_prefix("@&") {
-        let role = state.server.roles.iter().find(|r| r.id.to_string() == role)?;
-        return Some(format!("@{}", role.name));
-    }
     if let Some(user) = inner.strip_prefix("@!").or_else(|| inner.strip_prefix('@')) {
         let user: UserId = user.parse().ok()?;
         return Some(format!("@{}", state.profiles.get(&user)?.visible_name()));
@@ -195,6 +191,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -212,7 +209,8 @@ mod tests {
         let text = format!("hi <@{owner}> and <@!{owner}>, ask <@&{role}> in <#{channel}> by <t:1792500000:R>");
         assert_eq!(
             to_commy(&text, &state),
-            format!("hi @{name} and @{name}, ask @Helpers in #{channel_name} by 2026-10-20 12:40 UTC")
+            format!("hi @{name} and @{name}, ask <@&{role}> in #{channel_name} by 2026-10-20 12:40 UTC"),
+            "role tokens stay as role mentions"
         );
     }
 

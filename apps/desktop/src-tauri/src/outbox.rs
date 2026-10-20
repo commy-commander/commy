@@ -3,7 +3,7 @@ use crate::safety::{self, FriendSignal};
 use crate::state::App;
 use commy_core::catchup::{day_number, first_day};
 use commy_core::{
-    DmStore, Identity, IdentityKey, Message, MessageId, Presence, ServerEvent, ServerId, ServerState, TombstoneProof,
+    CallSignal, ChannelId, DmAction, DmStore, Identity, IdentityKey, Message, MessageId, Presence, ServerEvent, ServerId, ServerState, TombstoneProof,
     UserId, UserProfile,
 };
 use commy_net::node::IncomingDm;
@@ -309,6 +309,8 @@ pub enum Received {
     Taken,
     Report { from: UserId, content: String },
     Reply { to: UserId, signal: FriendSignal },
+    Call { from: UserId, call: ChannelId, signal: CallSignal },
+    GroupInvite { from: UserId, ticket: String },
 }
 
 pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
@@ -342,6 +344,43 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         return reply.map_or(Received::Taken, |signal| Received::Reply { to: partner, signal });
     }
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return Received::Dropped };
+    if matches!(message.action, DmAction::Call { .. } | DmAction::GroupInvite { .. }) {
+        let known = {
+            let safety = app.safety.lock().unwrap();
+            let dms = app.dms.lock().unwrap();
+            !safety.is_blocked(partner)
+                && (dms.has_sent_to(me, partner)
+                    || safety.friends.contains(&partner)
+                    || app.servers.lock().unwrap().values().any(|s| s.server.is_member(partner)))
+        };
+        if !known {
+            tracing::debug!("dropped a call or group invite from {partner}, who we do not talk to");
+            return Received::Dropped;
+        }
+        app.dms.lock().unwrap().remember_contact(sender);
+        return match message.action.clone() {
+            DmAction::Call { call, signal } => Received::Call { from: partner, call, signal },
+            DmAction::GroupInvite { ticket } => {
+                if !app.dms.lock().unwrap().apply(partner, message) {
+                    return Received::Dropped;
+                }
+                app.persist_dms();
+                Received::GroupInvite { from: partner, ticket }
+            }
+            _ => Received::Dropped,
+        };
+    }
+    if !message.is_post() {
+        let applied = {
+            let mut dms = app.dms.lock().unwrap();
+            dms.has_sent_to(me, partner) && dms.apply(partner, message)
+        };
+        if applied {
+            app.persist_dms();
+            access.emit("dm-changed", partner.to_string().into());
+        }
+        return if applied { Received::Taken } else { Received::Dropped };
+    }
     let verdict = {
         let shares_server = app.servers.lock().unwrap().values().any(|s| s.server.is_member(partner));
         let already_talking = app.dms.lock().unwrap().has_sent_to(me, partner);
@@ -391,14 +430,14 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
     let notice = serde_json::json!({
         "user": partner.to_string(),
         "name": sender.visible_name(),
-        "content": message.content.clone(),
+        "content": crate::view::dm_excerpt(&message),
         "request": verdict != safety::Verdict::Inbox,
         "spam": verdict == safety::Verdict::Spam,
     });
     let inserted = {
         let mut dms = app.dms.lock().unwrap();
         dms.remember_contact(sender);
-        dms.insert(partner, message)
+        dms.apply(partner, message)
     };
     if inserted {
         app.persist_dms();
@@ -1156,6 +1195,59 @@ mod tests {
         let unnamed = IncomingDm { envelope: DmEnvelope { message: unnamed, sender: sender.clone() }, node: SENDER_NODE };
         assert_eq!(screen_dm(&app, &unnamed), None);
         assert_eq!(screen_dm(&App::default(), &direct), None);
+    }
+
+    #[test]
+    fn edits_reactions_and_deletes_from_a_partner_apply_only_after_we_talked() {
+        use commy_core::DmAction;
+        let me = UserProfile::new("me");
+        let app = Arc::new(app_as(&me));
+        let (sender, identity) = sender_on(SENDER_NODE);
+        let node = hex(SENDER_NODE);
+        let handle = TestHandle::new(app.clone());
+        let control = |action: DmAction, content: &str| {
+            let mut message = DmMessage::acting(sender.id, me.id, action, content);
+            message.sign(&node, &identity);
+            IncomingDm { envelope: DmEnvelope { message, sender: sender.clone() }, node: SENDER_NODE }
+        };
+
+        let hello = dm_from(&sender, &identity, me.id, "first", SENDER_NODE, SENDER_NODE);
+        let target = hello.envelope.message.id;
+        assert_eq!(receive_dm(&handle, hello), Received::Taken);
+        let edit = control(DmAction::Edit { target }, "first, edited");
+        assert_eq!(receive_dm(&handle, edit.clone()), Received::Dropped, "no reply from us yet");
+        assert_eq!(app.dms.lock().unwrap().post(sender.id, target).unwrap().content, "first");
+
+        app.dms.lock().unwrap().insert(sender.id, DmMessage::new(me.id, sender.id, "hey"));
+        assert_eq!(receive_dm(&handle, edit.clone()), Received::Taken);
+        assert_eq!(receive_dm(&handle, edit), Received::Dropped, "replay");
+        let react = control(DmAction::React { target, emoji: "🔥".into(), active: true }, "");
+        assert_eq!(receive_dm(&handle, react), Received::Taken);
+        {
+            let dms = app.dms.lock().unwrap();
+            let post = dms.post(sender.id, target).unwrap();
+            assert_eq!(post.content, "first, edited");
+            assert!(post.edited_at.is_some());
+            assert_eq!(post.reactions[0].users, vec![sender.id]);
+        }
+        let mine = app.dms.lock().unwrap().posts(sender.id).find(|m| m.from == me.id).unwrap().id;
+        let foreign = control(DmAction::Delete { target: mine }, "");
+        assert_eq!(receive_dm(&handle, foreign), Received::Dropped);
+        assert!(app.dms.lock().unwrap().post(sender.id, mine).is_some());
+        let delete = control(DmAction::Delete { target }, "");
+        assert_eq!(receive_dm(&handle, delete), Received::Taken);
+        assert!(app.dms.lock().unwrap().post(sender.id, target).is_none());
+        let call = commy_core::ChannelId::new();
+        let ring = control(DmAction::Call { call, signal: CallSignal::Ring }, "");
+        assert_eq!(receive_dm(&handle, ring), Received::Call { from: sender.id, call, signal: CallSignal::Ring });
+        assert!(app.dms.lock().unwrap().conversation(sender.id).iter().all(|m| m.action.target().is_some() || m.is_post()));
+        let (stranger, stranger_key) = sender_on(OTHER_NODE);
+        let mut cold = DmMessage::acting(stranger.id, me.id, DmAction::Call { call, signal: CallSignal::Ring }, "");
+        cold.sign(&hex(OTHER_NODE), &stranger_key);
+        let cold = IncomingDm { envelope: DmEnvelope { message: cold, sender: stranger.clone() }, node: OTHER_NODE };
+        assert_eq!(receive_dm(&handle, cold), Received::Dropped, "strangers cannot ring us");
+        let notices = handle.take_events().into_iter().filter(|(name, _)| name == "dm-received").count();
+        assert_eq!(notices, 1, "control messages never notify");
     }
 
     #[test]

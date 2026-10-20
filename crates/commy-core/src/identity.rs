@@ -1,3 +1,4 @@
+use curve25519_dalek::montgomery::MontgomeryPoint;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -36,6 +37,11 @@ impl Identity {
     pub fn sign(&self, msg: &[u8]) -> Signature {
         Signature(self.0.sign(msg).to_bytes())
     }
+
+    pub(crate) fn agree(&self, their_point: [u8; 32]) -> Option<[u8; 32]> {
+        let shared = MontgomeryPoint(their_point).mul_clamped(self.0.to_scalar_bytes()).to_bytes();
+        (shared != [0u8; 32]).then_some(shared)
+    }
 }
 
 impl fmt::Debug for Identity {
@@ -57,6 +63,10 @@ impl IdentityKey {
 
     pub fn from_hex(s: &str) -> Option<Self> {
         from_hex(s).map(Self)
+    }
+
+    pub(crate) fn agreement_point(&self) -> Option<[u8; 32]> {
+        VerifyingKey::from_bytes(&self.0).ok().map(|key| key.to_montgomery().to_bytes())
     }
 }
 

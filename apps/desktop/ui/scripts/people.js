@@ -12,7 +12,7 @@ function indexPeople(servers, meId) {
       person.custom_status ||= member.custom_status;
       person.status_emoji ||= member.status_emoji;
       person.activity ||= member.activity;
-      if (!person.servers.some(s => s.id === server.id)) person.servers.push({ id: server.id, name: server.name });
+      if (!server.group && !person.servers.some(s => s.id === server.id)) person.servers.push({ id: server.id, name: server.name });
       people.set(member.id, person);
     }
   }

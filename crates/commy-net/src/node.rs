@@ -2,7 +2,7 @@ use crate::catchup::{
     admit, refuse, respond, run_initiator, CatchupError, CatchupStore, Refusal, SessionReport,
     CATCHUP_ALPN, HANDSHAKE_TIMEOUT,
 };
-use crate::dm::{DmAck, DmEnvelope, DM_ALPN};
+use crate::dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
 use crate::media::{read_frame, write_frame, MediaHello, MediaPacket, MEDIA_ALPN};
 use crate::protocol::{Envelope, WirePayload};
 use crate::ticket::ServerTicket;
@@ -277,6 +277,7 @@ pub struct IncomingDm {
 #[derive(Debug)]
 struct DmAcceptor {
     tx: mpsc::UnboundedSender<IncomingDm>,
+    legacy: bool,
 }
 
 impl ProtocolHandler for DmAcceptor {
@@ -289,16 +290,20 @@ impl DmAcceptor {
     async fn answer(&self, connection: Connection) -> Result<()> {
         let node = *connection.remote_id().as_bytes();
         let (mut send, mut recv) = connection.accept_bi().await?;
-        while let Some(envelope) = read_frame::<_, DmEnvelope>(&mut recv)
-            .await
-            .map_err(|e| anyhow::anyhow!("bad dm frame: {e}"))?
-        {
+        loop {
+            let envelope = if self.legacy {
+                read_frame::<_, LegacyDmEnvelope>(&mut recv).await.map(|frame| frame.map(LegacyDmEnvelope::upgrade))
+            } else {
+                read_frame::<_, DmEnvelope>(&mut recv).await
+            };
+            let Some(envelope) = envelope.map_err(|e| anyhow::anyhow!("bad dm frame: {e}"))? else {
+                return Ok(());
+            };
             let accepted = envelope.sent_from(&node) && self.tx.send(IncomingDm { envelope, node }).is_ok();
             write_frame(&mut send, &DmAck { accepted })
                 .await
                 .map_err(|e| anyhow::anyhow!("dm ack failed: {e}"))?;
         }
-        Ok(())
     }
 }
 
@@ -687,7 +692,8 @@ impl CommyNode {
         let router = router.accept(iroh_blobs::ALPN, iroh_blobs::BlobsProtocol::new(&blobs, None));
         let router = router
             .accept(MEDIA_ALPN, MediaAcceptor { tx: media_tx, gate: media_gate.clone() })
-            .accept(DM_ALPN, DmAcceptor { tx: dm_tx })
+            .accept(DM_ALPN, DmAcceptor { tx: dm_tx.clone(), legacy: false })
+            .accept(LEGACY_DM_ALPN, DmAcceptor { tx: dm_tx, legacy: true })
             .accept(crate::entry_key::ENTRY_KEY_ALPN, crate::entry_key::EntryKeyAcceptor { tx: entry_key_tx })
             .accept(CATCHUP_ALPN, catchup)
             .accept(crate::mirror::MIRROR_ALPN, crate::mirror::MirrorAcceptor { tx: mirror_tx, local })
@@ -736,30 +742,46 @@ impl CommyNode {
         let node_id = parse_node_hex(node_hex);
         let envelope = envelope.clone();
         async move {
-            let connection = endpoint
-                .connect(node_id?, DM_ALPN)
-                .await
-                .context("peer is unreachable")?;
-            let (mut send, mut recv) = connection.open_bi().await?;
-            write_frame(&mut send, &envelope)
-                .await
-                .map_err(|e| anyhow::anyhow!("dm send failed: {e}"))?;
-            let ack = n0_future::time::timeout(
-                std::time::Duration::from_secs(15),
-                read_frame::<_, DmAck>(&mut recv),
-            )
-            .await
-            .context("peer did not confirm delivery in time")?
-            .map_err(|e| anyhow::anyhow!("dm ack failed: {e}"))?
-            .context("peer closed before confirming")?;
-            if !ack.accepted {
-                anyhow::bail!("peer rejected the message");
-            }
-            connection.close(0u32.into(), b"done");
-            Ok(())
+            let node_id = node_id?;
+            let connection = match endpoint.connect(node_id, DM_ALPN).await {
+                Ok(connection) => connection,
+                Err(e) => {
+                    let Some(legacy) = LegacyDmEnvelope::downgrade(&envelope) else {
+                        return Err(e).context("peer is unreachable");
+                    };
+                    let connection = endpoint
+                        .connect(node_id, LEGACY_DM_ALPN)
+                        .await
+                        .context("peer is unreachable")?;
+                    return confirm_dm(connection, &legacy).await;
+                }
+            };
+            confirm_dm(connection, &envelope).await
         }
     }
+}
 
+async fn confirm_dm<T: serde::Serialize>(connection: Connection, envelope: &T) -> Result<()> {
+    let (mut send, mut recv) = connection.open_bi().await?;
+    write_frame(&mut send, envelope)
+        .await
+        .map_err(|e| anyhow::anyhow!("dm send failed: {e}"))?;
+    let ack = n0_future::time::timeout(
+        std::time::Duration::from_secs(15),
+        read_frame::<_, DmAck>(&mut recv),
+    )
+    .await
+    .context("peer did not confirm delivery in time")?
+    .map_err(|e| anyhow::anyhow!("dm ack failed: {e}"))?
+    .context("peer closed before confirming")?;
+    if !ack.accepted {
+        anyhow::bail!("peer rejected the message");
+    }
+    connection.close(0u32.into(), b"done");
+    Ok(())
+}
+
+impl CommyNode {
     pub fn set_catchup_store(&self, store: SharedCatchupStore) {
         *self
             .catchup_store

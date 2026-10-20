@@ -274,7 +274,7 @@ mod tests {
         let member = join(&mut state, "member");
         let moderator = join_moderator(&mut state, "mod");
         let trusted = join(&mut state, "trusted");
-        let role = Role { id: RoleId::new(), name: "trusted".into(), color: None, permissions: Permissions::NONE, position: 1, hoist: false, self_assignable: false, tag: None, banner: None };
+        let role = Role { id: RoleId::new(), name: "trusted".into(), color: None, permissions: Permissions::NONE, position: 1, hoist: false, self_assignable: false, tag: None, banner: None, mentionable: false };
         let rid = role.id;
         state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
         state.apply(ServerEvent::RoleAssign { server: sid, user: trusted, role: rid }).unwrap();

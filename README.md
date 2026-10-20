@@ -12,28 +12,35 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Servers and channels.** Create a server from scratch or a starter
   template, add text and voice channels, group servers into folders, and
   invite people with a link. Copy any server's channels, roles and rules as a
-  template code so others can start from the same layout.
+  template code so others can start from the same layout, and hand a server
+  you own to another member.
 - **Roles and moderation.** Colored roles with fine-grained permissions,
-  kick and ban, server mute and deafen, pinned messages and announcements,
-  and auto moderation that holds messages with blocked words, links, too many
-  mentions or flooding. A moderation bot you run yourself can remove new
-  ones for everyone ([crates/commy-bot](crates/commy-bot/README.md)).
+  kick, ban and timeouts, per-server nicknames, server mute and deafen,
+  pinned messages and announcements, and auto moderation that holds messages
+  with blocked words, links, too many mentions or flooding. A moderation bot
+  you run yourself can remove new ones for everyone
+  ([crates/commy-bot](crates/commy-bot/README.md)).
+  Channels can be limited to roles. Messages sent in a private channel are
+  encrypted so only those roles and admins can read them.
 - **Rich chat.** Replies, reactions, edits, emoji (including custom server
   emoji), images and files shown inline, clickable links, and a GIF picker when the server
   operator has set up a GIF provider key.
 - **Message search.** Search a server by keyword, phrase, author, mention or
   channel. Search runs on your device over the history it keeps, and a result
   jumps straight to the message, even weeks back.
-- **Voice.** Opus voice with a one-click noise cancellation toggle, per-person
-  volume, shared mute and deafen, and a soundboard with per-server clips.
+- **Voice.** Opus voice with one-click noise cancellation and echo
+  cancellation toggles, per-person volume, shared mute and deafen, and a
+  soundboard with per-server clips.
 - **Screen and game streaming.** Share a whole monitor or a single window with
   a Sharp, Balanced or Smooth quality preset. Windows uses Windows Graphics
-  Capture, so games stream cleanly.
+  Capture, so games stream cleanly, and can send what your computer plays
+  along with the picture; viewers set their own stream volume.
 - **Direct messages.** Private conversations between two people, delivered
   straight to their devices, with offline messages that arrive when the other
   person comes back.
 - **Presence and notifications.** Status, Do Not Disturb with a "back at"
-  time, appear offline, and notification toasts.
+  time, appear offline, notification toasts, and a notification level or a
+  timed mute for each server and each channel.
 - **Game overlay.** On Windows, an in-game overlay shows who is talking and
   recent chat, in the screen corner you choose.
 - **Safety tools.** Block and report people, an audit log of server changes,

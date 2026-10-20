@@ -19,12 +19,7 @@
       <button class="rail-btn rail-add" id="add-server-btn" title="Add a Server">
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
       </button>
-      <div class="rail-spacer">
-        <div class="rail-context" id="rail-context" aria-live="polite">
-          <span class="server-icon rail-context-icon" id="rail-context-icon"></span>
-          <span class="rail-context-name" id="rail-context-name"></span>
-        </div>
-      </div>
+      <div class="rail-spacer"></div>
       <footer class="user-panel">
       <button class="user-chip" id="user-chip" title="Set status">
         <span class="avatar" id="me-avatar">?</span>
@@ -81,7 +76,7 @@
         <div class="vp-streams" id="vp-streams"></div>
         <div class="vp-conn">
           <div class="vp-conn-meta" id="vp-conn-meta" title="Go to voice channel">
-            <div class="vp-status"><span class="vp-signal" id="vp-signal"></span>Voice Connected</div>
+            <div class="vp-status"><span class="vp-signal" id="vp-signal"></span><span id="vp-status-text">Voice Connected</span></div>
             <div class="vp-where" id="vp-where"></div>
           </div>
           <button class="icon-btn vp-hangup" id="vp-disconnect" title="Disconnect"></button>
@@ -120,6 +115,11 @@
           </button>
           <button class="icon-btn hidden" id="members-btn" title="Hide Members" aria-pressed="true">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zM8 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05A4.2 4.2 0 0 1 17 16.5V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+          </button>
+          <button class="icon-btn hidden" id="dm-call-btn" title="Start Voice Call"></button>
+          <button class="icon-btn hidden" id="group-add-btn" title="Add People"></button>
+          <button class="icon-btn hidden" id="group-leave-btn" title="Leave Group">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 13v-2H7V8l-5 4 5 4v-3zm4-10H10a2 2 0 0 0-2 2v3h2V5h10v14H10v-3H8v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/></svg>
           </button>
           <button class="icon-btn hidden" id="dm-profile-btn" title="Hide User Profile">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"/></svg>
@@ -161,6 +161,10 @@
             <div class="stage-chip stage-stats" id="stage-stats"></div>
           </div>
           <div class="stage-controls">
+            <label class="stage-chip stage-volume" id="stage-volume" title="Stream volume 100%">
+              <span class="stage-volume-icon" id="stage-volume-icon"></span>
+              <input type="range" id="stage-volume-range" min="0" max="200" value="100" aria-label="Stream volume" />
+            </label>
             <button class="stage-btn" id="stage-focus" title="Focus Mode"></button>
             <button class="stage-btn" id="stage-fullscreen" title="Fullscreen"></button>
             <button class="stage-btn danger" id="video-close" title="Stop Watching"></button>
@@ -218,6 +222,10 @@
           <button class="btn-primary btn-small" id="dm-request-accept">Accept</button>
         </div>
       </div>
+      <div class="typing-strip" id="typing-strip" role="status" aria-live="polite">
+        <span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span id="typing-text"></span>
+      </div>
       <div class="composer">
         <div class="link-draft hidden" id="link-draft" role="status">
           <span class="link-draft-thumb" id="link-draft-thumb"></span>
@@ -231,6 +239,10 @@
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4z"/></svg>
         </button>
         <textarea id="message-input" rows="1" autocomplete="off" placeholder="Message #welcome"></textarea>
+        <span class="composer-slow hidden" id="composer-slow" role="status" title="Slow mode is on in this channel">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.2 3.1.8-1.2-4.5-2.7z"/></svg>
+          <span id="composer-slow-text">5s</span>
+        </span>
         <button class="icon-btn gif-btn hidden" id="gif-btn" title="GIFs">GIF</button>
         <button class="icon-btn" id="emoji-btn" title="Emoji">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zM8.5 11A1.5 1.5 0 1 0 7 9.5 1.5 1.5 0 0 0 8.5 11zm7 0A1.5 1.5 0 1 0 14 9.5 1.5 1.5 0 0 0 15.5 11zm-8 3a5 5 0 0 0 9 0z"/></svg>
@@ -451,6 +463,21 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-transfer-owner">
+      <h2>Transfer Ownership</h2>
+      <p>The new owner gets every permission, including deleting the server. You stay as a member with the roles you have now. This cannot be undone by you.</p>
+      <label class="field-label">New owner
+        <select id="transfer-owner-pick" class="compact-select"></select>
+      </label>
+      <label class="field-label">Type the server name to confirm
+        <input id="transfer-owner-input" type="text" maxlength="100" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="transfer-owner-cancel">Cancel</button>
+        <button class="btn-danger" id="transfer-owner-go" disabled>Transfer Ownership</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-delete-server">
       <h2 id="delete-server-title">Delete Server</h2>
       <p>Every member is told the server was deleted and it leaves their list. Members who are offline find out the next time they connect. Your copy of its messages, channels and roles is removed from this device. This cannot be undone.</p>
@@ -618,12 +645,44 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-nickname" role="dialog" aria-labelledby="nickname-title">
+      <h2 id="nickname-title">Change Nickname</h2>
+      <p id="nickname-hint"></p>
+      <input id="nickname-input" type="text" maxlength="32" autocomplete="off" placeholder="Nickname" />
+      <div class="modal-actions">
+        <button class="btn-secondary" id="nickname-cancel">Cancel</button>
+        <button class="btn-secondary" id="nickname-clear">Clear</button>
+        <button class="btn-primary" id="nickname-save">Save</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-rename-folder">
       <h2>Rename Folder</h2>
       <input id="rename-folder-input" type="text" maxlength="32" placeholder="Folder name" />
       <div class="modal-actions">
         <button class="btn-secondary" id="rename-folder-cancel">Cancel</button>
         <button class="btn-primary" id="rename-folder-save">Save</button>
+      </div>
+    </div>
+
+    <div class="modal call-modal hidden" id="modal-call" role="alertdialog" aria-labelledby="call-name">
+      <div class="call-avatar" id="call-avatar"></div>
+      <h2 id="call-name"></h2>
+      <p class="call-sub">Incoming voice call</p>
+      <div class="call-actions">
+        <button class="call-btn decline" id="call-decline" title="Decline"></button>
+        <button class="call-btn accept" id="call-accept" title="Accept"></button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-forward">
+      <h2>Forward Message</h2>
+      <div class="msg delete-preview" id="forward-preview"></div>
+      <div class="setting-sub hidden" id="forward-files-note">Files and images stay where they are; only the text is forwarded.</div>
+      <input id="forward-search" type="text" autocomplete="off" placeholder="Find a channel or person" />
+      <div class="people-list" id="forward-list"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="forward-cancel">Cancel</button>
       </div>
     </div>
 
@@ -636,6 +695,19 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="delete-message-cancel">Cancel</button>
         <button class="btn-danger" id="delete-message-go">Delete</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-timeout">
+      <h2 id="timeout-title">Time out member</h2>
+      <p>They can still read channels and listen in voice, but cannot send messages, react, edit or talk until it ends.</p>
+      <div class="timeout-choices" id="timeout-choices" role="radiogroup" aria-label="How long"></div>
+      <label class="field-label">Custom length in minutes
+        <input id="timeout-custom" type="text" inputmode="numeric" autocomplete="off" placeholder="Up to 40320" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="timeout-cancel">Cancel</button>
+        <button class="btn-danger" id="timeout-go">Time Out</button>
       </div>
     </div>
 
@@ -701,6 +773,17 @@
       <div class="people-list" id="new-dm-list"></div>
     </div>
 
+    <div class="modal hidden" id="modal-group">
+      <h2 id="group-modal-title">New Group</h2>
+      <p id="group-modal-sub">Pick the people for this group. Everyone in it can message, call and add others.</p>
+      <input id="group-search" type="text" autocomplete="off" placeholder="Type a name" />
+      <div class="people-list" id="group-list"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="group-cancel">Cancel</button>
+        <button class="btn-primary" id="group-go" disabled>Create Group</button>
+      </div>
+    </div>
+
     <div class="modal modal-wide hidden" id="modal-share">
       <h2>Share Your Screen</h2>
       <div class="share-tabs" id="share-tabs">
@@ -717,6 +800,13 @@
         </div>
         <div class="setting-sub" id="share-quality-hint"></div>
       </div>
+      <label class="setting-row share-audio-row hidden" id="share-audio-row">
+        <div>
+          <div class="setting-title">Share audio</div>
+          <div class="setting-sub">Viewers hear what your computer plays, alongside your voice.</div>
+        </div>
+        <input type="checkbox" id="share-audio" class="switch" aria-label="Share audio" />
+      </label>
       <div class="modal-actions">
         <button class="btn-secondary" id="share-cancel">Cancel</button>
         <button class="btn-primary" id="share-go" disabled>Go Live</button>
@@ -957,6 +1047,13 @@
               <div class="setting-sub">Removes keyboards, fans and other background noise using RNNoise. If your headset or mic software also removes noise, turn one of them off; stacking two can cause hiss.</div>
             </div>
             <input type="checkbox" id="nc-toggle" class="switch" />
+          </label>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Echo Cancellation</div>
+              <div class="setting-sub">Stops the call audio coming out of your speakers from being sent back to everyone through your mic. Keep it on unless you always use a headset.</div>
+            </div>
+            <input type="checkbox" id="ec-toggle" class="switch" />
           </label>
           <h2 class="settings-subhead">Idle</h2>
           <div class="settings-card setting-row">
@@ -1325,6 +1422,7 @@
       <div class="settings-nav-inner">
         <div class="settings-nav-group" id="channel-settings-title">Channel</div>
         <button class="settings-tab" data-tab="overview">Overview</button>
+        <button class="settings-tab" data-tab="permissions" id="channel-tab-permissions">Permissions</button>
         <div class="settings-nav-sep"></div>
         <button class="settings-tab danger" id="channel-delete-nav">Delete Channel</button>
       </div>
@@ -1388,6 +1486,13 @@
               <option value="365">1 year</option>
             </select>
           </div>
+          <div class="settings-card setting-row" id="channel-slow-row">
+            <div>
+              <div class="setting-title">Slow Mode</div>
+              <div class="setting-sub">How long each member waits between messages here. Moderators and roles with Bypass Slow Mode are not held back.</div>
+            </div>
+            <select id="channel-slow" class="compact-select"></select>
+          </div>
           <div class="settings-card setting-row hidden" id="channel-limit-row">
             <div>
               <div class="setting-title">User Limit <span id="channel-limit-label">No limit</span></div>
@@ -1408,6 +1513,25 @@
               <div class="setting-sub">Removes the channel and all of its messages for everyone. This cannot be undone.</div>
             </div>
             <button class="btn-danger btn-small" id="channel-delete-btn">Delete Channel</button>
+          </div>
+        </section>
+        <section class="settings-page" data-page="permissions">
+          <h1>Permissions</h1>
+          <div class="settings-card">
+            <div class="setting-title" id="channel-view-title">Who can see this channel</div>
+            <div class="setting-sub">Pick roles to make this channel private. Only they, Administrators and the owner can read what is sent from then on, sealed with a key only they hold. Messages sent before stay with everyone who already has them.</div>
+            <div class="access-chips" id="channel-view-roles"></div>
+          </div>
+          <div class="settings-card" id="channel-send-card">
+            <div class="setting-title">Who can send messages</div>
+            <div class="setting-sub">Everyone who can see the channel can still read and react.</div>
+            <div class="access-chips" id="channel-send-roles"></div>
+          </div>
+          <div class="access-note" id="channel-access-note"></div>
+          <div class="save-bar hidden" id="channel-access-save-bar">
+            <span>You have unsaved changes</span>
+            <button class="btn-link" id="channel-access-reset">Reset</button>
+            <button class="btn-primary btn-small" id="channel-access-save">Save Changes</button>
           </div>
         </section>
       </div>
@@ -1521,6 +1645,13 @@
           </div>
           <div id="server-delete-section" class="hidden">
             <h2 class="settings-subhead danger-head">Danger Zone</h2>
+            <div class="danger-zone">
+              <div>
+                <div class="setting-title">Hand this server to someone else</div>
+                <div class="setting-sub">They become the owner with every permission, and you stay as a member with your roles. Only the new owner can hand it back.</div>
+              </div>
+              <button class="btn-secondary btn-small" id="server-transfer-open">Transfer Ownership</button>
+            </div>
             <div class="danger-zone">
               <div>
                 <div class="setting-title">Delete this server</div>
@@ -1831,6 +1962,7 @@
     <div class="mc-head"><div class="avatar avatar-lg" id="mc-avatar"></div></div>
     <div class="mc-body">
       <div class="mc-name-row"><span class="mc-name" id="mc-name"></span></div>
+      <div class="mc-username hidden" id="mc-username"></div>
       <div class="mc-status" id="mc-status"></div>
       <div class="mc-actions" id="mc-actions"></div>
       <div class="mc-about hidden" id="mc-about"></div>
@@ -1865,6 +1997,7 @@
   </div>
 
   <div class="pop-menu ctx-menu hidden" id="member-menu" role="menu"></div>
+  <div class="pop-menu ctx-menu hidden" id="msg-menu" role="menu"></div>
 
   <div class="pop-menu composer-menu hidden" id="composer-menu" role="menu">
     <button id="cm-file" role="menuitem">Upload a File</button>
@@ -1894,6 +2027,26 @@
     <div class="ctx-sep"></div>
     <button id="sm-leave" class="danger">Leave Server</button>
   </div>
+  <div class="pop-menu ctx-menu hidden" id="channel-menu" role="menu">
+    <div class="ctx-title" id="channel-menu-title"></div>
+    <button id="chm-read">Mark As Read</button>
+    <div class="ctx-sep"></div>
+    <div class="ctx-label">Notifications</div>
+    <button class="ctx-radio" data-level="default">Use server setting</button>
+    <button class="ctx-radio" data-level="all">All messages</button>
+    <button class="ctx-radio" data-level="mentions">Only @mentions</button>
+    <button class="ctx-radio" data-level="none">Nothing</button>
+    <div class="ctx-sep"></div>
+    <div class="ctx-label">Mute Channel</div>
+    <button class="ctx-radio" data-mute="15m">For 15 minutes</button>
+    <button class="ctx-radio" data-mute="1h">For 1 hour</button>
+    <button class="ctx-radio" data-mute="8h">For 8 hours</button>
+    <button class="ctx-radio" data-mute="24h">For 24 hours</button>
+    <button class="ctx-radio" data-mute="forever">Until I turn it back on</button>
+    <button class="ctx-check checked" id="chm-unmute"></button>
+    <div class="ctx-sep"></div>
+    <button id="chm-settings">Edit Channel</button>
+  </div>
   <div class="pop-menu ctx-menu hidden" id="folder-menu" role="menu">
     <button id="fm-rename">Rename Folder</button>
     <button id="fm-ungroup">Ungroup Folder</button>
@@ -1921,13 +2074,20 @@
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
   <script src="scripts/voice-input.js"></script>
+  <script src="scripts/stream-audio.js"></script>
+  <script src="scripts/typing.js"></script>
+  <script src="scripts/nicknames.js"></script>
+  <script src="scripts/message-link.js"></script>
+  <script src="scripts/slow-mode.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>
   <script src="scripts/embeds.js"></script>
   <script src="scripts/link-preview.js"></script>
   <script src="scripts/notify.js"></script>
+  <script src="scripts/mentions.js"></script>
   <script src="scripts/pins.js"></script>
+  <script src="scripts/channel-access.js"></script>
   <script src="scripts/audit-log.js"></script>
   <script src="scripts/invites.js"></script>
   <script src="scripts/automod.js"></script>
@@ -1935,6 +2095,7 @@
   <script src="scripts/presence.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>
+  <script src="scripts/timeouts.js"></script>
   <script src="scripts/server-colors.js"></script>
   <script src="scripts/starfield.js"></script>
   <script src="scripts/app-icons.js"></script>

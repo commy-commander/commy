@@ -2,13 +2,14 @@ use crate::action::{self, Action, SignedEvent};
 use crate::audit::{AuditEntry, AuditKind};
 use crate::invites::TrackedInvite;
 use crate::automod::{AutoMod, Hold};
+use crate::channel_key::ChannelKeys;
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 use crate::message::{
     Attachment, Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES, MAX_RELAYED_REACTIONS, MAX_RELAYED_REACTORS,
 };
-use crate::server::{ChannelKind, Member, Server};
+use crate::server::{ChannelKind, Member, Server, Timeout};
 use crate::user::{Presence, UserProfile};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,8 @@ pub enum StoreError {
     Unsigned,
     #[error("that server already holds as many of those as it can")]
     Limit,
+    #[error("that member is timed out")]
+    TimedOut,
 }
 
 pub const TOMBSTONE_KEEP_DAYS: i64 = 60;
@@ -103,6 +106,7 @@ pub struct ServerState {
     signed_actions: HashMap<String, SignedEvent>,
     local_floor: Option<DateTime<Utc>>,
     reaction_marks: HashMap<MessageId, Vec<ReactionMark>>,
+    channel_keys: HashMap<ChannelId, ChannelKeys>,
     automod: AutoMod,
     bots: BTreeSet<UserId>,
     audit: Vec<AuditEntry>,
@@ -138,6 +142,8 @@ pub struct Snapshot {
     pub signed_actions: Vec<SignedEvent>,
     #[serde(default)]
     pub reaction_marks: Vec<(MessageId, ReactionMark)>,
+    #[serde(default)]
+    pub channel_keys: Vec<(ChannelId, ChannelKeys)>,
     #[serde(default)]
     pub automod: AutoMod,
     #[serde(default)]
@@ -177,6 +183,7 @@ impl ServerState {
             signed_actions: HashMap::new(),
             local_floor: None,
             reaction_marks: HashMap::new(),
+            channel_keys: HashMap::new(),
             automod: AutoMod::default(),
             bots: BTreeSet::new(),
             audit: Vec::new(),
@@ -213,6 +220,7 @@ impl ServerState {
                 .filter(|(id, _)| self.index.contains_key(id))
                 .flat_map(|(id, marks)| marks.iter().map(|m| (*id, m.clone())))
                 .collect(),
+            channel_keys: self.channel_keys.iter().map(|(c, k)| (*c, k.clone())).collect(),
             automod: self.automod.clone(),
             bots: self.bots.iter().copied().collect(),
             audit: self.audit.clone(),
@@ -257,6 +265,11 @@ impl ServerState {
                 state.mark_reaction(id, mark.user, &mark.emoji, mark.at, mark.active);
             }
         }
+        state.channel_keys = snapshot
+            .channel_keys
+            .into_iter()
+            .filter(|(channel, _)| state.server.channel(*channel).is_some())
+            .collect();
         state.action_times = snapshot.action_times.into_iter().collect();
         state.action_floor = snapshot.action_floor;
         state.automod = snapshot.automod;
@@ -379,6 +392,10 @@ impl ServerState {
 
     pub fn retention_cutoff(&self, channel: ChannelId, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         self.server.channel(channel).and_then(|c| retention_cutoff(c, now))
+    }
+
+    pub fn channel_keys(&self, channel: ChannelId) -> Option<&ChannelKeys> {
+        self.channel_keys.get(&channel)
     }
 
     pub fn identity_of(&self, user: UserId) -> Option<IdentityKey> {
@@ -578,9 +595,13 @@ impl ServerState {
             | E::ChannelUpdate { channel, .. }
             | E::ChannelLayout { channel, .. }
             | E::ChannelLimit { channel, .. }
+            | E::ChannelSlowMode { channel, .. }
             | E::ChannelBanner { channel, .. }
             | E::ChannelColor { channel, .. }
-            | E::ChannelKindSet { channel, .. } => server.channel(*channel).is_some(),
+            | E::ChannelKindSet { channel, .. }
+            | E::ChannelAccessSet { channel, .. }
+            | E::ChannelKeyAdd { channel, .. }
+            | E::ChannelKeyGrant { channel, .. } => server.channel(*channel).is_some(),
             E::RoleUpdate { role, .. } => server.roles.iter().any(|r| r.id == role.id),
             E::RoleDelete { role, .. } | E::RoleAssign { role, .. } | E::RoleUnassign { role, .. } => {
                 server.roles.iter().any(|r| r.id == *role)
@@ -588,6 +609,7 @@ impl ServerState {
             E::MemberBan { user, .. } | E::MemberUnban { user, .. } | E::MemberLeave { user, .. } => {
                 server.is_member(*user) || server.banned.contains(user) || self.profiles.contains_key(user)
             }
+            E::MemberTimeout { user, .. } => server.is_member(*user),
             E::EventDelete { event, .. } | E::EventRsvp { event, .. } => server.events.iter().any(|e| e.id == *event),
             E::EmojiRemove { name, .. } => server.emojis.iter().any(|e| e.name == *name),
             E::StickerRemove { name, .. } => server.stickers.iter().any(|s| s.name == *name),
@@ -765,6 +787,7 @@ impl ServerState {
                     nickname: None,
                     roles: vec![],
                     joined_at: Utc::now(),
+                    timeout: None,
                 });
                 self.profiles.insert(profile.id, profile);
                 Ok(true)
@@ -810,6 +833,7 @@ impl ServerState {
                 let before = self.server.channels.len();
                 self.server.channels.retain(|c| c.id != channel);
                 self.server.pins.retain(|p| p.channel != channel);
+                self.channel_keys.remove(&channel);
                 for m in self.messages.remove(&channel).into_iter().flatten() {
                     self.index.remove(&m.id);
                 }
@@ -953,6 +977,14 @@ impl ServerState {
                 self.deleted = true;
                 Ok(true)
             }
+            ServerEvent::OwnerTransfer { server, user } => {
+                self.same_server(server)?;
+                if user == self.server.owner || !self.server.is_member(user) {
+                    return Ok(false);
+                }
+                self.server.owner = user;
+                Ok(true)
+            }
             ServerEvent::InviteTrack { server, invite } => {
                 self.same_server(server)?;
                 let now = Utc::now().timestamp_millis();
@@ -1060,6 +1092,17 @@ impl ServerState {
                     Some(Some(text)) => Ok(self.server.pronouns.insert(user, text.clone()).as_deref() != Some(text.as_str())),
                 }
             }
+            ServerEvent::MemberNickname { server, user, nickname } => {
+                self.same_server(server)?;
+                let Some(member) = self.server.member_mut(user) else {
+                    return Ok(false);
+                };
+                match nickname.as_deref().map(crate::server::clean_nickname) {
+                    None => Ok(replace(&mut member.nickname, None)),
+                    Some(None) => Ok(false),
+                    Some(cleaned) => Ok(replace(&mut member.nickname, cleaned)),
+                }
+            }
             ServerEvent::RulesAccept { server, user } => {
                 self.same_server(server)?;
                 if self.server.rules_accepted.contains(&user) || !self.server.is_member(user) {
@@ -1138,6 +1181,14 @@ impl ServerState {
                 }
                 Ok(replace(&mut target.user_limit, user_limit))
             }
+            ServerEvent::ChannelSlowMode { server, channel, seconds } => {
+                self.same_server(server)?;
+                let Some(target) = self.server.channel_mut(channel) else { return Ok(false) };
+                if !matches!(target.kind, crate::server::ChannelKind::Text | crate::server::ChannelKind::Announcement) || seconds > crate::server::MAX_SLOW_MODE {
+                    return Ok(false);
+                }
+                Ok(replace(&mut target.slow_mode, seconds))
+            }
             ServerEvent::VoiceModerate { server, user, muted, deafened } => {
                 self.same_server(server)?;
                 if user == self.server.owner {
@@ -1155,6 +1206,21 @@ impl ServerState {
                 let a = set(&mut self.server.server_muted, muted);
                 let b = set(&mut self.server.server_deafened, deafened);
                 Ok(a || b)
+            }
+            ServerEvent::MemberTimeout { server, user, by, at, until } => {
+                self.same_server(server)?;
+                if user == self.server.owner {
+                    return Ok(false);
+                }
+                let timeout = match until {
+                    Some(until) => match Timeout::new(at, until, by) {
+                        Some(timeout) => Some(timeout),
+                        None => return Ok(false),
+                    },
+                    None => None,
+                };
+                let Some(member) = self.server.member_mut(user) else { return Ok(false) };
+                Ok(replace(&mut member.timeout, timeout))
             }
             ServerEvent::MemberBan { server, user } => {
                 self.same_server(server)?;
@@ -1196,7 +1262,7 @@ impl ServerState {
                     return Ok(false);
                 }
                 let Some(existing) = self.server.roles.iter_mut().find(|r| r.id == role.id) else { return Ok(false) };
-                if existing.is_everyone() && (role.name != existing.name || role.self_assignable) {
+                if existing.is_everyone() && (role.name != existing.name || role.self_assignable || role.mentionable) {
                     return Ok(false);
                 }
                 if *existing == role {
@@ -1266,6 +1332,46 @@ impl ServerState {
                 }
                 Ok(replace(&mut target.kind, kind))
             }
+            ServerEvent::ChannelAccessSet { server, channel, view, send } => {
+                self.same_server(server)?;
+                let known: Vec<_> = self.server.roles.iter().map(|r| r.id).collect();
+                let clean = |mut roles: Vec<crate::ids::RoleId>| {
+                    roles.retain(|r| known.contains(r));
+                    roles.sort();
+                    roles.dedup();
+                    roles
+                };
+                let (view, send) = (clean(view), clean(send));
+                if view.len() > crate::server::MAX_ACCESS_ROLES || send.len() > crate::server::MAX_ACCESS_ROLES {
+                    return Ok(false);
+                }
+                let Some(target) = self.server.channel_mut(channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                if target.kind == ChannelKind::Category {
+                    return Ok(false);
+                }
+                let a = replace(&mut target.view_roles, view);
+                let b = replace(&mut target.send_roles, send);
+                if a {
+                    self.drop_unseen_live();
+                }
+                Ok(a | b)
+            }
+            ServerEvent::ChannelKeyAdd { server, channel, key } => {
+                self.same_server(server)?;
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                Ok(self.channel_keys.entry(channel).or_default().add_key(key))
+            }
+            ServerEvent::ChannelKeyGrant { server, channel, user, grant } => {
+                self.same_server(server)?;
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                self.channel_keys.entry(channel).or_default().set_grant(user, grant, MAX_PROFILES).ok_or(StoreError::Limit)
+            }
             ServerEvent::ServerImages { server, icon, banner } => {
                 self.same_server(server)?;
                 let clean = |v: Option<String>| v.filter(|r| crate::server::ImageRef::parse(r).is_some());
@@ -1323,6 +1429,7 @@ impl ServerState {
                 for member in &mut self.server.members {
                     member.roles.retain(|r| *r != role);
                 }
+                self.drop_unseen_live();
                 Ok(self.server.roles.len() != before)
             }
             ServerEvent::RoleAssign { server, user, role } => {
@@ -1346,10 +1453,41 @@ impl ServerState {
                 };
                 let before = member.roles.len();
                 member.roles.retain(|r| *r != role);
-                Ok(member.roles.len() != before)
+                let changed = member.roles.len() != before;
+                if changed {
+                    self.drop_unseen_live();
+                }
+                Ok(changed)
             }
             ServerEvent::TypingStart { .. } => Ok(true),
         }
+    }
+
+    fn drop_unseen_live(&mut self) {
+        let server = &self.server;
+        self.screen_shares.retain(|u, c| server.can_view(*c, *u));
+        self.cameras.retain(|u, c| server.can_view(*c, *u));
+        let gone: Vec<UserId> =
+            self.voice_states.iter().filter(|(u, c)| !server.can_view(**c, **u)).map(|(u, _)| *u).collect();
+        for user in gone {
+            self.voice_states.remove(&user);
+            self.voice_since.remove(&user);
+            self.voice_flags.remove(&user);
+        }
+    }
+
+    pub fn slow_mode_wait(&self, channel: ChannelId, author: UserId, at: DateTime<Utc>) -> Option<i64> {
+        let seconds = self.server.channel(channel).map(|c| c.slow_mode).unwrap_or(0);
+        if seconds == 0 || self.server.permissions_for(author).bypasses_slow_mode() {
+            return None;
+        }
+        let last = self.messages(channel).iter().filter(|m| m.author == author && m.created_at < at).map(|m| m.created_at).max()?;
+        let wait = i64::from(seconds) - (at - last).num_seconds();
+        (wait > 0).then_some(wait)
+    }
+
+    fn slow_mode_blocks(&self, message: &Message) -> bool {
+        self.slow_mode_wait(message.channel, message.author, message.created_at).is_some()
     }
 
     fn create_message(&mut self, mut message: Message) -> Result<bool, StoreError> {
@@ -1371,11 +1509,15 @@ impl ServerState {
             return Err(StoreError::UnknownChannel);
         }
         let held = self.has_message(message.id);
-        if !held
-            && self.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement)
-            && !self.server.can_post_in(message.channel, message.author)
-        {
-            return Err(StoreError::NotAnnouncer);
+        if !held && self.server.timed_out_at(message.author, message.created_at) {
+            return Err(StoreError::TimedOut);
+        }
+        if !held && !self.server.can_post_in(message.channel, message.author) {
+            match self.server.channel(message.channel) {
+                Some(c) if c.is_restricted() => return Err(StoreError::NotAllowed),
+                Some(c) if c.kind == ChannelKind::Announcement => return Err(StoreError::NotAnnouncer),
+                _ => {}
+            }
         }
         if !held
             && message.attachments.iter().any(Attachment::carries_a_file)
@@ -1387,6 +1529,9 @@ impl ServerState {
             if let Some(changed) = self.bind_proofs(&message) {
                 return Ok(changed);
             }
+        }
+        if !held && self.slow_mode_blocks(&message) {
+            return Ok(false);
         }
         if self.deleted_messages.contains(&message.id) {
             return Ok(false);
@@ -1475,6 +1620,14 @@ impl ServerState {
         if too_far_ahead(edited_at, Utc::now()) {
             return Err(StoreError::TooFarAhead);
         }
+        if self.server.timed_out_at(author, edited_at) {
+            return Err(StoreError::TimedOut);
+        }
+        let restricted = self.server.channel(channel).is_some_and(|c| c.is_restricted());
+        if restricted && !self.server.can_post_in(channel, author) {
+            return Err(StoreError::NotAllowed);
+        }
+        let msg = self.find_message_mut(channel, id)?;
         if !supersedes(msg, Some(edited_at), &sig) {
             return Ok(false);
         }
@@ -1637,7 +1790,7 @@ impl ServerState {
             .get(&user)
             .and_then(|p| p.node.as_deref())
             .is_some_and(|node| node.eq_ignore_ascii_case(node_hex));
-        node_ok && (!voice || self.voice_states.get(&user) == Some(&channel))
+        node_ok && self.server.can_view(channel, user) && (!voice || self.voice_states.get(&user) == Some(&channel))
     }
 
     fn pin_identity(&self, profile: &mut UserProfile) -> Result<(), StoreError> {
@@ -2205,6 +2358,7 @@ mod tests {
             position: 1,
             hoist: true,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2259,6 +2413,7 @@ mod tests {
             position: 0,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2280,6 +2435,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2548,6 +2704,7 @@ mod tests {
             position: 2,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2660,6 +2817,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2691,6 +2849,32 @@ mod tests {
         let signed = |by, user| crate::SignedEvent::sign(sid, by, 1, set(user, Some("he / him")), &identity_for(by));
         assert!(crate::action::authorized(&state.server, friend, &signed(friend, friend).event));
         assert!(!crate::action::authorized(&state.server, owner, &signed(owner, friend).event));
+    }
+
+    #[test]
+    fn nicknames_are_trimmed_kept_short_and_cleared_with_none() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let set = |user, text: Option<&str>| ServerEvent::MemberNickname { server: sid, user, nickname: text.map(Into::into) };
+        let nickname_of = |state: &ServerState, user| state.server.member(user).and_then(|m| m.nickname.clone());
+        assert_eq!(state.apply(set(friend, Some("  Sammy "))), Ok(true));
+        assert_eq!(nickname_of(&state, friend).as_deref(), Some("Sammy"));
+        assert_eq!(state.apply(set(friend, Some("Sammy"))), Ok(false), "unchanged");
+        assert_eq!(state.apply(set(friend, Some("   "))), Ok(false), "blank is not a nickname");
+        assert_eq!(state.apply(set(friend, Some("Sam\u{7}my"))), Ok(false), "control characters");
+        assert_eq!(state.apply(set(friend, Some(&"n".repeat(33)))), Ok(false), "too long");
+        assert_eq!(state.apply(set(friend, Some(&"n".repeat(32)))), Ok(true), "the longest allowed");
+        assert_eq!(nickname_of(&state, friend).as_deref(), Some("n".repeat(32).as_str()));
+        assert_eq!(state.apply(set(UserId::new(), Some("ghost"))), Ok(false), "strangers have none");
+        assert_eq!(state.apply(set(owner, Some("Boss"))), Ok(true), "the owner is a member like any other");
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        let restored = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert_eq!(nickname_of(&restored, owner).as_deref(), Some("Boss"));
+        assert_eq!(state.apply(set(friend, None)), Ok(true));
+        assert_eq!(state.apply(set(friend, None)), Ok(false), "already cleared");
+        assert_eq!(nickname_of(&state, friend), None);
+        assert_eq!(state.apply(ServerEvent::MemberNickname { server: ServerId::new(), user: owner, nickname: None }), Err(StoreError::WrongServer));
     }
 
     #[test]
@@ -3076,12 +3260,43 @@ mod tests {
     }
 
     #[test]
+    fn slow_mode_holds_members_to_the_interval_but_not_moderators() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels.iter().find(|c| c.kind == ChannelKind::Voice).unwrap().id;
+        let slow = |channel, n| ServerEvent::ChannelSlowMode { server: sid, channel, seconds: n };
+        assert_eq!(state.apply(slow(voice, 5)), Ok(false), "voice channels have no slow mode");
+        assert_eq!(state.apply(slow(channel, 100_000)), Ok(false), "capped");
+        assert_eq!(state.apply(slow(channel, 30)), Ok(true));
+        assert_eq!(state.apply(slow(channel, 30)), Ok(false), "unchanged");
+        let member = join(&mut state, "chatty");
+        let t0 = Utc::now() - chrono::Duration::seconds(120);
+        let first = post_at(&state, channel, member, "one", t0);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first }), Ok(true));
+        assert_eq!(state.slow_mode_wait(channel, member, t0 + chrono::Duration::seconds(10)), Some(20));
+        let quick = post_at(&state, channel, member, "two", t0 + chrono::Duration::seconds(10));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: quick }), Ok(false), "too soon");
+        let later = post_at(&state, channel, member, "three", t0 + chrono::Duration::seconds(31));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: later }), Ok(true));
+        assert_eq!(state.messages(channel).len(), 2);
+        let a = post_at(&state, channel, owner, "mod one", t0);
+        let b = post_at(&state, channel, owner, "mod two", t0 + chrono::Duration::seconds(1));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: a }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: b }), Ok(true), "owners bypass");
+        assert_eq!(state.slow_mode_wait(channel, owner, Utc::now()), None);
+        assert_eq!(state.apply(slow(channel, 0)), Ok(true));
+        assert_eq!(state.slow_mode_wait(channel, member, Utc::now()), None);
+    }
+
+    #[test]
     fn role_updates() {
         let (mut state, _, _) = fixture();
         let sid = state.server.id;
         let everyone = state.server.roles[0].clone();
         let pickable = crate::server::Role { self_assignable: true, ..everyone.clone() };
         assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: pickable }), Ok(false), "everyone is not pickable");
+        let pingable = crate::server::Role { mentionable: true, ..everyone.clone() };
+        assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: pingable }), Ok(false), "everyone is not a mentionable role");
         let tagged = crate::server::Role { tag: Some("GG".into()), ..everyone.clone() };
         assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: tagged }), Ok(true));
         let custom = crate::server::Role { tag: Some("<:gg:ab12@cd34>".into()), banner: Some("ab@cd".into()), ..everyone.clone() };
@@ -4079,7 +4294,7 @@ mod tests {
     }
 
     fn filler_member() -> Member {
-        Member { user: UserId::new(), nickname: None, roles: vec![], joined_at: Utc::now() }
+        Member { user: UserId::new(), nickname: None, roles: vec![], joined_at: Utc::now(), timeout: None }
     }
 
     #[test]
@@ -4133,6 +4348,7 @@ mod tests {
                 position: 1,
                 hoist: false,
                 self_assignable: false,
+                mentionable: false,
                 tag: None,
                 banner: None,
             });
@@ -4145,6 +4361,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -4291,5 +4508,126 @@ mod tests {
         assert!(!state.media_peer_ok(owner, &node, voice, false), "owner is on another node");
         state.apply(ServerEvent::MemberBan { server: sid, user: member }).unwrap();
         assert!(!state.media_peer_ok(member, &node, voice, false));
+    }
+
+    fn timeout(state: &ServerState, user: UserId, by: UserId, at: DateTime<Utc>, secs: i64) -> ServerEvent {
+        let until = (secs > 0).then(|| at + chrono::Duration::seconds(secs));
+        ServerEvent::MemberTimeout { server: state.server.id, user, by, at, until }
+    }
+
+    #[test]
+    fn a_timeout_sits_on_the_member_record_until_it_runs_out() {
+        let (mut state, _, owner) = fixture();
+        let user = join(&mut state, "loud");
+        let now = Utc::now();
+        assert_eq!(state.apply(timeout(&state, user, owner, now, 600)), Ok(true));
+        let held = state.server.member(user).unwrap().timeout.unwrap();
+        assert_eq!((held.since, held.until, held.by), (now, now + chrono::Duration::seconds(600), owner));
+        assert!(state.server.is_timed_out(user, now));
+        assert!(state.server.is_timed_out(user, now + chrono::Duration::seconds(599)));
+        assert!(!state.server.is_timed_out(user, now + chrono::Duration::seconds(600)), "it expires on its own");
+        assert_eq!(held.remaining_secs(now + chrono::Duration::seconds(100)), 500);
+        assert_eq!(held.remaining_secs(now + chrono::Duration::seconds(700)), 0);
+        assert!(state.server.timed_out_at(user, now + chrono::Duration::seconds(10)));
+        assert!(!state.server.timed_out_at(user, now - chrono::Duration::seconds(10)), "before it was set");
+        assert_eq!(state.server.timed_out_members(now), vec![(user, held)]);
+        assert!(state.server.timed_out_members(now + chrono::Duration::hours(1)).is_empty());
+        assert_eq!(state.apply(timeout(&state, user, owner, now, 600)), Ok(false), "a copy changes nothing");
+        assert_eq!(state.apply(timeout(&state, user, owner, now, 0)), Ok(true), "cleared early");
+        assert!(state.server.member(user).unwrap().timeout.is_none());
+        assert_eq!(state.apply(timeout(&state, user, owner, now, 0)), Ok(false));
+        let restored = ServerState::from_snapshot(state.snapshot());
+        assert!(restored.server.member(user).is_some());
+    }
+
+    #[test]
+    fn timeouts_refuse_the_owner_strangers_and_impossible_lengths() {
+        let (mut state, _, owner) = fixture();
+        let user = join(&mut state, "loud");
+        let now = Utc::now();
+        assert_eq!(state.apply(timeout(&state, owner, user, now, 60)), Ok(false));
+        assert_eq!(state.apply(timeout(&state, UserId::new(), owner, now, 60)), Ok(false));
+        assert_eq!(state.apply(timeout(&state, user, owner, now, -5)), Ok(false));
+        let too_long = crate::server::MAX_TIMEOUT_SECS + 1;
+        assert_eq!(state.apply(timeout(&state, user, owner, now, too_long)), Ok(false));
+        assert!(state.server.member(user).unwrap().timeout.is_none());
+        assert_eq!(state.apply(timeout(&state, user, owner, now, crate::server::MAX_TIMEOUT_SECS)), Ok(true));
+        let other = ServerEvent::MemberTimeout { server: ServerId::new(), user, by: owner, at: now, until: None };
+        assert_eq!(state.apply(other), Err(StoreError::WrongServer));
+    }
+
+    #[test]
+    fn messages_edits_and_reactions_from_a_timed_out_member_are_dropped() {
+        let (mut state, channel, owner) = fixture();
+        let user = join(&mut state, "loud");
+        let now = Utc::now();
+        let before = post_at(&state, channel, user, "before", now - chrono::Duration::seconds(5));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: before.clone() }), Ok(true));
+        state.apply(timeout(&state, user, owner, now, 300)).unwrap();
+        let during = post_at(&state, channel, user, "during", now + chrono::Duration::seconds(5));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: during }), Err(StoreError::TimedOut));
+        let edit_at = now + chrono::Duration::seconds(6);
+        assert_eq!(state.apply(edit(&state, &before, "changed", edit_at)), Err(StoreError::TimedOut));
+        assert_eq!(state.message(before.id).unwrap().content, "before");
+        let react = ServerEvent::ReactionSet { channel, message: before.id, emoji: "x".into(), user, active: true };
+        assert!(!crate::action::authorized(&state.server, user, &react));
+        assert!(!crate::action::authorized(&state.server, user, &ServerEvent::TypingStart { channel, user }));
+        let play = ServerEvent::SoundboardPlay { server: state.server.id, channel, user, name: "boop".into() };
+        assert!(!crate::action::authorized(&state.server, user, &play));
+        let listen = ServerEvent::VoiceState { user, channel: Some(state.server.channels[1].id), muted: false, deafened: false, since: None };
+        assert!(crate::action::authorized(&state.server, user, &listen), "they can still join voice to listen");
+        let owners = post_at(&state, channel, owner, "fine", now + chrono::Duration::seconds(5));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: owners }), Ok(true));
+        let after = post_at(&state, channel, user, "after", now + chrono::Duration::seconds(301));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: after }), Ok(true), "the timeout ran out");
+        let late_copy = post_at(&state, channel, user, "late", now + chrono::Duration::seconds(10));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: late_copy }), Err(StoreError::TimedOut), "sent during the timeout, delivered after");
+        assert!(!crate::action::authorized(&state.server, user, &react), "still timed out by the clock");
+        state.apply(timeout(&state, user, owner, now, 0)).unwrap();
+        assert!(crate::action::authorized(&state.server, user, &react), "reacting works again once lifted");
+    }
+
+    #[test]
+    fn only_members_allowed_to_time_out_may_and_never_on_themselves() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let mod_ = join(&mut state, "mod");
+        let user = join(&mut state, "user");
+        let role = Role {
+            id: RoleId::new(),
+            name: "mods".into(),
+            color: None,
+            permissions: Permissions::TIME_OUT_MEMBERS,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+            mentionable: false,
+        };
+        let rid = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: mod_, role: rid }).unwrap();
+        let now = Utc::now();
+        let by = |who: UserId, target: UserId| ServerEvent::MemberTimeout { server: sid, user: target, by: who, at: now, until: Some(now + chrono::Duration::minutes(5)) };
+        assert!(crate::action::authorized(&state.server, owner, &by(owner, user)));
+        assert!(crate::action::authorized(&state.server, mod_, &by(mod_, user)));
+        assert!(!crate::action::authorized(&state.server, user, &by(user, mod_)), "no permission");
+        assert!(!crate::action::authorized(&state.server, mod_, &by(owner, user)), "signed by someone else");
+        assert!(!crate::action::authorized(&state.server, mod_, &by(mod_, mod_)), "not on oneself");
+        let signed = SignedEvent::sign(sid, mod_, 1_000, by(mod_, user), &identity_for(mod_));
+        assert_eq!(state.apply_signed(&signed), Ok(true));
+        assert!(state.server.is_timed_out(user, now));
+        let forged = SignedEvent::sign(sid, user, 2_000, timeout(&state, user, user, now, 0), &identity_for(user));
+        assert_eq!(state.apply_signed(&forged), Err(StoreError::NotAllowed));
+        let lifted = SignedEvent::sign(sid, owner, 3_000, timeout(&state, user, owner, now, 0), &identity_for(owner));
+        assert_eq!(state.apply_signed(&lifted), Ok(true));
+        assert_eq!(state.apply_signed(&signed), Ok(false), "the older timeout loses");
+        assert!(!state.server.is_timed_out(user, now));
+        let kinds: Vec<AuditKind> = state.audit_log().iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, vec![AuditKind::MemberTimeout, AuditKind::MemberTimeoutClear]);
+        assert_eq!(state.audit_log()[0].detail.as_deref(), Some("5 minutes"));
+        assert!(crate::action::relayable(&by(mod_, user)));
+        assert!(crate::action::snapshot_omits("timeout:x"), "joiners learn timeouts from the relayed signed action");
     }
 }

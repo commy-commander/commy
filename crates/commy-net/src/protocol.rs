@@ -525,6 +525,7 @@ mod tests {
                     position: 5 - i as u32,
                     hoist: i < 2,
                     self_assignable: i >= 3,
+                    mentionable: false,
                     tag: None,
                     banner: None,
                 };

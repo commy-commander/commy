@@ -28,12 +28,16 @@ fn default_afk_minutes() -> u32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceSettings {
     pub noise_cancellation: bool,
+    #[serde(default = "default_true")]
+    pub echo_cancellation: bool,
     pub muted: bool,
     pub deafened: bool,
     #[serde(default = "default_gain")]
     pub output_volume: f32,
     #[serde(default = "default_gain")]
     pub input_gain: f32,
+    #[serde(default = "default_gain")]
+    pub stream_volume: f32,
     #[serde(default = "default_afk_minutes")]
     pub afk_timeout_minutes: u32,
     #[serde(default = "default_true")]
@@ -87,8 +91,17 @@ impl VoiceSettings {
         crate::voice_keys::sensitivity(self.auto_sensitivity, self.sensitivity_db)
     }
 
+    pub fn stream_gain(&self, forced_deaf: bool) -> f32 {
+        if self.deafened || forced_deaf {
+            0.0
+        } else {
+            self.stream_volume
+        }
+    }
+
     pub fn apply_to(&self, processor: &mut VoiceProcessor) {
         processor.set_noise_cancellation(self.noise_cancellation);
+        processor.set_echo_cancellation(self.echo_cancellation);
         processor.set_muted(self.muted);
         processor.set_input_gain(self.input_gain);
         processor.set_push_to_talk(self.input_mode == crate::voice_keys::InputMode::PushToTalk);
@@ -117,10 +130,12 @@ impl Default for VoiceSettings {
     fn default() -> Self {
         Self {
             noise_cancellation: true,
+            echo_cancellation: true,
             muted: false,
             deafened: false,
             output_volume: 1.0,
             input_gain: 1.0,
+            stream_volume: 1.0,
             afk_timeout_minutes: default_afk_minutes(),
             share_activity: true,
             input_device: None,
@@ -156,6 +171,7 @@ pub struct App {
     pub node_hex: Mutex<Option<String>>,
     pub data_dir: OnceLock<PathBuf>,
     pub voice_session: Mutex<Option<VoiceSession>>,
+    pub dm_call: Mutex<Option<crate::calls::DmCall>>,
     pub screen_share: Mutex<Option<ScreenShareSession>>,
     pub own_preview: Mutex<Option<ScreenWatch>>,
     pub watches: Mutex<HashMap<UserId, ScreenWatch>>,
@@ -207,6 +223,7 @@ impl Default for App {
             node_hex: Mutex::new(None),
             data_dir: OnceLock::new(),
             voice_session: Mutex::new(None),
+            dm_call: Mutex::new(None),
             screen_share: Mutex::new(None),
             own_preview: Mutex::new(None),
             watches: Mutex::new(HashMap::new()),

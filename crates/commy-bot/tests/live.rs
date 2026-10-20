@@ -125,6 +125,7 @@ async fn a_running_bot_joins_wears_its_badge_and_removes_held_messages() {
         position: 1,
         hoist: false,
         self_assignable: false,
+        mentionable: false,
         tag: None,
         banner: None,
     };

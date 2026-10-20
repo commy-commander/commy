@@ -28,7 +28,16 @@ pub struct Channel {
     pub banner: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
+    #[serde(default)]
+    pub view_roles: Vec<RoleId>,
+    #[serde(default)]
+    pub send_roles: Vec<RoleId>,
+    #[serde(default)]
+    pub slow_mode: u32,
 }
+
+pub const MAX_ACCESS_ROLES: usize = 16;
+pub const MAX_SLOW_MODE: u32 = 21_600;
 
 impl Channel {
     pub fn new(name: impl Into<String>, kind: ChannelKind, position: u32) -> Self {
@@ -43,7 +52,18 @@ impl Channel {
             user_limit: 0,
             banner: None,
             color: None,
+            view_roles: Vec::new(),
+            send_roles: Vec::new(),
+            slow_mode: 0,
         }
+    }
+
+    pub fn is_private(&self) -> bool {
+        !self.view_roles.is_empty()
+    }
+
+    pub fn is_restricted(&self) -> bool {
+        self.is_private() || !self.send_roles.is_empty()
     }
 }
 
@@ -61,6 +81,8 @@ pub struct Role {
     pub tag: Option<String>,
     #[serde(default)]
     pub banner: Option<String>,
+    #[serde(default)]
+    pub mentionable: bool,
 }
 
 pub const EVERYONE_ROLE_POSITION: u32 = 0;
@@ -81,12 +103,51 @@ pub struct Pin {
 
 pub const MAX_PINS_PER_CHANNEL: usize = 50;
 
+pub const MAX_TIMEOUT_SECS: i64 = 28 * 24 * 60 * 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Timeout {
+    pub since: DateTime<Utc>,
+    pub until: DateTime<Utc>,
+    pub by: UserId,
+}
+
+impl Timeout {
+    pub fn new(since: DateTime<Utc>, until: DateTime<Utc>, by: UserId) -> Option<Self> {
+        let length = until.signed_duration_since(since).num_seconds();
+        (length > 0 && length <= MAX_TIMEOUT_SECS).then_some(Self { since, until, by })
+    }
+
+    pub fn active_at(&self, now: DateTime<Utc>) -> bool {
+        now < self.until
+    }
+
+    pub fn covers(&self, at: DateTime<Utc>) -> bool {
+        self.since <= at && at < self.until
+    }
+
+    pub fn remaining_secs(&self, now: DateTime<Utc>) -> i64 {
+        self.until.signed_duration_since(now).num_seconds().max(0)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
     pub user: UserId,
     pub nickname: Option<String>,
     pub roles: Vec<RoleId>,
     pub joined_at: DateTime<Utc>,
+    #[serde(default)]
+    pub timeout: Option<Timeout>,
+}
+
+pub const MAX_NICKNAME_CHARS: usize = 32;
+
+pub fn clean_nickname(raw: &str) -> Option<String> {
+    let text = raw.trim();
+    let length = text.chars().count();
+    let fits = (1..=MAX_NICKNAME_CHARS).contains(&length) && !text.chars().any(char::is_control);
+    fits.then(|| text.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -167,6 +228,8 @@ pub struct Server {
     #[serde(default)]
     pub public: bool,
     #[serde(default)]
+    pub group: bool,
+    #[serde(default)]
     pub pins: Vec<Pin>,
     #[serde(default)]
     pub stickers: Vec<Sticker>,
@@ -188,6 +251,7 @@ impl Server {
             position: EVERYONE_ROLE_POSITION,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -209,6 +273,7 @@ impl Server {
                 nickname: None,
                 roles: vec![],
                 joined_at: Utc::now(),
+                timeout: None,
             }],
             emojis: vec![],
             soundboard: vec![],
@@ -232,6 +297,7 @@ impl Server {
             banned: vec![],
             afk_timeout_minutes: None,
             public: false,
+            group: false,
             pins: vec![],
             stickers: vec![],
             emoticons: vec![],
@@ -264,6 +330,25 @@ impl Server {
         self.is_member(user) && !self.banned.contains(&user)
     }
 
+    pub fn timeout_of(&self, user: UserId, now: DateTime<Utc>) -> Option<Timeout> {
+        self.member(user)?.timeout.filter(|t| t.active_at(now))
+    }
+
+    pub fn is_timed_out(&self, user: UserId, now: DateTime<Utc>) -> bool {
+        self.timeout_of(user, now).is_some()
+    }
+
+    pub fn timed_out_at(&self, user: UserId, at: DateTime<Utc>) -> bool {
+        self.member(user).and_then(|m| m.timeout).is_some_and(|t| t.covers(at))
+    }
+
+    pub fn timed_out_members(&self, now: DateTime<Utc>) -> Vec<(UserId, Timeout)> {
+        self.members
+            .iter()
+            .filter_map(|m| m.timeout.filter(|t| t.active_at(now)).map(|t| (m.user, t)))
+            .collect()
+    }
+
     pub fn permissions_for(&self, user: UserId) -> Permissions {
         if user == self.owner {
             return Permissions::all();
@@ -288,10 +373,36 @@ impl Server {
 
     pub fn can_post_in(&self, channel: ChannelId, user: UserId) -> bool {
         let perms = self.permissions_for(user);
-        match self.channel(channel).map(|c| c.kind) {
-            Some(ChannelKind::Announcement) => perms.can_announce(),
+        let Some(found) = self.channel(channel) else {
+            return perms.allows(Permissions::SEND_MESSAGES);
+        };
+        let allowed = match found.kind {
+            ChannelKind::Announcement => perms.can_announce(),
             _ => perms.allows(Permissions::SEND_MESSAGES),
+        };
+        allowed && self.admits(user, &found.view_roles) && self.admits(user, &found.send_roles)
+    }
+
+    pub fn can_view(&self, channel: ChannelId, user: UserId) -> bool {
+        self.channel(channel).is_some_and(|c| self.admits(user, &c.view_roles))
+    }
+
+    fn admits(&self, user: UserId, roles: &[RoleId]) -> bool {
+        if roles.is_empty() {
+            return true;
         }
+        if self.permissions_for(user).contains(Permissions::ADMINISTRATOR) {
+            return true;
+        }
+        self.member(user).is_some_and(|m| m.roles.iter().any(|r| roles.contains(r)))
+    }
+
+    pub fn readers_of(&self, channel: ChannelId) -> Vec<UserId> {
+        self.members
+            .iter()
+            .map(|m| m.user)
+            .filter(|u| !self.banned.contains(u) && self.can_view(channel, *u))
+            .collect()
     }
 
     pub fn is_pinned(&self, message: MessageId) -> bool {
@@ -330,6 +441,14 @@ impl Server {
             .iter()
             .filter(|r| member.roles.contains(&r.id) && wanted(r))
             .max_by_key(|r| r.position)
+    }
+
+    pub fn group(owner: UserId) -> Self {
+        let mut server = Self::new("", owner);
+        server.group = true;
+        server.channels = vec![Channel::new("chat", ChannelKind::Text, 0), Channel::new("call", ChannelKind::Voice, 1)];
+        server.afk_channel_id = None;
+        server
     }
 
     pub fn sorted_channels(&self) -> Vec<&Channel> {
@@ -374,6 +493,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -385,6 +505,7 @@ mod tests {
             position: 2,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -413,13 +534,14 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
         let rid = role.id;
         server.roles.push(role);
         for (user, roles) in [(plain, vec![]), (announcer, vec![rid])] {
-            server.members.push(Member { user, nickname: None, roles, joined_at: Utc::now() });
+            server.members.push(Member { user, nickname: None, roles, joined_at: Utc::now(), timeout: None });
         }
         assert!(server.can_post_in(general, plain));
         assert!(!server.can_post_in(news_id, plain));
@@ -470,6 +592,7 @@ mod tests {
             nickname: None,
             roles: vec![],
             joined_at: Utc::now(),
+            timeout: None,
         });
         let perms = server.permissions_for(user);
         assert!(perms.allows(Permissions::SEND_MESSAGES));
@@ -492,13 +615,14 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
         let rid = invite_role.id;
         server.roles.push(invite_role);
         for (user, roles) in [(plain, vec![]), (inviter, vec![rid])] {
-            server.members.push(Member { user, nickname: None, roles, joined_at: Utc::now() });
+            server.members.push(Member { user, nickname: None, roles, joined_at: Utc::now(), timeout: None });
         }
         assert!(!server.permissions_for(plain).allows(Permissions::CREATE_INVITES));
         assert!(server.permissions_for(inviter).allows(Permissions::CREATE_INVITES));
@@ -518,6 +642,7 @@ mod tests {
             position: 1,
             hoist: true,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -526,6 +651,7 @@ mod tests {
             nickname: None,
             roles: vec![mod_role.id],
             joined_at: Utc::now(),
+            timeout: None,
         });
         server.roles.push(mod_role);
         let perms = server.permissions_for(user);
@@ -547,6 +673,7 @@ mod tests {
             position: 2,
             hoist: true,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -555,6 +682,7 @@ mod tests {
             nickname: None,
             roles: vec![admin_role.id],
             joined_at: Utc::now(),
+            timeout: None,
         });
         server.roles.push(admin_role);
         assert!(server.permissions_for(user).allows(Permissions::BAN_MEMBERS));

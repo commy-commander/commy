@@ -120,7 +120,9 @@ mod tests {
         let whole = mirror_of(&state, 1_000, usize::MAX).unwrap();
         let trimmed = mirror_of(&state, 1_000, whole.snapshot.len() / 2).unwrap();
         let snapshot: Snapshot = serde_json::from_slice(&trimmed.snapshot).unwrap();
-        let kept: Vec<&str> = snapshot.messages[0].1.iter().map(|m| m.content.as_str()).collect();
+        let channel = state.server.channels[0].id;
+        let list = snapshot.messages.iter().find(|(id, _)| *id == channel).map(|(_, l)| l).unwrap();
+        let kept: Vec<&str> = list.iter().map(|m| m.content.as_str()).collect();
         assert!(kept.len() < 40 && !kept.is_empty());
         assert_eq!(kept.last(), Some(&"message 39"));
     }

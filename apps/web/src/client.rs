@@ -8,6 +8,7 @@ use commy_core::{
 };
 use commy_net::protocol::{gossip_size, verify_sync_response, SyncMember, MAX_GOSSIP_BYTES};
 use commy_net::{ServerTicket, WirePayload};
+use commy_view::keys::KeyHolder;
 use commy_view::{MessageView, ServerSummary, ServerView};
 
 pub type Servers = Arc<Mutex<HashMap<ServerId, ServerState>>>;
@@ -41,6 +42,10 @@ impl Client {
         self.me.lock().unwrap().as_ref().map(|(profile, _)| profile.id)
     }
 
+    fn keys(&self) -> KeyHolder {
+        KeyHolder::new(self.me.lock().unwrap().as_ref().map(|(profile, identity)| (profile.id, identity.clone())))
+    }
+
     pub fn has(&self, server: ServerId) -> bool {
         self.servers.lock().unwrap().contains_key(&server)
     }
@@ -55,19 +60,21 @@ impl Client {
 
     pub fn get_server(&self, server: ServerId) -> Result<ServerView, String> {
         let me = self.me_id();
+        let keys = self.keys();
         let servers = self.servers.lock().unwrap();
         let state = servers.get(&server).ok_or("This server is still loading")?;
-        Ok(ServerView::for_viewer(state, me))
+        Ok(ServerView::for_viewer(state, me, &keys))
     }
 
     pub fn get_messages(&self, server: ServerId, channel: ChannelId, around: Option<MessageId>) -> Result<Vec<MessageView>, String> {
         let me = self.me_id();
+        let keys = self.keys();
         let servers = self.servers.lock().unwrap();
         let state = servers.get(&server).ok_or("This server is still loading")?;
         match around {
-            Some(id) => commy_view::message_views_around(state, channel, id, &self.pending, me)
+            Some(id) => commy_view::message_views_around(state, channel, id, &self.pending, me, &keys)
                 .ok_or_else(|| "That message is not loaded in this browser".to_string()),
-            None => Ok(commy_view::message_views(state, channel, PAGE, &self.pending, me)),
+            None => Ok(commy_view::message_views(state, channel, PAGE, &self.pending, me, &keys)),
         }
     }
 
@@ -80,6 +87,7 @@ impl Client {
     ) -> Result<(Message, MessageView), String> {
         let content = clean_message(content)?;
         let (profile, identity) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
+        let keys = KeyHolder::new(Some((profile.id, identity.clone())));
         let mut servers = self.servers.lock().unwrap();
         let state = servers.get_mut(&server).ok_or("This server is still loading")?;
         check_can_post(state, profile.id, channel)?;
@@ -90,25 +98,40 @@ impl Client {
             }
             message.reply_to = Some(target);
         }
+        if let Some(wait) = state.slow_mode_wait(channel, profile.id, message.created_at) {
+            return Err(format!("Slow mode is on here: you can send again in {wait} seconds"));
+        }
+        if let Some(hold) = state.hold(&message) {
+            return Err(hold.refusal().into());
+        }
+        keys.seal_outgoing(state, &mut message)?;
         message.sign(server, &identity);
         if !fits_one_gossip_frame(&message) {
             return Err("That message is too long to send; try splitting it up".into());
         }
-        if let Some(hold) = state.hold(&message) {
+        if let Some(hold) = keys.hold(state, &message) {
             return Err(hold.refusal().into());
         }
         state
             .apply(ServerEvent::MessageCreate { message: message.clone() })
             .map_err(|e| e.to_string())?;
-        let view = MessageView::build(&message, state);
+        let view = MessageView::build(&message, state, &keys);
         Ok((message, view))
     }
 
     pub fn apply_live(&self, server: ServerId, event: ServerEvent, action: Option<Action>) -> Applied {
+        let keys = self.keys();
+        let me = self.me_id();
         let mut servers = self.servers.lock().unwrap();
         let Some(state) = servers.get_mut(&server) else { return Applied::Nothing };
         match commy_net::catchup::apply_live(state, event, action) {
-            (Ok(true), Some(message), _) if state.hold(&message).is_none() => Applied::Created(message),
+            (Ok(true), Some(message), _) => {
+                let visible = me.is_some_and(|me| state.server.can_view(message.channel, me));
+                match keys.open(state, &message) {
+                    Some(opened) if visible && keys.hold(state, &message).is_none() => Applied::Created(opened),
+                    _ => Applied::Changed,
+                }
+            }
             (Ok(true), _, _) => Applied::Changed,
             _ => Applied::Nothing,
         }
@@ -201,6 +224,15 @@ fn check_can_post(state: &ServerState, user: UserId, channel: ChannelId) -> Resu
     if channel.kind == ChannelKind::Announcement && !perms.can_announce() {
         return Err("Only members allowed to post announcements can write in this channel".into());
     }
+    if !state.server.can_view(channel.id, user) {
+        return Err("You do not have a role that can see that channel".into());
+    }
+    if channel.is_restricted() && !state.server.can_post_in(channel.id, user) {
+        return Err("Only some roles can send messages in this channel".into());
+    }
+    if state.server.is_timed_out(user, Utc::now()) {
+        return Err("You are timed out in this server for now".into());
+    }
     Ok(())
 }
 
@@ -211,7 +243,7 @@ fn fits_one_gossip_frame(message: &Message) -> bool {
 
 fn member_of(m: SyncMember) -> commy_core::Member {
     let joined_at = chrono::DateTime::from_timestamp_millis(m.joined_ms).unwrap_or_default();
-    commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at }
+    commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at, timeout: None }
 }
 
 #[cfg(test)]

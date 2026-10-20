@@ -7,6 +7,7 @@ pub const SAMPLE_RATE: u32 = 48_000;
 const RNNOISE_I16_FULL_SCALE: f32 = 32767.0;
 
 pub mod codec;
+pub mod echo;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum AudioError {
@@ -33,6 +34,9 @@ pub enum Sensitivity {
 pub struct VoiceProcessor {
     denoiser: Box<DenoiseState<'static>>,
     noise_cancellation: bool,
+    echo: Option<echo::EchoCanceller>,
+    far_end: echo::FarEndInbox,
+    capture_latency: Option<std::time::Duration>,
     muted: bool,
     push_to_talk: bool,
     talk_key_down: bool,
@@ -64,6 +68,9 @@ impl VoiceProcessor {
         Self {
             denoiser: DenoiseState::new(),
             noise_cancellation: true,
+            echo: Some(echo::EchoCanceller::new()),
+            far_end: echo::FarEndInbox::new(),
+            capture_latency: None,
             muted: false,
             push_to_talk: false,
             talk_key_down: false,
@@ -84,6 +91,43 @@ impl VoiceProcessor {
 
     pub fn noise_cancellation(&self) -> bool {
         self.noise_cancellation
+    }
+
+    pub fn set_echo_cancellation(&mut self, enabled: bool) {
+        if enabled && self.echo.is_none() {
+            let mut canceller = echo::EchoCanceller::new();
+            canceller.note_capture_latency(self.capture_latency);
+            self.echo = Some(canceller);
+        } else if !enabled {
+            self.echo = None;
+        }
+    }
+
+    pub fn echo_cancellation(&self) -> bool {
+        self.echo.is_some()
+    }
+
+    pub fn far_end_sink(&self) -> echo::FarEndSink {
+        self.far_end.sink()
+    }
+
+    pub fn note_capture_latency(&mut self, latency: Option<std::time::Duration>) {
+        self.capture_latency = latency;
+        if let Some(canceller) = &mut self.echo {
+            canceller.note_capture_latency(latency);
+        }
+    }
+
+    fn cancel_echo(&mut self, gained: &mut [f32; FRAME_SIZE]) {
+        match &mut self.echo {
+            Some(canceller) => {
+                self.far_end.drain_into(canceller);
+                let mut cleared = [0.0f32; FRAME_SIZE];
+                canceller.process(gained, &mut cleared);
+                gained.copy_from_slice(&cleared);
+            }
+            None => self.far_end.discard(),
+        }
     }
 
     pub fn set_muted(&mut self, muted: bool) {
@@ -138,11 +182,14 @@ impl VoiceProcessor {
             return Err(AudioError::BadFrameSize(input.len()));
         }
 
-        let mut scaled = [0.0f32; FRAME_SIZE];
         let mut gained = [0.0f32; FRAME_SIZE];
-        for ((dst, raw), src) in scaled.iter_mut().zip(gained.iter_mut()).zip(input) {
+        for (raw, src) in gained.iter_mut().zip(input) {
             *raw = (src * self.input_gain).clamp(-1.0, 1.0);
-            *dst = *raw * RNNOISE_I16_FULL_SCALE;
+        }
+        self.cancel_echo(&mut gained);
+        let mut scaled = [0.0f32; FRAME_SIZE];
+        for (dst, raw) in scaled.iter_mut().zip(&gained) {
+            *dst = raw * RNNOISE_I16_FULL_SCALE;
         }
         let input_level_db = level_db(&gained);
         self.last_level_db = input_level_db;
@@ -252,6 +299,7 @@ mod tests {
     fn push_to_talk_sends_only_while_the_key_is_down() {
         let mut p = VoiceProcessor::new();
         p.set_noise_cancellation(false);
+        p.set_echo_cancellation(false);
         p.set_push_to_talk(true);
         let frame = sine_frame(440.0, 0.5);
         let held = p.process(&frame).unwrap();
@@ -269,6 +317,7 @@ mod tests {
     fn a_manual_threshold_gates_on_level_even_without_noise_cancellation() {
         let mut p = VoiceProcessor::new();
         p.set_noise_cancellation(false);
+        p.set_echo_cancellation(false);
         p.set_sensitivity(Sensitivity::Threshold(-20.0));
         let quiet = sine_frame(440.0, 0.01);
         let loud = sine_frame(440.0, 0.5);
@@ -314,6 +363,7 @@ mod tests {
     fn bypass_preserves_signal() {
         let mut p = VoiceProcessor::new();
         p.set_noise_cancellation(false);
+        p.set_echo_cancellation(false);
         let frame = sine_frame(440.0, 0.5);
         let out = p.process(&frame).unwrap();
         assert!(out.should_transmit);
@@ -353,9 +403,55 @@ mod tests {
     fn gain_is_clamped() {
         let mut p = VoiceProcessor::new();
         p.set_noise_cancellation(false);
+        p.set_echo_cancellation(false);
         p.set_input_gain(100.0);
         let out = p.process(&sine_frame(440.0, 1.0)).unwrap();
         assert!(out.samples.iter().all(|s| (-1.0..=1.0).contains(s)));
+    }
+
+    #[test]
+    fn echo_cancellation_is_on_by_default_and_cancels_what_the_speakers_play() {
+        let mut p = VoiceProcessor::new();
+        assert!(p.echo_cancellation());
+        p.set_noise_cancellation(false);
+        let sink = p.far_end_sink();
+        let mut rng = 12345u64;
+        let mut noise = move || {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((rng >> 33) as f32 / (1u64 << 31) as f32) * 2.0 - 1.0
+        };
+        const HISTORY: usize = 8192;
+        let mut history = vec![0.0f32; HISTORY];
+        let mut written = 0usize;
+        let mut echo_power = 0.0f64;
+        let mut out_power = 0.0f64;
+        for frame in 0..700 {
+            let far: Vec<f32> = (0..FRAME_SIZE).map(|_| 0.3 * noise()).collect();
+            let near: Vec<f32> = far
+                .iter()
+                .map(|x| {
+                    history[written % HISTORY] = *x;
+                    let echo = 0.5 * history[(written + HISTORY - 2400) % HISTORY];
+                    written += 1;
+                    echo
+                })
+                .collect();
+            let pcm: Vec<i16> = far.iter().map(|s| (s * 32767.0) as i16).collect();
+            sink.push(&pcm, None);
+            let out = p.process(&near).unwrap();
+            if frame >= 500 {
+                echo_power += near.iter().map(|s| f64::from(s * s)).sum::<f64>();
+                out_power += out.samples.iter().map(|s| f64::from(s * s)).sum::<f64>();
+            }
+        }
+        let erle = 10.0 * (echo_power / out_power.max(1e-12)).log10();
+        assert!(erle > 25.0, "ERLE through the processor {erle:.1} dB");
+        p.set_echo_cancellation(false);
+        assert!(!p.echo_cancellation());
+        let out = p.process(&vec![0.1; FRAME_SIZE]).unwrap();
+        assert!(out.samples.iter().all(|s| (s - 0.1).abs() < 1e-3), "off means untouched");
+        p.set_echo_cancellation(true);
+        assert!(p.echo_cancellation());
     }
 
     #[test]
