@@ -1,15 +1,3 @@
-const INVITE_LINK_RE = /\b(?:https?:\/\/[a-z0-9.\-:[\]]+\/i\/|commy:\/\/i\/[^\s/]+\/)[a-hj-np-z2-9]{8}(?:#[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])|\b\/?)/i;
-
-function findInviteLink(text) {
-  const m = INVITE_LINK_RE.exec(text || "");
-  return m ? m[0] : null;
-}
-
-function looksLikeInviteLink(text) {
-  const link = findInviteLink(text);
-  return Boolean(link) && link === String(text).trim();
-}
-
 let inviteLinkBusy = false;
 let pendingInvite = null;
 
@@ -21,6 +9,9 @@ async function openInviteLink(link) {
     pendingInvite = invite;
     $("invite-link-name").textContent = invite.server_name;
     $("invite-link-icon").textContent = initials(invite.server_name);
+    const hero = $("invite-link-hero");
+    hero.style.backgroundImage = invite.background ? `url("${invite.background}")` : "";
+    $("modal-invite-link").classList.toggle("has-hero", Boolean(invite.background));
     const expires = invite.expires_at ? new Date(invite.expires_at) : null;
     $("invite-link-host").textContent = `Invite from ${invite.host}` +
       (!expires ? ", never expires" : isNaN(expires) ? "" : `, expires ${expires.toLocaleDateString(undefined, { month: "long", day: "numeric" })}`);

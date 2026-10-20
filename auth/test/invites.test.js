@@ -12,6 +12,10 @@ import {
   NEVER,
   generateCode,
   normalizeCode,
+  normalizeName,
+  customName,
+  hashRevokeSecret,
+  MAX_CUSTOM_PER_ACCOUNT,
   isPlainTicket,
   validTicket,
 } from "../src/invites.js";
@@ -23,7 +27,7 @@ const ENV = { BETTER_AUTH_SECRET: "test-secret-".repeat(4), DATABASE_URL: "postg
 
 function makeAuth(extraEnv = {}) {
   const options = buildAuthOptions(loadConfig({ ...ENV, ...extraEnv }), { pool: null, send: async () => {} });
-  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], doorbellRing: [] };
+  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [] };
   options.database = memoryAdapter(db);
   options.rateLimit = { enabled: false };
   const auth = betterAuth(options);
@@ -201,4 +205,106 @@ test("servers can require an account, and only the creator can revoke", async ()
   assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: created.json.code } })).status, 200);
   await call("POST", "/commy/invites/revoke", { cookie: alice, body: { code: created.json.code } });
   assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: created.json.code } })).status, 404);
+});
+
+const SECRET = "r".repeat(43);
+const BACKGROUND = "sealed1." + "Bg-_0123456789xyz".repeat(10);
+
+test("custom names are short, plain and never look like random codes", () => {
+  assert.equal(normalizeName(" Pixel-Pioneers "), "pixel-pioneers");
+  assert.equal(customName("team42"), "team42");
+  for (const bad of ["ab", "-lead", "trail-", "two--dashes", "has space", "pixelpio", "AB23CD45", "a".repeat(33), "ünïcode", null]) {
+    assert.equal(normalizeName(bad), null, String(bad));
+  }
+  assert.equal(normalizeName("admin"), "admin");
+  assert.equal(customName("admin"), null, "reserved names can still be looked up but never claimed");
+});
+
+test("signed in creators claim a custom name, keep it, and nobody else can take it", async () => {
+  const { db, call, signUp } = makeAuth();
+  const body = { ticket: TICKET, expiresIn: "30d", code: "Pixel-Pioneers", revokeHash: hashRevokeSecret(SECRET) };
+  assert.equal((await call("POST", "/commy/invites/create", { body })).status, 401, "a custom name needs an account");
+
+  const alice = await signUp("alice@example.test");
+  const bob = await signUp("bob@example.test");
+  const created = await call("POST", "/commy/invites/create", { cookie: alice.cookie, body });
+  assert.equal(created.status, 200, JSON.stringify(created.json));
+  assert.equal(created.json.url, `${ORIGIN}/i/pixel-pioneers`);
+  assert.equal(db.invite[0].custom, true);
+
+  const resolved = await call("GET", "/commy/invites/resolve", { query: { code: "PIXEL-pioneers" } });
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.json.ticket, TICKET);
+  assert.equal(resolved.json.hasBackground, false);
+
+  const stolen = await call("POST", "/commy/invites/create", { cookie: bob.cookie, body: { ...body, ticket: TICKET + "x" } });
+  assert.equal(stolen.status, 409);
+  const moved = await call("POST", "/commy/invites/create", { cookie: alice.cookie, body: { ...body, ticket: TICKET + "y", expiresIn: "1d" } });
+  assert.equal(moved.status, 200);
+  assert.equal(db.invite.length, 1, "the owner points the same name at a new invite");
+  assert.equal(db.invite[0].ticket, TICKET + "y");
+
+  for (const code of ["admin", "AB23CD45", "x"]) {
+    assert.equal((await call("POST", "/commy/invites/create", { cookie: alice.cookie, body: { ...body, code } })).status, 400, code);
+  }
+  for (let i = 1; i < MAX_CUSTOM_PER_ACCOUNT; i++) {
+    const r = await call("POST", "/commy/invites/create", { cookie: alice.cookie, body: { ...body, ticket: `${TICKET}${i}`, code: `name-${i}` } });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+  }
+  const over = await call("POST", "/commy/invites/create", { cookie: alice.cookie, body: { ...body, code: "one-too-many" } });
+  assert.equal(over.status, 403);
+
+  db.invite.find((r) => r.code === "pixel-pioneers").expiresAt = new Date(Date.now() - 1000);
+  const after = await call("POST", "/commy/invites/create", { cookie: bob.cookie, body: { ...body, ticket: TICKET + "z" } });
+  assert.equal(after.status, 200, "an expired name is free again");
+});
+
+test("whoever holds the revoke secret can revoke, without an account", async () => {
+  const { db, call } = makeAuth();
+  const created = await call("POST", "/commy/invites/create", { body: { ticket: TICKET, expiresIn: "7d", revokeHash: hashRevokeSecret(SECRET) } });
+  assert.equal(created.status, 200, JSON.stringify(created.json));
+  assert.equal(db.invite[0].revokeHash, hashRevokeSecret(SECRET), "only a hash of the secret is kept");
+  assert.equal((await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "a", revokeHash: "nope" } })).status, 400);
+
+  const wrong = await call("POST", "/commy/invites/revoke", { body: { code: created.json.code, secret: "s".repeat(43) } });
+  assert.equal(wrong.status, 200, "a wrong secret looks the same as a right one");
+  assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: created.json.code } })).status, 200);
+  await call("POST", "/commy/invites/revoke", { body: { code: created.json.code, secret: SECRET } });
+  assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: created.json.code } })).status, 404);
+
+  const old = await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "b" } });
+  await call("POST", "/commy/invites/revoke", { body: { code: old.json.code, secret: SECRET } });
+  assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: old.json.code } })).status, 200, "links made without a hash need their creator");
+});
+
+test("an invite background is stored sealed, needs an account and goes with its link", async () => {
+  const { db, call, signUp } = makeAuth();
+  const body = { ticket: TICKET, expiresIn: "7d", background: BACKGROUND, revokeHash: hashRevokeSecret(SECRET) };
+  assert.equal((await call("POST", "/commy/invites/create", { body })).status, 401);
+  const { cookie } = await signUp("bg@example.test");
+  assert.equal((await call("POST", "/commy/invites/create", { cookie, body: { ...body, background: "data:image/png;base64,AAAA" } })).status, 400);
+  assert.equal((await call("POST", "/commy/invites/create", { cookie, body: { ...body, background: "sealed1." + "a".repeat(700000) } })).status, 400);
+
+  const created = await call("POST", "/commy/invites/create", { cookie, body });
+  assert.equal(created.status, 200, JSON.stringify(created.json));
+  assert.deepEqual(Object.keys(db.inviteBackground[0]).sort(), ["code", "data", "expiresAt", "id"]);
+  const resolved = await call("GET", "/commy/invites/resolve", { query: { code: created.json.code } });
+  assert.equal(resolved.json.hasBackground, true);
+  const fetched = await call("GET", "/commy/invites/background", { query: { code: created.json.code } });
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.json.background, BACKGROUND);
+
+  const plain = await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "p" } });
+  assert.equal((await call("GET", "/commy/invites/background", { query: { code: plain.json.code } })).status, 404);
+
+  await call("POST", "/commy/invites/revoke", { body: { code: created.json.code, secret: SECRET } });
+  assert.equal(db.inviteBackground.length, 0, "revoking drops the background too");
+  assert.equal((await call("GET", "/commy/invites/background", { query: { code: created.json.code } })).status, 404);
+
+  const again = await call("POST", "/commy/invites/create", { cookie, body: { ...body, ticket: TICKET + "q" } });
+  db.invite.find((r) => r.code === again.json.code).expiresAt = new Date(Date.now() - 1000);
+  db.inviteBackground[0].expiresAt = new Date(Date.now() - 1000);
+  assert.equal((await call("GET", "/commy/invites/background", { query: { code: again.json.code } })).status, 404);
+  await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "r" } });
+  assert.equal(db.inviteBackground.length, 0, "expired backgrounds are swept");
 });

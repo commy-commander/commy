@@ -4497,3 +4497,89 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .rail-context.on { visibility: visible; }
 .rail-context-icon { width: 28px; height: 28px; flex: none; border-radius: 9px; font-size: 11px; cursor: default; }
 .rail-context-name { font-family: var(--font-display); font-weight: 600; font-size: 15px; color: var(--header-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+.invite-custom-card { display: flex; flex-direction: column; gap: 10px; }
+.invite-custom-row { display: flex; align-items: center; gap: 10px; }
+.invite-custom-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 0 0 12px;
+  background: var(--bg-darkest);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  transition: border-color var(--t-hover) ease;
+  cursor: text;
+}
+.invite-custom-field:focus-within { border-color: var(--focus); }
+.invite-custom-prefix { flex-shrink: 0; font-size: 14px; color: var(--text-faint); white-space: nowrap; }
+.settings-layer .invite-custom-field input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 12px 0 1px;
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--text-normal);
+}
+.settings-layer .invite-custom-field input[type="text"]:focus { border: none; }
+.invite-custom-note { min-height: 36px; }
+.invite-custom-note.error { color: var(--red); }
+.invite-bg-preview {
+  width: 240px;
+  height: 135px;
+  border-radius: 8px;
+  background-color: var(--bg-darkest);
+  background-size: cover;
+  background-position: center;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.invite-bg-preview span { display: none; font-size: 12px; color: var(--text-faint); }
+.invite-bg-preview.empty span { display: block; }
+.invite-list { display: flex; flex-direction: column; gap: 4px; }
+.invite-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 12px;
+  background: var(--bg-dark);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  transition: border-color .12s;
+}
+.invite-row:hover { border-color: var(--bg-active); }
+.invite-row .avatar { flex-shrink: 0; }
+.invite-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.invite-row-link, .invite-row-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.invite-row-link { font-size: 14px; color: var(--text-normal); font-weight: 600; }
+.invite-row-meta { font-size: 12px; color: var(--text-faint); }
+.invite-row-left { flex-shrink: 0; width: 150px; text-align: right; font-size: 13px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.invite-row-revoke { flex-shrink: 0; width: 84px; }
+
+.invite-link-hero { display: none; }
+#modal-invite-link.has-hero { padding-top: 0; overflow: hidden; }
+#modal-invite-link.has-hero .invite-link-hero {
+  display: block;
+  position: relative;
+  height: 200px;
+  margin: 0 -24px;
+  background-color: var(--bg-darkest);
+  background-size: cover;
+  background-position: center;
+}
+#modal-invite-link.has-hero .invite-link-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 55%, var(--bg-raised));
+}
+#modal-invite-link.has-hero .sw-icon { margin-top: -44px; position: relative; box-shadow: 0 0 0 4px var(--bg-raised); }
+.settings-page .invite-custom-row select.compact-select { flex: none; width: 170px; min-width: 0; }
+.invite-custom-row .btn-primary { flex: none; width: 132px; }

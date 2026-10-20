@@ -70,6 +70,20 @@ function mockAuditLog() {
   ];
 }
 
+function mockInvites() {
+  if (!mock.invites) {
+    const me = mock.user ? mock.user.username : "you";
+    const at = minutes => Date.now() + minutes * 60e3;
+    mock.invites = [
+      { origin: "https://commy.chat", host: "commy.chat", code: "pixel-pioneers", custom: true, creator: "me", creator_name: me, created_at: at(-2900), expires_at: null, can_revoke: true },
+      { origin: "https://commy.chat", host: "commy.chat", code: "KQ7M3N4P", custom: false, creator: "me", creator_name: me, created_at: at(-60), expires_at: at(6 * 1440 + 23 * 60), can_revoke: true },
+      { origin: "https://commy.chat", host: "commy.chat", code: "T4WZ8RHD", custom: false, creator: "m2", creator_name: "nova", created_at: at(-15), expires_at: at(45), can_revoke: true },
+    ];
+  }
+  mock.invites = mock.invites.filter(i => i.expires_at == null || i.expires_at > Date.now());
+  return mock.invites;
+}
+
 function mockCrabImage() {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
@@ -346,9 +360,23 @@ async function mockInvoke(cmd, args = {}) {
     case "create_invite_link": {
       const hours = { "1h": 1, "1d": 24, "7d": 168, "30d": 720 }[args.expires || "7d"];
       if (!hours && !mock.servers[args.serverId]?.public) throw "Only links to a public server can last forever";
-      return { url: "https://commy.chat/i/KQ7M3N4P#" + "q".repeat(43),
-        expires_at: hours ? new Date(Date.now() + hours * 3600e3).toISOString() : null };
+      const name = args.name ? checkInviteName(args.name) : null;
+      if (name?.error) throw name.error;
+      if (name && mockInvites().some(i => i.code === name.name && i.creator !== "me")) throw "That name is taken. Pick another one.";
+      const code = name ? name.name : "KQ7M3N4P";
+      const expiresAt = hours ? Date.now() + hours * 3600e3 : null;
+      mock.invites = mockInvites().filter(i => i.code !== code).concat({ origin: "https://commy.chat", host: "commy.chat", code, custom: Boolean(name),
+        creator: "me", creator_name: mock.user ? mock.user.username : "you", created_at: Date.now(), expires_at: expiresAt, can_revoke: true });
+      return { url: `https://commy.chat/i/${code}#` + "q".repeat(name ? 22 : 43),
+        expires_at: expiresAt ? new Date(expiresAt).toISOString() : null };
     }
+    case "list_invites": return mockInvites().map(i => ({ ...i }));
+    case "revoke_invite": {
+      if (!mockInvites().some(i => i.origin === args.origin && i.code === args.code)) throw "That invite is already gone";
+      mock.invites = mock.invites.filter(i => !(i.origin === args.origin && i.code === args.code));
+      return null;
+    }
+    case "account_server_info": return { origin: "https://commy.chat", host: "commy.chat", is_default: true };
     case "set_server_public": {
       const s = mock.servers[args.serverId];
       if (s) s.public = args.public;
@@ -356,8 +384,10 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "resolve_invite_link": {
       const host = /commy:\/\/i\/([^/]+)\//.exec(args.link)?.[1] || new URL(args.link).host;
+      const background = Object.values(mock.servers).map(s => s.invite_background).find(Boolean);
       return { server_name: "Pixel Pioneers", host, trusted: host === "commy.chat", account_server_host: "commy.chat",
-        expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock" };
+        expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock",
+        background: background ? mock.serverImages?.[background] || null : null };
     }
     case "get_messages": {
       const all = (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
@@ -539,7 +569,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_server_image": {
       const ref = args.data ? `mock${Date.now()}@mock` : null;
       if (ref) mock.serverImages = { ...(mock.serverImages || {}), [ref]: `data:image/jpeg;base64,${args.data}` };
-      mock.servers[args.serverId][args.which] = ref;
+      mock.servers[args.serverId][args.which === "invite" ? "invite_background" : args.which] = ref;
       return null;
     }
     case "add_emoji": {
@@ -1790,7 +1820,7 @@ function chooseImage(title, input) {
   });
 }
 
-function cropImageFile(file, width, height) {
+function cropImageFile(file, width, height, quality = 0.88) {
   return new Promise((resolve, reject) => {
     const url = typeof file === "string" ? file : URL.createObjectURL(file);
     const img = new Image();
@@ -1805,7 +1835,7 @@ function cropImageFile(file, width, height) {
       ctx.imageSmoothingQuality = "high";
       ctx.drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, 0, 0, width, height);
       URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL("image/jpeg", 0.88).split(",")[1]);
+      resolve(canvas.toDataURL("image/jpeg", quality).split(",")[1]);
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -1819,7 +1849,7 @@ async function setServerImage(which, data) {
   if (!state.currentServer) return;
   try {
     await invoke("set_server_image", { serverId: state.currentServer.id, which, data: data ?? null });
-    toast(data ? (which === "icon" ? "Server avatar updated" : "Banner updated") : "Removed");
+    toast(data ? ({ icon: "Server avatar updated", invite: "Invite background updated" }[which] || "Banner updated") : "Removed");
     await refreshServers();
     await refreshCurrentServer();
     openServerSettings();
@@ -9708,6 +9738,13 @@ function wireEvents() {
   $("banner-upload").onclick = () => uploadServerImage("banner");
   $("overview-icon-remove").onclick = () => setServerImage("icon", null);
   $("banner-remove").onclick = () => setServerImage("banner", null);
+  $("invite-bg-upload").onclick = uploadInviteBackground;
+  $("invite-bg-remove").onclick = () => setServerImage("invite", null);
+  $("invite-custom-name").addEventListener("input", paintInviteNameCheck);
+  $("invite-custom-name").addEventListener("keydown", e => {
+    if (e.key === "Enter") createCustomInvite();
+  });
+  $("invite-custom-create").onclick = createCustomInvite;
 
   $("notify-level").addEventListener("change", e => {
     const prefs = notifyPrefs();
@@ -10540,7 +10577,11 @@ function openServerSettings(tab) {
   if (server.can_view_audit_log) renderAuditLog(server);
   $("tab-emoji").classList.toggle("hidden", !canEmoji);
   $("tab-soundboard").classList.toggle("hidden", !canSounds);
+  const canInvites = Boolean(server.can_invite || server.can_manage_server);
+  $("tab-invites").classList.toggle("hidden", !canInvites);
+  if (canInvites) renderInvitesPage(server);
   const allowed = {
+    invites: canInvites,
     overview: true,
     channels: server.can_manage_channels,
     roles: server.can_manage_roles,
@@ -10634,6 +10675,161 @@ function paintAuditLog() {
     return;
   }
   list.replaceChildren(...shown.map(auditRow));
+}
+
+const INVITE_BACKGROUND_MAX = 400 * 1024;
+const invitesView = { serverId: null, invites: [], clock: null, accountHost: null };
+
+async function renderInvitesPage(server) {
+  const manage = Boolean(server.can_manage_server);
+  $("invite-manage").classList.toggle("hidden", !manage);
+  if (manage) {
+    paintInviteBackground(server);
+    const never = $("invite-custom-never");
+    never.disabled = !server.public;
+    never.textContent = server.public ? "Never expires" : "Never expires (public servers only)";
+    if (!server.public && $("invite-custom-expiry").value === "never") $("invite-custom-expiry").value = "30d";
+    if (invitesView.serverId !== server.id) $("invite-custom-name").value = "";
+    paintInviteNameCheck();
+    if (!invitesView.accountHost) {
+      invoke("account_server_info").then(info => {
+        invitesView.accountHost = info.host;
+        $("invite-custom-prefix").textContent = `${info.host}/i/`;
+      }).catch(() => {});
+    } else {
+      $("invite-custom-prefix").textContent = `${invitesView.accountHost}/i/`;
+    }
+  }
+  try {
+    const invites = await invoke("list_invites", { serverId: server.id });
+    if (!state.currentServer || state.currentServer.id !== server.id) return;
+    Object.assign(invitesView, { serverId: server.id, invites: sortInvites(invites) });
+  } catch (e) {
+    invitesView.invites = [];
+    $("invite-list").replaceChildren(el("div", "manage-empty", String(e)));
+    return;
+  }
+  paintInviteList();
+  startInviteClock();
+}
+
+function paintInviteBackground(server) {
+  const preview = $("invite-bg-preview");
+  const ref = server.invite_background || null;
+  preview.style.backgroundImage = "";
+  preview.classList.toggle("empty", !ref);
+  $("invite-bg-remove").classList.toggle("hidden", !ref);
+  if (ref) {
+    loadServerImage(ref).then(url => {
+      if (url && state.currentServer?.invite_background === ref) preview.style.backgroundImage = `url("${url}")`;
+    });
+  }
+}
+
+async function uploadInviteBackground() {
+  try {
+    const src = await chooseImage("Choose an invite background", $("server-image-file"));
+    if (!src) return;
+    let data = null;
+    for (const quality of [0.86, 0.76, 0.66, 0.56, 0.46]) {
+      data = await cropImageFile(src, 1280, 720, quality);
+      if (data.length * 3 / 4 <= INVITE_BACKGROUND_MAX) break;
+      data = null;
+    }
+    if (!data) throw "That image is too detailed to fit. Try a simpler one.";
+    await setServerImage("invite", data);
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
+function paintInviteNameCheck() {
+  const { name, error } = checkInviteName($("invite-custom-name").value);
+  const note = $("invite-custom-note");
+  note.classList.toggle("error", Boolean(error));
+  note.textContent = error || "Pick a name people can remember. You need to be signed in, and the link still ends in a short key so your account server never learns which server it opens.";
+  $("invite-custom-create").disabled = !name || Boolean(error);
+}
+
+async function createCustomInvite() {
+  const server = state.currentServer;
+  const { name, error } = checkInviteName($("invite-custom-name").value);
+  if (!server || !name || error) return;
+  const button = $("invite-custom-create");
+  button.disabled = true;
+  try {
+    const invite = await invoke("create_invite_link", { serverId: server.id, expires: $("invite-custom-expiry").value, name });
+    await navigator.clipboard.writeText(invite.url).catch(() => {});
+    toast("Custom invite link copied");
+    $("invite-custom-name").value = "";
+    await renderInvitesPage(server);
+  } catch (e) {
+    toast(String(e));
+  } finally {
+    paintInviteNameCheck();
+  }
+}
+
+function inviteRow(invite) {
+  const row = el("div", "invite-row");
+  row.appendChild(makeAvatar(invite.creator, invite.creator_name, "avatar avatar-sm"));
+  const text = el("div", "invite-row-text");
+  const label = el("div", "invite-row-link", inviteLabel(invite));
+  label.title = inviteLabel(invite);
+  text.appendChild(label);
+  const made = new Date(invite.created_at);
+  text.appendChild(el("div", "invite-row-meta", `${invite.custom ? "Custom link" : "Invite"} by ${invite.creator_name} on ${made.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`));
+  row.appendChild(text);
+  const left = el("span", "invite-row-left", inviteTimeLeft(invite.expires_at));
+  left.dataset.expires = invite.expires_at == null ? "" : String(invite.expires_at);
+  if (invite.expires_at != null) left.title = `Expires ${new Date(invite.expires_at).toLocaleString()}`;
+  row.appendChild(left);
+  const revoke = el("button", "btn-secondary btn-small danger-text invite-row-revoke", "Revoke");
+  revoke.disabled = !invite.can_revoke;
+  revoke.onclick = () => revokeInvite(invite, revoke);
+  row.appendChild(revoke);
+  return row;
+}
+
+function paintInviteList() {
+  const shown = invitesView.invites.filter(i => i.expires_at == null || i.expires_at > Date.now());
+  if (!shown.length) {
+    $("invite-list").replaceChildren(el("div", "manage-empty", "No active invites. Links made with Invite People show up here until they expire."));
+    return;
+  }
+  $("invite-list").replaceChildren(...shown.map(inviteRow));
+}
+
+function startInviteClock() {
+  if (invitesView.clock) return;
+  invitesView.clock = setInterval(() => {
+    if ($("server-settings").classList.contains("hidden")) {
+      clearInterval(invitesView.clock);
+      invitesView.clock = null;
+      return;
+    }
+    let expired = false;
+    for (const node of $("invite-list").querySelectorAll(".invite-row-left")) {
+      const at = node.dataset.expires ? Number(node.dataset.expires) : null;
+      node.textContent = inviteTimeLeft(at);
+      if (at != null && at <= Date.now()) expired = true;
+    }
+    if (expired) paintInviteList();
+  }, 15e3);
+}
+
+async function revokeInvite(invite, button) {
+  const server = state.currentServer;
+  if (!server) return;
+  button.disabled = true;
+  try {
+    await invoke("revoke_invite", { serverId: server.id, origin: invite.origin, code: invite.code });
+    toast("Invite revoked");
+    await renderInvitesPage(server);
+  } catch (e) {
+    toast(String(e));
+    button.disabled = false;
+  }
 }
 
 function renderUploadAccess(server) {

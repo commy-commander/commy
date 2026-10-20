@@ -1147,6 +1147,7 @@ fn servers_using_image(app: &App, image: &str) -> Vec<ServerId> {
                 || server.soundboard.iter().any(|s| s.blob == image)
                 || server.icon.as_deref() == Some(image)
                 || server.banner.as_deref() == Some(image)
+                || state.invite_background() == Some(image)
         })
         .map(|state| state.server.id)
         .collect()
@@ -2000,6 +2001,11 @@ fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
 pub(crate) fn require_invite_permission(app: &App, sid: ServerId) -> CmdResult<()> {
     let me = current_profile(app)?;
     manage_check(app, sid, me.id, Permissions::CREATE_INVITES, "invite people")
+}
+
+pub(crate) fn require_manage_server(app: &App, sid: ServerId, action: &str) -> CmdResult<()> {
+    let me = current_profile(app)?;
+    manage_check(app, sid, me.id, Permissions::MANAGE_SERVER, action)
 }
 
 fn require_permission(
@@ -3077,16 +3083,24 @@ async fn set_server_image(
         require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "change the server's images")?;
         (state.server.icon.clone(), state.server.banner.clone())
     };
-    let image = match data {
+    let bytes = data
+        .map(|b64| decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "server images must be a JPEG or PNG under 1 MB"))
+        .transpose()?;
+    if which == "invite" && bytes.as_ref().is_some_and(|b| b.len() > invite_link::MAX_INVITE_BACKGROUND_BYTES) {
+        return Err("invite backgrounds must be under 400 KB".into());
+    }
+    let image = match bytes {
         None => None,
-        Some(b64) => {
-            let bytes = decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "server images must be a JPEG or PNG under 1 MB")?;
-            Some(store_shared_blob(&app, bytes).await?)
-        }
+        Some(bytes) => Some(store_shared_blob(&app, bytes).await?),
     };
     let (icon, banner) = match which.as_str() {
         "icon" => (image, banner),
         "banner" => (icon, image),
+        "invite" => {
+            apply_and_broadcast(&app, &handle, sid, ServerEvent::InviteBackgroundSet { server: sid, background: image }).await?;
+            let _ = handle.emit("servers-changed", ());
+            return Ok(());
+        }
         _ => return Err("unknown server image".into()),
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ServerImages { server: sid, icon, banner }).await?;
@@ -3096,24 +3110,29 @@ async fn set_server_image(
 
 #[tauri::command]
 async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdResult<String> {
-    let image = commy_core::server::ImageRef::parse(&image).ok_or("bad image reference")?;
-    let path = server_image_path(&app, &image.blob);
-    let cached = path.as_ref().and_then(|p| std::fs::read(p).ok());
-    let bytes = match cached {
-        Some(bytes) => bytes,
-        None => {
-            let bytes = fetch_shared_image(&app, &image, MAX_SERVER_IMAGE_BYTES as u64).await?;
-            if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
-                return Err("server image is not a valid picture".into());
-            }
-            if let Some(path) = &path {
-                let _ = write_blob_cache(path, &bytes);
-            }
-            bytes
-        }
-    };
+    let bytes = server_image_bytes(&app, &image).await?;
+    Ok(picture_data_url(&bytes))
+}
+
+pub(crate) fn picture_data_url(bytes: &[u8]) -> String {
     let mime = if bytes.starts_with(&[0x89, b'P']) { "image/png" } else { "image/jpeg" };
-    Ok(data_url(mime, &bytes))
+    data_url(mime, bytes)
+}
+
+pub(crate) async fn server_image_bytes(app: &App, image: &str) -> CmdResult<Vec<u8>> {
+    let image = commy_core::server::ImageRef::parse(image).ok_or("bad image reference")?;
+    let path = server_image_path(app, &image.blob);
+    if let Some(bytes) = path.as_ref().and_then(|p| std::fs::read(p).ok()) {
+        return Ok(bytes);
+    }
+    let bytes = fetch_shared_image(app, &image, MAX_SERVER_IMAGE_BYTES as u64).await?;
+    if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
+        return Err("server image is not a valid picture".into());
+    }
+    if let Some(path) = &path {
+        let _ = write_blob_cache(path, &bytes);
+    }
+    Ok(bytes)
 }
 
 fn manage_check(app: &App, sid: ServerId, user: UserId, needed: Permissions, action: &str) -> CmdResult<()> {
@@ -4488,7 +4507,7 @@ async fn set_profile_banner(
     Ok(profile)
 }
 
-fn is_jpeg_or_png(bytes: &[u8]) -> bool {
+pub(crate) fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0xd8, 0xff]) || bytes.starts_with(&[0x89, b'P', b'N', b'G'])
 }
 
@@ -5849,6 +5868,8 @@ pub fn run() {
             get_invite,
             invite_link::resolve_invite_link,
             invite_link::create_invite_link,
+            invite_link::list_invites,
+            invite_link::revoke_invite,
             invite_link::account_server_info,
             invite_link::take_pending_invite_link,
             entry_list::entry_list_status,

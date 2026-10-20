@@ -16,7 +16,7 @@ function makeAuth(env = {}) {
     ...env,
   });
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
-  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], doorbellRing: [] };
+  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [] };
   options.database = memoryAdapter(db);
   options.rateLimit = { enabled: false };
   return { auth: betterAuth(options), db, config };
