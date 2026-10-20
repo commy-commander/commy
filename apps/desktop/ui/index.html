@@ -225,7 +225,7 @@
         <button class="icon-btn composer-attach" id="attach-btn" title="Add Files and GIFs">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4z"/></svg>
         </button>
-        <input id="message-input" type="text" autocomplete="off" placeholder="Message #welcome" />
+        <textarea id="message-input" rows="1" autocomplete="off" placeholder="Message #welcome"></textarea>
         <button class="icon-btn gif-btn hidden" id="gif-btn" title="GIFs">GIF</button>
         <button class="icon-btn" id="emoji-btn" title="Emoji">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zM8.5 11A1.5 1.5 0 1 0 7 9.5 1.5 1.5 0 0 0 8.5 11zm7 0A1.5 1.5 0 1 0 14 9.5 1.5 1.5 0 0 0 15.5 11zm-8 3a5 5 0 0 0 9 0z"/></svg>
@@ -243,7 +243,7 @@
       </header>
       <div class="thread-messages" id="thread-messages"></div>
       <div class="composer thread-composer">
-        <input id="thread-input" type="text" autocomplete="off" placeholder="Reply in thread" />
+        <textarea id="thread-input" rows="1" autocomplete="off" placeholder="Reply in thread"></textarea>
       </div>
     </aside>
 
@@ -1708,6 +1708,7 @@
 
   <div class="mention-pop hidden" id="mention-pop" role="listbox"></div>
   <div id="toast" class="toast hidden"></div>
+  <script src="scripts/markdown.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/composer-suggest.js"></script>
   <script src="scripts/embeds.js"></script>

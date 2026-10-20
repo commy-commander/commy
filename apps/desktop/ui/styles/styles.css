@@ -540,7 +540,7 @@ body {
 }
 .composer:focus-within { border-color: rgba(242, 239, 230, .18); }
 
-.composer input {
+.composer input, .composer textarea {
   flex: 1;
   background: none;
   border: none;
@@ -550,8 +550,17 @@ body {
   padding: 12px 8px;
   font-family: inherit;
 }
+.composer textarea {
+  resize: none;
+  line-height: 22px;
+  min-height: 46px;
+  max-height: 222px;
+  overflow-y: auto;
+  align-self: stretch;
+  scrollbar-width: thin;
+}
 
-.composer input::placeholder { color: var(--text-faint); }
+.composer input::placeholder, .composer textarea::placeholder { color: var(--text-faint); }
 
 .members {
   background: var(--bg-dark);
@@ -3437,15 +3446,94 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .voice-count.full { color: var(--red); }
 
 .md { color: var(--text-normal); font-size: 14px; line-height: 1.5; }
-.md h3, .md h4, .md h5 { margin: 12px 0 4px; color: var(--text-normal); }
-.md h3 { font-size: 18px; }
-.md h4 { font-size: 16px; }
-.md p { margin: 4px 0; }
-.md ul, .md ol { margin: 4px 0; padding-left: 22px; }
-.md li { margin: 3px 0; }
-.md code { background: var(--bg-darkest); padding: 1px 4px; border-radius: 3px; font-size: 13px; }
+.md .md-para { margin: 4px 0; }
+.msg-content .md-para { margin: 0; }
 .md a { color: var(--link); text-decoration: none; }
 .md a:hover { text-decoration: underline; }
+
+.md-heading { margin: 10px 0 4px; color: var(--header-primary); font-family: var(--font-display); line-height: 1.25; }
+.md-para + .md-heading, .md-list + .md-heading, .md-quote + .md-heading, .md-code + .md-heading { margin-top: 10px; }
+h1.md-heading { font-size: 1.45em; }
+h2.md-heading { font-size: 1.25em; }
+h3.md-heading { font-size: 1.1em; }
+.md-heading:first-child { margin-top: 2px; }
+.gap-after { margin-bottom: 1.2em; }
+.md-list { margin: 2px 0; padding-left: 22px; }
+.md-list li { margin: 1px 0; }
+.md-quote {
+  margin: 4px 0;
+  padding: 0 0 0 12px;
+  border-left: 3px solid rgba(242, 239, 230, .35);
+  border-radius: 2px;
+  color: var(--text-normal);
+}
+.md-inline-code, .md-code code {
+  font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: .875em;
+}
+.md-inline-code {
+  background: var(--bg-darkest);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+}
+.md-code {
+  position: relative;
+  margin: 6px 0;
+  padding: 10px 12px;
+  max-width: 90%;
+  background: var(--bg-darkest);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  line-height: 1.45;
+}
+.md-code code { display: block; white-space: pre; tab-size: 4; color: var(--text-normal); }
+.md-code-lang {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  user-select: none;
+}
+.md-code:has(.md-code-lang) { padding-top: 22px; }
+.tok-keyword { color: var(--link); }
+.tok-string { color: #e9c89b; }
+.tok-number { color: #b6e3a5; }
+.tok-comment { color: var(--text-faint); font-style: italic; }
+.msg-content u { text-decoration: underline; text-underline-offset: 2px; }
+.msg-content s { color: var(--text-muted); }
+.md-time {
+  background: rgba(242, 239, 230, .1);
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--header-primary);
+  cursor: default;
+}
+.spoiler {
+  position: relative;
+  border-radius: 4px;
+  padding: 0 3px;
+  background: var(--bg-darkest);
+  color: transparent;
+  cursor: pointer;
+  user-select: none;
+}
+.spoiler:not(.revealed) * { color: transparent !important; }
+.spoiler:not(.revealed) img, .spoiler:not(.revealed) .custom-emoji { visibility: hidden; }
+.spoiler:not(.revealed):hover { background: var(--bg-active); }
+.spoiler.revealed {
+  background: rgba(242, 239, 230, .1);
+  color: inherit;
+  cursor: text;
+  user-select: text;
+}
 
 .rules-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 #rules-input, #automod-terms {
