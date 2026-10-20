@@ -4266,7 +4266,8 @@ h3.md-heading { font-size: 1.1em; }
 .account-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .signin-server { display: flex; flex-direction: column; gap: 6px; margin-top: 18px; text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
 .signin-server select { width: 100%; text-transform: none; letter-spacing: 0; font-weight: 500; }
-.signin-server-note { margin-top: 8px; font-size: 12px; color: var(--text-faint); text-align: left; line-height: 1.4; }
+.signin-server-note { margin-top: 8px; font-size: 12px; color: var(--text-faint); text-align: left; line-height: 1.4; min-height: 4.2em; }
+.signin-server-note.warn { color: var(--text-normal); }
 
 .entry-recovery { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .entry-recovery input { flex: 1; min-width: 240px; font-family: var(--font-code, monospace); font-size: 13px; }
