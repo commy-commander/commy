@@ -35,6 +35,13 @@ function customEmojiMatches(query, groups) {
       seen.add(emoji.name);
       matches.push({ kind: "custom", name: emoji.name, image: emoji.image, server: group.name, rank, order });
     }
+    for (const face of group.emoticons || []) {
+      if (seen.has(`emoticon:${face.name}`)) continue;
+      const rank = emojiNameRank(face.name, query);
+      if (rank < 0) continue;
+      seen.add(`emoticon:${face.name}`);
+      matches.push({ kind: "emoticon", name: face.name, text: face.text, server: group.name, rank, order });
+    }
   });
   return matches.sort((a, b) => a.rank - b.rank || a.order - b.order || a.name.localeCompare(b.name));
 }
@@ -70,6 +77,7 @@ function commandSuggestions(token, available = {}) {
 
 function suggestionInsert(item) {
   if (item.kind === "custom") return `:${item.name}: `;
+  if (item.kind === "emoticon") return `${item.text} `;
   if (item.kind === "standard") return `${item.emoji} `;
   if (item.kind === "command") return `/${item.name} `;
   return `@${item.name} `;

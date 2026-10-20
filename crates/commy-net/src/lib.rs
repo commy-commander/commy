@@ -15,7 +15,7 @@ mod test_support;
 pub use catchup::{
     ApplyReport, CatchupError, CatchupFrame, CatchupStore, PeerCheck, Refusal, SessionReport, CATCHUP_ALPN,
 };
-pub use dm::{DmAck, DmEnvelope, DM_ALPN};
+pub use dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
 pub use entry_key::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ENTRY_KEY_ALPN};
 pub use media::{MediaHello, MediaPacket, MEDIA_ALPN};
 pub use node::{link_path, BlobFetcher, CommyNode, LinkPath, MediaChannel, MediaDialer, NetEvent, SharedCatchupStore, MEDIA_DIAL_TIMEOUT};

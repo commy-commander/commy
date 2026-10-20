@@ -1,4 +1,5 @@
 use crate::catchup::names_mentioned;
+use crate::channel_lock::KeyHolder;
 use crate::view::{held_view, sees_message, MessageView};
 use commy_core::{ChannelId, ChannelKind, Message, ServerState, UserId};
 use serde::Serialize;
@@ -99,19 +100,20 @@ fn holds_messages(kind: ChannelKind) -> bool {
     matches!(kind, ChannelKind::Text | ChannelKind::Announcement)
 }
 
-pub fn search(state: &ServerState, query: &SearchQuery, viewer: Option<UserId>, limit: usize) -> SearchResults {
+pub fn search(state: &ServerState, query: &SearchQuery, viewer: Option<UserId>, limit: usize, keys: &KeyHolder) -> SearchResults {
     if query.is_empty() {
         return SearchResults { total: 0, hits: Vec::new() };
     }
     let matcher = Matcher::new(state, query);
-    let sees = sees_message(state, viewer);
+    let sees = sees_message(state, viewer, keys);
+    let readable = |channel: ChannelId| viewer.is_none_or(|v| state.server.can_view(channel, v));
     let mut found: Vec<(&Message, &str)> = state
         .server
         .channels
         .iter()
-        .filter(|c| holds_messages(c.kind) && query.channel.is_none_or(|id| id == c.id))
+        .filter(|c| holds_messages(c.kind) && query.channel.is_none_or(|id| id == c.id) && readable(c.id))
         .flat_map(|c| state.messages(c.id).iter().map(move |m| (m, c.name.as_str())))
-        .filter(|(m, _)| matcher.matches(m) && sees(m))
+        .filter(|(m, _)| keys.open(state, m).is_some_and(|opened| matcher.matches(&opened)) && sees(m))
         .collect();
     found.sort_by_key(|(m, _)| std::cmp::Reverse(m.created_at));
     let total = found.len();
@@ -121,7 +123,7 @@ pub fn search(state: &ServerState, query: &SearchQuery, viewer: Option<UserId>, 
         .map(|(message, channel_name)| SearchHit {
             channel: message.channel.to_string(),
             channel_name: channel_name.to_string(),
-            message: held_view(state, message),
+            message: held_view(state, message, keys),
         })
         .collect();
     SearchResults { total, hits }
@@ -180,7 +182,7 @@ mod tests {
         }
 
         fn find(&self, query: SearchQuery) -> Vec<String> {
-            search(&self.state, &query, Some(self.owner()), MAX_HITS).hits.into_iter().map(|h| h.message.content).collect()
+            search(&self.state, &query, Some(self.owner()), MAX_HITS, &KeyHolder::default()).hits.into_iter().map(|h| h.message.content).collect()
         }
     }
 
@@ -251,7 +253,7 @@ mod tests {
         for i in 0..60 {
             f.post(f.general, owner, &format!("note {i}"), 100 - i);
         }
-        let results = search(&f.state, &SearchQuery::new(&words("note"), None, None, None), None, MAX_HITS);
+        let results = search(&f.state, &SearchQuery::new(&words("note"), None, None, None), None, MAX_HITS, &KeyHolder::default());
         assert_eq!(results.total, 60);
         assert_eq!(results.hits.len(), MAX_HITS);
         assert_eq!(results.hits[0].message.content, "note 59");
@@ -268,7 +270,7 @@ mod tests {
         let rules = commy_core::AutoMod { blocked_terms: vec!["cheap".into()], ..commy_core::AutoMod::default() };
         f.state.apply(ServerEvent::AutoModSet { server, rules }).unwrap();
         let found = |viewer| {
-            search(&f.state, &SearchQuery::new(&words("gold"), None, None, None), Some(viewer), MAX_HITS)
+            search(&f.state, &SearchQuery::new(&words("gold"), None, None, None), Some(viewer), MAX_HITS, &KeyHolder::default())
                 .hits
                 .into_iter()
                 .map(|h| (h.message.content, h.message.held.is_some()))
@@ -287,6 +289,6 @@ mod tests {
         f.post(f.general, owner, "hello", 1);
         let blank = vec!["  ".to_string()];
         assert!(SearchQuery::new(&blank, None, None, None).is_empty());
-        assert_eq!(search(&f.state, &SearchQuery::new(&blank, None, None, None), None, MAX_HITS).total, 0);
+        assert_eq!(search(&f.state, &SearchQuery::new(&blank, None, None, None), None, MAX_HITS, &KeyHolder::default()).total, 0);
     }
 }

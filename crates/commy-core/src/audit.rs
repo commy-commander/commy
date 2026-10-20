@@ -51,6 +51,12 @@ pub enum AuditKind {
     InviteCreate,
     InviteRevoke,
     InviteBackground,
+    StickerAdd,
+    StickerRemove,
+    EmoticonAdd,
+    EmoticonRemove,
+    ExpressionSharing,
+    ChannelAccess,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +181,11 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             let kind = serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(str::to_string));
             (K::ChannelKind, target, label, kind)
         }
+        E::ChannelAccessSet { channel: id, view, send, .. } => {
+            let (target, label) = channel(id);
+            let detail = if !view.is_empty() { "private" } else if !send.is_empty() { "send" } else { "open" };
+            (K::ChannelAccess, target, label, Some(detail.into()))
+        }
         E::RoleCreate { role, .. } => (K::RoleCreate, Some(role.id.to_string()), Some(clip(&role.name)), None),
         E::RoleUpdate { role, .. } => (K::RoleUpdate, Some(role.id.to_string()), Some(clip(&role.name)), None),
         E::RoleDelete { role, .. } => (K::RoleDelete, Some(role.to_string()), role_name(state, *role), None),
@@ -203,6 +214,14 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::EmojiRemove { name, .. } => (K::EmojiRemove, None, Some(clip(name)), None),
         E::SoundAdd { sound, .. } => (K::SoundAdd, None, Some(clip(&sound.name)), None),
         E::SoundRemove { name, .. } => (K::SoundRemove, None, Some(clip(name)), None),
+        E::StickerAdd { sticker, .. } => (K::StickerAdd, None, Some(clip(&sticker.name)), None),
+        E::StickerRemove { name, .. } => (K::StickerRemove, None, Some(clip(name)), None),
+        E::EmoticonAdd { emoticon, .. } => (K::EmoticonAdd, None, Some(clip(&emoticon.name)), None),
+        E::EmoticonRemove { name, .. } => (K::EmoticonRemove, None, Some(clip(name)), None),
+        E::ExpressionSharingSet { stickers, emoticons, .. } => {
+            let shared: Vec<&str> = [("stickers", *stickers), ("emoticons", *emoticons)].iter().filter(|(_, on)| *on).map(|(n, _)| *n).collect();
+            (K::ExpressionSharing, None, None, Some(shared.join(" and ")))
+        }
         E::EventUpsert { event: scheduled, .. } => {
             let known = server.events.iter().any(|e| e.id == scheduled.id);
             let kind = if known { K::EventUpdate } else { K::EventCreate };
@@ -322,6 +341,33 @@ mod tests {
     }
 
     #[test]
+    fn locking_a_channel_to_roles_is_logged() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let sign = |at, event| SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        let crew = Role {
+            id: crate::ids::RoleId::new(),
+            name: "crew".into(),
+            color: None,
+            permissions: Permissions::NONE,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+        };
+        let role = crew.id;
+        assert_eq!(state.apply_signed(&sign(1_000, ServerEvent::RoleCreate { server: sid, role: crew })), Ok(true));
+        let lock = ServerEvent::ChannelAccessSet { server: sid, channel, view: vec![role], send: vec![] };
+        assert_eq!(state.apply_signed(&sign(2_000, lock)), Ok(true));
+        let open = ServerEvent::ChannelAccessSet { server: sid, channel, view: vec![], send: vec![role] };
+        assert_eq!(state.apply_signed(&sign(3_000, open)), Ok(true));
+        let access: Vec<Option<&str>> =
+            state.audit_log().iter().filter(|e| e.kind == AuditKind::ChannelAccess).map(|e| e.detail.as_deref()).collect();
+        assert_eq!(access, vec![Some("private"), Some("send")]);
+    }
+
+    #[test]
     fn live_state_self_service_and_no_ops_stay_out_of_the_log() {
         let (mut state, channel, owner) = fixture();
         let sid = state.server.id;
@@ -406,5 +452,25 @@ mod tests {
         let signed = SignedEvent::sign(sid, owner, 1_000, ServerEvent::ChannelCreate { server: sid, channel: voice }, &identity_for(owner));
         state.apply_signed(&signed).unwrap();
         assert_eq!(state.audit_log()[0].detail.as_deref(), Some("voice"));
+    }
+
+    #[test]
+    fn stickers_emoticons_and_their_sharing_are_logged() {
+        use crate::server::{Emoticon, Sticker};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let sign = |at, event| SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        let image = format!("{}@{}", "c".repeat(52), "0".repeat(64));
+        let sticker = ServerEvent::StickerAdd { server: sid, sticker: Sticker { name: "party".into(), blob: image } };
+        let emoticon = ServerEvent::EmoticonAdd { server: sid, emoticon: Emoticon { name: "shrug".into(), text: "o_O".into() } };
+        let share = ServerEvent::ExpressionSharingSet { server: sid, stickers: true, emoticons: true };
+        assert_eq!(state.apply_signed(&sign(1_000, sticker)), Ok(true));
+        assert_eq!(state.apply_signed(&sign(2_000, emoticon)), Ok(true));
+        assert_eq!(state.apply_signed(&sign(3_000, share)), Ok(true));
+        let log = state.audit_log();
+        let kinds: Vec<AuditKind> = log.iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, vec![AuditKind::StickerAdd, AuditKind::EmoticonAdd, AuditKind::ExpressionSharing]);
+        assert_eq!(log[0].label.as_deref(), Some("party"));
+        assert_eq!(log[2].detail.as_deref(), Some("stickers and emoticons"));
     }
 }

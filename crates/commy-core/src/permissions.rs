@@ -31,6 +31,9 @@ impl Permissions {
     pub const PIN_MESSAGES: Permissions = Permissions(1 << 21);
     pub const POST_ANNOUNCEMENTS: Permissions = Permissions(1 << 22);
     pub const VIEW_AUDIT_LOG: Permissions = Permissions(1 << 23);
+    pub const ADD_EMOJIS: Permissions = Permissions(1 << 24);
+    pub const ADD_STICKERS: Permissions = Permissions(1 << 25);
+    pub const ADD_EMOTICONS: Permissions = Permissions(1 << 26);
 
     pub fn default_member() -> Permissions {
         Self::VIEW_CHANNELS
@@ -42,6 +45,9 @@ impl Permissions {
             | Self::ADD_REACTIONS
             | Self::USE_SOUNDBOARD
             | Self::USE_EXTERNAL_EMOJIS
+            | Self::ADD_EMOJIS
+            | Self::ADD_STICKERS
+            | Self::ADD_EMOTICONS
     }
 
     pub fn all() -> Permissions {
@@ -70,6 +76,10 @@ impl Permissions {
 
     pub fn can_announce(self) -> bool {
         self.allows(Self::POST_ANNOUNCEMENTS) || self.allows(Self::MANAGE_CHANNELS)
+    }
+
+    pub fn can_add(self, kind: Permissions) -> bool {
+        self.allows(kind) || self.allows(Self::MANAGE_EXPRESSIONS)
     }
 
     pub fn can_view_audit_log(self) -> bool {
@@ -152,5 +162,15 @@ mod tests {
         assert!(Permissions::MANAGE_SERVER.can_view_audit_log());
         assert!(Permissions::ADMINISTRATOR.can_view_audit_log());
         assert!(!Permissions::MANAGE_ROLES.can_view_audit_log());
+    }
+
+    #[test]
+    fn members_add_expressions_by_default_and_managers_always_can() {
+        let member = Permissions::default_member();
+        for kind in [Permissions::ADD_EMOJIS, Permissions::ADD_STICKERS, Permissions::ADD_EMOTICONS] {
+            assert!(member.can_add(kind));
+            assert!(!Permissions::SEND_MESSAGES.can_add(kind));
+            assert!(Permissions::MANAGE_EXPRESSIONS.can_add(kind));
+        }
     }
 }

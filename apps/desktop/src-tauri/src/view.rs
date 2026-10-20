@@ -1,3 +1,4 @@
+use crate::channel_lock::KeyHolder;
 use commy_core::server::Rsvp;
 use commy_core::{
     AutoMod, ChannelId, ChannelKind, DmMessage, DmStore, Hold, Message, MessageId, Permissions, Presence, ServerState,
@@ -47,6 +48,11 @@ pub struct ChannelView {
     pub banner: Option<String>,
     pub color: Option<String>,
     pub pins: usize,
+    pub view_roles: Vec<String>,
+    pub send_roles: Vec<String>,
+    pub can_view: bool,
+    pub can_send: bool,
+    pub key_ready: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -150,8 +156,17 @@ pub struct ServerView {
     pub can_mute: bool,
     pub can_ban: bool,
     pub emojis: Vec<EmojiView>,
+    pub stickers: Vec<EmojiView>,
+    pub emoticons: Vec<EmoticonView>,
     pub sounds: Vec<SoundView>,
     pub emojis_shareable: bool,
+    pub stickers_shareable: bool,
+    pub emoticons_shareable: bool,
+    pub add_restricted: AddRestrictions,
+    pub can_add_emojis: bool,
+    pub can_add_stickers: bool,
+    pub can_add_emoticons: bool,
+    pub can_use_external: bool,
     pub soundboard_open: bool,
     pub sounds_shareable: bool,
     pub uploads_restricted: bool,
@@ -170,6 +185,19 @@ pub struct EmojiView {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct EmoticonView {
+    pub name: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct AddRestrictions {
+    pub emojis: bool,
+    pub stickers: bool,
+    pub emoticons: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SoundView {
     pub name: String,
     pub blob: String,
@@ -178,13 +206,17 @@ pub struct SoundView {
 }
 
 impl ServerView {
-    pub fn for_viewer(state: &ServerState, viewer: Option<UserId>) -> Self {
+    pub fn for_viewer(state: &ServerState, viewer: Option<UserId>, keys: &KeyHolder) -> Self {
+        let manages_channels = viewer.is_some_and(|v| state.server.permissions_for(v).allows(Permissions::MANAGE_CHANNELS));
+        let sees = |c: ChannelId| viewer.is_some_and(|v| state.server.can_view(c, v));
         let channels = state
             .server
             .sorted_channels()
             .into_iter()
+            .filter(|c| manages_channels || sees(c.id))
             .map(|c| {
-                let voice = state.voice_members(c.id);
+                let can_view = sees(c.id);
+                let voice = if can_view { state.voice_members(c.id) } else { Vec::new() };
                 ChannelView {
                     id: c.id.to_string(),
                     name: c.name.clone(),
@@ -202,6 +234,11 @@ impl ServerView {
                     voice_since: voice.iter().map(|u| state.voice_since(*u)).collect(),
                     voice_muted: voice.iter().map(|u| state.voice_flags(*u).0).collect(),
                     voice_deafened: voice.iter().map(|u| state.voice_flags(*u).1).collect(),
+                    view_roles: c.view_roles.iter().map(|r| r.to_string()).collect(),
+                    send_roles: c.send_roles.iter().map(|r| r.to_string()).collect(),
+                    can_view,
+                    can_send: can_view && viewer.is_some_and(|v| state.server.can_post_in(c.id, v)),
+                    key_ready: can_view && keys.key_ready(state, c.id),
                 }
             })
             .collect();
@@ -280,6 +317,7 @@ impl ServerView {
         let screen_shares = state
             .screen_shares
             .iter()
+            .filter(|(_, channel)| sees(**channel))
             .map(|(user, channel)| ScreenShareView {
                 user: user.to_string(),
                 name: display_name(state, *user),
@@ -290,6 +328,7 @@ impl ServerView {
         let perms = viewer
             .map(|v| state.server.permissions_for(v))
             .unwrap_or(Permissions::NONE);
+        let is_member = viewer.is_some_and(|v| state.server.is_member(v));
 
         let events = state
             .server
@@ -364,6 +403,18 @@ impl ServerView {
                 .iter()
                 .map(|e| EmojiView { name: e.name.clone(), image: e.blob.clone() })
                 .collect(),
+            stickers: state
+                .server
+                .stickers
+                .iter()
+                .map(|s| EmojiView { name: s.name.clone(), image: s.blob.clone() })
+                .collect(),
+            emoticons: state
+                .server
+                .emoticons
+                .iter()
+                .map(|e| EmoticonView { name: e.name.clone(), text: e.text.clone() })
+                .collect(),
             sounds: state
                 .server
                 .soundboard
@@ -371,23 +422,37 @@ impl ServerView {
                 .map(|s| SoundView { name: s.name.clone(), blob: s.blob.clone(), volume: s.volume, emoji: s.emoji.clone() })
                 .collect(),
             emojis_shareable: state.server.emojis_shareable,
+            stickers_shareable: state.server.stickers_shareable,
+            emoticons_shareable: state.server.emoticons_shareable,
+            add_restricted: AddRestrictions {
+                emojis: everyone_lacks(state, Permissions::ADD_EMOJIS),
+                stickers: everyone_lacks(state, Permissions::ADD_STICKERS),
+                emoticons: everyone_lacks(state, Permissions::ADD_EMOTICONS),
+            },
+            can_add_emojis: is_member && perms.can_add(Permissions::ADD_EMOJIS),
+            can_add_stickers: is_member && perms.can_add(Permissions::ADD_STICKERS),
+            can_add_emoticons: is_member && perms.can_add(Permissions::ADD_EMOTICONS),
+            can_use_external: perms.allows(Permissions::USE_EXTERNAL_EMOJIS),
             soundboard_open: state.server.soundboard_open,
             sounds_shareable: state.server.sounds_shareable,
-            uploads_restricted: state
-                .server
-                .roles
-                .iter()
-                .find(|r| r.position == EVERYONE_ROLE_POSITION)
-                .is_some_and(|r| !r.permissions.contains(Permissions::ATTACH_FILES)),
+            uploads_restricted: everyone_lacks(state, Permissions::ATTACH_FILES),
             can_attach_files: perms.allows(Permissions::ATTACH_FILES),
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
-            can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS)
-                || (state.server.soundboard_open && viewer.is_some_and(|v| state.server.is_member(v))),
+            can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS) || (state.server.soundboard_open && is_member),
             can_use_soundboard: perms.allows(Permissions::USE_SOUNDBOARD),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
         }
     }
+}
+
+fn everyone_lacks(state: &ServerState, permission: Permissions) -> bool {
+    state
+        .server
+        .roles
+        .iter()
+        .find(|r| r.position == EVERYONE_ROLE_POSITION)
+        .is_some_and(|r| !r.permissions.contains(permission))
 }
 
 pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
@@ -402,6 +467,10 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("ban_members", Permissions::BAN_MEMBERS),
     ("mute_members", Permissions::MUTE_MEMBERS),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
+    ("add_emojis", Permissions::ADD_EMOJIS),
+    ("add_stickers", Permissions::ADD_STICKERS),
+    ("add_emoticons", Permissions::ADD_EMOTICONS),
+    ("use_external_emojis", Permissions::USE_EXTERNAL_EMOJIS),
     ("manage_events", Permissions::MANAGE_EVENTS),
     ("create_invites", Permissions::CREATE_INVITES),
     ("view_audit_log", Permissions::VIEW_AUDIT_LOG),
@@ -444,22 +513,72 @@ pub struct DmMessageView {
     pub created_at: String,
     pub outgoing: bool,
     pub pending: bool,
+    pub edited: bool,
+    pub reply_to: Option<String>,
+    pub reply_preview: Option<ReplyPreview>,
+    pub reactions: Vec<ReactionView>,
+    pub attachments: Vec<AttachmentView>,
+}
+
+fn dm_author_name(msg_from: UserId, me: UserId, dms: &DmStore) -> String {
+    if msg_from == me {
+        "You".to_string()
+    } else {
+        name_or_unknown(dms.contacts.get(&msg_from))
+    }
+}
+
+pub fn dm_excerpt(msg: &DmMessage) -> String {
+    let excerpt = crate::safety::truncate(&msg.content, 120);
+    if excerpt.is_empty() {
+        if let Some(file) = msg.attachments.first() {
+            return file.filename.clone();
+        }
+    }
+    excerpt
 }
 
 pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore, pending: bool) -> DmMessageView {
-    let from_name = if msg.from == me {
-        "You".to_string()
-    } else {
-        name_or_unknown(dms.contacts.get(&msg.from))
-    };
+    let partner = if msg.from == me { msg.to } else { msg.from };
     DmMessageView {
         id: msg.id.to_string(),
         from: msg.from.to_string(),
-        from_name,
+        from_name: dm_author_name(msg.from, me, dms),
         content: msg.content.clone(),
         created_at: msg.created_at.to_rfc3339(),
         outgoing: msg.from == me,
         pending,
+        edited: msg.edited_at.is_some(),
+        reply_to: msg.reply_to.map(|id| id.to_string()),
+        reply_preview: msg.reply_to.and_then(|id| {
+            let original = dms.post(partner, id)?;
+            Some(ReplyPreview {
+                author_id: original.from.to_string(),
+                author_name: dm_author_name(original.from, me, dms),
+                excerpt: dm_excerpt(original),
+            })
+        }),
+        reactions: msg
+            .reactions
+            .iter()
+            .map(|r| ReactionView {
+                emoji: r.emoji.clone(),
+                count: r.users.len(),
+                users: r.users.iter().map(|u| u.to_string()).collect(),
+            })
+            .collect(),
+        attachments: msg
+            .attachments
+            .iter()
+            .map(|a| AttachmentView {
+                filename: a.filename.clone(),
+                size_bytes: a.size_bytes,
+                is_image: a.is_image(),
+                mime: a.mime_type.clone(),
+                blob: a.blob.clone(),
+                provider: a.provider.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -467,15 +586,14 @@ pub fn dm_thread_views(dms: &DmStore, me: UserId) -> Vec<DmThreadView> {
     dms.partners()
         .into_iter()
         .map(|partner| {
-            let convo = dms.conversation(partner);
-            let last = convo.last();
+            let last = dms.last_post(partner);
             DmThreadView {
                 user: partner.to_string(),
                 name: name_or_unknown(dms.contacts.get(&partner)),
                 last_message: last
                     .map(|m| {
                         let prefix = if m.from == me { "You: " } else { "" };
-                        format!("{prefix}{}", crate::safety::truncate(&m.content, 60))
+                        format!("{prefix}{}", crate::safety::truncate(&dm_excerpt(m), 60))
                     })
                     .unwrap_or_default(),
                 last_at: last
@@ -494,6 +612,7 @@ pub struct MessageView {
     pub author_id: String,
     pub author_name: String,
     pub content: String,
+    pub sealed: bool,
     pub created_at: String,
     pub edited: bool,
     pub reply_to: Option<String>,
@@ -554,12 +673,17 @@ pub struct PinView {
     pub message: MessageView,
 }
 
-pub fn pin_views(state: &ServerState, channel: Option<ChannelId>) -> Vec<PinView> {
+pub fn pin_views(
+    state: &ServerState,
+    channel: Option<ChannelId>,
+    viewer: UserId,
+    keys: &KeyHolder,
+) -> Vec<PinView> {
     let mut pins: Vec<&commy_core::server::Pin> = state
         .server
         .pins
         .iter()
-        .filter(|p| channel.is_none_or(|c| p.channel == c))
+        .filter(|p| channel.is_none_or(|c| p.channel == c) && state.server.can_view(p.channel, viewer))
         .collect();
     pins.sort_by(|a, b| b.at.cmp(&a.at));
     pins.into_iter()
@@ -571,7 +695,7 @@ pub fn pin_views(state: &ServerState, channel: Option<ChannelId>) -> Vec<PinView
                 by: p.by.to_string(),
                 by_name: display_name(state, p.by),
                 at: p.at.to_rfc3339(),
-                message: MessageView::build(message, state),
+                message: MessageView::build(message, state, keys),
             })
         })
         .collect()
@@ -602,23 +726,29 @@ pub struct AttachmentView {
 }
 
 impl MessageView {
-    pub fn build(message: &Message, state: &ServerState) -> Self {
+    pub fn build(message: &Message, state: &ServerState, keys: &KeyHolder) -> Self {
+        let opened = keys.open(state, message);
+        let sealed = opened.is_none();
+        let message = opened.as_ref().unwrap_or(message);
+        let (content, attachments) = if sealed { (String::new(), &[][..]) } else { (message.content.clone(), &message.attachments[..]) };
         Self {
             id: message.id.to_string(),
             channel: message.channel.to_string(),
             author_id: message.author.to_string(),
             author_name: display_name(state, message.author),
-            content: message.content.clone(),
+            content,
+            sealed,
             created_at: message.created_at.to_rfc3339(),
             edited: message.edited_at.is_some(),
             reply_to: message.reply_to.map(|id| id.to_string()),
             reply_preview: message.reply_to.and_then(|id| {
-                let original = state.message(id).filter(|m| m.channel == message.channel)?;
+                let stored = state.message(id).filter(|m| m.channel == message.channel)?;
+                let original = keys.open(state, stored)?;
                 let mut excerpt = crate::safety::truncate(&original.content, 120);
                 if excerpt.is_empty() && original.files().next().is_some() {
                     excerpt = "Click to see attachment".to_string();
                 }
-                if state.hold(original).is_some() {
+                if keys.hold(state, stored).is_some() {
                     excerpt = HELD_EXCERPT.to_string();
                 }
                 Some(ReplyPreview {
@@ -636,8 +766,9 @@ impl MessageView {
                     users: r.users.iter().map(|u| u.to_string()).collect(),
                 })
                 .collect(),
-            attachments: message
-                .files()
+            attachments: attachments
+                .iter()
+                .filter(|a| !a.is_link_preview())
                 .map(|a| AttachmentView {
                     filename: a.filename.clone(),
                     size_bytes: a.size_bytes,
@@ -673,25 +804,32 @@ pub fn message_views(
     limit: usize,
     pending: &HashSet<MessageId>,
     viewer: Option<UserId>,
+    keys: &KeyHolder,
 ) -> Vec<MessageView> {
-    visible_views(state, state.page(channel, None, limit), pending, viewer)
+    visible_views(state, state.page(channel, None, limit), pending, viewer, keys)
 }
 
-pub fn sees_message(state: &ServerState, viewer: Option<UserId>) -> impl Fn(&Message) -> bool + '_ {
+pub fn sees_message<'a>(state: &'a ServerState, viewer: Option<UserId>, keys: &'a KeyHolder) -> impl Fn(&Message) -> bool + 'a {
     let reviews_held = viewer.is_some_and(|v| commy_core::automod::moderates(&state.server, v));
-    move |m| reviews_held || Some(m.author) == viewer || state.hold(m).is_none()
+    move |m| reviews_held || Some(m.author) == viewer || keys.hold(state, m).is_none()
 }
 
-pub fn held_view(state: &ServerState, message: &Message) -> MessageView {
-    MessageView::build(message, state).with_hold(state.hold(message))
+pub fn held_view(state: &ServerState, message: &Message, keys: &KeyHolder) -> MessageView {
+    MessageView::build(message, state, keys).with_hold(keys.hold(state, message))
 }
 
-fn visible_views(state: &ServerState, messages: &[Message], pending: &HashSet<MessageId>, viewer: Option<UserId>) -> Vec<MessageView> {
-    let sees = sees_message(state, viewer);
+fn visible_views(
+    state: &ServerState,
+    messages: &[Message],
+    pending: &HashSet<MessageId>,
+    viewer: Option<UserId>,
+    keys: &KeyHolder,
+) -> Vec<MessageView> {
+    let sees = sees_message(state, viewer, keys);
     messages
         .iter()
         .filter(|m| sees(m))
-        .map(|m| held_view(state, m).with_pending(pending.contains(&m.id)))
+        .map(|m| held_view(state, m, keys).with_pending(pending.contains(&m.id)))
         .collect()
 }
 
@@ -703,15 +841,16 @@ pub fn message_views_around(
     around: MessageId,
     pending: &HashSet<MessageId>,
     viewer: Option<UserId>,
+    keys: &KeyHolder,
 ) -> Option<Vec<MessageView>> {
     let all = state.messages(channel);
     let at = all.iter().position(|m| m.id == around)?;
-    if !sees_message(state, viewer)(&all[at]) {
+    if !sees_message(state, viewer, keys)(&all[at]) {
         return None;
     }
     let start = at.saturating_sub(AROUND_EACH_SIDE);
     let end = (at + AROUND_EACH_SIDE + 1).min(all.len());
-    Some(visible_views(state, &all[start..end], pending, viewer))
+    Some(visible_views(state, &all[start..end], pending, viewer, keys))
 }
 
 pub fn display_name(state: &ServerState, user: commy_core::UserId) -> String {
@@ -753,10 +892,11 @@ mod tests {
             state.apply(ServerEvent::MessageCreate { message }).unwrap();
         }
         let pending = HashSet::from([ids[1]]);
-        let views = message_views(&state, channel, 100, &pending, Some(owner.id));
+        let keys = KeyHolder::default();
+        let views = message_views(&state, channel, 100, &pending, Some(owner.id), &keys);
         let flags: Vec<(&str, bool)> = views.iter().map(|v| (v.content.as_str(), v.pending)).collect();
         assert_eq!(flags, vec![("sent", false), ("waiting", true)]);
-        assert!(!MessageView::build(state.message(ids[1]).unwrap(), &state).pending);
+        assert!(!MessageView::build(state.message(ids[1]).unwrap(), &state, &keys).pending);
         let json = serde_json::to_value(&views[1]).unwrap();
         assert_eq!(json["pending"], true);
     }
@@ -792,7 +932,7 @@ mod tests {
         let rules = AutoMod { blocked_terms: vec!["gold".into()], ..AutoMod::default() };
         state.apply(ServerEvent::AutoModSet { server: sid, rules }).unwrap();
         let seen = |viewer| {
-            message_views(&state, channel, 100, &HashSet::new(), Some(viewer))
+            message_views(&state, channel, 100, &HashSet::new(), Some(viewer), &KeyHolder::default())
                 .into_iter()
                 .map(|v| (v.content, v.held))
                 .collect::<Vec<_>>()
@@ -801,9 +941,9 @@ mod tests {
         assert_eq!(seen(owner.id), all);
         assert_eq!(seen(author), all);
         assert_eq!(seen(reader), vec![("fine".to_string(), None)]);
-        let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader)).remove(0);
+        let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader), &KeyHolder::default()).remove(0);
         assert_eq!(reply.reply_preview.unwrap().excerpt, HELD_EXCERPT);
-        let around = |viewer| message_views_around(&state, channel, bad, &HashSet::new(), Some(viewer)).map(|v| v.len());
+        let around = |viewer| message_views_around(&state, channel, bad, &HashSet::new(), Some(viewer), &KeyHolder::default()).map(|v| v.len());
         assert_eq!(around(owner.id), Some(2));
         assert_eq!(around(reader), None);
     }
@@ -826,14 +966,14 @@ mod tests {
             state.apply(ServerEvent::MessageCreate { message }).unwrap();
         }
         let none = HashSet::new();
-        let middle = message_views_around(&state, channel, ids[120], &none, Some(owner.id)).unwrap();
+        let middle = message_views_around(&state, channel, ids[120], &none, Some(owner.id), &KeyHolder::default()).unwrap();
         assert_eq!(middle.len(), 2 * AROUND_EACH_SIDE + 1);
         assert_eq!((middle[0].content.as_str(), middle[AROUND_EACH_SIDE].content.as_str()), ("m70", "m120"));
-        let first = message_views_around(&state, channel, ids[3], &none, Some(owner.id)).unwrap();
+        let first = message_views_around(&state, channel, ids[3], &none, Some(owner.id), &KeyHolder::default()).unwrap();
         assert_eq!((first[0].content.as_str(), first.len()), ("m0", 3 + AROUND_EACH_SIDE + 1));
-        let last = message_views_around(&state, channel, ids[299], &none, Some(owner.id)).unwrap();
+        let last = message_views_around(&state, channel, ids[299], &none, Some(owner.id), &KeyHolder::default()).unwrap();
         assert_eq!(last.last().unwrap().content, "m299");
-        assert!(message_views_around(&state, channel, MessageId::for_author(owner.id), &none, Some(owner.id)).is_none());
+        assert!(message_views_around(&state, channel, MessageId::for_author(owner.id), &none, Some(owner.id), &KeyHolder::default()).is_none());
     }
 
     #[test]
@@ -848,7 +988,7 @@ mod tests {
         let bot_id = bot.id;
         state.apply(ServerEvent::MemberJoin { server: sid, profile: bot }).unwrap();
         state.apply(ServerEvent::BotSet { server: sid, user: bot_id, bot: true }).unwrap();
-        let view = ServerView::for_viewer(&state, Some(owner.id));
+        let view = ServerView::for_viewer(&state, Some(owner.id), &KeyHolder::default());
         let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
         assert!(badge(bot_id));
         assert!(!badge(owner.id));

@@ -1,9 +1,10 @@
 use crate::handler::Act;
 use crate::Bot;
 use chrono::{DateTime, Duration, Utc};
+use commy_core::channel_key::{self, Keyring};
 use commy_core::server::valid_reaction;
 use commy_core::{
-    action, Message, Permissions, ServerEvent, ServerId, ServerState, SignedEvent, TombstoneProof, UserId,
+    action, Identity, Message, Permissions, ServerEvent, ServerId, ServerState, SignedEvent, TombstoneProof, UserId,
 };
 use commy_net::protocol::{gossip_size, MAX_GOSSIP_BYTES};
 use commy_net::WirePayload;
@@ -40,6 +41,8 @@ pub enum ActError {
     TooLong,
     #[error("this server's auto moderation would hold that message ({0})")]
     Held(String),
+    #[error("the bot has not been given the key to that private channel yet")]
+    KeyPending,
     #[error("a reaction is one emoji, or a custom emoji of this server written as :name:")]
     BadEmoji,
     #[error("the server did not accept that: {0}")]
@@ -82,14 +85,20 @@ impl Bot {
                 if let Some(hold) = state.hold(&message) {
                     return Err(ActError::Held(hold.describe().to_string()));
                 }
+                if private(state, channel) {
+                    let ring = Keyring::unlock(state, channel, me, identity);
+                    let (key, secret) = ring.sending_key(state, channel).ok_or(ActError::KeyPending)?;
+                    channel_key::seal_message(server, &mut message, key, secret);
+                }
                 message.sign(server, identity);
                 WirePayload::Event(ServerEvent::MessageCreate { message })
             }
             Act::Edit { message, content } => {
-                let original = state.message(message).ok_or(ActError::UnknownMessage)?.clone();
-                if original.author != me {
+                let stored = state.message(message).ok_or(ActError::UnknownMessage)?.clone();
+                if stored.author != me {
                     return Err(ActError::NotOwn);
                 }
+                let original = crate::readable(state, me, identity, &stored).ok_or(ActError::KeyPending)?;
                 let content = clean(&content)?;
                 let edited_at = match original.edited_at {
                     Some(last) if wall <= last => last + Duration::milliseconds(1),
@@ -99,7 +108,8 @@ impl Bot {
                 if let Some(hold) = state.hold(&edited) {
                     return Err(ActError::Held(hold.describe().to_string()));
                 }
-                WirePayload::Event(original.edit_event(server, content, edited_at, identity))
+                let content = seal_edit(state, me, identity, &stored, &original, content)?;
+                WirePayload::Event(stored.edit_event(server, content, edited_at, identity))
             }
             Act::Remove { message } => {
                 let found = state.message(message).ok_or(ActError::UnknownMessage)?;
@@ -140,6 +150,26 @@ impl Bot {
         applied.map_err(|e| ActError::Refused(e.to_string()))?;
         Ok(payload)
     }
+}
+
+fn private(state: &ServerState, channel: commy_core::ChannelId) -> bool {
+    state.server.channel(channel).is_some_and(|c| c.is_private())
+}
+
+fn seal_edit(
+    state: &ServerState,
+    me: UserId,
+    identity: &Identity,
+    stored: &Message,
+    opened: &Message,
+    content: String,
+) -> Result<String, ActError> {
+    if !channel_key::is_sealed(&stored.content) && !private(state, stored.channel) {
+        return Ok(content);
+    }
+    let ring = Keyring::unlock(state, stored.channel, me, identity);
+    let (key, secret) = ring.sending_key(state, stored.channel).ok_or(ActError::KeyPending)?;
+    Ok(channel_key::seal_body(state.server.id, stored, &content, &opened.attachments, key, secret))
 }
 
 fn clean(content: &str) -> Result<String, ActError> {

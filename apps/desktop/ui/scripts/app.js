@@ -141,6 +141,7 @@ function mockSeed() {
       ch(":ferris:-rust-help", "text", "Borrow checker support group"),
       ch("news", "announcement", "Patch notes and server news"),
       ch("General", "voice"),
+      ch("mod-lounge", "text", "For the moderators"),
     ],
     members: [
       { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
@@ -156,10 +157,19 @@ function mockSeed() {
   ];
   server.game_tags = ["Rust", "Valorant"];
   server.emojis = [{ name: "ferris", image: "ferris@mock" }, { name: "ferris_wave", image: "ferris@mock" }];
-  mock.expressions = { ...(mock.expressions || {}), "ferris@mock": mockCrabImage() };
+  server.stickers = [{ name: "ferris_hype", image: "ferris@mock" }, { name: "party", image: "party@mock" }];
+  server.emoticons = [{ name: "borrow_check", text: "(ง •̀_•́)ง borrow!" }, { name: "ship_it", text: "ᕦ(ò_óˇ)ᕤ ship it" }];
+  mock.expressions = { ...(mock.expressions || {}), "ferris@mock": mockCrabImage(), "party@mock": mockEmojiFace(48, "M40 84 Q64 108 88 84", 8), "pixel@mock": mockEmojiFace(280, "M44 88 L84 88", 10) };
+  const club = {
+    id: crypto.randomUUID(), name: "Pixel Club", owner: "m2", channels: [ch("lobby", "text", null)], members: [{ id: "m2", name: "nova", presence: "idle", custom_status: null }],
+    emojis: [{ name: "pixel_heart", image: "pixel@mock" }], stickers: [{ name: "pixel_wave", image: "pixel@mock" }], emoticons: [{ name: "pixel_shrug", text: "¯\\_(ツ)_/¯ pixels" }],
+    emojis_shareable: true, stickers_shareable: true, emoticons_shareable: true,
+  };
+  mock.servers[club.id] = club;
   mock.serverImages = { ...(mock.serverImages || {}), "welcome-banner@mock": mockBannerImage() };
   server.channels[0].banner = "welcome-banner@mock";
   server.channels[1].color = "9b7bff";
+  server.channels[5].view_roles = ["r2"];
   server.rules = "# Welcome\n1. Be kind to each other\n2. **No spam** or self promotion\n3. Keep it on topic, see https://commy.chat";
   server.needs_rules = true;
   const general = server.channels[3];
@@ -189,6 +199,13 @@ function mockSeed() {
     messages: [
       { id: "d1", from: "m1", from_name: "ferris", content: "hey, did the voice fix land?",
         created_at: new Date(Date.now() - 26 * 3600e3).toISOString(), outgoing: false },
+      { id: "d0", from: "me", from_name: "You", content: "yes, it is in **0.1.2**. try the new mic test",
+        created_at: new Date(Date.now() - 25 * 3600e3).toISOString(), outgoing: true, edited: true,
+        reply_to: "d1", reply_preview: { author_id: "m1", author_name: "ferris", excerpt: "hey, did the voice fix land?" },
+        reactions: [{ emoji: "🎉", count: 1, users: ["m1"] }] },
+      { id: "d4", from: "m1", from_name: "ferris", content: "",
+        created_at: new Date(Date.now() - 900e3).toISOString(), outgoing: false,
+        attachments: [{ filename: "voice-fix-notes.txt", size_bytes: 2048, is_image: false, mime: "text/plain", blob: "mocknotes", provider: null }] },
       { id: "d2", from: "m1", from_name: "ferris", content: "screen share looked great btw",
         created_at: new Date(Date.now() - 600e3).toISOString(), outgoing: false },
     ],
@@ -213,6 +230,8 @@ function mockSeed() {
   ];
   server.automod = { blocked_terms: ["free gifts", "scam*"], block_links: false, max_mentions: 5, burst: { messages: 5, seconds: 10 }, exempt_roles: ["r2"] };
   mock.messages[server.channels[1].id] = [
+    { id: "g0", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
+      content: "<sticker:party:party@mock>", created_at: new Date(Date.now() - 1200e3).toISOString(), edited: false, attachments: [] },
     { id: "g1", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
       content: "clutch round from last night", created_at: new Date(Date.now() - 900e3).toISOString(), edited: false,
       attachments: [{ filename: "clutch-round.mp4", size_bytes: 18400000, is_image: false, mime: "video/mp4", blob: "clip@mock", provider: null }] },
@@ -274,6 +293,30 @@ function mockTemplateView(id, title, blurb, layout, roles = [], hasRules = false
   return { id, title, blurb, name: title, channels, roles: roles.map(([name, color]) => ({ name, color })), has_rules: hasRules };
 }
 
+function mockEmojiFace(hue, mouth, eyes) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">`
+    + `<circle cx="64" cy="64" r="58" fill="hsl(${hue} 80% 62%)"/>`
+    + `<circle cx="44" cy="54" r="${eyes}" fill="#1b1e2e"/><circle cx="84" cy="54" r="${eyes}" fill="#1b1e2e"/>`
+    + `<path d="${mouth}" stroke="#1b1e2e" stroke-width="7" fill="none" stroke-linecap="round"/></svg>`;
+  return `data:image/svg+xml;base64,${btoa(svg)}`;
+}
+
+function mockEmojiCatalog(query = "", category = null, page = 0) {
+  const names = ["party_blob", "cat_wave", "pog", "sad_frog", "heart_eyes", "thumbs_up_cat", "gg_wp", "blob_dance", "clap", "pepe_think",
+    "shy", "sparkle_heart", "wave_hi", "no_thanks", "cool_cat", "salute", "pixel_heart", "sleepy", "blush_blob", "hype",
+    "laugh_cry", "rage", "duck_wave", "sus", "yes", "nope", "pat", "bonk", "hug_blob", "snack"];
+  const mouths = ["M40 84 Q64 108 88 84", "M42 92 Q64 76 86 92", "M44 88 L84 88", "M48 82 Q64 98 80 82"];
+  const items = names.map((title, i) => ({
+    id: 6000 - i, title, url: mockEmojiFace((i * 37) % 360, mouths[i % mouths.length], 6 + (i % 4) * 2), animated: i % 7 === 0, category: [22, 15, 3, 10, 17][i % 5],
+  }));
+  const q = String(query || "").toLowerCase().trim();
+  const matches = items.filter(e => (!q || e.title.includes(q)) && (!category || e.category === Number(category)));
+  const categories = [[22, "Reactions"], [15, "Cute"], [3, "Meme"], [10, "Gaming"], [8, "Animated"], [17, "Animals"], [4, "Anime"], [6, "Blobs"], [20, "Hearts"], [21, "Pixel Art"]]
+    .map(([id, name]) => ({ id, name }));
+  const start = (page || 0) * 60;
+  return { results: matches.slice(start, start + 60).map(({ id, title, url, animated }) => ({ id, title, url, animated })), more: matches.length > start + 60, categories };
+}
+
 function mockTemplates() {
   return [
     mockTemplateView("fresh", "Start fresh", "A chat channel and a voice room", [[null, ["general", "v:General", "v:AFK"]]]),
@@ -315,7 +358,7 @@ async function mockInvoke(cmd, args = {}) {
       const members = [...s.members];
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: mock.user.username, presence, custom_status: null };
+        const me = { id: "me", name: mock.user.username, presence, custom_status: null, roles: s.myRoles || [] };
         const vc = s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -326,10 +369,21 @@ async function mockInvoke(cmd, args = {}) {
       return {
         ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
-        channels: s.channels.map((c, i) => ({ parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, ...c })),
+        channels: s.channels
+          .map((c, i) => {
+            const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
+            const sees = admits(c.view_roles);
+            const sendable = admits(c.send_roles);
+            return { parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], ...c, can_view: sees, can_send: sees && sendable, key_ready: sees };
+          })
+          .filter(c => c.can_view || !mock.plainMember),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
+        stickers: s.stickers || [], emoticons: s.emoticons || [], stickers_shareable: !!s.stickers_shareable, emoticons_shareable: !!s.emoticons_shareable,
+        add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
+        can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
+        can_add_emoticons: !mock.plainMember || !(s.add_restricted || {}).emoticons, can_use_external: s.can_use_external !== false,
         can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
@@ -406,6 +460,12 @@ async function mockInvoke(cmd, args = {}) {
       if (args.pinned) mock.pins.push({ channel: args.channelId, message: args.messageId, by: "me", at: new Date().toISOString() });
       return null;
     }
+    case "set_channel_access": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      c.view_roles = [...args.viewRoles];
+      c.send_roles = [...args.sendRoles];
+      return null;
+    }
     case "set_channel_kind": {
       const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
       c.kind = args.kind;
@@ -430,6 +490,11 @@ async function mockInvoke(cmd, args = {}) {
     case "check_for_updates": mock.update = { ...mock.update, phase: "up_to_date", checked_at: Math.floor(Date.now() / 1000) }; return mock.update;
     case "restart_to_update": return null;
     case "set_noise_cancellation": mock.voice.noise_cancellation = args.enabled; return mock.voice;
+    case "set_input_mode": Object.assign(mock.voice, { input_mode: args.mode, talk_key: args.talkKey, talk_release_ms: args.releaseMs }); return mock.voice;
+    case "set_voice_hotkeys": Object.assign(mock.voice, { mute_hotkey: args.mute, deafen_hotkey: args.deafen }); return mock.voice;
+    case "set_sensitivity": Object.assign(mock.voice, { auto_sensitivity: args.auto, sensitivity_db: args.thresholdDb }); return mock.voice;
+    case "voice_hotkey_problems": return [];
+    case "mic_level": return mock.micTesting ? -55 + 25 * Math.sin(Date.now() / 400) : -100;
     case "set_muted": mock.voice.muted = args.muted; return mock.voice;
     case "set_deafened":
       mock.voice.deafened = args.deafened;
@@ -470,16 +535,50 @@ async function mockInvoke(cmd, args = {}) {
       mock.dms[args.userId] ||= { name: member ? member.name : "Unknown User", messages: [] };
       return { user: args.userId, name: mock.dms[args.userId].name, last_message: "", last_at: "", kind: "inbox" };
     }
-    case "send_dm": {
+    case "send_dm":
+    case "attach_dm_bytes": {
       const dm = mock.dms[args.userId];
       if (!dm) throw "no such conversation";
       const partner = Object.values(mock.servers).flatMap(s => s.members).find(m => m.id === args.userId);
+      const original = args.replyTo ? dm.messages.find(m => m.id === args.replyTo) : null;
       const sent = {
-        id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: args.content,
+        id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: args.content || "",
         created_at: new Date().toISOString(), outgoing: true, pending: !partner || partner.presence === "offline",
+        reply_to: original ? original.id : null,
+        reply_preview: original ? { author_id: original.from, author_name: original.from_name, excerpt: original.content.slice(0, 120) } : null,
+        reactions: [],
+        attachments: cmd === "attach_dm_bytes"
+          ? [{ filename: args.filename, size_bytes: Math.round(args.data.length * 3 / 4), is_image: /\.(png|jpe?g|gif|webp)$/i.test(args.filename), mime: "application/octet-stream", blob: "mock" + Date.now(), provider: null }]
+          : [],
       };
       dm.messages.push(sent);
       return sent;
+    }
+    case "attach_dm_file": return null;
+    case "edit_dm": {
+      const m = (mock.dms[args.userId] || { messages: [] }).messages.find(x => x.id === args.messageId);
+      if (!m || !m.outgoing) throw "you can only edit your own messages";
+      m.content = args.content;
+      m.edited = true;
+      return null;
+    }
+    case "delete_dm": {
+      const dm = mock.dms[args.userId];
+      if (!dm) throw "no such conversation";
+      dm.messages = dm.messages.filter(m => m.id !== args.messageId || !m.outgoing);
+      return null;
+    }
+    case "set_dm_reaction": {
+      const m = (mock.dms[args.userId] || { messages: [] }).messages.find(x => x.id === args.messageId);
+      if (!m) throw "that message no longer exists";
+      m.reactions = m.reactions || [];
+      let r = m.reactions.find(x => x.emoji === args.emoji);
+      if (args.active) {
+        if (!r) m.reactions.push(r = { emoji: args.emoji, count: 0, users: [] });
+        if (!r.users.includes("me")) r.users.push("me");
+      } else if (r) r.users = r.users.filter(u => u !== "me");
+      m.reactions = m.reactions.map(x => ({ ...x, count: x.users.length })).filter(x => x.count);
+      return null;
     }
     case "update_profile":
       Object.assign(mock.user, {
@@ -550,9 +649,9 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "audit_log": return mockAuditLog();
-    case "start_mic_test":
-    case "stop_mic_test":
-      return null;
+    case "send_typing": return null;
+    case "start_mic_test": mock.micTesting = true; return null;
+    case "stop_mic_test": mock.micTesting = false; return null;
     case "set_afk_timeout": mock.voice.afk_timeout_minutes = args.minutes; return mock.voice;
     case "set_share_activity": mock.voice.share_activity = args.enabled; return mock.voice;
     case "list_audio_devices": return { inputs: ["Microphone (Realtek Audio)", "Headset Mic (HyperX Cloud)"], outputs: ["Speakers (Realtek Audio)", "Headphones (HyperX Cloud)"] };
@@ -586,6 +685,41 @@ async function mockInvoke(cmd, args = {}) {
       const s = mock.servers[args.serverId];
       s.emojis = (s.emojis || []).filter(e => e.name !== args.name);
       return null;
+    }
+    case "add_sticker": {
+      const s = mock.servers[args.serverId];
+      const ref = `mock${Date.now()}@mock`;
+      mock.expressions = { ...(mock.expressions || {}), [ref]: `data:image/png;base64,${args.data}` };
+      s.stickers = (s.stickers || []).filter(e => e.name !== args.name).concat({ name: args.name, image: ref });
+      return null;
+    }
+    case "remove_sticker": {
+      const s = mock.servers[args.serverId];
+      s.stickers = (s.stickers || []).filter(e => e.name !== args.name);
+      return null;
+    }
+    case "add_emoticon": {
+      const s = mock.servers[args.serverId];
+      s.emoticons = (s.emoticons || []).filter(e => e.name !== args.name).concat({ name: args.name, text: args.text.trim() });
+      return null;
+    }
+    case "remove_emoticon": {
+      const s = mock.servers[args.serverId];
+      s.emoticons = (s.emoticons || []).filter(e => e.name !== args.name);
+      return null;
+    }
+    case "set_expression_sharing": {
+      const s = mock.servers[args.serverId];
+      s.stickers_shareable = args.stickers;
+      s.emoticons_shareable = args.emoticons;
+      return null;
+    }
+    case "search_emoji_catalog": return mockEmojiCatalog(args.query, args.category, args.page);
+    case "fetch_catalog_image": return args.url;
+    case "store_catalog_emoji": {
+      const blob = `gg${Object.keys(mock.expressions || {}).length}@mock`;
+      mock.expressions = { ...(mock.expressions || {}), [blob]: `data:image/png;base64,${args.data}` };
+      return `<:${args.name}:${blob}>`;
     }
     case "add_sound": {
       const s = mock.servers[args.serverId];
@@ -625,13 +759,15 @@ async function mockInvoke(cmd, args = {}) {
     case "fetch_expression": return (mock.expressions || {})[args.blob] || null;
     case "pick_sound": return null;
     case "is_mobile_app": return new URLSearchParams(location.search).has("mobile");
-    case "set_upload_access": {
+    case "set_role_access": {
       const srv = mock.servers[args.serverId];
-      srv.uploads_restricted = args.restricted;
+      const perm = { files: "attach_files", emojis: "add_emojis", stickers: "add_stickers", emoticons: "add_emoticons" }[args.access];
+      if (args.access === "files") srv.uploads_restricted = args.restricted;
+      else srv.add_restricted = { ...(srv.add_restricted || {}), [args.access]: args.restricted };
       for (const r of srv.roles || []) {
-        const has = (r.permissions || []).includes("attach_files");
+        const has = (r.permissions || []).includes(perm);
         const want = args.restricted && args.roleIds.includes(r.id);
-        if (args.restricted && want !== has) r.permissions = want ? [...(r.permissions || []), "attach_files"] : r.permissions.filter(x => x !== "attach_files");
+        if (args.restricted && want !== has) r.permissions = want ? [...(r.permissions || []), perm] : r.permissions.filter(x => x !== perm);
       }
       return null;
     }
@@ -640,9 +776,11 @@ async function mockInvoke(cmd, args = {}) {
       return Object.values(mock.servers).filter(s => s.sounds_shareable)
         .flatMap(s => (s.sounds || []).map(x => ({ server: s.id, server_name: s.name, name: x.name, blob: x.blob, volume: x.volume ?? 1, emoji: x.emoji || null })));
     case "play_shared_sound": return null;
-    case "list_shareable_emojis":
-      return Object.values(mock.servers).filter(s => s.emojis_shareable)
-        .flatMap(s => (s.emojis || []).map(e => ({ server: s.id, server_name: s.name, name: e.name, image: e.image })));
+    case "list_shareable_expressions": {
+      const from = (flag, kind) => Object.values(mock.servers).filter(s => s[flag])
+        .flatMap(s => (s[kind] || []).map(e => ({ server: s.id, server_name: s.name, ...e })));
+      return { emojis: from("emojis_shareable", "emojis"), stickers: from("stickers_shareable", "stickers"), emoticons: from("emoticons_shareable", "emoticons") };
+    }
     case "fetch_server_image": return (mock.serverImages || {})[args.image] || null;
     case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, show_everyone: false, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11" });
     case "set_overlay_settings": mock.overlay = args.settings; return mock.overlay;
@@ -725,7 +863,7 @@ async function mockInvoke(cmd, args = {}) {
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
-    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_media: false });
+    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_media: false });
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
@@ -927,6 +1065,7 @@ const ICONS = {
   uploadFile: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z",
   movie: "M4 6.47 5.76 10H20v8H4V6.47M22 4h-4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2z",
   gifBox: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H5V5h14zM9.5 13v-1h1v1a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1h-2v2zm3 1h-1v-4h1zm4-3h-2v.5H16v1h-1.5V14h-1v-4h3z",
+  lock: "M12 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6-9h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zM8.9 6a3.1 3.1 0 0 1 6.2 0v2H8.9zM18 20H6V10h12z",
   people: "M16.5 13c-1.2 0-3.07.34-4.5 1-1.43-.67-3.3-1-4.5-1C5.33 13 1 14.08 1 16.25V19h22v-2.75c0-2.17-4.33-3.25-6.5-3.25zm-4 4.5h-10v-1.25c0-.54 2.56-1.75 5-1.75s5 1.21 5 1.75v1.25zm9 0H14v-1.25c0-.46-.2-.86-.52-1.22.88-.3 1.96-.53 3.02-.53 2.44 0 5 1.21 5 1.75v1.25zM7.5 12c1.93 0 3.5-1.57 3.5-3.5S9.43 5 7.5 5 4 6.57 4 8.5 5.57 12 7.5 12zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 5.5c1.93 0 3.5-1.57 3.5-3.5S18.43 5 16.5 5 13 6.57 13 8.5s1.57 3.5 3.5 3.5zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z",
   gamepad: "M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H3V8h18v8zM6 15h2v-2h2v-2H8V9H6v2H4v2h2v2zm8.5-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
   paste: "M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z",
@@ -1000,6 +1139,7 @@ function openSettingsLayerId() {
 
 async function closeSettingsLayers() {
   if (state.micTesting) await stopMicTest();
+  stopMicMeter();
   stopCameraPreview();
   for (const layer of document.querySelectorAll(".settings-layer")) layer.classList.add("hidden");
 }
@@ -1649,10 +1789,22 @@ function channelMark(channel, size = 18) {
   return el("span", "hash", "#");
 }
 
+function channelLockMark(row, channel) {
+  if (!channelIsPrivate(channel)) return;
+  const mark = el("span", "channel-lock");
+  mark.appendChild(svgIcon("lock", 14));
+  mark.title = channel.can_view === false
+    ? `Only ${accessWho(state.currentServer, channel.view_roles)} can read this channel`
+    : `Only ${accessWho(state.currentServer, channel.view_roles)} can see this channel`;
+  row.appendChild(mark);
+  if (channel.can_view === false) row.classList.add("unreadable");
+}
+
 function textChannelRow(channel, canCreate) {
   const row = el("div", "channel");
   row.appendChild(channelMark(channel));
   row.appendChild(channelNameNode(channel, "channel-label"));
+  channelLockMark(row, channel);
   paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
   if (unread.channels.get(channel.id)) row.classList.add("unread");
@@ -1670,6 +1822,7 @@ function voiceChannelRow(channel, canCreate) {
   icon.appendChild(svgIcon("speaker", 18));
   row.appendChild(icon);
   row.appendChild(channelNameNode(channel, "channel-label"));
+  channelLockMark(row, channel);
   paintChannelBand(row, channel);
   const full = voiceFull(channel);
   if (channel.id === state.voiceChannelId) {
@@ -1685,6 +1838,10 @@ function voiceChannelRow(channel, canCreate) {
     row.appendChild(badge);
   }
   row.onclick = () => {
+    if (channel.can_view === false) {
+      toast(`Only ${accessWho(state.currentServer, channel.view_roles)} can join this channel`);
+      return;
+    }
     if (full) {
       toast("That voice channel is full");
       return;
@@ -2002,7 +2159,56 @@ function clearDmUnread(userId) {
   if (unread.dms.delete(userId)) syncUnreadBadge();
 }
 
+const typingTracker = new TypingTracker();
+const typingSender = new TypingSender(channel => {
+  if (!state.currentServer) return;
+  invoke("send_typing", { serverId: state.currentServer.id, channelId: channel }).catch(() => {});
+});
+let typingTimer = null;
+
+function onTyping({ server, channel, user }) {
+  if (!state.user || user === state.user.id || isBlocked(user)) return;
+  if (!state.currentServer || server !== state.currentServer.id) return;
+  typingTracker.start(channel, user);
+  renderTypingStrip();
+}
+
+function renderTypingStrip() {
+  const strip = $("typing-strip");
+  const channel = state.view === "server" && state.currentChannel ? state.currentChannel.id : null;
+  const typers = channel ? typingTracker.typers(channel) : [];
+  const names = typers.map(id => {
+    const member = currentServerMember(id);
+    return member ? member.name : null;
+  });
+  const line = typingLine(names);
+  const text = $("typing-text");
+  text.replaceChildren();
+  if (line) {
+    const split = line.lastIndexOf(" are typing");
+    const single = line.lastIndexOf(" is typing");
+    const cut = split >= 0 ? split : single;
+    if (cut > 0 && !line.startsWith("Several")) {
+      text.appendChild(el("strong", null, line.slice(0, cut)));
+      text.appendChild(document.createTextNode(line.slice(cut)));
+    } else {
+      text.textContent = line;
+    }
+  }
+  strip.classList.toggle("on", Boolean(line));
+  clearInterval(typingTimer);
+  typingTimer = null;
+  if (typingTracker.anyone()) typingTimer = setInterval(renderTypingStrip, 1000);
+}
+
+function noteTyped(input) {
+  if (state.view !== "server" || !state.currentChannel) return;
+  typingSender.typed(state.currentChannel.id, input.value);
+}
+
 function onMessageCreated(msg) {
+  typingTracker.stop(msg.channel, msg.author);
+  renderTypingStrip();
   if (state.user && msg.author === state.user.id) return;
   if (isBlocked(msg.author)) return;
   const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === msg.channel;
@@ -2558,7 +2764,7 @@ function editingChannel() {
   return state.currentServer && state.currentServer.channels.find(c => c.id === editingChannelId);
 }
 
-function openChannelSettings(channelId) {
+function openChannelSettings(channelId, tab = "overview") {
   editingChannelId = channelId;
   const channel = editingChannel();
   if (!channel) return;
@@ -2583,7 +2789,77 @@ function openChannelSettings(channelId) {
   paintChannelBandPreview();
   syncChannelDirty();
   paintChannelBannerCard(channel);
-  openSettingsLayer("channel-settings", "overview");
+  $("channel-tab-permissions").classList.toggle("hidden", channel.kind === "category");
+  accessDraft = { view: [...(channel.view_roles || [])], send: [...(channel.send_roles || [])] };
+  paintChannelAccess();
+  openSettingsLayer("channel-settings", tab);
+}
+
+let accessDraft = null;
+
+function holdsAnyRole(server, ids) {
+  const me = state.user && state.user.id;
+  if (!me || server.owner === me) return true;
+  const mine = (server.members.find(m => m.id === me) || {}).roles || [];
+  const admin = server.roles.some(r => mine.includes(r.id) && (r.permissions || []).includes("administrator"));
+  return admin || ids.some(id => mine.includes(id));
+}
+
+function paintAccessChips(container, server, ids, onChange) {
+  container.replaceChildren();
+  const everyone = el("button", "access-chip" + (ids.length ? "" : " picked"), "Everyone");
+  everyone.type = "button";
+  everyone.onclick = () => onChange([]);
+  container.appendChild(everyone);
+  for (const role of server.roles) {
+    const chip = el("button", "access-chip" + (ids.includes(role.id) ? " picked" : ""));
+    chip.type = "button";
+    const dot = el("span", "role-dot");
+    if (role.color) dot.style.background = `#${role.color}`;
+    chip.append(dot, el("span", null, role.name));
+    chip.onclick = () => onChange(toggleAccessRole(ids, role.id));
+    container.appendChild(chip);
+  }
+}
+
+function paintChannelAccess() {
+  const channel = editingChannel();
+  const server = state.currentServer;
+  if (!channel || !server || !accessDraft) return;
+  $("channel-view-title").textContent = channel.kind === "voice" ? "Who can see and join this channel" : "Who can see this channel";
+  $("channel-send-card").classList.toggle("hidden", !holdsMessages(channel));
+  paintAccessChips($("channel-view-roles"), server, accessDraft.view, ids => {
+    accessDraft.view = ids;
+    paintChannelAccess();
+  });
+  paintAccessChips($("channel-send-roles"), server, accessDraft.send, ids => {
+    accessDraft.send = ids;
+    paintChannelAccess();
+  });
+  let note = "";
+  if (!server.roles.length) note = "Create roles in Server Settings to lock this channel to them.";
+  else if (accessDraft.view.length && !holdsAnyRole(server, accessDraft.view)) note = "You don't hold any of these roles, so you won't be able to read this channel.";
+  $("channel-access-note").textContent = note;
+  const dirty = !sameAccess(accessDraft.view, channel.view_roles) || !sameAccess(accessDraft.send, channel.send_roles);
+  $("channel-access-save-bar").classList.toggle("hidden", !dirty);
+}
+
+async function saveChannelAccess() {
+  const channel = editingChannel();
+  if (!channel || !accessDraft) return;
+  try {
+    await invoke("set_channel_access", {
+      serverId: state.currentServer.id,
+      channelId: channel.id,
+      viewRoles: accessDraft.view,
+      sendRoles: holdsMessages(channel) ? accessDraft.send : [],
+    });
+    toast(accessDraft.view.length ? `Only ${accessSummary(state.currentServer, accessDraft.view)} can see this channel now` : "Channel access saved");
+    await refreshCurrentServer();
+    openChannelSettings(channel.id, "permissions");
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 let channelColorDraft = null;
@@ -2866,7 +3142,7 @@ function renderMessages(messages) {
   else if (state.currentChannel) box.appendChild(buildChannelIntro(state.currentChannel));
   if (!messages.length) return;
   state.renderedMessages = messages;
-  const replyCounts = threadReplyCounts(messages);
+  const replyCounts = state.view === "dm" ? new Map() : threadReplyCounts(messages);
   let lastAuthor = null;
   let lastTime = 0;
   let lastDay = null;
@@ -3011,6 +3287,12 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   }
   if (linkPreviewPrefs().show) {
     for (const preview of message.previews || []) body.appendChild(renderLinkPreview(preview));
+  }
+  if (message.sealed) {
+    const sealed = el("div", "msg-content msg-sealed");
+    sealed.appendChild(svgIcon("lock", 14));
+    sealed.appendChild(el("span", null, "Sealed message. It opens once this channel's key reaches you."));
+    body.appendChild(sealed);
   }
   if (inlineMark) body.prepend(pendingMark());
   for (const att of message.attachments || []) {
@@ -3679,7 +3961,7 @@ async function sendThreadReply() {
 
 function reactionPills(message) {
   const reactions = message.reactions || [];
-  if (!reactions.length || state.view !== "server") return null;
+  if (!reactions.length || !(state.view === "server" || inDmView())) return null;
   const wrap = el("div", "reactions");
   for (const r of reactions) {
     const mine = Boolean(state.user && r.users.includes(state.user.id));
@@ -3717,11 +3999,24 @@ function currentServerMember(id) {
 }
 
 function avatarNameFor(userId) {
+  if (inDmView() && userId === state.currentDm.user) return state.currentDm.name;
   const member = currentServerMember(userId);
   return member ? member.name : "Someone";
 }
 
 async function setReaction(message, emoji, active) {
+  if (inDmView()) {
+    try {
+      await invoke("set_dm_reaction", { userId: state.currentDm.user, messageId: message.id, emoji, active });
+      const box = $("messages");
+      const keep = box.scrollTop;
+      await selectDm(state.currentDm.user, state.currentDm.name);
+      box.scrollTop = keep;
+    } catch (e) {
+      toast(String(e));
+    }
+    return;
+  }
   if (!state.currentServer || !state.currentChannel) return;
   try {
     await invoke("set_reaction", {
@@ -3784,8 +4079,13 @@ function isOwnMessage(message) {
 }
 
 function canDeleteMessage(message) {
+  if (state.view === "dm") return Boolean(state.currentDm) && isOwnMessage(message);
   if (state.view !== "server" || !state.currentServer) return false;
   return isOwnMessage(message) || Boolean(state.currentServer.can_manage_messages);
+}
+
+function inDmView() {
+  return state.view === "dm" && Boolean(state.currentDm);
 }
 
 function messageActions(message, inThread = false) {
@@ -3800,20 +4100,20 @@ function messageActions(message, inThread = false) {
     };
     bar.appendChild(btn);
   };
-  if (state.view === "server") {
+  if (state.view === "server" || inDmView()) {
     add("smilePlus", "Add Reaction", e => openEmojiPop(e.currentTarget, emoji => setReaction(message, emoji, true), { custom: true }));
     if (inThread) {
       add("reply", "Reply", () => $("thread-input").focus());
     } else {
       add("reply", "Reply", () => startReply(message));
-      add("thread", "Open Thread", () => openThread(message.id));
+      if (state.view === "server") add("thread", "Open Thread", () => openThread(message.id));
     }
   }
   if (state.view === "server" && canPinIn(state.currentServer, state.currentChannel)) {
     if (message.pinned) add("pinOff", "Unpin", () => setPinned(message, false));
     else add("pin", "Pin", () => setPinned(message, true));
   }
-  if (state.view === "server" && isOwnMessage(message) && message.content) {
+  if ((state.view === "server" || inDmView()) && isOwnMessage(message) && message.content && !parseStickerToken(message.content)) {
     add("pencil", "Edit", () => startEditMessage(message.id));
   }
   if (!isOwnMessage(message)) add("eyeOff", "Hide for Me", () => setHidden(message.id, true));
@@ -3864,6 +4164,11 @@ function startEditMessage(id) {
     }
     if (encodeCustomEmojis(text) === message.content) return finish();
     try {
+      if (inDmView()) {
+        await invoke("edit_dm", { userId: state.currentDm.user, messageId: message.id, content: encodeCustomEmojis(text) });
+        await selectDm(state.currentDm.user, state.currentDm.name);
+        return;
+      }
       await invoke("edit_message", {
         serverId: state.currentServer.id,
         channelId: state.currentChannel.id,
@@ -3910,6 +4215,12 @@ function openDeleteMessage(message) {
 
 async function deleteMessage(message) {
   try {
+    if (inDmView()) {
+      await invoke("delete_dm", { userId: state.currentDm.user, messageId: message.id });
+      hideModals();
+      await selectDm(state.currentDm.user, state.currentDm.name);
+      return;
+    }
     await invoke("delete_message", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
@@ -4111,6 +4422,107 @@ async function saveOverlaySettings(changes) {
   }
 }
 
+const MIC_METER_INTERVAL_MS = 80;
+let micMeterTimer = null;
+
+function renderVoiceInputSettings() {
+  const v = voiceInputState(state.voice);
+  const card = $("input-mode").closest(".settings-card");
+  card.dataset.mode = v.mode;
+  for (const button of $("input-mode").querySelectorAll("button")) {
+    const on = button.dataset.mode === v.mode;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-checked", String(on));
+  }
+  $("input-mode-note").textContent = inputModeCopy(v.mode).text;
+  $("talk-key").value = v.talkKey;
+  const release = $("talk-release");
+  if (!release.options.length) {
+    for (const [ms, label] of TALK_RELEASE_OPTIONS) release.appendChild(new Option(label, String(ms)));
+  }
+  release.value = String(v.releaseMs);
+  $("sensitivity-auto").checked = v.auto;
+  $("sensitivity-label").textContent = sensitivityLabel(v.auto, v.thresholdDb);
+  $("sensitivity-block").classList.toggle("auto", v.auto);
+  $("mic-meter").classList.toggle("auto", v.auto);
+  $("sensitivity-db").value = String(Math.round(v.thresholdDb));
+  syncRangeFill($("sensitivity-db"));
+  $("mic-meter-mark").style.left = `${meterPercent(v.thresholdDb)}%`;
+  $("mute-key").value = v.muteKey;
+  $("deafen-key").value = v.deafenKey;
+  renderUserPanel();
+  invoke("voice_hotkey_problems").then(taken => {
+    const warn = $("voice-hotkey-warning");
+    warn.textContent = taken.length ? `${taken.join(" and ")} ${taken.length === 1 ? "is" : "are"} already used by another app. Pick a different combination.` : "";
+    warn.classList.toggle("hidden", !taken.length);
+  }).catch(() => {});
+}
+
+async function saveVoiceInput(command, args) {
+  try {
+    state.voice = await invoke(command, args);
+  } catch (e) {
+    toast(String(e));
+  }
+  renderVoiceInputSettings();
+}
+
+function wireVoiceInputSettings() {
+  for (const button of $("input-mode").querySelectorAll("button")) {
+    button.onclick = () => {
+      const v = voiceInputState(state.voice);
+      saveVoiceInput("set_input_mode", { mode: button.dataset.mode, talkKey: v.talkKey, releaseMs: v.releaseMs });
+    };
+  }
+  wireHotkeyInput($("talk-key"), combo => {
+    const v = voiceInputState(state.voice);
+    saveVoiceInput("set_input_mode", { mode: v.mode, talkKey: combo, releaseMs: v.releaseMs });
+  });
+  $("talk-release").addEventListener("change", e => {
+    const v = voiceInputState(state.voice);
+    saveVoiceInput("set_input_mode", { mode: v.mode, talkKey: v.talkKey, releaseMs: Number(e.target.value) });
+  });
+  $("sensitivity-auto").addEventListener("change", e => {
+    saveVoiceInput("set_sensitivity", { auto: e.target.checked, thresholdDb: voiceInputState(state.voice).thresholdDb });
+  });
+  $("sensitivity-db").addEventListener("input", e => {
+    const db = Number(e.target.value);
+    $("sensitivity-label").textContent = sensitivityLabel(false, db);
+    $("mic-meter-mark").style.left = `${meterPercent(db)}%`;
+  });
+  $("sensitivity-db").addEventListener("change", e => {
+    saveVoiceInput("set_sensitivity", { auto: false, thresholdDb: Number(e.target.value) });
+  });
+  wireHotkeyInput($("mute-key"), combo => saveVoiceInput("set_voice_hotkeys", { mute: combo, deafen: voiceInputState(state.voice).deafenKey }), { clearable: true });
+  wireHotkeyInput($("deafen-key"), combo => saveVoiceInput("set_voice_hotkeys", { mute: voiceInputState(state.voice).muteKey, deafen: combo }), { clearable: true });
+}
+
+function startMicMeter() {
+  stopMicMeter();
+  micMeterTimer = setInterval(async () => {
+    let db = SILENCE_DB;
+    try {
+      db = await invoke("mic_level");
+    } catch {}
+    const listening = state.micTesting || Boolean(state.voiceChannelId);
+    const v = voiceInputState(state.voice);
+    $("mic-meter-fill").style.width = `${listening ? meterPercent(db) : 0}%`;
+    $("mic-meter").dataset.state = meterState(db, v.auto, v.thresholdDb, listening);
+    $("mic-meter-note").classList.toggle("hidden", listening);
+  }, MIC_METER_INTERVAL_MS);
+}
+
+function stopMicMeter() {
+  clearInterval(micMeterTimer);
+  micMeterTimer = null;
+}
+
+function setTalking(talking) {
+  state.talking = talking;
+  $("mute-btn").classList.toggle("talking", talking && !state.voice.muted);
+  renderUserPanel();
+}
+
 function hotkeyFromEvent(e) {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
   const parts = [];
@@ -4126,7 +4538,7 @@ function hotkeyFromEvent(e) {
   return parts.join("+");
 }
 
-function wireHotkeyInput(input, field) {
+function wireHotkeyInput(input, onPick, { clearable = false } = {}) {
   input.addEventListener("focus", () => {
     input.dataset.prev = input.value;
     input.value = "Press keys...";
@@ -4140,12 +4552,19 @@ function wireHotkeyInput(input, field) {
       input.blur();
       return;
     }
+    if (clearable && (e.key === "Backspace" || e.key === "Delete")) {
+      input.value = "";
+      input.dataset.prev = "";
+      input.blur();
+      onPick("");
+      return;
+    }
     const combo = hotkeyFromEvent(e);
     if (!combo) return;
     input.value = combo;
     input.dataset.prev = combo;
     input.blur();
-    saveOverlaySettings({ [field]: combo });
+    onPick(combo);
   });
 }
 
@@ -4736,9 +5155,12 @@ function maybePromptRoles() {
 function syncRulesGate() {
   const gated = state.view === "server" && Boolean(state.currentServer && state.currentServer.needs_rules);
   $("rules-gate").classList.toggle("hidden", !gated);
-  const lock = gated ? null : composerLock({ view: state.view, server: state.currentServer, channel: state.currentChannel });
+  const where = { view: state.view, server: state.currentServer, channel: state.currentChannel };
+  const accessLock = gated ? null : channelAccessLock(where);
+  const lock = gated ? null : accessLock || composerLock(where);
   $("announce-gate").classList.toggle("hidden", !lock);
   if (lock) {
+    $("announce-gate-icon").replaceChildren(svgIcon(accessLock ? "lock" : "megaphone", 22));
     $("announce-gate-title").textContent = lock.title;
     $("announce-gate-text").textContent = lock.text;
   }
@@ -6484,6 +6906,8 @@ function renderStatusExpiry() {
 
 const EMOJI_TOKEN_RE = /<:([a-z0-9_]{2,32}):([A-Za-z0-9]{1,128}@[A-Za-z0-9]{1,128})>/g;
 const MAX_EMOJIS = 50;
+const MAX_STICKERS = 30;
+const MAX_EMOTICONS = 50;
 const MAX_SOUNDS = 24;
 const MAX_SOUND_SECONDS = 15;
 const expressionUrls = new Map();
@@ -6516,6 +6940,8 @@ function parseEmojiToken(text) {
 }
 
 function decodeCustomEmojis(text) {
+  const sticker = parseStickerToken(text);
+  if (sticker) return `:${sticker.name}: sticker`;
   return String(text || "").replace(EMOJI_TOKEN_RE, ":$1:");
 }
 
@@ -6528,32 +6954,41 @@ function isEmojiOnly(text) {
   return tokens.length > 0 && tokens.length <= 27 && !text.replace(EMOJI_TOKEN_RE, "").trim();
 }
 
-let shareableEmojis = [];
+const NO_SHARED_EXPRESSIONS = { emojis: [], stickers: [], emoticons: [] };
+let shareable = NO_SHARED_EXPRESSIONS;
 
 async function loadShareableEmojis() {
   try {
-    shareableEmojis = await invoke("list_shareable_emojis");
+    shareable = { ...NO_SHARED_EXPRESSIONS, ...(await invoke("list_shareable_expressions")) };
   } catch {
-    shareableEmojis = [];
+    shareable = NO_SHARED_EXPRESSIONS;
   }
 }
 
+function serverHere() {
+  return state.view === "server" ? state.currentServer : null;
+}
+
+function mayUseOtherServers() {
+  const here = serverHere();
+  return !here || here.can_use_external !== false;
+}
+
+function expressionGroups(kind) {
+  const external = kind === "emoticons" || mayUseOtherServers();
+  return pickerGroups(serverHere(), shareable[kind], kind, { external });
+}
+
 function usableCustomEmojis() {
-  const here = state.view === "server" ? state.currentServer : null;
-  const local = here && here.emojis && here.emojis.length ? { id: here.id, name: here.name, emojis: here.emojis } : null;
-  const others = new Map();
-  for (const e of shareableEmojis) {
-    if (here && e.server === here.id) continue;
-    if (!others.has(e.server)) others.set(e.server, { id: e.server, name: e.server_name, emojis: [] });
-    others.get(e.server).emojis.push({ name: e.name, image: e.image });
-  }
-  return { local, external: [...others.values()] };
+  const groups = expressionGroups("emojis").map(g => ({ ...g, emojis: g.items }));
+  return { local: groups.find(g => g.local) || null, external: groups.filter(g => !g.local) };
 }
 
 function findCustomEmoji(name) {
   const { local, external } = usableCustomEmojis();
   return (local && local.emojis.find(e => e.name === name))
     || external.flatMap(g => g.emojis).find(e => e.name === name)
+    || catalogPickNamed(name)
     || null;
 }
 
@@ -6576,34 +7011,151 @@ function appendRichText(div, text) {
   if (last < text.length) appendTextWithMentions(div, text.slice(last));
 }
 
-function appendCustomEmojiSections(grid, query, onPick, localOnly = false) {
-  const { local, external } = usableCustomEmojis();
-  const groups = [local, ...(localOnly ? [] : external)].filter(Boolean);
-  let any = false;
-  for (const group of groups) {
-    const matches = group.emojis.filter(e => !query || e.name.includes(query));
-    if (!matches.length) continue;
-    any = true;
-    const head = el("div", "emoji-section");
-    head.appendChild(el("span", null, group.name));
-    if (group !== local) head.appendChild(el("span", "emoji-section-tag", "Other Server"));
-    grid.appendChild(head);
-    for (const e of matches) {
-      const btn = el("button", "custom");
-      btn.title = `:${e.name}:`;
-      btn.appendChild(customEmojiImg(e.name, e.image));
-      btn.onclick = () => onPick(e);
-      grid.appendChild(btn);
-    }
+function pickerSection(grid, title, { other = false, addKind = null } = {}) {
+  const head = el("div", "emoji-section");
+  head.appendChild(el("span", "emoji-section-name", title));
+  if (other) head.appendChild(el("span", "emoji-section-tag", "Other Server"));
+  if (addKind) {
+    const add = el("button", "emoji-section-add");
+    add.type = "button";
+    add.title = `Add ${EXPRESSION_KINDS[addKind].one} to this server`;
+    add.append(svgIcon("plus", 12), el("span", null, "Add"));
+    add.onclick = e => {
+      e.stopPropagation();
+      openAddExpression(addKind);
+    };
+    head.appendChild(add);
   }
-  if (any) grid.appendChild(el("div", "emoji-section", "Standard"));
+  grid.appendChild(head);
 }
 
-async function prepareEmojiImage(src) {
+function canAddHere(kind) {
+  const here = serverHere();
+  return Boolean(here && here[`can_add_${kind}`]);
+}
+
+function appendExpressionGroups(grid, kind, query, renderItem, { localOnly = false, add = true } = {}) {
+  const groups = expressionGroups(kind).filter(g => g.local || !localOnly);
+  const label = kind === "emoticons" ? "text" : null;
+  const addable = add && canAddHere(kind) && !query;
+  if (addable && !groups.some(g => g.local)) {
+    pickerSection(grid, serverHere().name, { addKind: kind });
+    grid.appendChild(el("div", "picker-empty", `No ${EXPRESSION_KINDS[kind].many} here yet`));
+  }
+  let any = false;
+  for (const group of groups) {
+    const matches = expressionMatches(group.items, query, label);
+    if (!matches.length) continue;
+    any = true;
+    pickerSection(grid, group.name, { other: !group.local, addKind: group.local && addable ? kind : null });
+    for (const item of matches) grid.appendChild(renderItem(item));
+  }
+  return any;
+}
+
+function appendCustomEmojiSections(grid, query, onPick, localOnly = false, add = false, more = null) {
+  appendExpressionGroups(grid, "emojis", query, e => {
+    const btn = el("button", "custom");
+    btn.title = `:${e.name}:`;
+    btn.appendChild(customEmojiImg(e.name, e.image));
+    btn.onclick = () => onPick(e);
+    return btn;
+  }, { localOnly, add });
+  if (more) more(grid, query);
+  if (grid.childElementCount) grid.appendChild(el("div", "emoji-section", "Standard"));
+}
+
+const CATALOG_PICKER_SLOTS = 16;
+const catalogPicker = { results: new Map(), timer: null, seq: 0 };
+const catalogPicks = new Map();
+
+function catalogPickNamed(name) {
+  for (const pick of catalogPicks.values()) if (pick.name === name) return pick;
+  return null;
+}
+
+function appendCatalogEmojis(grid, q) {
+  if (!account.server_emojis || !mayUseOtherServers()) return;
+  pickerSection(grid, "emoji.gg");
+  const slots = [];
+  for (let i = 0; i < CATALOG_PICKER_SLOTS; i++) {
+    const slot = el("button", "catalog-slot");
+    slot.type = "button";
+    slot.disabled = true;
+    grid.appendChild(slot);
+    slots.push(slot);
+  }
+  const fill = results => {
+    if (!slots[0].isConnected) return;
+    if (!results.length) {
+      slots[0].replaceWith(el("div", "picker-empty catalog-none", "Nothing on emoji.gg matches that"));
+      for (const slot of slots.slice(1)) slot.remove();
+      return;
+    }
+    slots.forEach((slot, i) => {
+      const item = results[i];
+      if (!item) return;
+      slot.disabled = false;
+      slot.title = `${item.title} from emoji.gg`;
+      const img = el("img");
+      img.loading = "lazy";
+      img.alt = item.title;
+      img.draggable = false;
+      img.src = viaAccountServer(item.url);
+      img.onerror = () => slot.classList.add("missing");
+      slot.appendChild(img);
+      slot.onclick = () => useCatalogEmoji(item, slot);
+    });
+  };
+  const cached = catalogPicker.results.get(q);
+  if (cached) {
+    fill(cached);
+    return;
+  }
+  const seq = ++catalogPicker.seq;
+  clearTimeout(catalogPicker.timer);
+  catalogPicker.timer = setTimeout(async () => {
+    try {
+      const page = await invoke("search_emoji_catalog", { query: q, category: null, page: 0 });
+      const results = (page.results || []).slice(0, CATALOG_PICKER_SLOTS);
+      catalogPicker.results.set(q, results);
+      if (seq === catalogPicker.seq) fill(results);
+    } catch {
+      if (seq === catalogPicker.seq) fill([]);
+    }
+  }, q ? 300 : 0);
+}
+
+async function useCatalogEmoji(item, slot) {
+  if (slot.classList.contains("busy")) return;
+  const known = catalogPicks.get(item.id);
+  if (known) {
+    insertIntoComposer(`:${known.name}: `);
+    return;
+  }
+  slot.classList.add("busy");
+  try {
+    const { local, external } = usableCustomEmojis();
+    const taken = [local, ...external].filter(Boolean).flatMap(g => g.emojis.map(e => e.name))
+      .concat([...catalogPicks.values()].map(p => p.name));
+    const name = freeExpressionName(expressionName(item.title, "emoji"), taken);
+    const src = await invoke("fetch_catalog_image", { url: item.url });
+    const prepared = await prepareEmojiImage(src, CATALOG_SIZES.emojis);
+    const token = parseEmojiToken(await invoke("store_catalog_emoji", { name, data: prepared.data }));
+    if (!token) throw new Error("that emoji could not be saved");
+    catalogPicks.set(item.id, token);
+    insertIntoComposer(`:${token.name}: `);
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    slot.classList.remove("busy");
+  }
+}
+
+async function prepareEmojiImage(src, { size = 128, maxGif = 256 * 1024 } = {}) {
   const blob = await (await fetch(src)).blob();
-  const MAX_GIF_BYTES_KEPT_ANIMATED = 256 * 1024;
-  const EMOJI_SIZE_PX = 128;
-  if (blob.type === "image/gif" && blob.size <= MAX_GIF_BYTES_KEPT_ANIMATED) {
+  const EMOJI_SIZE_PX = size;
+  if (blob.type === "image/gif" && blob.size <= maxGif) {
     return { data: await blobToBase64(blob), url: src, flattened: false };
   }
   const img = await new Promise((resolve, reject) => {
@@ -6689,37 +7241,91 @@ function pendingExpressionRow(preview, name, onSave) {
   return row;
 }
 
+function expressionDeleteButton(label, onDelete) {
+  const del = el("button", "icon-btn expr-delete");
+  del.title = label;
+  del.appendChild(svgIcon("trash", 18));
+  del.onclick = async () => {
+    try {
+      await onDelete();
+      await refreshExpressions();
+    } catch (err) {
+      toast(String(err));
+    }
+  };
+  return del;
+}
+
+function renderImageExpressions(server, { kind, listId, countId, max, removeCommand, previewClass, label }) {
+  const items = server[kind] || [];
+  $(countId).textContent = `${items.length} of ${max} slots used`;
+  const list = $(listId);
+  list.replaceChildren();
+  for (const item of items) {
+    const row = el("div", "expr-row");
+    row.appendChild(customEmojiImg(item.name, item.image, previewClass));
+    row.appendChild(el("span", "expr-name", `:${item.name}:`));
+    if (server.can_manage_expressions) {
+      row.appendChild(expressionDeleteButton(`Delete :${item.name}:`, () => invoke(removeCommand, { serverId: server.id, name: item.name })));
+    }
+    list.appendChild(row);
+  }
+  if (!items.length) list.appendChild(el("div", "manage-empty", `No ${label} yet`));
+}
+
 function renderEmojiSettings(server) {
   const emojis = server.emojis || [];
   $("emoji-share-toggle").checked = Boolean(server.emojis_shareable);
   $("emoji-share-toggle").disabled = !server.can_manage_server;
   $("emoji-share-row").classList.toggle("readonly", !server.can_manage_server);
-  $("emoji-upload").classList.toggle("hidden", !server.can_manage_expressions);
+  $("emoji-upload").classList.toggle("hidden", !server.can_add_emojis);
   $("emoji-upload").disabled = emojis.length >= MAX_EMOJIS;
-  $("emoji-count").textContent = `${emojis.length} of ${MAX_EMOJIS} slots used`;
-  const list = $("emoji-list");
+  $("emoji-browse").classList.toggle("hidden", !server.can_add_emojis || !account.server_emojis);
+  $("emoji-browse").disabled = emojis.length >= MAX_EMOJIS;
+  renderRoleAccess(server, "emojis");
+  renderImageExpressions(server, {
+    kind: "emojis", listId: "emoji-list", countId: "emoji-count", max: MAX_EMOJIS,
+    removeCommand: "remove_emoji", previewClass: "custom-emoji expr-preview", label: "custom emojis",
+  });
+}
+
+function renderStickerSettings(server) {
+  const stickers = server.stickers || [];
+  $("sticker-share-toggle").checked = Boolean(server.stickers_shareable);
+  $("sticker-share-toggle").disabled = !server.can_manage_server;
+  $("sticker-share-row").classList.toggle("readonly", !server.can_manage_server);
+  $("sticker-upload").classList.toggle("hidden", !server.can_add_stickers);
+  $("sticker-upload").disabled = stickers.length >= MAX_STICKERS;
+  $("sticker-browse").classList.toggle("hidden", !server.can_add_stickers || !account.server_emojis);
+  $("sticker-browse").disabled = stickers.length >= MAX_STICKERS;
+  renderRoleAccess(server, "stickers");
+  renderImageExpressions(server, {
+    kind: "stickers", listId: "sticker-list", countId: "sticker-count", max: MAX_STICKERS,
+    removeCommand: "remove_sticker", previewClass: "sticker-img expr-preview sticker-preview", label: "stickers",
+  });
+}
+
+function renderEmoticonSettings(server) {
+  const faces = server.emoticons || [];
+  $("emoticon-share-toggle").checked = Boolean(server.emoticons_shareable);
+  $("emoticon-share-toggle").disabled = !server.can_manage_server;
+  $("emoticon-share-row").classList.toggle("readonly", !server.can_manage_server);
+  $("emoticon-add").classList.toggle("hidden", !server.can_add_emoticons);
+  $("emoticon-add").disabled = faces.length >= MAX_EMOTICONS;
+  $("emoticon-count").textContent = `${faces.length} of ${MAX_EMOTICONS} slots used`;
+  renderRoleAccess(server, "emoticons");
+  const list = $("emoticon-list");
   list.replaceChildren();
-  for (const e of emojis) {
+  for (const face of faces) {
     const row = el("div", "expr-row");
-    row.appendChild(customEmojiImg(e.name, e.image, "custom-emoji expr-preview"));
-    row.appendChild(el("span", "expr-name", `:${e.name}:`));
+    row.appendChild(el("span", "expr-face", face.text));
+    row.appendChild(el("span", "expr-name", `:${face.name}:`));
     if (server.can_manage_expressions) {
-      const del = el("button", "icon-btn expr-delete");
-      del.title = `Delete :${e.name}:`;
-      del.appendChild(svgIcon("trash", 18));
-      del.onclick = async () => {
-        try {
-          await invoke("remove_emoji", { serverId: server.id, name: e.name });
-          await refreshExpressions();
-        } catch (err) {
-          toast(String(err));
-        }
-      };
-      row.appendChild(del);
+      row.appendChild(expressionDeleteButton(`Delete :${face.name}:`, () => invoke("remove_emoticon", { serverId: server.id, name: face.name })));
     }
     list.appendChild(row);
   }
-  if (!emojis.length) list.appendChild(el("div", "manage-empty", "No custom emojis yet"));
+  if (!faces.length) list.appendChild(el("div", "manage-empty", "No emoticons yet"));
 }
 
 async function uploadEmoji() {
@@ -7150,7 +7756,8 @@ function mentionSuggestions(query) {
 
 function emojiGroupsHere() {
   const { local, external } = usableCustomEmojis();
-  return [local, ...external].filter(Boolean);
+  const faces = expressionGroups("emoticons").map(g => ({ name: g.name, emojis: [], emoticons: g.items }));
+  return [local, ...external].filter(Boolean).concat(faces, [{ name: "Commy", emojis: [], emoticons: builtinEmoticons() }]);
 }
 
 function suggestionsFor(token, input) {
@@ -7179,6 +7786,8 @@ function suggestionRow(item) {
     const glyph = el("span", "suggest-glyph");
     glyph.appendChild(customEmojiImg(item.name, item.image));
     row.append(glyph, el("span", "mention-name", `:${item.name}:`), el("span", "mention-hint", item.server));
+  } else if (item.kind === "emoticon") {
+    row.append(el("span", "mention-name", `:${item.name}`), el("span", "suggest-face", item.text), el("span", "mention-hint", item.server));
   } else if (item.kind === "standard") {
     row.append(el("span", "suggest-glyph", item.emoji), el("span", "mention-name", item.name));
   } else if (item.kind === "command") {
@@ -7291,6 +7900,12 @@ function appendAfterText(content, mark) {
 
 function buildMessageContent(text) {
   const div = el("div", "msg-content");
+  const sticker = parseStickerToken(text);
+  if (sticker) {
+    div.classList.add("sticker-msg");
+    div.appendChild(customEmojiImg(sticker.name, sticker.image, "sticker-img"));
+    return div;
+  }
   if (looksLikeInviteLink(text)) {
     div.appendChild(inviteCard(text));
     return div;
@@ -7691,7 +8306,10 @@ function renderUserPanel() {
   setIcon($("mute-btn"), state.voice.muted ? "micOff" : "mic");
   setIcon($("deafen-btn"), state.voice.deafened ? "headsetOff" : "headset");
   setIcon($("settings-btn"), "gear");
-  $("mute-btn").title = state.voice.muted ? "Unmute" : "Mute";
+  const v = voiceInputState(state.voice);
+  const talkTitle = talkKeyTitle(v.mode, v.talkKey, Boolean(state.talking));
+  $("mute-btn").title = state.voice.muted ? "Unmute" : talkTitle || "Mute";
+  $("mute-btn").classList.toggle("talking", Boolean(state.talking) && !state.voice.muted);
   $("deafen-btn").title = state.voice.deafened ? "Undeafen" : "Deafen";
   if (state.currentServer && state.voiceChannelId && state.view === "server") renderChannels();
 }
@@ -7771,7 +8389,6 @@ function setViewMode(mode) {
   $("server-name").classList.toggle("hidden", dm);
   if (dm) paintSidebarBanner();
   $("dm-search").classList.toggle("hidden", !dm);
-  $("attach-btn").classList.toggle("hidden", dm);
   paintRailContext();
   syncAttachAccess();
   $("home-btn").classList.toggle("active", dm);
@@ -7804,7 +8421,7 @@ async function selectServer(serverId) {
   state.historyAnchor = null;
   setViewMode("server");
   state.currentDm = null;
-  const firstText = state.currentServer.channels.find(c => c.kind === "text");
+  const firstText = state.currentServer.channels.find(c => c.kind === "text" && c.can_view !== false);
   renderServerRail();
   renderMembers();
   await selectChannel(firstText || null);
@@ -8033,6 +8650,7 @@ async function renderDmThreads() {
 }
 
 async function selectDm(userId, name) {
+  if (!state.currentDm || state.currentDm.user !== userId) cancelReply();
   state.currentDm = { user: userId, name };
   clearDmUnread(userId);
   if (state.view !== "dm") setViewMode("dm");
@@ -8045,6 +8663,7 @@ async function selectDm(userId, name) {
   renderDmRequestBar(threads.find(t => t.user === userId) || null);
   const messages = await invoke("get_dm_messages", { userId });
   renderMessages(messages.map(dmToRenderable));
+  renderTypingStrip();
 }
 
 function renderDmHeader(userId, name) {
@@ -8199,8 +8818,11 @@ function dmToRenderable(m) {
     author_name: m.from_name,
     content: m.content,
     created_at: m.created_at,
-    edited: false,
-    attachments: [],
+    edited: Boolean(m.edited),
+    reply_to: m.reply_to || null,
+    reply_preview: m.reply_preview || null,
+    reactions: m.reactions || [],
+    attachments: m.attachments || [],
     pending: Boolean(m.pending),
   };
 }
@@ -8227,8 +8849,10 @@ async function sendDm() {
   if (!content || !state.currentDm) return;
   input.value = "";
   fitComposer(input);
+  const replyTo = state.replyingTo ? state.replyingTo.id : null;
+  cancelReply();
   try {
-    await invoke("send_dm", { userId: state.currentDm.user, content: encodeCustomEmojis(content) });
+    await invoke("send_dm", { userId: state.currentDm.user, content: encodeCustomEmojis(content), replyTo });
     await selectDm(state.currentDm.user, state.currentDm.name);
   } catch (e) {
     input.value = content;
@@ -8249,6 +8873,7 @@ async function selectChannel(channel) {
   $("channel-topic").textContent = (channel && channel.topic) || "";
   $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
   syncPinButton();
+  renderTypingStrip();
   if (!channel) return renderMessages([]);
   renderMessages(await fetchChannelMessages(channel));
 }
@@ -8268,6 +8893,7 @@ async function sendMessage() {
   input.value = "";
   fitComposer(input);
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
+  typingSender.sent();
   $("messages").dataset.view = "";
   state.historyAnchor = null;
   cancelReply();
@@ -8556,6 +9182,15 @@ function toggleComposerMenu() {
 
 async function attachFromMenu(kind) {
   closeFloating();
+  if (inDmView()) {
+    try {
+      const sent = await invoke("attach_dm_file", { userId: state.currentDm.user, kind });
+      if (sent) await selectDm(state.currentDm.user, state.currentDm.name);
+    } catch (e) {
+      toast(String(e));
+    }
+    return;
+  }
   if (!state.currentServer || !state.currentChannel) return;
   try {
     const sent = await invoke("attach_file", {
@@ -8932,11 +9567,12 @@ function toggleStageFullscreen() {
 }
 
 async function uploadFileObject(file) {
-  if (state.view !== "server" || !state.currentServer || !state.currentChannel) {
-    toast("Open a server channel to share files");
+  const dm = inDmView();
+  if (!dm && (state.view !== "server" || !state.currentServer || !state.currentChannel)) {
+    toast("Open a channel or conversation to share files");
     return;
   }
-  if (!canAttachHere()) {
+  if (!dm && !canAttachHere()) {
     toast("You can't send files or images in this server");
     return;
   }
@@ -8955,6 +9591,11 @@ async function uploadFileObject(file) {
     ? file.name
     : `pasted-${Date.now()}.png`;
   try {
+    if (dm) {
+      await invoke("attach_dm_bytes", { userId: state.currentDm.user, filename: name, data: btoa(binary) });
+      await selectDm(state.currentDm.user, state.currentDm.name);
+      return;
+    }
     await invoke("attach_bytes", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
@@ -9202,12 +9843,9 @@ function wireEvents() {
     const picker = $("emoji-picker");
     const opening = picker.classList.contains("hidden");
     picker.classList.toggle("hidden");
-    if (opening) {
-      renderEmojiGrid("");
-      $("emoji-search").value = "";
-      $("emoji-search").focus();
-    }
+    if (opening) setPickerKind(pickerKind);
   };
+  for (const tab of $("picker-tabs").querySelectorAll("button")) tab.onclick = () => setPickerKind(tab.dataset.kind);
   $("emoji-search").addEventListener("input", e => renderEmojiGrid(e.target.value));
   document.addEventListener("mousedown", e => {
     const picker = $("emoji-picker");
@@ -9219,6 +9857,52 @@ function wireEvents() {
 
   $("server-settings-btn").onclick = () => openServerSettings();
   $("emoji-upload").onclick = uploadEmoji;
+  $("emoji-browse").onclick = () => openCatalog("emojis");
+  $("sticker-browse").onclick = () => openCatalog("stickers");
+  $("sticker-upload").onclick = () => openCatalog("stickers", { upload: true });
+  $("emoticon-add").onclick = () => openEmoticonModal();
+  $("emoticon-save").onclick = saveEmoticon;
+  $("emoticon-cancel").onclick = hideModals;
+  for (const id of ["emoticon-text", "emoticon-name"]) {
+    $(id).addEventListener("keydown", e => {
+      if (e.key === "Enter") saveEmoticon();
+    });
+  }
+  $("emoticon-text").addEventListener("input", () => {
+    const named = builtinEmoticons().find(f => f.text === $("emoticon-text").value.trim());
+    if (named && !$("emoticon-name").value) $("emoticon-name").value = named.name;
+  });
+  $("catalog-close").replaceChildren(svgIcon("close", 18));
+  $("catalog-close").onclick = hideModals;
+  $("catalog-add").onclick = addFromCatalog;
+  $("catalog-upload").onclick = uploadToCatalog;
+  $("catalog-name").addEventListener("keydown", e => {
+    if (e.key === "Enter") addFromCatalog();
+  });
+  $("catalog-search").addEventListener("input", e => {
+    clearTimeout(catalog.timer);
+    catalog.timer = setTimeout(() => {
+      catalog.query = e.target.value.trim();
+      catalog.page = 0;
+      loadCatalog();
+    }, 300);
+  });
+  const saveExpressionSharing = async () => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_expression_sharing", {
+        serverId: server.id,
+        stickers: $("sticker-share-toggle").checked,
+        emoticons: $("emoticon-share-toggle").checked,
+      });
+      await refreshExpressions();
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+  $("sticker-share-toggle").addEventListener("change", saveExpressionSharing);
+  $("emoticon-share-toggle").addEventListener("change", saveExpressionSharing);
   $("sound-upload").onclick = uploadSound;
   const saveExpressionSettings = async () => {
     const server = state.currentServer;
@@ -9598,8 +10282,9 @@ function wireEvents() {
   });
   $("overlay-opacity").addEventListener("change", e => saveOverlaySettings({ opacity: Number(e.target.value) / 100 }));
   $("overlay-chat").addEventListener("change", e => saveOverlaySettings({ show_chat: e.target.checked }));
-  wireHotkeyInput($("overlay-toggle-key"), "toggle_hotkey");
-  wireHotkeyInput($("overlay-chat-key"), "chat_hotkey");
+  wireHotkeyInput($("overlay-toggle-key"), combo => saveOverlaySettings({ toggle_hotkey: combo }));
+  wireHotkeyInput($("overlay-chat-key"), combo => saveOverlaySettings({ chat_hotkey: combo }));
+  wireVoiceInputSettings();
   $("dm-policy").addEventListener("change", saveDmSettings);
   $("keep-default").addEventListener("change", e => setHistoryWindow(null, e.target.value));
   $("spam-filter-toggle").addEventListener("change", saveDmSettings);
@@ -9974,7 +10659,7 @@ function wireEvents() {
   $("delete-message-cancel").onclick = hideModals;
   $("message-input").addEventListener("keydown", e => {
     if (e.key !== "ArrowUp" || e.target.value || state.view !== "server") return;
-    const mine = (state.renderedMessages || []).filter(m => isOwnMessage(m) && m.content && !isHidden(m.id));
+    const mine = (state.renderedMessages || []).filter(m => isOwnMessage(m) && m.content && !parseStickerToken(m.content) && !isHidden(m.id));
     if (!mine.length) return;
     e.preventDefault();
     startEditMessage(mine[mine.length - 1].id);
@@ -10031,6 +10716,8 @@ function wireEvents() {
   $("pins-modal-close").onclick = hideModals;
   $("announce-gate-icon").appendChild(svgIcon("megaphone", 22));
   $("channel-edit-reset").onclick = () => openChannelSettings(editingChannelId);
+  $("channel-access-save").onclick = saveChannelAccess;
+  $("channel-access-reset").onclick = () => openChannelSettings(editingChannelId, "permissions");
   $("channel-settings-close").onclick = closeSettingsLayers;
   $("channel-delete-btn").onclick = openDeleteChannel;
   $("channel-delete-nav").onclick = openDeleteChannel;
@@ -10137,7 +10824,11 @@ function wireEvents() {
     }
   });
 
-  $("message-input").addEventListener("input", e => scheduleLinkDraft(e.inputType === "insertFromPaste" ? 0 : LINK_DRAFT_DELAY_MS));
+  $("message-input").addEventListener("input", e => {
+    scheduleLinkDraft(e.inputType === "insertFromPaste" ? 0 : LINK_DRAFT_DELAY_MS);
+    noteTyped(e.target);
+  });
+  $("thread-input").addEventListener("input", e => noteTyped(e.target));
   setIcon($("link-draft-dismiss"), "close", 16);
   $("link-draft-dismiss").onclick = dismissLinkDraft;
   setIcon($("lightbox-open"), "openExternal", 16);
@@ -10261,6 +10952,15 @@ function wireEvents() {
         await enterDmMode();
       }
     });
+    window.__TAURI__.event.listen("voice-left", async event => {
+      if (state.voiceServer && state.voiceServer.id === event.payload) {
+        state.voiceChannelId = null;
+        state.voiceServer = null;
+        state.sharing = false;
+        toast("You left voice because that channel is now locked to other roles");
+      }
+      await refreshCurrentServer();
+    });
     window.__TAURI__.event.listen("overlay-hello", () => {
       lastOverlayRoster = "";
       pushOverlayRoster(true);
@@ -10332,10 +11032,17 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("camera-frame", event => showCameraFrame(event.payload));
     window.__TAURI__.event.listen("message-created", event => onMessageCreated(event.payload));
+    window.__TAURI__.event.listen("typing", event => onTyping(event.payload));
     window.__TAURI__.event.listen("messages-caught-up", event => onMessagesCaughtUp(event.payload));
     window.__TAURI__.event.listen("dm-received", event => onDmReceived(event.payload));
     window.__TAURI__.event.listen("notification-clicked", event => openNotificationTarget(event.payload));
     window.__TAURI__.event.listen("tray-toggle-mute", () => $("mute-btn").click());
+    window.__TAURI__.event.listen("voice-settings-changed", event => {
+      state.voice = event.payload;
+      renderUserPanel();
+      toast(state.voice.deafened ? "Deafened" : state.voice.muted ? "Muted" : "Unmuted");
+    });
+    window.__TAURI__.event.listen("talk-key", event => setTalking(Boolean(event.payload)));
     window.__TAURI__.event.listen("voice-speaking", event => {
       setSpeaking(event.payload.user, Boolean(event.payload.speaking));
     });
@@ -10356,11 +11063,40 @@ async function stopMicTest() {
   $("mic-test-btn").textContent = "Start Test";
 }
 
+const EXPRESSION_KINDS = {
+  emojis: { one: "an emoji", many: "emojis", search: "Search emojis" },
+  stickers: { one: "a sticker", many: "stickers", search: "Search stickers" },
+  emoticons: { one: "an emoticon", many: "emoticons", search: "Search emoticons" },
+};
+let pickerKind = "emojis";
+
+function setPickerKind(kind) {
+  pickerKind = kind;
+  for (const tab of $("picker-tabs").querySelectorAll("button")) {
+    const on = tab.dataset.kind === kind;
+    tab.classList.toggle("active", on);
+    tab.setAttribute("aria-selected", String(on));
+  }
+  $("emoji-search").placeholder = EXPRESSION_KINDS[kind].search;
+  $("emoji-search").value = "";
+  renderEmojiGrid("");
+  $("emoji-search").focus();
+}
+
 function renderEmojiGrid(query) {
   const grid = $("emoji-grid");
-  grid.innerHTML = "";
+  grid.replaceChildren();
+  grid.dataset.kind = pickerKind;
+  grid.scrollTop = 0;
   const q = query.trim().toLowerCase();
-  appendCustomEmojiSections(grid, q, e => insertIntoComposer(`:${e.name}: `));
+  if (pickerKind === "stickers") renderStickerTab(grid, q);
+  else if (pickerKind === "emoticons") renderEmoticonTab(grid, q);
+  else renderEmojiTab(grid, q);
+  if (!grid.childElementCount) grid.appendChild(el("div", "picker-empty", "No matches"));
+}
+
+function renderEmojiTab(grid, q) {
+  appendCustomEmojiSections(grid, q, e => insertIntoComposer(`:${e.name}: `), false, true, appendCatalogEmojis);
   const matches = EMOJI_DATA.filter(([, name]) => !q || name.includes(q)).slice(0, 160);
   for (const [emoji, name] of matches) {
     const btn = el("button", null, emoji);
@@ -10368,7 +11104,289 @@ function renderEmojiGrid(query) {
     btn.onclick = () => insertIntoComposer(emoji);
     grid.appendChild(btn);
   }
-  if (!grid.childElementCount) grid.appendChild(el("div", "dm-preview", "No matches"));
+}
+
+function renderStickerTab(grid, q) {
+  const any = appendExpressionGroups(grid, "stickers", q, sticker => {
+    const btn = el("button", "sticker-tile");
+    btn.title = sticker.name;
+    btn.appendChild(customEmojiImg(sticker.name, sticker.image, "sticker-img"));
+    btn.onclick = () => sendSticker(sticker);
+    return btn;
+  });
+  if (!any && !q && !grid.childElementCount) {
+    grid.appendChild(el("div", "picker-empty", "No stickers yet. Servers add them in Server Settings, then Stickers."));
+  }
+}
+
+function renderEmoticonTab(grid, q) {
+  const face = item => {
+    const btn = el("button", "emoticon-tile");
+    btn.title = `:${item.name}:`;
+    btn.appendChild(el("span", "emoticon-text", item.text));
+    btn.appendChild(el("span", "emoticon-name", item.name.replace(/_/g, " ")));
+    btn.onclick = () => insertIntoComposer(`${item.text} `);
+    return btn;
+  };
+  appendExpressionGroups(grid, "emoticons", q, face);
+  for (const { group, faces } of BUILTIN_EMOTICONS) {
+    const matches = expressionMatches(faces.map(([name, text]) => ({ name, text })), q, "text");
+    if (!matches.length) continue;
+    pickerSection(grid, group);
+    for (const item of matches) grid.appendChild(face(item));
+  }
+}
+
+async function sendSticker(sticker) {
+  $("emoji-picker").classList.add("hidden");
+  const content = stickerToken(sticker.name, sticker.image);
+  if (state.view === "dm" && state.currentDm) {
+    const { user, name } = state.currentDm;
+    try {
+      await invoke("send_dm", { userId: user, content });
+      await selectDm(user, name);
+    } catch (e) {
+      toast(String(e));
+    }
+    return;
+  }
+  if (!state.currentServer || !state.currentChannel) return;
+  const replyTo = state.replyingTo ? state.replyingTo.id : null;
+  $("messages").dataset.view = "";
+  cancelReply();
+  try {
+    await invoke("send_message", { serverId: state.currentServer.id, channelId: state.currentChannel.id, content, replyTo });
+    await selectChannel(state.currentChannel);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function openAddExpression(kind) {
+  $("emoji-picker").classList.add("hidden");
+  if (kind === "emoticons") openEmoticonModal();
+  else openCatalog(kind);
+}
+
+const catalog = { kind: "emojis", query: "", category: null, page: 0, results: [], picked: null, seq: 0, timer: null, busy: false };
+const CATALOG_SIZES = {
+  emojis: { size: 128, maxGif: 256 * 1024, command: "add_emoji", max: MAX_EMOJIS, list: "emojis" },
+  stickers: { size: 320, maxGif: 512 * 1024, command: "add_sticker", max: MAX_STICKERS, list: "stickers" },
+};
+
+function openCatalog(kind, { upload = false } = {}) {
+  const server = state.currentServer;
+  if (!server) return;
+  closeFloating();
+  Object.assign(catalog, { kind, query: "", category: null, page: 0, results: [], picked: null, busy: false });
+  $("catalog-title").textContent = kind === "stickers" ? "Add a sticker" : "Add an emoji";
+  $("catalog-search").value = "";
+  $("catalog-search").placeholder = kind === "stickers" ? "Search emoji.gg for a sticker" : "Search emoji.gg";
+  renderCatalogPick();
+  showModal("modal-catalog");
+  if (account.server_emojis) {
+    $("catalog-search").disabled = false;
+    $("catalog-search").focus();
+    loadCatalog();
+  } else {
+    $("catalog-search").disabled = true;
+    $("catalog-chips").replaceChildren();
+    $("catalog-grid").replaceChildren(el("div", "catalog-note", "Sign in to an account server with emoji search to browse emoji.gg. You can still upload an image."));
+  }
+  if (upload) uploadToCatalog();
+}
+
+async function loadCatalog(append = false) {
+  const seq = ++catalog.seq;
+  const grid = $("catalog-grid");
+  if (!append) grid.replaceChildren(el("div", "catalog-note", "Loading emoji.gg"));
+  try {
+    const page = await invoke("search_emoji_catalog", { query: catalog.query, category: catalog.category, page: catalog.page });
+    if (seq !== catalog.seq) return;
+    if (!$("catalog-chips").childElementCount) renderCatalogChips(page.categories || []);
+    catalog.results = append ? catalog.results.concat(page.results) : page.results;
+    renderCatalogGrid(Boolean(page.more));
+  } catch (e) {
+    if (seq === catalog.seq) grid.replaceChildren(el("div", "catalog-note", String(e)));
+  }
+}
+
+function renderCatalogChips(categories) {
+  const row = $("catalog-chips");
+  row.replaceChildren();
+  for (const c of [{ id: null, name: "Popular" }, ...categories]) {
+    const chip = el("button", "catalog-chip" + (c.id === catalog.category ? " active" : ""), c.name);
+    chip.type = "button";
+    chip.onclick = () => {
+      catalog.category = c.id;
+      catalog.page = 0;
+      for (const other of row.children) other.classList.toggle("active", other === chip);
+      loadCatalog();
+    };
+    row.appendChild(chip);
+  }
+}
+
+function renderCatalogGrid(more) {
+  const grid = $("catalog-grid");
+  grid.replaceChildren();
+  for (const item of catalog.results) {
+    const tile = el("button", "catalog-tile" + (catalog.picked && catalog.picked.id === item.id ? " picked" : ""));
+    tile.type = "button";
+    tile.title = item.title;
+    const img = el("img");
+    img.loading = "lazy";
+    img.alt = item.title;
+    img.draggable = false;
+    img.src = viaAccountServer(item.url);
+    img.onerror = () => tile.classList.add("missing");
+    tile.appendChild(img);
+    if (item.animated) tile.appendChild(el("span", "catalog-gif", "GIF"));
+    tile.onclick = () => {
+      catalog.picked = { ...item, src: img.src };
+      for (const t of grid.querySelectorAll(".catalog-tile.picked")) t.classList.remove("picked");
+      tile.classList.add("picked");
+      renderCatalogPick();
+    };
+    grid.appendChild(tile);
+  }
+  if (!catalog.results.length) grid.appendChild(el("div", "catalog-note", "Nothing on emoji.gg matches that"));
+  if (more) {
+    const next = el("button", "btn-secondary btn-small catalog-more", "Load More");
+    next.onclick = () => {
+      catalog.page += 1;
+      next.remove();
+      loadCatalog(true);
+    };
+    grid.appendChild(next);
+  }
+}
+
+function renderCatalogPick() {
+  const picked = catalog.picked;
+  const preview = $("catalog-pick-preview");
+  preview.replaceChildren();
+  preview.classList.toggle("sticker", catalog.kind === "stickers");
+  if (picked) {
+    const img = el("img");
+    img.src = picked.src;
+    img.alt = picked.title;
+    preview.appendChild(img);
+  } else {
+    preview.appendChild(svgIcon(catalog.kind === "stickers" ? "uploadFile" : "smile", 22));
+  }
+  const server = state.currentServer;
+  const taken = server ? (server[CATALOG_SIZES[catalog.kind].list] || []).map(e => e.name) : [];
+  const name = $("catalog-name");
+  name.disabled = !picked;
+  name.value = picked ? freeExpressionName(expressionName(picked.title, catalog.kind === "stickers" ? "sticker" : "emoji"), taken) : "";
+  $("catalog-add").disabled = !picked || catalog.busy;
+}
+
+async function uploadToCatalog() {
+  let src;
+  try {
+    src = await chooseImage(catalog.kind === "stickers" ? "Choose a sticker image" : "Choose an emoji image", $("server-image-file"));
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  if (!src) return;
+  catalog.picked = { id: null, title: catalog.kind === "stickers" ? "sticker" : "emoji", src, local: true };
+  for (const t of $("catalog-grid").querySelectorAll(".catalog-tile.picked")) t.classList.remove("picked");
+  renderCatalogPick();
+  $("catalog-name").focus();
+  $("catalog-name").select();
+}
+
+async function addFromCatalog() {
+  const server = state.currentServer;
+  const picked = catalog.picked;
+  if (!server || !picked || catalog.busy) return;
+  const spec = CATALOG_SIZES[catalog.kind];
+  const name = expressionName($("catalog-name").value, "");
+  if (!name) {
+    toast("Names are 2 to 32 letters, numbers or underscores");
+    return;
+  }
+  const items = server[spec.list] || [];
+  const exists = items.some(e => e.name === name);
+  if (exists && !server.can_manage_expressions) {
+    toast(`:${name}: is taken, pick another name`);
+    return;
+  }
+  if (exists && !confirm(`Replace the existing :${name}:?`)) return;
+  if (!exists && items.length >= spec.max) {
+    toast(`This server already has ${spec.max} ${catalog.kind}`);
+    return;
+  }
+  catalog.busy = true;
+  $("catalog-add").disabled = true;
+  try {
+    const src = picked.local ? picked.src : await invoke("fetch_catalog_image", { url: picked.url });
+    const prepared = await prepareEmojiImage(src, spec);
+    if (prepared.flattened) toast(`That GIF is over ${spec.maxGif / 1024} KB, so it was saved as a still image`);
+    await invoke(spec.command, { serverId: server.id, name, data: prepared.data });
+    await refreshExpressions();
+    catalog.picked = null;
+    for (const t of $("catalog-grid").querySelectorAll(".catalog-tile.picked")) t.classList.remove("picked");
+    toast(`Added :${name}: to ${server.name}`);
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    catalog.busy = false;
+    renderCatalogPick();
+  }
+}
+
+function openEmoticonModal(text = "", name = "") {
+  if (!state.currentServer) return;
+  closeFloating();
+  const ideas = $("emoticon-ideas");
+  ideas.replaceChildren();
+  for (const idea of builtinEmoticons().filter((_, i) => i % 3 === 0).slice(0, 12)) {
+    const chip = el("button", "emoticon-idea", idea.text);
+    chip.type = "button";
+    chip.title = idea.name;
+    chip.onclick = () => {
+      $("emoticon-text").value = idea.text;
+      $("emoticon-name").value = idea.name;
+    };
+    ideas.appendChild(chip);
+  }
+  $("emoticon-text").value = text;
+  $("emoticon-name").value = name;
+  showModal("modal-emoticon");
+  $("emoticon-text").focus();
+}
+
+async function saveEmoticon() {
+  const server = state.currentServer;
+  if (!server) return;
+  const text = $("emoticon-text").value.trim();
+  const name = expressionName($("emoticon-name").value, "");
+  if (!text) {
+    toast("Type an emoticon first");
+    return;
+  }
+  if (!name) {
+    toast("Names are 2 to 32 letters, numbers or underscores");
+    return;
+  }
+  const exists = (server.emoticons || []).some(e => e.name === name);
+  if (exists && !server.can_manage_expressions) {
+    toast(`:${name}: is taken, pick another name`);
+    return;
+  }
+  if (exists && !confirm(`Replace the existing :${name}:?`)) return;
+  try {
+    await invoke("add_emoticon", { serverId: server.id, name, text });
+    hideModals();
+    await refreshExpressions();
+    toast(`Added :${name}: to ${server.name}`);
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function insertIntoComposer(text) {
@@ -10404,6 +11422,10 @@ const PERMISSION_LABELS = [
   ["manage_messages", "Manage Messages"],
   ["pin_messages", "Pin Messages"],
   ["attach_files", "Send Files and Images"],
+  ["add_emojis", "Add Emojis"],
+  ["add_stickers", "Add Stickers"],
+  ["add_emoticons", "Add Emoticons"],
+  ["use_external_emojis", "Use Other Servers' Emojis and Stickers"],
   ["post_announcements", "Post Announcements"],
   ["manage_expressions", "Manage Expressions"],
   ["manage_events", "Manage Events"],
@@ -10508,6 +11530,8 @@ function openUserSettings(tab) {
   $("input-gain").value = Math.round((state.voice.input_gain ?? 1) * 100);
   $("output-vol-label").textContent = `${$("output-vol").value}%`;
   $("input-gain-label").textContent = `${$("input-gain").value}%`;
+  renderVoiceInputSettings();
+  startMicMeter();
   $("account-display-name").value = state.user.display_name || "";
   $("account-status").value = state.user.custom_status || "";
   $("account-presence").value = state.user.presence || "online";
@@ -10728,8 +11752,11 @@ function openServerSettings(tab) {
   $("tab-channels").classList.toggle("hidden", !server.can_manage_channels);
   $("tab-roles").classList.toggle("hidden", !server.can_manage_roles);
   $("tab-members").classList.toggle("hidden", !canMembers);
-  const canEmoji = server.can_manage_expressions || server.can_manage_server;
-  const canSounds = canEmoji || server.can_upload_sounds;
+  const manages = server.can_manage_expressions || server.can_manage_server;
+  const canEmoji = manages || server.can_add_emojis;
+  const canStickers = manages || server.can_add_stickers;
+  const canEmoticons = manages || server.can_add_emoticons;
+  const canSounds = manages || server.can_upload_sounds;
   $("tab-rules").classList.toggle("hidden", !server.can_manage_server);
   renderRulesSettings(server);
   $("tab-automod").classList.toggle("hidden", !server.can_manage_server);
@@ -10742,6 +11769,8 @@ function openServerSettings(tab) {
   $("tab-audit").classList.toggle("hidden", !server.can_view_audit_log);
   if (server.can_view_audit_log) renderAuditLog(server);
   $("tab-emoji").classList.toggle("hidden", !canEmoji);
+  $("tab-stickers").classList.toggle("hidden", !canStickers);
+  $("tab-emoticons").classList.toggle("hidden", !canEmoticons);
   $("tab-soundboard").classList.toggle("hidden", !canSounds);
   const canInvites = Boolean(server.can_invite || server.can_manage_server);
   $("tab-invites").classList.toggle("hidden", !canInvites);
@@ -10752,6 +11781,8 @@ function openServerSettings(tab) {
     channels: server.can_manage_channels,
     roles: server.can_manage_roles,
     emoji: canEmoji,
+    stickers: canStickers,
+    emoticons: canEmoticons,
     soundboard: canSounds,
     reports: isOwner,
     rules: server.can_manage_server,
@@ -10760,6 +11791,8 @@ function openServerSettings(tab) {
     audit: server.can_view_audit_log,
   };
   renderEmojiSettings(server);
+  renderStickerSettings(server);
+  renderEmoticonSettings(server);
   renderSoundboardSettings(server);
   let current = tab || (layer.classList.contains("hidden") ? "overview" : layer.dataset.tab);
   if (!allowed[current]) current = "overview";
@@ -10998,13 +12031,37 @@ async function revokeInvite(invite, button) {
   }
 }
 
-function renderUploadAccess(server) {
-  const box = $("upload-access");
-  box.innerHTML = "";
-  const restricted = Boolean(server.uploads_restricted);
+const ROLE_ACCESS = {
+  files: {
+    box: "upload-access", permission: "attach_files", restricted: server => Boolean(server.uploads_restricted),
+    title: "Who can send files and images",
+    sub: "Applies to attachments, pasted images and dropped files in every channel. Text, links and GIFs are not affected. The owner and anyone with Administrator can always send them.",
+  },
+  emojis: {
+    box: "emoji-access", permission: "add_emojis", restricted: server => Boolean(server.add_restricted?.emojis),
+    title: "Who can add emojis",
+    sub: "Everyone can use this server's emojis. This decides who can add new ones from emoji.gg or their computer. Replacing and deleting stays with roles that have Manage Expressions.",
+  },
+  stickers: {
+    box: "sticker-access", permission: "add_stickers", restricted: server => Boolean(server.add_restricted?.stickers),
+    title: "Who can add stickers",
+    sub: "Everyone can send this server's stickers. This decides who can add new ones. Replacing and deleting stays with roles that have Manage Expressions.",
+  },
+  emoticons: {
+    box: "emoticon-access", permission: "add_emoticons", restricted: server => Boolean(server.add_restricted?.emoticons),
+    title: "Who can add emoticons",
+    sub: "Everyone can use this server's emoticons. This decides who can save new ones. Replacing and deleting stays with roles that have Manage Expressions.",
+  },
+};
+
+function renderRoleAccess(server, access) {
+  const spec = ROLE_ACCESS[access];
+  const box = $(spec.box);
+  box.replaceChildren();
+  const restricted = spec.restricted(server);
   const save = async (nextRestricted, ids) => {
     try {
-      await invoke("set_upload_access", { serverId: server.id, restricted: nextRestricted, roleIds: ids });
+      await invoke("set_role_access", { serverId: server.id, access, restricted: nextRestricted, roleIds: ids });
       await refreshCurrentServer();
       openServerSettings();
     } catch (err) {
@@ -11012,9 +12069,9 @@ function renderUploadAccess(server) {
       openServerSettings();
     }
   };
-  const allowedIds = () => server.roles.filter(r => (r.permissions || []).includes("attach_files")).map(r => r.id);
-  box.appendChild(el("div", "setting-title", "Who can send files and images"));
-  box.appendChild(el("div", "setting-sub", "Applies to attachments, pasted images and dropped files in every channel. Text, links and GIFs are not affected. The owner and anyone with Administrator can always send them."));
+  const allowedIds = () => server.roles.filter(r => (r.permissions || []).includes(spec.permission)).map(r => r.id);
+  box.appendChild(el("div", "setting-title", spec.title));
+  box.appendChild(el("div", "setting-sub", spec.sub));
   const seg = el("div", "segmented upload-seg");
   for (const [label, hint, value] of [["Anyone", "Every member", false], ["Only selected roles", "Pick the roles below", true]]) {
     const b = el("button", value === restricted ? "active" : "");
@@ -11033,7 +12090,7 @@ function renderUploadAccess(server) {
     const row = el("label", "role-self");
     const check = el("input");
     check.type = "checkbox";
-    check.checked = restricted && (role.permissions || []).includes("attach_files");
+    check.checked = restricted && (role.permissions || []).includes(spec.permission);
     check.disabled = !restricted || !server.can_manage_roles;
     check.onchange = () => {
       const ids = new Set(allowedIds());
@@ -11058,7 +12115,7 @@ function syncAttachAccess() {
 }
 
 function renderRoleSettings(server) {
-  renderUploadAccess(server);
+  renderRoleAccess(server, "files");
   const list = $("manage-role-list");
   list.innerHTML = "";
   for (const role of server.roles) {
@@ -11213,15 +12270,15 @@ async function refreshCurrentServer() {
     if (still) {
       state.currentChannel = still;
       syncPinButton();
+      syncRulesGate();
       if (still.kind !== keepChannel.kind) {
         $("chat-hash").replaceChildren(still.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
-        syncRulesGate();
       }
       renderMessages(await fetchChannelMessages(still));
       return;
     }
   }
-  await selectChannel(state.currentServer.channels.find(c => c.kind === "text") || null);
+  await selectChannel(state.currentServer.channels.find(c => c.kind === "text" && c.can_view !== false) || null);
 }
 
 function wireActivityPing() {

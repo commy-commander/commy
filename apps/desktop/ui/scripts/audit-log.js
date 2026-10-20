@@ -5,7 +5,7 @@ const AUDIT_FILTERS = [
   ["roles", "Roles"],
   ["members", "Members"],
   ["messages", "Messages"],
-  ["expressions", "Emoji and sounds"],
+  ["expressions", "Emoji, stickers and sounds"],
   ["events", "Events"],
   ["invites", "Invites"],
 ];
@@ -52,6 +52,12 @@ const AUDIT_GROUP_OF = {
   invite_create: "invites",
   invite_revoke: "invites",
   invite_background: "invites",
+  sticker_add: "expressions",
+  sticker_remove: "expressions",
+  emoticon_add: "expressions",
+  emoticon_remove: "expressions",
+  expression_sharing: "expressions",
+  channel_access: "channels",
 };
 
 const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", announcement: "announcement channel", category: "category" };
@@ -102,6 +108,7 @@ function describeAudit(entry) {
     case "channel_banner": return [detail === "removed" ? "removed the banner of " : "changed the banner of ", channel];
     case "channel_color": return [detail ? "changed the color of " : "removed the color of ", channel];
     case "channel_kind": return ["turned ", channel, ` into a ${CHANNEL_KIND_WORDS[detail] || "channel"}`];
+    case "channel_access": return detail === "private" ? ["made ", channel, " private"] : detail === "send" ? ["limited who can send in ", channel] : ["opened ", channel, " to everyone"];
     case "role_create": return ["created the role ", role];
     case "role_update": return ["updated the role ", role];
     case "role_delete": return label ? ["deleted the role ", role] : ["deleted a role"];
@@ -113,6 +120,11 @@ function describeAudit(entry) {
     case "voice_moderate": return VOICE_MODERATION_WORDS[detail] ? [`${VOICE_MODERATION_WORDS[detail]} `, member] : ["lifted the server mute on ", member];
     case "emoji_add": return ["added the emoji ", auditStrong(`:${label || "emoji"}:`)];
     case "emoji_remove": return ["removed the emoji ", auditStrong(`:${label || "emoji"}:`)];
+    case "sticker_add": return ["added the sticker ", named("a sticker")];
+    case "sticker_remove": return ["removed the sticker ", named("a sticker")];
+    case "emoticon_add": return ["added the emoticon ", auditStrong(`:${label || "emoticon"}`)];
+    case "emoticon_remove": return ["removed the emoticon ", auditStrong(`:${label || "emoticon"}`)];
+    case "expression_sharing": return [detail ? `let members use this server's ${detail} in other servers and DMs` : "stopped sharing this server's stickers and emoticons"];
     case "sound_add": return ["added the sound ", named("a sound")];
     case "sound_remove": return ["removed the sound ", named("a sound")];
     case "event_create": return ["scheduled the event ", named("an event")];
