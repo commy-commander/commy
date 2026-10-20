@@ -106,8 +106,8 @@ fn unseal(key: &[u8; 32], nonce: [u8; 12], aad: &[u8], sealed: &[u8]) -> Option<
 }
 
 fn wrapping_key(shared: &[u8; 32], info: &[u8]) -> [u8; 32] {
-    let mut extract = <Hmac<Sha256> as KeyInit>::new_from_slice(GRANT_DOMAIN.as_bytes()).expect("any key length");
-    extract.update(shared);
+    let mut extract = <Hmac<Sha256> as KeyInit>::new_from_slice(shared).expect("any key length");
+    extract.update(GRANT_DOMAIN.as_bytes());
     let prk = extract.finalize().into_bytes();
     let mut expand = <Hmac<Sha256> as KeyInit>::new_from_slice(&prk).expect("any key length");
     expand.update(info);
