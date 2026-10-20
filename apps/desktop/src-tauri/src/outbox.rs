@@ -48,6 +48,8 @@ pub fn is_transient(event: &ServerEvent) -> bool {
             | ServerEvent::VoiceModerate { .. }
             | ServerEvent::VoiceMove { .. }
             | ServerEvent::HandRaise { .. }
+            | ServerEvent::ActivitySet { .. }
+            | ServerEvent::ActivityInput { .. }
     )
 }
 
@@ -817,6 +819,8 @@ mod tests {
             ServerEvent::SoundboardPlay { server: sid, channel, user, name: "boop".into() },
             ServerEvent::VoiceModerate { server: sid, user, muted: true, deafened: false },
             ServerEvent::HandRaise { server: sid, channel, user, raised: true },
+            ServerEvent::ActivitySet { server: sid, channel, activity: None, by: user },
+            ServerEvent::ActivityInput { server: sid, channel, seq: 1, input: commy_core::ActivityInput::Join, by: user },
         ];
         for event in &transient {
             assert!(is_transient(event));

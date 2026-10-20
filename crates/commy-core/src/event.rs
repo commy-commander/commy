@@ -338,6 +338,19 @@ pub enum ServerEvent {
         commands: Vec<crate::command::BotCommand>,
         by: UserId,
     },
+    ActivitySet {
+        server: ServerId,
+        channel: ChannelId,
+        activity: Option<crate::activity::Activity>,
+        by: UserId,
+    },
+    ActivityInput {
+        server: ServerId,
+        channel: ChannelId,
+        seq: u64,
+        input: crate::activity::ActivityInput,
+        by: UserId,
+    },
 }
 
 #[cfg(test)]
@@ -411,6 +424,9 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::StageSet { server, channel, user, speaker: true, by: user }), 78);
         assert_eq!(wire_tag(ServerEvent::HandRaise { server, channel, user, raised: true }), 79);
         assert_eq!(wire_tag(ServerEvent::BotCommandsSet { server, bot: user, commands: vec![], by: user }), 80);
+        assert_eq!(wire_tag(ServerEvent::ActivitySet { server, channel, activity: None, by: user }), 81);
+        let input = crate::activity::ActivityInput::Join;
+        assert_eq!(wire_tag(ServerEvent::ActivityInput { server, channel, seq: 1, input, by: user }), 82);
     }
 
     #[test]

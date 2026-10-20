@@ -190,6 +190,27 @@ function mockOgg(secs) {
   return out.buffer;
 }
 
+const MOCK_OPPONENT = "m1";
+let mockActivitySeq = 0;
+
+function mockActivityOpponent(server, channel, input) {
+  const activity = channel.activity;
+  if (activity.kind !== "tic_tac_toe" || !(channel.voice_user_ids || []).includes(MOCK_OPPONENT)) return;
+  const send = (payload, delay) => setTimeout(() => onActivityInput({ server: server.id, channel: channel.id, seq: ++mockActivitySeq, by: MOCK_OPPONENT, ...payload }), delay);
+  const run = activityUi.run;
+  if (input === "join" && activity.starter === MOCK_OPPONENT) {
+    const board = [1, 0, 0, 0, 2, 0, 0, 0, 1];
+    send({ input: { sync: { participants: ["me", "m2"], players: [MOCK_OPPONENT, "me"], board, playing: false, position: 0, at: 0 } } }, 300);
+    return;
+  }
+  if (activity.starter === "me" && run && run.players.length < 2 && !isParticipant(run, MOCK_OPPONENT)) send({ input: "join" }, 800);
+  if (input && input.move) {
+    const free = run ? run.board.map((c, i) => (c === 0 ? i : -1)).filter(i => i >= 0) : [];
+    if (free.length && !gameOver(run.board)) send({ input: { move: { cell: free[Math.floor(Math.random() * free.length)] } } }, 700);
+  }
+  if (input === "rematch") send({ input: { move: { cell: 4 } } }, 900);
+}
+
 function mockSeed() {
   const ch = (name, kind, topic) => ({
     id: crypto.randomUUID(), name, kind, topic: topic || null, voice_users: [],
@@ -281,6 +302,7 @@ function mockSeed() {
   general.voice_since = [Math.floor(Date.now() / 1000) - 754];
   general.voice_muted = [true];
   general.voice_deafened = [false];
+  general.activity = { id: "mock-tic-tac-toe", kind: "tic_tac_toe", starter: "m1", started_at: Date.now() - 120e3 };
   server.members[0].voice_channel = general.id;
   server.members[0].voice_since = general.voice_since[0];
   server.members[0].voice_muted = true;
@@ -985,6 +1007,24 @@ async function mockInvoke(cmd, args = {}) {
       if (args.raised && (c.speakers || []).includes("me")) throw "you already have the floor";
       c.hands = (c.hands || []).filter(id => id !== "me");
       if (args.raised) c.hands.push("me");
+      return null;
+    }
+    case "set_activity": {
+      const s = mock.servers[args.serverId];
+      const channel = s && s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
+      if (!channel) throw "join a voice channel first";
+      if (args.activity && channel.activity && channel.activity.id !== args.activity.id && channel.activity.starter !== "me" && mock.plainMember) {
+        throw "another activity is already running in this channel";
+      }
+      if (args.activity) channel.activity = args.activity;
+      else delete channel.activity;
+      return null;
+    }
+    case "send_activity_input": {
+      const s = mock.servers[args.serverId];
+      const channel = s && s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
+      if (!channel || !channel.activity) throw "nothing is running in this channel";
+      mockActivityOpponent(s, channel, args.input);
       return null;
     }
     case "list_dm_threads":
@@ -2747,6 +2787,7 @@ function renderChannels() {
   if (!state.currentServer) return;
   const server = state.currentServer;
   checkVoiceRoster();
+  reconcileActivity();
   if (server.group) {
     renderDmThreads();
     return;
@@ -2914,6 +2955,13 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
     row.title = "Click to disconnect";
   } else {
     row.title = full ? "This channel is full" : isStageChannel(channel) ? "Click to join the audience" : "Click to join voice";
+  }
+  if (channel.activity && activityPillLabel(channel.activity)) {
+    const pill = el("span", "voice-activity-pill");
+    pill.appendChild(svgIcon(activityKindInfo(channel.activity).icon, 12));
+    pill.appendChild(el("span", null, activityPillLabel(channel.activity)));
+    pill.title = `${activityName(channel.activity)} is running here`;
+    row.appendChild(pill);
   }
   const count = voiceCountLabel(channel);
   if (count) {
@@ -12146,6 +12194,7 @@ function renderVoicePanel() {
   $("vp-camera").title = state.cameraOn ? "Turn Off Camera" : "Turn On Camera";
   renderCamGrid();
 
+  renderVoicePanelActivity();
   $("vp-live").classList.toggle("hidden", !state.sharing);
   $("vp-live-source").textContent = state.shareSource ? `Streaming ${state.shareSource}` : "";
   $("vp-live-title").textContent = `Live in ${vs.channelName}`;
@@ -12187,6 +12236,407 @@ function renderStageStrip(server) {
   button.classList.toggle("spent", hand.role === "speaker");
   button.disabled = hand.role === "speaker";
   button.onclick = () => toggleHand(!hand.raised);
+}
+const ACTIVITY_REMOTE_SETTLE_MS = 400;
+const ACTIVITY_DRIFT_CHECK_MS = 2000;
+
+const activityUi = { run: null, open: false, seq: 0, pick: "tictactoe", chip: null, videoBlob: null, settling: 0 };
+
+function activityMe() {
+  return state.user ? state.user.id : null;
+}
+
+function activityMemberName(id) {
+  if (id === activityMe()) return state.user.display_name || state.user.username || "You";
+  const members = (state.currentServer && state.currentServer.members) || [];
+  const member = members.find(m => m.id === id);
+  return member ? member.nickname || member.name : "Someone";
+}
+
+function activityChannelView() {
+  const server = state.currentServer;
+  if (!server || !state.voiceServer || server.id !== state.voiceServer.id || !state.voiceChannelId) return null;
+  return server.channels.find(c => c.id === state.voiceChannelId) || null;
+}
+
+function reconcileActivity() {
+  if (!state.voiceChannelId || !state.voiceServer) {
+    if (activityUi.run) endActivityLocally(null);
+    renderActivityUi();
+    return;
+  }
+  const channel = activityChannelView();
+  if (!channel) {
+    renderActivityUi();
+    return;
+  }
+  const current = channel.activity || null;
+  if (current && (!activityUi.run || activityUi.run.id !== current.id)) adoptActivity(current, null);
+  else if (!current && activityUi.run) endActivityLocally(null);
+  else renderActivityUi();
+}
+
+function adoptActivity(activity, by) {
+  releaseActivityVideo();
+  activityUi.run = newActivityRun(activity);
+  const me = activityMe();
+  activityUi.open = activity.starter === me;
+  if (by && by !== me) toast(`${activityMemberName(by)} started ${activityName(activity)}`);
+  renderActivityUi();
+}
+
+function endActivityLocally(by) {
+  const was = activityUi.run;
+  activityUi.run = null;
+  activityUi.open = false;
+  releaseActivityVideo();
+  if (was && by && by !== activityMe()) toast(`${activityMemberName(by)} ended ${activityName(was.activity)}`);
+  renderActivityUi();
+}
+
+function onActivitySet(payload) {
+  if (!state.voiceServer || payload.server !== state.voiceServer.id || payload.channel !== state.voiceChannelId) return;
+  const run = activityUi.run;
+  if (payload.activity) {
+    if (run && run.id === payload.activity.id) return;
+    adoptActivity(payload.activity, payload.by);
+  } else if (run) {
+    endActivityLocally(payload.by);
+  }
+}
+
+function onActivityInput(payload) {
+  const run = activityUi.run;
+  if (!run || !state.voiceServer || payload.server !== state.voiceServer.id || payload.channel !== state.voiceChannelId) return;
+  const result = applyActivityInput(run, payload.input, payload.by, payload.seq);
+  if (!result.ok) return;
+  if (payload.input === "join" && run.starter === activityMe()) sendActivityInput(syncInput(run, Date.now()), false);
+  if (payload.input && payload.input.playback) syncActivityVideo();
+  if (payload.input && payload.input.sync && run.kind === "watch") syncActivityVideo();
+  renderActivityUi();
+}
+
+async function sendActivityInput(input, applyLocally = true) {
+  const run = activityUi.run;
+  if (!run || !state.voiceServer) return;
+  if (applyLocally) {
+    const result = applyActivityInput(run, input, activityMe(), null);
+    if (!result.ok) {
+      if (result.reason) toast(result.reason);
+      return;
+    }
+    renderActivityUi();
+  }
+  const seq = ++activityUi.seq;
+  try {
+    await invoke("send_activity_input", { serverId: state.voiceServer.id, seq, input });
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function startActivity(activity) {
+  if (!state.voiceServer) return;
+  try {
+    await invoke("set_activity", { serverId: state.voiceServer.id, activity });
+    hideModals();
+    adoptActivity(activity, activityMe());
+    activityUi.open = true;
+    renderActivityUi();
+    if (state.currentServer && state.currentServer.id === state.voiceServer.id) await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function endActivity() {
+  if (!activityUi.run || !state.voiceServer) return;
+  try {
+    await invoke("set_activity", { serverId: state.voiceServer.id, activity: null });
+    endActivityLocally(activityMe());
+    if (state.currentServer && state.currentServer.id === state.voiceServer.id) await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function toggleActivityPanel(open) {
+  activityUi.open = open === undefined ? !activityUi.open : open;
+  renderActivityUi();
+}
+
+function renderActivityUi() {
+  renderActivityPanel();
+  renderVoicePanelActivity();
+}
+
+function renderVoicePanelActivity() {
+  const btn = $("vp-activities");
+  if (!btn) return;
+  const run = activityUi.run;
+  const vs = state.voiceServer;
+  btn.classList.toggle("hidden", !vs || Boolean(vs.call));
+  btn.classList.toggle("running", Boolean(run));
+  const info = run ? activityKindInfo(run.activity) : null;
+  btn.replaceChildren(svgIcon(info ? info.icon : "gamepad", 16), el("span", null, run ? `Open ${activityName(run.activity)}` : "Activities"));
+  btn.title = run ? `${activityName(run.activity)} is running in your voice channel` : "Start something together with everyone in the channel";
+  btn.onclick = () => (run ? toggleActivityPanel() : openActivityPicker());
+}
+
+function renderActivityPanel() {
+  const panel = $("activity-panel");
+  const run = activityUi.run;
+  const shown = Boolean(run && activityUi.open);
+  panel.classList.toggle("hidden", !shown);
+  if (!shown) return;
+  const me = activityMe();
+  const info = activityKindInfo(run.activity);
+  $("activity-icon").replaceChildren(svgIcon(info ? info.icon : "gamepad", 20));
+  $("activity-title").textContent = activityName(run.activity);
+  $("activity-sub").textContent = `Started by ${activityMemberName(run.starter)}`;
+  renderActivityPeople(run);
+  const joined = isParticipant(run, me);
+  const starter = run.starter === me;
+  $("activity-join").classList.toggle("hidden", joined);
+  $("activity-leave").classList.toggle("hidden", !joined);
+  $("activity-leave").classList.toggle("ghost", starter);
+  $("activity-leave").disabled = starter;
+  const mayEnd = canEndActivity(run, me, state.currentServer);
+  $("activity-end").classList.toggle("ghost", !mayEnd);
+  $("activity-end").disabled = !mayEnd;
+  setIcon($("activity-close"), "chevronDown", 18);
+  $("activity-game").classList.toggle("hidden", run.kind !== "tictactoe");
+  $("activity-watch").classList.toggle("hidden", run.kind !== "watch");
+  if (run.kind === "tictactoe") renderTicTacToe(run, me);
+  else renderActivityWatch(run, me);
+}
+
+function renderActivityPeople(run) {
+  const box = $("activity-people");
+  box.innerHTML = "";
+  const { shown, more } = avatarRow(activityParticipants(run));
+  for (const id of shown) {
+    const avatar = makeAvatar(id, activityMemberName(id), "avatar avatar-sm");
+    const mark = markOf(run, id);
+    if (mark) avatar.classList.add("player", mark === MARK_X ? "mark-x" : "mark-o");
+    avatar.title = mark ? `${activityMemberName(id)} (${MARK_GLYPHS[mark]})` : activityMemberName(id);
+    box.appendChild(avatar);
+  }
+  if (more) box.appendChild(el("span", "activity-people-more", `+${more}`));
+}
+
+function renderTicTacToe(run, me) {
+  const status = gameStatus(run, me, activityMemberName);
+  $("activity-turn").textContent = status.text;
+  const board = $("ttt-board");
+  if (board.children.length !== BOARD_CELLS) {
+    board.innerHTML = "";
+    for (let i = 0; i < BOARD_CELLS; i++) {
+      const cell = el("button", "ttt-cell");
+      cell.type = "button";
+      cell.dataset.cell = String(i);
+      cell.setAttribute("role", "gridcell");
+      cell.onclick = () => {
+        if (canMoveAt(activityUi.run, activityMe(), i)) sendActivityInput({ move: { cell: i } });
+      };
+      board.appendChild(cell);
+    }
+  }
+  const line = status.line || [];
+  for (const cell of board.children) {
+    const i = Number(cell.dataset.cell);
+    const mark = run.board[i];
+    cell.textContent = MARK_GLYPHS[mark] || "";
+    cell.classList.toggle("o", mark === MARK_O);
+    cell.classList.toggle("x", mark === MARK_X);
+    cell.classList.toggle("win", line.includes(i));
+    cell.classList.toggle("open", canMoveAt(run, me, i));
+    cell.setAttribute("aria-label", mark ? `Cell ${i + 1}, ${MARK_GLYPHS[mark]}` : `Cell ${i + 1}, empty`);
+  }
+  $("ttt-rematch").classList.toggle("hidden", !status.canRematch);
+  const hint = $("ttt-hint");
+  if (status.canRematch) hint.textContent = "";
+  else if (status.over) hint.textContent = "Waiting for a rematch";
+  else if (run.players.length < 2) hint.textContent = isPlayer(run, me) ? "Share the voice channel to find an opponent" : "The first to join plays O";
+  else hint.textContent = isPlayer(run, me) ? `You are ${MARK_GLYPHS[markOf(run, me)]}` : "You are watching";
+}
+
+function renderActivityWatch(run, me) {
+  $("activity-watch-title").textContent = watchTitle(run.activity);
+  const video = $("activity-video");
+  video.controls = isParticipant(run, me);
+  loadActivityVideo(run);
+  renderActivitySyncLabel(run);
+}
+
+function renderActivitySyncLabel(run) {
+  const label = $("activity-sync");
+  const video = $("activity-video");
+  if (!video.src || !isParticipant(run, activityMe())) {
+    label.textContent = isParticipant(run, activityMe()) ? "" : "Join to control playback";
+    label.className = "activity-sync";
+    return;
+  }
+  const off = watchNeedsSeek(video.currentTime, watchTargetPosition(run.playback, Date.now()));
+  label.textContent = off ? "Catching up" : "In sync";
+  label.className = `activity-sync ${off ? "catching" : "good"}`;
+}
+
+async function loadActivityVideo(run) {
+  const video = $("activity-video");
+  const url = watchLinkUrl(run.activity);
+  if (url) {
+    if (video.src !== url) {
+      video.src = url;
+      activityUi.videoBlob = null;
+    }
+    return;
+  }
+  const att = watchAttachment(run.activity);
+  if (!att || activityUi.videoBlob === att.blob) return;
+  activityUi.videoBlob = att.blob;
+  const cached = videoUrls.get(att.blob);
+  if (cached) {
+    video.src = cached;
+    return;
+  }
+  $("activity-video-wait").classList.remove("hidden");
+  try {
+    const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null });
+    const objectUrl = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
+    videoUrls.set(att.blob, objectUrl);
+    if (activityUi.run && activityUi.run.id === run.id) video.src = objectUrl;
+  } catch (e) {
+    toast(`Could not load the video: ${e}`);
+  } finally {
+    $("activity-video-wait").classList.add("hidden");
+  }
+}
+
+function releaseActivityVideo() {
+  const video = $("activity-video");
+  if (!video) return;
+  activityUi.settling = performance.now() + ACTIVITY_REMOTE_SETTLE_MS;
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+  activityUi.videoBlob = null;
+}
+
+function syncActivityVideo() {
+  const run = activityUi.run;
+  const video = $("activity-video");
+  if (!run || run.kind !== "watch" || !video.src) return;
+  const target = watchTargetPosition(run.playback, Date.now());
+  activityUi.settling = performance.now() + ACTIVITY_REMOTE_SETTLE_MS;
+  if (Number.isFinite(video.duration) && watchNeedsSeek(video.currentTime, target)) video.currentTime = target;
+  if (run.playback.playing && video.paused) video.play().catch(() => {});
+  else if (!run.playback.playing && !video.paused) video.pause();
+  renderActivitySyncLabel(run);
+}
+
+function onActivityVideoChange() {
+  const run = activityUi.run;
+  const video = $("activity-video");
+  if (!run || run.kind !== "watch" || performance.now() < activityUi.settling) return;
+  if (!isParticipant(run, activityMe()) || !video.src) return;
+  sendActivityInput({ playback: { playing: !video.paused, position: video.currentTime, at: Date.now() } });
+}
+
+function openActivityPicker() {
+  if (!state.voiceServer || !state.voiceChannelId) {
+    toast("Join a voice channel first");
+    return;
+  }
+  activityUi.pick = "tictactoe";
+  activityUi.chip = null;
+  $("activity-link-input").value = "";
+  renderActivityPicker();
+  showModal("modal-activities");
+}
+
+function renderActivityPicker() {
+  const cards = $("activity-cards");
+  cards.innerHTML = "";
+  for (const kind of ACTIVITY_KINDS) {
+    const card = el("button", "activity-card");
+    card.type = "button";
+    card.setAttribute("role", "radio");
+    card.setAttribute("aria-checked", String(kind.key === activityUi.pick));
+    card.appendChild(el("span", "activity-card-icon")).appendChild(svgIcon(kind.icon, 22));
+    card.appendChild(el("span", "activity-card-name", kind.name));
+    card.appendChild(el("span", "activity-card-blurb", kind.blurb));
+    card.onclick = () => {
+      activityUi.pick = kind.key;
+      renderActivityPicker();
+    };
+    cards.appendChild(card);
+  }
+  const watch = activityUi.pick === "watch";
+  $("activity-setup-game").classList.toggle("hidden", watch);
+  $("activity-setup-watch").classList.toggle("hidden", !watch);
+  const chips = $("activity-chips");
+  chips.innerHTML = "";
+  for (const att of channelVideoAttachments(state.renderedMessages)) {
+    const chip = el("button", "activity-chip");
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", String(activityUi.chip && activityUi.chip.blob === att.blob));
+    chip.appendChild(svgIcon("movie", 14));
+    chip.appendChild(el("span", null, att.filename));
+    chip.title = `${att.filename}, ${formatSize(att.size_bytes)}`;
+    chip.onclick = () => {
+      activityUi.chip = activityUi.chip && activityUi.chip.blob === att.blob ? null : att;
+      if (activityUi.chip) $("activity-link-input").value = "";
+      renderActivityPicker();
+    };
+    chips.appendChild(chip);
+  }
+  $("activity-start").textContent = watch ? "Start watching" : "Start game";
+}
+
+function pickedActivity() {
+  const now = Date.now();
+  const id = crypto.randomUUID();
+  if (activityUi.pick !== "watch") return makeActivity("tictactoe", activityMe(), now, id);
+  const url = $("activity-link-input").value.trim();
+  if (url) {
+    if (!isVideoLink(url)) throw new Error("Paste a direct https link that ends in .mp4, .webm or .ogg");
+    return makeActivity("watch", activityMe(), now, id, watchLinkSource(url));
+  }
+  if (activityUi.chip) return makeActivity("watch", activityMe(), now, id, watchAttachmentSource(activityUi.chip));
+  throw new Error("Paste a video link or pick an attached video");
+}
+
+function initActivityUi() {
+  $("activity-cancel").onclick = hideModals;
+  $("activity-start").onclick = async () => {
+    try {
+      await startActivity(pickedActivity());
+    } catch (e) {
+      toast(e.message || String(e));
+    }
+  };
+  $("activity-link-input").addEventListener("input", () => {
+    if ($("activity-link-input").value.trim()) {
+      activityUi.chip = null;
+      renderActivityPicker();
+    }
+  });
+  $("activity-join").onclick = () => sendActivityInput("join");
+  $("activity-leave").onclick = () => {
+    sendActivityInput("leave");
+    toggleActivityPanel(false);
+  };
+  $("activity-end").onclick = endActivity;
+  $("activity-close").onclick = () => toggleActivityPanel(false);
+  $("ttt-rematch").onclick = () => sendActivityInput("rematch");
+  const video = $("activity-video");
+  for (const name of ["play", "pause", "seeked"]) video.addEventListener(name, onActivityVideoChange);
+  video.addEventListener("loadedmetadata", syncActivityVideo);
+  setInterval(() => {
+    const run = activityUi.run;
+    if (run && run.kind === "watch" && run.playback.playing) syncActivityVideo();
+  }, ACTIVITY_DRIFT_CHECK_MS);
 }
 
 async function disconnectVoice() {
@@ -14649,6 +15099,7 @@ function wireEvents() {
     btn.onclick = () => setShareQuality(btn.dataset.q);
   }
   $("share-go").onclick = goLive;
+  initActivityUi();
   $("vp-game-share").onclick = async () => {
     try {
       const sources = await invoke("list_share_sources");
@@ -15559,6 +16010,8 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
+    window.__TAURI__.event.listen("activity-set", event => onActivitySet(event.payload));
+    window.__TAURI__.event.listen("activity-input", event => onActivityInput(event.payload));
     window.__TAURI__.event.listen("stream-deck-pair", event => onStreamDeckPair(event.payload));
     window.__TAURI__.event.listen("stream-deck-pair-closed", event => onStreamDeckPairClosed(event.payload));
     window.__TAURI__.event.listen("stream-deck-changed", event => {

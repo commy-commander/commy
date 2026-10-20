@@ -49,7 +49,10 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   voice channel, and a soundboard with per-server clips. Invite a friend or
   a channel to a call with a card that shows who is in it right now and a
   Join button. Stage channels seat an audience that only listens and can
-  raise a hand; hosts invite people up to speak.
+  raise a hand; hosts invite people up to speak. Activities in a
+  voice channel: watch a direct video link or an attached video together,
+  kept within a second of each other, or play tic-tac-toe while the rest of
+  the channel watches.
 - **Screen and game streaming.** Share a whole monitor or a single window with
   a Sharp, Balanced or Smooth quality preset. Windows uses Windows Graphics
   Capture, so games stream cleanly, and can send what your computer plays
