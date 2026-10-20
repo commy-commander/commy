@@ -24,7 +24,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   moving people between voice channels, pinned messages and announcements,
   and auto moderation that holds messages with blocked words, links, too many
   mentions or flooding. A moderation bot you run yourself can remove new ones
-  for everyone ([crates/commy-bot](crates/commy-bot/README.md)).
+  for everyone ([crates/commy-bot](crates/commy-bot/README.md)), and bots can
+  register slash commands that members pick from the composer with option
+  hints; using one posts a compact "used /name" line that the bot answers.
   Channels can be limited to roles. Messages sent in a private channel are
   encrypted so only those roles and admins can read them.
 - **Rich chat.** Replies, reactions, edits, named threads that can be

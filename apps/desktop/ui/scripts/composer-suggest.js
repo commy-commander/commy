@@ -3,14 +3,19 @@
 const SUGGEST_LIMIT = 8;
 const COMPOSER_COMMANDS = [{ name: "gif", needs: "gifs" }, { name: "tts", needs: "tts" }];
 
-function suggestTokenAt(value, caret) {
+function suggestTokenAt(value, caret, names = []) {
   const text = String(value || "");
   const before = text.slice(0, caret ?? text.length);
-  const command = before.match(/^\/([a-z]{0,16})(?:\s+([^]*))?$/i);
-  if (command && (command[2] === undefined || COMPOSER_COMMANDS.some(c => c.name === command[1].toLowerCase()))) {
-    return { kind: "command", start: 0, query: command[1].toLowerCase(), args: command[2] ?? null };
-  }
+  const command = before.match(/^\/([a-z0-9-]{0,32})(?:\s+([^]*))?$/i);
   const mention = before.match(/(^|\s)@([^\s@]{0,32})$/);
+  if (command) {
+    const name = command[1].toLowerCase();
+    const builtin = COMPOSER_COMMANDS.some(c => c.name === name);
+    const bot = names.includes(name);
+    if (command[2] === undefined || builtin || (bot && !mention)) {
+      return { kind: "command", start: 0, query: name, args: command[2] ?? null };
+    }
+  }
   if (mention) return { kind: "mention", start: before.length - mention[2].length - 1, query: mention[2].toLowerCase() };
   const emoji = before.match(/(?:^|\s):([a-z0-9_]{2,32})$/i);
   if (emoji) return { kind: "emoji", start: before.length - emoji[1].length - 1, query: emoji[1].toLowerCase() };
@@ -62,9 +67,9 @@ function emojiSuggestions(query, groups, standard, limit = SUGGEST_LIMIT) {
   return [...customEmojiMatches(q, groups || []), ...standardEmojiMatches(q, standard || [])].slice(0, limit);
 }
 
-function commandSuggestions(token, available = {}) {
+function commandSuggestions(token, available = {}, catalog = []) {
   const typed = token.args !== null;
-  return COMPOSER_COMMANDS
+  const builtin = COMPOSER_COMMANDS
     .filter(c => (typed ? c.name === token.query : c.name.startsWith(token.query)))
     .map(c => ({
       kind: "command",
@@ -73,6 +78,10 @@ function commandSuggestions(token, available = {}) {
       ready: c.name === token.query,
       available: Boolean(available[c.needs]),
     }));
+  const bots = (catalog || [])
+    .filter(c => (typed ? c.name === token.query : c.name.startsWith(token.query)))
+    .map(c => ({ kind: "command", bot: true, name: c.name, args: typed ? token.args : null, ready: c.name === token.query, entry: c }));
+  return [...builtin, ...bots].slice(0, SUGGEST_LIMIT);
 }
 
 function suggestionInsert(item) {

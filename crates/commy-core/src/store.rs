@@ -3,6 +3,7 @@ use crate::audit::{AuditEntry, AuditKind};
 use crate::invites::TrackedInvite;
 use crate::automod::{AutoMod, Hold};
 use crate::channel_key::ChannelKeys;
+use crate::command::{BotCommand, CommandUse};
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
@@ -117,6 +118,7 @@ pub struct ServerState {
     channel_keys: HashMap<ChannelId, ChannelKeys>,
     automod: AutoMod,
     bots: BTreeSet<UserId>,
+    bot_commands: BTreeMap<UserId, Vec<BotCommand>>,
     audit: Vec<AuditEntry>,
     deleted: bool,
     invites: BTreeMap<String, TrackedInvite>,
@@ -158,6 +160,8 @@ pub struct Snapshot {
     pub automod: AutoMod,
     #[serde(default)]
     pub bots: Vec<UserId>,
+    #[serde(default)]
+    pub bot_commands: Vec<(UserId, Vec<BotCommand>)>,
     #[serde(default)]
     pub audit: Vec<AuditEntry>,
     #[serde(default)]
@@ -201,6 +205,7 @@ impl ServerState {
             channel_keys: HashMap::new(),
             automod: AutoMod::default(),
             bots: BTreeSet::new(),
+            bot_commands: BTreeMap::new(),
             audit: Vec::new(),
             deleted: false,
             invites: BTreeMap::new(),
@@ -240,6 +245,7 @@ impl ServerState {
             channel_keys: self.channel_keys.iter().map(|(c, k)| (*c, k.clone())).collect(),
             automod: self.automod.clone(),
             bots: self.bots.iter().copied().collect(),
+            bot_commands: self.bot_commands.iter().map(|(bot, list)| (*bot, list.clone())).collect(),
             audit: self.audit.clone(),
             deleted: self.deleted,
             invites: self.invites.values().cloned().collect(),
@@ -293,6 +299,11 @@ impl ServerState {
         state.action_floor = snapshot.action_floor;
         state.automod = snapshot.automod;
         state.bots = snapshot.bots.into_iter().filter(|user| state.server.is_member(*user)).collect();
+        state.bot_commands = snapshot
+            .bot_commands
+            .into_iter()
+            .filter(|(bot, list)| state.bots.contains(bot) && !list.is_empty() && crate::command::valid_commands(list))
+            .collect();
         state.audit = crate::audit::tidy(snapshot.audit);
         state.deleted = snapshot.deleted;
         state.invites = snapshot.invites.into_iter().filter(TrackedInvite::valid).map(|i| (i.id(), i)).collect();
@@ -605,6 +616,26 @@ impl ServerState {
         self.bots.iter().copied()
     }
 
+    pub fn commands_of(&self, bot: UserId) -> &[BotCommand] {
+        self.bot_commands.get(&bot).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn bot_commands(&self) -> impl Iterator<Item = (UserId, &[BotCommand])> + '_ {
+        self.bot_commands.iter().map(|(bot, list)| (*bot, list.as_slice()))
+    }
+
+    pub fn command_of(&self, used: &CommandUse) -> Option<&BotCommand> {
+        self.commands_of(used.bot).iter().find(|c| c.name == used.command).filter(|c| used.fits(c))
+    }
+
+    pub fn carry_bot_commands(&mut self, from: &ServerState) {
+        for (bot, list) in from.bot_commands() {
+            if self.bots.contains(&bot) && !self.bot_commands.contains_key(&bot) {
+                self.bot_commands.insert(bot, list.to_vec());
+            }
+        }
+    }
+
     pub fn hold(&self, message: &Message) -> Option<Hold> {
         self.automod.hold(&self.server, self.messages(message.channel), message)
     }
@@ -896,6 +927,7 @@ impl ServerState {
                 self.server.members.retain(|m| m.user != user);
                 self.drop_voice_presence(user);
                 self.bots.remove(&user);
+                self.bot_commands.remove(&user);
                 Ok(self.server.members.len() != before)
             }
             ServerEvent::PresenceUpdate { user, presence } => {
@@ -1186,9 +1218,20 @@ impl ServerState {
             ServerEvent::BotSet { server, user, bot } => {
                 self.same_server(server)?;
                 if !bot {
+                    self.bot_commands.remove(&user);
                     return Ok(self.bots.remove(&user));
                 }
                 Ok(self.server.is_member(user) && self.bots.insert(user))
+            }
+            ServerEvent::BotCommandsSet { server, bot, commands, by } => {
+                self.same_server(server)?;
+                if by != bot || !self.bots.contains(&bot) || !self.server.is_member(bot) || !crate::command::valid_commands(&commands) {
+                    return Ok(false);
+                }
+                if commands.is_empty() {
+                    return Ok(self.bot_commands.remove(&bot).is_some());
+                }
+                Ok(self.bot_commands.insert(bot, commands.clone()).as_ref() != Some(&commands))
             }
             ServerEvent::PronounsSet { server, user, pronouns } => {
                 self.same_server(server)?;
@@ -1483,6 +1526,7 @@ impl ServerState {
                 self.drop_voice_presence(user);
                 self.screen_shares.remove(&user);
                 self.bots.remove(&user);
+                self.bot_commands.remove(&user);
                 Ok(true)
             }
             ServerEvent::AfkTimeoutSet { server, minutes } => {
@@ -3766,6 +3810,53 @@ mod tests {
         state.apply(ServerEvent::MemberLeave { server: sid, user: bot }).unwrap();
         assert!(!state.is_bot(bot));
         assert_eq!(state.apply(ServerEvent::BotSet { server: sid, user: bot, bot: true }), Ok(false), "only members");
+    }
+
+    #[test]
+    fn bots_register_their_own_commands_and_members_keep_them() {
+        use crate::command::{BotCommand, CommandOption, OptionKind};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let bot = join(&mut state, "bot");
+        let roll = BotCommand {
+            name: "roll".into(),
+            description: "Roll dice".into(),
+            options: vec![CommandOption { name: "sides".into(), description: "How many sides".into(), required: false, kind: OptionKind::Integer }],
+        };
+        let set = |by, at, bot, commands: Vec<BotCommand>| {
+            crate::SignedEvent::sign(sid, by, at, ServerEvent::BotCommandsSet { server: sid, bot, commands, by }, &identity_for(by))
+        };
+        assert_eq!(state.apply_signed(&set(bot, 1_000, bot, vec![roll.clone()])), Ok(false), "no badge yet");
+        let badge = crate::SignedEvent::sign(sid, bot, 1_500, ServerEvent::BotSet { server: sid, user: bot, bot: true }, &identity_for(bot));
+        state.apply_signed(&badge).unwrap();
+        assert_eq!(state.apply_signed(&set(owner, 2_000, bot, vec![roll.clone()])), Err(StoreError::NotAllowed), "only the bot itself");
+        let own = set(bot, 3_000, bot, vec![roll.clone()]);
+        assert_eq!(state.apply_signed(&own), Ok(true));
+        assert_eq!(state.commands_of(bot), &[roll.clone()]);
+        assert_eq!(state.apply_signed(&set(bot, 4_000, bot, vec![roll.clone()])), Ok(false), "same list again");
+        assert!(state.signed_actions().iter().any(|s| s.event == own.event), "relayed to members who missed it");
+        assert!(crate::action::snapshot_omits("bot_commands:x"), "owner snapshots do not carry the list, so the action stays fresh");
+        let restored = reload(&state);
+        assert_eq!(restored.commands_of(bot), &[roll.clone()]);
+        let mut older_build = serde_json::to_value(state.snapshot()).unwrap();
+        older_build.as_object_mut().unwrap().remove("bot_commands");
+        let without: crate::Snapshot = serde_json::from_value(older_build).unwrap();
+        assert!(ServerState::from_snapshot(without).commands_of(bot).is_empty(), "snapshots from before slash commands load");
+        let bad = BotCommand { name: "Roll".into(), ..roll.clone() };
+        assert_eq!(state.apply_signed(&set(bot, 5_000, bot, vec![bad])), Ok(false), "invalid lists are ignored");
+        let used = CommandUse::new(bot, "roll").with("sides", "20");
+        assert_eq!(state.command_of(&used), Some(&roll));
+        assert_eq!(state.command_of(&CommandUse::new(bot, "roll").with("sides", "d20")), None);
+        assert_eq!(state.command_of(&CommandUse::new(owner, "roll")), None);
+        let mut rebuilt = ServerState::new(state.server.clone());
+        rebuilt.apply(ServerEvent::BotSet { server: sid, user: bot, bot: true }).unwrap();
+        rebuilt.carry_bot_commands(&state);
+        assert_eq!(rebuilt.commands_of(bot), &[roll.clone()]);
+        assert_eq!(state.apply_signed(&set(bot, 6_000, bot, vec![])), Ok(true), "an empty list clears them");
+        assert!(state.commands_of(bot).is_empty());
+        assert_eq!(state.apply_signed(&set(bot, 7_000, bot, vec![roll.clone()])), Ok(true));
+        state.apply(ServerEvent::MemberLeave { server: sid, user: bot }).unwrap();
+        assert!(state.commands_of(bot).is_empty(), "leaving drops them");
     }
 
     #[test]

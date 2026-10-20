@@ -21,6 +21,8 @@ removals. On top of that:
   [Porting a bot](#porting-a-bot).
 - **Incoming webhooks** let other services (build servers, feeds, monitoring)
   post into a channel (`--webhooks`). See [Webhooks](#webhooks).
+- **Slash commands** your bot registers show up in the composer of every
+  member with a description and option hints. See [Slash commands](#slash-commands).
 
 ## Hosting
 
@@ -140,6 +142,7 @@ talks to it over the bridge, a newline-delimited JSON connection on 127.0.0.1.
 | Familiar idea | In Commy |
 |---|---|
 | Prefix commands (`!ping`) | Work as they are. `client.command(name, run)` routes them. |
+| Slash commands with a picker | `client.registerCommands(server, [...])` once the server is ready, then `client.slashCommand(name, run)`. See [Slash commands](#slash-commands). |
 | Message, edit, delete and reaction events | `messageCreate`, `messageUpdate`, `messageDelete`, `messageReactionAdd`, `messageReactionRemove` |
 | Member joins and leaves | `memberJoin`, `memberLeave` |
 | Reply, react, edit or delete a message | `message.reply`, `react`, `unreact`, `edit`, `delete` (edits only on the bot's own messages) |
@@ -157,7 +160,7 @@ answer old commands.
 
 ### Not supported yet
 
-- Slash commands with an in-app picker, buttons, menus and pop-up forms.
+- Buttons, menus and pop-up forms.
 - Replies that only one person can see, direct messages to or from bots,
   threads, and bots in voice channels.
 - Card layouts for rich messages (they are flattened to text).
@@ -182,6 +185,7 @@ After that, the bot sends events:
 | `reaction_add`, `reaction_remove` | `server`, `channel`, `message` (id), `user`, `emoji` |
 | `member_join` | `server`, `member` |
 | `member_leave` | `server`, `user` (id) |
+| `command_invoked` | `server`, `message`, `command` (name), `options` (`{name: value}`) |
 | `lagged` | `missed`: events dropped because your code read too slowly |
 
 A server is `{id, name, ready, owner, channels: [{id, name, kind}], roles: [{id, name, position}], members: [...]}`.
@@ -201,9 +205,56 @@ back in its `{"type": "result", "nonce": ..., "ok": true}` or
 | `kick`, `ban` | `server`, `user` | |
 | `add_role`, `remove_role` | `server`, `user`, `role` | |
 | `server` | `server` | `server` with its members |
+| `set_commands` | `server`, `commands` (see [Slash commands](#slash-commands)) | |
 
 `server` may be an id or a server name, `channel` an id, `#name` or `<#id>`,
 `user` an id, `@name` or `<@id>`, and `role` an id, a name or `<@&id>`.
+
+## Slash commands
+
+A bot can tell each server which commands it answers. Members then see them
+when they type `/` in the composer, with the description and the options as
+hints, and sending `/name ...` posts a normal signed message that carries a
+small command marker. The bot gets a `CommandInvoked` event with the options
+already parsed; everyone else sees a compact "used /name" line.
+
+A command has a `name` (up to 32 lowercase letters, digits and dashes), a
+`description` (up to 100 characters) and up to 10 ordered `options`, each with
+a `name`, a `description`, `required` and a `kind` of `string`, `integer`,
+`user` or `channel`. Required options come first. A bot registers up to 25
+commands per server, and only the bot itself can change its list. Members
+need Send Messages in the channel to use one, the same as for any message.
+
+In Rust, register on `Ready` and answer `CommandInvoked`:
+
+```rust
+use commy_bot::{Act, BotEvent, Ctx};
+use commy_core::{BotCommand, CommandOption, OptionKind};
+
+fn dice(ctx: &Ctx, event: &BotEvent) -> Vec<Act> {
+    match event {
+        BotEvent::Ready => vec![Act::SetCommands {
+            commands: vec![BotCommand {
+                name: "roll".into(),
+                description: "Roll some dice".into(),
+                options: vec![CommandOption { name: "sides".into(), description: "How many sides".into(), required: false, kind: OptionKind::Integer }],
+            }],
+        }],
+        BotEvent::CommandInvoked(used) if used.command == "roll" => {
+            let sides = used.option("sides").and_then(|s| s.parse::<u32>().ok()).unwrap_or(6);
+            vec![used.reply(format!("{} rolled a {sides}-sided die", ctx.name_of(used.message.author)))]
+        }
+        _ => Vec::new(),
+    }
+}
+```
+
+`Bot::register_commands(server, commands, now)` does the same outside a
+handler. Over the bridge, send `{"op": "set_commands", "server": ..., "commands": [...]}`
+and listen for `command_invoked`; in JavaScript that is
+`client.registerCommands(server, commands)` and `client.slashCommand("roll", (message, options) => ...)`.
+The list is signed by the bot and reaches members who were offline when it
+was set, and the bot repeats it whenever it connects.
 
 ## Webhooks
 

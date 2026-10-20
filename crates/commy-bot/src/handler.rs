@@ -1,5 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
-use commy_core::{ChannelId, Message, MessageId, RoleId, ServerId, ServerState, UserId};
+use commy_core::{BotCommand, ChannelId, Message, MessageId, RoleId, ServerId, ServerState, UserId};
+use std::collections::BTreeMap;
 
 pub const LATE_AFTER_SECONDS: i64 = 120;
 
@@ -13,14 +14,33 @@ pub enum BotEvent {
     ReactionRemove { channel: ChannelId, message: MessageId, user: UserId, emoji: String },
     MemberJoin(UserId),
     MemberLeave(UserId),
+    CommandInvoked(CommandInvoked),
 }
 
 impl BotEvent {
     pub fn message(&self) -> Option<&Message> {
         match self {
             BotEvent::MessageCreate(m) | BotEvent::MessageUpdate(m) => Some(m),
+            BotEvent::CommandInvoked(c) => Some(&c.message),
             _ => None,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandInvoked {
+    pub message: Message,
+    pub command: String,
+    pub options: BTreeMap<String, String>,
+}
+
+impl CommandInvoked {
+    pub fn option(&self, name: &str) -> Option<&str> {
+        self.options.get(name).map(String::as_str)
+    }
+
+    pub fn reply(&self, text: impl Into<String>) -> Act {
+        Act::Send { channel: self.message.channel, content: text.into(), reply_to: Some(self.message.id) }
     }
 }
 
@@ -34,6 +54,7 @@ pub enum Act {
     Ban { user: UserId },
     AddRole { user: UserId, role: RoleId },
     RemoveRole { user: UserId, role: RoleId },
+    SetCommands { commands: Vec<BotCommand> },
 }
 
 pub struct Ctx<'a> {
