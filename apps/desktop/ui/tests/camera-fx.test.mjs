@@ -9,13 +9,12 @@ const {
   CAMERA_BACKGROUNDS,
   parseCameraFx,
   cameraFxNeedsSegmenter,
-  cameraStars,
-  starAlpha,
   edgeStep,
   writeMaskAlpha,
   maskMemory,
   segmentStride,
   averageCost,
+  coverCrop,
   cameraFrameSize,
 } = require("../scripts/camera-fx.js");
 
@@ -25,37 +24,17 @@ test("camera settings fall back to no effect and a mirrored self view", () => {
   assert.deepEqual(parseCameraFx(null), { background: "off", mirror: true });
   assert.deepEqual(parseCameraFx("blur"), { background: "off", mirror: true });
   assert.deepEqual(parseCameraFx({ background: "confetti", mirror: "yes" }), { background: "off", mirror: true });
-  assert.deepEqual(parseCameraFx({ background: "stars", mirror: false }), { background: "stars", mirror: false });
-  assert.deepEqual(CAMERA_BACKGROUNDS, ["off", "blur", "stars"]);
+  assert.deepEqual(parseCameraFx({ background: "blur", mirror: false }), { background: "blur", mirror: false });
+  assert.deepEqual(parseCameraFx({ background: "image", mirror: true }), { background: "image", mirror: true });
+  assert.deepEqual(parseCameraFx({ background: "stars" }), { background: "off", mirror: true });
+  assert.deepEqual(CAMERA_BACKGROUNDS, ["off", "blur", "image"]);
 });
 
-test("only blur and stars load the person segmenter", () => {
+test("blur and a custom image load the person segmenter", () => {
   assert.equal(cameraFxNeedsSegmenter({ background: "off" }), false);
   assert.equal(cameraFxNeedsSegmenter({ background: "blur" }), true);
-  assert.equal(cameraFxNeedsSegmenter({ background: "stars" }), true);
+  assert.equal(cameraFxNeedsSegmenter({ background: "image" }), true);
   assert.equal(cameraFxNeedsSegmenter(undefined), false);
-});
-
-test("the starfield is the same on every device and stays inside the frame", () => {
-  const stars = cameraStars();
-  assert.deepEqual(stars, cameraStars());
-  assert.equal(stars.length, 140);
-  for (const star of stars) {
-    assert.ok(star.x >= 0 && star.x < 1 && star.y >= 0 && star.y < 1);
-    assert.ok(star.alpha > 0.3 && star.alpha <= 0.95);
-  }
-  assert.ok(stars.some(s => s.twinkle) && stars.some(s => !s.twinkle));
-});
-
-test("stars twinkle slowly and never vanish, still stars hold steady", () => {
-  const [twinkler] = cameraStars().filter(s => s.twinkle);
-  const [steady] = cameraStars().filter(s => !s.twinkle);
-  assert.equal(starAlpha(steady, 0), starAlpha(steady, 3.7));
-  const samples = Array.from({ length: 60 }, (_, i) => starAlpha(twinkler, i / 10));
-  assert.ok(Math.min(...samples) >= twinkler.alpha * 0.45 - 1e-9);
-  assert.ok(Math.max(...samples) <= twinkler.alpha + 1e-9);
-  assert.ok(Math.abs(starAlpha(twinkler, 0) - starAlpha(twinkler, 0.1)) < 0.05);
-  assert.ok(Math.abs(starAlpha(twinkler, 0) - starAlpha(twinkler, 6)) < 1e-9);
 });
 
 test("mask edges are soft between unsure and sure", () => {
@@ -118,4 +97,11 @@ test("the camera scripts load before the app that uses them", () => {
   const order = ["scripts/camera-fx.js", "scripts/camera-pipeline.js", "scripts/app.js"].map(src => html.indexOf(`<script src="${src}">`));
   assert.ok(order.every(i => i > 0));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
+});
+
+test("a custom background fills the frame from its centre without stretching", () => {
+  assert.deepEqual(coverCrop(960, 540, 640, 360), { sx: 0, sy: 0, sw: 960, sh: 540 });
+  assert.deepEqual(coverCrop(960, 540, 640, 480), { sx: 120, sy: 0, sw: 720, sh: 540 });
+  assert.deepEqual(coverCrop(1000, 1000, 640, 360), { sx: 0, sy: 218.75, sw: 1000, sh: 562.5 });
+  assert.equal(coverCrop(0, 540, 640, 360), null);
 });

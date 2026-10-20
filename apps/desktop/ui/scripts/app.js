@@ -1667,7 +1667,7 @@ function paintSidebarBanner() {
   header.classList.toggle("has-banner", Boolean(server));
   header.classList.toggle("plain", Boolean(server) && !ref);
   banner.style.backgroundImage = "";
-  header.style.setProperty("--slot", server ? starfield(server.id, serverColors(server.id).glow).css : "");
+  header.style.setProperty("--slot", server ? starfield(server.id).css : "");
   if (!ref) return;
   loadServerImage(ref).then(url => {
     if (url && state.currentServer && state.currentServer.banner === ref) {
@@ -2167,6 +2167,17 @@ function renderCameraFx(status = cameraFxStatus()) {
   const note = $("cam-fx-note");
   note.textContent = CAMERA_FX_NOTES[status];
   note.classList.toggle("warn", status === "failed");
+}
+
+async function chooseCameraBackdrop() {
+  try {
+    const src = await chooseImage("Choose a camera background", $("server-image-file"));
+    if (!src) return;
+    setCameraBackdrop(await cropImageFile(src, CAMERA_BACKDROP_WIDTH, CAMERA_BACKDROP_HEIGHT));
+    updateCameraFx({ background: "image" });
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function fillDeviceSelect(select, names, chosen) {
@@ -7784,7 +7795,7 @@ function renderDmProfile(userId, name) {
 }
 
 function bannerColor(userId) {
-  return starfield(userId, hueGlow(tintHue(userId))).css;
+  return starfield(userId).css;
 }
 
 function roleGradient(hex) {
@@ -9595,12 +9606,15 @@ function wireEvents() {
   $("vp-camera").onclick = () => (state.cameraOn ? stopCamera() : startCamera());
   $("cam-preview-btn").onclick = toggleCameraPreview;
   for (const button of $("cam-bg").querySelectorAll("button")) {
-    button.onclick = () => updateCameraFx({ background: button.dataset.bg });
+    button.onclick = () => {
+      if (button.dataset.bg === "image" && !hasCameraBackdrop()) chooseCameraBackdrop();
+      else updateCameraFx({ background: button.dataset.bg });
+    };
   }
+  $("cam-backdrop-btn").onclick = chooseCameraBackdrop;
   $("cam-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
   onCameraFxChange(renderCameraFx);
   renderCameraFx();
-  paintCameraSky($("cam-sky"));
   $("camera-device").addEventListener("change", async e => {
     try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch {}
     if (previewPipe) {
