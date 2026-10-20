@@ -218,6 +218,10 @@
           <button class="btn-primary btn-small" id="dm-request-accept">Accept</button>
         </div>
       </div>
+      <div class="typing-strip" id="typing-strip" role="status" aria-live="polite">
+        <span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span id="typing-text"></span>
+      </div>
       <div class="composer">
         <div class="link-draft hidden" id="link-draft" role="status">
           <span class="link-draft-thumb" id="link-draft-thumb"></span>
@@ -1921,6 +1925,7 @@
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
   <script src="scripts/voice-input.js"></script>
+  <script src="scripts/typing.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>

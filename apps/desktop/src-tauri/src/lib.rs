@@ -362,6 +362,19 @@ fn sign_message(app: &App, sid: ServerId, message: &mut Message) -> CmdResult<()
 }
 
 #[tauri::command]
+async fn send_typing(app: tauri::State<'_, App>, server_id: String, channel_id: String) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let channel: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?.id;
+    let allowed = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.channel(channel).is_some());
+    if !allowed {
+        return Err("unknown channel".into());
+    }
+    broadcast_event(&app, sid, ServerEvent::TypingStart { channel, user: me }).await;
+    Ok(())
+}
+
+#[tauri::command]
 async fn send_message(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -5596,6 +5609,16 @@ async fn run_net_loop(
         let app = handle.state::<App>();
         match event {
             NetEvent::Event { server, event, action, .. } => {
+                if let ServerEvent::TypingStart { channel, user } = &event {
+                    if remote_action_ok(&app, server, &event, action) {
+                        liveness::heard(&app, server, *user, std::time::Instant::now());
+                        let _ = handle.emit(
+                            "typing",
+                            serde_json::json!({ "server": server.to_string(), "channel": channel.to_string(), "user": user.to_string() }),
+                        );
+                    }
+                    continue;
+                }
                 if let ServerEvent::SoundboardPlay { channel, user, name, .. } = &event {
                     if remote_action_ok(&app, server, &event, action) {
                         on_remote_soundboard(&app, &handle, server, *channel, *user, name);
@@ -6271,6 +6294,7 @@ pub fn run() {
             set_voice_hotkeys,
             set_sensitivity,
             mic_level,
+            send_typing,
             set_overlay_settings,
             set_game_tags,
             set_rules,
