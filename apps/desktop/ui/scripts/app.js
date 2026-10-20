@@ -434,7 +434,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_voice_hotkeys": Object.assign(mock.voice, { mute_hotkey: args.mute, deafen_hotkey: args.deafen }); return mock.voice;
     case "set_sensitivity": Object.assign(mock.voice, { auto_sensitivity: args.auto, sensitivity_db: args.thresholdDb }); return mock.voice;
     case "voice_hotkey_problems": return [];
-    case "mic_level": return mock.micTesting ? -100 + Math.random() * 70 : -100;
+    case "mic_level": return mock.micTesting ? -55 + 25 * Math.sin(Date.now() / 400) : -100;
     case "set_muted": mock.voice.muted = args.muted; return mock.voice;
     case "set_deafened":
       mock.voice.deafened = args.deafened;
