@@ -164,6 +164,14 @@ pub fn load_invites(dir: &Path) -> HashMap<ServerId, String> {
     read_json(&dir.join("invites.json")).unwrap_or_default()
 }
 
+pub fn save_listings(dir: &Path, listings: &HashMap<ServerId, crate::directory::Listing>) -> Result<()> {
+    write_json(&dir.join("directory.json"), listings)
+}
+
+pub fn load_listings(dir: &Path) -> HashMap<ServerId, crate::directory::Listing> {
+    read_json(&dir.join("directory.json")).unwrap_or_default()
+}
+
 fn server_path(dir: &Path, id: ServerId) -> PathBuf {
     dir.join("servers").join(format!("{id}.json"))
 }

@@ -82,10 +82,6 @@ impl Attachment {
         }
         Some(preview)
     }
-
-    pub fn carries_a_file(&self) -> bool {
-        !self.is_link_preview() || !self.blob.is_empty()
-    }
 }
 
 pub fn is_web_link(url: &str) -> bool {

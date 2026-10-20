@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, shouldNotify, messageNotice, mentionsName, levelForServer, isRecent, caughtUpNotice } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -49,6 +49,16 @@ test("an announcement is named as one in its notification", () => {
   assert.equal(messageNotice({ ...msg, content: "", has_attachments: true }, strip).body, "Sent an attachment");
 });
 
+test("a message that is only a voice message is announced as one", () => {
+  const msg = { author_name: "nova", channel_name: "general", server_name: "Rust Hangout", content: "", has_attachments: true, voice_message: true };
+  assert.equal(messageNotice(msg, plain).body, "Voice message");
+  assert.equal(messageNotice({ ...msg, content: "hear this" }, plain).body, "hear this");
+  assert.equal(messageNotice({ ...msg, voice_message: false }, plain).body, "Sent an attachment");
+  assert.equal(caughtUpNotice({ ...msg, count: 3 }, plain).body, "Voice message · 2 more messages");
+  assert.equal(noticeText("", false, plain, true), "Voice message");
+  assert.equal(noticeText("", false, plain, false), "");
+});
+
 test("muted and per-server choices win over the global level", () => {
   const prefs = { level: "all", servers: { quiet: "mentions", normal: "default" }, muted: { gone: true } };
   assert.equal(levelForServer(prefs, "quiet"), "mentions");
@@ -85,4 +95,56 @@ test("one notice per channel names the newest message and the rest", () => {
   assert.equal(caughtUpNotice({ ...base, count: 4, content: "hi" }, plain).body, "hi · 3 more messages");
   assert.equal(caughtUpNotice({ ...base, count: 1, content: "", has_attachments: true }, plain).body, "Sent an attachment");
   assert.equal(caughtUpNotice({ ...base, count: 3, content: "", author_name: "" }, plain).title, "Someone (#general, Pixel Pioneers)");
+});
+
+test("a channel follows its server until it has a level of its own", () => {
+  const prefs = { level: "all", servers: { s1: "mentions" }, channels: { s1: { c1: { level: "none" }, c2: { level: "default" } } } };
+  assert.equal(levelForChannel(prefs, "s1", "c1", 0), "none");
+  assert.equal(levelForChannel(prefs, "s1", "c2", 0), "mentions");
+  assert.equal(levelForChannel(prefs, "s1", "c3", 0), "mentions");
+  assert.equal(levelForChannel(prefs, "s2", "c1", 0), "all");
+  assert.equal(levelForChannel({ servers: {} }, "s2", "c1", 0), "all");
+  assert.equal(channelPref(prefs, "s1", "c1").level, "none");
+  assert.equal(channelPref(prefs, "s9", "c1"), null);
+});
+
+test("a muted channel or server silences the channel, and a timed mute ends on its own", () => {
+  const now = 1_000_000;
+  const prefs = {
+    level: "all",
+    servers: {},
+    muted: { gone: true },
+    channels: { s1: { forever: { mute: true }, soon: { mute: now + 60 }, over: { mute: now - 1 }, exact: { mute: now }, odd: { mute: "yes" }, level: { level: "all" } } },
+  };
+  assert.equal(isMuted(prefs, "s1", "forever", now), true);
+  assert.equal(isMuted(prefs, "s1", "soon", now), true);
+  assert.equal(isMuted(prefs, "s1", "over", now), false);
+  assert.equal(isMuted(prefs, "s1", "exact", now), false);
+  assert.equal(isMuted(prefs, "s1", "odd", now), false);
+  assert.equal(isMuted(prefs, "s1", "level", now), false);
+  assert.equal(isMuted(prefs, "s1", "unknown", now), false);
+  assert.equal(isMuted(prefs, "gone", "anything", now), true);
+  assert.equal(isMuted({ servers: {} }, "s1", "c1", now), false);
+  assert.equal(levelForChannel(prefs, "s1", "forever", now), "none");
+  assert.equal(levelForChannel(prefs, "s1", "soon", now), "none");
+  assert.equal(levelForChannel(prefs, "s1", "over", now), "all");
+  assert.equal(levelForChannel(prefs, "gone", "c1", now), "none");
+  assert.equal(shouldNotify({ level: levelForChannel(prefs, "s1", "soon", now), presence: "online", focusedOnIt: false, isDm: false, mentioned: true }), false);
+});
+
+test("channel choices are stored per server and cleaned up when they return to the default", () => {
+  const now = 1_000_000;
+  let prefs = { level: "all", servers: {} };
+  prefs = withChannelPref(prefs, "s1", "c1", { level: "mentions" });
+  assert.deepEqual(prefs.channels, { s1: { c1: { level: "mentions" } } });
+  prefs = withChannelPref(prefs, "s1", "c1", { mute: muteUntil(MUTE_CHOICES[0], now) });
+  assert.deepEqual(prefs.channels, { s1: { c1: { level: "mentions", mute: now + 15 * 60 } } });
+  prefs = withChannelPref(prefs, "s1", "c1", { mute: muteUntil(MUTE_CHOICES[4], now) });
+  assert.equal(prefs.channels.s1.c1.mute, true);
+  prefs = withChannelPref(prefs, "s1", "c1", { level: "default" });
+  assert.deepEqual(prefs.channels, { s1: { c1: { mute: true } } });
+  prefs = withChannelPref(prefs, "s1", "c1", { mute: false });
+  assert.deepEqual(prefs.channels, {});
+  assert.equal(prefs.level, "all");
+  assert.deepEqual(MUTE_CHOICES.map(c => c.seconds), [900, 3600, 28800, 86400, null]);
 });

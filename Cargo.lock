@@ -886,6 +886,7 @@ name = "commy-audio"
 version = "0.1.0"
 dependencies = [
  "nnnoiseless",
+ "realfft",
  "rusty-opus",
  "thiserror 1.0.69",
 ]

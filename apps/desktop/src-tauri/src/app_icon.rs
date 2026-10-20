@@ -1,6 +1,6 @@
 #![cfg_attr(mobile, allow(dead_code))]
 
-use image::{imageops, RgbaImage};
+use image::{imageops, Rgba, RgbaImage};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
@@ -9,8 +9,16 @@ pub const CUSTOM: &str = "custom";
 pub const FOLLOW_APP: &str = "app";
 pub const PRESETS: &[&str] = &[CLASSIC, "amber", "mint", "ocean", "violet", "mono"];
 pub const TARGETS: &[&str] = &["app", "tray"];
+pub const TILE_COLOURS: &[(&str, &str)] = &[
+    ("amber", "#e08a1e"),
+    ("mint", "#1f9e6e"),
+    ("ocean", "#2a6fd1"),
+    ("violet", "#7448d4"),
+    ("mono", "#33363d"),
+];
 
 const CUSTOM_SIZE: u32 = 256;
+const MARK_PNG: &[u8] = include_bytes!("../../ui/images/commy_v3_noback.png");
 
 static CURRENT: RwLock<Option<(RgbaImage, RgbaImage)>> = RwLock::new(None);
 
@@ -19,32 +27,41 @@ fn original() -> Option<&'static RgbaImage> {
     BASE.get_or_init(|| image::load_from_memory(crate::tray::ICON_PNG).ok().map(|i| i.to_rgba8())).as_ref()
 }
 
-fn hue_degrees(name: &str) -> Option<i32> {
-    match name {
-        "amber" => Some(40),
-        "mint" => Some(130),
-        "ocean" => Some(200),
-        "violet" => Some(270),
-        _ => None,
-    }
+fn mark() -> Option<&'static RgbaImage> {
+    static MARK: std::sync::OnceLock<Option<RgbaImage>> = std::sync::OnceLock::new();
+    MARK.get_or_init(|| {
+        let base = original()?;
+        let decoded = image::load_from_memory(MARK_PNG).ok()?.to_rgba8();
+        Some(imageops::resize(&decoded, base.width(), base.height(), imageops::FilterType::Lanczos3))
+    })
+    .as_ref()
+}
+
+fn parse_hex(hex: &str) -> Option<[u8; 3]> {
+    let digits = hex.strip_prefix('#').filter(|d| d.len() == 6 && d.is_ascii())?;
+    let channel = |i: usize| u8::from_str_radix(&digits[i..i + 2], 16).ok();
+    Some([channel(0)?, channel(2)?, channel(4)?])
+}
+
+fn tile_colour(name: &str) -> Option<[u8; 3]> {
+    TILE_COLOURS.iter().find(|(preset, _)| *preset == name).and_then(|(_, hex)| parse_hex(hex))
+}
+
+fn mark_on_tile(rgb: [u8; 3]) -> Option<RgbaImage> {
+    let star = mark()?;
+    Some(RgbaImage::from_fn(star.width(), star.height(), |x, y| {
+        let px = star.get_pixel(x, y);
+        let coverage = px[3] as u32;
+        let mix = |i: usize| ((px[i] as u32 * coverage + rgb[i] as u32 * (255 - coverage) + 127) / 255) as u8;
+        Rgba([mix(0), mix(1), mix(2), 255])
+    }))
 }
 
 pub fn preset(name: &str) -> Option<RgbaImage> {
-    let base = original()?;
-    match name {
-        CLASSIC => Some(base.clone()),
-        "mono" => {
-            let mut grey = base.clone();
-            for px in grey.pixels_mut() {
-                let luma = ((px[0] as u32 * 299 + px[1] as u32 * 587 + px[2] as u32 * 114) / 1000) as u8;
-                px[0] = luma;
-                px[1] = luma;
-                px[2] = luma;
-            }
-            Some(grey)
-        }
-        other => hue_degrees(other).map(|degrees| imageops::huerotate(base, degrees)),
+    if name == CLASSIC {
+        return original().cloned();
     }
+    tile_colour(name).and_then(mark_on_tile)
 }
 
 pub fn custom_path(dir: &Path, target: &str) -> PathBuf {
@@ -110,15 +127,38 @@ mod tests {
     }
 
     #[test]
-    fn every_preset_builds_and_keeps_the_shape() {
+    fn every_preset_builds_as_a_full_tile() {
         let classic = preset(CLASSIC).unwrap();
         for name in PRESETS {
             let icon = preset(name).unwrap();
             assert_eq!(icon.dimensions(), classic.dimensions());
-            let opaque = |i: &RgbaImage| i.pixels().filter(|p| p[3] > 0).count();
-            assert_eq!(opaque(&icon), opaque(&classic), "{name} keeps the same silhouette");
+            assert!(icon.pixels().all(|p| p[3] == 255), "{name} has no see-through pixels");
         }
         assert!(preset("nope").is_none());
+    }
+
+    #[test]
+    fn colour_tiles_share_the_same_star() {
+        let star = mark().unwrap();
+        let solid: Vec<usize> = star.pixels().enumerate().filter(|(_, p)| p[3] == 255).map(|(i, _)| i).collect();
+        assert!(!solid.is_empty());
+        let amber = preset("amber").unwrap();
+        let mono = preset("mono").unwrap();
+        for i in solid {
+            assert_eq!(amber.as_raw()[i * 4..i * 4 + 3], mono.as_raw()[i * 4..i * 4 + 3]);
+        }
+    }
+
+    #[test]
+    fn every_colour_preset_has_a_tile_colour() {
+        let coloured: Vec<&str> = PRESETS.iter().copied().filter(|p| *p != CLASSIC).collect();
+        let named: Vec<&str> = TILE_COLOURS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(coloured, named);
+        assert!(TILE_COLOURS.iter().all(|(_, hex)| parse_hex(hex).is_some()));
+        assert_eq!(parse_hex("#e08a1e"), Some([0xe0, 0x8a, 0x1e]));
+        assert_eq!(parse_hex("e08a1e"), None);
+        assert_eq!(parse_hex("#e08a1"), None);
+        assert_eq!(parse_hex("#zz8a1e"), None);
     }
 
     #[test]

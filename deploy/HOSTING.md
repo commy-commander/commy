@@ -98,10 +98,10 @@ Run `docker compose up -d` after any `.env` change.
 
 ## GIF search and Twitch
 
-Signed in apps search GIFs (KLIPY) and games (IGDB, which uses a Twitch
+Signed in apps search GIFs and stickers (KLIPY) and games (IGDB, which uses a Twitch
 application) through your account server. The keys stay in your `.env`: apps
 only ever get results, so your users need no keys of their own and nothing
-worth extracting ships in the app. The GIF files and game covers load through
+worth extracting ships in the app. The GIF and sticker files and game covers load through
 the server as well (`/api/auth/commy/media`), so apps talk only to their
 account server and KLIPY and IGDB never see your users' addresses. That route
 needs a signed in app and fetches only from `static.klipy.com`,
@@ -128,7 +128,7 @@ server, never your users.
    - Client Type: Confidential
 
    Open Manage, copy the Client ID, press New Secret and copy the secret.
-2. **KLIPY key** (GIFs). Sign in at https://partner.klipy.com/api-keys, choose
+2. **KLIPY key** (GIFs and stickers). Sign in at https://partner.klipy.com/api-keys, choose
    Add Platform, then Create API Key, and copy it. Test keys are rate limited;
    use Request Production in the key menu before opening to the public.
 3. Fill in `deploy/.env`:
@@ -340,6 +340,10 @@ never reach this stack. The auth database holds:
 - invite links: the code, the sealed invite (unreadable without the link),
   creator account if the app was signed in, expiry, a hash of its revoke
   secret, and the sealed invite background if the server set one
+- server directory listings: the invite code, server name, description,
+  category, a rounded member count, and the account that listed it. A listing
+  also carries its invite link's key so anyone browsing can join, which means
+  the operator can open that one invite too
 - each account's sealed server list (`vaultItem`): bytes sealed with a key
   only that account's devices hold, plus a version and the last change time.
   The operator can see its size, not which servers are in it

@@ -9,6 +9,7 @@ use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 use crate::message::{
     Attachment, Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES, MAX_RELAYED_REACTIONS, MAX_RELAYED_REACTORS,
 };
+use crate::poll::{Ballots, PollTally};
 use crate::server::{ChannelKind, Member, Server, Timeout};
 use crate::user::{Presence, UserProfile};
 use chrono::{DateTime, Utc};
@@ -48,6 +49,8 @@ pub enum StoreError {
     NotAnnouncer,
     #[error("members without the send files permission cannot attach files here")]
     NoUploads,
+    #[error("members without the send voice messages permission cannot send voice messages here")]
+    NoVoiceMessages,
     #[error("the signer may not do that here")]
     NotAllowed,
     #[error("unsigned event from a member whose key is known")]
@@ -113,6 +116,8 @@ pub struct ServerState {
     deleted: bool,
     invites: BTreeMap<String, TrackedInvite>,
     invite_background: Option<String>,
+    ballots: HashMap<MessageId, Ballots>,
+    closed_polls: HashSet<MessageId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +161,10 @@ pub struct Snapshot {
     pub invites: Vec<TrackedInvite>,
     #[serde(default)]
     pub invite_background: Option<String>,
+    #[serde(default)]
+    pub ballots: Vec<(MessageId, UserId, Vec<u8>)>,
+    #[serde(default)]
+    pub closed_polls: Vec<MessageId>,
 }
 
 impl ServerState {
@@ -190,6 +199,8 @@ impl ServerState {
             deleted: false,
             invites: BTreeMap::new(),
             invite_background: None,
+            ballots: HashMap::new(),
+            closed_polls: HashSet::new(),
         }
     }
 
@@ -227,6 +238,8 @@ impl ServerState {
             deleted: self.deleted,
             invites: self.invites.values().cloned().collect(),
             invite_background: self.invite_background.clone(),
+            ballots: self.ballots().map(|(id, user, choices)| (id, user, choices.to_vec())).collect(),
+            closed_polls: self.closed_polls.iter().filter(|id| self.index.contains_key(id)).copied().collect(),
         }
     }
 
@@ -278,6 +291,12 @@ impl ServerState {
         state.deleted = snapshot.deleted;
         state.invites = snapshot.invites.into_iter().filter(TrackedInvite::valid).map(|i| (i.id(), i)).collect();
         state.invite_background = snapshot.invite_background;
+        for (id, user, choices) in snapshot.ballots {
+            if state.index.contains_key(&id) && !choices.is_empty() {
+                state.ballots.entry(id).or_default().insert(user, choices);
+            }
+        }
+        state.closed_polls = snapshot.closed_polls.into_iter().filter(|id| state.index.contains_key(id)).collect();
         for signed in snapshot.signed_actions {
             if let Some(subject) = action::subject(&signed.event) {
                 if state.action_times.get(&subject) == Some(&signed.action.at) {
@@ -438,6 +457,71 @@ impl ServerState {
         self.message(id).is_some()
     }
 
+    pub fn ballots(&self) -> impl Iterator<Item = (MessageId, UserId, &[u8])> + '_ {
+        self.ballots
+            .iter()
+            .filter(|(id, _)| self.index.contains_key(id))
+            .flat_map(|(id, votes)| votes.iter().map(|(user, choices)| (*id, *user, choices.as_slice())))
+    }
+
+    pub fn poll_choices(&self, id: MessageId, user: UserId) -> &[u8] {
+        self.ballots.get(&id).and_then(|b| b.get(&user)).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn poll_closed(&self, id: MessageId, now: DateTime<Utc>) -> bool {
+        self.closed_polls.contains(&id) || self.message(id).and_then(|m| m.poll()).is_some_and(|p| !p.is_open_at(now))
+    }
+
+    pub fn poll_tally(&self, id: MessageId, now: DateTime<Utc>) -> Option<PollTally> {
+        let poll = self.message(id)?.poll()?;
+        let empty = Ballots::new();
+        let ballots = self.ballots.get(&id).unwrap_or(&empty);
+        Some(poll.tally(ballots, self.poll_closed(id, now)))
+    }
+
+    pub fn carry_polls(&mut self, from: &ServerState) {
+        for (id, user, choices) in from.ballots() {
+            if self.index.contains_key(&id) && !self.ballots.get(&id).is_some_and(|b| b.contains_key(&user)) {
+                self.ballots.entry(id).or_default().insert(user, choices.to_vec());
+            }
+        }
+        for id in from.closed_polls.iter().filter(|id| self.index.contains_key(id)) {
+            self.closed_polls.insert(*id);
+        }
+    }
+
+    fn vote_poll(&mut self, channel: ChannelId, id: MessageId, user: UserId, choices: Vec<u8>) -> Result<bool, StoreError> {
+        let message = self.find_message_mut(channel, id)?;
+        let Some(poll) = message.poll() else { return Ok(false) };
+        if self.poll_closed(id, Utc::now()) {
+            return Ok(false);
+        }
+        let Some(choices) = poll.normalize_choices(&choices) else { return Ok(false) };
+        let votes = self.ballots.entry(id).or_default();
+        let before = votes.get(&user).map_or(&[][..], Vec::as_slice);
+        if before == choices.as_slice() {
+            return Ok(false);
+        }
+        if choices.is_empty() {
+            votes.remove(&user);
+        } else {
+            votes.insert(user, choices);
+        }
+        Ok(true)
+    }
+
+    fn close_poll(&mut self, channel: ChannelId, id: MessageId, by: UserId) -> Result<bool, StoreError> {
+        let message = self.find_message_mut(channel, id)?;
+        let author = message.author;
+        if message.poll().is_none() {
+            return Ok(false);
+        }
+        if author != by && !self.server.permissions_for(by).allows(crate::permissions::Permissions::MANAGE_MESSAGES) {
+            return Err(StoreError::NotAllowed);
+        }
+        Ok(self.closed_polls.insert(id))
+    }
+
     pub fn deleted_ids(&self) -> impl Iterator<Item = MessageId> + '_ {
         self.deleted_messages.iter().chain(self.tombstones.keys()).copied()
     }
@@ -595,10 +679,12 @@ impl ServerState {
             | E::ChannelUpdate { channel, .. }
             | E::ChannelLayout { channel, .. }
             | E::ChannelLimit { channel, .. }
+            | E::ChannelSlowMode { channel, .. }
             | E::ChannelBanner { channel, .. }
             | E::ChannelColor { channel, .. }
             | E::ChannelKindSet { channel, .. }
             | E::ChannelAccessSet { channel, .. }
+            | E::ChannelSensitiveSet { channel, .. }
             | E::ChannelKeyAdd { channel, .. }
             | E::ChannelKeyGrant { channel, .. } => server.channel(*channel).is_some(),
             E::RoleUpdate { role, .. } => server.roles.iter().any(|r| r.id == role.id),
@@ -614,9 +700,11 @@ impl ServerState {
             E::StickerRemove { name, .. } => server.stickers.iter().any(|s| s.name == *name),
             E::EmoticonRemove { name, .. } => server.emoticons.iter().any(|e| e.name == *name),
             E::SoundRemove { name, .. } => server.soundboard.iter().any(|s| s.name == *name),
-            E::MessagePin { message, .. } | E::ReactionSet { message, .. } | E::ReactionToggle { message, .. } => {
-                self.has_message(*message)
-            }
+            E::MessagePin { message, .. }
+            | E::ReactionSet { message, .. }
+            | E::ReactionToggle { message, .. }
+            | E::PollVote { message, .. }
+            | E::PollClose { message, .. } => self.has_message(*message),
             _ => true,
         }
     }
@@ -976,6 +1064,14 @@ impl ServerState {
                 self.deleted = true;
                 Ok(true)
             }
+            ServerEvent::OwnerTransfer { server, user } => {
+                self.same_server(server)?;
+                if user == self.server.owner || !self.server.is_member(user) {
+                    return Ok(false);
+                }
+                self.server.owner = user;
+                Ok(true)
+            }
             ServerEvent::InviteTrack { server, invite } => {
                 self.same_server(server)?;
                 let now = Utc::now().timestamp_millis();
@@ -1065,6 +1161,13 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.automod, rules))
             }
+            ServerEvent::OnboardingSet { server, onboarding } => {
+                self.same_server(server)?;
+                if onboarding.as_ref().is_some_and(|o| !o.valid()) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.server.onboarding, onboarding))
+            }
             ServerEvent::BotSet { server, user, bot } => {
                 self.same_server(server)?;
                 if !bot {
@@ -1081,6 +1184,17 @@ impl ServerState {
                     None => Ok(self.server.pronouns.remove(&user).is_some()),
                     Some(None) => Ok(false),
                     Some(Some(text)) => Ok(self.server.pronouns.insert(user, text.clone()).as_deref() != Some(text.as_str())),
+                }
+            }
+            ServerEvent::MemberNickname { server, user, nickname } => {
+                self.same_server(server)?;
+                let Some(member) = self.server.member_mut(user) else {
+                    return Ok(false);
+                };
+                match nickname.as_deref().map(crate::server::clean_nickname) {
+                    None => Ok(replace(&mut member.nickname, None)),
+                    Some(None) => Ok(false),
+                    Some(cleaned) => Ok(replace(&mut member.nickname, cleaned)),
                 }
             }
             ServerEvent::RulesAccept { server, user } => {
@@ -1161,6 +1275,14 @@ impl ServerState {
                 }
                 Ok(replace(&mut target.user_limit, user_limit))
             }
+            ServerEvent::ChannelSlowMode { server, channel, seconds } => {
+                self.same_server(server)?;
+                let Some(target) = self.server.channel_mut(channel) else { return Ok(false) };
+                if !matches!(target.kind, crate::server::ChannelKind::Text | crate::server::ChannelKind::Announcement) || seconds > crate::server::MAX_SLOW_MODE {
+                    return Ok(false);
+                }
+                Ok(replace(&mut target.slow_mode, seconds))
+            }
             ServerEvent::VoiceModerate { server, user, muted, deafened } => {
                 self.same_server(server)?;
                 if user == self.server.owner {
@@ -1193,6 +1315,23 @@ impl ServerState {
                 };
                 let Some(member) = self.server.member_mut(user) else { return Ok(false) };
                 Ok(replace(&mut member.timeout, timeout))
+            }
+            ServerEvent::VoiceMove { server, user, channel } => {
+                self.same_server(server)?;
+                if user == self.server.owner {
+                    return Ok(false);
+                }
+                let Some(current) = self.voice_states.get(&user).copied() else {
+                    return Ok(false);
+                };
+                match channel {
+                    Some(target) => match self.server.channel(target) {
+                        Some(c) if c.kind == ChannelKind::Voice => Ok(target != current),
+                        Some(_) => Ok(false),
+                        None => Err(StoreError::UnknownChannel),
+                    },
+                    None => Ok(true),
+                }
             }
             ServerEvent::MemberBan { server, user } => {
                 self.same_server(server)?;
@@ -1260,6 +1399,16 @@ impl ServerState {
                     return Err(StoreError::UnknownChannel);
                 };
                 Ok(replace(&mut target.color, color))
+            }
+            ServerEvent::ChannelSensitiveSet { server, channel, sensitive } => {
+                self.same_server(server)?;
+                let Some(target) = self.server.channel_mut(channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                if !matches!(target.kind, ChannelKind::Text | ChannelKind::Announcement) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut target.sensitive, sensitive))
             }
             ServerEvent::MessagePin { server, channel, message, by, at, pinned } => {
                 self.same_server(server)?;
@@ -1343,6 +1492,14 @@ impl ServerState {
                     return Err(StoreError::UnknownChannel);
                 }
                 self.channel_keys.entry(channel).or_default().set_grant(user, grant, MAX_PROFILES).ok_or(StoreError::Limit)
+            }
+            ServerEvent::PollVote { server, channel, message, user, choices } => {
+                self.same_server(server)?;
+                self.vote_poll(channel, message, user, choices)
+            }
+            ServerEvent::PollClose { server, channel, message, by } => {
+                self.same_server(server)?;
+                self.close_poll(channel, message, by)
             }
             ServerEvent::ServerImages { server, icon, banner } => {
                 self.same_server(server)?;
@@ -1448,6 +1605,20 @@ impl ServerState {
         }
     }
 
+    pub fn slow_mode_wait(&self, channel: ChannelId, author: UserId, at: DateTime<Utc>) -> Option<i64> {
+        let seconds = self.server.channel(channel).map(|c| c.slow_mode).unwrap_or(0);
+        if seconds == 0 || self.server.permissions_for(author).bypasses_slow_mode() {
+            return None;
+        }
+        let last = self.messages(channel).iter().filter(|m| m.author == author && m.created_at < at).map(|m| m.created_at).max()?;
+        let wait = i64::from(seconds) - (at - last).num_seconds();
+        (wait > 0).then_some(wait)
+    }
+
+    fn slow_mode_blocks(&self, message: &Message) -> bool {
+        self.slow_mode_wait(message.channel, message.author, message.created_at).is_some()
+    }
+
     fn create_message(&mut self, mut message: Message) -> Result<bool, StoreError> {
         if !message.id.is_bound_to(message.author) {
             return Err(StoreError::UnboundMessageId);
@@ -1478,15 +1649,24 @@ impl ServerState {
             }
         }
         if !held
-            && message.attachments.iter().any(Attachment::carries_a_file)
+            && message.attachments.iter().any(Attachment::is_plain_file)
             && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::ATTACH_FILES)
         {
             return Err(StoreError::NoUploads);
+        }
+        if !held
+            && message.attachments.iter().any(Attachment::is_voice_message)
+            && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::SEND_VOICE_MESSAGES)
+        {
+            return Err(StoreError::NoVoiceMessages);
         }
         if !held {
             if let Some(changed) = self.bind_proofs(&message) {
                 return Ok(changed);
             }
+        }
+        if !held && self.slow_mode_blocks(&message) {
+            return Ok(false);
         }
         if self.deleted_messages.contains(&message.id) {
             return Ok(false);
@@ -1621,6 +1801,8 @@ impl ServerState {
             }
             self.index.remove(&proof.message);
             self.server.pins.retain(|p| p.message != proof.message);
+            self.ballots.remove(&proof.message);
+            self.closed_polls.remove(&proof.message);
             self.store_proof(proof, Some(author));
             return Ok(true);
         }
@@ -2558,6 +2740,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn channel_sensitive_sets_and_clears_on_text_channels_only() {
+        let (mut state, channel, _) = fixture();
+        let sid = state.server.id;
+        let set = |channel, sensitive| ServerEvent::ChannelSensitiveSet { server: sid, channel, sensitive };
+        assert_eq!(state.apply(set(channel, true)), Ok(true));
+        assert!(state.server.channel(channel).unwrap().sensitive);
+        assert_eq!(state.apply(set(channel, true)), Ok(false));
+        assert_eq!(state.apply(set(channel, false)), Ok(true));
+        assert!(!state.server.channel(channel).unwrap().sensitive);
+        let voice = Channel::new("Voice", ChannelKind::Voice, 9);
+        let voice_id = voice.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: voice }).unwrap();
+        assert_eq!(state.apply(set(voice_id, true)), Ok(false));
+        assert!(!state.server.channel(voice_id).unwrap().sensitive);
+        assert_eq!(state.apply(set(ChannelId::new(), true)), Err(StoreError::UnknownChannel));
+    }
+
     fn pin_event(state: &ServerState, channel: ChannelId, message: MessageId, by: UserId, pinned: bool) -> ServerEvent {
         ServerEvent::MessagePin { server: state.server.id, channel, message, by, at: Utc::now(), pinned }
     }
@@ -2784,6 +2984,39 @@ mod tests {
     }
 
     #[test]
+    fn voice_messages_need_their_own_permission_and_not_the_files_one() {
+        let (mut state, channel, _owner) = fixture();
+        let sid = state.server.id;
+        let plain = join(&mut state, "plain");
+        let with_voice = |state: &ServerState, author| {
+            let mut m = Message::new(channel, author, "");
+            m.attachments.push(crate::message::Attachment::voice_message("abc".into(), 10, None));
+            crate::test_support::signed(state, m)
+        };
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.remove(Permissions::ATTACH_FILES);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone.clone() }).unwrap();
+        let first = with_voice(&state, plain);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first.clone() }), Ok(true), "voice needs no send files permission");
+        everyone.permissions.remove(Permissions::SEND_VOICE_MESSAGES);
+        everyone.permissions.insert(Permissions::ATTACH_FILES);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        let blocked = with_voice(&state, plain);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: blocked }), Err(StoreError::NoVoiceMessages));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first }), Ok(false), "held messages stay");
+        let mut file = Message::new(channel, plain, "look");
+        file.attachments.push(crate::message::Attachment {
+            blob: "abc".into(),
+            filename: "cat.png".into(),
+            size_bytes: 10,
+            mime_type: "image/png".into(),
+            provider: None,
+        });
+        let file = crate::test_support::signed(&state, file);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: file }), Ok(true), "files still follow their own permission");
+    }
+
+    #[test]
     fn pronouns_are_the_members_own_and_kept_short() {
         let (mut state, _, owner) = fixture();
         let sid = state.server.id;
@@ -2804,6 +3037,32 @@ mod tests {
         let signed = |by, user| crate::SignedEvent::sign(sid, by, 1, set(user, Some("he / him")), &identity_for(by));
         assert!(crate::action::authorized(&state.server, friend, &signed(friend, friend).event));
         assert!(!crate::action::authorized(&state.server, owner, &signed(owner, friend).event));
+    }
+
+    #[test]
+    fn nicknames_are_trimmed_kept_short_and_cleared_with_none() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let set = |user, text: Option<&str>| ServerEvent::MemberNickname { server: sid, user, nickname: text.map(Into::into) };
+        let nickname_of = |state: &ServerState, user| state.server.member(user).and_then(|m| m.nickname.clone());
+        assert_eq!(state.apply(set(friend, Some("  Sammy "))), Ok(true));
+        assert_eq!(nickname_of(&state, friend).as_deref(), Some("Sammy"));
+        assert_eq!(state.apply(set(friend, Some("Sammy"))), Ok(false), "unchanged");
+        assert_eq!(state.apply(set(friend, Some("   "))), Ok(false), "blank is not a nickname");
+        assert_eq!(state.apply(set(friend, Some("Sam\u{7}my"))), Ok(false), "control characters");
+        assert_eq!(state.apply(set(friend, Some(&"n".repeat(33)))), Ok(false), "too long");
+        assert_eq!(state.apply(set(friend, Some(&"n".repeat(32)))), Ok(true), "the longest allowed");
+        assert_eq!(nickname_of(&state, friend).as_deref(), Some("n".repeat(32).as_str()));
+        assert_eq!(state.apply(set(UserId::new(), Some("ghost"))), Ok(false), "strangers have none");
+        assert_eq!(state.apply(set(owner, Some("Boss"))), Ok(true), "the owner is a member like any other");
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        let restored = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert_eq!(nickname_of(&restored, owner).as_deref(), Some("Boss"));
+        assert_eq!(state.apply(set(friend, None)), Ok(true));
+        assert_eq!(state.apply(set(friend, None)), Ok(false), "already cleared");
+        assert_eq!(nickname_of(&state, friend), None);
+        assert_eq!(state.apply(ServerEvent::MemberNickname { server: ServerId::new(), user: owner, nickname: None }), Err(StoreError::WrongServer));
     }
 
     #[test]
@@ -3088,6 +3347,40 @@ mod tests {
     }
 
     #[test]
+    fn onboarding_questions_are_kept_when_tidy_and_survive_a_restart() {
+        use crate::onboarding::{Answer, Onboarding, Question};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let role = RoleId::new();
+        let tidy = Onboarding {
+            questions: vec![Question {
+                title: "Pick one".into(),
+                description: String::new(),
+                multiple: false,
+                answers: vec![Answer { label: "A".into(), roles: vec![role] }, Answer { label: "B".into(), roles: vec![] }],
+            }],
+        };
+        let signed = crate::SignedEvent::sign(sid, owner, 1_000, ServerEvent::OnboardingSet { server: sid, onboarding: Some(tidy.clone()) }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&signed), Ok(true));
+        assert_eq!(state.server.onboarding, Some(tidy.clone()));
+        assert_eq!(state.audit_log().last().map(|e| e.kind), Some(crate::AuditKind::Onboarding));
+        let restored = ServerState::from_snapshot(state.snapshot());
+        assert_eq!(restored.server.onboarding, Some(tidy.clone()));
+        assert_eq!(state.apply(ServerEvent::OnboardingSet { server: sid, onboarding: Some(tidy.clone()) }), Ok(false), "same again");
+        let untidy = Onboarding { questions: vec![Question { title: "  spaced ".into(), ..tidy.questions[0].clone() }] };
+        assert_eq!(state.apply(ServerEvent::OnboardingSet { server: sid, onboarding: Some(untidy) }), Ok(false));
+        assert_eq!(state.apply(ServerEvent::OnboardingSet { server: sid, onboarding: Some(Onboarding::default()) }), Ok(false), "no questions means none");
+        assert_eq!(state.server.onboarding, Some(tidy));
+        let member = join(&mut state, "member");
+        let by_member = crate::SignedEvent::sign(sid, member, 2_000, ServerEvent::OnboardingSet { server: sid, onboarding: None }, &identity_for(member));
+        assert_eq!(state.apply_signed(&by_member), Err(StoreError::NotAllowed));
+        let off = crate::SignedEvent::sign(sid, owner, 3_000, ServerEvent::OnboardingSet { server: sid, onboarding: None }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&off), Ok(true));
+        assert_eq!(state.server.onboarding, None);
+        assert_eq!(state.apply(ServerEvent::OnboardingSet { server: ServerId::new(), onboarding: None }), Err(StoreError::WrongServer));
+    }
+
+    #[test]
     fn auto_moderation_rules_hold_messages_and_survive_a_restart() {
         let (mut state, channel, owner) = fixture();
         let sid = state.server.id;
@@ -3189,6 +3482,35 @@ mod tests {
     }
 
     #[test]
+    fn slow_mode_holds_members_to_the_interval_but_not_moderators() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels.iter().find(|c| c.kind == ChannelKind::Voice).unwrap().id;
+        let slow = |channel, n| ServerEvent::ChannelSlowMode { server: sid, channel, seconds: n };
+        assert_eq!(state.apply(slow(voice, 5)), Ok(false), "voice channels have no slow mode");
+        assert_eq!(state.apply(slow(channel, 100_000)), Ok(false), "capped");
+        assert_eq!(state.apply(slow(channel, 30)), Ok(true));
+        assert_eq!(state.apply(slow(channel, 30)), Ok(false), "unchanged");
+        let member = join(&mut state, "chatty");
+        let t0 = Utc::now() - chrono::Duration::seconds(120);
+        let first = post_at(&state, channel, member, "one", t0);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first }), Ok(true));
+        assert_eq!(state.slow_mode_wait(channel, member, t0 + chrono::Duration::seconds(10)), Some(20));
+        let quick = post_at(&state, channel, member, "two", t0 + chrono::Duration::seconds(10));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: quick }), Ok(false), "too soon");
+        let later = post_at(&state, channel, member, "three", t0 + chrono::Duration::seconds(31));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: later }), Ok(true));
+        assert_eq!(state.messages(channel).len(), 2);
+        let a = post_at(&state, channel, owner, "mod one", t0);
+        let b = post_at(&state, channel, owner, "mod two", t0 + chrono::Duration::seconds(1));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: a }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: b }), Ok(true), "owners bypass");
+        assert_eq!(state.slow_mode_wait(channel, owner, Utc::now()), None);
+        assert_eq!(state.apply(slow(channel, 0)), Ok(true));
+        assert_eq!(state.slow_mode_wait(channel, member, Utc::now()), None);
+    }
+
+    #[test]
     fn role_updates() {
         let (mut state, _, _) = fixture();
         let sid = state.server.id;
@@ -3205,6 +3527,33 @@ mod tests {
         assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: bad_banner }), Ok(false));
         let long = crate::server::Role { tag: Some("much too long tag".into()), ..everyone };
         assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: long }), Ok(false));
+    }
+
+    #[test]
+    fn voice_moves_apply_only_to_voice_members_headed_somewhere_else() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let other = UserProfile::new("other");
+        let uid = other.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: other }).unwrap();
+        let general = state.server.channels.iter().find(|c| c.kind == ChannelKind::Voice).unwrap().id;
+        let text = state.server.channels.iter().find(|c| c.kind == ChannelKind::Text).unwrap().id;
+        let lobby = crate::server::Channel::new("Lobby", ChannelKind::Voice, 9);
+        let lobby_id = lobby.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: lobby }).unwrap();
+        let move_to = |user, channel| ServerEvent::VoiceMove { server: sid, user, channel };
+        assert_eq!(state.apply(move_to(uid, Some(lobby_id))), Ok(false), "not in voice");
+        let join = ServerEvent::VoiceState { user: uid, channel: Some(general), muted: false, deafened: false, since: None };
+        state.apply(join).unwrap();
+        assert_eq!(state.apply(move_to(uid, Some(lobby_id))), Ok(true));
+        assert_eq!(state.voice_members(general), vec![uid], "the member's own voice state follows later");
+        assert_eq!(state.apply(move_to(uid, Some(general))), Ok(false), "already there");
+        assert_eq!(state.apply(move_to(uid, Some(text))), Ok(false), "not a voice channel");
+        assert_eq!(state.apply(move_to(uid, Some(ChannelId::new()))), Err(StoreError::UnknownChannel));
+        assert_eq!(state.apply(move_to(uid, None)), Ok(true));
+        let owner_join = ServerEvent::VoiceState { user: owner, channel: Some(general), muted: false, deafened: false, since: None };
+        state.apply(owner_join).unwrap();
+        assert_eq!(state.apply(move_to(owner, Some(lobby_id))), Ok(false), "owner is exempt");
     }
 
     #[test]
@@ -4529,5 +4878,225 @@ mod tests {
         assert_eq!(state.audit_log()[0].detail.as_deref(), Some("5 minutes"));
         assert!(crate::action::relayable(&by(mod_, user)));
         assert!(crate::action::snapshot_omits("timeout:x"), "joiners learn timeouts from the relayed signed action");
+    }
+}
+
+#[cfg(test)]
+mod poll_tests {
+    use super::*;
+    use crate::permissions::Permissions;
+    use crate::poll::{Poll, PollTally};
+    use crate::test_support::{delete, fixture, join, join_moderator, post, signed};
+
+    fn poll(multi: bool, closes_at: Option<DateTime<Utc>>) -> Poll {
+        Poll {
+            question: "Raid night?".into(),
+            options: vec!["Friday".into(), "Saturday".into(), "Sunday".into()],
+            multi,
+            closes_at,
+        }
+    }
+
+    fn post_poll(state: &mut ServerState, channel: ChannelId, author: UserId, poll: Poll) -> Message {
+        let mut message = Message::new(channel, author, "");
+        message.attachments.push(poll.into_attachment());
+        let message = signed(state, message);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: message.clone() }), Ok(true));
+        message
+    }
+
+    fn vote(state: &ServerState, message: &Message, user: UserId, choices: Vec<u8>) -> ServerEvent {
+        ServerEvent::PollVote { server: state.server.id, channel: message.channel, message: message.id, user, choices }
+    }
+
+    fn close(state: &ServerState, message: &Message, by: UserId) -> ServerEvent {
+        ServerEvent::PollClose { server: state.server.id, channel: message.channel, message: message.id, by }
+    }
+
+    fn counts(state: &ServerState, message: &Message) -> Vec<usize> {
+        state.poll_tally(message.id, Utc::now()).unwrap().counts
+    }
+
+    #[test]
+    fn members_without_the_files_permission_can_still_post_a_poll() {
+        let (mut state, channel, owner) = fixture();
+        let member = join(&mut state, "member");
+        for role in state.server.roles.iter_mut() {
+            role.permissions.remove(Permissions::ATTACH_FILES);
+        }
+        assert!(state.server.permissions_for(owner).allows(Permissions::ATTACH_FILES), "the owner keeps everything");
+        assert!(!state.server.permissions_for(member).allows(Permissions::ATTACH_FILES));
+        let message = post_poll(&mut state, channel, member, poll(false, None));
+        assert_eq!(state.message(message.id).unwrap().poll(), Some(poll(false, None)));
+    }
+
+    #[test]
+    fn latest_vote_per_member_wins_and_repeats_change_nothing() {
+        let (mut state, channel, owner) = fixture();
+        let member = join(&mut state, "member");
+        let message = post_poll(&mut state, channel, owner, poll(false, None));
+        assert_eq!(state.apply(vote(&state, &message, owner, vec![0])), Ok(true));
+        assert_eq!(state.apply(vote(&state, &message, owner, vec![0])), Ok(false));
+        assert_eq!(state.apply(vote(&state, &message, member, vec![2])), Ok(true));
+        assert_eq!(counts(&state, &message), vec![1, 0, 1]);
+        assert_eq!(state.apply(vote(&state, &message, owner, vec![1])), Ok(true));
+        assert_eq!(counts(&state, &message), vec![0, 1, 1]);
+        assert_eq!(state.poll_choices(message.id, owner), &[1]);
+        assert_eq!(state.poll_tally(message.id, Utc::now()).unwrap().voters, 2);
+    }
+
+    #[test]
+    fn empty_choices_retract_a_vote() {
+        let (mut state, channel, owner) = fixture();
+        let message = post_poll(&mut state, channel, owner, poll(false, None));
+        assert_eq!(state.apply(vote(&state, &message, owner, vec![])), Ok(false), "nothing to retract");
+        state.apply(vote(&state, &message, owner, vec![2])).unwrap();
+        assert_eq!(state.apply(vote(&state, &message, owner, vec![])), Ok(true));
+        assert_eq!(state.poll_choices(message.id, owner), &[] as &[u8]);
+        assert_eq!(state.poll_tally(message.id, Utc::now()).unwrap(), PollTally { counts: vec![0, 0, 0], voters: 0, closed: false });
+        assert_eq!(state.ballots().count(), 0);
+    }
+
+    #[test]
+    fn single_choice_polls_take_one_answer_and_multi_polls_several() {
+        let (mut state, channel, owner) = fixture();
+        let single = post_poll(&mut state, channel, owner, poll(false, None));
+        assert_eq!(state.apply(vote(&state, &single, owner, vec![0, 1])), Ok(false));
+        assert_eq!(state.apply(vote(&state, &single, owner, vec![7])), Ok(false), "out of range");
+        assert_eq!(counts(&state, &single), vec![0, 0, 0]);
+        let multi = post_poll(&mut state, channel, owner, poll(true, None));
+        assert_eq!(state.apply(vote(&state, &multi, owner, vec![2, 0, 2])), Ok(true));
+        assert_eq!(counts(&state, &multi), vec![1, 0, 1]);
+        assert_eq!(state.poll_choices(multi.id, owner), &[0, 2]);
+        assert_eq!(state.apply(vote(&state, &multi, owner, vec![0, 2])), Ok(false), "same choices in another order");
+    }
+
+    #[test]
+    fn votes_need_a_poll_and_a_known_message() {
+        let (mut state, channel, owner) = fixture();
+        let plain = post(&state, channel, owner, "no poll here");
+        state.apply(ServerEvent::MessageCreate { message: plain.clone() }).unwrap();
+        assert_eq!(state.apply(vote(&state, &plain, owner, vec![0])), Ok(false));
+        assert_eq!(state.poll_tally(plain.id, Utc::now()), None);
+        let missing = Message::new(channel, owner, "");
+        assert_eq!(state.apply(vote(&state, &missing, owner, vec![0])), Err(StoreError::UnknownMessage));
+        let elsewhere = Message { channel: ChannelId::new(), ..plain };
+        assert_eq!(state.apply(vote(&state, &elsewhere, owner, vec![0])), Err(StoreError::UnknownChannel));
+        let other_server = ServerEvent::PollVote { server: ServerId::new(), channel, message: missing.id, user: owner, choices: vec![] };
+        assert_eq!(state.apply(other_server), Err(StoreError::WrongServer));
+    }
+
+    #[test]
+    fn votes_stop_at_the_closing_time() {
+        let (mut state, channel, owner) = fixture();
+        let past = Utc::now() - chrono::Duration::minutes(1);
+        let ended = post_poll(&mut state, channel, owner, poll(false, Some(past)));
+        assert_eq!(state.apply(vote(&state, &ended, owner, vec![0])), Ok(false));
+        assert!(state.poll_closed(ended.id, Utc::now()));
+        let later = Utc::now() + chrono::Duration::hours(1);
+        let open = post_poll(&mut state, channel, owner, poll(false, Some(later)));
+        assert_eq!(state.apply(vote(&state, &open, owner, vec![0])), Ok(true));
+        assert!(!state.poll_closed(open.id, Utc::now()));
+        assert!(state.poll_closed(open.id, later));
+        assert!(state.poll_tally(open.id, later).unwrap().closed);
+    }
+
+    #[test]
+    fn the_author_or_a_moderator_closes_a_poll_early() {
+        let (mut state, channel, owner) = fixture();
+        let member = join(&mut state, "member");
+        let other = join(&mut state, "other");
+        let moderator = join_moderator(&mut state, "mod");
+        let message = post_poll(&mut state, channel, member, poll(true, None));
+        state.apply(vote(&state, &message, other, vec![1])).unwrap();
+        assert_eq!(state.apply(close(&state, &message, other)), Err(StoreError::NotAllowed));
+        assert!(!state.poll_closed(message.id, Utc::now()));
+        assert_eq!(state.apply(close(&state, &message, member)), Ok(true));
+        assert_eq!(state.apply(close(&state, &message, member)), Ok(false));
+        assert!(state.poll_closed(message.id, Utc::now()));
+        assert_eq!(state.apply(vote(&state, &message, owner, vec![0])), Ok(false), "closed polls take no votes");
+        assert_eq!(counts(&state, &message), vec![0, 1, 0]);
+        let second = post_poll(&mut state, channel, member, poll(true, None));
+        assert_eq!(state.apply(close(&state, &second, moderator)), Ok(true));
+        let third = post_poll(&mut state, channel, member, poll(true, None));
+        assert_eq!(state.apply(close(&state, &third, owner)), Ok(true), "the owner moderates");
+        let plain = post(&state, channel, member, "text");
+        state.apply(ServerEvent::MessageCreate { message: plain.clone() }).unwrap();
+        assert_eq!(state.apply(close(&state, &plain, member)), Ok(false));
+    }
+
+    #[test]
+    fn closing_by_a_moderator_lands_in_the_audit_log_but_not_by_the_author() {
+        let (mut state, channel, _owner) = fixture();
+        let member = join(&mut state, "member");
+        let moderator = join_moderator(&mut state, "mod");
+        let sid = state.server.id;
+        let first = post_poll(&mut state, channel, member, poll(false, None));
+        let second = post_poll(&mut state, channel, member, poll(false, None));
+        let sign = |by: UserId, event: ServerEvent, at: i64| {
+            SignedEvent::sign(sid, by, at, event, &crate::test_support::identity_for(by))
+        };
+        let own = sign(member, close(&state, &first, member), 1_000);
+        assert_eq!(state.apply_signed(&own), Ok(true));
+        assert!(state.audit_log().is_empty());
+        let moderated = sign(moderator, close(&state, &second, moderator), 2_000);
+        assert_eq!(state.apply_signed(&moderated), Ok(true));
+        let entry = state.audit_log().last().unwrap();
+        assert_eq!(entry.kind, AuditKind::PollClose);
+        assert_eq!(entry.target, Some(second.id.to_string()));
+        assert_eq!(entry.by, moderator);
+    }
+
+    #[test]
+    fn signed_votes_are_ordered_by_time_and_relayed_to_late_peers() {
+        let (mut state, channel, owner) = fixture();
+        let member = join(&mut state, "member");
+        let sid = state.server.id;
+        let message = post_poll(&mut state, channel, owner, poll(false, None));
+        let identity = crate::test_support::identity_for(member);
+        let at = |state: &ServerState, choices: Vec<u8>, at: i64| {
+            SignedEvent::sign(sid, member, at, vote(state, &message, member, choices), &identity)
+        };
+        let second = at(&state, vec![1], 2_000);
+        let first = at(&state, vec![0], 1_000);
+        assert_eq!(state.apply_signed(&second), Ok(true));
+        assert_eq!(state.apply_signed(&first), Ok(false), "an older vote never replaces a newer one");
+        assert_eq!(state.poll_choices(message.id, member), &[1]);
+        assert_eq!(state.apply_signed(&second), Ok(false));
+        let relayed = state.signed_actions();
+        assert!(relayed.iter().any(|s| s.event == second.event), "late peers hear the vote");
+        let stranger = UserId::new();
+        let unsigned = vote(&state, &message, stranger, vec![0]);
+        assert_eq!(state.apply_unsigned(unsigned), Err(StoreError::Unsigned));
+    }
+
+    #[test]
+    fn ballots_survive_snapshots_and_move_to_a_rebuilt_state() {
+        let (mut state, channel, owner) = fixture();
+        let member = join(&mut state, "member");
+        let message = post_poll(&mut state, channel, owner, poll(true, None));
+        let gone = post_poll(&mut state, channel, owner, poll(true, None));
+        state.apply(vote(&state, &message, owner, vec![0, 2])).unwrap();
+        state.apply(vote(&state, &message, member, vec![2])).unwrap();
+        state.apply(vote(&state, &gone, member, vec![1])).unwrap();
+        state.apply(close(&state, &gone, owner)).unwrap();
+        state.apply(delete(&state, &gone, owner)).unwrap();
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.ballots.len(), 2, "deleted polls leave no ballots behind");
+        assert!(snapshot.closed_polls.is_empty());
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let restored = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert_eq!(restored.poll_tally(message.id, Utc::now()).unwrap().counts, vec![1, 0, 2]);
+        assert_eq!(restored.poll_choices(message.id, owner), &[0, 2]);
+        let mut rebuilt = ServerState::new(state.server.clone());
+        rebuilt.profiles = state.profiles.clone();
+        rebuilt.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
+        rebuilt.apply(vote(&rebuilt, &message, owner, vec![1])).unwrap();
+        rebuilt.carry_polls(&state);
+        assert_eq!(rebuilt.poll_choices(message.id, owner), &[1], "fresher local votes stay");
+        assert_eq!(rebuilt.poll_choices(message.id, member), &[2]);
+        state.apply(close(&state, &message, owner)).unwrap();
+        rebuilt.carry_polls(&state);
+        assert!(rebuilt.poll_closed(message.id, Utc::now()));
     }
 }

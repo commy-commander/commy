@@ -11,6 +11,7 @@ const MAX_DETAIL_CHARS: usize = 120;
 #[serde(rename_all = "snake_case")]
 pub enum AuditKind {
     ServerRename,
+    OwnerTransfer,
     ServerImages,
     ServerPublic,
     GameTags,
@@ -26,6 +27,7 @@ pub enum AuditKind {
     ChannelRetention,
     ChannelMove,
     ChannelLimit,
+    ChannelSlowMode,
     ChannelBanner,
     ChannelColor,
     ChannelKind,
@@ -38,6 +40,8 @@ pub enum AuditKind {
     MemberBan,
     MemberUnban,
     VoiceModerate,
+    VoiceMove,
+    VoiceDisconnect,
     EmojiAdd,
     EmojiRemove,
     SoundAdd,
@@ -59,6 +63,10 @@ pub enum AuditKind {
     ChannelAccess,
     MemberTimeout,
     MemberTimeoutClear,
+    MemberNickname,
+    PollClose,
+    ChannelSensitive,
+    Onboarding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +110,10 @@ pub fn member_name(state: &ServerState, user: UserId) -> Option<String> {
     Some(clip(&name))
 }
 
+fn account_name(state: &ServerState, user: UserId) -> Option<String> {
+    state.profiles.get(&user).map(|p| clip(p.visible_name()))
+}
+
 fn channel_name(state: &ServerState, channel: crate::ids::ChannelId) -> Option<String> {
     state.server.channel(channel).map(|c| clip(&c.name))
 }
@@ -143,6 +155,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
     let channel = |id: &crate::ids::ChannelId| (Some(id.to_string()), channel_name(state, *id));
     Some(match event {
         E::ServerRename { name, .. } => (K::ServerRename, None, Some(clip(&server.name)), Some(clip(name))),
+        E::OwnerTransfer { user, .. } => {
+            let (target, label) = member(user);
+            (K::OwnerTransfer, target, label, None)
+        }
         E::ServerImages { icon, banner, .. } => {
             let changed = [("icon", *icon != server.icon), ("banner", *banner != server.banner)];
             let names: Vec<&str> = changed.iter().filter(|(_, c)| *c).map(|(n, _)| *n).collect();
@@ -151,6 +167,7 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::PublicSet { public, .. } => (K::ServerPublic, None, None, on_off(*public)),
         E::GameTagsSet { tags, .. } => (K::GameTags, None, None, Some(clip(&tags.join(", ")))),
         E::RulesSet { rules, .. } => (K::Rules, None, None, set_or_removed(rules.is_some())),
+        E::OnboardingSet { onboarding, .. } => (K::Onboarding, None, None, set_or_removed(onboarding.is_some())),
         E::AutoModSet { .. } => (K::AutoMod, None, None, None),
         E::AfkChannelSet { channel: afk, .. } => {
             let (target, label) = afk.as_ref().map(channel).unwrap_or((None, None));
@@ -184,6 +201,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             let (target, label) = channel(id);
             (K::ChannelLimit, target, label, Some(user_limit.to_string()))
         }
+        E::ChannelSlowMode { channel: id, seconds, .. } => {
+            let (target, label) = channel(id);
+            (K::ChannelSlowMode, target, label, Some(seconds.to_string()))
+        }
         E::ChannelBanner { channel: id, banner, .. } => {
             let (target, label) = channel(id);
             (K::ChannelBanner, target, label, set_or_removed(banner.is_some()))
@@ -201,6 +222,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             let (target, label) = channel(id);
             let detail = if !view.is_empty() { "private" } else if !send.is_empty() { "send" } else { "open" };
             (K::ChannelAccess, target, label, Some(detail.into()))
+        }
+        E::ChannelSensitiveSet { channel: id, sensitive, .. } => {
+            let (target, label) = channel(id);
+            (K::ChannelSensitive, target, label, Some(if *sensitive { "on" } else { "off" }.into()))
         }
         E::RoleCreate { role, .. } => (K::RoleCreate, Some(role.id.to_string()), Some(clip(&role.name)), None),
         E::RoleUpdate { role, .. } => (K::RoleUpdate, Some(role.id.to_string()), Some(clip(&role.name)), None),
@@ -236,6 +261,16 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
                 None => (K::MemberTimeoutClear, target, label, None),
             }
         }
+        E::MemberNickname { user, nickname, .. } => {
+            (K::MemberNickname, Some(user.to_string()), account_name(state, *user), nickname.as_deref().map(clip))
+        }
+        E::VoiceMove { user, channel: to, .. } => {
+            let (target, label) = member(user);
+            match to {
+                Some(to) => (K::VoiceMove, target, label, channel_name(state, *to)),
+                None => (K::VoiceDisconnect, target, label, None),
+            }
+        }
         E::EmojiAdd { emoji, .. } => (K::EmojiAdd, None, Some(clip(&emoji.name)), None),
         E::EmojiRemove { name, .. } => (K::EmojiRemove, None, Some(clip(name)), None),
         E::SoundAdd { sound, .. } => (K::SoundAdd, None, Some(clip(&sound.name)), None),
@@ -260,6 +295,13 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::MessagePin { channel: id, message, pinned, .. } => {
             let kind = if *pinned { K::MessagePin } else { K::MessageUnpin };
             (kind, Some(message.to_string()), channel_name(state, *id), None)
+        }
+        E::PollClose { channel: id, message, by: closer, .. } => {
+            let author = state.message(*message).map(|m| m.author);
+            if author == Some(*closer) {
+                return None;
+            }
+            (K::PollClose, Some(message.to_string()), channel_name(state, *id), None)
         }
         E::InviteTrack { invite, .. } => (K::InviteCreate, Some(invite.creator.to_string()), Some(clip(&invite.code)), None),
         E::InviteRevoke { code, creator, .. } => {
@@ -463,6 +505,44 @@ mod tests {
         assert_eq!(log[1].detail.as_deref(), Some("mods"));
         assert_eq!(log[1].label.as_deref(), Some("sam"));
         assert_eq!(log[2].kind, AuditKind::MemberKick);
+    }
+
+    #[test]
+    fn nickname_changes_name_the_account_and_the_new_nickname() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "sam");
+        let sign = |at, event| SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        let rename = |nickname: Option<&str>| ServerEvent::MemberNickname { server: sid, user, nickname: nickname.map(Into::into) };
+        state.apply_signed(&sign(1_000, rename(Some("Sammy")))).unwrap();
+        state.apply_signed(&sign(2_000, rename(Some("Sammy")))).unwrap();
+        state.apply_signed(&sign(3_000, rename(None))).unwrap();
+        let log = state.audit_log();
+        assert_eq!(log.len(), 2, "a repeat changes nothing");
+        assert_eq!(log[0].kind, AuditKind::MemberNickname);
+        assert_eq!(log[0].target.as_deref(), Some(user.to_string().as_str()));
+        assert_eq!(log[0].label.as_deref(), Some("sam"));
+        assert_eq!(log[0].detail.as_deref(), Some("Sammy"));
+        assert_eq!(log[1].label.as_deref(), Some("sam"), "the account name, not the nickname being cleared");
+        assert_eq!(log[1].detail, None);
+    }
+
+    #[test]
+    fn age_restricting_a_channel_is_logged_with_its_direction() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let sign = |at, sensitive| {
+            SignedEvent::sign(sid, owner, at, ServerEvent::ChannelSensitiveSet { server: sid, channel, sensitive }, &identity_for(owner))
+        };
+        state.apply_signed(&sign(1_000, true)).unwrap();
+        state.apply_signed(&sign(2_000, true)).unwrap();
+        state.apply_signed(&sign(3_000, false)).unwrap();
+        let log = state.audit_log();
+        assert_eq!(log.len(), 2, "a repeat changes nothing");
+        assert_eq!(log[0].kind, AuditKind::ChannelSensitive);
+        assert_eq!(log[0].target.as_deref(), Some(channel.to_string().as_str()));
+        assert_eq!(log[0].detail.as_deref(), Some("on"));
+        assert_eq!(log[1].detail.as_deref(), Some("off"));
     }
 
     #[test]

@@ -249,6 +249,47 @@ pub enum ServerEvent {
         at: DateTime<Utc>,
         until: Option<DateTime<Utc>>,
     },
+    MemberNickname {
+        server: ServerId,
+        user: UserId,
+        nickname: Option<String>,
+    },
+    OwnerTransfer {
+        server: ServerId,
+        user: UserId,
+    },
+    ChannelSlowMode {
+        server: ServerId,
+        channel: ChannelId,
+        seconds: u32,
+    },
+    PollVote {
+        server: ServerId,
+        channel: ChannelId,
+        message: MessageId,
+        user: UserId,
+        choices: Vec<u8>,
+    },
+    PollClose {
+        server: ServerId,
+        channel: ChannelId,
+        message: MessageId,
+        by: UserId,
+    },
+    VoiceMove {
+        server: ServerId,
+        user: UserId,
+        channel: Option<ChannelId>,
+    },
+    ChannelSensitiveSet {
+        server: ServerId,
+        channel: ChannelId,
+        sensitive: bool,
+    },
+    OnboardingSet {
+        server: ServerId,
+        onboarding: Option<crate::onboarding::Onboarding>,
+    },
 }
 
 #[cfg(test)]
@@ -304,6 +345,14 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 62);
         let timeout = ServerEvent::MemberTimeout { server, user, by: user, at: chrono::Utc::now(), until: None };
         assert_eq!(wire_tag(timeout), 65);
+        assert_eq!(wire_tag(ServerEvent::MemberNickname { server, user, nickname: None }), 66);
+        let message = MessageId::new();
+        assert_eq!(wire_tag(ServerEvent::OwnerTransfer { server, user }), 67);
+        assert_eq!(wire_tag(ServerEvent::ChannelSlowMode { server, channel, seconds: 5 }), 68);
+        assert_eq!(wire_tag(ServerEvent::PollVote { server, channel, message, user, choices: vec![0] }), 69);
+        assert_eq!(wire_tag(ServerEvent::PollClose { server, channel, message, by: user }), 70);
+        assert_eq!(wire_tag(ServerEvent::ChannelSensitiveSet { server, channel, sensitive: true }), 72);
+        assert_eq!(wire_tag(ServerEvent::OnboardingSet { server, onboarding: None }), 73);
     }
 
     #[test]

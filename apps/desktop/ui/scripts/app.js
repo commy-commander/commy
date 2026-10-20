@@ -2,6 +2,8 @@
 
 const IS_TAURI = Boolean(window.__TAURI__);
 const invoke = IS_TAURI ? window.__TAURI__.core.invoke : mockInvoke;
+const discoverState = { open: false, q: "", category: null, cursor: null, entries: [], busy: false, request: 0 };
+const discoveryState = { listing: null, dirty: false };
 
 window.addEventListener("error", e => {
   try { toast(`UI error: ${e.message}`); } catch (_) {}
@@ -15,7 +17,7 @@ const state = {
   servers: [],
   currentServer: null,
   currentChannel: null,
-  voice: { noise_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10 },
+  voice: { noise_cancellation: true, echo_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
   voiceChannelId: null,
   voiceServer: null,
   shareSource: null,
@@ -30,6 +32,7 @@ const state = {
   dmThreads: [],
   showDmProfile: true,
   historyAnchor: null,
+  previousChannel: null,
 };
 
 const mock = {
@@ -37,7 +40,7 @@ const mock = {
   servers: {},
   messages: {},
   dms: {},
-  voice: { noise_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10 },
+  voice: { noise_cancellation: true, echo_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
 };
 
 function mockSearch({ serverId, terms, from, mentions, channelId }) {
@@ -56,14 +59,27 @@ function mockSearch({ serverId, terms, from, mentions, channelId }) {
   return { total: hits.length, hits: hits.slice(0, 50) };
 }
 
+function mockReadView(channelIds) {
+  const channels = {};
+  for (const id of channelIds) {
+    const mark = (mock.readMarks || {})[id];
+    if (!mark) continue;
+    const server = Object.values(mock.servers).find(s => s.channels.some(c => c.id === id));
+    channels[id] = { mark, server: server ? server.id : null, unread: unreadAfter(mock.messages[id] || [], mark, "me") };
+  }
+  return { channels };
+}
+
 function mockAuditLog() {
   const ago = minutes => Date.now() - minutes * 60e3;
   return [
     { at: ago(4), by: "m2", by_name: "nova", kind: "message_delete", target: "m3", label: "sleepy", detail: "welcome" },
     { at: ago(26), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "role_assign", target: "m2", label: "nova", detail: "Moderator" },
     { at: ago(70), by: "m2", by_name: "nova", kind: "voice_moderate", target: "m3", label: "sleepy", detail: "muted" },
+    { at: ago(95), by: "m2", by_name: "nova", kind: "voice_move", target: "m1", label: "ferris", detail: "General" },
     { at: ago(180), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "channel_rename", target: null, label: "chat", detail: "general" },
     { at: ago(600), by: "m1", by_name: "ferris", kind: "emoji_add", target: null, label: "ferris_wave", detail: null },
+    { at: ago(900), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "member_nickname", target: "m3", label: "sleepy", detail: "Sleepy Sam" },
     { at: ago(1500), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "member_ban", target: "m9", label: "spam_bot", detail: null },
     { at: ago(3000), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "channel_create", target: null, label: "news", detail: "announcement" },
     { at: ago(4000), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "auto_mod", target: null, label: null, detail: null },
@@ -127,6 +143,30 @@ function mockBannerImage() {
   return c.toDataURL("image/jpeg", 0.85);
 }
 
+function mockVoiceAttachment(secs) {
+  const blob = `voice-${Date.now()}@mock`;
+  (mock.voiceClips ||= {})[blob] = secs;
+  return { filename: VOICE_MESSAGE_FILENAME, size_bytes: 400 + secs * 4000, is_image: false, mime: VOICE_MESSAGE_MIME, blob, provider: null };
+}
+
+function mockOgg(secs) {
+  const page = (granule, body, flags) => {
+    const out = new Uint8Array(28 + body.length);
+    out.set([0x4f, 0x67, 0x67, 0x53, 0, flags]);
+    new DataView(out.buffer).setUint32(6, granule, true);
+    out[26] = 1;
+    out[27] = body.length;
+    out.set(body, 28);
+    return out;
+  };
+  const head = new Uint8Array([79, 112, 117, 115, 72, 101, 97, 100, 1, 1, 56, 1, 128, 187, 0, 0, 0, 0, 0]);
+  const pages = [page(0, head, 2), page(312 + secs * 48000, new Uint8Array(4), 4)];
+  const out = new Uint8Array(pages[0].length + pages[1].length);
+  out.set(pages[0]);
+  out.set(pages[1], pages[0].length);
+  return out.buffer;
+}
+
 function mockSeed() {
   const ch = (name, kind, topic) => ({
     id: crypto.randomUUID(), name, kind, topic: topic || null, voice_users: [],
@@ -142,11 +182,14 @@ function mockSeed() {
       ch("news", "announcement", "Patch notes and server news"),
       ch("General", "voice"),
       ch("mod-lounge", "text", "For the moderators"),
+      ch("Lounge", "voice"),
+      ch("after-dark", "text", "Grown-up talk, after hours"),
     ],
     members: [
       { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
-      { id: "m2", name: "nova", pronouns: "they / them", presence: "idle", custom_status: null, roles: ["r2"] },
+      { id: "m2", name: "nova", pronouns: "they / them", presence: "idle", custom_status: null, roles: ["r2"],
+        activity: "Playing Portal 2", activity_cover: "co1rs4", activity_since: Math.floor(Date.now() / 1000) - 983 },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
       { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
     ],
@@ -154,7 +197,21 @@ function mockSeed() {
   server.roles = [
     { id: "r1", name: "Raider", color: "9b7bff", position: 2, permissions: [], self_assignable: true, tag: "RAID", mentionable: true },
     { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages", "mention_everyone"], self_assignable: false, hoist: true, tag: null, mentionable: false },
+    { id: "r3", name: "Event Pings", color: "4d9bff", position: 1, permissions: [], self_assignable: false, hoist: false, tag: null, mentionable: true },
   ];
+  server.onboarding = {
+    questions: [
+      { title: "What brings you here?", description: "Pick everything that fits. The channels for each open up for you.", multiple: true, answers: [
+        { label: "Raiding and game nights", roles: ["r1"] },
+        { label: "Rust help and code review", roles: [] },
+        { label: "Just hanging out", roles: [] },
+      ] },
+      { title: "How often do you want pings?", description: "", multiple: false, answers: [
+        { label: "Every event and announcement", roles: ["r3"] },
+        { label: "Only when someone mentions me", roles: [] },
+      ] },
+    ],
+  };
   server.game_tags = ["Rust", "Valorant"];
   server.emojis = [{ name: "ferris", image: "ferris@mock" }, { name: "ferris_wave", image: "ferris@mock" }];
   server.stickers = [{ name: "ferris_hype", image: "ferris@mock" }, { name: "party", image: "party@mock" }];
@@ -180,9 +237,16 @@ function mockSeed() {
   server.channels[0].banner = "welcome-banner@mock";
   server.channels[1].color = "9b7bff";
   server.channels[5].view_roles = ["r2"];
+  server.channels[6].sensitive = true;
+  mock.messages[server.channels[6].id] = [
+    { id: "ad1", channel: server.channels[6].id, author_id: "m2", author_name: "nova",
+      content: "Friday's game night runs late, bring your own drinks.", created_at: new Date(Date.now() - 2400e3).toISOString(), edited: false, attachments: [] },
+    { id: "ad2", channel: server.channels[6].id, author_id: "m1", author_name: "ferris",
+      content: "Noted. Keep the welcome channel tidy, this one is for the grown-ups.", created_at: new Date(Date.now() - 2100e3).toISOString(), edited: false, attachments: [] },
+  ];
   server.rules = "# Welcome\n1. Be kind to each other\n2. **No spam** or self promotion\n3. Keep it on topic, see https://commy.chat";
   server.needs_rules = true;
-  const general = server.channels[3];
+  const general = server.channels.find(c => c.kind === "voice");
   general.voice_users = ["ferris"];
   general.voice_user_ids = ["m1"];
   general.voice_since = [Math.floor(Date.now() / 1000) - 754];
@@ -195,6 +259,20 @@ function mockSeed() {
   server.members[0].tag_color = "9b7bff";
   server.members[0].color = "9b7bff";
   mock.servers[server.id] = server;
+  mock.directory = [
+    { code: "KQ7M3N4P", key: "q".repeat(43), name: "Rust Hangout", category: "tech", members: 250, description: "Borrow checker support group, weekly code reviews and a friendly place to ask the questions you were afraid to ask. Beginners welcome, lifetimes optional." },
+    { code: "pixel-club", key: "Zx9-_".repeat(4) + "aA", name: "Pixel Club", category: "art", members: 100, description: "Pixel art, palettes and tiny animations. Share your work in progress and get kind, concrete feedback." },
+    { code: "SYNTH2V4W", key: "s".repeat(43), name: "Synth Lounge", category: "music", members: 500, description: "Modular jams every Friday night, patch notes, gear talk and the occasional live set over voice." },
+    { code: "RAIDN8GHT", key: "r".repeat(43), name: "Raid Night", category: "gaming", members: 1000, description: "Co-op raids, weekend tournaments and a soundboard that is honestly out of control." },
+    { code: "STARGAZ3R", key: "t".repeat(43), name: "Stargazers", category: "science", members: 50, description: "Backyard astronomy, telescope builds and clear-sky alerts for the northern hemisphere." },
+    { code: "LERNLAT1N", key: "l".repeat(43), name: "Lingua Franca", category: "languages", members: 25, description: "Practice Spanish, Portuguese and Italian with patient speakers. Voice tables every evening." },
+    { code: "STUDYHALL", key: "u".repeat(43), name: "Study Hall", category: "education", members: 100, description: "Quiet focus rooms, exam countdowns and shared notes for university students." },
+    { code: "SUNDAYRUN", key: "n".repeat(43), name: "Sunday Runners", category: "sports", members: 25, description: "Long runs, race day plans and far too many photos of shoes." },
+    { code: "COZYCRN3R", key: "c".repeat(43), name: "Cozy Corner", category: "friends", members: 10, description: "" },
+    { code: "BOARDGAM3", key: "b".repeat(43), name: "Board Game Night", category: "gaming", members: 50, description: "Tabletop over video, from quick card games to six-hour campaigns. New players always get a seat." },
+    { code: "FILMCLUB2", key: "f".repeat(43), name: "Midnight Film Club", category: "other", members: 25, description: "One film a week, watched together with the soundtrack on voice, then argued about for days." },
+    { code: "MAKERSPCE", key: "m".repeat(43), name: "Makerspace", category: "tech", members: 10, description: "3D printing, soldering irons and home automation that mostly works." },
+  ];
   mock.dms.m2 = {
     name: "nova",
     kind: "request",
@@ -248,7 +326,17 @@ function mockSeed() {
     { id: "g2", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
       content: "full res screenshot of the new map", created_at: new Date(Date.now() - 600e3).toISOString(), edited: false,
       attachments: [{ filename: "new-map.png", size_bytes: 12900000, is_image: true, mime: "image/png", blob: "map@mock", provider: null }] },
+    { id: "p1", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
+      content: "", created_at: new Date(Date.now() - 300e3).toISOString(), edited: false, attachments: [],
+      poll: { question: "Raid night this week?", multi: false, total: 4, closed: false, closes_at: new Date(Date.now() + 3 * 3600e3).toISOString(),
+        options: [{ text: "Friday", votes: 3, mine: true }, { text: "Saturday", votes: 1, mine: false }, { text: "Sunday after lunch", votes: 0, mine: false }] } },
+    { id: "g3", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
+      content: "", created_at: new Date(Date.now() - 300e3).toISOString(), edited: false,
+      attachments: [{ filename: VOICE_MESSAGE_FILENAME, size_bytes: 61440, is_image: false, mime: VOICE_MESSAGE_MIME, blob: "voice@mock", provider: null }] },
   ];
+  mock.readMarks = { [server.channels[1].id]: { id: "g0", at: Date.now() - 1200e3, set: Date.now() - 1100e3 } };
+  (mock.voiceClips ||= {})["voice@mock"] = 14;
+  mock.listPins = { dms: ["m1"], channels: [{ server: server.id, channel: server.channels[1].id }] };
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
     { channel: c0, message: "x1", by: "m1", at: new Date(Date.now() - 3000e3).toISOString() },
@@ -327,6 +415,17 @@ function mockEmojiCatalog(query = "", category = null, page = 0) {
   return { results: matches.slice(start, start + 60).map(({ id, title, url, animated }) => ({ id, title, url, animated })), more: matches.length > start + 60, categories };
 }
 
+function mockStickerSearch(query = "") {
+  const names = ["Happy Dance", "Sleepy Cat", "Thumbs Up", "Love You", "Party Time", "Good Morning", "So Sad", "Wow", "High Five", "Bye Bye", "Hugs", "LOL"];
+  const q = String(query || "").toLowerCase().trim();
+  return names
+    .map((title, i) => {
+      const url = mockEmojiFace((i * 53 + 20) % 360, ["M40 84 Q64 108 88 84", "M48 82 Q64 98 80 82"][i % 2], 8);
+      return { id: `mock-${i}`, title, preview: url, url, ratio: 1 };
+    })
+    .filter(s => !q || s.title.toLowerCase().includes(q));
+}
+
 function mockTemplates() {
   return [
     mockTemplateView("fresh", "Start fresh", "A chat channel and a voice room", [[null, ["general", "v:General", "v:AFK"]]]),
@@ -386,10 +485,10 @@ async function mockInvoke(cmd, args = {}) {
     case "get_server": {
       const s = mock.servers[args.serverId];
       if (!s) throw "unknown server";
-      const members = [...s.members];
+      const members = s.members.map(m => ({ username: m.username || m.name, nickname: m.nickname || null, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: mock.user.username, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
+        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
         const vc = s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -399,23 +498,24 @@ async function mockInvoke(cmd, args = {}) {
       }
       return {
         ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
-        game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
+        game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true, onboarding: s.onboarding || null,
         channels: s.channels
           .map((c, i) => {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
             const sees = admits(c.view_roles);
             const sendable = admits(c.send_roles);
-            return { parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], ...c, can_view: sees, can_send: sees && sendable, key_ready: sees };
+            return { parent: null, position: i, user_limit: 0, slow_mode: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], ...c, can_view: sees, can_send: sees && sendable, key_ready: sees };
           })
           .filter(c => c.can_view || !mock.plainMember),
-        can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
+        can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
+        can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         stickers: s.stickers || [], emoticons: s.emoticons || [], stickers_shareable: !!s.stickers_shareable, emoticons_shareable: !!s.emoticons_shareable,
         add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
         can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
         can_add_emoticons: !mock.plainMember || !(s.add_restricted || {}).emoticons, can_use_external: s.can_use_external !== false,
-        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_move: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_manage_nicknames: !mock.plainMember, can_change_nickname: true, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
@@ -470,6 +570,38 @@ async function mockInvoke(cmd, args = {}) {
       if (s) s.public = args.public;
       return null;
     }
+    case "browse_directory": {
+      const words = normalizeDirectorySearch(args.q).split(" ").filter(Boolean);
+      const rows = (mock.directory || [])
+        .filter(l => !args.category || l.category === args.category)
+        .filter(l => words.every(w => `${l.name} ${l.description}`.toLowerCase().includes(w)))
+        .sort((a, b) => b.members - a.members || a.name.localeCompare(b.name));
+      const start = Number(args.cursor) || 0;
+      const page = rows.slice(start, start + 24);
+      return { host: "commy.chat", next_cursor: start + 24 < rows.length ? String(start + 24) : null,
+        entries: page.map(l => ({ code: l.code, name: l.name, description: l.description, category: l.category, members: l.members, link: `https://commy.chat/i/${l.code}#${l.key}` })) };
+    }
+    case "publish_listing": {
+      const s = mock.servers[args.serverId];
+      if (!s) throw "unknown server";
+      if (!s.public) throw "Make the server public before listing it in Discover";
+      const existing = (mock.listings || {})[args.serverId];
+      const code = existing ? existing.code : "KQ7M3N4P";
+      const listing = { origin: "https://commy.chat", code, link: `https://commy.chat/i/${code}#${"q".repeat(43)}`, category: args.category,
+        description: args.description, members: memberBucket(s.members.length), listed_at: Date.now() };
+      mock.listings = { ...(mock.listings || {}), [args.serverId]: listing };
+      mock.directory = (mock.directory || []).filter(l => l.code !== code)
+        .concat({ code, key: "q".repeat(43), name: s.name, category: listing.category, members: listing.members, description: listing.description });
+      return listing;
+    }
+    case "unlist_server": {
+      const listing = (mock.listings || {})[args.serverId];
+      if (!listing) throw "This server was not listed from this device";
+      delete mock.listings[args.serverId];
+      mock.directory = (mock.directory || []).filter(l => l.code !== listing.code);
+      return null;
+    }
+    case "server_listing": return (mock.listings || {})[args.serverId] || null;
     case "resolve_invite_link": {
       const host = /commy:\/\/i\/([^/]+)\//.exec(args.link)?.[1] || new URL(args.link).host;
       const background = Object.values(mock.servers).map(s => s.invite_background).find(Boolean);
@@ -491,6 +623,35 @@ async function mockInvoke(cmd, args = {}) {
       if (args.pinned) mock.pins.push({ channel: args.channelId, message: args.messageId, by: "me", at: new Date().toISOString() });
       return null;
     }
+    case "send_poll": {
+      const closes_at = args.hours ? new Date(Date.now() + args.hours * 3600e3).toISOString() : null;
+      const msg = {
+        id: crypto.randomUUID(), channel: args.channelId, author_id: "me", author_name: mock.user.username, content: "",
+        created_at: new Date().toISOString(), edited: false, attachments: [], reactions: [],
+        poll: { question: args.question, options: args.options.map(text => ({ text, votes: 0, mine: false })), multi: args.multi, total: 0, closed: false, closes_at },
+      };
+      (mock.messages[args.channelId] ||= []).push(msg);
+      return msg;
+    }
+    case "vote_poll": {
+      const m = Object.values(mock.messages).flat().find(x => x.id === args.messageId);
+      if (!m || !m.poll) throw "that message is not a poll";
+      if (pollIsClosed(m.poll)) throw "that poll has closed";
+      const votedBefore = m.poll.options.some(o => o.mine);
+      m.poll.options = m.poll.options.map((o, i) => {
+        const mine = args.choices.includes(i);
+        return { ...o, mine, votes: o.votes + (mine ? 1 : 0) - (o.mine ? 1 : 0) };
+      });
+      m.poll.total += (args.choices.length > 0 ? 1 : 0) - (votedBefore ? 1 : 0);
+      return null;
+    }
+    case "close_poll": {
+      const m = Object.values(mock.messages).flat().find(x => x.id === args.messageId);
+      if (!m || !m.poll) throw "that message is not a poll";
+      if (m.author_id !== "me" && mock.plainMember) throw "only the poll's author or a moderator can close it";
+      m.poll.closed = true;
+      return null;
+    }
     case "set_channel_access": {
       const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
       c.view_roles = [...args.viewRoles];
@@ -505,6 +666,12 @@ async function mockInvoke(cmd, args = {}) {
     case "send_message": {
       const chan = Object.values(mock.servers).flatMap(s => s.channels).find(c => c.id === args.channelId);
       if (chan && chan.kind === "announcement" && mock.plainMember) throw "only members allowed to post announcements can write in this channel";
+      if (chan && chan.slow_mode && mock.plainMember) {
+        const mine = (mock.messages[args.channelId] || []).filter(m => m.author_id === "me");
+        const last = mine.length ? Date.parse(mine[mine.length - 1].created_at) : 0;
+        const left = Math.ceil((last + chan.slow_mode * 1000 - Date.now()) / 1000);
+        if (left > 0) throw `slow mode is on here: you can send again in ${left}s`;
+      }
       const msg = {
         id: crypto.randomUUID(), channel: args.channelId, author_id: "me",
         author_name: mock.user.username, content: args.content,
@@ -521,6 +688,7 @@ async function mockInvoke(cmd, args = {}) {
     case "check_for_updates": mock.update = { ...mock.update, phase: "up_to_date", checked_at: Math.floor(Date.now() / 1000) }; return mock.update;
     case "restart_to_update": return null;
     case "set_noise_cancellation": mock.voice.noise_cancellation = args.enabled; return mock.voice;
+    case "set_echo_cancellation": mock.voice.echo_cancellation = args.enabled; return mock.voice;
     case "set_input_mode": Object.assign(mock.voice, { input_mode: args.mode, talk_key: args.talkKey, talk_release_ms: args.releaseMs }); return mock.voice;
     case "set_voice_hotkeys": Object.assign(mock.voice, { mute_hotkey: args.mute, deafen_hotkey: args.deafen }); return mock.voice;
     case "set_sensitivity": Object.assign(mock.voice, { auto_sensitivity: args.auto, sensitivity_db: args.thresholdDb }); return mock.voice;
@@ -596,6 +764,29 @@ async function mockInvoke(cmd, args = {}) {
       return sent;
     }
     case "attach_dm_file": return null;
+    case "start_voice_recording":
+      mock.recordingSince = Date.now();
+      return null;
+    case "cancel_voice_recording":
+      mock.recordingSince = null;
+      return null;
+    case "send_voice_message":
+    case "send_dm_voice_message": {
+      const secs = Math.max(1, Math.round((Date.now() - (mock.recordingSince || Date.now())) / 1000));
+      mock.recordingSince = null;
+      const att = mockVoiceAttachment(secs);
+      if (cmd === "send_dm_voice_message") {
+        const dm = mock.dms[args.userId];
+        if (!dm) throw "unknown conversation";
+        const sent = { id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: "", created_at: new Date().toISOString(), outgoing: true, pending: false, reply_to: null, reply_preview: null, reactions: [], attachments: [att] };
+        dm.messages.push(sent);
+        return sent;
+      }
+      const sent = { id: crypto.randomUUID(), channel: args.channelId, author_id: "me", author_name: mock.user.username, content: "", created_at: new Date().toISOString(), edited: false, attachments: [att], reactions: [] };
+      (mock.messages[args.channelId] ||= []).push(sent);
+      return sent;
+    }
+    case "get_voice_message": return mockOgg((mock.voiceClips || {})[args.blob] ?? 30);
     case "start_dm_call": {
       const dm = mock.dms[args.userId];
       if (!dm) throw "no such conversation";
@@ -684,6 +875,12 @@ async function mockInvoke(cmd, args = {}) {
       c.color = args.color || null;
       return null;
     }
+    case "set_channel_sensitive": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      if (!holdsMessages(c)) throw "only text channels can be age-restricted";
+      c.sensitive = Boolean(args.sensitive);
+      return null;
+    }
     case "delete_channel": {
       const s = mock.servers[args.serverId];
       s.channels = s.channels.filter(c => c.id !== args.channelId);
@@ -692,6 +889,13 @@ async function mockInvoke(cmd, args = {}) {
     case "leave_server":
       delete mock.servers[args.serverId];
       return null;
+    case "transfer_ownership": {
+      const s = mock.servers[args.serverId];
+      if (!s || args.confirmName.trim() !== s.name.trim()) throw "type the server name exactly as it is shown to hand it over";
+      if (!s.members.some(m => m.id === args.userId)) throw "pick another member of this server";
+      s.owner = args.userId;
+      return null;
+    }
     case "delete_server": {
       const s = mock.servers[args.serverId];
       if (!s || args.confirmName.trim() !== s.name.trim()) throw "type the server name exactly as it is shown to delete it";
@@ -766,6 +970,12 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "search_emoji_catalog": return mockEmojiCatalog(args.query, args.category, args.page);
     case "fetch_catalog_image": return args.url;
+    case "sticker_search": return mockStickerSearch(args.query);
+    case "store_catalog_sticker": {
+      const blob = `ggs${Object.keys(mock.expressions || {}).length}@mock`;
+      mock.expressions = { ...(mock.expressions || {}), [blob]: `data:image/png;base64,${args.data}` };
+      return `<sticker:${args.name}:${blob}>`;
+    }
     case "store_catalog_emoji": {
       const blob = `gg${Object.keys(mock.expressions || {}).length}@mock`;
       mock.expressions = { ...(mock.expressions || {}), [blob]: `data:image/png;base64,${args.data}` };
@@ -848,6 +1058,8 @@ async function mockInvoke(cmd, args = {}) {
       mock.integrations = { igdb_client_id: args.clientId, igdb_configured: Boolean(args.clientId) };
       return args.clientId ? [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }] : [];
     case "gif_search": return null;
+    case "game_details":
+      return { "hollowknight": { id: 14593, name: "Hollow Knight", cover: "co93cr", year: 2017, steam: 367520 }, "portal2": { id: 72, name: "Portal 2", cover: "co1rs4", year: 2011, steam: 620 } }[args.name.toLowerCase().replace(/[^a-z0-9]/g, "")] || null;
     case "search_games":
       return [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }, { id: 71, name: "Portal", cover: "co1x7d", year: 2007 }]
         .filter(g => g.name.toLowerCase().includes(args.query.toLowerCase()));
@@ -860,6 +1072,13 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "accept_rules": mock.servers[args.serverId].needs_rules = false; return null;
+    case "set_onboarding": mock.servers[args.serverId].onboarding = args.onboarding; return null;
+    case "answer_onboarding": {
+      const s = mock.servers[args.serverId];
+      s.myRoles = (s.myRoles || []).filter(id => !args.revoke.includes(id));
+      for (const id of args.grant) if (!s.myRoles.includes(id)) s.myRoles.push(id);
+      return null;
+    }
     case "save_event": {
       const s = mock.servers[args.serverId];
       s.events = (s.events || []).filter(e => e.id !== args.eventId);
@@ -886,15 +1105,16 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "set_channel_limit": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).user_limit = args.limit; return null;
+    case "set_channel_slow_mode": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).slow_mode = args.seconds; return null;
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
       Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag, mentionable: Boolean(args.mentionable) });
       if (args.permissions) r.permissions = args.permissions;
       return null;
     }
-    case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] };
+    case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] };
     case "friend_action": {
-      const f = mock.friends || (mock.friends = { friends: [{ id: "m1", name: "ferris" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] });
+      const f = mock.friends || (mock.friends = { friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] });
       const name = (Object.values(mock.servers)[0].members.find(m => m.id === args.userId) || { name: "Someone" }).name;
       f.incoming = f.incoming.filter(x => x.id !== args.userId);
       if (args.action === "accept") f.friends.push({ id: args.userId, name });
@@ -902,7 +1122,19 @@ async function mockInvoke(cmd, args = {}) {
       if (args.action === "remove") { f.friends = f.friends.filter(x => x.id !== args.userId); f.outgoing = f.outgoing.filter(x => x.id !== args.userId); }
       return null;
     }
+    case "mock_presence": {
+      const touched = [];
+      for (const s of Object.values(mock.servers)) {
+        for (const m of s.members) {
+          if (m.id !== args.userId) continue;
+          m.presence = args.presence;
+          touched.push(s.id);
+        }
+      }
+      return touched;
+    }
     case "set_about": mock.user.about = args.about; return mock.user;
+    case "set_window_title": return null;
     case "set_icons": mock.voice.app_icon = args.appIcon; mock.voice.tray_icon = args.trayIcon; return mock.voice;
     case "get_custom_icon": return null;
     case "choose_custom_icon": return null;
@@ -913,7 +1145,7 @@ async function mockInvoke(cmd, args = {}) {
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
-    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_media: false });
+    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false });
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
@@ -925,12 +1157,38 @@ async function mockInvoke(cmd, args = {}) {
       if (args.muted !== null) mock.voice.muted_users = args.muted ? [...mock.voice.muted_users, args.userId] : mock.voice.muted_users.filter(u => u !== args.userId);
       return mock.voice;
     }
+    case "set_nickname": {
+      const s = mock.servers[args.serverId];
+      const nickname = args.nickname || null;
+      if (args.userId === "me") {
+        s.myNickname = nickname;
+        return null;
+      }
+      const m = s.members.find(x => x.id === args.userId);
+      if (!m) throw "that person is not a member of this server";
+      m.username = m.username || m.name;
+      m.nickname = nickname;
+      m.name = nickname || m.username;
+      return null;
+    }
     case "moderate_voice": {
       const s = mock.servers[args.serverId];
       s.server_muted = (s.server_muted || []).filter(u => u !== args.userId);
       s.server_deafened = (s.server_deafened || []).filter(u => u !== args.userId);
       if (args.muted) s.server_muted.push(args.userId);
       if (args.deafened) s.server_deafened.push(args.userId);
+      return null;
+    }
+    case "move_voice_member": {
+      const s = mock.servers[args.serverId];
+      const from = s.channels.find(c => (c.voice_user_ids || []).includes(args.userId));
+      if (!from) throw new Error("that member is not in voice here");
+      const at = from.voice_user_ids.indexOf(args.userId);
+      const carried = ["voice_users", "voice_user_ids", "voice_since", "voice_muted", "voice_deafened"].map(k => [k, (from[k] || []).splice(at, 1)[0]]);
+      const to = args.channelId ? s.channels.find(c => c.id === args.channelId) : null;
+      if (to) for (const [k, v] of carried) (to[k] ||= []).push(v);
+      const member = s.members.find(x => x.id === args.userId);
+      if (member) member.voice_channel = to ? to.id : null;
       return null;
     }
     case "ban_member": {
@@ -1006,6 +1264,33 @@ async function mockInvoke(cmd, args = {}) {
       if (mock.user) mock.user.presence_until = args.presenceUntil;
       return mock.voice;
     case "set_unread": mock.unread = args.count; return null;
+    case "read_state_load": return mockReadView(Object.keys(mock.readMarks || {}));
+    case "read_state_set": mock.readMarks = mergeReadMaps(mock.readMarks, args.channels); return null;
+    case "read_state_mark_read": {
+      const server = mock.servers[args.serverId];
+      const touched = [];
+      for (const c of server ? server.channels : []) {
+        if (args.channelIds && !args.channelIds.includes(c.id)) continue;
+        const mark = latestMark(mock.messages[c.id] || []);
+        if (!mark) continue;
+        mock.readMarks = mergeReadMaps(mock.readMarks, { [c.id]: mark });
+        touched.push(c.id);
+      }
+      return mockReadView(touched);
+    }
+    case "read_state_sync": return mockReadView(Object.keys(mock.readMarks || {}));
+    case "pins_load": return mock.listPins || { dms: [], channels: [] };
+    case "pin_dm": {
+      const pins = mock.listPins || { dms: [], channels: [] };
+      mock.listPins = { ...pins, dms: togglePinned(pins.dms, args.userId, args.pinned) };
+      return mock.listPins;
+    }
+    case "pin_channel": {
+      const pins = mock.listPins || { dms: [], channels: [] };
+      const others = pins.channels.filter(c => !(c.server === args.serverId && c.channel === args.channelId));
+      mock.listPins = { ...pins, channels: args.pinned ? others.concat({ server: args.serverId, channel: args.channelId }) : others };
+      return mock.listPins;
+    }
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
     case "get_autostart": return !!mock.autostart;
@@ -1029,11 +1314,13 @@ async function mockInvoke(cmd, args = {}) {
         { kind: "window", id: 12, name: "Spotify", is_primary: false },
       ];
     case "share_source_preview": return mockFrame(`Source ${args.sourceId}`, 360, 203, args.sourceId * 47);
-    case "start_screen_share": mock.share = { name: `Source ${args.sourceId}`, hue: args.sourceId * 47 }; return null;
+    case "start_screen_share": mock.share = { name: `Source ${args.sourceId}`, hue: args.sourceId * 47, audio: args.audio }; return null;
+    case "share_audio_supported": return true;
+    case "set_stream_volume": mock.voice.stream_volume = args.volume; return mock.voice;
     case "stop_screen_share": mock.share = null; return null;
     case "own_share_frame":
       if (!mock.share) throw "not sharing";
-      return { width: 1280, height: 720, jpeg: mockFrame(mock.share.name, 640, 360, mock.share.hue), viewers: 2 };
+      return { width: 1280, height: 720, jpeg: mockFrame(mock.share.name, 640, 360, mock.share.hue), viewers: 2, audio: Boolean(mock.share.audio) };
     case "watch_screen":
       clearInterval(mock.watchTimer);
       mock.watchTimer = setInterval(() => {
@@ -1099,6 +1386,8 @@ const ICONS = {
   reply: "M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z",
   smilePlus: "M20 4V2h-2v2h-2v2h2v2h2V6h2V4zM12 20a8 8 0 0 1 0-16 7.9 7.9 0 0 1 2 .26V2.2A10 10 0 1 0 21.8 10h-2.06A7.9 7.9 0 0 1 20 12a8 8 0 0 1-8 8zm-3.5-9A1.5 1.5 0 1 0 7 9.5 1.5 1.5 0 0 0 8.5 11zm7 0A1.5 1.5 0 1 0 14 9.5 1.5 1.5 0 0 0 15.5 11zm-8 3a5 5 0 0 0 9 0z",
   play: "M8 5v14l11-7z",
+  pause: "M6 5h4v14H6zm8 0h4v14h-4z",
+  send: "M3 20v-6l11-2-11-2V4l19 8z",
   folder: "M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z",
   camera: "M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11z",
   cameraOff: "M21 6.5l-4 4V7a1 1 0 0 0-1-1H9.82L21 17.18zM3.27 2 2 3.27 4.73 6H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 .55-.17L19.73 21 21 19.73z",
@@ -1118,14 +1407,17 @@ const ICONS = {
   chevronDown: "M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z",
   roles: "M21.41 11.41l-8.83-8.83A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.83 8.83a2 2 0 0 0 2.82 0l7.17-7.17a2 2 0 0 0 0-2.84zM12.83 20 4 11.17V4h7.17L20 12.83zM6.5 5A1.5 1.5 0 1 0 8 6.5 1.5 1.5 0 0 0 6.5 5z",
   check: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z",
+  poll: "M5 9.2h3V19H5zm5.6-4.2h2.8v14h-2.8zm5.6 8H19v6h-2.8z",
   close: "M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z",
   eye: "M12 5C7 5 2.7 8.1 1 12.5 2.7 16.9 7 20 12 20s9.3-3.1 11-7.5C21.3 8.1 17 5 12 5zm0 12.5a5 5 0 1 1 5-5 5 5 0 0 1-5 5zm0-8a3 3 0 1 0 3 3 3 3 0 0 0-3-3z",
   pin: "M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z",
+  pinOutline: "M14 4v5c0 1.12.37 2.16 1 3H9c.65-.86 1-1.9 1-3V4h4m3-2H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3V4h1c.55 0 1-.45 1-1s-.45-1-1-1z",
   pinOff: "M3.3 2 2 3.3l5.6 5.6V9c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7h1.17l6.96 6.96 1.3-1.3zM16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.44 0-.8.28-.94.67L16.7 13.3c.66-.78 1.76-1.3 2.3-1.3v-2c-1.66 0-3-1.34-3-3z",
   megaphone: "M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1v4h2v-4h1l5 3V6L8 9H4zm11.5 3c0-1.33-.58-2.53-1.5-3.35v6.69c.92-.81 1.5-2.01 1.5-3.34z",
   uploadFile: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z",
   movie: "M4 6.47 5.76 10H20v8H4V6.47M22 4h-4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2z",
   gifBox: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H5V5h14zM9.5 13v-1h1v1a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1h-2v2zm3 1h-1v-4h1zm4-3h-2v.5H16v1h-1.5V14h-1v-4h3z",
+  bellOff: "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6zM3.3 4.7l1.4-1.4 16 16-1.4 1.4z",
   lock: "M12 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6-9h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zM8.9 6a3.1 3.1 0 0 1 6.2 0v2H8.9zM18 20H6V10h12z",
   people: "M16.5 13c-1.2 0-3.07.34-4.5 1-1.43-.67-3.3-1-4.5-1C5.33 13 1 14.08 1 16.25V19h22v-2.75c0-2.17-4.33-3.25-6.5-3.25zm-4 4.5h-10v-1.25c0-.54 2.56-1.75 5-1.75s5 1.21 5 1.75v1.25zm9 0H14v-1.25c0-.46-.2-.86-.52-1.22.88-.3 1.96-.53 3.02-.53 2.44 0 5 1.21 5 1.75v1.25zM7.5 12c1.93 0 3.5-1.57 3.5-3.5S9.43 5 7.5 5 4 6.57 4 8.5 5.57 12 7.5 12zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 5.5c1.93 0 3.5-1.57 3.5-3.5S18.43 5 16.5 5 13 6.57 13 8.5s1.57 3.5 3.5 3.5zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z",
   gamepad: "M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H3V8h18v8zM6 15h2v-2h2v-2H8V9H6v2H4v2h2v2zm8.5-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
@@ -1134,6 +1426,8 @@ const ICONS = {
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
   link: "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 0-10z",
   download: "M18 15v3H6v-3H4v3c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-3zm-1-4-1.41-1.41L13 12.17V4h-2v8.17L8.41 9.59 7 11l5 5z",
+  steam: "M11.979 0C5.678 0 .511 4.86.022 11.037l6.432 2.658c.545-.371 1.203-.59 1.912-.59.063 0 .125.004.188.006l2.861-4.142V8.91c0-2.495 2.028-4.524 4.524-4.524 2.494 0 4.524 2.031 4.524 4.527s-2.03 4.525-4.524 4.525h-.105l-4.076 2.911c0 .052.004.105.004.159 0 1.875-1.515 3.396-3.39 3.396-1.635 0-3.016-1.173-3.331-2.727L.436 15.27C1.862 20.307 6.486 24 11.979 24c6.627 0 11.999-5.373 11.999-12S18.605 0 11.979 0zM7.54 18.21l-1.473-.61c.262.543.714.999 1.314 1.25 1.297.539 2.793-.076 3.332-1.375.263-.63.264-1.319.005-1.949s-.75-1.121-1.377-1.383c-.624-.26-1.29-.249-1.878-.03l1.523.63c.956.4 1.409 1.5 1.009 2.455-.397.957-1.497 1.41-2.454 1.012H7.54zm11.415-9.303c0-1.662-1.353-3.015-3.015-3.015-1.665 0-3.015 1.353-3.015 3.015 0 1.665 1.35 3.015 3.015 3.015 1.663 0 3.015-1.35 3.015-3.015zm-5.273-.005c0-1.252 1.013-2.266 2.265-2.266 1.249 0 2.266 1.014 2.266 2.266 0 1.251-1.017 2.265-2.266 2.265-1.253 0-2.265-1.014-2.265-2.265z",
+  warning: "M12 5.99 19.53 19H4.47L12 5.99M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v4h2v-4z",
   openExternal: "M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3z",
 };
 
@@ -1226,12 +1520,17 @@ function saveAppearance(prefs) {
   try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(prefs)); } catch {}
 }
 
-function toast(message) {
+function toast(message, { avatar = null, onClick = null } = {}) {
   const node = $("toast");
-  node.textContent = message;
+  node.replaceChildren(...(avatar ? [avatar] : []), el("span", "toast-text", message));
+  node.classList.toggle("toast-click", Boolean(onClick));
+  node.onclick = onClick ? () => {
+    node.classList.add("hidden");
+    onClick();
+  } : null;
   node.classList.remove("hidden");
   clearTimeout(node._timer);
-  node._timer = setTimeout(() => node.classList.add("hidden"), 3000);
+  node._timer = setTimeout(() => node.classList.add("hidden"), onClick ? 6000 : 3000);
 }
 
 function showModal(id) {
@@ -1488,11 +1787,18 @@ function makeRailDropTarget(node, target) {
   });
 }
 
+function shownUnread(serverId, channelId) {
+  const count = unread.channels.get(channelId) || 0;
+  if (!count) return 0;
+  if (!unread.mentions.has(channelId) && isChannelMuted(serverId, channelId)) return 0;
+  return count;
+}
+
 function serverUnreadCount(serverId) {
   if (isServerMuted(serverId)) return 0;
   let total = 0;
   for (const [channel, server] of unread.channelServer) {
-    if (server === serverId) total += unread.channels.get(channel) || 0;
+    if (server === serverId) total += shownUnread(serverId, channel);
   }
   return total;
 }
@@ -1542,19 +1848,17 @@ function plainServer() {
   return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
 }
 
-function paintRailContext() {
+function syncWindowTitle() {
   const server = plainServer();
-  const box = $("rail-context");
-  box.classList.toggle("on", Boolean(server));
-  if (!server) return;
-  $("rail-context-name").textContent = server.name;
-  const icon = $("rail-context-icon");
-  paintServerIcon(icon, server);
-  icon.style.background = serverTint(server.id);
+  const name = server ? server.name : null;
+  if (name === state.windowTitleServer) return;
+  state.windowTitleServer = name;
+  document.title = name ? `${name} - Commy` : "Commy";
+  invoke("set_window_title", { server: name }).catch(() => {});
 }
 
 function renderServerRail() {
-  paintRailContext();
+  syncWindowTitle();
   const list = $("server-list");
   list.innerHTML = "";
   const dmCount = [...unread.dms.values()].reduce((a, b) => a + b, 0)
@@ -1629,6 +1933,57 @@ function isServerMuted(serverId) {
   return serverPrefs(serverId).muted;
 }
 
+function nowSecs() {
+  return Math.floor(Date.now() / 1000);
+}
+
+function channelMute(serverId, channelId) {
+  const own = channelPref(notifyPrefs(), serverId, channelId);
+  if (!own) return null;
+  if (own.mute === true) return true;
+  return typeof own.mute === "number" && own.mute > nowSecs() ? own.mute : null;
+}
+
+function isChannelMuted(serverId, channelId) {
+  return isMuted(notifyPrefs(), serverId, channelId, nowSecs());
+}
+
+function updateChannelPrefs(serverId, channelId, change) {
+  saveNotifyPrefs(withChannelPref(notifyPrefs(), serverId, channelId, change));
+  syncUnreadBadge();
+  if (state.currentServer && state.currentServer.id === serverId) renderChannels();
+}
+
+function muteWords(mute) {
+  if (mute === true) return "Muted until you turn it back on";
+  const at = new Date(mute * 1000);
+  const today = at.toDateString() === new Date().toDateString();
+  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return today ? `Muted until ${time}` : `Muted until ${at.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
+
+let menuChannel = null;
+
+function openChannelMenu(channel, x, y) {
+  closeFloating();
+  const server = state.currentServer;
+  if (!server) return;
+  menuChannel = channel;
+  const own = channelPref(notifyPrefs(), server.id, channel.id) || {};
+  const level = own.level || "default";
+  const mute = channelMute(server.id, channel.id);
+  $("channel-menu-title").replaceChildren(document.createTextNode("# "), channelNameNode(channel));
+  for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-level]")) {
+    btn.classList.toggle("checked", btn.dataset.level === level);
+  }
+  for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-mute]")) btn.classList.toggle("hidden", mute !== null);
+  $("chm-unmute").classList.toggle("hidden", mute === null);
+  $("chm-unmute").textContent = mute === null ? "" : muteWords(mute);
+  $("chm-pin").textContent = channelIsPinned(server.id, channel.id) ? "Unpin Channel" : "Pin Channel";
+  $("chm-settings").classList.toggle("hidden", !server.can_manage_channels);
+  placeMenuAt($("channel-menu"), x, y);
+}
+
 function placeMenuAt(menu, x, y) {
   menu.classList.remove("hidden");
   const r = menu.getBoundingClientRect();
@@ -1650,12 +2005,14 @@ function openServerMenu(server, x, y, folderId) {
   $("sm-ungroup").classList.toggle("hidden", !menuFolderOf);
   $("sm-rules").classList.add("hidden");
   $("sm-roles").classList.add("hidden");
+  $("sm-onboarding").classList.add("hidden");
   $("sm-settings").textContent = "Server Settings";
   $("sm-invite").classList.add("hidden");
   invoke("get_server", { serverId: server.id }).then(full => {
     $("sm-invite").classList.toggle("hidden", !full.can_invite);
     $("sm-rules").classList.toggle("hidden", !full.rules);
     $("sm-roles").classList.toggle("hidden", !selfAssignableRoles(full).length);
+    $("sm-onboarding").classList.toggle("hidden", !full.onboarding);
     $("sm-settings").textContent = canOpenServerSettings(full) ? "Server Settings" : "Server Info";
   }).catch(() => {});
   placeMenuAt($("server-menu"), x, y);
@@ -1684,10 +2041,14 @@ function updateServerPrefs(serverId, change) {
 
 function markServerRead(serverId) {
   for (const [channel, server] of [...unread.channelServer]) {
-    if (server === serverId) unread.channels.delete(channel);
+    if (server === serverId) {
+      unread.channels.delete(channel);
+      unread.mentions.delete(channel);
+    }
   }
   syncUnreadBadge();
   if (state.currentServer && state.currentServer.id === serverId) renderChannels();
+  markChannelsRead(serverId, null);
 }
 
 let leavingServerId = null;
@@ -1705,6 +2066,47 @@ function openLeaveServer(serverId) {
 }
 
 let deletingServerId = null;
+
+function openTransferOwner(server) {
+  const pick = $("transfer-owner-pick");
+  pick.replaceChildren();
+  const others = server.members.filter(m => !(state.user && m.id === state.user.id) && m.id !== server.owner && !m.bot);
+  for (const member of others) {
+    const option = el("option", null, member.name);
+    option.value = member.id;
+    pick.appendChild(option);
+  }
+  if (!others.length) {
+    toast("There is nobody else here to hand the server to");
+    return;
+  }
+  const input = $("transfer-owner-input");
+  input.value = "";
+  input.placeholder = server.name;
+  const go = $("transfer-owner-go");
+  go.disabled = true;
+  input.oninput = () => {
+    go.disabled = input.value.trim() !== server.name.trim();
+  };
+  showModal("modal-transfer-owner");
+  input.focus();
+}
+
+async function confirmTransferOwner() {
+  const server = state.currentServer;
+  if (!server) return;
+  const pick = $("transfer-owner-pick");
+  const name = pick.selectedOptions[0] ? pick.selectedOptions[0].textContent : "them";
+  try {
+    await invoke("transfer_ownership", { serverId: server.id, userId: pick.value, confirmName: $("transfer-owner-input").value });
+    hideModals();
+    await refreshCurrentServer();
+    if (!$("server-settings").classList.contains("hidden")) openServerSettings("overview");
+    toast(`${name} now owns ${server.name}`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
 
 function openDeleteServer(server) {
   deletingServerId = server.id;
@@ -1840,13 +2242,13 @@ function renderChannels() {
 
   const canCreate = Boolean(server.can_manage_channels);
   const collapsed = collapsedSections();
-  for (const section of channelSections(server, canCreate)) {
+  for (const section of pinnedFirst(channelSections(server, canCreate), server, canCreate)) {
     const isCollapsed = collapsed.has(section.key);
     list.appendChild(sectionHeader(section, isCollapsed, canCreate && !section.fixed));
     for (const channel of section.channels) {
       const active = (state.currentChannel && channel.id === state.currentChannel.id) || channel.id === state.voiceChannelId;
       if (isCollapsed && !active) continue;
-      const row = channel.kind === "voice" ? voiceChannelRow(channel, canCreate) : textChannelRow(channel, canCreate);
+      const row = channel.kind === "voice" ? voiceChannelRow(channel, canCreate, section.pinned) : textChannelRow(channel, canCreate, section.pinned);
       if (canCreate && !section.fixed) {
         row.draggable = true;
         row.addEventListener("dragstart", e => {
@@ -1859,7 +2261,41 @@ function renderChannels() {
       if (channel.kind === "voice") appendVoiceUsers(list, channel);
     }
   }
+  scheduleMuteExpiry(server);
   pushOverlayRoster();
+}
+
+function pinnedFirst(sections, server, canCreate) {
+  const ids = pinnedChannelIds(listPins, server.id);
+  if (!ids.length) return sections;
+  const pinned = [];
+  const kept = [];
+  for (const section of sections) {
+    const split = splitPinned(section.channels, ids, c => c.id);
+    pinned.push(...split.pinned);
+    if (split.pinned.length && !split.rest.length && !canCreate) continue;
+    kept.push({ ...section, channels: split.rest });
+  }
+  if (!pinned.length) return sections;
+  kept.unshift({ key: `${server.id}:pinned`, title: "Pinned", kind: "text", parent: null, fixed: true, pinned: true, channels: pinned });
+  return kept;
+}
+
+let muteExpiryTimer = null;
+
+function scheduleMuteExpiry(server) {
+  clearTimeout(muteExpiryTimer);
+  muteExpiryTimer = null;
+  const now = nowSecs();
+  const soonest = server.channels
+    .map(c => channelMute(server.id, c.id))
+    .filter(mute => typeof mute === "number" && mute > now)
+    .reduce((a, b) => Math.min(a, b), Infinity);
+  if (!Number.isFinite(soonest)) return;
+  muteExpiryTimer = setTimeout(() => {
+    if (state.currentServer && state.currentServer.id === server.id) renderChannels();
+    syncUnreadBadge();
+  }, Math.min((soonest - now) * 1000 + 500, 2_147_000_000));
 }
 
 function channelMark(channel, size = 18) {
@@ -1882,29 +2318,55 @@ function channelLockMark(row, channel) {
   if (channel.can_view === false) row.classList.add("unreadable");
 }
 
-function textChannelRow(channel, canCreate) {
+function channelBellSlot(row, channel) {
+  const slot = el("span", "channel-bell");
+  const serverId = state.currentServer && state.currentServer.id;
+  if (serverId && channel.kind !== "voice" && isChannelMuted(serverId, channel.id) && !isServerMuted(serverId)) {
+    slot.appendChild(svgIcon("bellOff", 14));
+    slot.title = muteWords(channelMute(serverId, channel.id));
+    row.classList.add("muted");
+  }
+  row.appendChild(slot);
+}
+
+function channelSensitiveMark(row, channel) {
+  if (!showsSensitiveBadge(channel)) return;
+  const mark = el("span", "channel-age", "18+");
+  mark.title = "Age-restricted channel";
+  row.appendChild(mark);
+}
+
+function textChannelRow(channel, canCreate, pinned = false) {
   const row = el("div", "channel");
   row.appendChild(channelMark(channel));
   row.appendChild(channelNameNode(channel, "channel-label"));
   channelLockMark(row, channel);
+  channelSensitiveMark(row, channel);
+  if (pinned) row.appendChild(pinMark("channel-pin"));
   paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
-  if (unread.channels.get(channel.id)) row.classList.add("unread");
+  if (shownUnread(state.currentServer.id, channel.id)) row.classList.add("unread");
   row.onclick = () => {
     state.historyAnchor = null;
     selectChannel(channel);
   };
+  row.oncontextmenu = e => {
+    e.preventDefault();
+    openChannelMenu(channel, e.clientX, e.clientY);
+  };
   if (canCreate) row.appendChild(channelGear(channel));
+  channelBellSlot(row, channel);
   return row;
 }
 
-function voiceChannelRow(channel, canCreate) {
+function voiceChannelRow(channel, canCreate, pinned = false) {
   const row = el("div", "channel voice-channel");
   const icon = el("span", "channel-icon");
   icon.appendChild(svgIcon("speaker", 18));
   row.appendChild(icon);
   row.appendChild(channelNameNode(channel, "channel-label"));
   channelLockMark(row, channel);
+  if (pinned) row.appendChild(pinMark("channel-pin"));
   paintChannelBand(row, channel);
   const full = voiceFull(channel);
   if (channel.id === state.voiceChannelId) {
@@ -1931,6 +2393,7 @@ function voiceChannelRow(channel, canCreate) {
     toggleVoice(channel);
   };
   if (canCreate) row.appendChild(channelGear(channel));
+  channelBellSlot(row, channel);
   return row;
 }
 
@@ -2210,14 +2673,216 @@ function saveNotifyPrefs(prefs) {
   try { localStorage.setItem(NOTIFY_KEY, JSON.stringify(prefs)); } catch {}
 }
 
-const unread = { channels: new Map(), channelServer: new Map(), dms: new Map() };
+let friendOnline = createFriendOnlineTracker();
+const friendPresenceViews = new Map();
+
+function noteFriendPresence(view) {
+  if (!view || !view.id) return;
+  friendPresenceViews.set(view.id, (view.members || []).map(m => ({ id: m.id, presence: m.presence })));
+}
+
+function showFriendOnline(friend) {
+  const avatar = makeAvatar(friend.id, friend.name, "avatar toast-avatar");
+  avatar.appendChild(el("span", "presence-dot online"));
+  toast(`${friend.name} is now online`, { avatar, onClick: () => messageUser(friend.id, friend.name) });
+  if (!appFocused()) invoke("notify", friendOnlineNotice(friend)).catch(() => {});
+}
+
+function announceFriendsOnline() {
+  if (!state.user) return;
+  const due = sweepFriendPresence(friendOnline, {
+    friends: friends.friends,
+    presenceOf: id => mergedPresence(friendPresenceViews.values(), id),
+    prefs: notifyPrefs(),
+    myPresence: state.user.presence,
+    nowSecs: nowSecs(),
+  });
+  for (const friend of due) showFriendOnline(friend);
+}
+
+async function primeFriendPresence() {
+  friendOnline = createFriendOnlineTracker();
+  friendPresenceViews.clear();
+  await refreshPeople();
+  announceFriendsOnline();
+}
+
+async function trackFriendPresence(serverId) {
+  if (!state.user || !friendOnline.swept || !friends.friends.length) return;
+  if (state.currentServer && state.currentServer.id === serverId) noteFriendPresence(state.currentServer);
+  else if (state.view !== "dm") {
+    try {
+      noteFriendPresence(await invoke("get_server", { serverId }));
+    } catch {
+      return;
+    }
+  }
+  announceFriendsOnline();
+}
+
+function toggleFriendOnlinePick(userId) {
+  const prefs = notifyPrefs();
+  saveNotifyPrefs(withFriendOnlinePick(prefs, userId, !wantsFriendOnline(prefs, userId)));
+}
+
+const unread = { channels: new Map(), channelServer: new Map(), dms: new Map(), mentions: new Set() };
+const READ_FLUSH_DELAY_MS = 2000;
+const readState = { marks: {}, line: null, held: null, pending: {}, timer: null };
+
+function myId() {
+  return state.user ? state.user.id : null;
+}
+
+function skipsUnread(message) {
+  return isBlocked(message.author_id);
+}
+
+function queueReadMark(channelId, mark, flush = false) {
+  readState.pending[channelId] = mark;
+  clearTimeout(readState.timer);
+  readState.timer = null;
+  if (flush) return flushReadMarks();
+  readState.timer = setTimeout(flushReadMarks, READ_FLUSH_DELAY_MS);
+}
+
+function flushReadMarks() {
+  clearTimeout(readState.timer);
+  readState.timer = null;
+  const channels = readState.pending;
+  readState.pending = {};
+  if (!Object.keys(channels).length) return;
+  invoke("read_state_set", { channels, flush: true }).catch(() => {});
+}
+
+function advanceRead(channelId, messages, flush = false) {
+  if (!channelId || readState.held === channelId) return;
+  const mark = latestMark(messages);
+  if (!markAdvances(readState.marks[channelId], mark)) return;
+  readState.marks[channelId] = mark;
+  queueReadMark(channelId, mark, flush);
+}
+
+function openChannelWithLine(channel) {
+  if (readState.line && readState.line.channel === channel.id) return;
+  if (readState.line && readState.line.channel !== channel.id) flushReadMarks();
+  if (readState.held && readState.held !== channel.id) readState.held = null;
+  readState.line = { channel: channel.id, mark: readState.marks[channel.id] || null };
+}
+
+function applyReadView(view) {
+  const channels = (view && view.channels) || {};
+  let changed = false;
+  for (const [channelId, info] of Object.entries(channels)) {
+    if (!info || !info.mark) continue;
+    readState.marks[channelId] = newerMark(readState.marks[channelId], info.mark);
+    const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === channelId;
+    if (viewing && readState.held !== channelId) continue;
+    if (info.unread > 0) {
+      unread.channels.set(channelId, info.unread);
+      if (info.server) unread.channelServer.set(channelId, info.server);
+    } else {
+      unread.channels.delete(channelId);
+      unread.mentions.delete(channelId);
+    }
+    changed = true;
+  }
+  if (!changed) return;
+  syncUnreadBadge();
+  if (state.currentServer) renderChannels();
+  if (dmListShown()) renderDmThreads();
+}
+
+async function loadReadState() {
+  try {
+    applyReadView(await invoke("read_state_load"));
+  } catch {}
+}
+
+let listPins = { dms: [], channels: [] };
+
+async function loadPins() {
+  try {
+    listPins = await invoke("pins_load");
+  } catch {}
+}
+
+function dmIsPinned(userId) {
+  return isPinned(listPins.dms, userId);
+}
+
+function channelIsPinned(serverId, channelId) {
+  return isPinned(pinnedChannelIds(listPins, serverId), channelId);
+}
+
+async function setDmPinned(userId, pinned) {
+  try {
+    listPins = await invoke("pin_dm", { userId, pinned });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  if (dmListShown()) renderDmThreads();
+}
+
+async function setChannelPinned(serverId, channelId, pinned) {
+  try {
+    listPins = await invoke("pin_channel", { serverId, channelId, pinned });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  if (state.currentServer && state.currentServer.id === serverId) renderChannels();
+}
+
+function pinMark(cls) {
+  const mark = el("span", cls);
+  mark.title = "Pinned for you";
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", "Pinned");
+  mark.appendChild(svgIcon("pinOutline", 14));
+  return mark;
+}
+
+function markUnreadFrom(message) {
+  const messages = state.renderedMessages || [];
+  const index = messages.findIndex(m => m.id === message.id);
+  const channel = state.currentChannel;
+  if (index < 0 || !channel || !state.currentServer) return;
+  const mark = markBefore(messages, index);
+  readState.marks[channel.id] = mark;
+  readState.held = channel.id;
+  readState.line = { channel: channel.id, mark };
+  const count = unreadAfter(messages, mark, myId(), skipsUnread);
+  if (count) {
+    unread.channels.set(channel.id, count);
+    unread.channelServer.set(channel.id, state.currentServer.id);
+  } else {
+    unread.channels.delete(channel.id);
+  }
+  queueReadMark(channel.id, mark, true);
+  syncUnreadBadge();
+  renderChannels();
+  $("messages").dataset.view = "";
+  renderMessages(messages);
+}
+
+async function markChannelsRead(serverId, channelIds) {
+  for (const channelId of channelIds || [...unread.channelServer].filter(([, s]) => s === serverId).map(([c]) => c)) {
+    if (readState.held === channelId) readState.held = null;
+  }
+  try {
+    applyReadView(await invoke("read_state_mark_read", { serverId, channelIds: channelIds || null }));
+  } catch {}
+}
 
 function appFocused() {
   return document.visibilityState === "visible" && document.hasFocus();
 }
 
 function myMentionNames() {
-  return state.user ? [state.user.username, state.user.display_name] : [];
+  if (!state.user) return [];
+  const me = state.view === "server" ? currentServerMember(state.user.id) : null;
+  return [state.user.username, state.user.display_name, me && me.nickname];
 }
 
 function mentionsMe(content) {
@@ -2244,6 +2909,7 @@ function syncUnreadBadge() {
 }
 
 function clearChannelUnread(channelId) {
+  unread.mentions.delete(channelId);
   if (unread.channels.delete(channelId)) syncUnreadBadge();
 }
 
@@ -2305,18 +2971,22 @@ function onMessageCreated(msg) {
   if (isBlocked(msg.author)) return;
   const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === msg.channel;
   const focusedOnIt = viewing && appFocused();
+  const announcement = Boolean(msg.announcement);
+  const mentioned = typeof msg.mentioned === "boolean" ? msg.mentioned : messageMentionsMeIn(msg.server, msg.author, msg.content);
   if (!focusedOnIt) {
     unread.channels.set(msg.channel, (unread.channels.get(msg.channel) || 0) + 1);
     unread.channelServer.set(msg.channel, msg.server);
+    if (mentioned) unread.mentions.add(msg.channel);
+    if (viewing && readState.line && readState.line.channel === msg.channel && !readState.line.mark) {
+      readState.line.mark = readState.marks[msg.channel] || null;
+    }
     syncUnreadBadge();
     if (state.currentServer && state.currentServer.id === msg.server) renderChannels();
     else if (dmListShown() && isGroupServer(msg.server)) renderDmThreads();
   }
-  const level = levelForServer(notifyPrefs(), msg.server);
-  const announcement = Boolean(msg.announcement);
-  const mentioned = typeof msg.mentioned === "boolean" ? msg.mentioned : messageMentionsMeIn(msg.server, msg.author, msg.content);
+  const level = levelForChannel(notifyPrefs(), msg.server, msg.channel, nowSecs());
   if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement })) {
-    const notice = messageNotice(msg, plainText);
+    const notice = messageNotice(sensitiveNotice(msg, msg.channel, sensitiveConfirmed()), plainText);
     invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
     playSound("message");
   }
@@ -2329,23 +2999,25 @@ function onMessagesCaughtUp(payload) {
   if (!server || !channels || typeof channels !== "object") return;
   let changed = false;
   const notices = [];
-  const now = Math.floor(Date.now() / 1000);
-  const level = levelForServer(notifyPrefs(), server);
+  const now = nowSecs();
+  const prefs = notifyPrefs();
   for (const [channel, value] of Object.entries(channels)) {
     const info = typeof value === "object" && value ? value : bareCountFromOlderBuild(value);
     const count = Number(info.count);
     if (!Number.isInteger(count) || count <= 0) continue;
     const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === channel;
     const focusedOnIt = viewing && appFocused();
+    const mentioned = Boolean(info.mentioned) || mentionsMe(info.content);
     if (!focusedOnIt) {
       unread.channels.set(channel, (unread.channels.get(channel) || 0) + count);
       unread.channelServer.set(channel, server);
+      if (mentioned) unread.mentions.add(channel);
       changed = true;
     }
     if (info.channel_name === undefined || isBlocked(info.author) || !isRecent(Number(info.at), now)) continue;
-    const mentioned = Boolean(info.mentioned) || mentionsMe(info.content);
+    const level = levelForChannel(prefs, server, channel, now);
     if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement: Boolean(info.announcement) })) {
-      const notice = caughtUpNotice({ ...info, count, server_name: payload.server_name }, plainText);
+      const notice = caughtUpNotice(sensitiveNotice({ ...info, count, server_name: payload.server_name }, channel, sensitiveConfirmed()), plainText);
       notices.push({ ...notice, target: `channel:${server}:${channel}` });
     }
   }
@@ -2387,7 +3059,8 @@ function onDmReceived(dm) {
   }
   const prefs = notifyPrefs();
   if (shouldNotify({ level: prefs.level, presence: state.user?.presence, focusedOnIt, isDm: true, mentioned: true })) {
-    invoke("notify", { title: dm.name, body: plainText(dm.content), target: `dm:${dm.user}` }).catch(() => {});
+    const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "");
+    invoke("notify", { title: dm.name, body, target: `dm:${dm.user}` }).catch(() => {});
     playSound("dm");
   }
 }
@@ -2699,7 +3372,7 @@ function placePopup(popup, anchor, prefer = "above") {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "msg-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -2868,6 +3541,8 @@ function openChannelSettings(channelId, tab = "overview") {
   $("channel-edit-prefix").replaceChildren(voice ? svgIcon("speaker", 16) : announcement ? svgIcon("megaphone", 16) : document.createTextNode("#"));
   $("channel-announce-row").classList.toggle("hidden", voice);
   $("channel-edit-announce").checked = announcement;
+  $("channel-sensitive-row").classList.toggle("hidden", !holdsMessages(channel));
+  $("channel-edit-sensitive").checked = Boolean(channel.sensitive);
   $("channel-edit-name").value = channel.name;
   const retention = String(channel.retention_days || 0);
   const select = $("channel-edit-retention");
@@ -2878,6 +3553,8 @@ function openChannelSettings(channelId, tab = "overview") {
   $("channel-limit-row").classList.toggle("hidden", !voice);
   $("channel-limit").value = String(channel.user_limit || 0);
   syncLimitLabel();
+  $("channel-slow-row").classList.toggle("hidden", !holdsMessages(channel));
+  fillSlowModeSelect(channel.slow_mode || 0);
   channelColorDraft = channel.color || null;
   $("channel-edit-color").value = `#${channel.color || "9b7bff"}`;
   paintChannelBandPreview();
@@ -3009,10 +3686,11 @@ function channelEdits() {
   if (holdsMessages(channel)) name = name.toLowerCase().replace(/\s+/g, "-");
   const retention = Number($("channel-edit-retention").value) || 0;
   const limit = channel.kind === "voice" ? Number($("channel-limit").value) || 0 : 0;
+  const slow = holdsMessages(channel) ? Number($("channel-slow").value) || 0 : 0;
   const color = channelColorDraft;
   const dirty = name !== channel.name || retention !== (channel.retention_days || 0) || limit !== (channel.user_limit || 0)
-    || color !== (channel.color || null);
-  return { channel, name, retention, limit, color, dirty };
+    || slow !== (channel.slow_mode || 0) || color !== (channel.color || null);
+  return { channel, name, retention, limit, slow, color, dirty };
 }
 
 function syncChannelDirty() {
@@ -3034,6 +3712,9 @@ async function saveChannelEdits() {
     if (edits.limit !== (edits.channel.user_limit || 0)) {
       await invoke("set_channel_limit", { serverId: state.currentServer.id, channelId: edits.channel.id, limit: edits.limit });
     }
+    if (edits.slow !== (edits.channel.slow_mode || 0)) {
+      await invoke("set_channel_slow_mode", { serverId: state.currentServer.id, channelId: edits.channel.id, seconds: edits.slow });
+    }
     if (edits.color !== (edits.channel.color || null)) {
       await invoke("set_channel_color", { serverId: state.currentServer.id, channelId: edits.channel.id, color: edits.color });
     }
@@ -3042,6 +3723,47 @@ async function saveChannelEdits() {
     openChannelSettings(edits.channel.id);
   } catch (e) {
     toast(String(e));
+  }
+}
+
+function fillSlowModeSelect(current) {
+  const select = $("channel-slow");
+  const values = SLOW_MODE_OPTIONS.includes(current) ? SLOW_MODE_OPTIONS : [...SLOW_MODE_OPTIONS, current].sort((a, b) => a - b);
+  select.replaceChildren(...values.map(v => new Option(slowModeOptionText(v), String(v))));
+  select.value = String(current);
+}
+
+const slowSent = new Map();
+let slowTimer = null;
+
+function noteSlowSend(channelId, waitSeconds) {
+  const channel = state.currentChannel;
+  const seconds = channel && channel.id === channelId ? Number(channel.slow_mode) || 0 : 0;
+  if (!seconds) return;
+  const at = waitSeconds ? Date.now() - (seconds - waitSeconds) * 1000 : Date.now();
+  slowSent.set(channelId, at);
+  syncSlowMode();
+}
+
+function syncSlowMode() {
+  const pill = $("composer-slow");
+  const channel = state.view === "server" ? state.currentChannel : null;
+  const view = slowModeState({
+    channel,
+    canBypass: Boolean(state.currentServer && state.currentServer.can_bypass_slow_mode),
+    sentAt: channel ? slowSent.get(channel.id) || 0 : 0,
+    now: Date.now(),
+  });
+  pill.classList.toggle("hidden", !view.shown);
+  pill.classList.toggle("waiting", view.waiting > 0);
+  if (view.shown) {
+    $("composer-slow-text").textContent = view.text;
+    pill.title = view.waiting ? `Slow mode: you can send again in ${view.waiting}s` : `Slow mode: one message every ${slowModeOptionText(view.seconds)}`;
+  }
+  if (view.waiting > 0 && !slowTimer) slowTimer = setInterval(syncSlowMode, 1000);
+  if (view.waiting === 0 && slowTimer) {
+    clearInterval(slowTimer);
+    slowTimer = null;
   }
 }
 
@@ -3158,6 +3880,7 @@ function renderMembers() {
   renderCamGrid();
 
   const sharers = new Set((state.currentServer.screen_shares || []).map(s => s.user));
+  renderPlayingNow(list, state.currentServer.members);
 
   const group = (title, members, dim, color) => {
     if (!members.length) return;
@@ -3225,8 +3948,73 @@ function renderMembers() {
   for (const g of groupMembers(state.currentServer.members, state.currentServer.roles)) group(g.title, g.members, !!g.dim, g.color);
 }
 
+function sensitiveConfirmed() {
+  try {
+    return readConfirmed(localStorage.getItem(SENSITIVE_KEY));
+  } catch {
+    return new Set();
+  }
+}
+
+function ageGated(channel) {
+  return sensitiveGated({ view: state.view, channel, confirmed: sensitiveConfirmed() });
+}
+
+function buildSensitiveGate(channel) {
+  const wrap = el("div", "age-gate-wrap");
+  const panel = el("div", "age-gate");
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Age-restricted channel");
+  const icon = el("div", "age-gate-icon");
+  icon.appendChild(svgIcon("warning", 40));
+  const name = el("div", "age-gate-channel");
+  name.append(document.createTextNode("#"), channelNameNode(channel));
+  const text = sensitiveGateText(channelPlainName(channel));
+  const actions = el("div", "age-gate-actions");
+  const no = el("button", "btn-secondary age-gate-btn", "Nevermind");
+  no.type = "button";
+  no.onclick = leaveSensitiveChannel;
+  const yes = el("button", "btn-primary age-gate-btn", "Continue");
+  yes.type = "button";
+  yes.onclick = () => confirmSensitiveChannel(channel);
+  actions.append(no, yes);
+  panel.append(icon, name, el("h2", null, text.title), el("p", null, text.body), actions);
+  wrap.appendChild(panel);
+  return wrap;
+}
+
+async function confirmSensitiveChannel(channel) {
+  const confirmed = sensitiveConfirmed();
+  confirmed.add(channel.id);
+  try { localStorage.setItem(SENSITIVE_KEY, writeConfirmed(confirmed)); } catch {}
+  $("messages").dataset.view = "";
+  if (state.currentChannel && state.currentChannel.id === channel.id) await selectChannel(channel);
+}
+
+async function leaveSensitiveChannel() {
+  if (!state.currentServer) return;
+  const next = fallbackChannel({ channels: state.currentServer.channels, previous: state.previousChannel, confirmed: sensitiveConfirmed() });
+  state.historyAnchor = null;
+  await selectChannel(next);
+}
+
+async function resetSensitiveConfirmations() {
+  try { localStorage.removeItem(SENSITIVE_KEY); } catch {}
+  toast("Age-restricted channels will ask again");
+  if (state.view === "server" && ageGated(state.currentChannel)) {
+    $("messages").dataset.view = "";
+    await selectChannel(state.currentChannel);
+  }
+}
+
 function renderMessages(messages) {
   const box = $("messages");
+  if (state.view === "server" && ageGated(state.currentChannel)) {
+    box.dataset.view = "";
+    box.replaceChildren(buildSensitiveGate(state.currentChannel));
+    state.renderedMessages = [];
+    return;
+  }
   const viewKey = state.view === "dm" ? `dm:${state.currentDm && state.currentDm.user}` : `ch:${state.currentChannel && state.currentChannel.id}`;
   const sameView = box.dataset.view === viewKey;
   const prevScroll = box.scrollTop;
@@ -3242,7 +4030,10 @@ function renderMessages(messages) {
   let lastTime = 0;
   let lastDay = null;
   let blockedRun = null;
-  for (const message of messages) {
+  const lineAt = state.view === "server" && state.currentChannel
+    ? newLineIndex(messages, lineFor(readState.line, state.currentChannel.id), myId(), skipsUnread)
+    : -1;
+  for (const [index, message] of messages.entries()) {
     const time = new Date(message.created_at).getTime();
     const day = new Date(message.created_at).toDateString();
     if (day !== lastDay) {
@@ -3250,6 +4041,7 @@ function renderMessages(messages) {
       lastDay = day;
       lastAuthor = null;
     }
+    if (index === lineAt) box.appendChild(newDivider());
     if (state.view === "server" && isBlocked(message.author_id) && !revealedBlocked.has(message.id)) {
       if (!blockedRun) {
         blockedRun = [];
@@ -3275,6 +4067,11 @@ function renderMessages(messages) {
     box.appendChild(historyPill());
   }
   box.scrollTop = sameView && !atBottom ? prevScroll : box.scrollHeight;
+  const line = !sameView && box.querySelector(".new-divider");
+  if (line) {
+    const above = line.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    if (above < 0) box.scrollTop += above - 8;
+  }
   if (state.threadRoot) renderThread();
 }
 
@@ -3317,6 +4114,14 @@ function buildChannelIntro(channel) {
 function dayDivider(date) {
   const row = el("div", "day-divider");
   row.appendChild(el("span", "day-divider-label", dayLabel(date)));
+  return row;
+}
+
+function newDivider() {
+  const row = el("div", "new-divider");
+  row.setAttribute("role", "separator");
+  row.setAttribute("aria-label", "New messages");
+  row.appendChild(el("span", "new-divider-label", "NEW"));
   return row;
 }
 
@@ -3396,6 +4201,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   if (linkPreviewPrefs().show) {
     for (const preview of message.previews || []) body.appendChild(renderLinkPreview(preview));
   }
+  if (message.poll) body.appendChild(renderPoll(message));
   if (message.sealed) {
     const sealed = el("div", "msg-content msg-sealed");
     sealed.appendChild(svgIcon("lock", 14));
@@ -3540,9 +4346,10 @@ function pinRow(pin, { jump, showChannel = false } = {}) {
   head.appendChild(el("span", "pin-time", formatTime(message.created_at)));
   if (showChannel) head.appendChild(el("span", "pin-channel", `#${pin.channel_name}`));
   body.appendChild(head);
-  const text = pinExcerpt(message, plainText);
+  const pinChannel = state.currentServer && state.currentServer.channels.find(c => c.id === pin.channel);
+  const text = sensitivePreview({ channel: pinChannel, confirmed: sensitiveConfirmed(), text: pinExcerpt(message, plainText) });
   const excerpt = el("div", "pin-text", text);
-  if (!text) excerpt.classList.add("muted");
+  if (!text || text === SENSITIVE_PREVIEW) excerpt.classList.add("muted");
   body.appendChild(excerpt);
   const images = (message.attachments || []).filter(a => a.is_image && (loadsImageOnItsOwn(a) || imagePreviewCache.has(a.blob)));
   if (images.length) {
@@ -3777,7 +4584,8 @@ function searchResultRow(hit, terms) {
   decorateAuthor(author, message.author_id);
   const channel = state.currentServer.channels.find(c => c.id === hit.channel);
   head.append(author, el("span", "pin-time", formatTime(message.created_at)), el("span", "pin-channel", `#${channel ? channelPlainName(channel) : hit.channel_name}`));
-  body.append(head, highlightedExcerpt(message, terms));
+  const gated = sensitiveGated({ view: "server", channel, confirmed: sensitiveConfirmed() });
+  body.append(head, gated ? el("div", "pin-text search-text muted", SENSITIVE_PREVIEW) : highlightedExcerpt(message, terms));
   row.appendChild(body);
   return pickableRow(row, () => openSearchHit(hit));
 }
@@ -3891,6 +4699,194 @@ function wireSearch() {
       e.preventDefault();
       focusSearch();
     }
+  });
+}
+
+const SWITCHER_RECENT_KEY = "commy.switcher.recent";
+const SWITCHER_MOD = /mac/i.test(navigator.platform || "") ? "Cmd" : "Ctrl";
+const switcher = { items: [], shown: [], at: 0, views: {}, open: false, recent: [] };
+
+function loadSwitcherRecent() {
+  try {
+    return readRecent(localStorage.getItem(SWITCHER_RECENT_KEY));
+  } catch {
+    return [];
+  }
+}
+
+function rememberSwitcherRecent(key) {
+  switcher.recent = rememberRecent(loadSwitcherRecent(), key);
+  try { localStorage.setItem(SWITCHER_RECENT_KEY, JSON.stringify(switcher.recent)); } catch {}
+}
+
+function switcherActions() {
+  return [
+    { id: "settings", name: "Settings", subtitle: "Account, voice, appearance" },
+    { id: "create-server", name: "Create a server", subtitle: "From scratch or a template" },
+  ];
+}
+
+function switcherPresence(userId) {
+  return PRESENCE_LABELS[personPresence(userId)] || "";
+}
+
+async function refreshSwitcherViews() {
+  const views = {};
+  for (const summary of state.servers) {
+    try {
+      views[summary.id] = await invoke("get_server", { serverId: summary.id });
+    } catch {
+      continue;
+    }
+  }
+  switcher.views = views;
+}
+
+function rebuildSwitcherItems() {
+  switcher.items = buildSwitcherItems({
+    servers: state.servers, views: switcher.views, threads: state.dmThreads || [], friends: friends.friends,
+    presence: switcherPresence, plainName: channelPlainName, actions: switcherActions(),
+  });
+}
+
+async function openSwitcher() {
+  if (!state.user) return;
+  const input = $("switcher-input");
+  switcher.open = true;
+  switcher.at = 0;
+  switcher.recent = loadSwitcherRecent();
+  $("switcher-backdrop").classList.remove("hidden");
+  input.value = "";
+  rebuildSwitcherItems();
+  renderSwitcher();
+  input.focus();
+  await refreshSwitcherViews();
+  if (!switcher.open) return;
+  try {
+    state.dmThreads = await invoke("list_dm_threads");
+  } catch {}
+  if (!switcher.open) return;
+  rebuildSwitcherItems();
+  renderSwitcher();
+}
+
+function closeSwitcher() {
+  switcher.open = false;
+  $("switcher-backdrop").classList.add("hidden");
+}
+
+function renderSwitcher() {
+  const list = $("switcher-list");
+  switcher.shown = rankSwitcher(switcher.items, $("switcher-input").value, switcher.recent);
+  switcher.at = Math.min(switcher.at, Math.max(0, switcher.shown.length - 1));
+  list.innerHTML = "";
+  if (!switcher.shown.length) {
+    list.appendChild(el("div", "switcher-empty", switcher.items.length ? "Nothing matches" : "Join or create a server first"));
+    return;
+  }
+  switcher.shown.forEach((item, at) => {
+    const row = el("div", "switcher-row");
+    row.setAttribute("role", "option");
+    row.appendChild(switcherGlyph(item));
+    const text = el("div", "switcher-text");
+    text.appendChild(el("span", "switcher-name", item.name));
+    if (item.subtitle) text.appendChild(el("span", "switcher-sub", item.subtitle));
+    row.appendChild(text);
+    row.onmousemove = () => {
+      if (switcher.at !== at) highlightSwitcher(at, false);
+    };
+    row.onmousedown = e => e.preventDefault();
+    row.onclick = () => runSwitcherItem(item);
+    list.appendChild(row);
+  });
+  highlightSwitcher(switcher.at, true);
+}
+
+function switcherGlyph(item) {
+  if (item.kind === "person" && !item.group) return makeAvatar(item.userId, item.name, "avatar switcher-avatar");
+  const glyph = el("div", "switcher-glyph");
+  if (item.kind === "server") {
+    const summary = state.servers.find(s => s.id === item.serverId);
+    glyph.classList.add("switcher-server-icon");
+    if (summary) paintServerIcon(glyph, summary);
+    return glyph;
+  }
+  if (item.kind === "person") glyph.appendChild(svgIcon("people", 18));
+  else if (item.kind === "action") glyph.appendChild(svgIcon(item.action === "settings" ? "gear" : "plus", 18));
+  else if (item.channelKind === "voice") glyph.appendChild(svgIcon("speaker", 18));
+  else if (item.channelKind === "announcement") glyph.appendChild(svgIcon("megaphone", 18));
+  else glyph.textContent = "#";
+  return glyph;
+}
+
+function highlightSwitcher(at, scroll) {
+  const rows = $("switcher-list").querySelectorAll(".switcher-row");
+  if (!rows.length) return;
+  switcher.at = (at + rows.length) % rows.length;
+  rows.forEach((row, i) => {
+    row.classList.toggle("active", i === switcher.at);
+    row.setAttribute("aria-selected", i === switcher.at ? "true" : "false");
+  });
+  if (scroll) rows[switcher.at].scrollIntoView({ block: "nearest" });
+}
+
+async function runSwitcherItem(item) {
+  closeSwitcher();
+  if (openSettingsLayerId()) await closeSettingsLayers();
+  if (item.kind === "action") {
+    if (item.action === "settings") openUserSettings("voice");
+    else await openCreateServer();
+    return;
+  }
+  if (item.kind === "server" || item.group) return selectServer(item.serverId);
+  if (item.kind === "person") {
+    const known = (state.dmThreads || []).some(t => t.user === item.userId);
+    return known ? selectDm(item.userId, item.name) : messageUser(item.userId, item.name);
+  }
+  if (!state.currentServer || state.currentServer.id !== item.serverId) await selectServer(item.serverId);
+  const channel = state.currentServer && state.currentServer.channels.find(c => c.id === item.channelId);
+  if (!channel) return toast("That channel is gone");
+  if (channel.kind === "voice") {
+    if (state.voiceChannelId !== channel.id) await toggleVoice(channel);
+    return;
+  }
+  await selectChannel(channel);
+}
+
+function wireSwitcher() {
+  const input = $("switcher-input");
+  $("switcher-icon").appendChild(svgIcon("search", 18));
+  for (const node of document.querySelectorAll("[data-shortcut]")) node.textContent = `${SWITCHER_MOD}+${node.dataset.shortcut}`;
+  input.addEventListener("input", () => {
+    switcher.at = 0;
+    renderSwitcher();
+  });
+  input.addEventListener("keydown", e => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      highlightSwitcher(switcher.at + 1, true);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      highlightSwitcher(switcher.at - 1, true);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const item = switcher.shown[switcher.at];
+      if (item) runSwitcherItem(item);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeSwitcher();
+    }
+  });
+  $("switcher-backdrop").addEventListener("mousedown", e => {
+    if (e.target === e.currentTarget) closeSwitcher();
+  });
+  document.addEventListener("keydown", e => {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "k") return;
+    if (!state.user) return;
+    e.preventDefault();
+    if (switcher.open) closeSwitcher();
+    else if ($("modal-backdrop").classList.contains("hidden")) openSwitcher();
   });
 }
 
@@ -4357,13 +5353,107 @@ function formatSize(bytes) {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
+const voiceClips = new Map();
+let voicePlaying = null;
+
+function voicePlaybackSupported() {
+  if (typeof Audio === "undefined") return false;
+  return new Audio().canPlayType(VOICE_PLAYBACK_TYPE) !== "";
+}
+
+async function loadVoiceClip(att) {
+  if (voiceClips.has(att.blob)) return voiceClips.get(att.blob);
+  const bytes = await invoke("get_voice_message", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null });
+  const clip = { url: URL.createObjectURL(new Blob([bytes], { type: VOICE_PLAYBACK_TYPE })), duration: oggDuration(new Uint8Array(bytes)) };
+  voiceClips.set(att.blob, clip);
+  return clip;
+}
+
+function renderVoiceMessage(att) {
+  const box = el("div", "voice-msg");
+  box.title = "Voice message";
+  const play = el("button", "voice-play");
+  play.type = "button";
+  play.title = "Play";
+  play.appendChild(svgIcon("play", 16));
+  const wave = el("div", "voice-wave");
+  const bars = waveformBars(att.blob).map(height => {
+    const bar = el("i");
+    bar.style.height = `${Math.round(height * 100)}%`;
+    wave.appendChild(bar);
+    return bar;
+  });
+  const elapsed = el("span", "voice-elapsed", "0:00");
+  const total = el("span", "voice-total", "–:––");
+  const time = el("span", "voice-time");
+  time.append(elapsed, el("span", "voice-sep", "/"), total);
+  box.append(play, wave, time);
+  let audio = null;
+  let duration = null;
+  const paint = progress => {
+    const played = playedBars(progress, bars.length);
+    bars.forEach((bar, i) => bar.classList.toggle("played", i < played));
+  };
+  const showPlaying = playing => {
+    play.replaceChildren(svgIcon(playing ? "pause" : "play", 16));
+    play.title = playing ? "Pause" : "Play";
+    box.classList.toggle("playing", playing);
+  };
+  loadVoiceClip(att).then(clip => {
+    duration = clip.duration;
+    if (duration !== null) total.textContent = formatClock(duration);
+  }).catch(() => {});
+  play.onclick = async () => {
+    if (audio && !audio.paused) {
+      audio.pause();
+      return;
+    }
+    if (!audio) {
+      play.disabled = true;
+      try {
+        const clip = await loadVoiceClip(att);
+        audio = new Audio(clip.url);
+        audio.preload = "auto";
+        audio.ontimeupdate = () => {
+          const length = duration || audio.duration || 0;
+          elapsed.textContent = formatClock(audio.currentTime);
+          paint(length > 0 ? audio.currentTime / length : 0);
+        };
+        audio.onplay = () => {
+          if (voicePlaying && voicePlaying !== audio) voicePlaying.pause();
+          voicePlaying = audio;
+          showPlaying(true);
+        };
+        audio.onpause = () => showPlaying(false);
+        audio.onended = () => {
+          showPlaying(false);
+          elapsed.textContent = "0:00";
+          paint(0);
+        };
+        audio.onerror = () => {
+          showPlaying(false);
+          toast("This voice message could not be played");
+        };
+      } catch (e) {
+        toast(String(e));
+        play.disabled = false;
+        return;
+      }
+      play.disabled = false;
+    }
+    audio.play().catch(() => toast("This voice message could not be played"));
+  };
+  return box;
+}
+
 function renderAttachment(att) {
+  if (isVoiceMessage(att) && voicePlaybackSupported()) return renderVoiceMessage(att);
   const box = el("div", "attachment");
   const icon = el("span", "file-icon");
   icon.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5z"/></svg>';
   box.appendChild(icon);
   const meta = el("div", "file-meta");
-  meta.appendChild(el("div", "file-name", att.filename));
+  meta.appendChild(el("div", "file-name", isVoiceMessage(att) ? voiceMessageText(null) : att.filename));
   meta.appendChild(el("div", "file-size", formatSize(att.size_bytes)));
   box.appendChild(meta);
   const btn = el("button", "btn-secondary btn-small", "Download");
@@ -4956,6 +6046,150 @@ function igdbCover(imageId, size = "t_cover_small") {
   return /^[A-Za-z0-9]{1,32}$/.test(imageId || "") ? viaAccountServer(`https://images.igdb.com/igdb/image/upload/${size}/${imageId}.jpg`) : null;
 }
 
+const knownGames = new Map();
+const pendingGames = new Map();
+const missedGames = new Map();
+const GAME_RETRY_MS = 10 * 60e3;
+
+function gameKey(name) {
+  return String(name || "").toLowerCase();
+}
+
+function lookUpGame(name) {
+  const key = gameKey(name);
+  if (!key) return Promise.resolve(null);
+  if (knownGames.has(key)) return Promise.resolve(knownGames.get(key));
+  if (Date.now() - (missedGames.get(key) || 0) < GAME_RETRY_MS) return Promise.resolve(null);
+  if (!pendingGames.has(key)) {
+    pendingGames.set(key, invoke("game_details", { name })
+      .catch(() => null)
+      .then(hit => {
+        if (hit) knownGames.set(key, hit);
+        else missedGames.set(key, Date.now());
+        return hit || null;
+      })
+      .finally(() => pendingGames.delete(key)));
+  }
+  return pendingGames.get(key);
+}
+
+function steamButton(appId) {
+  const url = steamStoreUrl(appId);
+  if (!url) return null;
+  const btn = el("button", "ac-steam");
+  btn.type = "button";
+  btn.append(svgIcon("steam", 18), el("span", null, "Get on Steam"));
+  btn.onclick = e => {
+    e.stopPropagation();
+    invoke("open_url", { url }).catch(err => toast(String(err)));
+  };
+  return btn;
+}
+
+function coverSlot(className, imageId, size) {
+  const slot = el("div", className);
+  const src = igdbCover(imageId, size);
+  if (!src) {
+    slot.appendChild(svgIcon("gamepad", 22));
+    return slot;
+  }
+  const img = el("img");
+  img.alt = "";
+  img.onerror = () => img.replaceWith(svgIcon("gamepad", 22));
+  img.src = src;
+  slot.appendChild(img);
+  return slot;
+}
+
+function activityTime(person) {
+  const time = el("div", "ac-time");
+  time.appendChild(svgIcon("gamepad", 14));
+  if (person.activity_since) time.appendChild(liveElapsed(person.activity_since, "clock"));
+  else time.appendChild(el("span", null, "In game"));
+  return time;
+}
+
+function activityCard(person) {
+  const game = gameFromActivity(person.activity);
+  const details = knownGames.get(gameKey(game));
+  const art = activityArt(person, details);
+  const card = el("div", "activity-card");
+  const glow = el("div", "ac-glow");
+  const glowSrc = igdbCover(art, "t_cover_big");
+  if (glowSrc) glow.style.backgroundImage = `url("${glowSrc}")`;
+  const main = el("div", "ac-main");
+  const info = el("div", "ac-info");
+  info.append(el("div", "ac-game", game), activityTime(person));
+  main.append(coverSlot("ac-cover", art, "t_cover_big"), info);
+  card.append(glow, main);
+  const steam = details && steamButton(details.steam);
+  if (steam) card.appendChild(steam);
+  return card;
+}
+
+function fillActivity(box, person, afterLookup) {
+  box.replaceChildren();
+  const game = isShowingActivity(person) && gameFromActivity(person.activity);
+  box.classList.toggle("hidden", !game);
+  if (!game) return;
+  box.append(el("div", "ac-label", "Playing"), activityCard(person));
+  if (knownGames.has(gameKey(game))) return;
+  lookUpGame(game).then(() => {
+    if (!knownGames.has(gameKey(game)) || !box.isConnected || box.dataset.user !== person.id) return;
+    fillActivity(box, person, afterLookup);
+    if (afterLookup) afterLookup();
+  });
+}
+
+function showActivityIn(box, person, afterLookup) {
+  box.dataset.user = person ? person.id : "";
+  fillActivity(box, person || {}, afterLookup);
+}
+
+function keepOnScreen(node) {
+  const r = node.getBoundingClientRect();
+  if (r.bottom > window.innerHeight - 8) node.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`;
+}
+
+function statusBesideGame(person) {
+  const own = [person.status_emoji, person.custom_status].filter(Boolean).join(" ");
+  return [backLine(person), own].filter(Boolean).join(" · ");
+}
+
+function activityChip(member) {
+  const game = gameFromActivity(member.activity);
+  const details = knownGames.get(gameKey(game));
+  const chip = el("button", "activity-chip");
+  chip.type = "button";
+  chip.title = `${member.name} is playing ${game}`;
+  const text = el("div", "acc-text");
+  const who = el("div", "acc-who");
+  who.append(makeAvatar(member.id, member.name, "avatar acc-avatar"), el("span", null, member.name));
+  text.append(who, el("div", "ac-game", game), activityTime(member));
+  const cover = coverSlot("acc-cover", activityArt(member, details), "t_cover_small");
+  chip.append(text, cover);
+  chip.onclick = e => {
+    e.stopPropagation();
+    openMemberCard(member, chip);
+  };
+  if (!details) {
+    lookUpGame(game).then(found => {
+      if (member.activity_cover) return;
+      if (found && found.cover && chip.isConnected) cover.replaceWith(coverSlot("acc-cover", found.cover, "t_cover_small"));
+    });
+  }
+  return chip;
+}
+
+function renderPlayingNow(list, members) {
+  const playing = playingNow(members, state.user && state.user.id);
+  if (!playing.length) return;
+  list.appendChild(el("div", "member-group", "Playing now"));
+  const strip = el("div", "playing-now");
+  for (const member of playing) strip.appendChild(activityChip(member));
+  list.appendChild(strip);
+}
+
 function renderIntegrations() {
   $("igdb-client-id").value = integrations.igdb_client_id || "";
   $("igdb-client-secret").value = "";
@@ -5214,7 +6448,8 @@ async function acceptRules() {
     await invoke("accept_rules", { serverId: server.id });
     await refreshCurrentServer();
     rolePromptPending.delete(state.currentServer.id);
-    if (selfAssignableRoles(state.currentServer).length) openServerWelcome("roles");
+    if (state.currentServer.onboarding) openOnboarding("join");
+    else if (selfAssignableRoles(state.currentServer).length) openServerWelcome("roles");
     else {
       hideModals();
       toast("Thanks! You can chat now");
@@ -5229,7 +6464,8 @@ function openServerWelcome(step) {
   if (!server) return;
   closeFloating();
   const hasRoles = selfAssignableRoles(server).length > 0;
-  const twoSteps = Boolean(server.rules) && hasRoles;
+  const twoSteps = Boolean(server.rules) && (hasRoles || Boolean(server.onboarding));
+  $("sw-steps").lastElementChild.textContent = server.onboarding ? "Questions" : "Roles";
   paintServerIcon($("sw-icon"), server);
   $("sw-title").textContent = step === "rules" ? `Welcome to ${server.name}` : `You are in, ${state.user ? state.user.username : "friend"}`;
   $("sw-sub").textContent = step === "rules"
@@ -5263,10 +6499,11 @@ async function enterJoinedServer(summary) {
 function maybePromptRoles() {
   const server = state.currentServer;
   if (!server || !rolePromptPending.has(server.id) || server.needs_rules) return;
-  if (!selfAssignableRoles(server).length) return;
+  if (!server.onboarding && !selfAssignableRoles(server).length) return;
   if (!$("modal-backdrop").classList.contains("hidden")) return;
   rolePromptPending.delete(server.id);
-  openServerWelcome("roles");
+  if (server.onboarding) openOnboarding("join");
+  else openServerWelcome("roles");
 }
 
 function syncRulesGate() {
@@ -5276,7 +6513,8 @@ function syncRulesGate() {
   const timedOut = gated ? null : timeoutLock(where);
   const accessLock = gated || timedOut ? null : channelAccessLock(where);
   const lock = gated ? null : timedOut || accessLock || composerLock(where);
-  $("announce-gate").classList.toggle("hidden", !lock);
+  const aged = state.view === "server" && ageGated(state.currentChannel);
+  $("announce-gate").classList.toggle("hidden", !lock || aged);
   if (lock) {
     $("announce-gate-icon").replaceChildren(svgIcon(timedOut ? "clock" : accessLock ? "lock" : "megaphone", 22));
     $("announce-gate-title").textContent = lock.title;
@@ -5288,7 +6526,7 @@ function syncRulesGate() {
       text.append(left, document.createTextNode("."));
     }
   }
-  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || Boolean(lock));
+  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || aged || Boolean(lock));
   if (gated && !rulesPrompted.has(state.currentServer.id)) {
     rulesPrompted.add(state.currentServer.id);
     openServerWelcome("rules");
@@ -5318,6 +6556,299 @@ async function syncAwaitedBar() {
   if (seq !== awaitedSeq) return;
   $("awaited-text").textContent = text || "";
   $("awaited-bar").classList.toggle("hidden", !text);
+}
+
+const onboardingFlow = { mode: "join", onboarding: null, picks: [], pages: [], page: 0 };
+
+function myHeldRoles(server) {
+  const me = state.user && (server.members || []).find(m => m.id === state.user.id);
+  return me ? me.roles || [] : [];
+}
+
+function roleDots(server, roleIds) {
+  const wrap = el("span", "ob-answer-roles");
+  const names = [];
+  for (const id of roleIds || []) {
+    const role = (server.roles || []).find(r => r.id === id);
+    if (!role) continue;
+    const dot = el("span", "role-dot");
+    if (role.color) dot.style.background = `#${role.color}`;
+    wrap.appendChild(dot);
+    names.push(role.name);
+  }
+  if (names.length) wrap.title = `Gives you ${names.join(", ")}`;
+  return wrap;
+}
+
+function openOnboarding(mode, draft) {
+  const server = state.currentServer;
+  const onboarding = mode === "preview" ? draft : server && server.onboarding;
+  if (!server || !onboarding || !onboarding.questions.length) return;
+  closeFloating();
+  Object.assign(onboardingFlow, {
+    mode,
+    onboarding,
+    picks: inferPicks(onboarding, myHeldRoles(server)),
+    pages: onboardingPages(onboarding.questions.length),
+    page: 0,
+  });
+  paintServerIcon($("ob-icon"), server);
+  const who = state.user ? state.user.username : "friend";
+  const copy = {
+    join: [`Welcome in, ${who}`, `${server.name} uses your answers to hand out roles and open the right channels.`],
+    change: ["Your answers", "Change what you picked when you joined. Your roles update right away."],
+    preview: ["Welcome in, friend", "This is what new members see after the rules. Nothing picked here is saved."],
+  }[mode];
+  $("ob-title").textContent = copy[0];
+  $("ob-sub").textContent = copy[1];
+  $("ob-preview-badge").classList.toggle("hidden", mode !== "preview");
+  $("ob-later").textContent = { join: "Later", change: "Cancel", preview: "Close" }[mode];
+  renderOnboardingPage();
+  showModal("modal-onboarding");
+  $("ob-next").focus();
+}
+
+function renderOnboardingPage() {
+  const server = state.currentServer;
+  const { onboarding, pages, page, picks } = onboardingFlow;
+  const steps = $("ob-steps");
+  steps.replaceChildren();
+  steps.classList.toggle("hidden", pages.length < 2);
+  pages.forEach((_, i) => {
+    const dot = el("span", "sw-step", String(i + 1));
+    dot.classList.toggle("active", i === page);
+    dot.classList.toggle("done", i < page);
+    steps.appendChild(dot);
+  });
+  const list = $("ob-questions");
+  list.replaceChildren();
+  for (const qi of pages[page] || []) {
+    const question = onboarding.questions[qi];
+    const block = el("div", "ob-question");
+    block.appendChild(el("div", "ob-question-title", question.title));
+    if (question.description) block.appendChild(el("div", "ob-question-sub", question.description));
+    const answers = el("div", "ob-answers");
+    question.answers.forEach((answer, ai) => {
+      const row = el("button", "ob-answer" + (question.multiple ? " multiple" : ""));
+      row.type = "button";
+      row.classList.toggle("picked", (picks[qi] || []).includes(ai));
+      row.appendChild(el("span", "ob-check")).appendChild(svgIcon("check", 14));
+      row.appendChild(el("span", "ob-answer-label", answer.label));
+      row.appendChild(roleDots(server, answer.roles));
+      row.onclick = () => {
+        picks[qi] = togglePick(question, picks[qi], ai);
+        for (const [i, node] of [...answers.children].entries()) node.classList.toggle("picked", picks[qi].includes(i));
+      };
+      answers.appendChild(row);
+    });
+    block.appendChild(answers);
+    list.appendChild(block);
+  }
+  list.scrollTop = 0;
+  $("ob-back").classList.toggle("hidden", page === 0);
+  $("ob-next").textContent = page >= pages.length - 1 ? "Done" : "Next";
+}
+
+function turnOnboardingPage(delta) {
+  const next = onboardingFlow.page + delta;
+  if (next < 0 || next >= onboardingFlow.pages.length) return;
+  onboardingFlow.page = next;
+  renderOnboardingPage();
+}
+
+async function advanceOnboarding() {
+  if (onboardingFlow.page < onboardingFlow.pages.length - 1) return turnOnboardingPage(1);
+  const server = state.currentServer;
+  if (!server) return hideModals();
+  if (onboardingFlow.mode === "preview") {
+    hideModals();
+    toast("Preview only, nothing was saved");
+    return;
+  }
+  const { grant, revoke } = answerDiff(onboardingFlow.onboarding, onboardingFlow.picks, myHeldRoles(server));
+  if (!grant.length && !revoke.length) {
+    hideModals();
+    toast(onboardingFlow.mode === "join" ? "You are all set" : "Your answers are unchanged");
+    return;
+  }
+  try {
+    await invoke("answer_onboarding", { serverId: server.id, grant, revoke });
+    await refreshCurrentServer();
+    hideModals();
+    toast(onboardingFlow.mode === "join" ? "You are all set" : "Answers saved");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+let onboardingDraft = { questions: [] };
+let onboardingDraftSource = null;
+
+function renderOnboardingSettings(server) {
+  const source = JSON.stringify(server.onboarding || null);
+  if (source !== onboardingDraftSource) {
+    onboardingDraftSource = source;
+    onboardingDraft = server.onboarding ? structuredClone(server.onboarding) : { questions: [] };
+  }
+  $("ob-remove").classList.toggle("hidden", !server.onboarding);
+  paintOnboardingEditor(server);
+}
+
+function syncOnboardingCount() {
+  const usage = onboardingUsage(onboardingDraft);
+  const count = $("ob-count");
+  count.textContent = `${usage.bytes} / ${ONBOARDING_LIMITS.textBytes}`;
+  count.classList.toggle("over", usage.bytes > ONBOARDING_LIMITS.textBytes);
+}
+
+function onboardingTextField(value, placeholder, maxLength, onInput) {
+  const input = el("input");
+  input.type = "text";
+  input.value = value || "";
+  input.placeholder = placeholder;
+  input.maxLength = maxLength;
+  input.oninput = () => {
+    onInput(input.value);
+    syncOnboardingCount();
+  };
+  return input;
+}
+
+function iconButton(icon, title, onClick) {
+  const btn = el("button", "ob-icon-btn");
+  btn.type = "button";
+  btn.title = title;
+  btn.appendChild(svgIcon(icon, 16));
+  btn.onclick = onClick;
+  return btn;
+}
+
+function paintOnboardingAnswer(server, question, answer, index, repaint) {
+  const row = el("div", "ob-answer-row");
+  row.appendChild(onboardingTextField(answer.label, `Answer ${index + 1}`, ONBOARDING_LIMITS.answerChars, v => { answer.label = v; }));
+  row.appendChild(iconButton("close", "Remove answer", () => {
+    question.answers.splice(index, 1);
+    repaint();
+  }));
+  const chips = el("div", "ob-role-chips");
+  const eligible = onboardingRoles(server.roles);
+  answer.roles = (answer.roles || []).filter(id => eligible.some(r => r.id === id));
+  for (const id of answer.roles) {
+    const role = eligible.find(r => r.id === id);
+    const chip = el("span", "ob-role-chip");
+    const dot = el("span", "role-dot");
+    if (role.color) dot.style.background = `#${role.color}`;
+    chip.append(dot, document.createTextNode(role.name));
+    const x = el("button", "game-chip-x");
+    x.type = "button";
+    x.title = `Stop giving ${role.name}`;
+    x.appendChild(svgIcon("close", 12));
+    x.onclick = () => {
+      answer.roles = answer.roles.filter(r => r !== id);
+      repaint();
+    };
+    chip.appendChild(x);
+    chips.appendChild(chip);
+  }
+  const left = eligible.filter(r => !answer.roles.includes(r.id));
+  if (left.length && answer.roles.length < ONBOARDING_LIMITS.rolesPerAnswer) {
+    const select = el("select", "compact-select");
+    select.title = "Give a role to members who pick this";
+    fillOptions(select, [{ value: "", label: answer.roles.length ? "Add another role" : "Gives no role" }, ...left.map(r => ({ value: r.id, label: r.name }))], "");
+    select.onchange = () => {
+      if (!select.value) return;
+      answer.roles.push(select.value);
+      repaint();
+    };
+    chips.appendChild(select);
+  } else if (!eligible.length) {
+    chips.appendChild(el("span", "setting-sub", "Create a role under Roles to hand it out here"));
+  }
+  row.appendChild(chips);
+  return row;
+}
+
+function paintOnboardingQuestion(server, question, index, repaint) {
+  const card = el("div", "settings-card ob-card");
+  const head = el("div", "ob-card-head");
+  head.appendChild(el("div", "setting-title", `Question ${index + 1}`));
+  const type = el("select", "compact-select");
+  fillOptions(type, [{ value: "single", label: "Pick one" }, { value: "multiple", label: "Pick any" }], question.multiple ? "multiple" : "single");
+  type.onchange = () => { question.multiple = type.value === "multiple"; };
+  head.appendChild(type);
+  head.appendChild(iconButton("trash", "Remove question", () => {
+    onboardingDraft.questions.splice(index, 1);
+    repaint();
+  }));
+  card.appendChild(head);
+  const title = el("div", "ob-field");
+  title.appendChild(onboardingTextField(question.title, "What do you want to ask?", ONBOARDING_LIMITS.titleChars, v => { question.title = v; }));
+  card.appendChild(title);
+  const sub = el("div", "ob-field");
+  sub.appendChild(onboardingTextField(question.description, "Optional one-line description", ONBOARDING_LIMITS.descriptionChars, v => { question.description = v; }));
+  card.appendChild(sub);
+  const rows = el("div", "ob-answer-rows");
+  question.answers.forEach((answer, ai) => rows.appendChild(paintOnboardingAnswer(server, question, answer, ai, repaint)));
+  card.appendChild(rows);
+  if (question.answers.length < ONBOARDING_LIMITS.answers) {
+    const add = el("button", "btn-secondary btn-small ob-add-answer", "Add Answer");
+    add.type = "button";
+    add.onclick = () => {
+      question.answers.push({ label: "", roles: [] });
+      repaint();
+    };
+    card.appendChild(add);
+  }
+  return card;
+}
+
+function paintOnboardingEditor(server) {
+  const editor = $("ob-editor");
+  editor.replaceChildren();
+  const repaint = () => paintOnboardingEditor(server);
+  onboardingDraft.questions.forEach((q, i) => editor.appendChild(paintOnboardingQuestion(server, q, i, repaint)));
+  if (!onboardingDraft.questions.length) {
+    editor.appendChild(el("div", "manage-empty", "No questions yet. Add one to ask new members something when they join."));
+  }
+  $("ob-add-question").classList.toggle("hidden", onboardingDraft.questions.length >= ONBOARDING_LIMITS.questions);
+  syncOnboardingCount();
+}
+
+function addOnboardingQuestion() {
+  if (!state.currentServer || onboardingDraft.questions.length >= ONBOARDING_LIMITS.questions) return;
+  onboardingDraft.questions.push({ title: "", description: "", multiple: false, answers: [{ label: "", roles: [] }, { label: "", roles: [] }] });
+  paintOnboardingEditor(state.currentServer);
+  const inputs = $("ob-editor").querySelectorAll(".ob-card input");
+  const first = inputs[inputs.length - 2 - onboardingDraft.questions[onboardingDraft.questions.length - 1].answers.length];
+  if (first) first.focus();
+}
+
+function tidyOnboardingDraft(server) {
+  return tidyOnboarding(onboardingDraft, onboardingRoles(server.roles).map(r => r.id));
+}
+
+async function saveOnboarding(remove) {
+  const server = state.currentServer;
+  if (!server) return;
+  const problems = remove ? [] : onboardingProblems(onboardingDraft);
+  if (problems.length) return toast(problems[0]);
+  try {
+    await invoke("set_onboarding", { serverId: server.id, onboarding: remove ? null : tidyOnboardingDraft(server) });
+    await refreshCurrentServer();
+    onboardingDraftSource = null;
+    renderOnboardingSettings(state.currentServer);
+    toast(remove ? "Onboarding questions removed" : "Onboarding saved");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function previewOnboarding() {
+  const server = state.currentServer;
+  if (!server) return;
+  const problems = onboardingProblems(onboardingDraft);
+  if (problems.length) return toast(problems[0]);
+  openOnboarding("preview", tidyOnboardingDraft(server));
 }
 
 function renderRulesSettings(server) {
@@ -5972,7 +7503,8 @@ async function openFullProfile(member) {
   $("fp-name").parentElement.querySelector(".role-tag")?.remove();
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = [person.username ? `@${person.username}` : "", person.pronouns || ""].filter(Boolean).join(" \u00b7 ");
-  $("fp-status").textContent = subLine(person) || presenceLabel(person);
+  $("fp-status").textContent = (isShowingActivity(person) ? statusBesideGame(person) : subLine(person)) || presenceLabel(person);
+  showActivityIn($("fp-activity"), person);
   $("fp-about-wrap").classList.toggle("hidden", !person.about);
   $("fp-about").textContent = person.about || "";
   const servers = (state.people.get(person.id) || {}).servers || [];
@@ -6037,6 +7569,10 @@ function openProfileMenu(person, x, y) {
     };
     menu.appendChild(btn);
   };
+  if (friendState(person.id) === "friend") {
+    const wants = wantsFriendOnline(notifyPrefs(), person.id);
+    item("Notify when online", "signal", () => toggleFriendOnlinePick(person.id), "ctx-check" + (wants ? " checked" : ""));
+  }
   const blocked = isBlocked(person.id);
   item(blocked ? "Unblock" : "Block", "block", () => {
     if (blocked) setBlocked(person.id, person.name, false);
@@ -6075,20 +7611,29 @@ function openMemberCard(member, anchor) {
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) name.after(botTag());
   if (member.pronouns) name.after(el("span", "mc-pronouns", member.pronouns));
+  const accountLine = nicknameAccountLine(member);
+  $("mc-username").textContent = accountLine || "";
+  $("mc-username").classList.toggle("hidden", !accountLine);
   const status = $("mc-status");
   status.replaceChildren();
-  const line = subLine(member);
-  const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
-  if (cover) {
-    const img = el("img", "activity-cover");
-    img.src = cover;
-    status.appendChild(img);
+  const playing = isShowingActivity(member);
+  if (playing) {
+    status.textContent = statusBesideGame(member) || presenceLabel(member);
+  } else {
+    const line = subLine(member);
+    const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
+    if (cover) {
+      const img = el("img", "activity-cover");
+      img.src = cover;
+      status.appendChild(img);
+    }
+    status.appendChild(document.createTextNode(line || presenceLabel(member)));
+    if (member.activity && member.activity_since) {
+      status.appendChild(document.createTextNode(" · "));
+      status.appendChild(liveElapsed(member.activity_since, "words"));
+    }
   }
-  status.appendChild(document.createTextNode(line || presenceLabel(member)));
-  if (member.activity && member.activity_since) {
-    status.appendChild(document.createTextNode(" · "));
-    status.appendChild(liveElapsed(member.activity_since, "words"));
-  }
+  showActivityIn($("mc-activity"), member, () => keepOnScreen(card));
   const roles = $("mc-roles");
   roles.replaceChildren();
   const held = (server.roles || []).filter(r => (member.roles || []).includes(r.id));
@@ -6130,6 +7675,7 @@ function openMemberCard(member, anchor) {
     const active = timeoutActive(currentTimeoutOf(member));
     action("clock", timeoutActionLabel(member), () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
   }
+  if (isMe && canChangeOwnNickname()) action("pencil", "Nickname", () => openNicknameModal(currentServerMember(member.id)));
   $("mc-composer").classList.toggle("hidden", isMe || member.bot || isBlocked(member.id));
   const input = $("mc-input");
   input.value = "";
@@ -6221,8 +7767,8 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
-  ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "mention_everyone", "create_invites"]],
-  ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members"]],
+  ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
+  ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
 ];
 
 function roleForm(server, role, onClose) {
@@ -6666,6 +8212,15 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
   if (!(dm && state.currentDm && state.currentDm.user === member.id)) {
     item("Message", () => messageUser(member.id, member.name));
   }
+  if (dm && (state.dmThreads || []).some(t => t.user === member.id)) {
+    const pinned = dmIsPinned(member.id);
+    item(pinned ? "Unpin" : "Pin", () => setDmPinned(member.id, !pinned));
+  }
+  if (friendState(member.id) === "friend") {
+    const wants = wantsFriendOnline(notifyPrefs(), member.id);
+    const ping = item("Notify when online", () => toggleFriendOnlinePick(member.id), "ctx-check" + (wants ? " checked" : ""));
+    ping.title = "A toast when they come online";
+  }
   sep();
 
   const voice = state.voice || {};
@@ -6687,7 +8242,8 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
-  if (inServer && member.id !== server.owner && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out)) {
+  const moderates = inServer && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames);
+  if (inServer && member.id !== server.owner && moderates) {
     sep();
     if (server.can_mute) {
       const sm = (server.server_muted || []).includes(member.id);
@@ -6695,9 +8251,17 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
       item("Server Mute", () => moderateVoice(member, !sm, sd), "ctx-check" + (sm ? " checked" : ""));
       item("Server Deafen", () => moderateVoice(member, sm, !sd), "ctx-check" + (sd ? " checked" : ""));
     }
+    if (server.can_manage_nicknames) item("Change Nickname", () => openNicknameModal(member));
     if (canTimeOut(server, member, state.user && state.user.id)) {
       const active = timeoutActive(currentTimeoutOf(member));
       item(active ? "Remove timeout" : `Time out ${member.name}`, () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
+    }
+    const inVoice = server.can_move ? (server.members.find(m => m.id === member.id) || {}).voice_channel : null;
+    if (inVoice) {
+      for (const channel of server.channels.filter(c => c.kind === "voice" && c.id !== inVoice && c.can_view !== false)) {
+        item(`Move to ${channelPlainName(channel)}`, () => moveVoiceMember(member, channel));
+      }
+      item("Disconnect from Voice", () => moveVoiceMember(member, null), "danger");
     }
     if (server.can_kick) {
       item(`Kick ${member.name}`, async () => {
@@ -6743,6 +8307,7 @@ function openSelfVoiceMenu(x, y) {
   };
 
   item("Profile", () => openMemberCard(fullMember(state.user), { getBoundingClientRect: () => ({ left: x, top: y }) }));
+  if (canChangeOwnNickname()) item("Change Nickname", () => openNicknameModal(currentServerMember(state.user.id)));
   sep();
   item(state.voice.muted ? "Unmute" : "Mute", async () => {
     state.voice = await invoke("set_muted", { muted: !state.voice.muted });
@@ -6857,6 +8422,16 @@ async function confirmTimeout() {
   }
 }
 
+async function moveVoiceMember(member, channel) {
+  try {
+    await invoke("move_voice_member", { serverId: state.currentServer.id, userId: member.id, channelId: channel ? channel.id : null });
+    await refreshCurrentServer();
+    toast(channel ? `Moved ${member.name} to ${channelPlainName(channel)}` : `Disconnected ${member.name} from voice`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 async function clearMemberTimeout(member) {
   const server = state.currentServer;
   if (!server) return;
@@ -6879,6 +8454,55 @@ function wireTimeoutModal() {
   $("timeout-custom").onkeydown = e => {
     if (e.key === "Enter" && !$("timeout-go").disabled) confirmTimeout();
   };
+}
+
+function canChangeOwnNickname() {
+  const server = state.view === "server" ? state.currentServer : null;
+  return Boolean(server && state.user && server.can_change_nickname && currentServerMember(state.user.id));
+}
+
+let nicknameTarget = null;
+
+function openNicknameModal(member) {
+  const server = state.currentServer;
+  if (!member || !server) return;
+  closeFloating();
+  nicknameTarget = { serverId: server.id, userId: member.id };
+  $("nickname-hint").textContent = nicknamePrompt(member, server, state.user && state.user.id);
+  const input = $("nickname-input");
+  input.value = member.nickname || "";
+  input.placeholder = member.username || "Nickname";
+  $("nickname-clear").disabled = !member.nickname;
+  showModal("modal-nickname");
+  input.focus();
+  input.select();
+}
+
+async function saveNickname(nickname) {
+  const target = nicknameTarget;
+  if (!target) return;
+  const problem = nickname === null ? null : nicknameProblem(nickname);
+  if (problem) {
+    toast(problem);
+    return;
+  }
+  try {
+    await invoke("set_nickname", { serverId: target.serverId, userId: target.userId, nickname: nickname === null ? null : cleanNickname(nickname) });
+    hideModals();
+    nicknameTarget = null;
+    await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireNicknameModal() {
+  $("nickname-save").onclick = () => saveNickname($("nickname-input").value);
+  $("nickname-clear").onclick = () => saveNickname(null);
+  $("nickname-cancel").onclick = hideModals;
+  $("nickname-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") saveNickname(e.currentTarget.value);
+  });
 }
 
 async function moderateVoice(member, muted, deafened) {
@@ -7334,21 +8958,55 @@ function catalogPickNamed(name) {
   return null;
 }
 
+const CATALOG_PICKER = {
+  emojis: {
+    label: "emoji.gg", slots: CATALOG_PICKER_SLOTS, cls: "catalog-slot", external: true,
+    search: searchEmojiggPicks, use: (item, slot) => useCatalogEmoji(item, slot),
+  },
+  stickers: {
+    label: "emoji.gg", slots: 6, cls: "sticker-tile catalog-sticker", external: true,
+    search: searchEmojiggPicks, use: (item, slot) => useCatalogSticker(item, slot),
+  },
+  klipy: {
+    label: "KLIPY", slots: 9, cls: "sticker-tile catalog-sticker", external: false,
+    search: async q => (await invoke("sticker_search", { query: q })) || [],
+    use: (item, slot) => useCatalogSticker(item, slot),
+  },
+};
+
+async function searchEmojiggPicks(q) {
+  const page = await invoke("search_emoji_catalog", { query: q, category: null, page: 0 });
+  return (page.results || []).slice(0, CATALOG_PICKER_SLOTS);
+}
+
 function appendCatalogEmojis(grid, q) {
-  if (!account.server_emojis || !mayUseOtherServers()) return;
-  pickerSection(grid, "emoji.gg");
+  appendCatalogSection(grid, q, "emojis");
+}
+
+function appendCatalogSection(grid, q, kind) {
+  const spec = CATALOG_PICKER[kind];
+  if (spec.external && !mayUseOtherServers()) return false;
+  if (spec.external && !account.server_emojis) {
+    if (!q) return false;
+    pickerSection(grid, "emoji.gg");
+    grid.appendChild(el("div", "picker-empty", "Your account server doesn't offer emoji.gg search yet."));
+    return true;
+  }
+  pickerSection(grid, spec.label);
   const slots = [];
-  for (let i = 0; i < CATALOG_PICKER_SLOTS; i++) {
-    const slot = el("button", "catalog-slot");
+  for (let i = 0; i < spec.slots; i++) {
+    const slot = el("button", spec.cls);
     slot.type = "button";
     slot.disabled = true;
     grid.appendChild(slot);
     slots.push(slot);
   }
-  const fill = results => {
+  const fill = all => {
     if (!slots[0].isConnected) return;
+    const results = all.slice(0, spec.slots);
     if (!results.length) {
-      slots[0].replaceWith(el("div", "picker-empty catalog-none", "Nothing on emoji.gg matches that"));
+      const box = kind === "emojis" ? "emojis" : "stickers";
+      slots[0].replaceWith(el("div", `picker-empty catalog-none ${box}`, `Nothing on ${spec.label} matches that`));
       for (const slot of slots.slice(1)) slot.remove();
       return;
     }
@@ -7356,34 +9014,60 @@ function appendCatalogEmojis(grid, q) {
       const item = results[i];
       if (!item) return;
       slot.disabled = false;
-      slot.title = `${item.title} from emoji.gg`;
+      slot.title = `${item.title} from ${spec.label}`;
       const img = el("img");
       img.loading = "lazy";
       img.alt = item.title;
       img.draggable = false;
-      img.src = viaAccountServer(item.url);
+      img.src = viaAccountServer(item.preview || item.url);
       img.onerror = () => slot.classList.add("missing");
       slot.appendChild(img);
-      slot.onclick = () => useCatalogEmoji(item, slot);
+      slot.onclick = () => spec.use(item, slot);
     });
   };
-  const cached = catalogPicker.results.get(q);
+  const key = `${spec.label}:${q}`;
+  const cached = catalogPicker.results.get(key);
   if (cached) {
     fill(cached);
-    return;
+    return true;
   }
   const seq = ++catalogPicker.seq;
   clearTimeout(catalogPicker.timer);
   catalogPicker.timer = setTimeout(async () => {
     try {
-      const page = await invoke("search_emoji_catalog", { query: q, category: null, page: 0 });
-      const results = (page.results || []).slice(0, CATALOG_PICKER_SLOTS);
-      catalogPicker.results.set(q, results);
+      const results = await spec.search(q);
+      catalogPicker.results.set(key, results);
       if (seq === catalogPicker.seq) fill(results);
     } catch {
       if (seq === catalogPicker.seq) fill([]);
     }
   }, q ? 300 : 0);
+  return true;
+}
+
+const catalogStickers = new Map();
+
+async function useCatalogSticker(item, slot) {
+  if (slot.classList.contains("busy")) return;
+  const known = catalogStickers.get(item.id);
+  if (known) {
+    sendSticker(known);
+    return;
+  }
+  slot.classList.add("busy");
+  try {
+    const src = await invoke("fetch_catalog_image", { url: item.url });
+    const prepared = await prepareEmojiImage(src, CATALOG_SIZES.stickers);
+    const name = expressionName(item.title, "sticker");
+    const token = parseStickerToken(await invoke("store_catalog_sticker", { name, data: prepared.data }));
+    if (!token) throw new Error("that sticker could not be saved");
+    catalogStickers.set(item.id, token);
+    sendSticker(token);
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    slot.classList.remove("busy");
+  }
 }
 
 async function useCatalogEmoji(item, slot) {
@@ -7415,7 +9099,7 @@ async function useCatalogEmoji(item, slot) {
 async function prepareEmojiImage(src, { size = 128, maxGif = 256 * 1024 } = {}) {
   const blob = await (await fetch(src)).blob();
   const EMOJI_SIZE_PX = size;
-  if (blob.type === "image/gif" && blob.size <= maxGif) {
+  if ((blob.type === "image/gif" || blob.type === "image/webp") && blob.size <= maxGif) {
     return { data: await blobToBase64(blob), url: src, flattened: false };
   }
   const img = await new Promise((resolve, reject) => {
@@ -8248,7 +9932,9 @@ function jumpCard(target) {
   const card = el("div", "jump-card");
   card.appendChild(svgIcon("link", 18));
   const known = state.servers.find(s => s.id === target.server);
-  card.appendChild(el("span", "jump-card-text", known ? `Message in ${known.name}` : "Message in a server you are not in"));
+  const here = state.currentServer && state.currentServer.id === target.server ? state.currentServer.channels.find(c => c.id === target.channel) : null;
+  const gated = sensitiveGated({ view: "server", channel: here, confirmed: sensitiveConfirmed() });
+  card.appendChild(el("span", "jump-card-text", gated ? `${SENSITIVE_PREVIEW} in ${known.name}` : known ? `Message in ${known.name}` : "Message in a server you are not in"));
   const go = el("button", "btn-primary btn-small", "Jump");
   go.disabled = !known;
   go.onclick = () => openMessageLink(target);
@@ -8287,6 +9973,7 @@ function openMessageMenu(message, anchor) {
     item("Copy Message Link", () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied"));
   }
   if (message.content) item("Forward", () => openForward(message));
+  if (state.view === "server" && state.currentChannel && !message.pending) item("Mark as Unread", () => markUnreadFrom(message));
   const r = anchor.getBoundingClientRect();
   placeMenuAt(menu, r.left, r.bottom + 4);
 }
@@ -8772,6 +10459,9 @@ function renderUserPanel() {
 
 async function refreshServers() {
   state.servers = await invoke("list_servers");
+  for (const id of [...friendPresenceViews.keys()]) {
+    if (!state.servers.some(s => s.id === id)) friendPresenceViews.delete(id);
+  }
   loadShareableEmojis();
   renderServerRail();
 }
@@ -8836,6 +10526,7 @@ async function markMobileApp() {
 }
 
 function setViewMode(mode) {
+  closeDiscover();
   state.view = mode;
   const dm = mode === "dm";
   const group = mode === "server" && Boolean(state.currentServer && state.currentServer.group);
@@ -8850,7 +10541,7 @@ function setViewMode(mode) {
   $("server-name").classList.toggle("hidden", home);
   if (home) paintSidebarBanner();
   $("dm-search").classList.toggle("hidden", !home);
-  paintRailContext();
+  syncWindowTitle();
   syncAttachAccess();
   $("home-btn").classList.toggle("active", home);
   $("app").classList.toggle("dm-mode", home);
@@ -8882,6 +10573,7 @@ async function selectServer(serverId) {
   state.historyAnchor = null;
   setViewMode("server");
   state.currentDm = null;
+  if (state.currentServer.group) rememberSwitcherRecent(`group:${serverId}`);
   const firstText = state.currentServer.channels.find(c => c.kind === "text" && c.can_view !== false);
   renderServerRail();
   renderMembers();
@@ -9003,6 +10695,8 @@ async function refreshPeople() {
     }
   }
   for (const server of views) rememberAvatars(server.members);
+  friendPresenceViews.clear();
+  for (const server of views) noteFriendPresence(server);
   state.people = indexPeople(views, state.user ? state.user.id : null);
 }
 
@@ -9078,7 +10772,7 @@ function renderDmHome() {
 function buildWelcomeHome() {
   const home = el("div", "empty-state welcome-home");
   const mark = el("img", "welcome-mark");
-  mark.src = "images/commy_v2.png";
+  mark.src = "images/commy_v3_noback.png";
   mark.alt = "";
   mark.draggable = false;
   home.appendChild(mark);
@@ -9119,7 +10813,16 @@ async function renderDmThreads() {
   } else if (!matches.length) {
     list.appendChild(el("div", "dm-list-empty", "No conversations match."));
   }
-  if (!query && (friends.friends.length || friends.incoming.length)) {
+  const split = splitPinned(shown, listPins.dms, t => t.user);
+  if (split.pinned.length) {
+    list.appendChild(el("div", "channel-group dm-group", "Pinned"));
+    for (const thread of split.pinned) list.appendChild(dmThreadRow(thread, true));
+  }
+  const friendsShown = !query && (friends.friends.length || friends.incoming.length);
+  if (split.pinned.length && !friendsShown && (split.rest.length || requests.length)) {
+    list.appendChild(el("div", "channel-group dm-group", "Direct Messages"));
+  }
+  if (friendsShown) {
     list.appendChild(el("div", "channel-group dm-group", `Friends - ${friends.friends.length}`));
     for (const req of friends.incoming) {
       const row = el("div", "channel dm-thread friend-request");
@@ -9164,7 +10867,7 @@ async function renderDmThreads() {
     }
     list.appendChild(el("div", "channel-group dm-group", "Direct Messages"));
   }
-  const rows = [...shown];
+  const rows = [...split.rest];
   if (requests.length) {
     rows.push({ header: `Message Requests - ${requests.length}` });
     rows.push(...requests.filter(t => t.kind === "request"));
@@ -9176,28 +10879,7 @@ async function renderDmThreads() {
       list.appendChild(el("div", "channel-group dm-group dm-requests-head", thread.header));
       continue;
     }
-    if (thread.kind === "group") {
-      list.appendChild(groupThreadRow(thread));
-      continue;
-    }
-    const row = el("div", "channel dm-thread");
-    if (state.currentDm && thread.user === state.currentDm.user) row.classList.add("active");
-    if (unread.dms.get(thread.user)) row.classList.add("unread");
-    row.appendChild(avatarWithPresence(thread.name, thread.user));
-    const meta = el("div", "dm-meta");
-    const top = el("div", "dm-top");
-    top.appendChild(el("span", "dm-name", thread.name));
-    top.appendChild(el("span", "dm-time", formatShortTime(thread.last_at)));
-    meta.appendChild(top);
-    meta.appendChild(el("div", "dm-preview", thread.kind === "spam" ? "Hidden as possible spam" : plainText(thread.last_message) || "No messages yet"));
-    if (thread.kind !== "inbox") row.classList.add("dm-request");
-    row.appendChild(meta);
-    row.onclick = () => selectDm(thread.user, thread.name);
-    row.oncontextmenu = e => {
-      e.preventDefault();
-      openMemberMenu({ id: thread.user, name: thread.name }, e.clientX, e.clientY, { dm: true });
-    };
-    list.appendChild(row);
+    list.appendChild(dmThreadRow(thread, false));
   }
   if (query) {
     const known = new Set(threads.map(t => t.user));
@@ -9221,13 +10903,36 @@ async function renderDmThreads() {
   return threads;
 }
 
+function dmThreadRow(thread, pinned) {
+  if (thread.kind === "group") return groupThreadRow(thread, pinned);
+  const row = el("div", "channel dm-thread");
+  if (state.currentDm && thread.user === state.currentDm.user) row.classList.add("active");
+  if (unread.dms.get(thread.user)) row.classList.add("unread");
+  row.appendChild(avatarWithPresence(thread.name, thread.user));
+  const meta = el("div", "dm-meta");
+  const top = el("div", "dm-top");
+  top.appendChild(el("span", "dm-name", thread.name));
+  if (pinned) top.appendChild(pinMark("dm-pin"));
+  top.appendChild(el("span", "dm-time", formatShortTime(thread.last_at)));
+  meta.appendChild(top);
+  meta.appendChild(el("div", "dm-preview", thread.kind === "spam" ? "Hidden as possible spam" : plainText(thread.last_message) || "No messages yet"));
+  if (thread.kind !== "inbox") row.classList.add("dm-request");
+  row.appendChild(meta);
+  row.onclick = () => selectDm(thread.user, thread.name);
+  row.oncontextmenu = e => {
+    e.preventDefault();
+    openMemberMenu({ id: thread.user, name: thread.name }, e.clientX, e.clientY, { dm: true });
+  };
+  return row;
+}
+
 function groupAvatar(className = "avatar group-avatar") {
   const node = el("div", className);
   node.appendChild(svgIcon("people", 18));
   return node;
 }
 
-function groupThreadRow(thread) {
+function groupThreadRow(thread, pinned = false) {
   const row = el("div", "channel dm-thread");
   if (isGroupView() && thread.user === state.currentServer.id) row.classList.add("active");
   if (serverUnreadCount(thread.user)) row.classList.add("unread");
@@ -9235,6 +10940,7 @@ function groupThreadRow(thread) {
   const meta = el("div", "dm-meta");
   const top = el("div", "dm-top");
   top.appendChild(el("span", "dm-name", thread.name));
+  if (pinned) top.appendChild(pinMark("dm-pin"));
   top.appendChild(el("span", "dm-time", formatShortTime(thread.last_at)));
   meta.appendChild(top);
   meta.appendChild(el("div", "dm-preview", plainText(thread.last_message) || "No messages yet"));
@@ -9253,6 +10959,8 @@ function openGroupMenu(thread, x, y) {
   menu.replaceChildren(el("div", "ctx-title", thread.name));
   const { item, sep } = contextMenuBuilder(menu);
   item("Open", () => selectServer(thread.user));
+  const pinned = dmIsPinned(thread.user);
+  item(pinned ? "Unpin" : "Pin", () => setDmPinned(thread.user, !pinned));
   item("Add People", async () => {
     if (!isGroupView() || state.currentServer.id !== thread.user) await selectServer(thread.user);
     openGroupModal(thread.user);
@@ -9265,6 +10973,7 @@ function openGroupMenu(thread, x, y) {
 async function selectDm(userId, name) {
   if (!state.currentDm || state.currentDm.user !== userId) cancelReply();
   state.currentDm = { user: userId, name };
+  rememberSwitcherRecent(`dm:${userId}`);
   clearDmUnread(userId);
   if (state.view !== "dm") setViewMode("dm");
   $("chat-hash").textContent = "@";
@@ -9403,7 +11112,9 @@ function renderDmProfile(userId, name) {
   $("dm-profile-presence").className = `presence-dot ${presence}`;
   $("dm-profile-banner").style.background = bannerColor(userId);
   $("dm-profile-name").textContent = name;
-  $("dm-profile-status").textContent = (person && subLine(person)) || presenceLabel({ ...(person || {}), presence });
+  const seen = { ...(person || {}), presence };
+  $("dm-profile-status").textContent = (person && (isShowingActivity(seen) ? statusBesideGame(seen) : subLine(seen))) || presenceLabel(seen);
+  showActivityIn($("dm-profile-activity"), person && seen);
   const servers = person ? person.servers : [];
   $("dm-profile-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
   const list = $("dm-profile-servers");
@@ -9593,7 +11304,10 @@ async function sendDm() {
 }
 
 async function selectChannel(channel) {
+  if (state.currentChannel && (!channel || channel.id !== state.currentChannel.id)) state.previousChannel = state.currentChannel;
   state.currentChannel = channel;
+  if (channel && state.currentServer && !state.currentServer.group) rememberSwitcherRecent(`channel:${channel.id}`);
+  if (channel) openChannelWithLine(channel);
   renderDmRequestBar(null);
   syncRulesGate();
   syncAwaitedBar();
@@ -9604,9 +11318,12 @@ async function selectChannel(channel) {
   $("channel-topic").textContent = (channel && channel.topic) || "";
   $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
   syncPinButton();
+  syncSlowMode();
   renderTypingStrip();
-  if (!channel) return renderMessages([]);
-  renderMessages(await fetchChannelMessages(channel));
+  if (!channel || ageGated(channel)) return renderMessages([]);
+  const messages = await fetchChannelMessages(channel);
+  renderMessages(messages);
+  if (state.currentChannel === channel && !state.historyAnchor) advanceRead(channel.id, messages);
 }
 
 async function sendMessage() {
@@ -9627,6 +11344,8 @@ async function sendMessage() {
   typingSender.sent();
   $("messages").dataset.view = "";
   state.historyAnchor = null;
+  readState.line = null;
+  readState.held = null;
   cancelReply();
   try {
     const previewUrl = await previewUrlFor(content);
@@ -9640,10 +11359,13 @@ async function sendMessage() {
       previewUrl,
     });
     pushOverlayChat(state.user.id, state.user.display_name || state.user.username, outgoing, false);
+    noteSlowSend(state.currentChannel.id, 0);
     await selectChannel(state.currentChannel);
   } catch (e) {
     input.value = content;
     fitComposer(input);
+    const wait = slowModeWaitFromError(e);
+    if (wait) noteSlowSend(state.currentChannel.id, wait);
     toast(String(e));
   }
 }
@@ -9898,8 +11620,10 @@ function openGifPicker(query = "", target = null) {
 
 function toggleComposerMenu() {
   const menu = $("composer-menu");
-  if (state.view === "server" && !canAttachHere()) {
-    toast("You can't send files or images in this server");
+  const files = state.view !== "server" || canAttachHere();
+  const voice = state.view !== "server" || canSendVoiceHere();
+  if (!files && !voice) {
+    toast("You can't send files or voice messages in this server");
     return;
   }
   if (!menu.classList.contains("hidden")) {
@@ -9908,8 +11632,253 @@ function toggleComposerMenu() {
   }
   closeFloating("composer-menu");
   closeGifPicker();
-  $("cm-gif").classList.toggle("hidden", !gifSettings().key && !serverHasGifs());
+  $("cm-file").classList.toggle("hidden", !files);
+  $("cm-video").classList.toggle("hidden", !files);
+  $("cm-gif").classList.toggle("hidden", !files || (!gifSettings().key && !serverHasGifs()));
+  $("cm-voice").classList.toggle("hidden", !voice || voiceRec.target !== null);
+  $("cm-poll").classList.toggle("hidden", state.view !== "server");
   placePopup(menu, $("attach-btn"), "above");
+}
+
+function openPollModal() {
+  if (state.view !== "server" || !state.currentChannel) return;
+  $("poll-question").value = "";
+  $("poll-rows").replaceChildren();
+  addPollRow("");
+  addPollRow("");
+  $("poll-multi").checked = false;
+  const select = $("poll-duration");
+  select.replaceChildren(...POLL_DURATIONS.map(d => {
+    const option = el("option", null, d.label);
+    option.value = d.hours === null ? "" : String(d.hours);
+    return option;
+  }));
+  select.value = String(DEFAULT_POLL_HOURS);
+  showModal("modal-poll");
+  $("poll-question").focus();
+}
+
+function addPollRow(text) {
+  const rows = $("poll-rows");
+  if (rows.children.length >= MAX_POLL_OPTIONS) return;
+  const row = el("div", "poll-row");
+  const input = el("input");
+  input.type = "text";
+  input.maxLength = MAX_POLL_OPTION_CHARS;
+  input.autocomplete = "off";
+  input.value = text;
+  input.onkeydown = e => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const next = row.nextElementSibling;
+    if (next) next.querySelector("input").focus();
+    else if (rows.children.length < MAX_POLL_OPTIONS) $("poll-add").onclick();
+    else sendPoll();
+  };
+  const remove = el("button", "poll-row-remove");
+  remove.type = "button";
+  remove.title = "Remove this answer";
+  remove.appendChild(svgIcon("close", 16));
+  remove.onclick = () => {
+    row.remove();
+    syncPollRows();
+  };
+  row.append(input, remove);
+  rows.appendChild(row);
+  syncPollRows();
+}
+
+function syncPollRows() {
+  const rows = [...$("poll-rows").children];
+  rows.forEach((row, i) => {
+    row.querySelector("input").placeholder = `Answer ${i + 1}`;
+    row.querySelector("button").disabled = rows.length <= MIN_POLL_OPTIONS;
+  });
+  $("poll-add").disabled = rows.length >= MAX_POLL_OPTIONS;
+}
+
+async function sendPoll() {
+  if (!state.currentServer || !state.currentChannel) return;
+  const draft = { question: $("poll-question").value, options: [...$("poll-rows").querySelectorAll("input")].map(i => i.value) };
+  const problem = pollDraftProblem(draft);
+  if (problem) {
+    toast(problem);
+    return;
+  }
+  const hours = Number($("poll-duration").value) || null;
+  try {
+    await invoke("send_poll", {
+      serverId: state.currentServer.id,
+      channelId: state.currentChannel.id,
+      question: squashPollText(draft.question),
+      options: cleanPollOptions(draft.options),
+      multi: $("poll-multi").checked,
+      hours,
+    });
+    hideModals();
+    await selectChannel(state.currentChannel);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+const voiceRec = { target: null, startedAt: 0, timer: null, busy: false };
+
+function voiceRecordingTarget() {
+  if (inDmView()) return { dm: state.currentDm.user, name: state.currentDm.name };
+  if (state.view === "server" && state.currentServer && state.currentChannel) {
+    return { server: state.currentServer.id, channel: state.currentChannel.id };
+  }
+  return null;
+}
+
+function showVoiceRecorder(shown) {
+  $("voice-rec").classList.toggle("hidden", !shown);
+  $("voice-rec-send").disabled = false;
+  $("voice-rec-cancel").disabled = false;
+  if (!shown) $("voice-rec-time").textContent = "0:00";
+}
+
+function stopVoiceTimer() {
+  if (voiceRec.timer) clearInterval(voiceRec.timer);
+  voiceRec.timer = null;
+}
+
+function tickVoiceRecording() {
+  const { label, done } = recordingTimer((Date.now() - voiceRec.startedAt) / 1000);
+  $("voice-rec-time").textContent = label;
+  if (done) sendVoiceRecording();
+}
+
+async function startVoiceRecording() {
+  closeFloating();
+  const target = voiceRecordingTarget();
+  if (!target || voiceRec.target) return;
+  if (target.server && !canSendVoiceHere()) {
+    toast("You can't send voice messages in this server");
+    return;
+  }
+  try {
+    await invoke("start_voice_recording");
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  voiceRec.target = target;
+  voiceRec.startedAt = Date.now();
+  showVoiceRecorder(true);
+  tickVoiceRecording();
+  voiceRec.timer = setInterval(tickVoiceRecording, 250);
+}
+
+async function cancelVoiceRecording() {
+  if (!voiceRec.target || voiceRec.busy) return;
+  stopVoiceTimer();
+  voiceRec.target = null;
+  showVoiceRecorder(false);
+  try {
+    await invoke("cancel_voice_recording");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function renderPoll(message) {
+  const poll = message.poll;
+  const now = Date.now();
+  const closed = pollIsClosed(poll, now);
+  const card = el("div", "poll" + (closed ? " closed" : ""));
+  card.appendChild(el("div", "poll-question", poll.question));
+  const hint = pollHint(poll, now);
+  if (hint) card.appendChild(el("div", "poll-hint", hint));
+  const list = el("div", "poll-options");
+  const shares = pollShares(poll);
+  (poll.options || []).forEach((option, i) => {
+    const row = el("button", "poll-option" + (option.mine ? " mine" : "") + (poll.multi ? " multi" : ""));
+    row.type = "button";
+    row.disabled = closed;
+    if (!closed) row.title = option.mine ? "Take your vote back" : "Vote for this";
+    const fill = el("div", "poll-fill");
+    fill.style.width = `${shares[i].percent}%`;
+    const mark = el("span", "poll-mark");
+    mark.appendChild(svgIcon("check", 14));
+    const count = el("span", "poll-count");
+    count.appendChild(el("strong", null, `${shares[i].percent}%`));
+    count.appendChild(document.createTextNode(` · ${shares[i].votes}`));
+    row.append(fill, mark, el("span", "poll-text", option.text), count);
+    row.onclick = e => {
+      e.stopPropagation();
+      votePoll(message, nextPollChoices(poll, i));
+    };
+    list.appendChild(row);
+  });
+  card.appendChild(list);
+  const foot = el("div", "poll-foot");
+  foot.appendChild(el("span", "poll-status", pollFooter(poll, now)));
+  const canManage = Boolean(state.currentServer && state.currentServer.can_manage_messages);
+  if (state.view === "server" && canClosePoll({ poll, own: isOwnMessage(message), canManage, now })) {
+    const close = el("button", "poll-close", "Close poll");
+    close.type = "button";
+    close.onclick = e => {
+      e.stopPropagation();
+      closePoll(message);
+    };
+    foot.appendChild(close);
+  }
+  card.appendChild(foot);
+  return card;
+}
+
+async function refreshChannelInPlace() {
+  if (!state.currentChannel) return;
+  const box = $("messages");
+  const keep = box.scrollTop;
+  await selectChannel(state.currentChannel);
+  box.scrollTop = keep;
+}
+
+async function votePoll(message, choices) {
+  if (!state.currentServer) return;
+  try {
+    await invoke("vote_poll", { serverId: state.currentServer.id, messageId: message.id, choices });
+    await refreshChannelInPlace();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function closePoll(message) {
+  if (!state.currentServer) return;
+  if (!confirm("Close this poll now? Nobody can vote after that.")) return;
+  try {
+    await invoke("close_poll", { serverId: state.currentServer.id, messageId: message.id });
+    await refreshChannelInPlace();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function sendVoiceRecording() {
+  if (!voiceRec.target || voiceRec.busy) return;
+  voiceRec.busy = true;
+  stopVoiceTimer();
+  $("voice-rec-send").disabled = true;
+  $("voice-rec-cancel").disabled = true;
+  const target = voiceRec.target;
+  try {
+    if (target.dm) {
+      const sent = await invoke("send_dm_voice_message", { userId: target.dm });
+      if (sent && inDmView() && state.currentDm.user === target.dm) await selectDm(target.dm, target.name);
+    } else {
+      const sent = await invoke("send_voice_message", { serverId: target.server, channelId: target.channel });
+      if (sent && state.currentChannel && state.currentChannel.id === target.channel) await selectChannel(state.currentChannel);
+    }
+  } catch (e) {
+    toast(String(e));
+  }
+  voiceRec.busy = false;
+  voiceRec.target = null;
+  showVoiceRecorder(false);
 }
 
 async function attachFromMenu(kind) {
@@ -10042,7 +12011,21 @@ const SHARE_QUALITY_HINTS = {
   sharp: "Best for code and documents. Crisp text, fewer frames.",
 };
 
-const sharePicker = { sources: [], kind: "monitor", picked: null, thumbs: new Map(), token: 0 };
+const sharePicker = { sources: [], kind: "monitor", picked: null, thumbs: new Map(), token: 0, audioSupported: null };
+
+function shareAudioWanted(supported = true) {
+  let saved = null;
+  try { saved = localStorage.getItem(SHARE_AUDIO_KEY); } catch {}
+  return shareAudioChoice(saved, supported);
+}
+
+async function renderShareAudioRow() {
+  if (sharePicker.audioSupported === null) {
+    try { sharePicker.audioSupported = Boolean(await invoke("share_audio_supported")); } catch { sharePicker.audioSupported = false; }
+  }
+  $("share-audio-row").classList.toggle("hidden", !sharePicker.audioSupported);
+  $("share-audio").checked = shareAudioWanted(sharePicker.audioSupported);
+}
 
 function shareQuality() {
   try {
@@ -10068,6 +12051,7 @@ async function openSharePicker() {
   sharePicker.thumbs.clear();
   sharePicker.kind = "monitor";
   setShareQuality(shareQuality());
+  renderShareAudioRow();
   $("share-go").textContent = state.sharing ? "Switch Stream" : "Go Live";
   const list = $("share-source-list");
   list.innerHTML = "";
@@ -10168,10 +12152,10 @@ async function loadShareThumbs(token) {
 function goLive() {
   const source = sharePicker.picked;
   if (!source || source.kind !== sharePicker.kind) return;
-  startShareWith(source, shareQuality());
+  startShareWith(source, shareQuality(), shareAudioWanted(sharePicker.audioSupported === true));
 }
 
-async function startShareWith(source, quality) {
+async function startShareWith(source, quality, audio = shareAudioWanted()) {
   hideModals();
   sharePicker.token++;
   try {
@@ -10181,11 +12165,12 @@ async function startShareWith(source, quality) {
       sourceKind: source.kind,
       sourceId: source.id,
       quality,
+      audio,
     });
     state.sharing = true;
     state.shareSource = source.name;
     state.shareQuality = quality;
-    toast(`You are live: ${source.name}`);
+    toast(liveToastText(source.name, audio));
     renderShareButton();
     startOwnPreview();
   } catch (e) {
@@ -10232,7 +12217,7 @@ function startOwnPreview() {
       const now = performance.now();
       if (ownFpsSample && own.frames >= ownFpsSample.frames) {
         const fps = Math.round((own.frames - ownFpsSample.frames) / ((now - ownFpsSample.at) / 1000));
-        $("vp-live-source").textContent = [state.shareSource ? `Streaming ${state.shareSource}` : "", `${fps} fps`].filter(Boolean).join(" - ");
+        $("vp-live-source").textContent = liveSourceText(state.shareSource, own.audio, fps);
       }
       ownFpsSample = { frames: own.frames, at: now };
     } catch {}
@@ -10264,6 +12249,22 @@ function openStage(mode, label) {
   $("video-pane").classList.remove("hidden");
   $("video-pane").classList.toggle("self", mode === "self");
   $("video-close").title = mode === "self" ? "Close Preview" : "Stop Watching";
+  renderStageVolume(streamVolumePercent(state.voice));
+}
+
+function renderStageVolume(percent) {
+  const range = $("stage-volume-range");
+  range.value = String(percent);
+  syncRangeFill(range);
+  $("stage-volume").title = streamVolumeTitle(percent);
+}
+
+async function setStreamVolume(percent) {
+  try {
+    state.voice = await invoke("set_stream_volume", { volume: streamVolumeGain(percent) });
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function closeStage() {
@@ -10390,6 +12391,7 @@ function wireEvents() {
   };
   $("signin-server-select").addEventListener("change", async e => {
     const value = e.target.value;
+    syncServerNote();
     if (value === "custom") {
       $("signin-server-edit").classList.remove("hidden");
       $("signin-server-input").value = "";
@@ -10430,6 +12432,8 @@ function wireEvents() {
       hideModals();
       renderUserPanel();
       await refreshServers();
+      await loadReadState();
+      await loadPins();
       if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
     } catch (e) {
@@ -10441,6 +12445,7 @@ function wireEvents() {
   });
 
   $("add-server-btn").onclick = () => showModal("modal-add-server");
+  wireDiscover();
   $("create-server-open").onclick = () => openCreateServer();
   $("create-server-back").onclick = () => showModal("modal-add-server");
   $("template-code-input").addEventListener("input", readTemplateCode);
@@ -10669,6 +12674,7 @@ function wireEvents() {
     try {
       await invoke("set_server_public", { serverId: server.id, public: e.target.checked });
       server.public = e.target.checked;
+      paintDiscoverySettings(server);
     } catch (err) {
       toast(String(err));
       e.target.checked = Boolean(server.public);
@@ -10791,6 +12797,11 @@ function wireEvents() {
     renderVoicePanel();
   };
 
+  $("ec-toggle").onchange = async e => {
+    state.voice = await invoke("set_echo_cancellation", { enabled: e.target.checked });
+    toast(`Echo cancellation ${state.voice.echo_cancellation ? "on" : "off"}`);
+  };
+
   $("mute-btn").onclick = async () => {
     state.voice = await invoke("set_muted", { muted: !state.voice.muted });
     renderUserPanel();
@@ -10842,17 +12853,39 @@ function wireEvents() {
   $("cm-file").prepend(svgIcon("uploadFile", 18));
   $("cm-video").prepend(svgIcon("movie", 18));
   $("cm-gif").prepend(svgIcon("gifBox", 18));
+  $("cm-poll").prepend(svgIcon("poll", 18));
+  $("cm-voice").prepend(svgIcon("mic", 18));
   $("cm-file").onclick = () => attachFromMenu("file");
   $("cm-video").onclick = () => attachFromMenu("video");
+  $("cm-voice").onclick = startVoiceRecording;
+  $("voice-rec-cancel").onclick = cancelVoiceRecording;
+  $("voice-rec-send").onclick = sendVoiceRecording;
   $("cm-gif").onclick = () => {
     closeFloating();
     openGifPicker("");
+  };
+  $("cm-poll").onclick = () => {
+    closeFloating();
+    openPollModal();
+  };
+  $("poll-cancel").onclick = hideModals;
+  $("poll-send").onclick = sendPoll;
+  $("poll-add").onclick = () => {
+    addPollRow("");
+    const last = $("poll-rows").lastElementChild;
+    if (last) last.querySelector("input").focus();
   };
   $("share-btn").onclick = toggleShare;
   $("video-close").onclick = closeStageButton;
   setIcon($("video-close"), "close", 20);
   setIcon($("stage-focus"), "expand", 20);
   setIcon($("stage-fullscreen"), "fullscreen", 20);
+  setIcon($("stage-volume-icon"), "speaker", 18);
+  $("stage-volume-range").oninput = () => renderStageVolume(Number($("stage-volume-range").value));
+  $("stage-volume-range").onchange = () => setStreamVolume(Number($("stage-volume-range").value));
+  $("share-audio").onchange = () => {
+    try { localStorage.setItem(SHARE_AUDIO_KEY, shareAudioSaveValue($("share-audio").checked)); } catch {}
+  };
   $("stage-focus").onclick = toggleStageFocus;
   $("stage-fullscreen").onclick = toggleStageFullscreen;
   $("stage-view").ondblclick = toggleStageFullscreen;
@@ -11171,6 +13204,47 @@ function wireEvents() {
     if (menuServer) markServerRead(menuServer.id);
     closeFloating();
   };
+  for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-level]")) {
+    btn.onclick = () => {
+      if (!menuChannel || !state.currentServer) return;
+      updateChannelPrefs(state.currentServer.id, menuChannel.id, { level: btn.dataset.level });
+      closeFloating();
+      toast(`#${menuChannel.name}: ${btn.textContent}`);
+    };
+  }
+  for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-mute]")) {
+    btn.onclick = () => {
+      if (!menuChannel || !state.currentServer) return;
+      const choice = MUTE_CHOICES.find(c => c.id === btn.dataset.mute);
+      if (!choice) return;
+      updateChannelPrefs(state.currentServer.id, menuChannel.id, { mute: muteUntil(choice, nowSecs()) });
+      closeFloating();
+      toast(`Muted #${menuChannel.name} ${choice.label.replace(/^For /, "for ").replace(/^Until/, "until")}`);
+    };
+  }
+  $("chm-unmute").onclick = () => {
+    if (!menuChannel || !state.currentServer) return;
+    updateChannelPrefs(state.currentServer.id, menuChannel.id, { mute: false });
+    closeFloating();
+    toast(`Unmuted #${menuChannel.name}`);
+  };
+  $("chm-read").onclick = () => {
+    if (menuChannel) clearChannelUnread(menuChannel.id);
+    closeFloating();
+    renderChannels();
+    if (menuChannel && state.currentServer) markChannelsRead(state.currentServer.id, [menuChannel.id]);
+  };
+  $("chm-settings").onclick = () => {
+    const channel = menuChannel;
+    closeFloating();
+    if (channel) openChannelSettings(channel.id);
+  };
+  $("chm-pin").onclick = () => {
+    const channel = menuChannel;
+    const server = state.currentServer;
+    closeFloating();
+    if (channel && server) setChannelPinned(server.id, channel.id, !channelIsPinned(server.id, channel.id));
+  };
   const fromMenu = action => async () => {
     closeFloating();
     if (!menuServer) return;
@@ -11182,6 +13256,7 @@ function wireEvents() {
   $("sm-pins").onclick = fromMenu(openServerPins);
   $("sm-rules").onclick = fromMenu(openRules);
   $("sm-roles").onclick = fromMenu(openChooseRoles);
+  $("sm-onboarding").onclick = fromMenu(() => openOnboarding("change"));
   $("game-tag-input").addEventListener("keydown", e => {
     if (e.key === "Escape") closeGameSearch();
     if (e.key !== "Enter") return;
@@ -11213,6 +13288,14 @@ function wireEvents() {
   $("rules-accept").onclick = acceptRules;
   $("rules-gate-open").onclick = () => openServerWelcome("rules");
   $("sw-later").onclick = hideModals;
+  $("ob-later").onclick = hideModals;
+  $("ob-back").onclick = () => turnOnboardingPage(-1);
+  $("ob-next").onclick = advanceOnboarding;
+  $("ob-add-question").onclick = addOnboardingQuestion;
+  $("ob-save").onclick = () => saveOnboarding(false);
+  $("ob-remove").onclick = () => saveOnboarding(true);
+  $("ob-preview").onclick = previewOnboarding;
+  $("si-answers").onclick = () => openOnboarding("change");
   $("events-close").replaceChildren(svgIcon("close", 18));
   $("events-close").onclick = closeEvents;
   $("event-create").onclick = () => openEventEditor(null);
@@ -11250,6 +13333,12 @@ function wireEvents() {
     if (e.key === "Enter" && !$("delete-server-go").disabled) confirmDeleteServer();
   });
   $("server-delete-open").onclick = () => state.currentServer && openDeleteServer(state.currentServer);
+  $("server-transfer-open").onclick = () => state.currentServer && openTransferOwner(state.currentServer);
+  $("transfer-owner-cancel").onclick = hideModals;
+  $("transfer-owner-go").onclick = confirmTransferOwner;
+  $("transfer-owner-input").onkeydown = e => {
+    if (e.key === "Enter" && !$("transfer-owner-go").disabled) confirmTransferOwner();
+  };
   $("audit-group").onchange = paintAuditLog;
   $("audit-actor").onchange = paintAuditLog;
   $("fm-ungroup").onclick = () => {
@@ -11281,6 +13370,7 @@ function wireEvents() {
     if (e.key === "Enter") saveFolderName();
   });
   $("rename-folder-cancel").onclick = hideModals;
+  wireNicknameModal();
 
   const uploadServerImage = async which => {
     try {
@@ -11307,6 +13397,11 @@ function wireEvents() {
   $("notify-level").addEventListener("change", e => {
     const prefs = notifyPrefs();
     prefs.level = e.target.value;
+    saveNotifyPrefs(prefs);
+  });
+  $("friend-online-toggle").addEventListener("change", e => {
+    const prefs = notifyPrefs();
+    prefs.friendOnline = e.target.checked;
     saveNotifyPrefs(prefs);
   });
   $("close-to-tray-toggle").addEventListener("change", async e => {
@@ -11350,7 +13445,11 @@ function wireEvents() {
   $("notify-test").onclick = () =>
     invoke("notify", { title: "Commy", body: "Notifications are working." }).then(() => playSound("message")).catch(e => toast(String(e)));
   window.addEventListener("focus", () => {
-    if (state.view === "server" && state.currentChannel) clearChannelUnread(state.currentChannel.id);
+    if (state.view === "server" && state.currentChannel) {
+      if (readState.held === state.currentChannel.id) return;
+      clearChannelUnread(state.currentChannel.id);
+      if (!state.historyAnchor) advanceRead(state.currentChannel.id, state.renderedMessages || []);
+    }
     if (state.view === "dm" && state.currentDm) clearDmUnread(state.currentDm.user);
   });
 
@@ -11425,6 +13524,7 @@ function wireEvents() {
     if (e.key === "Enter") saveChannelEdits();
   });
   $("channel-edit-retention").addEventListener("change", syncChannelDirty);
+  $("channel-slow").addEventListener("change", syncChannelDirty);
   $("channel-limit").addEventListener("input", () => {
     syncLimitLabel();
     syncChannelDirty();
@@ -11444,8 +13544,24 @@ function wireEvents() {
       toast(String(err));
     }
   };
+  $("channel-edit-sensitive").onchange = async e => {
+    const channel = editingChannel();
+    if (!channel || !state.currentServer) return;
+    const sensitive = e.target.checked;
+    try {
+      await invoke("set_channel_sensitive", { serverId: state.currentServer.id, channelId: channel.id, sensitive });
+      toast(sensitive ? "Channel is now age-restricted" : "Age restriction removed");
+      await refreshCurrentServer();
+      openChannelSettings(channel.id);
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(String(err));
+    }
+  };
+  $("sensitive-reset").onclick = resetSensitiveConfirmations;
   $("pins-btn").onclick = togglePinsPanel;
   wireSearch();
+  wireSwitcher();
   $("pins-all").onclick = openServerPins;
   $("pins-modal-close").onclick = hideModals;
   $("announce-gate-icon").appendChild(svgIcon("megaphone", 22));
@@ -11564,7 +13680,8 @@ function wireEvents() {
   $("lightbox").onclick = closeLightbox;
   window.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
-    if (!$("lightbox").classList.contains("hidden")) closeLightbox();
+    if (switcher.open) closeSwitcher();
+    else if (!$("lightbox").classList.contains("hidden")) closeLightbox();
     else if (!$("modal-backdrop").classList.contains("hidden") && state.user) hideModals();
     else if (openSettingsLayerId()) closeSettingsLayers();
   });
@@ -11657,6 +13774,7 @@ function wireEvents() {
         await renderDmThreads();
         if (state.currentDm) renderDmHeader(state.currentDm.user, state.currentDm.name);
       }
+      await trackFriendPresence(serverId);
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
@@ -11690,6 +13808,10 @@ function wireEvents() {
     window.__TAURI__.event.listen("timed-out", event => {
       const { until } = event.payload || {};
       toast(timeoutActive(until) ? `A moderator timed you out for ${timeoutLeftText(until)}` : "A moderator removed your timeout");
+    });
+    window.__TAURI__.event.listen("owner-changed", event => {
+      const { name, who, mine } = event.payload;
+      toast(mine ? `You now own ${name || "a server"}` : `${who || "Someone else"} now owns ${name || "a server"}`);
     });
     window.__TAURI__.event.listen("server-deleted", async event => {
       toast(`${event.payload.name || "A server"} was deleted by its owner`);
@@ -11766,6 +13888,23 @@ function wireEvents() {
       renderVoicePanel();
       if (state.currentServer) await refreshCurrentServer();
     });
+    window.__TAURI__.event.listen("voice-moved", async event => {
+      const { server, channel, name } = event.payload;
+      if (!channel) {
+        toast("A moderator disconnected you from voice");
+        state.voiceChannelId = null;
+        state.voiceServer = null;
+        state.sharing = false;
+        clearSpeaking();
+        playSound("leave");
+      } else {
+        toast(`A moderator moved you to ${name || "another channel"}`);
+        state.voiceChannelId = channel;
+        if (state.voiceServer && state.voiceServer.id === server && name) state.voiceServer.channelName = name;
+      }
+      renderVoicePanel();
+      if (state.currentServer && state.currentServer.id === server) await refreshCurrentServer();
+    });
     window.__TAURI__.event.listen("afk-moved", async () => {
       toast("You were moved to AFK for inactivity");
       if (state.currentServer) {
@@ -11790,6 +13929,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("message-created", event => onMessageCreated(event.payload));
     window.__TAURI__.event.listen("typing", event => onTyping(event.payload));
     window.__TAURI__.event.listen("messages-caught-up", event => onMessagesCaughtUp(event.payload));
+    window.__TAURI__.event.listen("read-state-changed", event => applyReadView(event.payload));
     window.__TAURI__.event.listen("dm-received", event => onDmReceived(event.payload));
     window.__TAURI__.event.listen("dm-call", event => onDmCall(event.payload));
     invoke("get_dm_call").then(call => call && onDmCall(call)).catch(() => {});
@@ -11873,8 +14013,9 @@ function renderStickerTab(grid, q) {
     return btn;
   });
   if (!any && !q && !grid.childElementCount) {
-    grid.appendChild(el("div", "picker-empty", "No stickers yet. Servers add them in Server Settings, then Stickers."));
+    grid.appendChild(el("div", "picker-empty", "No stickers here yet. Servers add them in Server Settings, then Stickers."));
   }
+  appendCatalogSection(grid, q, account.server_stickers ? "klipy" : "stickers");
 }
 
 function renderEmoticonTab(grid, q) {
@@ -12179,7 +14320,9 @@ const PERMISSION_LABELS = [
   ["manage_channels", "Manage Channels"],
   ["manage_messages", "Manage Messages"],
   ["pin_messages", "Pin Messages"],
+  ["bypass_slow_mode", "Bypass Slow Mode"],
   ["attach_files", "Send Files and Images"],
+  ["send_voice_messages", "Send Voice Messages"],
   ["add_emojis", "Add Emojis"],
   ["add_stickers", "Add Stickers"],
   ["add_emoticons", "Add Emoticons"],
@@ -12195,6 +14338,9 @@ const PERMISSION_LABELS = [
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
   ["time_out_members", "Time Out Members"],
+  ["manage_nicknames", "Manage Nicknames"],
+  ["change_nickname", "Change Nickname"],
+  ["move_members", "Move Members"],
   ["administrator", "Administrator"],
 ];
 
@@ -12224,8 +14370,8 @@ async function renderIconPickers() {
         const img = el("img");
         img.alt = "";
         img.draggable = false;
-        img.src = choice.custom ? iconState.custom[target] : "images/commy_v2.png";
-        if (choice.filter) img.style.filter = choice.filter;
+        img.src = choice.custom ? iconState.custom[target] : choice.image;
+        if (choice.tile) art.style.background = choice.tile;
         art.appendChild(img);
       }
       tile.append(art, el("span", "icon-label", choice.label));
@@ -12266,6 +14412,7 @@ function openUserSettings(tab) {
   if (!state.user) return;
   renderIconPickers();
   $("nc-toggle").checked = state.voice.noise_cancellation;
+  $("ec-toggle").checked = state.voice.echo_cancellation !== false;
   $("afk-timeout").value = String(state.voice.afk_timeout_minutes ?? 10);
   $("share-activity-toggle").checked = state.voice.share_activity !== false;
   loadAudioDevices();
@@ -12284,6 +14431,7 @@ function openUserSettings(tab) {
     $("gif-provider").dispatchEvent(new Event("change"));
   });
   $("notify-level").value = notifyPrefs().level;
+  $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
   invoke("get_autostart").then(on => { $("autostart-toggle").checked = on; }).catch(() => {});
   $("output-vol").value = Math.round((state.voice.output_volume ?? 1) * 100);
@@ -12343,6 +14491,7 @@ function openServerInfo(server) {
     roles.appendChild(chip);
   }
   $("si-roles-wrap").classList.toggle("hidden", !held.length);
+  $("si-answers").classList.toggle("hidden", !server.onboarding);
   showModal("modal-server-info");
 }
 
@@ -12502,6 +14651,8 @@ function openServerSettings(tab) {
   $("server-public-toggle").checked = Boolean(server.public);
   $("server-public-toggle").disabled = !server.can_manage_server;
   $("server-public-row").classList.toggle("readonly", !server.can_manage_server);
+  discoveryState.dirty = false;
+  paintDiscoverySettings(server);
   $("server-template-section").classList.toggle("hidden", !server.can_manage_server);
   const afkSelect = $("afk-channel-select");
   fillVoiceChannelSelect(afkSelect, "No AFK channel", server, server.afk_channel || "");
@@ -12519,6 +14670,8 @@ function openServerSettings(tab) {
   const canSounds = manages || server.can_upload_sounds;
   $("tab-rules").classList.toggle("hidden", !server.can_manage_server);
   renderRulesSettings(server);
+  $("tab-onboarding").classList.toggle("hidden", !server.can_manage_server);
+  if (server.can_manage_server) renderOnboardingSettings(server);
   $("tab-automod").classList.toggle("hidden", !server.can_manage_server);
   if (server.can_manage_server) renderAutomodSettings(server);
   renderGameTagEditor(server);
@@ -12546,6 +14699,7 @@ function openServerSettings(tab) {
     soundboard: canSounds,
     reports: isOwner,
     rules: server.can_manage_server,
+    onboarding: server.can_manage_server,
     automod: server.can_manage_server,
     members: canMembers,
     audit: server.can_view_audit_log,
@@ -12868,10 +15022,14 @@ function canAttachHere() {
   return !state.currentServer || state.currentServer.can_attach_files !== false;
 }
 
+function canSendVoiceHere() {
+  return !state.currentServer || state.currentServer.can_send_voice_messages !== false;
+}
+
 function syncAttachAccess() {
-  const locked = state.view === "server" && !canAttachHere();
+  const locked = state.view === "server" && !canAttachHere() && !canSendVoiceHere();
   $("attach-btn").classList.toggle("locked", locked);
-  $("attach-btn").title = locked ? "You can't send files or images in this server" : "Attach";
+  $("attach-btn").title = locked ? "You can't send files or voice messages in this server" : "Attach";
 }
 
 function renderRoleSettings(server) {
@@ -13106,8 +15264,11 @@ async function continueBoot() {
   hideModals();
   renderUserPanel();
   await refreshServers();
+  await loadReadState();
+  await loadPins();
   if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
+  await primeFriendPresence();
 }
 
 let account = { signed_in: false, server_host: "" };
@@ -13120,6 +15281,16 @@ async function loadAccount() {
 }
 
 let signInUrl = null;
+
+const SERVER_NOTE_DEFAULT = "Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.";
+const SERVER_NOTE_WARNING = "Only add a server you know and trust. It handles your sign-in and sees your email and display name.";
+
+function syncServerNote() {
+  const custom = $("signin-server-select").value !== "default";
+  const note = $("signin-server-note");
+  note.textContent = custom ? SERVER_NOTE_WARNING : SERVER_NOTE_DEFAULT;
+  note.classList.toggle("warn", custom);
+}
 
 function showSignIn() {
   $("signin-start").classList.remove("hidden");
@@ -13136,6 +15307,7 @@ function showSignIn() {
   select.disabled = Boolean(account.server_from_env);
   select.title = account.server_from_env ? "Set by COMMY_AUTH_URL" : "";
   $("signin-server-edit").classList.add("hidden");
+  syncServerNote();
   showModal("modal-signin");
 }
 
@@ -13206,3 +15378,206 @@ function renderAccountSettings() {
 }
 
 boot().catch(e => toast(String(e)));
+
+function closeDiscover() {
+  if (!discoverState.open) return;
+  discoverState.open = false;
+  $("discover").classList.add("hidden");
+  const button = $("discover-btn");
+  button.classList.remove("active");
+  button.setAttribute("aria-pressed", "false");
+}
+
+async function openDiscover() {
+  if (discoverState.open) return;
+  discoverState.open = true;
+  $("discover").classList.remove("hidden");
+  const button = $("discover-btn");
+  button.classList.add("active");
+  button.setAttribute("aria-pressed", "true");
+  renderDiscoverChips();
+  if (!discoverState.entries.length) await loadDiscover(true);
+  $("discover-search").focus();
+}
+
+function renderDiscoverChips() {
+  const box = $("discover-chips");
+  box.innerHTML = "";
+  const chips = [{ id: null, label: "All" }, ...DIRECTORY_CATEGORIES];
+  for (const chip of chips) {
+    const button = el("button", "discover-chip", chip.label);
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(discoverState.category === chip.id));
+    button.onclick = () => {
+      if (discoverState.category === chip.id) return;
+      discoverState.category = chip.id;
+      renderDiscoverChips();
+      loadDiscover(true);
+    };
+    box.appendChild(button);
+  }
+}
+
+async function loadDiscover(reset) {
+  if (discoverState.busy) return;
+  discoverState.busy = true;
+  const more = $("discover-more");
+  more.disabled = true;
+  const request = ++discoverState.request;
+  try {
+    const page = await invoke("browse_directory", {
+      q: normalizeDirectorySearch(discoverState.q) || null,
+      category: discoverState.category,
+      cursor: reset ? null : discoverState.cursor,
+    });
+    if (request !== discoverState.request) return;
+    discoverState.entries = reset ? page.entries : discoverState.entries.concat(page.entries);
+    discoverState.cursor = page.next_cursor || null;
+    if (page.host) $("discover-sub").textContent = `Public servers listed by the people who run them, through ${page.host}.`;
+    renderDiscoverCards();
+  } catch (e) {
+    if (reset) discoverState.entries = [];
+    discoverState.cursor = null;
+    renderDiscoverCards(String(e));
+  } finally {
+    discoverState.busy = false;
+    more.disabled = false;
+  }
+}
+
+function renderDiscoverCards(error) {
+  const grid = $("discover-grid");
+  grid.innerHTML = "";
+  for (const entry of discoverState.entries) grid.appendChild(discoverCard(entry));
+  const empty = $("discover-empty");
+  const none = !discoverState.entries.length;
+  empty.classList.toggle("hidden", !none);
+  if (none) {
+    $("discover-empty-art").replaceChildren(svgIcon("search", 48));
+    $("discover-empty-title").textContent = error ? "Could not load Discover" : "No servers found";
+    $("discover-empty-text").textContent = error || "Try another word or category, or list your own public server from Server Settings.";
+  }
+  $("discover-more").classList.toggle("hidden", !discoverState.cursor);
+}
+
+function discoverCard(entry) {
+  const card = el("div", "discover-card");
+  card.appendChild(el("div", "discover-card-name", entry.name));
+  const meta = el("div", "discover-card-meta");
+  meta.appendChild(el("span", null, directoryCategoryLabel(entry.category)));
+  meta.appendChild(el("span", "discover-dot"));
+  meta.appendChild(el("span", null, memberBucketLabel(entry.members)));
+  card.appendChild(meta);
+  card.appendChild(el("div", "discover-card-text", directoryExcerpt(entry.description, 300)));
+  const foot = el("div", "discover-card-foot");
+  const join = el("button", "btn-primary btn-small", "Join");
+  join.onclick = () => openInviteLink(entry.link);
+  foot.appendChild(join);
+  card.appendChild(foot);
+  return card;
+}
+
+function fillDiscoveryCategories() {
+  const select = $("discovery-category");
+  if (select.options.length) return;
+  for (const category of DIRECTORY_CATEGORIES) {
+    const option = document.createElement("option");
+    option.value = category.id;
+    option.textContent = category.label;
+    select.appendChild(option);
+  }
+}
+
+function paintDiscoveryCounter() {
+  const counter = directoryDescriptionCounter($("discovery-description").value);
+  $("discovery-count").textContent = counter.text;
+  $("discovery-count").classList.toggle("over", counter.over);
+}
+
+async function paintDiscoverySettings(server) {
+  fillDiscoveryCategories();
+  let listing = null;
+  try {
+    listing = await invoke("server_listing", { serverId: server.id });
+  } catch {
+    listing = null;
+  }
+  if (!state.currentServer || state.currentServer.id !== server.id) return;
+  discoveryState.listing = listing;
+  const view = discoverySettingsState({ server, listing });
+  $("discovery-card").classList.toggle("readonly", !view.enabled);
+  $("discovery-hint").textContent = view.hint;
+  const description = $("discovery-description");
+  const category = $("discovery-category");
+  description.disabled = !view.enabled;
+  category.disabled = !view.enabled;
+  if (listing) {
+    description.value = listing.description || "";
+    category.value = listing.category;
+  } else if (!discoveryState.dirty) {
+    description.value = "";
+    category.value = "other";
+  }
+  paintDiscoveryCounter();
+  $("discovery-list").classList.toggle("hidden", view.listed);
+  $("discovery-list").disabled = !view.enabled;
+  $("discovery-update").classList.toggle("hidden", !view.listed);
+  $("discovery-update").disabled = !view.enabled;
+  $("discovery-unlist").classList.toggle("hidden", !view.listed);
+  $("discovery-unlist").disabled = !view.enabled;
+}
+
+async function saveDiscoveryListing() {
+  const server = state.currentServer;
+  if (!server) return;
+  const counter = directoryDescriptionCounter($("discovery-description").value);
+  if (counter.over) return toast(`Keep the description under ${DIRECTORY_DESCRIPTION_MAX} characters`);
+  const buttons = [$("discovery-list"), $("discovery-update")];
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    await invoke("publish_listing", { serverId: server.id, description: $("discovery-description").value, category: $("discovery-category").value });
+    discoveryState.dirty = false;
+    discoverState.entries = [];
+    toast(discoveryState.listing ? "Listing updated" : "Listed in Discover");
+    await paintDiscoverySettings(server);
+  } catch (e) {
+    toast(String(e));
+    buttons.forEach(b => { b.disabled = false; });
+  }
+}
+
+async function removeDiscoveryListing() {
+  const server = state.currentServer;
+  if (!server) return;
+  $("discovery-unlist").disabled = true;
+  try {
+    await invoke("unlist_server", { serverId: server.id });
+    discoveryState.dirty = false;
+    discoverState.entries = [];
+    toast("Removed from Discover");
+    await paintDiscoverySettings(server);
+  } catch (e) {
+    toast(String(e));
+    $("discovery-unlist").disabled = false;
+  }
+}
+
+function wireDiscover() {
+  $("discover-btn").onclick = openDiscover;
+  $("discover-search-icon").replaceChildren(svgIcon("search", 16));
+  let timer = null;
+  $("discover-search").addEventListener("input", e => {
+    discoverState.q = e.target.value;
+    clearTimeout(timer);
+    timer = setTimeout(() => loadDiscover(true), 250);
+  });
+  $("discover-more").onclick = () => loadDiscover(false);
+  $("discovery-description").addEventListener("input", () => {
+    discoveryState.dirty = true;
+    paintDiscoveryCounter();
+  });
+  $("discovery-category").addEventListener("change", () => { discoveryState.dirty = true; });
+  $("discovery-list").onclick = saveDiscoveryListing;
+  $("discovery-update").onclick = saveDiscoveryListing;
+  $("discovery-unlist").onclick = removeDiscoveryListing;
+}

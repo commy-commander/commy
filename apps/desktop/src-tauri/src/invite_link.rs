@@ -293,7 +293,7 @@ struct ErrorResponse {
     message: Option<String>,
 }
 
-async fn error_message(res: reqwest::Response) -> String {
+pub(crate) async fn error_message(res: reqwest::Response) -> String {
     let status = res.status();
     match res.json::<ErrorResponse>().await {
         Ok(ErrorResponse { message: Some(m) }) => clip(&m, 200),
@@ -301,7 +301,7 @@ async fn error_message(res: reqwest::Response) -> String {
     }
 }
 
-async fn invite_call<T: serde::de::DeserializeOwned>(
+pub(crate) async fn account_call<T: serde::de::DeserializeOwned>(
     request: reqwest::RequestBuilder,
     origin: &str,
 ) -> Result<T, String> {
@@ -325,7 +325,7 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
     let parsed = parse(link).ok_or("That is not a Commy invite link")?;
     let mut url = Url::parse(&format!("{}/api/auth/commy/invites/resolve", parsed.origin)).map_err(|e| e.to_string())?;
     url.query_pairs_mut().append_pair("code", &parsed.code);
-    let body: ResolveResponse = invite_call(app.http.get(url), &parsed.origin).await?;
+    let body: ResolveResponse = account_call(app.http.get(url), &parsed.origin).await?;
     let (raw, sealed_expiry) = open_ticket(&body.ticket, parsed.key.as_deref())?;
     let ticket = ServerTicket::decode(&raw).map_err(|_| "The invite server sent an invalid invite".to_string())?;
     app.doorbell.lock().unwrap().note_invite_origin(ticket.server_id, parsed.origin.clone());
@@ -351,7 +351,7 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
 async fn fetch_background(app: &App, link: &InviteLink, key: &str) -> Option<String> {
     let mut url = Url::parse(&format!("{}/api/auth/commy/invites/background", link.origin)).ok()?;
     url.query_pairs_mut().append_pair("code", &link.code);
-    let body: BackgroundResponse = invite_call(app.http.get(url), &link.origin).await.ok()?;
+    let body: BackgroundResponse = account_call(app.http.get(url), &link.origin).await.ok()?;
     let bytes = open_background(&body.background, key)?;
     Some(crate::picture_data_url(&bytes))
 }
@@ -434,7 +434,7 @@ pub async fn create_invite_link(
     create(&app, &handle, &server_id, expiry, name).await
 }
 
-fn signed_in_token(app: &App) -> Option<String> {
+pub(crate) fn signed_in_token(app: &App) -> Option<String> {
     let state = app.account.lock().unwrap();
     crate::account::is_signed_in(&state).then(|| state.token.clone()).flatten()
 }
@@ -524,7 +524,7 @@ pub(crate) async fn create(
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
-    let body: CreateResponse = invite_call(request, &origin).await?;
+    let body: CreateResponse = account_call(request, &origin).await?;
     let Some(link) = parse(&body.url).filter(|l| l.origin == origin && l.key.is_none()) else {
         return Err("The invite server sent an unexpected link".into());
     };

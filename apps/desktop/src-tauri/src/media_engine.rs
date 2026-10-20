@@ -1,5 +1,5 @@
 use commy_core::{ChannelId, ServerId, UserId};
-use commy_media::{Mixer, OutputHandle, StreamGuards};
+use commy_media::{InputHandle, Mixer, OutputHandle, StreamGuards};
 use commy_net::media::MediaPacket;
 use commy_net::node::MediaChannel;
 use std::collections::{HashMap, HashSet};
@@ -19,6 +19,12 @@ pub fn mixer_key(user: UserId) -> u64 {
 
 pub fn silenced(until_ms: &AtomicI64) -> bool {
     chrono::Utc::now().timestamp_millis() < until_ms.load(Ordering::Relaxed)
+}
+
+const STREAM_AUDIO_KEY_BIT: u64 = 1 << 63;
+
+pub fn stream_audio_key(user: UserId) -> u64 {
+    mixer_key(user) ^ STREAM_AUDIO_KEY_BIT
 }
 
 pub struct VoiceSession {
@@ -189,6 +195,7 @@ impl VoiceSession {
         input: Option<String>,
         output: Option<String>,
     ) {
+        let far_end = processor.lock().unwrap().far_end_sink();
         self.devices.mic = None;
         self.devices.mic = match commy_media::start_microphone(processor, self.mic_tx.clone(), input) {
             Ok(mic) => Some(mic),
@@ -198,7 +205,7 @@ impl VoiceSession {
             }
         };
         self.devices.speaker = None;
-        self.devices.speaker = match commy_media::start_playback(self.mixer.clone(), output) {
+        self.devices.speaker = match commy_media::start_playback(self.mixer.clone(), output, Some(far_end)) {
             Ok(speaker) => Some(speaker),
             Err(e) => {
                 tracing::warn!("speaker switch failed: {e}");
@@ -376,9 +383,12 @@ pub struct ScreenShareSession {
     pub server: ServerId,
     pub channel: ChannelId,
     pub subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<MediaPacket>>>>,
+    audio_subscribers: Option<Arc<Mutex<Vec<mpsc::UnboundedSender<MediaPacket>>>>>,
     latest: Arc<Mutex<Option<commy_media::screen::ScreenFrame>>>,
     stop: Arc<AtomicBool>,
     encoded: Arc<std::sync::atomic::AtomicU64>,
+    _audio_capture: Option<InputHandle>,
+    audio_task: Option<JoinHandle<()>>,
 }
 
 const ENCODERS: usize = 2;
@@ -387,6 +397,24 @@ const JPEG_QUALITY: u8 = 60;
 pub type FrameSource = Box<dyn FnMut() -> anyhow::Result<image::RgbaImage>>;
 pub type FrameOpener = Box<dyn FnMut() -> anyhow::Result<FrameSource> + Send>;
 
+pub struct SystemAudio {
+    pub frames: mpsc::UnboundedReceiver<Vec<i16>>,
+    pub capture: Option<InputHandle>,
+}
+
+impl SystemAudio {
+    pub fn open() -> Option<Self> {
+        let (tx, frames) = mpsc::unbounded_channel();
+        match commy_media::start_system_audio(tx) {
+            Ok(capture) => Some(Self { frames, capture: Some(capture) }),
+            Err(e) => {
+                tracing::warn!("sharing without audio: {e}");
+                None
+            }
+        }
+    }
+}
+
 impl ScreenShareSession {
     pub fn start(
         server: ServerId,
@@ -394,15 +422,24 @@ impl ScreenShareSession {
         fps: u32,
         max_width: u32,
         source: Option<(commy_media::screen::SourceKind, u32)>,
+        share_audio: bool,
     ) -> Self {
         let opener: FrameOpener = Box::new(move || {
             let mut capturer = commy_media::screen::Capturer::open(source)?;
             Ok(Box::new(move || capturer.grab()) as FrameSource)
         });
-        Self::start_with(server, channel, fps, max_width, opener)
+        let audio = share_audio.then(SystemAudio::open).flatten();
+        Self::start_with(server, channel, fps, max_width, opener, audio)
     }
 
-    pub fn start_with(server: ServerId, channel: ChannelId, fps: u32, max_width: u32, mut open: FrameOpener) -> Self {
+    pub fn start_with(
+        server: ServerId,
+        channel: ChannelId,
+        fps: u32,
+        max_width: u32,
+        mut open: FrameOpener,
+        audio: Option<SystemAudio>,
+    ) -> Self {
         let subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<MediaPacket>>>> =
             Arc::new(Mutex::new(Vec::new()));
         let latest = Arc::new(Mutex::new(None));
@@ -470,18 +507,46 @@ impl ScreenShareSession {
                 subscribers.lock().unwrap().retain(|tx| tx.send(packet.clone()).is_ok());
             });
         }
+        let (audio_subscribers, audio_capture, audio_task) = match audio {
+            Some(SystemAudio { frames, capture }) => {
+                let listeners: Arc<Mutex<Vec<mpsc::UnboundedSender<MediaPacket>>>> = Arc::default();
+                let task = tokio::spawn(encode_stream_audio(frames, listeners.clone()));
+                (Some(listeners), capture, Some(task))
+            }
+            None => (None, None, None),
+        };
         Self {
             server,
             channel,
             subscribers,
+            audio_subscribers,
             latest,
             stop,
             encoded,
+            _audio_capture: audio_capture,
+            audio_task,
         }
     }
 
     pub fn add_subscriber(&self, tx: mpsc::UnboundedSender<MediaPacket>) {
         self.subscribers.lock().unwrap().push(tx);
+    }
+
+    pub fn add_viewer(&self, tx: mpsc::UnboundedSender<MediaPacket>, mut requests: mpsc::UnboundedReceiver<MediaPacket>) {
+        self.add_subscriber(tx.clone());
+        let Some(listeners) = self.audio_subscribers.clone() else { return };
+        tokio::spawn(async move {
+            while let Some(packet) = requests.recv().await {
+                if packet == MediaPacket::StreamAudioWanted {
+                    listeners.lock().unwrap().push(tx);
+                    break;
+                }
+            }
+        });
+    }
+
+    pub fn shares_audio(&self) -> bool {
+        self.audio_subscribers.is_some()
     }
 
     pub fn frames_encoded(&self) -> u64 {
@@ -499,14 +564,84 @@ impl ScreenShareSession {
     }
 }
 
+async fn encode_stream_audio(
+    mut frames: mpsc::UnboundedReceiver<Vec<i16>>,
+    listeners: Arc<Mutex<Vec<mpsc::UnboundedSender<MediaPacket>>>>,
+) {
+    let mut encoder = commy_audio::codec::VoiceEncoder::for_stream_audio();
+    let mut seq: u32 = 0;
+    while let Some(pcm) = frames.recv().await {
+        if let Some(data) = encoder.encode(&pcm) {
+            let packet = MediaPacket::StreamAudio { seq, data };
+            listeners.lock().unwrap().retain(|tx| tx.send(packet.clone()).is_ok());
+        }
+        seq = seq.wrapping_add(1);
+    }
+}
+
 impl Drop for ScreenShareSession {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        if let Some(task) = self.audio_task.take() {
+            task.abort();
+        }
     }
+}
+
+pub struct StreamAudioSink {
+    mixer: Arc<Mutex<Mixer>>,
+    key: u64,
+    _speaker: Option<OutputHandle>,
+}
+
+impl StreamAudioSink {
+    pub fn in_call(mixer: Arc<Mutex<Mixer>>, sharer: UserId, gain: f32) -> Self {
+        let sink = Self { mixer, key: stream_audio_key(sharer), _speaker: None };
+        sink.set_gain(gain);
+        sink
+    }
+
+    pub fn standalone(sharer: UserId, gain: f32, master: f32, output_device: Option<String>) -> anyhow::Result<Self> {
+        let mixer = Arc::new(Mutex::new(Mixer::new()));
+        mixer.lock().unwrap().set_master(master);
+        let speaker = commy_media::start_playback(mixer.clone(), output_device, None)?;
+        let sink = Self { mixer, key: stream_audio_key(sharer), _speaker: Some(speaker) };
+        sink.set_gain(gain);
+        Ok(sink)
+    }
+
+    pub fn set_gain(&self, gain: f32) {
+        self.mixer.lock().unwrap().set_peer_gain(self.key, gain);
+    }
+
+    pub fn set_master(&self, gain: f32) {
+        self.mixer.lock().unwrap().set_master(gain);
+    }
+
+    fn push(&self, seq: u32, pcm: Vec<i16>) {
+        self.mixer.lock().unwrap().push(self.key, seq, pcm);
+    }
+}
+
+impl Drop for StreamAudioSink {
+    fn drop(&mut self) {
+        self.mixer.lock().unwrap().remove_peer(self.key);
+    }
+}
+
+pub fn newest_video_with_all_audio(batch: Vec<MediaPacket>) -> Vec<MediaPacket> {
+    let newest_video = batch.iter().rposition(MediaPacket::is_video);
+    batch
+        .into_iter()
+        .enumerate()
+        .filter(|(i, packet)| !packet.is_video() || Some(*i) == newest_video)
+        .map(|(_, packet)| packet)
+        .collect()
 }
 
 pub struct ScreenWatch {
     pub task: JoinHandle<()>,
+    audio: Option<Arc<StreamAudioSink>>,
     _channel: Option<mpsc::UnboundedSender<MediaPacket>>,
 }
 
@@ -514,35 +649,67 @@ impl ScreenWatch {
     pub fn start(
         user: UserId,
         media: MediaChannel,
+        audio: Option<StreamAudioSink>,
         emit: impl Fn(UserId, u64, u32, u32, Vec<u8>) + Send + 'static,
     ) -> Self {
         let MediaChannel { incoming, outgoing, .. } = media;
-        Self::from_frames(user, incoming, Some(outgoing), emit)
+        if audio.is_some() {
+            let _ = outgoing.send(MediaPacket::StreamAudioWanted);
+        }
+        Self::from_frames(user, incoming, Some(outgoing), audio, emit)
     }
 
     pub fn from_frames(
         user: UserId,
         mut incoming: mpsc::UnboundedReceiver<MediaPacket>,
         channel: Option<mpsc::UnboundedSender<MediaPacket>>,
+        audio: Option<StreamAudioSink>,
         emit: impl Fn(UserId, u64, u32, u32, Vec<u8>) + Send + 'static,
     ) -> Self {
+        let audio = audio.map(Arc::new);
+        let sink = audio.clone();
         let task = tokio::spawn(async move {
             let mut last_seq: Option<u64> = None;
-            while let Some(mut packet) = incoming.recv().await {
-                while let Ok(newer) = incoming.try_recv() {
-                    packet = newer;
+            let mut decoder = commy_audio::codec::VoiceDecoder::new();
+            while let Some(first) = incoming.recv().await {
+                let mut batch = vec![first];
+                while let Ok(next) = incoming.try_recv() {
+                    batch.push(next);
                 }
-                if let MediaPacket::Video { seq, width, height, jpeg } = packet {
-                    if last_seq.is_some_and(|last| seq <= last) {
-                        continue;
+                for packet in newest_video_with_all_audio(batch) {
+                    match packet {
+                        MediaPacket::Video { seq, width, height, jpeg } => {
+                            if last_seq.is_some_and(|last| seq <= last) {
+                                continue;
+                            }
+                            last_seq = Some(seq);
+                            emit(user, seq, width, height, jpeg);
+                        }
+                        MediaPacket::StreamAudio { seq, data } => {
+                            if let Some(sink) = &sink {
+                                sink.push(seq, decoder.decode(&data));
+                            }
+                        }
+                        _ => {}
                     }
-                    last_seq = Some(seq);
-                    emit(user, seq, width, height, jpeg);
                 }
             }
         });
-        Self { task, _channel: channel }
+        Self { task, audio, _channel: channel }
     }
+
+    pub fn set_stream_volume(&self, gain: f32) {
+        if let Some(audio) = &self.audio {
+            audio.set_gain(gain);
+        }
+    }
+
+    pub fn set_master_volume(&self, gain: f32) {
+        if let Some(audio) = &self.audio {
+            audio.set_master(gain);
+        }
+    }
+
 }
 
 impl Drop for ScreenWatch {
@@ -590,9 +757,10 @@ impl MicTest {
         output: Option<String>,
     ) -> anyhow::Result<Self> {
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<i16>>();
+        let far_end = processor.lock().unwrap().far_end_sink();
         let mic = commy_media::start_microphone(processor, tx, input)?;
         let mixer = Arc::new(Mutex::new(Mixer::new()));
-        let speaker = commy_media::start_playback(mixer.clone(), output)?;
+        let speaker = commy_media::start_playback(mixer.clone(), output, Some(far_end))?;
         let task = tokio::spawn(async move {
             let mut encoder = commy_audio::codec::VoiceEncoder::new();
             let mut decoder = commy_audio::codec::VoiceDecoder::new();
@@ -724,6 +892,31 @@ mod tests {
         let u2 = UserId::new();
         assert_eq!(mixer_key(u1), mixer_key(u1));
         assert_ne!(mixer_key(u1), mixer_key(u2));
+    }
+
+    #[test]
+    fn stream_audio_mixes_as_its_own_source_beside_the_sharers_voice() {
+        let sharer = UserId::new();
+        assert_eq!(stream_audio_key(sharer), stream_audio_key(sharer));
+        assert_ne!(stream_audio_key(sharer), mixer_key(sharer));
+        assert_ne!(stream_audio_key(sharer), MIC_TEST_KEY);
+        assert_eq!(stream_audio_key(sharer) ^ STREAM_AUDIO_KEY_BIT, mixer_key(sharer));
+    }
+
+    #[test]
+    fn a_stream_audio_sink_takes_its_own_volume_and_leaves_the_mixer_when_dropped() {
+        let mixer = Arc::new(Mutex::new(Mixer::new()));
+        let sharer = UserId::new();
+        mixer.lock().unwrap().push(mixer_key(sharer), 0, vec![100; commy_audio::FRAME_SIZE]);
+        let sink = StreamAudioSink::in_call(mixer.clone(), sharer, 0.5);
+        sink.push(0, vec![1000; commy_audio::FRAME_SIZE]);
+        assert_eq!(mixer.lock().unwrap().next_frame()[0], 600);
+        sink.set_gain(0.0);
+        sink.push(1, vec![1000; commy_audio::FRAME_SIZE]);
+        assert_eq!(mixer.lock().unwrap().next_frame()[0], 0);
+        assert_eq!(mixer.lock().unwrap().peer_count(), 2);
+        drop(sink);
+        assert_eq!(mixer.lock().unwrap().peer_count(), 1);
     }
 }
 
@@ -876,14 +1069,14 @@ mod share_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn own_preview_and_viewers_see_frames_at_stream_rate() {
-        let session = ScreenShareSession::start_with(ServerId::new(), ChannelId::new(), 30, 64, synthetic());
+        let session = ScreenShareSession::start_with(ServerId::new(), ChannelId::new(), 30, 64, synthetic(), None);
         let (preview_tx, preview_rx) = mpsc::unbounded_channel();
         let (viewer_tx, mut viewer_rx) = mpsc::unbounded_channel();
         session.add_subscriber(preview_tx);
         session.add_subscriber(viewer_tx);
         let shown = Arc::new(AtomicU64::new(0));
         let counter = shown.clone();
-        let _preview = ScreenWatch::from_frames(UserId::new(), preview_rx, None, move |_, _, w, h, jpeg| {
+        let _preview = ScreenWatch::from_frames(UserId::new(), preview_rx, None, None, move |_, _, w, h, jpeg| {
             assert_eq!((w, h), (64, 48));
             assert_eq!(&jpeg[..2], &[0xff, 0xd8]);
             counter.fetch_add(1, Ordering::Relaxed);
@@ -900,6 +1093,71 @@ mod share_tests {
         assert!(viewer_frames >= 8, "viewer got {viewer_frames} frames in a second");
         assert!(previewed >= 8, "own preview showed {previewed} frames in a second");
         assert_eq!(session.viewer_count(), 1, "the dropped viewer is no longer counted");
+        assert!(!session.shares_audio());
+        drop(session);
+    }
+
+    fn video(seq: u64) -> MediaPacket {
+        MediaPacket::Video { seq, width: 1, height: 1, jpeg: vec![] }
+    }
+
+    fn audio(seq: u32) -> MediaPacket {
+        MediaPacket::StreamAudio { seq, data: vec![] }
+    }
+
+    #[test]
+    fn a_backlog_keeps_every_audio_packet_but_only_the_newest_frame() {
+        let kept = newest_video_with_all_audio(vec![video(1), audio(1), video(2), audio(2), video(3), audio(3)]);
+        assert_eq!(kept, vec![audio(1), audio(2), video(3), audio(3)]);
+        assert_eq!(newest_video_with_all_audio(vec![]), vec![]);
+        assert_eq!(newest_video_with_all_audio(vec![audio(1)]), vec![audio(1)]);
+    }
+
+    async fn until(mut done: impl FnMut() -> bool) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !done() {
+            assert!(tokio::time::Instant::now() < deadline, "timed out waiting");
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stream_audio_reaches_only_viewers_who_asked_for_it() {
+        let (pcm_tx, frames) = mpsc::unbounded_channel();
+        let audio = SystemAudio { frames, capture: None };
+        let session = ScreenShareSession::start_with(ServerId::new(), ChannelId::new(), 30, 64, synthetic(), Some(audio));
+        assert!(session.shares_audio());
+        let (old_tx, mut old_rx) = mpsc::unbounded_channel();
+        let (old_req_tx, old_req_rx) = mpsc::unbounded_channel();
+        session.add_viewer(old_tx, old_req_rx);
+        let (new_tx, new_rx) = mpsc::unbounded_channel();
+        let (new_req_tx, new_req_rx) = mpsc::unbounded_channel();
+        session.add_viewer(new_tx, new_req_rx);
+        let mixer = Arc::new(Mutex::new(Mixer::new()));
+        let sharer = UserId::new();
+        let sink = StreamAudioSink::in_call(mixer.clone(), sharer, 1.0);
+        let _watch = ScreenWatch::from_frames(sharer, new_rx, Some(new_req_tx.clone()), Some(sink), |_, _, _, _, _| {});
+        new_req_tx.send(MediaPacket::StreamAudioWanted).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        for frame in 0..20usize {
+            let tone: Vec<i16> = (0..commy_audio::FRAME_SIZE)
+                .map(|i| {
+                    let t = (frame * commy_audio::FRAME_SIZE + i) as f32 / commy_audio::SAMPLE_RATE as f32;
+                    ((t * 440.0 * std::f32::consts::TAU).sin() * 8000.0) as i16
+                })
+                .collect();
+            pcm_tx.send(tone).unwrap();
+        }
+        until(|| mixer.lock().unwrap().peer_count() == 1).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let loudest = (0..30).flat_map(|_| mixer.lock().unwrap().next_frame()).map(|s| s.abs()).max().unwrap();
+        assert!(loudest > 1000, "viewer who asked hears the stream, peak {loudest}");
+        drop(old_req_tx);
+        let mut old_audio = 0;
+        while let Ok(packet) = old_rx.try_recv() {
+            old_audio += usize::from(matches!(packet, MediaPacket::StreamAudio { .. }));
+        }
+        assert_eq!(old_audio, 0, "a viewer who never asked gets no audio packets");
         drop(session);
     }
 }

@@ -28,12 +28,16 @@ fn default_afk_minutes() -> u32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceSettings {
     pub noise_cancellation: bool,
+    #[serde(default = "default_true")]
+    pub echo_cancellation: bool,
     pub muted: bool,
     pub deafened: bool,
     #[serde(default = "default_gain")]
     pub output_volume: f32,
     #[serde(default = "default_gain")]
     pub input_gain: f32,
+    #[serde(default = "default_gain")]
+    pub stream_volume: f32,
     #[serde(default = "default_afk_minutes")]
     pub afk_timeout_minutes: u32,
     #[serde(default = "default_true")]
@@ -87,8 +91,17 @@ impl VoiceSettings {
         crate::voice_keys::sensitivity(self.auto_sensitivity, self.sensitivity_db)
     }
 
+    pub fn stream_gain(&self, forced_deaf: bool) -> f32 {
+        if self.deafened || forced_deaf {
+            0.0
+        } else {
+            self.stream_volume
+        }
+    }
+
     pub fn apply_to(&self, processor: &mut VoiceProcessor) {
         processor.set_noise_cancellation(self.noise_cancellation);
+        processor.set_echo_cancellation(self.echo_cancellation);
         processor.set_muted(self.muted);
         processor.set_input_gain(self.input_gain);
         processor.set_push_to_talk(self.input_mode == crate::voice_keys::InputMode::PushToTalk);
@@ -117,10 +130,12 @@ impl Default for VoiceSettings {
     fn default() -> Self {
         Self {
             noise_cancellation: true,
+            echo_cancellation: true,
             muted: false,
             deafened: false,
             output_volume: 1.0,
             input_gain: 1.0,
+            stream_volume: 1.0,
             afk_timeout_minutes: default_afk_minutes(),
             share_activity: true,
             input_device: None,
@@ -150,6 +165,7 @@ pub struct App {
     pub profile: Mutex<Option<UserProfile>>,
     pub servers: Mutex<HashMap<ServerId, ServerState>>,
     pub invites: Mutex<HashMap<ServerId, String>>,
+    pub listings: Mutex<HashMap<ServerId, crate::directory::Listing>>,
     pub voice: Mutex<VoiceSettings>,
     pub processor: std::sync::Arc<Mutex<VoiceProcessor>>,
     pub net: tokio::sync::Mutex<Option<CommyNode>>,
@@ -167,6 +183,7 @@ pub struct App {
     pub storage: Mutex<crate::storage::StorageSettings>,
     pub dm_filter: Mutex<crate::safety::DmFilter>,
     pub mic_test: Mutex<Option<MicTest>>,
+    pub voice_recorder: Mutex<Option<crate::voice_message::VoiceRecorder>>,
     pub last_user_activity: std::sync::atomic::AtomicI64,
     pub auto_idle: std::sync::atomic::AtomicBool,
     pub overlay_visible: std::sync::atomic::AtomicBool,
@@ -202,6 +219,7 @@ impl Default for App {
             profile: Mutex::new(None),
             servers: Mutex::new(HashMap::new()),
             invites: Mutex::new(HashMap::new()),
+            listings: Mutex::new(HashMap::new()),
             voice: Mutex::new(VoiceSettings::default()),
             processor: std::sync::Arc::new(Mutex::new(VoiceProcessor::new())),
             net: tokio::sync::Mutex::new(None),
@@ -219,6 +237,7 @@ impl Default for App {
             storage: Mutex::new(crate::storage::StorageSettings::default()),
             dm_filter: Mutex::new(crate::safety::DmFilter::default()),
             mic_test: Mutex::new(None),
+            voice_recorder: Mutex::new(None),
             last_user_activity: std::sync::atomic::AtomicI64::new(
                 chrono::Utc::now().timestamp(),
             ),
@@ -370,6 +389,11 @@ impl App {
     pub fn persist_invites(&self) {
         let Some(dir) = self.data_dir() else { return };
         let _ = crate::persist::save_invites(dir, &self.invites.lock().unwrap());
+    }
+
+    pub fn persist_listings(&self) {
+        let Some(dir) = self.data_dir() else { return };
+        warn_unsaved("directory listings", crate::persist::save_listings(dir, &self.listings.lock().unwrap()));
     }
 
     pub fn announced(&self, profile: UserProfile) -> UserProfile {

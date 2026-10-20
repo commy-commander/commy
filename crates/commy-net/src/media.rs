@@ -35,6 +35,14 @@ pub enum MediaPacket {
         jpeg: Vec<u8>,
     },
     Opus { seq: u32, data: Vec<u8> },
+    StreamAudio { seq: u32, data: Vec<u8> },
+    StreamAudioWanted,
+}
+
+impl MediaPacket {
+    pub fn is_video(&self) -> bool {
+        matches!(self, MediaPacket::Video { .. })
+    }
 }
 
 pub async fn write_frame<W, T>(writer: &mut W, value: &T) -> Result<(), MediaError>
@@ -118,6 +126,38 @@ mod tests {
         assert_eq!(wire_tag(postcard::to_stdvec(&MediaHello::CameraSubscribe { user, channel }).unwrap()), 2);
         assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::Voice { seq: 0, pcm: vec![] }).unwrap()), 0);
         assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::Opus { seq: 0, data: vec![] }).unwrap()), 2);
+        assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::StreamAudio { seq: 0, data: vec![] }).unwrap()), 3);
+        assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::StreamAudioWanted).unwrap()), 4);
+    }
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    enum PacketBeforeStreamAudio {
+        Voice { seq: u32, pcm: Vec<i16> },
+        Video { seq: u64, width: u32, height: u32, jpeg: Vec<u8> },
+        Opus { seq: u32, data: Vec<u8> },
+    }
+
+    #[tokio::test]
+    async fn a_reader_without_the_stream_audio_kinds_rejects_them_so_senders_wait_to_be_asked() {
+        let (mut a, mut b) = tokio::io::duplex(4096);
+        write_frame(&mut a, &MediaPacket::Opus { seq: 1, data: vec![9] }).await.unwrap();
+        write_frame(&mut a, &MediaPacket::StreamAudio { seq: 2, data: vec![8] }).await.unwrap();
+        let old: PacketBeforeStreamAudio = read_frame(&mut b).await.unwrap().unwrap();
+        assert_eq!(old, PacketBeforeStreamAudio::Opus { seq: 1, data: vec![9] });
+        let unknown: Result<Option<PacketBeforeStreamAudio>, _> = read_frame(&mut b).await;
+        assert!(matches!(unknown, Err(MediaError::Malformed)));
+    }
+
+    #[tokio::test]
+    async fn stream_audio_kinds_roundtrip() {
+        let (mut a, mut b) = tokio::io::duplex(4096);
+        write_frame(&mut a, &MediaPacket::StreamAudioWanted).await.unwrap();
+        write_frame(&mut a, &MediaPacket::StreamAudio { seq: 3, data: vec![1, 2] }).await.unwrap();
+        let first: MediaPacket = read_frame(&mut b).await.unwrap().unwrap();
+        assert_eq!(first, MediaPacket::StreamAudioWanted);
+        assert!(!first.is_video());
+        let second: MediaPacket = read_frame(&mut b).await.unwrap().unwrap();
+        assert_eq!(second, MediaPacket::StreamAudio { seq: 3, data: vec![1, 2] });
     }
 
     #[tokio::test]

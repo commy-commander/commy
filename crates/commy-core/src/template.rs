@@ -33,6 +33,8 @@ pub struct TemplateChannel {
     pub view_roles: Vec<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub send_roles: Vec<usize>,
+    #[serde(default)]
+    pub sensitive: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +118,10 @@ fn known_permissions() -> Permissions {
         Permissions::ADD_STICKERS,
         Permissions::ADD_EMOTICONS,
         Permissions::MENTION_EVERYONE,
+        Permissions::CHANGE_NICKNAME,
+        Permissions::MANAGE_NICKNAMES,
+        Permissions::MOVE_MEMBERS,
+        Permissions::SEND_VOICE_MESSAGES,
     ]
     .into_iter()
     .fold(Permissions::NONE, |acc, p| acc | p)
@@ -187,6 +193,7 @@ impl ServerTemplate {
                 color: c.color.clone(),
                 view_roles: role_indexes(&c.view_roles),
                 send_roles: role_indexes(&c.send_roles),
+                sensitive: c.sensitive,
             })
             .collect();
         let everyone = server
@@ -245,6 +252,7 @@ impl ServerTemplate {
                 color: clean_color(c.color.as_deref()),
                 view_roles: if c.kind == ChannelKind::Category { vec![] } else { role_picks(&c.view_roles, self.roles.len()) },
                 send_roles: if is_text_like(c.kind) { role_picks(&c.send_roles, self.roles.len()) } else { vec![] },
+                sensitive: c.sensitive && is_text_like(c.kind),
             });
         }
         if !channels.iter().any(|c| c.kind != ChannelKind::Category) {
@@ -257,6 +265,7 @@ impl ServerTemplate {
                 color: None,
                 view_roles: vec![],
                 send_roles: vec![],
+                sensitive: false,
             });
         }
         let mut roles = Vec::with_capacity(self.roles.len());
@@ -302,6 +311,7 @@ impl ServerTemplate {
                 retention_days: c.retention_days,
                 user_limit: c.user_limit,
                 color: c.color.clone(),
+                sensitive: c.sensitive,
                 ..Channel::new(c.name.clone(), c.kind, i as u32)
             })
             .collect();
@@ -429,6 +439,7 @@ impl Draft {
             color: None,
             view_roles: vec![],
             send_roles: vec![],
+            sensitive: false,
         });
         self.channels.len() - 1
     }
@@ -772,6 +783,7 @@ mod tests {
             color: None,
             view_roles: vec![],
             send_roles: vec![],
+            sensitive: false,
         }];
         template.afk_channel = None;
         let cleaned = template.cleaned().unwrap();

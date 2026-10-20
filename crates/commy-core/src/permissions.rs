@@ -36,6 +36,11 @@ impl Permissions {
     pub const ADD_EMOTICONS: Permissions = Permissions(1 << 26);
     pub const MENTION_EVERYONE: Permissions = Permissions(1 << 27);
     pub const TIME_OUT_MEMBERS: Permissions = Permissions(1 << 28);
+    pub const BYPASS_SLOW_MODE: Permissions = Permissions(1 << 29);
+    pub const MOVE_MEMBERS: Permissions = Permissions(1 << 30);
+    pub const CHANGE_NICKNAME: Permissions = Permissions(1 << 31);
+    pub const MANAGE_NICKNAMES: Permissions = Permissions(1 << 32);
+    pub const SEND_VOICE_MESSAGES: Permissions = Permissions(1 << 33);
 
     pub fn default_member() -> Permissions {
         Self::VIEW_CHANNELS
@@ -50,6 +55,8 @@ impl Permissions {
             | Self::ADD_EMOJIS
             | Self::ADD_STICKERS
             | Self::ADD_EMOTICONS
+            | Self::CHANGE_NICKNAME
+            | Self::SEND_VOICE_MESSAGES
     }
 
     pub fn all() -> Permissions {
@@ -72,6 +79,10 @@ impl Permissions {
         self.contains(Self::ADMINISTRATOR) || self.contains(other)
     }
 
+    pub fn bypasses_slow_mode(self) -> bool {
+        self.allows(Self::BYPASS_SLOW_MODE) || self.allows(Self::MANAGE_MESSAGES) || self.allows(Self::MANAGE_CHANNELS)
+    }
+
     pub fn can_pin(self) -> bool {
         self.allows(Self::PIN_MESSAGES) || self.allows(Self::MANAGE_MESSAGES)
     }
@@ -90,6 +101,10 @@ impl Permissions {
 
     pub fn can_mention_everyone(self) -> bool {
         self.allows(Self::MENTION_EVERYONE)
+    }
+
+    pub fn can_change_own_nickname(self) -> bool {
+        self.allows(Self::CHANGE_NICKNAME) || self.allows(Self::MANAGE_NICKNAMES)
     }
 }
 
@@ -148,6 +163,7 @@ mod tests {
     fn default_member_cannot_moderate() {
         let p = Permissions::default_member();
         assert!(p.allows(Permissions::SEND_MESSAGES));
+        assert!(p.allows(Permissions::SEND_VOICE_MESSAGES));
         assert!(!p.allows(Permissions::KICK_MEMBERS));
         assert!(!p.allows(Permissions::TIME_OUT_MEMBERS));
         assert!(!p.allows(Permissions::MANAGE_SERVER));
@@ -156,6 +172,17 @@ mod tests {
         assert!(!p.can_announce());
         assert!(!p.can_view_audit_log());
         assert!(!p.can_mention_everyone());
+        assert!(p.can_change_own_nickname());
+        assert!(!p.allows(Permissions::MANAGE_NICKNAMES));
+    }
+
+    #[test]
+    fn managing_nicknames_covers_your_own_too() {
+        assert!(Permissions::CHANGE_NICKNAME.can_change_own_nickname());
+        assert!(Permissions::MANAGE_NICKNAMES.can_change_own_nickname());
+        assert!(Permissions::ADMINISTRATOR.can_change_own_nickname());
+        assert!(!Permissions::SEND_MESSAGES.can_change_own_nickname());
+        assert_ne!(Permissions::CHANGE_NICKNAME, Permissions::MANAGE_NICKNAMES);
     }
 
     #[test]

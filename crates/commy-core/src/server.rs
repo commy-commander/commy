@@ -32,9 +32,14 @@ pub struct Channel {
     pub view_roles: Vec<RoleId>,
     #[serde(default)]
     pub send_roles: Vec<RoleId>,
+    #[serde(default)]
+    pub slow_mode: u32,
+    #[serde(default)]
+    pub sensitive: bool,
 }
 
 pub const MAX_ACCESS_ROLES: usize = 16;
+pub const MAX_SLOW_MODE: u32 = 21_600;
 
 impl Channel {
     pub fn new(name: impl Into<String>, kind: ChannelKind, position: u32) -> Self {
@@ -51,6 +56,8 @@ impl Channel {
             color: None,
             view_roles: Vec::new(),
             send_roles: Vec::new(),
+            slow_mode: 0,
+            sensitive: false,
         }
     }
 
@@ -135,6 +142,15 @@ pub struct Member {
     pub joined_at: DateTime<Utc>,
     #[serde(default)]
     pub timeout: Option<Timeout>,
+}
+
+pub const MAX_NICKNAME_CHARS: usize = 32;
+
+pub fn clean_nickname(raw: &str) -> Option<String> {
+    let text = raw.trim();
+    let length = text.chars().count();
+    let fits = (1..=MAX_NICKNAME_CHARS).contains(&length) && !text.chars().any(char::is_control);
+    fits.then(|| text.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -226,6 +242,8 @@ pub struct Server {
     pub stickers_shareable: bool,
     #[serde(default)]
     pub emoticons_shareable: bool,
+    #[serde(default)]
+    pub onboarding: Option<crate::onboarding::Onboarding>,
 }
 
 impl Server {
@@ -290,6 +308,7 @@ impl Server {
             emoticons: vec![],
             stickers_shareable: false,
             emoticons_shareable: false,
+            onboarding: None,
         }
     }
 

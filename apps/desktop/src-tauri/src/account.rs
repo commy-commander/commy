@@ -39,6 +39,8 @@ pub struct ServerFeatures {
     pub media: bool,
     #[serde(default)]
     pub vault: bool,
+    #[serde(default)]
+    pub stickers: bool,
 }
 
 impl AccountState {
@@ -65,6 +67,7 @@ impl AccountState {
                 (Some(f), "gifs") => f.gifs,
                 (Some(f), "games") => f.games,
                 (Some(f), "emojis") => f.emojis,
+                (Some(f), "stickers") => f.stickers,
                 _ => false,
             }
     }
@@ -314,6 +317,7 @@ pub struct AccountView {
     server_gifs: bool,
     server_games: bool,
     server_emojis: bool,
+    server_stickers: bool,
     server_media: bool,
 }
 
@@ -335,6 +339,7 @@ fn view(app: &App) -> AccountView {
         server_gifs: state.server_offers("gifs"),
         server_games: state.server_offers("games"),
         server_emojis: state.server_offers("emojis"),
+        server_stickers: state.server_offers("stickers"),
         server_media: state.server_offers("media"),
     }
 }
@@ -730,8 +735,9 @@ mod tests {
         };
         assert!(state.server_offers("gifs") && state.server_offers("games"));
         assert!(!state.server_offers("media"));
-        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false });
+        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false, stickers: true });
         assert!(state.server_offers("gifs"));
+        assert!(state.server_offers("stickers"));
         assert!(state.server_offers("emojis"));
         assert!(!state.server_offers("games"));
         assert!(state.server_offers("media"));
@@ -751,7 +757,7 @@ mod tests {
         let mut with = base;
         with["features"] = serde_json::json!({ "gifs": true, "games": false });
         let new: Discovery = serde_json::from_value(with).unwrap();
-        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false }));
+        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false }));
     }
 
     #[test]

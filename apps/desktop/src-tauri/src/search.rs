@@ -93,6 +93,12 @@ fn searchable_text(message: &Message) -> String {
             text.push_str(&part.to_lowercase());
         }
     }
+    if let Some(poll) = message.poll() {
+        for part in std::iter::once(&poll.question).chain(poll.options.iter()) {
+            text.push('\n');
+            text.push_str(&part.to_lowercase());
+        }
+    }
     text
 }
 

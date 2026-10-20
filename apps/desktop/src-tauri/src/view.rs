@@ -71,6 +71,8 @@ pub struct ChannelView {
     pub pins: usize,
     pub view_roles: Vec<String>,
     pub send_roles: Vec<String>,
+    pub slow_mode: u32,
+    pub sensitive: bool,
     pub can_view: bool,
     pub can_send: bool,
     pub key_ready: bool,
@@ -80,6 +82,8 @@ pub struct ChannelView {
 pub struct MemberView {
     pub id: String,
     pub name: String,
+    pub username: String,
+    pub nickname: Option<String>,
     pub presence: Presence,
     pub presence_until: Option<i64>,
     pub custom_status: Option<String>,
@@ -164,6 +168,7 @@ pub struct ServerView {
     pub can_manage_roles: bool,
     pub can_kick: bool,
     pub can_manage_messages: bool,
+    pub can_bypass_slow_mode: bool,
     pub can_invite: bool,
     pub can_pin: bool,
     pub can_post_announcements: bool,
@@ -179,9 +184,12 @@ pub struct ServerView {
     pub banned: Vec<(String, String)>,
     pub afk_timeout_minutes: Option<u32>,
     pub can_mute: bool,
+    pub can_move: bool,
     pub can_ban: bool,
     pub can_time_out: bool,
     pub my_timeout_until: Option<i64>,
+    pub can_manage_nicknames: bool,
+    pub can_change_nickname: bool,
     pub emojis: Vec<EmojiView>,
     pub stickers: Vec<EmojiView>,
     pub emoticons: Vec<EmoticonView>,
@@ -199,11 +207,13 @@ pub struct ServerView {
     pub sounds_shareable: bool,
     pub uploads_restricted: bool,
     pub can_attach_files: bool,
+    pub can_send_voice_messages: bool,
     pub public: bool,
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
     pub can_use_soundboard: bool,
     pub automod: Option<AutoMod>,
+    pub onboarding: Option<commy_core::Onboarding>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -264,6 +274,8 @@ impl ServerView {
                     voice_deafened: voice.iter().map(|u| state.voice_flags(*u).1).collect(),
                     view_roles: c.view_roles.iter().map(|r| r.to_string()).collect(),
                     send_roles: c.send_roles.iter().map(|r| r.to_string()).collect(),
+                    slow_mode: c.slow_mode,
+                    sensitive: c.sensitive,
                     can_view,
                     can_send: can_view && viewer.is_some_and(|v| state.server.can_post_in(c.id, v)),
                     key_ready: can_view && keys.key_ready(state, c.id),
@@ -280,7 +292,9 @@ impl ServerView {
                 let (voice_muted, voice_deafened) = state.voice_flags(p.id);
                 MemberView {
                     id: p.id.to_string(),
-                    name: p.visible_name().to_string(),
+                    name: display_name(state, p.id),
+                    username: p.username.clone(),
+                    nickname: nickname_of(state, p.id),
                     presence: p.presence,
                     presence_until: p.presence_until,
                     custom_status: p.custom_status.clone(),
@@ -410,6 +424,7 @@ impl ServerView {
             can_manage_roles: perms.allows(Permissions::MANAGE_ROLES),
             can_kick: perms.allows(Permissions::KICK_MEMBERS),
             can_manage_messages: perms.allows(Permissions::MANAGE_MESSAGES),
+            can_bypass_slow_mode: perms.bypasses_slow_mode(),
             can_invite: perms.allows(Permissions::CREATE_INVITES),
             can_pin: perms.can_pin(),
             can_post_announcements: perms.can_announce(),
@@ -429,9 +444,12 @@ impl ServerView {
             },
             afk_timeout_minutes: state.server.afk_timeout_minutes,
             can_mute: perms.allows(Permissions::MUTE_MEMBERS),
+            can_move: perms.allows(Permissions::MOVE_MEMBERS),
             can_ban: perms.allows(Permissions::BAN_MEMBERS),
             can_time_out: perms.allows(Permissions::TIME_OUT_MEMBERS),
             my_timeout_until: viewer.and_then(|v| state.server.timeout_of(v, now)).map(|t| t.until.timestamp_millis()),
+            can_manage_nicknames: perms.allows(Permissions::MANAGE_NICKNAMES),
+            can_change_nickname: is_member && perms.can_change_own_nickname(),
             emojis: state
                 .server
                 .emojis
@@ -473,11 +491,15 @@ impl ServerView {
             sounds_shareable: state.server.sounds_shareable,
             uploads_restricted: everyone_lacks(state, Permissions::ATTACH_FILES),
             can_attach_files: perms.allows(Permissions::ATTACH_FILES),
+            can_send_voice_messages: perms.allows(Permissions::SEND_VOICE_MESSAGES),
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS) || (state.server.soundboard_open && is_member),
             can_use_soundboard: perms.allows(Permissions::USE_SOUNDBOARD),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
+            onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {
+                o.tidied(|r| commy_core::onboarding::grantable(&state.server.roles, r))
+            }),
         }
     }
 }
@@ -496,13 +518,18 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_channels", Permissions::MANAGE_CHANNELS),
     ("manage_messages", Permissions::MANAGE_MESSAGES),
     ("pin_messages", Permissions::PIN_MESSAGES),
+    ("bypass_slow_mode", Permissions::BYPASS_SLOW_MODE),
     ("attach_files", Permissions::ATTACH_FILES),
+    ("send_voice_messages", Permissions::SEND_VOICE_MESSAGES),
     ("post_announcements", Permissions::POST_ANNOUNCEMENTS),
     ("manage_roles", Permissions::MANAGE_ROLES),
     ("kick_members", Permissions::KICK_MEMBERS),
     ("ban_members", Permissions::BAN_MEMBERS),
     ("mute_members", Permissions::MUTE_MEMBERS),
     ("time_out_members", Permissions::TIME_OUT_MEMBERS),
+    ("manage_nicknames", Permissions::MANAGE_NICKNAMES),
+    ("change_nickname", Permissions::CHANGE_NICKNAME),
+    ("move_members", Permissions::MOVE_MEMBERS),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("add_emojis", Permissions::ADD_EMOJIS),
     ("add_stickers", Permissions::ADD_STICKERS),
@@ -658,9 +685,53 @@ pub struct MessageView {
     pub reactions: Vec<ReactionView>,
     pub attachments: Vec<AttachmentView>,
     pub previews: Vec<LinkPreviewView>,
+    pub poll: Option<PollView>,
     pub pending: bool,
     pub pinned: bool,
     pub held: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PollView {
+    pub question: String,
+    pub options: Vec<PollOptionView>,
+    pub multi: bool,
+    pub total: usize,
+    pub closed: bool,
+    pub closes_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PollOptionView {
+    pub text: String,
+    pub votes: usize,
+    pub mine: bool,
+}
+
+impl PollView {
+    fn build(message: &Message, state: &ServerState, viewer: Option<UserId>) -> Option<Self> {
+        let poll = message.poll()?;
+        let tally = state.poll_tally(message.id, chrono::Utc::now())?;
+        let mine = viewer.map(|me| state.poll_choices(message.id, me)).unwrap_or(&[]);
+        let options = poll
+            .options
+            .iter()
+            .enumerate()
+            .map(|(i, text)| PollOptionView {
+                text: text.clone(),
+                votes: tally.counts.get(i).copied().unwrap_or(0),
+                mine: mine.contains(&(i as u8)),
+            })
+            .collect();
+        Some(Self {
+            question: poll.question,
+            options,
+            multi: poll.multi,
+            total: tally.voters,
+            closed: tally.closed,
+            closes_at: poll.closes_at.map(|t| t.to_rfc3339()),
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -783,8 +854,12 @@ impl MessageView {
                 let stored = state.message(id).filter(|m| m.channel == message.channel)?;
                 let original = keys.open(state, stored)?;
                 let mut excerpt = crate::safety::truncate(&original.content, 120);
-                if excerpt.is_empty() && original.files().next().is_some() {
-                    excerpt = "Click to see attachment".to_string();
+                if excerpt.is_empty() {
+                    if let Some(poll) = original.poll() {
+                        excerpt = crate::safety::truncate(&poll.question, 120);
+                    } else if original.files().next().is_some() {
+                        excerpt = "Click to see attachment".to_string();
+                    }
                 }
                 if keys.hold(state, stored).is_some() {
                     excerpt = HELD_EXCERPT.to_string();
@@ -806,7 +881,7 @@ impl MessageView {
                 .collect(),
             attachments: attachments
                 .iter()
-                .filter(|a| !a.is_link_preview())
+                .filter(|a| !a.is_card())
                 .map(|a| AttachmentView {
                     filename: a.filename.clone(),
                     size_bytes: a.size_bytes,
@@ -817,6 +892,7 @@ impl MessageView {
                 })
                 .collect(),
             previews: message.link_previews().take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
+            poll: (!sealed).then(|| PollView::build(message, state, keys.user())).flatten(),
             pending: false,
             pinned: state.server.is_pinned(message.id),
             held: None,
@@ -891,8 +967,16 @@ pub fn message_views_around(
     Some(visible_views(state, &all[start..end], pending, viewer, keys))
 }
 
+pub fn nickname_of(state: &ServerState, user: UserId) -> Option<String> {
+    state.server.member(user).and_then(|m| m.nickname.clone())
+}
+
+pub fn known_name_of(state: &ServerState, user: UserId) -> Option<String> {
+    nickname_of(state, user).or_else(|| state.profiles.get(&user).map(|p| p.visible_name().to_string()))
+}
+
 pub fn display_name(state: &ServerState, user: commy_core::UserId) -> String {
-    name_or_unknown(state.profiles.get(&user))
+    known_name_of(state, user).unwrap_or_else(|| UNKNOWN_USER.to_string())
 }
 
 pub const UNKNOWN_USER: &str = "Unknown User";
@@ -1030,6 +1114,77 @@ mod tests {
         let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
         assert!(badge(bot_id));
         assert!(!badge(owner.id));
+    }
+
+    #[test]
+    fn onboarding_questions_reach_members_without_roles_that_can_no_longer_be_handed_out() {
+        use commy_core::onboarding::{Answer, Onboarding, Question};
+        use commy_core::{Permissions, Role, RoleId};
+        let owner = UserProfile::new("owner");
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let role = |perms| Role { id: RoleId::new(), name: "r".into(), color: None, permissions: perms, position: 1, hoist: false, self_assignable: false, mentionable: false, tag: None, banner: None };
+        let plain = role(Permissions::NONE);
+        let admin = role(Permissions::ADMINISTRATOR);
+        let gone = RoleId::new();
+        for r in [plain.clone(), admin.clone()] {
+            state.apply(ServerEvent::RoleCreate { server: sid, role: r }).unwrap();
+        }
+        let onboarding = Onboarding {
+            questions: vec![Question {
+                title: "Q".into(),
+                description: String::new(),
+                multiple: false,
+                answers: vec![Answer { label: "A".into(), roles: vec![plain.id, admin.id, gone] }, Answer { label: "B".into(), roles: vec![] }],
+            }],
+        };
+        state.apply(ServerEvent::OnboardingSet { server: sid, onboarding: Some(onboarding) }).unwrap();
+        let keys = KeyHolder::default();
+        let view = ServerView::for_viewer(&state, Some(owner.id), &keys);
+        let shown = view.onboarding.as_ref().expect("members see the questions");
+        assert_eq!(shown.questions[0].answers[0].roles, vec![plain.id]);
+        assert!(ServerView::for_viewer(&state, Some(UserId::new()), &keys).onboarding.is_none(), "strangers do not");
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["onboarding"]["questions"][0]["answers"][1]["label"], "B");
+    }
+
+    #[test]
+    fn nicknames_replace_names_inside_the_server_and_keep_the_account_name_beside_them() {
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(Identity::generate().public());
+        let server = Server::new("s", owner.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let friend_key = Identity::generate();
+        let mut friend = UserProfile::new("sam");
+        friend.display_name = Some("Sam".into());
+        friend.identity = Some(friend_key.public());
+        let friend_id = friend.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: friend }).unwrap();
+        let mut message = Message::new(channel, friend_id, "hi");
+        message.sign(sid, &friend_key);
+        state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        state.apply(ServerEvent::MemberNickname { server: sid, user: friend_id, nickname: Some("Sammy".into()) }).unwrap();
+        let keys = KeyHolder::default();
+        let view = ServerView::for_viewer(&state, Some(friend_id), &keys);
+        let member = view.members.iter().find(|m| m.id == friend_id.to_string()).unwrap();
+        assert_eq!((member.name.as_str(), member.username.as_str(), member.nickname.as_deref()), ("Sammy", "sam", Some("Sammy")));
+        let me = view.members.iter().find(|m| m.id == owner.id.to_string()).unwrap();
+        assert_eq!((me.name.as_str(), me.nickname.as_deref()), ("owner", None));
+        assert!(view.can_change_nickname && !view.can_manage_nicknames);
+        let as_owner = ServerView::for_viewer(&state, Some(owner.id), &keys);
+        assert!(as_owner.can_change_nickname && as_owner.can_manage_nicknames);
+        assert!(!ServerView::for_viewer(&state, Some(UserId::new()), &keys).can_change_nickname);
+        let messages = message_views(&state, channel, 10, &HashSet::new(), Some(owner.id), &keys);
+        assert_eq!(messages[0].author_name, "Sammy");
+        assert_eq!(display_name(&state, friend_id), "Sammy");
+        assert_eq!(known_name_of(&state, UserId::new()), None);
+        let names = permission_names(Permissions::CHANGE_NICKNAME | Permissions::MANAGE_NICKNAMES);
+        assert_eq!(names, vec!["manage_nicknames".to_string(), "change_nickname".to_string()]);
+        assert_eq!(permissions_from_names(&names), Permissions::CHANGE_NICKNAME | Permissions::MANAGE_NICKNAMES);
     }
 
     #[test]
