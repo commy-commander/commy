@@ -593,6 +593,7 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "audit_log": return mockAuditLog();
+    case "send_typing": return null;
     case "start_mic_test": mock.micTesting = true; return null;
     case "stop_mic_test": mock.micTesting = false; return null;
     case "set_afk_timeout": mock.voice.afk_timeout_minutes = args.minutes; return mock.voice;
@@ -2082,7 +2083,56 @@ function clearDmUnread(userId) {
   if (unread.dms.delete(userId)) syncUnreadBadge();
 }
 
+const typingTracker = new TypingTracker();
+const typingSender = new TypingSender(channel => {
+  if (!state.currentServer) return;
+  invoke("send_typing", { serverId: state.currentServer.id, channelId: channel }).catch(() => {});
+});
+let typingTimer = null;
+
+function onTyping({ server, channel, user }) {
+  if (!state.user || user === state.user.id || isBlocked(user)) return;
+  if (!state.currentServer || server !== state.currentServer.id) return;
+  typingTracker.start(channel, user);
+  renderTypingStrip();
+}
+
+function renderTypingStrip() {
+  const strip = $("typing-strip");
+  const channel = state.view === "server" && state.currentChannel ? state.currentChannel.id : null;
+  const typers = channel ? typingTracker.typers(channel) : [];
+  const names = typers.map(id => {
+    const member = currentServerMember(id);
+    return member ? member.name : null;
+  });
+  const line = typingLine(names);
+  const text = $("typing-text");
+  text.replaceChildren();
+  if (line) {
+    const split = line.lastIndexOf(" are typing");
+    const single = line.lastIndexOf(" is typing");
+    const cut = split >= 0 ? split : single;
+    if (cut > 0 && !line.startsWith("Several")) {
+      text.appendChild(el("strong", null, line.slice(0, cut)));
+      text.appendChild(document.createTextNode(line.slice(cut)));
+    } else {
+      text.textContent = line;
+    }
+  }
+  strip.classList.toggle("on", Boolean(line));
+  clearInterval(typingTimer);
+  typingTimer = null;
+  if (typingTracker.anyone()) typingTimer = setInterval(renderTypingStrip, 1000);
+}
+
+function noteTyped(input) {
+  if (state.view !== "server" || !state.currentChannel) return;
+  typingSender.typed(state.currentChannel.id, input.value);
+}
+
 function onMessageCreated(msg) {
+  typingTracker.stop(msg.channel, msg.author);
+  renderTypingStrip();
   if (state.user && msg.author === state.user.id) return;
   if (isBlocked(msg.author)) return;
   const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === msg.channel;
@@ -8385,6 +8435,7 @@ async function selectDm(userId, name) {
   renderDmRequestBar(threads.find(t => t.user === userId) || null);
   const messages = await invoke("get_dm_messages", { userId });
   renderMessages(messages.map(dmToRenderable));
+  renderTypingStrip();
 }
 
 function renderDmHeader(userId, name) {
@@ -8588,6 +8639,7 @@ async function selectChannel(channel) {
   $("channel-topic").textContent = (channel && channel.topic) || "";
   $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
   syncPinButton();
+  renderTypingStrip();
   if (!channel) return renderMessages([]);
   renderMessages(await fetchChannelMessages(channel));
 }
@@ -8607,6 +8659,7 @@ async function sendMessage() {
   input.value = "";
   fitComposer(input);
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
+  typingSender.sent();
   $("messages").dataset.view = "";
   state.historyAnchor = null;
   cancelReply();
@@ -10502,7 +10555,11 @@ function wireEvents() {
     }
   });
 
-  $("message-input").addEventListener("input", e => scheduleLinkDraft(e.inputType === "insertFromPaste" ? 0 : LINK_DRAFT_DELAY_MS));
+  $("message-input").addEventListener("input", e => {
+    scheduleLinkDraft(e.inputType === "insertFromPaste" ? 0 : LINK_DRAFT_DELAY_MS);
+    noteTyped(e.target);
+  });
+  $("thread-input").addEventListener("input", e => noteTyped(e.target));
   setIcon($("link-draft-dismiss"), "close", 16);
   $("link-draft-dismiss").onclick = dismissLinkDraft;
   setIcon($("lightbox-open"), "openExternal", 16);
@@ -10697,6 +10754,7 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("camera-frame", event => showCameraFrame(event.payload));
     window.__TAURI__.event.listen("message-created", event => onMessageCreated(event.payload));
+    window.__TAURI__.event.listen("typing", event => onTyping(event.payload));
     window.__TAURI__.event.listen("messages-caught-up", event => onMessagesCaughtUp(event.payload));
     window.__TAURI__.event.listen("dm-received", event => onDmReceived(event.payload));
     window.__TAURI__.event.listen("notification-clicked", event => openNotificationTarget(event.payload));
