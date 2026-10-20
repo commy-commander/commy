@@ -2,7 +2,7 @@
 
 const IS_TAURI = Boolean(window.__TAURI__);
 const invoke = IS_TAURI ? window.__TAURI__.core.invoke : mockInvoke;
-const discoverState = { open: false, q: "", category: null, cursor: null, entries: [], busy: false, request: 0 };
+const discoverState = { open: false, q: "", category: null, cursor: null, entries: [], busy: false, request: 0, host: "" };
 const discoveryState = { listing: null, dirty: false };
 
 window.addEventListener("error", e => {
@@ -778,6 +778,7 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "browse_directory": {
+      if (mock.directoryMissing) return { host: "commy.chat", next_cursor: null, entries: [], available: false };
       const words = normalizeDirectorySearch(args.q).split(" ").filter(Boolean);
       const rows = (mock.directory || [])
         .filter(l => !args.category || l.category === args.category)
@@ -785,7 +786,7 @@ async function mockInvoke(cmd, args = {}) {
         .sort((a, b) => b.members - a.members || a.name.localeCompare(b.name));
       const start = Number(args.cursor) || 0;
       const page = rows.slice(start, start + 24);
-      return { host: "commy.chat", next_cursor: start + 24 < rows.length ? String(start + 24) : null,
+      return { host: "commy.chat", available: true, next_cursor: start + 24 < rows.length ? String(start + 24) : null,
         entries: page.map(l => ({ code: l.code, name: l.name, description: l.description, category: l.category, members: l.members, link: `https://commy.chat/i/${l.code}#${l.key}` })) };
     }
     case "publish_listing": {
@@ -17736,8 +17737,8 @@ async function openDiscover() {
   button.classList.add("active");
   button.setAttribute("aria-pressed", "true");
   renderDiscoverChips();
-  if (!discoverState.entries.length) await loadDiscover(true);
   $("discover-search").focus();
+  if (!discoverState.entries.length) await loadDiscover(true);
 }
 
 function renderDiscoverChips() {
@@ -17758,12 +17759,17 @@ function renderDiscoverChips() {
   }
 }
 
+function discoverFiltered() {
+  return Boolean(normalizeDirectorySearch(discoverState.q) || discoverState.category);
+}
+
 async function loadDiscover(reset) {
-  if (discoverState.busy) return;
-  discoverState.busy = true;
-  const more = $("discover-more");
-  more.disabled = true;
+  if (!reset && (discoverState.busy || !discoverState.cursor)) return;
   const request = ++discoverState.request;
+  discoverState.busy = true;
+  $("discover-more").disabled = true;
+  if (reset && !discoverState.entries.length) renderDiscoverCards({ loading: true });
+  let outcome = {};
   try {
     const page = await invoke("browse_directory", {
       q: normalizeDirectorySearch(discoverState.q) || null,
@@ -17773,19 +17779,27 @@ async function loadDiscover(reset) {
     if (request !== discoverState.request) return;
     discoverState.entries = reset ? page.entries : discoverState.entries.concat(page.entries);
     discoverState.cursor = page.next_cursor || null;
-    if (page.host) $("discover-sub").textContent = `Public servers listed by the people who run them, through ${page.host}.`;
-    renderDiscoverCards();
+    if (page.host) {
+      discoverState.host = page.host;
+      $("discover-sub").textContent = `Public servers listed by the people who run them, through ${page.host}.`;
+    }
+    outcome = { unavailable: page.available === false };
   } catch (e) {
-    if (reset) discoverState.entries = [];
-    discoverState.cursor = null;
-    renderDiscoverCards(String(e));
-  } finally {
-    discoverState.busy = false;
-    more.disabled = false;
+    if (request !== discoverState.request) return;
+    if (reset) {
+      discoverState.entries = [];
+      discoverState.cursor = null;
+      outcome = { error: String(e) };
+    } else {
+      toast(String(e));
+    }
   }
+  discoverState.busy = false;
+  $("discover-more").disabled = false;
+  renderDiscoverCards(outcome);
 }
 
-function renderDiscoverCards(error) {
+function renderDiscoverCards(outcome = {}) {
   const grid = $("discover-grid");
   grid.innerHTML = "";
   for (const entry of discoverState.entries) grid.appendChild(discoverCard(entry));
@@ -17793,11 +17807,13 @@ function renderDiscoverCards(error) {
   const none = !discoverState.entries.length;
   empty.classList.toggle("hidden", !none);
   if (none) {
-    $("discover-empty-art").replaceChildren(svgIcon("search", 48));
-    $("discover-empty-title").textContent = error ? "Could not load Discover" : "No servers found";
-    $("discover-empty-text").textContent = error || "Try another word or category, or list your own public server from Server Settings.";
+    const view = discoverEmptyView({ ...outcome, host: discoverState.host, filtered: discoverFiltered() });
+    $("discover-empty-art").replaceChildren(svgIcon(view.icon, 48));
+    $("discover-empty-title").textContent = view.title;
+    $("discover-empty-text").textContent = view.text;
+    $("discover-retry").classList.toggle("hidden", !view.retry);
   }
-  $("discover-more").classList.toggle("hidden", !discoverState.cursor);
+  $("discover-more").classList.toggle("hidden", none || !discoverState.cursor);
 }
 
 function discoverCard(entry) {
@@ -17912,6 +17928,7 @@ function wireDiscover() {
     timer = setTimeout(() => loadDiscover(true), 250);
   });
   $("discover-more").onclick = () => loadDiscover(false);
+  $("discover-retry").onclick = () => loadDiscover(true);
   $("discovery-description").addEventListener("input", () => {
     discoveryState.dirty = true;
     paintDiscoveryCounter();

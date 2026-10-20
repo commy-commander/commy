@@ -64,9 +64,20 @@ function discoverySettingsState({ server, listing }) {
   return { enabled: canManage && isPublic, listed, hint };
 }
 
+function discoverEmptyView({ loading = false, error = "", unavailable = false, host = "", filtered = false } = {}) {
+  const where = host ? `Your account server, ${host},` : "Your account server";
+  if (loading) return { icon: "search", title: "Looking for servers", text: "Loading the public server list.", retry: false };
+  if (unavailable) {
+    return { icon: "clock", title: "Discover is not available yet", text: `${where} does not list public servers yet. Check back after it updates.`, retry: true };
+  }
+  if (error) return { icon: "warning", title: "Could not load Discover", text: error, retry: true };
+  if (filtered) return { icon: "search", title: "No servers found", text: "Try another word or category.", retry: false };
+  return { icon: "search", title: "No public servers yet", text: "Be the first: list your own public server from Server Settings.", retry: false };
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DIRECTORY_CATEGORIES, DIRECTORY_BUCKETS, DIRECTORY_DESCRIPTION_MAX, directoryCategoryLabel, memberBucket, memberBucketLabel,
-    normalizeDirectorySearch, directoryExcerpt, directoryDescriptionCounter, discoverySettingsState,
+    normalizeDirectorySearch, directoryExcerpt, directoryDescriptionCounter, discoverySettingsState, discoverEmptyView,
   };
 }

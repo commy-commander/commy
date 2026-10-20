@@ -5920,47 +5920,6 @@ h3.md-heading { font-size: 1.1em; }
 }
 .switcher-icon { display: flex; color: var(--text-muted); flex-shrink: 0; }
 .switcher-field input {
-.rail-discover.active { background: var(--accent); color: var(--accent-ink); }
-
-.discover {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-mid);
-  border-radius: inherit;
-  min-height: 0;
-}
-.discover-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 22px 24px 12px;
-}
-.discover-title h2 {
-  font-family: var(--font-display);
-  font-size: 24px;
-  letter-spacing: -.01em;
-  color: var(--header-primary);
-}
-.discover-title p { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
-.discover-search {
-  flex: 0 0 280px;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border-radius: var(--radius-pill);
-  background: var(--input-bg);
-  border: 1px solid transparent;
-  color: var(--text-muted);
-}
-.discover-search:focus-within { border-color: var(--focus); }
-.discover-search-icon { display: flex; flex-shrink: 0; }
-.discover-search input {
   flex: 1;
   min-width: 0;
   background: none;
@@ -6055,10 +6014,58 @@ h3.md-heading { font-size: 1.1em; }
 .switcher-foot-tip { margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
 .shortcut-card { display: flex; flex-direction: column; gap: 14px; }
 .shortcut-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-  color: var(--text-normal);
-  font-size: 14px;
-  user-select: text;
+
+.rail-discover.active { background: var(--accent); color: var(--accent-ink); }
+
+.discover {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-mid);
+  border-radius: inherit;
+  min-height: 0;
 }
+.discover-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px 12px;
+}
+.discover-title h2 {
+  font-family: var(--font-display);
+  font-size: 24px;
+  letter-spacing: -.01em;
+  color: var(--header-primary);
+}
+.discover-title p { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+.discover-search {
+  flex: 0 0 280px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  border: 1px solid transparent;
+  color: var(--text-muted);
+}
+.discover-search:focus-within { border-color: var(--focus); }
+.discover-search-icon { display: flex; flex-shrink: 0; }
+.discover-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--header-primary);
+  font-family: var(--font);
+  font-size: 14px;
+}
+.discover-search input::placeholder { color: var(--text-faint); }
 .discover-chips {
   display: flex;
   flex-wrap: nowrap;
@@ -6130,6 +6137,7 @@ h3.md-heading { font-size: 1.1em; }
 .discover-card-foot .btn-primary { min-width: 72px; }
 .discover-empty { padding: 48px 0; }
 .discover-empty-art { color: var(--text-faint); margin-bottom: 12px; display: flex; justify-content: center; }
+.discover-retry { margin-top: 16px; padding: 9px 22px; font-size: 14px; }
 .discover-foot { display: flex; justify-content: center; padding-top: 16px; height: 56px; }
 .discover-more { padding: 9px 22px; font-size: 14px; }
 
