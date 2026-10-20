@@ -81,6 +81,9 @@ test("the starter and moderators manage a thread; a locked thread closes the com
   assert.equal(canManageThread(root, { userId: "m2", canManageMessages: false }), false);
   assert.equal(canManageThread(root, { userId: "m2", canManageMessages: true }), true);
   assert.equal(canManageThread(null, { userId: "m1", canManageMessages: true }), false);
+  assert.equal(canManageThread(root, { userId: "m1", canManageMessages: false, canCreateThreads: false }), false, "no create threads, no new thread");
+  assert.equal(canManageThread(root, { userId: "m1", canManageMessages: false, canCreateThreads: false, meta: { name: "plans" } }), true, "an existing thread stays the starter's");
+  assert.equal(canManageThread(root, { userId: "m2", canManageMessages: true, canCreateThreads: false }), true);
   assert.deepEqual(threadComposerState({ meta: null }), { disabled: false, placeholder: "Reply in thread" });
   assert.deepEqual(threadComposerState({ meta: { locked: true }, canManageMessages: false }), { disabled: true, placeholder: "This thread is locked" });
   assert.deepEqual(threadComposerState({ meta: { locked: true }, canManageMessages: true }), { disabled: false, placeholder: "Reply in thread (locked for members)" });

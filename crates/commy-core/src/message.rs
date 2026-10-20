@@ -197,6 +197,14 @@ impl Message {
             .filter(|(p, _)| self.content.contains(&p.url))
     }
 
+    pub fn embeds_for(&self, author_permissions: Permissions) -> bool {
+        author_permissions.can_embed_links()
+    }
+
+    pub fn previews_for(&self, author_permissions: Permissions) -> impl Iterator<Item = (crate::link_preview::LinkPreview, &Attachment)> {
+        self.link_previews().filter(move |_| self.embeds_for(author_permissions))
+    }
+
     pub fn sign(&mut self, server: ServerId, identity: &Identity) {
         self.sig = Some(identity.sign(&self.signing_bytes(server)));
     }
@@ -392,6 +400,28 @@ mod tests {
         assert!(!plain.speaks_for(Permissions::ADMINISTRATOR));
         let bytes = postcard::to_stdvec(&msg).unwrap();
         assert_eq!(postcard::from_bytes::<Message>(&bytes).unwrap(), msg);
+    }
+
+    #[test]
+    fn link_previews_show_only_for_authors_allowed_to_embed() {
+        let preview = crate::link_preview::LinkPreview {
+            url: "https://example.org/a".into(),
+            site: String::new(),
+            title: "A page".into(),
+            description: String::new(),
+            image: None,
+        };
+        let mut msg = Message::new(ChannelId::new(), UserId::new(), "see https://example.org/a");
+        msg.attachments.push(preview.into_attachment(None));
+        assert_eq!(msg.link_previews().count(), 1);
+        assert_eq!(msg.previews_for(Permissions::default_member()).count(), 1);
+        assert_eq!(msg.previews_for(Permissions::NONE).count(), 1, "an unset bit allows");
+        assert_eq!(msg.previews_for(Permissions::SEND_MESSAGES | Permissions::NO_EMBED_LINKS).count(), 0);
+        assert!(msg.embeds_for(Permissions::SEND_MESSAGES));
+        assert!(!msg.embeds_for(Permissions::NO_EMBED_LINKS));
+        assert!(msg.embeds_for(Permissions::NO_SEND_POLLS), "other restrictions leave links alone");
+        let plain = Message::new(ChannelId::new(), UserId::new(), "no links");
+        assert_eq!(plain.previews_for(Permissions::ADMINISTRATOR).count(), 0);
     }
 
     fn sample(identity: &Identity, server: ServerId) -> Message {

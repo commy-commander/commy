@@ -79,8 +79,11 @@ function buildThreadList(messages, threads, { plain = s => s } = {}) {
   return { active: entries.filter(e => !e.archived), archived: entries.filter(e => e.archived) };
 }
 
-function canManageThread(root, { userId, canManageMessages } = {}) {
-  return Boolean(root) && (Boolean(canManageMessages) || (Boolean(userId) && root.author_id === userId));
+function canManageThread(root, { userId, canManageMessages, meta = null, canCreateThreads = true } = {}) {
+  if (!root) return false;
+  if (canManageMessages) return true;
+  const own = Boolean(userId) && root.author_id === userId;
+  return own && (Boolean(meta) || canCreateThreads !== false);
 }
 
 function threadComposerState({ meta, canManageMessages } = {}) {

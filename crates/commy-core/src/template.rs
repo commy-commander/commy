@@ -133,6 +133,11 @@ fn known_permissions() -> Permissions {
         Permissions::SEND_VOICE_MESSAGES,
         Permissions::PRIORITY_SPEAKER,
         Permissions::SEND_TTS_MESSAGES,
+        Permissions::NO_EMBED_LINKS,
+        Permissions::NO_READ_MESSAGE_HISTORY,
+        Permissions::NO_CREATE_THREADS,
+        Permissions::NO_SEND_POLLS,
+        Permissions::NO_CREATE_EVENTS,
     ]
     .into_iter()
     .fold(Permissions::NONE, |acc, p| acc | p)
@@ -793,7 +798,7 @@ mod tests {
         assert!(!cleaned.everyone.contains(Permissions::ADMINISTRATOR));
         assert!(!cleaned.everyone.contains(Permissions::MANAGE_ROLES));
         assert!(cleaned.everyone.contains(Permissions::SEND_MESSAGES));
-        assert_eq!(cleaned.roles[0].permissions, known_permissions());
+        assert_eq!(cleaned.roles[0].permissions, known_permissions() & !Permissions::RESTRICTIONS);
         let server = cleaned.build("Safe", owner());
         let member = UserId::new();
         let mut server = server;

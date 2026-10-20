@@ -182,24 +182,38 @@ fn channel_matches<'a>(
     query: &'a SearchQuery,
     viewer: Option<UserId>,
     keys: &'a KeyHolder,
+    opens: crate::view::ChannelOpens,
+    now: Option<chrono::DateTime<chrono::Utc>>,
 ) -> impl Iterator<Item = (&'a Message, &'a str)> + 'a {
     let matcher = Matcher::new(state, query);
     let sees = sees_message(state, viewer, keys);
     let readable = move |channel: ChannelId| viewer.is_none_or(|v| state.server.can_view(channel, v));
+    let floor = move |channel: ChannelId| now.and_then(|now| crate::view::history_floor(state, viewer, &opens, channel, now));
     state
         .server
         .channels
         .iter()
         .filter(move |c| holds_messages(c.kind) && query.channel.is_none_or(|id| id == c.id) && readable(c.id))
-        .flat_map(|c| state.messages(c.id).iter().map(move |m| (m, c.name.as_str())))
+        .flat_map(move |c| {
+            let floor = floor(c.id);
+            state.messages(c.id).iter().filter(move |m| crate::view::within_history(floor, m)).map(move |m| (m, c.name.as_str()))
+        })
         .filter(move |(m, _)| keys.open(state, m).is_some_and(|opened| matcher.matches(&opened)) && sees(m))
 }
 
-pub fn search(state: &ServerState, query: &SearchQuery, viewer: Option<UserId>, page: Page, keys: &KeyHolder) -> SearchResults {
+pub fn search(
+    state: &ServerState,
+    query: &SearchQuery,
+    viewer: Option<UserId>,
+    page: Page,
+    keys: &KeyHolder,
+    opens: &crate::view::ChannelOpens,
+    now: Option<chrono::DateTime<chrono::Utc>>,
+) -> SearchResults {
     if query.is_empty() {
         return SearchResults { total: 0, offset: 0, hits: Vec::new() };
     }
-    let mut found: Vec<(&Message, &str)> = channel_matches(state, query, viewer, keys).collect();
+    let mut found: Vec<(&Message, &str)> = channel_matches(state, query, viewer, keys, opens.clone(), now).collect();
     found.sort_by_key(|(m, _)| std::cmp::Reverse(m.created_at));
     let (total, offset, page) = page.cut(found);
     let hits = page
@@ -254,7 +268,7 @@ pub fn search_dms(
             servers
                 .values()
                 .filter(|s| s.server.group)
-                .flat_map(|state| channel_matches(state, query, Some(me), keys).map(move |(m, _)| Found::Group(state, m))),
+                .flat_map(|state| channel_matches(state, query, Some(me), keys, crate::view::ChannelOpens::new(), None).map(move |(m, _)| Found::Group(state, m))),
         );
     }
     found.sort_by_key(|f| std::cmp::Reverse(f.at()));
@@ -331,7 +345,7 @@ mod tests {
         }
 
         fn find(&self, query: SearchQuery) -> Vec<String> {
-            search(&self.state, &query, Some(self.owner()), Page::newest(), &KeyHolder::default()).hits.into_iter().map(|h| h.message.content).collect()
+            search(&self.state, &query, Some(self.owner()), Page::newest(), &KeyHolder::default(), &crate::view::ChannelOpens::new(), None).hits.into_iter().map(|h| h.message.content).collect()
         }
     }
 
@@ -349,6 +363,34 @@ mod tests {
         assert_eq!(f.find(SearchQuery::new(&words("FRIDAY"), None, None, None)), ["friday works for me", "Raid night is Friday"]);
         assert_eq!(f.find(SearchQuery::new(&words("raid friday"), None, None, None)), ["Raid night is Friday"]);
         assert!(f.find(SearchQuery::new(&words("sunday"), None, None, None)).is_empty());
+    }
+
+    #[test]
+    fn members_without_read_message_history_search_only_what_they_could_see() {
+        let mut f = Fixture::new();
+        let owner = f.owner();
+        let reader = f.join("reader", None);
+        let (general, news) = (f.general, f.news);
+        f.post(general, owner, "lake trip last month", 40);
+        f.post(general, owner, "lake trip this week", 5);
+        f.post(news, owner, "lake photos posted", 2);
+        let now = Utc::now();
+        let opens = crate::view::ChannelOpens::from([(general, now - Duration::minutes(10))]);
+        let lake = SearchQuery::new(&words("lake"), None, None, None);
+        let find = |f: &Fixture, viewer| {
+            search(&f.state, &lake, Some(viewer), Page::newest(), &KeyHolder::default(), &opens, Some(now))
+                .hits
+                .into_iter()
+                .map(|h| h.message.content)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(find(&f, reader).len(), 3, "history readers search everything");
+        let sid = f.state.server.id;
+        let mut everyone = f.state.server.roles[0].clone();
+        everyone.permissions.insert(commy_core::Permissions::NO_READ_MESSAGE_HISTORY);
+        f.state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        assert_eq!(find(&f, reader), ["lake trip this week"], "only what arrived since opening, and nothing from channels never opened");
+        assert_eq!(find(&f, owner).len(), 3, "the owner keeps history");
     }
 
     #[test]
@@ -402,7 +444,7 @@ mod tests {
         for i in 0..60 {
             f.post(f.general, owner, &format!("note {i}"), 100 - i);
         }
-        let results = search(&f.state, &SearchQuery::new(&words("note"), None, None, None), None, Page::newest(), &KeyHolder::default());
+        let results = search(&f.state, &SearchQuery::new(&words("note"), None, None, None), None, Page::newest(), &KeyHolder::default(), &crate::view::ChannelOpens::new(), None);
         assert_eq!(results.total, 60);
         assert_eq!(results.offset, 0);
         assert_eq!(results.hits.len(), MAX_HITS);
@@ -418,13 +460,13 @@ mod tests {
             f.post(f.general, owner, &format!("note {i}"), 100 - i);
         }
         let query = SearchQuery::new(&words("note"), None, None, None);
-        let second = search(&f.state, &query, None, Page::at(50), &KeyHolder::default());
+        let second = search(&f.state, &query, None, Page::at(50), &KeyHolder::default(), &crate::view::ChannelOpens::new(), None);
         assert_eq!((second.total, second.offset, second.hits.len()), (60, 50, 10));
         assert_eq!(second.hits[0].message.content, "note 9");
         assert_eq!(second.hits[9].message.content, "note 0");
-        let beyond = search(&f.state, &query, None, Page::at(500), &KeyHolder::default());
+        let beyond = search(&f.state, &query, None, Page::at(500), &KeyHolder::default(), &crate::view::ChannelOpens::new(), None);
         assert_eq!((beyond.offset, beyond.hits.len()), (50, 10));
-        let odd = search(&f.state, &query, None, Page { offset: 7, limit: 1000 }, &KeyHolder::default());
+        let odd = search(&f.state, &query, None, Page { offset: 7, limit: 1000 }, &KeyHolder::default(), &crate::view::ChannelOpens::new(), None);
         assert_eq!((odd.offset, odd.hits.len()), (7, MAX_HITS));
         assert_eq!(odd.hits[0].message.content, "note 52");
         assert_eq!(Page::at(3).start(0), 0);
@@ -440,7 +482,7 @@ mod tests {
         let rules = commy_core::AutoMod { blocked_terms: vec!["cheap".into()], ..commy_core::AutoMod::default() };
         f.state.apply(ServerEvent::AutoModSet { server, rules }).unwrap();
         let found = |viewer| {
-            search(&f.state, &SearchQuery::new(&words("gold"), None, None, None), Some(viewer), Page::newest(), &KeyHolder::default())
+            search(&f.state, &SearchQuery::new(&words("gold"), None, None, None), Some(viewer), Page::newest(), &KeyHolder::default(), &crate::view::ChannelOpens::new(), None)
                 .hits
                 .into_iter()
                 .map(|h| (h.message.content, h.message.held.is_some()))
@@ -459,7 +501,7 @@ mod tests {
         f.post(f.general, owner, "hello", 1);
         let blank = vec!["  ".to_string()];
         assert!(SearchQuery::new(&blank, None, None, None).is_empty());
-        assert_eq!(search(&f.state, &SearchQuery::new(&blank, None, None, None), None, Page::newest(), &KeyHolder::default()).total, 0);
+        assert_eq!(search(&f.state, &SearchQuery::new(&blank, None, None, None), None, Page::newest(), &KeyHolder::default(), &crate::view::ChannelOpens::new(), None).total, 0);
     }
 
     struct Inbox {

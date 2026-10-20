@@ -320,11 +320,31 @@ fn get_messages(
     if !state.server.can_view(cid, me) {
         return Ok(Vec::new());
     }
+    let floor = {
+        let opens = app.channel_opens.lock().unwrap();
+        let none = view::ChannelOpens::new();
+        view::history_floor(state, Some(me), opens.get(&sid).unwrap_or(&none), cid, chrono::Utc::now())
+    };
     if let Some(id) = around {
-        return view::message_views_around(state, cid, id, &pending, Some(me), &keys)
-            .ok_or_else(|| "that message is no longer on this device".to_string());
+        return view::message_views_around(state, cid, id, &pending, Some(me), &keys, floor).ok_or_else(|| {
+            if floor.is_some() && state.message(id).is_some_and(|m| m.channel == cid) {
+                HISTORY_HIDDEN.to_string()
+            } else {
+                "that message is no longer on this device".to_string()
+            }
+        });
     }
-    Ok(view::message_views(state, cid, 100, &pending, Some(me), &keys))
+    Ok(view::message_views(state, cid, 100, &pending, Some(me), &keys, floor))
+}
+
+const HISTORY_HIDDEN: &str = "you can see only new messages in this channel";
+
+#[tauri::command]
+fn open_channel(app: tauri::State<App>, server_id: String, channel_id: String) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    app.channel_opens.lock().unwrap().entry(sid).or_default().insert(cid, chrono::Utc::now());
+    Ok(())
 }
 
 #[tauri::command]
@@ -344,9 +364,10 @@ fn search_messages(
     let query = search::SearchQuery::new(&terms, from, mentions, channel);
     let keys = channel_lock::holder_of(&app);
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let opens = app.channel_opens.lock().unwrap().get(&sid).cloned().unwrap_or_default();
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
-    Ok(search::search(state, &query, me, offset.map_or(search::Page::newest(), search::Page::at), &keys))
+    Ok(search::search(state, &query, me, offset.map_or(search::Page::newest(), search::Page::at), &keys, &opens, Some(chrono::Utc::now())))
 }
 
 #[tauri::command]
@@ -527,9 +548,16 @@ async fn send_poll(
     hours: Option<u32>,
 ) -> CmdResult<MessageView> {
     use commy_core::poll::{MAX_DURATION_HOURS, MAX_OPTIONS, MAX_OPTION_CHARS, MAX_QUESTION_CHARS, MIN_OPTIONS};
-    let sid = server_id.parse().map_err(err_to_string)?;
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid = channel_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        if !our_permissions(&app, state, profile.id).can_send_polls() {
+            return Err("you do not have permission to create polls here".into());
+        }
+    }
     let hours = hours.filter(|h| *h > 0);
     if hours.is_some_and(|h| h > MAX_DURATION_HOURS) {
         return Err(format!("a poll runs for up to {} days", MAX_DURATION_HOURS / 24));
@@ -615,12 +643,16 @@ async fn close_poll(
 
 async fn preview_card(app: &App, sid: ServerId, message: &Message, url: Option<&str>) -> Option<Attachment> {
     let url = url.filter(|u| message.content.contains(u))?;
-    let prepared = link_preview::prepared(url)?;
     let may_share_pictures = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid)?;
-        our_permissions(app, state, message.author).allows(Permissions::ATTACH_FILES)
+        let perms = our_permissions(app, state, message.author);
+        if !perms.can_embed_links() {
+            return None;
+        }
+        perms.allows(Permissions::ATTACH_FILES)
     };
+    let prepared = link_preview::prepared(url)?;
     let picture = match prepared.picture {
         Some(bytes) if may_share_pictures => {
             let size_bytes = bytes.len() as u64;
@@ -4299,12 +4331,13 @@ async fn save_event(
     let creator = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        let can_manage = our_permissions(&app, state, me.id).allows(Permissions::MANAGE_EVENTS);
+        let perms = our_permissions(&app, state, me.id);
+        let can_manage = perms.allows(Permissions::MANAGE_EVENTS);
         let existing = event_id.as_ref().and_then(|id| state.server.events.iter().find(|e| &e.id == id));
         match existing {
             Some(e) if e.creator == me.id || can_manage => e.creator,
             Some(_) => return Err("you can only edit events you created".into()),
-            None if can_manage => me.id,
+            None if perms.can_create_events() => me.id,
             None => return Err("you do not have permission to create events".into()),
         }
     };
@@ -4874,8 +4907,12 @@ async fn set_thread(
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_can_view(state, me.id, cid)?;
         let author = message_author(state, cid, root)?;
-        if author != me.id && !our_permissions(&app, state, me.id).allows(Permissions::MANAGE_MESSAGES) {
+        let perms = our_permissions(&app, state, me.id);
+        if author != me.id && !perms.allows(Permissions::MANAGE_MESSAGES) {
             return Err("only the person who started a thread or a moderator can change it".into());
+        }
+        if state.thread_of(cid, root).is_none() && !perms.can_create_threads() {
+            return Err("you do not have permission to start threads here".into());
         }
     }
     let event = ServerEvent::ThreadSet { server: sid, channel: cid, root, name, archived, locked, by: me.id };
@@ -5903,16 +5940,27 @@ fn role_access_permission(access: &str) -> CmdResult<(Permissions, &'static str)
         "emojis" => Ok((Permissions::ADD_EMOJIS, "change who can add emojis")),
         "stickers" => Ok((Permissions::ADD_STICKERS, "change who can add stickers")),
         "emoticons" => Ok((Permissions::ADD_EMOTICONS, "change who can add emoticons")),
+        "embeds" => Ok((Permissions::NO_EMBED_LINKS, "change who can embed links")),
+        "history" => Ok((Permissions::NO_READ_MESSAGE_HISTORY, "change who can read message history")),
+        "threads" => Ok((Permissions::NO_CREATE_THREADS, "change who can start threads")),
+        "polls" => Ok((Permissions::NO_SEND_POLLS, "change who can create polls")),
+        "events" => Ok((Permissions::NO_CREATE_EVENTS, "change who can create events")),
         _ => Err("unknown setting".into()),
     }
 }
 
 fn role_access_updates(roles: &[Role], permission: Permissions, restricted: bool, allowed: &[RoleId]) -> Vec<Role> {
+    let inverted = permission.is_restriction();
     roles
         .iter()
         .filter_map(|r| {
             let mut role = r.clone();
-            if r.is_everyone() {
+            if inverted {
+                role.permissions.remove(permission);
+                if restricted && !allowed.contains(&r.id) {
+                    role.permissions.insert(permission);
+                }
+            } else if r.is_everyone() {
                 role.permissions.remove(permission);
                 if !restricted {
                     role.permissions.insert(permission);
@@ -5927,6 +5975,79 @@ fn role_access_updates(roles: &[Role], permission: Permissions, restricted: bool
             (role.permissions != r.permissions).then_some(role)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod role_access_tests {
+    use super::*;
+    use commy_core::server::EVERYONE_ROLE_POSITION;
+
+    fn role(permissions: Permissions, position: u32) -> Role {
+        Role {
+            id: RoleId::new(),
+            name: "r".into(),
+            color: None,
+            permissions,
+            position,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        }
+    }
+
+    fn after(roles: &[Role], updates: Vec<Role>) -> Vec<Permissions> {
+        roles
+            .iter()
+            .map(|r| updates.iter().find(|u| u.id == r.id).map_or(r.permissions, |u| u.permissions))
+            .collect()
+    }
+
+    #[test]
+    fn restricting_everyone_sets_the_no_bit_on_every_role_except_the_allowed_ones() {
+        let roles = [
+            role(Permissions::default_member(), EVERYONE_ROLE_POSITION),
+            role(Permissions::MANAGE_MESSAGES, 1),
+            role(Permissions::NONE, 2),
+        ];
+        let bit = Permissions::NO_SEND_POLLS;
+        let updates = role_access_updates(&roles, bit, true, &[roles[2].id]);
+        assert_eq!(updates.len(), 2);
+        let perms = after(&roles, updates);
+        assert!(perms[0].contains(bit));
+        assert!(perms[1].contains(bit));
+        assert!(!perms[2].contains(bit));
+        assert!(perms[1].allows(Permissions::MANAGE_MESSAGES));
+    }
+
+    #[test]
+    fn lifting_a_restriction_clears_the_no_bit_everywhere_and_touches_nothing_else() {
+        let bit = Permissions::NO_EMBED_LINKS;
+        let roles = [
+            role(Permissions::default_member() | bit, EVERYONE_ROLE_POSITION),
+            role(Permissions::MANAGE_MESSAGES | bit, 1),
+            role(Permissions::NONE, 2),
+        ];
+        let updates = role_access_updates(&roles, bit, false, &[]);
+        assert_eq!(updates.len(), 2);
+        let perms = after(&roles, updates);
+        assert_eq!(perms[0], Permissions::default_member());
+        assert_eq!(perms[1], Permissions::MANAGE_MESSAGES);
+        assert_eq!(perms[2], Permissions::NONE);
+    }
+
+    #[test]
+    fn positive_permissions_keep_the_grant_model() {
+        let roles = [
+            role(Permissions::default_member(), EVERYONE_ROLE_POSITION),
+            role(Permissions::NONE, 1),
+        ];
+        let updates = role_access_updates(&roles, Permissions::ATTACH_FILES, true, &[roles[1].id]);
+        let perms = after(&roles, updates);
+        assert!(!perms[0].contains(Permissions::ATTACH_FILES));
+        assert!(perms[1].contains(Permissions::ATTACH_FILES));
+    }
 }
 
 #[tauri::command]
@@ -8046,6 +8167,7 @@ pub fn run() {
             saved::reminder_set,
             saved::reminder_cancel,
             get_messages,
+            open_channel,
             send_message,
             attach_file,
             attach_bytes,

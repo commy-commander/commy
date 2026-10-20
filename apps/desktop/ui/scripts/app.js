@@ -60,10 +60,11 @@ function mockPage(hits, offset) {
 
 function mockSearch({ serverId, terms, from, mentions, channelId, offset }) {
   const server = mock.servers[serverId];
+  const hidden = mockChatRestricted(server, "read_history");
   const matches = mockSearchMatcher({ terms, from, mentions }, server.members.find(m => m.id === mentions));
   const hits = server.channels
     .filter(c => holdsMessages(c) && (!channelId || c.id === channelId))
-    .flatMap(c => (mock.messages[c.id] || []).map(message => ({ channel: c.id, channel_name: c.name, message })))
+    .flatMap(c => (hidden ? historyWindow(mock.messages[c.id] || [], (mock.channelOpens || {})[c.id]) : mock.messages[c.id] || []).map(message => ({ channel: c.id, channel_name: c.name, message })))
     .filter(({ message }) => matches(message.author_id, message.content))
     .sort((a, b) => Date.parse(b.message.created_at) - Date.parse(a.message.created_at));
   return mockPage(hits, offset);
@@ -640,6 +641,14 @@ function mockProfileFor(member) {
   return publicProfile(member, canSeeProfile(member.profile_policy, { friend, sharesServer: true }));
 }
 
+function mockChatRestricted(server, field) {
+  return mock.plainMember && Boolean(server.chat_restricted && server.chat_restricted[field]);
+}
+
+function mockServerOfChannel(channelId) {
+  return Object.values(mock.servers).find(s => s.channels.some(c => c.id === channelId));
+}
+
 function mockCanSetVoiceStatus(channel) {
   return channel.kind === "voice" && (!mock.plainMember || (channel.voice_user_ids || []).includes("me"));
 }
@@ -690,7 +699,10 @@ async function mockInvoke(cmd, args = {}) {
       }
       return {
         ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
-        game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true, onboarding: s.onboarding || null,
+        game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: !mock.plainMember, onboarding: s.onboarding || null,
+        chat_restricted: { embed_links: false, read_history: false, create_threads: false, send_polls: false, create_events: false, ...(s.chat_restricted || {}) },
+        can_embed_links: !mockChatRestricted(s, "embed_links"), can_read_history: !mockChatRestricted(s, "read_history"), can_create_threads: !mockChatRestricted(s, "create_threads"),
+        can_send_polls: !mockChatRestricted(s, "send_polls"), can_create_events: !mockChatRestricted(s, "create_events"),
         channels: s.channels
           .map((c, i) => {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
@@ -804,11 +816,15 @@ async function mockInvoke(cmd, args = {}) {
         expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock",
         background: background ? mock.serverImages?.[background] || null : null };
     }
+    case "open_channel": (mock.channelOpens ||= {})[args.channelId] = Date.now(); return null;
     case "get_messages": {
-      const all = (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+      const kept = (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+      const historyOwner = mockServerOfChannel(args.channelId);
+      const hidden = historyOwner && mockChatRestricted(historyOwner, "read_history");
+      const all = hidden ? historyWindow(kept, (mock.channelOpens || {})[args.channelId]) : kept;
       if (!args.around) return all.slice(-100);
       const at = all.findIndex(m => m.id === args.around);
-      if (at === -1) throw "that message is no longer on this device";
+      if (at === -1) throw hidden && kept.some(m => m.id === args.around) ? "you can see only new messages in this channel" : "that message is no longer on this device";
       return all.slice(Math.max(0, at - 50), at + 51);
     }
     case "search_messages": return mockSearch(args);
@@ -840,6 +856,7 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "send_poll": {
+      if (mockChatRestricted(mockServerOfChannel(args.channelId) || {}, "send_polls")) throw "you do not have permission to create polls here";
       const closes_at = args.hours ? new Date(Date.now() + args.hours * 3600e3).toISOString() : null;
       const msg = {
         id: crypto.randomUUID(), channel: args.channelId, author_id: "me", author_name: mock.user.username, content: "",
@@ -884,6 +901,7 @@ async function mockInvoke(cmd, args = {}) {
       const root = (mock.messages[args.channelId] || []).find(m => m.id === args.rootId);
       if (!root) throw "that message no longer exists";
       if (mock.plainMember && root.author_id !== "me") throw "only the person who started a thread or a moderator can change it";
+      if (!(c.threads || []).some(t => t.root === args.rootId) && mockChatRestricted(mock.servers[args.serverId], "create_threads")) throw "you do not have permission to start threads here";
       const name = (args.name || "").replace(/\s+/g, " ").trim() || null;
       c.threads = (c.threads || []).filter(t => t.root !== args.rootId);
       if (name || args.archived || args.locked) c.threads.push({ root: args.rootId, name, archived: Boolean(args.archived), locked: Boolean(args.locked), by: "me" });
@@ -1331,13 +1349,15 @@ async function mockInvoke(cmd, args = {}) {
     case "pick_sound": return null;
     case "set_role_access": {
       const srv = mock.servers[args.serverId];
-      const perm = { files: "attach_files", emojis: "add_emojis", stickers: "add_stickers", emoticons: "add_emoticons" }[args.access];
-      if (args.access === "files") srv.uploads_restricted = args.restricted;
+      const chat = EVERYONE_CHAT_ACCESS.find(spec => spec.key === args.access);
+      const perm = chat ? chat.permission : { files: "attach_files", emojis: "add_emojis", stickers: "add_stickers", emoticons: "add_emoticons" }[args.access];
+      if (chat) srv.chat_restricted = { ...(srv.chat_restricted || {}), [chat.field]: args.restricted };
+      else if (args.access === "files") srv.uploads_restricted = args.restricted;
       else srv.add_restricted = { ...(srv.add_restricted || {}), [args.access]: args.restricted };
       for (const r of srv.roles || []) {
         const has = (r.permissions || []).includes(perm);
-        const want = args.restricted && args.roleIds.includes(r.id);
-        if (args.restricted && want !== has) r.permissions = want ? [...(r.permissions || []), perm] : r.permissions.filter(x => x !== perm);
+        const want = chat ? args.restricted && !args.roleIds.includes(r.id) : args.restricted && args.roleIds.includes(r.id);
+        if ((chat || args.restricted) && want !== has) r.permissions = want ? [...(r.permissions || []), perm] : r.permissions.filter(x => x !== perm);
       }
       return null;
     }
@@ -1391,6 +1411,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "save_event": {
       const s = mock.servers[args.serverId];
+      if (!args.eventId && mockChatRestricted(s, "create_events")) throw "you do not have permission to create events";
       s.events = (s.events || []).filter(e => e.id !== args.eventId);
       const channel = s.channels.find(c => c.id === args.channelId);
       s.events.push({ id: args.eventId || crypto.randomUUID(), title: args.title, description: args.description, start: args.start, end: args.end,
@@ -4708,6 +4729,7 @@ function renderMessages(messages) {
   box.dataset.view = viewKey;
   box.innerHTML = "";
   if (state.view === "dm" && state.currentDm) box.appendChild(buildDmIntro());
+  else if (state.currentChannel && state.view === "server" && !canReadHistory(state.currentServer)) box.appendChild(historyNotice());
   else if (state.currentChannel) box.appendChild(buildChannelIntro(state.currentChannel));
   syncThreadsButton(messages);
   if (!messages.length) return;
@@ -5133,6 +5155,14 @@ function buildChannelIntro(channel) {
   return intro;
 }
 
+function historyNotice() {
+  const row = el("div", "history-notice");
+  row.setAttribute("role", "status");
+  row.appendChild(svgIcon("eyeOff", 16));
+  row.appendChild(el("span", null, HISTORY_NOTICE));
+  return row;
+}
+
 function dayDivider(date) {
   const row = el("div", "day-divider");
   row.appendChild(el("span", "day-divider-label", dayLabel(date)));
@@ -5200,7 +5230,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   if (held || message.tts) grouped = false;
   const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : "") + (held ? " held" : "") + (message.tts ? " tts" : ""));
   row.dataset.id = message.id;
-  row.appendChild(messageActions(message, inThread));
+  row.appendChild(messageActions(message, inThread, replies));
   if (message.reply_to) row.appendChild(replyReference(message));
 
   const avatar = grouped ? el("div", "avatar spacer", "") : makeAvatar(message.author_id, message.author_name);
@@ -5234,9 +5264,9 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
       inlineMark = false;
       body.appendChild(content);
     }
-    body.append(...imageEmbeds(imageLinks(message.content)));
+    if (showsEmbeds(message)) body.append(...imageEmbeds(imageLinks(message.content)));
   }
-  if (linkPreviewPrefs().show) {
+  if (linkPreviewPrefs().show && showsEmbeds(message)) {
     for (const preview of message.previews || []) body.appendChild(renderLinkPreview(preview));
   }
   if (message.poll) body.appendChild(renderPoll(message));
@@ -6189,7 +6219,13 @@ function canManageMessagesHere() {
 }
 
 function canManageCurrentThread(root) {
-  return canManageThread(root, { userId: state.user && state.user.id, canManageMessages: canManageMessagesHere() });
+  const meta = root ? threadMetaOf(root.id) : null;
+  return canManageThread(root, {
+    userId: state.user && state.user.id,
+    canManageMessages: canManageMessagesHere(),
+    meta,
+    canCreateThreads: canCreateThreads(state.currentServer),
+  });
 }
 
 function openThread(rootId) {
@@ -6560,7 +6596,7 @@ function dmListShown() {
   return state.view === "dm" || isGroupView();
 }
 
-function messageActions(message, inThread = false) {
+function messageActions(message, inThread = false, replies = 0) {
   const bar = el("div", "msg-actions");
   const add = (icon, title, onClick, cls = "") => {
     const btn = el("button", cls);
@@ -6578,7 +6614,9 @@ function messageActions(message, inThread = false) {
       add("reply", "Reply", () => $("thread-input").focus());
     } else {
       add("reply", "Reply", () => startReply(message));
-      if (state.view === "server") add("thread", "Open Thread", () => openThread(message.id));
+      if (state.view === "server" && threadEntryShown({ replies, meta: threadMetaOf(message.id), canCreate: canCreateThreads(state.currentServer) })) {
+        add("thread", "Open Thread", () => openThread(message.id));
+      }
     }
   }
   if (state.view === "server" && canPinIn(state.currentServer, state.currentChannel)) {
@@ -8311,7 +8349,7 @@ function openEvents() {
   eventsView.month = new Date(first.getFullYear(), first.getMonth(), 1);
   eventsView.day = null;
   $("events-title").textContent = `${state.currentServer.name} Events`;
-  $("event-create").classList.toggle("hidden", !state.currentServer.can_manage_events);
+  $("event-create").classList.toggle("hidden", !canCreateEvents(state.currentServer));
   $("events-layer").classList.remove("hidden");
   renderEvents();
 }
@@ -8342,7 +8380,7 @@ function renderEvents() {
     const empty = el("div", "events-empty");
     empty.appendChild(svgIcon("calendar", 40));
     empty.appendChild(el("h3", null, "No upcoming events"));
-    empty.appendChild(el("p", null, server.can_manage_events ? "Schedule one so people know when to show up." : "Check back later."));
+    empty.appendChild(el("p", null, canCreateEvents(server) ? "Schedule one so people know when to show up." : "Check back later."));
     body.appendChild(empty);
     return;
   }
@@ -9177,8 +9215,8 @@ async function removeRoleBanner(server, role) {
 const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff", "c05ccf", "ff6fa8", "99aab5"];
 
 const PERMISSION_GROUPS = [
-  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
-  ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "send_tts_messages", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
+  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "create_events", "manage_events", "view_audit_log"]],
+  ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "send_tts_messages", "embed_links", "read_message_history", "create_threads", "send_polls", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
   ["Voice", ["priority_speaker"]],
 ];
@@ -9323,9 +9361,13 @@ function roleForm(server, role, onClose) {
     const input = el("input");
     input.type = "checkbox";
     input.value = value;
-    input.checked = held.has(value);
+    input.checked = switchOn(held, value);
     permInputs.push(input);
-    wrap.append(input, document.createTextNode(labels.get(value)));
+    const text = el("span", "perm-text");
+    text.appendChild(el("span", "perm-name", labels.get(value)));
+    const hint = permissionHint(value);
+    if (hint && cls !== "rf-admin") text.appendChild(el("span", "perm-hint", hint));
+    wrap.append(input, text);
     return wrap;
   };
   body.appendChild(el("div", "setting-title role-perms-title", "Permissions"));
@@ -9373,7 +9415,7 @@ function roleForm(server, role, onClose) {
       name.focus();
       return;
     }
-    const permissions = permInputs.filter(input => input.checked).map(input => input.value);
+    const permissions = namesToSave(permInputs.map(input => [input.value, input.checked]));
     try {
       let roleId = role && role.id;
       if (creating) {
@@ -13495,8 +13537,10 @@ async function sendDm() {
 }
 
 async function selectChannel(channel) {
+  const switched = Boolean(channel) && (!state.currentChannel || channel.id !== state.currentChannel.id);
   if (state.currentChannel && (!channel || channel.id !== state.currentChannel.id)) state.previousChannel = state.currentChannel;
   state.currentChannel = channel;
+  if (switched && state.currentServer) await invoke("open_channel", { serverId: state.currentServer.id, channelId: channel.id }).catch(() => {});
   if (channel && state.currentServer && !state.currentServer.group) rememberSwitcherRecent(`channel:${channel.id}`);
   if (channel) openChannelWithLine(channel);
   renderDmRequestBar(null);
@@ -13625,6 +13669,11 @@ function refreshLinkDraft() {
   const token = ++linkDraft.token;
   renderLinkDraft();
   if (!url || url === linkDraft.dismissed) return;
+  if (!canEmbedLinks(state.currentServer)) {
+    linkDraft.preview = { off: true, url };
+    renderLinkDraft();
+    return;
+  }
   linkDraft.loading = invoke("prepare_link_preview", { url })
     .catch(() => null)
     .then(preview => {
@@ -13651,6 +13700,13 @@ function renderLinkDraft() {
   if (!visible) return;
   const thumb = $("link-draft-thumb");
   thumb.replaceChildren();
+  bar.classList.toggle("off", Boolean(preview.off));
+  if (preview.off) {
+    thumb.appendChild(svgIcon("link", 18));
+    $("link-draft-title").textContent = LINK_EMBED_OFF.title;
+    $("link-draft-site").textContent = LINK_EMBED_OFF.sub;
+    return;
+  }
   if (preview.image) {
     const img = el("img");
     img.alt = "";
@@ -13670,7 +13726,7 @@ function dismissLinkDraft() {
 
 async function previewUrlFor(content) {
   const url = previewableDraftLink(content);
-  if (!url || url === linkDraft.dismissed) return null;
+  if (!url || url === linkDraft.dismissed || !canEmbedLinks(state.currentServer)) return null;
   const pending = url === linkDraft.url && linkDraft.loading
     ? linkDraft.loading
     : invoke("prepare_link_preview", { url }).catch(() => null);
@@ -13843,7 +13899,7 @@ function toggleComposerMenu() {
   $("cm-video").classList.toggle("hidden", !files);
   $("cm-gif").classList.toggle("hidden", !files || (!gifSettings().key && !serverHasGifs()));
   $("cm-voice").classList.toggle("hidden", !voice || voiceRec.target !== null);
-  $("cm-poll").classList.toggle("hidden", state.view !== "server");
+  $("cm-poll").classList.toggle("hidden", state.view !== "server" || !canSendPolls(state.currentServer));
   placePopup(menu, $("attach-btn"), "above");
 }
 
@@ -16565,6 +16621,10 @@ const PERMISSION_LABELS = [
   ["attach_files", "Send Files and Images"],
   ["send_voice_messages", "Send Voice Messages"],
   ["send_tts_messages", "Send Text-to-Speech Messages"],
+  ["embed_links", "Embed Links"],
+  ["read_message_history", "Read Message History"],
+  ["create_threads", "Create Threads"],
+  ["send_polls", "Create Polls"],
   ["add_emojis", "Add Emojis"],
   ["add_stickers", "Add Stickers"],
   ["add_emoticons", "Add Emoticons"],
@@ -16572,6 +16632,7 @@ const PERMISSION_LABELS = [
   ["post_announcements", "Post Announcements"],
   ["mention_everyone", "Mention Everyone and Any Role"],
   ["manage_expressions", "Manage Expressions"],
+  ["create_events", "Create Events"],
   ["manage_events", "Manage Events"],
   ["manage_roles", "Manage Roles"],
   ["kick_members", "Kick Members"],
@@ -17276,8 +17337,38 @@ function syncAttachAccess() {
   $("attach-btn").title = locked ? "You can't send files or voice messages in this server" : "Attach";
 }
 
+function renderEveryoneChatAccess(server) {
+  const box = $("chat-access");
+  box.replaceChildren();
+  box.appendChild(el("div", "setting-title", "Everyone can"));
+  box.appendChild(el("div", "setting-sub", "What every member may do. Switching one off applies to every role; turn it back on in a role's form to let that role through. The owner and administrators are never held back."));
+  const save = async (access, restricted, ids) => {
+    try {
+      await invoke("set_role_access", { serverId: server.id, access, restricted, roleIds: ids });
+      await refreshCurrentServer();
+      openServerSettings();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  };
+  for (const spec of EVERYONE_CHAT_ACCESS) {
+    const row = el("label", "setting-row chat-access-row");
+    const text = el("div");
+    text.append(el("div", "setting-title", spec.title), el("div", "setting-sub", spec.sub));
+    const check = el("input", "switch");
+    check.type = "checkbox";
+    check.checked = !everyoneLacks(server, spec);
+    check.disabled = !server.can_manage_roles;
+    check.onchange = () => save(spec.key, !check.checked, []);
+    row.append(text, check);
+    box.appendChild(row);
+  }
+}
+
 function renderRoleSettings(server) {
   renderRoleAccess(server, "files");
+  renderEveryoneChatAccess(server);
   const list = $("manage-role-list");
   list.innerHTML = "";
   for (const role of server.roles) {
@@ -17313,9 +17404,10 @@ function renderRoleSettings(server) {
     if (role.self_assignable) label.appendChild(el("span", "kind pickable", "pickable"));
     if (role.mentionable) label.appendChild(el("span", "kind", "anyone can mention"));
     if (role.hoist) label.appendChild(el("span", "kind", "own group"));
-    const count = role.permissions.length;
+    const granted = grantedNames(role.permissions);
+    const count = granted.length;
     const perms = el("span", "kind", count ? (count === 1 ? "1 permission" : `${count} permissions`) : "no permissions");
-    if (count) perms.title = role.permissions.map(p => (PERMISSION_LABELS.find(([v]) => v === p) || [p, p])[1]).join(", ");
+    if (count) perms.title = granted.map(p => (PERMISSION_LABELS.find(([v]) => v === p) || [p, p])[1]).join(", ");
     label.appendChild(perms);
     row.appendChild(label);
     const edit = el("button", "btn-secondary btn-small", "Edit");

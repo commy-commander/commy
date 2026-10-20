@@ -52,6 +52,8 @@ pub enum StoreError {
     NoUploads,
     #[error("members without the send voice messages permission cannot send voice messages here")]
     NoVoiceMessages,
+    #[error("members without the create polls permission cannot post polls here")]
+    NoPolls,
     #[error("the signer may not do that here")]
     NotAllowed,
     #[error("unsigned event from a member whose key is known")]
@@ -1901,6 +1903,12 @@ impl ServerState {
             && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::SEND_VOICE_MESSAGES)
         {
             return Err(StoreError::NoVoiceMessages);
+        }
+        if !held
+            && message.attachments.iter().any(Attachment::is_poll)
+            && !self.server.permissions_for(message.author).can_send_polls()
+        {
+            return Err(StoreError::NoPolls);
         }
         if !held {
             if let Some(changed) = self.bind_proofs(&message) {
@@ -5542,6 +5550,42 @@ mod poll_tests {
         assert!(!state.server.permissions_for(member).allows(Permissions::ATTACH_FILES));
         let message = post_poll(&mut state, channel, member, poll(false, None));
         assert_eq!(state.message(message.id).unwrap().poll(), Some(poll(false, None)));
+    }
+
+    #[test]
+    fn polls_need_the_send_polls_permission() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let member = join(&mut state, "member");
+        let first = post_poll(&mut state, channel, member, poll(false, None));
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.insert(Permissions::NO_SEND_POLLS);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        let mut blocked = Message::new(channel, member, "");
+        blocked.attachments.push(poll(true, None).into_attachment());
+        let blocked = signed(&state, blocked);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: blocked }), Err(StoreError::NoPolls));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first.clone() }), Ok(false), "held polls stay");
+        assert_eq!(state.apply(vote(&state, &first, member, vec![0])), Ok(true), "and can still be voted on");
+        let words = post(&state, channel, member, "no poll here");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: words }), Ok(true));
+        post_poll(&mut state, channel, owner, poll(false, None));
+        let pollsters = crate::server::Role {
+            id: crate::ids::RoleId::new(),
+            name: "pollsters".into(),
+            color: None,
+            permissions: Permissions::NONE,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        };
+        let rid = pollsters.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: pollsters }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: member, role: rid }).unwrap();
+        post_poll(&mut state, channel, member, poll(true, None));
     }
 
     #[test]
