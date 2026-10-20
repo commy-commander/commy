@@ -42,6 +42,7 @@ impl Permissions {
     pub const MANAGE_NICKNAMES: Permissions = Permissions(1 << 32);
     pub const SEND_VOICE_MESSAGES: Permissions = Permissions(1 << 33);
     pub const PRIORITY_SPEAKER: Permissions = Permissions(1 << 34);
+    pub const SEND_TTS_MESSAGES: Permissions = Permissions(1 << 35);
 
     pub fn default_member() -> Permissions {
         Self::VIEW_CHANNELS
@@ -58,6 +59,7 @@ impl Permissions {
             | Self::ADD_EMOTICONS
             | Self::CHANGE_NICKNAME
             | Self::SEND_VOICE_MESSAGES
+            | Self::SEND_TTS_MESSAGES
     }
 
     pub fn all() -> Permissions {
@@ -114,6 +116,10 @@ impl Permissions {
 
     pub fn can_set_voice_status(self, in_channel: bool) -> bool {
         self.allows(Self::MANAGE_CHANNELS) || (in_channel && self.allows(Self::SPEAK))
+    }
+
+    pub fn can_send_tts(self) -> bool {
+        self.allows(Self::SEND_TTS_MESSAGES)
     }
 }
 
@@ -173,6 +179,7 @@ mod tests {
         let p = Permissions::default_member();
         assert!(p.allows(Permissions::SEND_MESSAGES));
         assert!(p.allows(Permissions::SEND_VOICE_MESSAGES));
+        assert!(p.can_send_tts());
         assert!(!p.allows(Permissions::KICK_MEMBERS));
         assert!(!p.allows(Permissions::TIME_OUT_MEMBERS));
         assert!(!p.allows(Permissions::MANAGE_SERVER));
@@ -192,6 +199,16 @@ mod tests {
         assert!(Permissions::ADMINISTRATOR.can_change_own_nickname());
         assert!(!Permissions::SEND_MESSAGES.can_change_own_nickname());
         assert_ne!(Permissions::CHANGE_NICKNAME, Permissions::MANAGE_NICKNAMES);
+    }
+
+    #[test]
+    fn text_to_speech_is_its_own_permission() {
+        assert!(Permissions::SEND_TTS_MESSAGES.can_send_tts());
+        assert!(Permissions::ADMINISTRATOR.can_send_tts());
+        assert!(!Permissions::SEND_MESSAGES.can_send_tts());
+        assert!(!Permissions::SEND_VOICE_MESSAGES.can_send_tts());
+        assert_ne!(Permissions::SEND_TTS_MESSAGES, Permissions::SEND_VOICE_MESSAGES);
+        assert_eq!(Permissions::SEND_TTS_MESSAGES.0, 1 << 35);
     }
 
     #[test]

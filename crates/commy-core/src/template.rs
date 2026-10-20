@@ -132,6 +132,7 @@ fn known_permissions() -> Permissions {
         Permissions::MOVE_MEMBERS,
         Permissions::SEND_VOICE_MESSAGES,
         Permissions::PRIORITY_SPEAKER,
+        Permissions::SEND_TTS_MESSAGES,
     ]
     .into_iter()
     .fold(Permissions::NONE, |acc, p| acc | p)

@@ -1,7 +1,7 @@
 "use strict";
 
 const SUGGEST_LIMIT = 8;
-const COMPOSER_COMMANDS = [{ name: "gif", needs: "gifs" }];
+const COMPOSER_COMMANDS = [{ name: "gif", needs: "gifs" }, { name: "tts", needs: "tts" }];
 
 function suggestTokenAt(value, caret) {
   const text = String(value || "");
@@ -84,5 +84,5 @@ function suggestionInsert(item) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { SUGGEST_LIMIT, suggestTokenAt, emojiSuggestions, commandSuggestions, suggestionInsert };
+  module.exports = { SUGGEST_LIMIT, COMPOSER_COMMANDS, suggestTokenAt, emojiSuggestions, commandSuggestions, suggestionInsert };
 }

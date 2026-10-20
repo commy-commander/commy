@@ -30,8 +30,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Rich chat.** Replies, reactions, edits, named threads that can be
   archived or locked, emoji (including custom server emoji), images and
   files shown inline, voice messages recorded from the composer and played
-  back in place, clickable links, polls with a closing time, and a GIF
-  picker when the server operator has set up a GIF provider key.
+  back in place, `/tts` messages that readers can have read aloud, clickable
+  links, polls with a closing time, and a GIF picker when the server operator
+  has set up a GIF provider key.
 - **Message search.** Search a server by keyword, phrase, author, mention or
   channel. Search runs on your device over the history it keeps, and a result
   jumps straight to the message, even weeks back. Save any message to a
