@@ -1,7 +1,9 @@
-use commy_core::{DmMessage, UserProfile};
+use chrono::{DateTime, Utc};
+use commy_core::{DmMessage, MessageId, Signature, UserId, UserProfile};
 use serde::{Deserialize, Serialize};
 
-pub const DM_ALPN: &[u8] = b"commy/dm/2";
+pub const DM_ALPN: &[u8] = b"commy/dm/3";
+pub const LEGACY_DM_ALPN: &[u8] = b"commy/dm/2";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DmEnvelope {
@@ -22,6 +24,50 @@ impl DmEnvelope {
         data_encoding::HEXLOWER_PERMISSIVE
             .decode(self.message.from_node.trim().as_bytes())
             .is_ok_and(|bytes| bytes == node)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LegacyDmMessage {
+    pub id: MessageId,
+    pub from: UserId,
+    pub to: UserId,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+    pub from_node: String,
+    pub sig: Option<Signature>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LegacyDmEnvelope {
+    pub message: LegacyDmMessage,
+    pub sender: UserProfile,
+}
+
+impl LegacyDmEnvelope {
+    pub fn downgrade(envelope: &DmEnvelope) -> Option<Self> {
+        if !envelope.message.is_plain() {
+            return None;
+        }
+        let m = &envelope.message;
+        Some(Self {
+            message: LegacyDmMessage {
+                id: m.id,
+                from: m.from,
+                to: m.to,
+                content: m.content.clone(),
+                created_at: m.created_at,
+                from_node: m.from_node.clone(),
+                sig: m.sig,
+            },
+            sender: envelope.sender.clone(),
+        })
+    }
+
+    pub fn upgrade(self) -> DmEnvelope {
+        let LegacyDmMessage { id, from, to, content, created_at, from_node, sig } = self.message;
+        let message = DmMessage { id, from, to, content, created_at, from_node, sig, ..DmMessage::new(from, to, "") };
+        DmEnvelope { message, sender: self.sender }
     }
 }
 
@@ -106,8 +152,24 @@ mod tests {
     }
 
     #[test]
-    fn alpn_is_bumped_for_signed_messages() {
-        assert_eq!(DM_ALPN, b"commy/dm/2");
+    fn alpn_is_bumped_for_rich_messages() {
+        assert_eq!(DM_ALPN, b"commy/dm/3");
+        assert_eq!(LEGACY_DM_ALPN, b"commy/dm/2");
+    }
+
+    #[tokio::test]
+    async fn a_legacy_envelope_upgrades_with_its_signature_intact() {
+        let (envelope, _) = signed_envelope("from an older build");
+        let legacy = LegacyDmEnvelope::downgrade(&envelope).unwrap();
+        let mut rich = envelope.clone();
+        rich.message.reply_to = Some(envelope.message.id);
+        assert!(LegacyDmEnvelope::downgrade(&rich).is_none(), "older builds cannot read replies");
+        let (mut a, mut b) = tokio::io::duplex(16 * 1024);
+        write_frame(&mut a, &legacy).await.unwrap();
+        let got: LegacyDmEnvelope = read_frame(&mut b).await.unwrap().unwrap();
+        let upgraded = got.upgrade();
+        assert_eq!(upgraded, envelope);
+        assert!(upgraded.signed_by_sender());
     }
 
     #[tokio::test]
