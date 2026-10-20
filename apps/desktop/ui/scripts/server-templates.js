@@ -18,7 +18,7 @@ function templateGroups(template) {
   });
   for (const channel of channels) {
     if (channel.kind === "category") continue;
-    const group = byIndex.get(channel.category) || (channel.kind === "voice" ? looseVoice : looseText);
+    const group = byIndex.get(channel.category) || (channel.kind === "voice" || channel.kind === "stage" ? looseVoice : looseText);
     group.channels.push({ name: channel.name, kind: channel.kind });
   }
   return groups.filter(g => g.channels.length);
@@ -30,7 +30,7 @@ function plural(count, word) {
 
 function templateSummary(template) {
   const channels = (template.channels || []).filter(c => c.kind !== "category");
-  const voice = channels.filter(c => c.kind === "voice").length;
+  const voice = channels.filter(c => c.kind === "voice" || c.kind === "stage").length;
   const parts = [plural(channels.length - voice, "text channel"), plural(voice, "voice channel")];
   const roles = (template.roles || []).length;
   if (roles) parts.push(plural(roles, "role"));

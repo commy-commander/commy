@@ -73,6 +73,7 @@ pub enum AuditKind {
     VoiceStatusSet,
     ForumTags,
     ForumPostEdit,
+    StageSpeaker,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -323,6 +324,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             } else {
                 (K::ThreadRename, target, label, name.as_deref().map(clip))
             }
+        }
+        E::StageSet { user, speaker, .. } => {
+            let (target, label) = member(user);
+            (K::StageSpeaker, target, label, Some(if *speaker { "speaker" } else { "audience" }.into()))
         }
         E::InviteTrack { invite, .. } => (K::InviteCreate, Some(invite.creator.to_string()), Some(clip(&invite.code)), None),
         E::InviteRevoke { code, creator, .. } => {
@@ -644,6 +649,29 @@ mod tests {
         assert_eq!(log[0].label.as_deref(), Some("nova"));
         assert_eq!(log[0].target, Some(user.to_string()));
         assert!(log[0].detail.is_some(), "names the channel");
+    }
+
+    #[test]
+    fn stage_speaker_changes_are_logged_with_their_direction() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let stage = Channel::new("Town Hall", ChannelKind::Stage, 9);
+        let stage_id = stage.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: stage }).unwrap();
+        let guest = join(&mut state, "guest");
+        let sign = |at, speaker| {
+            let event = ServerEvent::StageSet { server: sid, channel: stage_id, user: guest, speaker, by: owner };
+            SignedEvent::sign(sid, owner, at, event, &identity_for(owner))
+        };
+        assert_eq!(state.apply_signed(&sign(1_000, true)), Ok(true));
+        assert_eq!(state.apply_signed(&sign(2_000, true)), Ok(false));
+        assert_eq!(state.apply_signed(&sign(3_000, false)), Ok(true));
+        let log = state.audit_log();
+        assert_eq!(log.len(), 2, "a repeat changes nothing");
+        assert_eq!(log[0].kind, AuditKind::StageSpeaker);
+        assert_eq!(log[0].label.as_deref(), Some("guest"));
+        assert_eq!(log[0].detail.as_deref(), Some("speaker"));
+        assert_eq!(log[1].detail.as_deref(), Some("audience"));
     }
 
     #[test]

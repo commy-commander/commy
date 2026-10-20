@@ -49,6 +49,7 @@ const AUDIT_GROUP_OF = {
   member_nickname: "members",
   voice_move: "members",
   voice_disconnect: "members",
+  stage_speaker: "members",
   emoji_add: "expressions",
   emoji_remove: "expressions",
   sound_add: "expressions",
@@ -76,7 +77,7 @@ const AUDIT_GROUP_OF = {
   voice_status_set: "channels",
 };
 
-const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", announcement: "announcement channel", category: "category", forum: "forum channel" };
+const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", stage: "stage channel", announcement: "announcement channel", category: "category", forum: "forum channel" };
 
 const VOICE_MODERATION_WORDS = {
   muted: "server-muted",
@@ -143,6 +144,7 @@ function describeAudit(entry) {
     case "voice_move": return ["moved ", member, " to ", auditStrong(detail || "another voice channel")];
     case "voice_disconnect": return ["disconnected ", member, " from voice"];
     case "voice_moderate": return VOICE_MODERATION_WORDS[detail] ? [`${VOICE_MODERATION_WORDS[detail]} `, member] : ["lifted the server mute on ", member];
+    case "stage_speaker": return detail === "speaker" ? ["invited ", member, " to speak on the stage"] : ["moved ", member, " to the stage audience"];
     case "member_timeout": return detail ? ["timed out ", member, ` for ${detail}`] : ["timed out ", member];
     case "member_timeout_clear": return ["removed the timeout on ", member];
     case "member_nickname": return detail ? ["changed ", member, "'s nickname to ", auditStrong(detail)] : ["cleared ", member, "'s nickname"];
