@@ -182,6 +182,11 @@ pub enum ServerEvent {
         blob: String,
         volume: f32,
     },
+    PronounsSet {
+        server: ServerId,
+        user: UserId,
+        pronouns: Option<String>,
+    },
     ChannelAccessSet {
         server: ServerId,
         channel: ChannelId,
@@ -244,7 +249,8 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::SoundSharingSet { server, shareable: true }), 50);
         let play = ServerEvent::SharedSoundPlay { server, channel, user, name: "n".into(), blob: "b".into(), volume: 1.0 };
         assert_eq!(wire_tag(play), 51);
-        assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 52);
+        assert_eq!(wire_tag(ServerEvent::PronounsSet { server, user, pronouns: None }), 52);
+        assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 53);
     }
 
     #[test]

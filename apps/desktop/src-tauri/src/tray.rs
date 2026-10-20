@@ -109,13 +109,14 @@ fn blend(px: &mut [u8], rgb: [u8; 3], alpha: f32) {
     px[3] = px[3].max((alpha * 255.0) as u8);
 }
 
-fn base_icon() -> Option<&'static image::RgbaImage> {
-    static BASE: std::sync::OnceLock<Option<image::RgbaImage>> = std::sync::OnceLock::new();
-    BASE.get_or_init(|| {
-        let decoded = image::load_from_memory(ICON_PNG).ok()?.to_rgba8();
-        Some(image::imageops::resize(&decoded, 64, 64, image::imageops::FilterType::Triangle))
-    })
-    .as_ref()
+static UNREAD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn base_icon() -> Option<image::RgbaImage> {
+    let source = match crate::app_icon::tray_image() {
+        Some(chosen) => chosen,
+        None => image::load_from_memory(ICON_PNG).ok()?.to_rgba8(),
+    };
+    Some(image::imageops::resize(&source, 64, 64, image::imageops::FilterType::Triangle))
 }
 
 pub fn icon(count: u32) -> Option<Image<'static>> {
@@ -180,7 +181,14 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+pub fn refresh_icon(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_icon(icon(UNREAD.load(std::sync::atomic::Ordering::Relaxed)));
+    }
+}
+
 pub fn set_unread(app: &AppHandle, count: u32) {
+    UNREAD.store(count, std::sync::atomic::Ordering::Relaxed);
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_icon(icon(count));
         let tip = match count {

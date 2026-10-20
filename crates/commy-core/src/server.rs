@@ -147,6 +147,8 @@ pub struct Server {
     #[serde(default)]
     pub sounds_shareable: bool,
     #[serde(default)]
+    pub pronouns: std::collections::BTreeMap<UserId, String>,
+    #[serde(default)]
     pub game_tags: Vec<String>,
     #[serde(default)]
     pub game_tag_meta: Vec<GameTagMeta>,
@@ -214,6 +216,7 @@ impl Server {
             emojis_shareable: false,
             soundboard_open: false,
             sounds_shareable: false,
+            pronouns: std::collections::BTreeMap::new(),
             game_tags: vec![],
             game_tag_meta: vec![],
             rules: None,

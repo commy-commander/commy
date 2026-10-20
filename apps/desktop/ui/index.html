@@ -19,7 +19,12 @@
       <button class="rail-btn rail-add" id="add-server-btn" title="Add a Server">
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
       </button>
-      <div class="rail-spacer"></div>
+      <div class="rail-spacer">
+        <div class="rail-context" id="rail-context" aria-live="polite">
+          <span class="server-icon rail-context-icon" id="rail-context-icon"></span>
+          <span class="rail-context-name" id="rail-context-name"></span>
+        </div>
+      </div>
       <footer class="user-panel">
       <button class="user-chip" id="user-chip" title="Set status">
         <span class="avatar" id="me-avatar">?</span>
@@ -715,6 +720,9 @@
                   <option value="invisible">Appear Offline</option>
                 </select>
               </label>
+              <label class="field-label">Pronouns
+                <input id="account-pronouns" type="text" maxlength="24" autocomplete="off" placeholder="Optional, like she/her, he/him or they/them" />
+              </label>
               <label class="field-label">About Me
                 <span class="field-emoji">
                   <textarea id="account-about" rows="3" maxlength="190" placeholder="A line or two about you, shown on your profile"></textarea>
@@ -791,13 +799,17 @@
               <div class="segmented cam-bg" id="cam-bg" role="radiogroup" aria-labelledby="cam-bg-label">
                 <button data-bg="off" role="radio"><strong>Off</strong></button>
                 <button data-bg="blur" role="radio"><strong>Blur</strong></button>
+                <button data-bg="image" role="radio"><strong>Image</strong></button>
               </div>
               <label class="setting-row cam-mirror-row">
                 <span class="setting-title">Mirror my video</span>
                 <input type="checkbox" id="cam-mirror" class="switch" />
               </label>
               <div class="setting-sub cam-fx-note" id="cam-fx-note"></div>
-              <button class="btn-secondary btn-small" id="cam-preview-btn">Test Camera</button>
+              <div class="cam-actions">
+                <button class="btn-secondary btn-small" id="cam-preview-btn">Test Camera</button>
+                <button class="btn-secondary btn-small" id="cam-backdrop-btn">Choose Image</button>
+              </div>
             </div>
           </div>
           <div class="settings-card">
@@ -1150,6 +1162,16 @@
             </div>
             <input type="checkbox" id="compact-toggle" class="switch" />
           </label>
+          <h2 class="settings-subhead">App Icon</h2>
+          <div class="settings-card icon-card">
+            <div class="setting-sub">Shown in your taskbar or dock while Commy is running.</div>
+            <div class="icon-grid" id="app-icon-grid" role="radiogroup" aria-label="App icon"></div>
+          </div>
+          <h2 class="settings-subhead">Tray Icon</h2>
+          <div class="settings-card icon-card">
+            <div class="setting-sub">Shown in the system tray, with your unread count on it.</div>
+            <div class="icon-grid" id="tray-icon-grid" role="radiogroup" aria-label="Tray icon"></div>
+          </div>
         </section>
       </div>
       <div class="settings-close-wrap">
@@ -1690,6 +1712,7 @@
   <script src="scripts/timers.js"></script>
   <script src="scripts/server-colors.js"></script>
   <script src="scripts/starfield.js"></script>
+  <script src="scripts/app-icons.js"></script>
   <script src="scripts/layout.js"></script>
   <script src="scripts/tint.js"></script>
   <script src="scripts/updates.js"></script>

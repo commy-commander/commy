@@ -1,4 +1,5 @@
 mod account;
+mod app_icon;
 mod activity;
 mod afk;
 mod entry_list;
@@ -2024,6 +2025,7 @@ async fn rename_server(
 }
 
 fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
+    let pronouns = app.voice.lock().unwrap().pronouns.clone();
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
     let perms = our_permissions(app, state, me);
@@ -2072,6 +2074,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     if state.server.rules_accepted.contains(&me) {
         events.push(ServerEvent::RulesAccept { server: sid, user: me });
+    }
+    if let Some(pronouns) = pronouns {
+        events.push(ServerEvent::PronounsSet { server: sid, user: me, pronouns: Some(pronouns) });
     }
     for event in &state.server.events {
         events.push(ServerEvent::EventUpsert { server: sid, event: event.clone() });
@@ -2514,6 +2519,93 @@ async fn update_profile(
     entry_list::record_profile_edit(&app);
     entry_list::schedule(&handle);
     Ok(profile)
+}
+
+#[tauri::command]
+async fn set_pronouns(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    pronouns: Option<String>,
+) -> CmdResult<VoiceSettings> {
+    let me = current_profile(&app)?;
+    let cleaned = match pronouns.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        None => None,
+        Some(text) => Some(commy_core::user::clean_pronouns(text).ok_or_else(|| {
+            format!("pronouns can be up to {} characters", commy_core::user::MAX_PRONOUNS_CHARS)
+        })?),
+    };
+    let settings = app.update_voice(|voice| voice.pronouns = cleaned.clone());
+    let server_ids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    for sid in server_ids {
+        let event = ServerEvent::PronounsSet { server: sid, user: me.id, pronouns: cleaned.clone() };
+        let _ = apply_and_broadcast(&app, &handle, sid, event).await;
+    }
+    let _ = handle.emit("servers-changed", ());
+    Ok(settings)
+}
+
+#[tauri::command]
+fn set_icons(
+    app: tauri::State<App>,
+    handle: tauri::AppHandle,
+    app_icon: String,
+    tray_icon: String,
+) -> CmdResult<VoiceSettings> {
+    if !app_icon::valid_choice("app", &app_icon) || !app_icon::valid_choice("tray", &tray_icon) {
+        return Err("unknown icon".into());
+    }
+    let settings = app.update_voice(|voice| {
+        voice.app_icon = app_icon.clone();
+        voice.tray_icon = tray_icon.clone();
+    });
+    app_icon::apply(&handle, app.data_dir().map(|d| d.as_path()), &app_icon, &tray_icon);
+    Ok(settings)
+}
+
+#[tauri::command]
+async fn choose_custom_icon(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    target: String,
+) -> CmdResult<Option<VoiceSettings>> {
+    if !app_icon::TARGETS.contains(&target.as_str()) {
+        return Err("unknown icon".into());
+    }
+    let Some(picked) = rfd::AsyncFileDialog::new()
+        .set_title("Choose an icon")
+        .add_filter("PNG image", &["png"])
+        .pick_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path = picked.path().to_path_buf();
+    let size = tokio::fs::metadata(&path).await.map_err(err_to_string)?.len();
+    if size > MAX_PICKED_IMAGE_BYTES {
+        return Err("that image is larger than 25 MB".into());
+    }
+    let bytes = tokio::fs::read(&path).await.map_err(err_to_string)?;
+    let dir = app.data_dir().cloned().ok_or("storage is not ready yet")?;
+    app_icon::save_custom(&dir, &target, &bytes)?;
+    let settings = app.update_voice(|voice| {
+        if target == "app" {
+            voice.app_icon = app_icon::CUSTOM.to_string();
+        } else {
+            voice.tray_icon = app_icon::CUSTOM.to_string();
+        }
+    });
+    app_icon::apply(&handle, Some(dir.as_path()), &settings.app_icon, &settings.tray_icon);
+    Ok(Some(settings))
+}
+
+#[tauri::command]
+fn get_custom_icon(app: tauri::State<App>, target: String) -> Option<String> {
+    let dir = app.data_dir()?;
+    if !app_icon::TARGETS.contains(&target.as_str()) {
+        return None;
+    }
+    let bytes = std::fs::read(app_icon::custom_path(dir, &target)).ok()?;
+    Some(data_url("image/png", &bytes))
 }
 
 #[tauri::command]
@@ -5455,7 +5547,9 @@ pub fn run() {
                     processor.set_muted(voice.muted);
                     processor.set_input_gain(voice.input_gain);
                     drop(processor);
+                    let (app_choice, tray_choice) = (voice.app_icon.clone(), voice.tray_icon.clone());
                     *app.voice.lock().unwrap() = voice;
+                    app_icon::apply(&handle, Some(dir.as_path()), &app_choice, &tray_choice);
                 }
                 {
                     let mut servers = app.servers.lock().unwrap();
@@ -5641,6 +5735,10 @@ pub fn run() {
             list_friends,
             friend_action,
             set_about,
+            set_icons,
+            choose_custom_icon,
+            get_custom_icon,
+            set_pronouns,
             moderate_voice,
             ban_member,
             unban_member,

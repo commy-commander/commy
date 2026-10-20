@@ -1,4 +1,4 @@
-const CAMERA_BACKGROUNDS = ["off", "blur"];
+const CAMERA_BACKGROUNDS = ["off", "blur", "image"];
 const CAMERA_FX_DEFAULTS = { background: "off", mirror: true };
 const MASK_EDGE_LOW = 0.3;
 const MASK_EDGE_HIGH = 0.7;
@@ -53,6 +53,14 @@ function averageCost(previous, sample) {
   return previous + (sample - previous) * COST_SMOOTHING;
 }
 
+function coverCrop(sourceWidth, sourceHeight, width, height) {
+  if (!sourceWidth || !sourceHeight || !width || !height) return null;
+  const scale = Math.max(width / sourceWidth, height / sourceHeight);
+  const sw = width / scale;
+  const sh = height / scale;
+  return { sx: (sourceWidth - sw) / 2, sy: (sourceHeight - sh) / 2, sw, sh };
+}
+
 function cameraFrameSize(width, height, maxWidth) {
   if (!width || !height) return null;
   const scale = Math.min(1, maxWidth / width);
@@ -69,6 +77,7 @@ if (typeof module !== "undefined" && module.exports) {
     maskMemory,
     segmentStride,
     averageCost,
+    coverCrop,
     cameraFrameSize,
   };
 }

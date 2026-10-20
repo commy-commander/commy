@@ -930,6 +930,17 @@ impl ServerState {
                 }
                 Ok(self.server.is_member(user) && self.bots.insert(user))
             }
+            ServerEvent::PronounsSet { server, user, pronouns } => {
+                self.same_server(server)?;
+                if !self.server.is_member(user) {
+                    return Ok(false);
+                }
+                match pronouns.as_deref().map(crate::user::clean_pronouns) {
+                    None => Ok(self.server.pronouns.remove(&user).is_some()),
+                    Some(None) => Ok(false),
+                    Some(Some(text)) => Ok(self.server.pronouns.insert(user, text.clone()).as_deref() != Some(text.as_str())),
+                }
+            }
             ServerEvent::RulesAccept { server, user } => {
                 self.same_server(server)?;
                 if self.server.rules_accepted.contains(&user) || !self.server.is_member(user) {
@@ -2525,6 +2536,29 @@ mod tests {
         state.apply(ServerEvent::RoleAssign { server: sid, user: plain, role: rid }).unwrap();
         let allowed = with_file(&state, plain);
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: allowed }), Ok(true));
+    }
+
+    #[test]
+    fn pronouns_are_the_members_own_and_kept_short() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let set = |user, text: Option<&str>| ServerEvent::PronounsSet { server: sid, user, pronouns: text.map(Into::into) };
+        assert_eq!(state.apply(set(friend, Some("  she / her "))), Ok(true));
+        assert_eq!(state.server.pronouns.get(&friend).map(String::as_str), Some("she / her"));
+        assert_eq!(state.apply(set(friend, Some("she / her"))), Ok(false));
+        assert_eq!(state.apply(set(friend, Some("   "))), Ok(false));
+        assert_eq!(state.apply(set(friend, Some("a very very long string of pronouns"))), Ok(false));
+        assert_eq!(state.server.pronouns.get(&friend).map(String::as_str), Some("she / her"));
+        assert_eq!(state.apply(set(UserId::new(), Some("they / them"))), Ok(false), "strangers have none");
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        let restored = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert_eq!(restored.server.pronouns.len(), 1);
+        assert_eq!(state.apply(set(friend, None)), Ok(true));
+        assert!(state.server.pronouns.is_empty());
+        let signed = |by, user| crate::SignedEvent::sign(sid, by, 1, set(user, Some("he / him")), &identity_for(by));
+        assert!(crate::action::authorized(&state.server, friend, &signed(friend, friend).event));
+        assert!(!crate::action::authorized(&state.server, owner, &signed(owner, friend).event));
     }
 
     #[test]

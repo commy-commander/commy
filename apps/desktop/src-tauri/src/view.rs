@@ -70,6 +70,7 @@ pub struct MemberView {
     pub status_emoji: Option<String>,
     pub activity: Option<String>,
     pub about: Option<String>,
+    pub pronouns: Option<String>,
     pub activity_cover: Option<String>,
     pub activity_since: Option<i64>,
     pub voice_channel: Option<String>,
@@ -252,6 +253,7 @@ impl ServerView {
                         .clone()
                         .filter(|_| p.presence.is_visible_online()),
                     about: p.about.as_deref().map(|a| crate::safety::truncate(a, commy_core::user::MAX_ABOUT_CHARS)),
+                    pronouns: state.server.pronouns.get(&p.id).cloned(),
                     activity_cover: p
                         .activity_cover
                         .clone()
