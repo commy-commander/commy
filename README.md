@@ -159,6 +159,31 @@ cargo run -p commy-desktop
 `auth/docker-compose.dev.yml` runs a local account server with a mail catcher
 and Redis.
 
+### Phone apps (early)
+
+Android and iOS build from the same crate and UI. The UI switches to a phone
+layout below 700px wide; add `?mobile` to the preview URL to also hide the
+desktop-only settings. The native projects are generated, not committed:
+
+```sh
+cd apps/desktop/src-tauri
+
+# Android (needs Android Studio's SDK and NDK, NDK_HOME set)
+cargo tauri android init
+cargo tauri icon icons/icon.png
+node ../mobile/android-manifest.mjs
+cargo tauri android dev
+
+# iOS (macOS with Xcode)
+cargo tauri ios init
+cargo tauri icon icons/icon.png
+cargo tauri ios dev
+```
+
+The "Mobile builds" workflow builds a debug APK and an iOS simulator app on
+every change. Screen sharing, the overlay, hotkeys, the tray and Stream Deck
+are desktop only.
+
 ## Self-hosting
 
 You do not need to host anything to use Commy. If you want your own account

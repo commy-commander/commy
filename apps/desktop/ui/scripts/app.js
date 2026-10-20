@@ -570,6 +570,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "fetch_expression": return (mock.expressions || {})[args.blob] || null;
     case "pick_sound": return null;
+    case "is_mobile_app": return new URLSearchParams(location.search).has("mobile");
     case "set_upload_access": {
       const srv = mock.servers[args.serverId];
       srv.uploads_restricted = args.restricted;
@@ -928,6 +929,7 @@ function selectSettingsTab(id, tab) {
   const layer = $(id);
   for (const btn of layer.querySelectorAll(".settings-tab[data-tab]")) {
     btn.classList.toggle("active", btn.dataset.tab === tab);
+    if (btn.dataset.tab === tab && isPhoneWidth(window.innerWidth)) btn.scrollIntoView({ block: "nearest", inline: "center" });
   }
   for (const page of layer.querySelectorAll(".settings-page")) {
     page.classList.toggle("hidden", page.dataset.page !== tab);
@@ -7491,6 +7493,41 @@ function applyMembersLayout() {
   btn.title = collapsed ? "Show Members" : "Hide Members";
 }
 
+function phonePane() {
+  return $("app").dataset.pane || "list";
+}
+
+function setPhonePane(pane, { fromHistory = false } = {}) {
+  const was = phonePane();
+  if (was === pane) return;
+  $("app").dataset.pane = pane;
+  if (!fromHistory && phonePaneGoesDeeper(was, pane)) history.pushState({ pane }, "");
+}
+
+function phoneStep(action) {
+  if (!isPhoneWidth(window.innerWidth)) return false;
+  const from = phonePane();
+  const to = phonePaneAfter(from, action);
+  if (!phonePaneGoesDeeper(from, to) && history.state && history.state.pane) history.back();
+  else setPhonePane(to);
+  return true;
+}
+
+function wirePhoneLayout() {
+  $("app").dataset.pane = "list";
+  window.addEventListener("popstate", e => setPhonePane((e.state && e.state.pane) || "list", { fromHistory: true }));
+  $("phone-back").onclick = () => phoneStep("back");
+  $("channel-list").addEventListener("click", e => {
+    const row = e.target.closest(".channel");
+    if (row && rowOpensConversation([...row.classList], Boolean(e.target.closest("button")))) phoneStep("open");
+  });
+}
+
+async function markMobileApp() {
+  const mobile = await invoke("is_mobile_app").catch(() => false);
+  document.body.classList.toggle("mobile-app", Boolean(mobile));
+}
+
 function setViewMode(mode) {
   state.view = mode;
   const dm = mode === "dm";
@@ -8332,9 +8369,20 @@ async function sendGif(url) {
   }
 }
 
+async function askForMicrophoneOnPhones() {
+  if (!document.body.classList.contains("mobile-app") || !navigator.mediaDevices) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    stream.getTracks().forEach(track => track.stop());
+  } catch {
+    toast("Commy needs the microphone for voice. You can allow it in your phone's settings.");
+  }
+}
+
 async function toggleVoice(channel) {
   if (!state.currentServer) return;
   const leaving = state.voiceChannelId === channel.id;
+  if (!leaving) await askForMicrophoneOnPhones();
   try {
     await invoke("set_voice_channel", {
       serverId: state.currentServer.id,
@@ -9784,6 +9832,7 @@ function wireEvents() {
     }
   });
   $("members-btn").onclick = () => {
+    if (phoneStep("people")) return;
     const collapsed = membersCollapsed(readMembersPref(), window.innerWidth);
     try {
       localStorage.setItem("commy.members.collapsed", collapsed ? "0" : "1");
@@ -9793,6 +9842,12 @@ function wireEvents() {
   window.addEventListener("resize", applyMembersLayout);
   applyMembersLayout();
   $("dm-profile-btn").onclick = () => {
+    if (isPhoneWidth(window.innerWidth)) {
+      state.showDmProfile = true;
+      if (state.currentDm) renderDmProfile(state.currentDm.user, state.currentDm.name);
+      phoneStep("people");
+      return;
+    }
     state.showDmProfile = !state.showDmProfile;
     if (state.currentDm) renderDmProfile(state.currentDm.user, state.currentDm.name);
   };
@@ -10681,7 +10736,9 @@ function wireActivityPing() {
 }
 
 async function boot() {
+  await markMobileApp();
   wireEvents();
+  wirePhoneLayout();
   wireActivityPing();
   if (IS_TAURI) {
     await invoke("ui_ready");

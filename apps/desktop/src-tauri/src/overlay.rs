@@ -1,6 +1,10 @@
+#![cfg_attr(mobile, allow(dead_code))]
+
 use crate::state::default_true;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::AppHandle;
+#[cfg(desktop)]
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const LABEL: &str = "overlay";
 const WIDTH: f64 = 280.0;
@@ -64,6 +68,12 @@ impl OverlaySettings {
     }
 }
 
+#[cfg(mobile)]
+pub fn valid_hotkey(_hotkey: &str) -> bool {
+    false
+}
+
+#[cfg(desktop)]
 pub fn valid_hotkey(hotkey: &str) -> bool {
     hotkey.parse::<tauri_plugin_global_shortcut::Shortcut>().is_ok()
 }
@@ -80,6 +90,7 @@ pub fn corner_position(area: (i32, i32, u32, u32), size: (u32, u32), corner: &st
     }
 }
 
+#[cfg(desktop)]
 fn ensure_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     if let Some(window) = app.get_webview_window(LABEL) {
         return Ok(window);
@@ -99,6 +110,10 @@ fn ensure_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
         .build()
 }
 
+#[cfg(mobile)]
+pub fn apply(_app: &AppHandle, _settings: &OverlaySettings, _visible: bool) {}
+
+#[cfg(desktop)]
 pub fn apply(app: &AppHandle, settings: &OverlaySettings, visible: bool) {
     if !settings.enabled || !visible {
         if let Some(window) = app.get_webview_window(LABEL) {
@@ -157,12 +172,12 @@ fn hide_window(window: &tauri::WebviewWindow) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(desktop, not(windows)))]
 fn hide_window(window: &tauri::WebviewWindow) {
     let _ = window.hide();
 }
 
-#[cfg(not(windows))]
+#[cfg(all(desktop, not(windows)))]
 fn show_without_focus(window: &tauri::WebviewWindow) {
     let _ = window.show();
 }

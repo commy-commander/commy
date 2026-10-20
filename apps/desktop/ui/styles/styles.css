@@ -4464,3 +4464,68 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .rail-context.on { visibility: visible; }
 .rail-context-icon { width: 28px; height: 28px; flex: none; border-radius: 9px; font-size: 11px; cursor: default; }
 .rail-context-name { font-family: var(--font-display); font-weight: 600; font-size: 15px; color: var(--header-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+.phone-back { display: none; }
+body.mobile-app .desktop-only { display: none !important; }
+
+@media (max-width: 700px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: 56px minmax(0, 1fr);
+    gap: 8px;
+    height: 100dvh;
+    padding: env(safe-area-inset-top) calc(8px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left));
+  }
+  .app[data-pane="chat"], .app[data-pane="people"] {
+    grid-template-rows: minmax(0, 1fr);
+    padding-top: calc(8px + env(safe-area-inset-top));
+  }
+  .app > .sidebar, .app > .main, .app > .members, .app > .thread-panel, .app > .dm-profile { grid-column: 1; grid-row: -2; width: auto; }
+  .app[data-pane="list"] > :is(.main, .members, .thread-panel, .dm-profile) { display: none !important; }
+  .app[data-pane="chat"] > :is(.rail, .sidebar, .members, .dm-profile) { display: none !important; }
+  .app[data-pane="chat"].thread-open > .main { display: none; }
+  .app[data-pane="people"] { grid-template-rows: auto minmax(0, 1fr); }
+  .app[data-pane="people"] > :is(.rail, .sidebar, .thread-panel) { display: none !important; }
+  .app[data-pane="people"] > .main { grid-row: 1; background: none; }
+  .app[data-pane="people"] > .main > :not(.chat-header) { display: none !important; }
+  .app[data-pane="people"] > :is(#member-list, .dm-profile) { grid-row: 2; }
+  .app[data-pane="people"] > #member-list:not(.hidden) { display: block; }
+
+  .rail { gap: 6px; padding: 0 2px; overflow: hidden; }
+  .rail-brand, .rail-context { display: none; }
+  .rail-spacer { flex: 1 0 0; }
+  .server-list { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .server-list::-webkit-scrollbar { display: none; }
+  .rail-btn, .server-icon { width: 42px; height: 42px; }
+  .user-panel { padding: 0 4px; }
+  .user-chip { flex: 0 0 auto; width: auto; padding: 0 2px; }
+  .user-chip .user-meta { display: none; }
+
+  .phone-back { display: flex; margin-left: -8px; flex-shrink: 0; }
+  .chat-header { padding: 0 8px 0 12px; gap: 6px; }
+  .chat-header #channel-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-header .topic, #search-box { display: none !important; }
+  .header-actions { gap: 0; flex-shrink: 0; }
+  .icon-btn { width: 40px; height: 40px; }
+  .composer { margin: 0 8px 8px; }
+  .composer input, .modal input[type="text"], .modal textarea, .settings-layer input[type="text"], .settings-layer textarea { font-size: 16px; }
+
+  .members, .dm-profile { overflow-y: auto; }
+
+  .modal-backdrop { padding: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom)); }
+  .modal { width: 100% !important; max-width: 100% !important; max-height: 100%; overflow-y: auto; padding: 20px; }
+
+  .settings-layer {
+    flex-direction: column;
+    gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom));
+  }
+  .settings-nav { flex: 0 0 auto; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .settings-nav::-webkit-scrollbar { display: none; }
+  .settings-nav-inner { width: auto; flex-direction: row; align-items: center; padding: 6px; gap: 2px; }
+  .settings-nav-group, .settings-nav-sep { display: none; }
+  .settings-tab { white-space: nowrap; flex-shrink: 0; }
+  .settings-content { flex: 1 1 auto; min-height: 0; flex-direction: column; }
+  .settings-content-inner { padding: 4px 16px 60px; }
+  .settings-close-wrap { order: -1; flex-direction: row; align-self: flex-end; padding: 10px 10px 0; position: static; }
+}

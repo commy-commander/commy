@@ -1,5 +1,6 @@
 mod account;
 mod app_icon;
+mod browser;
 mod activity;
 mod afk;
 mod entry_list;
@@ -15,6 +16,7 @@ mod liveness;
 mod outbox;
 mod overlay;
 mod persist;
+mod picker;
 mod safety;
 mod search;
 mod settle;
@@ -55,6 +57,11 @@ type CmdResult<T> = Result<T, String>;
 
 fn err_to_string(e: impl std::fmt::Display) -> String {
     e.to_string()
+}
+
+#[tauri::command]
+fn is_mobile_app() -> bool {
+    cfg!(mobile)
 }
 
 #[tauri::command]
@@ -606,22 +613,14 @@ async fn attach_file(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
 
-    let dialog = match kind.as_deref() {
-        Some("video") => rfd::AsyncFileDialog::new()
-            .set_title("Post a video")
-            .add_filter("Videos", INLINE_VIDEO_EXTENSIONS),
-        _ => rfd::AsyncFileDialog::new().set_title("Share a file"),
+    let (title, filter) = match kind.as_deref() {
+        Some("video") => ("Post a video", Some(picker::Filter { label: "Videos", extensions: INLINE_VIDEO_EXTENSIONS })),
+        _ => ("Share a file", None),
     };
-    let Some(picked) = dialog.pick_file().await else {
+    let Some(picked) = picker::pick_file(&handle, title, filter, MAX_ATTACHMENT_BYTES, ATTACHMENT_TOO_LARGE).await? else {
         return Ok(None);
     };
-    let path = picked.path().to_path_buf();
-    let filename = picked.file_name();
-    if tokio::fs::metadata(&path).await.map_err(err_to_string)?.len() > MAX_ATTACHMENT_BYTES {
-        return Err(ATTACHMENT_TOO_LARGE.into());
-    }
-    let bytes = tokio::fs::read(&path).await.map_err(err_to_string)?;
-    send_attachment(&app, &handle, sid, cid, filename, bytes)
+    send_attachment(&app, &handle, sid, cid, picked.name, picked.bytes)
         .await
         .map(Some)
 }
@@ -652,24 +651,17 @@ fn data_url(mime: &str, bytes: &[u8]) -> String {
 }
 
 const MAX_PICKED_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
+const IMAGE_TOO_LARGE: &str = "that image is larger than 25 MB";
 
 #[tauri::command]
-async fn pick_image(title: Option<String>) -> CmdResult<Option<String>> {
-    let Some(picked) = rfd::AsyncFileDialog::new()
-        .set_title(title.as_deref().unwrap_or("Choose an image"))
-        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
-        .pick_file()
-        .await
-    else {
+async fn pick_image(handle: tauri::AppHandle, title: Option<String>) -> CmdResult<Option<String>> {
+    let filter = picker::Filter { label: "Images", extensions: &["png", "jpg", "jpeg", "gif", "webp"] };
+    let title = title.as_deref().unwrap_or("Choose an image");
+    let Some(picked) = picker::pick_file(&handle, title, Some(filter), MAX_PICKED_IMAGE_BYTES, IMAGE_TOO_LARGE).await? else {
         return Ok(None);
     };
-    let path = picked.path().to_path_buf();
-    let size = tokio::fs::metadata(&path).await.map_err(err_to_string)?.len();
-    if size > MAX_PICKED_IMAGE_BYTES {
-        return Err("that image is larger than 25 MB".into());
-    }
-    let bytes = tokio::fs::read(&path).await.map_err(err_to_string)?;
-    let mime = match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+    let bytes = picked.bytes;
+    let mime = match std::path::Path::new(&picked.name).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
         Some("png") => "image/png",
         Some("gif") => "image/gif",
         Some("webp") => "image/webp",
@@ -715,9 +707,9 @@ async fn note_user_activity(app: tauri::State<'_, App>, handle: tauri::AppHandle
 }
 
 #[tauri::command]
-fn open_url(url: String) -> CmdResult<()> {
+fn open_url(handle: tauri::AppHandle, url: String) -> CmdResult<()> {
     let target = web_url(&url).ok_or("only http and https links can be opened")?;
-    open::that_detached(target).map_err(err_to_string)
+    browser::open(&handle, &target)
 }
 
 fn web_url(raw: &str) -> Option<String> {
@@ -762,6 +754,7 @@ fn safe_file_name(name: &str) -> String {
 #[tauri::command]
 async fn download_attachment(
     app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
     blob: String,
     filename: String,
     provider: Option<String>,
@@ -771,16 +764,7 @@ async fn download_attachment(
         commy_net::node::check_blob_size(size, MAX_ATTACHMENT_BYTES).map_err(err_to_string)?;
     }
     let bytes = fetch_blob(&app, &blob, provider.as_deref(), MAX_ATTACHMENT_BYTES).await?;
-    let Some(target) = rfd::AsyncFileDialog::new()
-        .set_file_name(safe_file_name(&filename))
-        .save_file()
-        .await
-    else {
-        return Ok(None);
-    };
-    let path = target.path().to_path_buf();
-    tokio::fs::write(&path, bytes).await.map_err(err_to_string)?;
-    Ok(Some(path.display().to_string()))
+    picker::save_file(&handle, &safe_file_name(&filename), bytes).await
 }
 
 #[tauri::command]
@@ -2567,20 +2551,11 @@ async fn choose_custom_icon(
     if !app_icon::TARGETS.contains(&target.as_str()) {
         return Err("unknown icon".into());
     }
-    let Some(picked) = rfd::AsyncFileDialog::new()
-        .set_title("Choose an icon")
-        .add_filter("PNG image", &["png"])
-        .pick_file()
-        .await
-    else {
+    let filter = picker::Filter { label: "PNG image", extensions: &["png"] };
+    let Some(picked) = picker::pick_file(&handle, "Choose an icon", Some(filter), MAX_PICKED_IMAGE_BYTES, IMAGE_TOO_LARGE).await? else {
         return Ok(None);
     };
-    let path = picked.path().to_path_buf();
-    let size = tokio::fs::metadata(&path).await.map_err(err_to_string)?.len();
-    if size > MAX_PICKED_IMAGE_BYTES {
-        return Err("that image is larger than 25 MB".into());
-    }
-    let bytes = tokio::fs::read(&path).await.map_err(err_to_string)?;
+    let bytes = picked.bytes;
     let dir = app.data_dir().cloned().ok_or("storage is not ready yet")?;
     app_icon::save_custom(&dir, &target, &bytes)?;
     let settings = app.update_voice(|voice| {
@@ -2949,6 +2924,10 @@ mod status_expiry_tests {
     }
 }
 
+#[cfg(mobile)]
+fn register_overlay_hotkeys(_handle: &tauri::AppHandle, _settings: &overlay::OverlaySettings) {}
+
+#[cfg(desktop)]
 fn register_overlay_hotkeys(handle: &tauri::AppHandle, settings: &overlay::OverlaySettings) {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let shortcuts = handle.global_shortcut();
@@ -2970,10 +2949,12 @@ fn overlay_hotkey_problems(app: tauri::State<'_, App>) -> Vec<String> {
     app.overlay_hotkeys_taken.lock().unwrap().clone()
 }
 
+#[cfg(desktop)]
 fn hotkey_id(key: &str) -> Option<u32> {
     key.parse::<tauri_plugin_global_shortcut::Shortcut>().ok().map(|s| s.id())
 }
 
+#[cfg(desktop)]
 fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
     let app = handle.state::<App>();
     let settings = app.voice.lock().unwrap().overlay.clone();
@@ -4277,22 +4258,16 @@ async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult
 }
 
 #[tauri::command]
-async fn pick_sound() -> CmdResult<Option<(String, String)>> {
-    let Some(picked) = rfd::AsyncFileDialog::new()
-        .set_title("Choose a sound")
-        .add_filter("Sounds", &["mp3", "ogg", "wav"])
-        .pick_file()
-        .await
-    else {
+async fn pick_sound(handle: tauri::AppHandle) -> CmdResult<Option<(String, String)>> {
+    let filter = picker::Filter { label: "Sounds", extensions: &["mp3", "ogg", "wav"] };
+    let max = expressions::MAX_SOUND_BYTES as u64;
+    let Some(picked) = picker::pick_file(&handle, "Choose a sound", Some(filter), max, "sounds must be under 1 MB").await? else {
         return Ok(None);
     };
-    let bytes = tokio::fs::read(picked.path()).await.map_err(err_to_string)?;
-    if bytes.len() > expressions::MAX_SOUND_BYTES {
-        return Err("sounds must be under 1 MB".into());
-    }
+    let bytes = picked.bytes;
     let mime = expressions::audio_mime(&bytes).ok_or("sounds must be an MP3, OGG or WAV file")?;
     Ok(Some((
-        picked.file_name().rsplit_once('.').map(|(stem, _)| stem.to_string()).unwrap_or_default(),
+        picked.name.rsplit_once('.').map(|(stem, _)| stem.to_string()).unwrap_or_default(),
         data_url(mime, &bytes),
     )))
 }
@@ -5227,12 +5202,26 @@ fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
     app.update_voice(|voice| voice.close_to_tray = enabled)
 }
 
+#[cfg(mobile)]
+#[tauri::command]
+fn get_autostart() -> bool {
+    false
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn set_autostart(_enabled: bool) -> CmdResult<bool> {
+    Ok(false)
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 fn get_autostart(handle: tauri::AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
     handle.autolaunch().is_enabled().unwrap_or(false)
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 fn set_autostart(handle: tauri::AppHandle, enabled: bool) -> CmdResult<bool> {
     use tauri_plugin_autostart::ManagerExt;
@@ -5325,6 +5314,7 @@ async fn run_media_loop(
     }
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -5344,7 +5334,7 @@ pub fn run() {
 
     instance::apply_webview_data_dir_before_any_window();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(App::default())
         .manage(updater::Updates::default())
         .register_asynchronous_uri_scheme_protocol("commy-media", |ctx, request, responder| {
@@ -5355,7 +5345,14 @@ pub fn run() {
                 responder.respond(account::media_image(&app, &uri).await);
             });
         })
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+    #[cfg(mobile)]
+    let builder = builder
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(desktop)]
+    let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -5369,7 +5366,8 @@ pub fn run() {
                     }
                 })
                 .build(),
-        )
+        );
+    builder
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() != "main" {
@@ -5705,6 +5703,7 @@ pub fn run() {
             pick_sound,
             list_shareable_emojis,
             ui_ready,
+            is_mobile_app,
             init_user,
             get_user,
             create_server,

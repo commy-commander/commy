@@ -1,6 +1,6 @@
 [package]
 name = "commy-desktop"
-description = "Commy desktop app for Windows and macOS"
+description = "Commy app for Windows, macOS, Linux, Android and iOS"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,8 +15,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-notification = "2"
-tauri-plugin-global-shortcut = "2"
-tauri-plugin-autostart = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 url = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
@@ -31,14 +29,23 @@ commy-net = { workspace = true }
 commy-audio = { workspace = true }
 commy-media = { workspace = true }
 chrono = { workspace = true }
-rfd = "0.17"
 base64 = "0.22"
 mime_guess = "2"
 data-encoding = { workspace = true }
-open = "5"
 ed25519-dalek = "2"
-tauri-plugin-updater = "2"
 semver = "1"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+rfd = "0.17"
+open = "5"
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-opener = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [
