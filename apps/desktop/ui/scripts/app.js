@@ -117,7 +117,7 @@ function mockSeed() {
     members: [
       { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
-      { id: "m2", name: "nova", presence: "idle", custom_status: null, roles: ["r2"] },
+      { id: "m2", name: "nova", pronouns: "they / them", presence: "idle", custom_status: null, roles: ["r2"] },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
       { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
     ],
@@ -660,6 +660,7 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "set_about": mock.user.about = args.about; return mock.user;
+    case "set_pronouns": mock.voice.pronouns = (args.pronouns || "").trim() || null; return mock.voice;
     case "set_server_afk_timeout": mock.servers[args.serverId].afk_timeout_minutes = args.minutes; return null;
     case "voice_stats":
       return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, links: [
@@ -5153,7 +5154,7 @@ async function openFullProfile(member) {
   $("fp-name").style.color = person.color ? `#${person.color}` : "";
   $("fp-name").parentElement.querySelector(".role-tag")?.remove();
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
-  $("fp-username").textContent = person.username ? `@${person.username}` : "";
+  $("fp-username").textContent = [person.username ? `@${person.username}` : "", person.pronouns || ""].filter(Boolean).join(" \u00b7 ");
   $("fp-status").textContent = subLine(person) || presenceLabel(person);
   $("fp-about-wrap").classList.toggle("hidden", !person.about);
   $("fp-about").textContent = person.about || "";
@@ -5252,9 +5253,10 @@ function openMemberCard(member, anchor) {
   const name = $("mc-name");
   name.textContent = member.name;
   name.style.color = member.color ? `#${member.color}` : "";
-  name.parentElement.querySelectorAll(".role-tag, .bot-tag").forEach(n => n.remove());
+  name.parentElement.querySelectorAll(".role-tag, .bot-tag, .mc-pronouns").forEach(n => n.remove());
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) name.after(botTag());
+  if (member.pronouns) name.after(el("span", "mc-pronouns", member.pronouns));
   const status = $("mc-status");
   status.replaceChildren();
   const line = subLine(member);
@@ -9077,6 +9079,15 @@ function wireEvents() {
     const input = $("mc-input");
     openGifPicker("", { user: input.dataset.user, name: input.dataset.name });
   };
+  $("account-pronouns").addEventListener("change", async e => {
+    try {
+      state.voice = await invoke("set_pronouns", { pronouns: e.target.value });
+      e.target.value = state.voice.pronouns || "";
+      toast(state.voice.pronouns ? "Pronouns saved" : "Pronouns removed");
+    } catch (err) {
+      toast(String(err));
+    }
+  });
   $("account-about").addEventListener("change", async e => {
     try {
       state.user = await invoke("set_about", { about: e.target.value });
@@ -9861,6 +9872,7 @@ function openUserSettings(tab) {
   loadSafety().then(renderSafetySettings);
   loadStorageSettings().then(renderStorageSettings);
   $("account-about").value = state.user.about || "";
+  $("account-pronouns").value = state.voice.pronouns || "";
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();
   loadIntegrations().then(renderIntegrations);

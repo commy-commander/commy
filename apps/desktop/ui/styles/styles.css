@@ -3692,6 +3692,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .mc-body { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 6px; }
 .mc-name-row { display: flex; align-items: center; }
 .mc-name { font-size: 20px; font-weight: 700; color: var(--text-normal); }
+.mc-pronouns { margin-left: 8px; font-size: 13px; font-weight: 500; color: var(--text-muted); }
 .mc-status { font-size: 13px; color: var(--text-muted); min-height: 16px; }
 .mc-label { margin-top: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); }
 .mc-roles { display: flex; flex-wrap: wrap; gap: 4px; }

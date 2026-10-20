@@ -73,7 +73,8 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::RulesAccept { user, .. }
         | E::EventRsvp { user, .. }
         | E::DoorbellSet { user, .. }
-        | E::BotSet { user, .. } => Some(*user),
+        | E::BotSet { user, .. }
+        | E::PronounsSet { user, .. } => Some(*user),
         E::MessagePin { by, .. } => Some(*by),
         _ => None,
     }
@@ -114,6 +115,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::RulesSet { .. } => "rules".into(),
         E::AutoModSet { .. } => "automod".into(),
         E::BotSet { user, .. } => format!("bot:{user}"),
+        E::PronounsSet { user, .. } => format!("pronouns:{user}"),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
         E::ExpressionSettings { .. } => "expressions".into(),
         E::SoundSharingSet { .. } => "sound_sharing".into(),
@@ -171,7 +173,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::MemberJoin { .. } => actor(event) == Some(by),
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
         E::ProfileUpdate { .. } => actor(event) == Some(by),
-        E::BotSet { .. } => member && actor(event) == Some(by),
+        E::BotSet { .. } | E::PronounsSet { .. } => member && actor(event) == Some(by),
         E::PresenceUpdate { .. }
         | E::VoiceState { .. }
         | E::TypingStart { .. }

@@ -55,6 +55,13 @@ pub struct UserProfile {
 }
 
 pub const MAX_ABOUT_CHARS: usize = 190;
+pub const MAX_PRONOUNS_CHARS: usize = 24;
+
+pub fn clean_pronouns(raw: &str) -> Option<String> {
+    let text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let fits = !text.is_empty() && text.chars().count() <= MAX_PRONOUNS_CHARS && !text.chars().any(char::is_control);
+    fits.then_some(text)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Avatar {
