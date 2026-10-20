@@ -6,11 +6,15 @@ use rand::RngCore;
 pub const SEALED_PREFIX: &str = "sealed1.";
 const NONCE_LEN: usize = 12;
 pub const KEY_TEXT_LEN: usize = 43;
+pub const SHORT_KEY_TEXT_LEN: usize = 22;
+const SHORT_KEY_BYTES: usize = 16;
+const SHORT_KEY_DOMAIN: &[u8] = b"commy-short-key-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Purpose {
     Invite,
     EntryList,
+    InviteBackground,
 }
 
 impl Purpose {
@@ -18,6 +22,7 @@ impl Purpose {
         match self {
             Purpose::Invite => b"commy-invite-v1",
             Purpose::EntryList => b"commy-entry-list-v1",
+            Purpose::InviteBackground => b"commy-invite-bg-v1",
         }
     }
 }
@@ -48,12 +53,31 @@ impl SealKey {
         Self(key)
     }
 
+    pub fn generate_short() -> (Self, String) {
+        let mut seed = [0u8; SHORT_KEY_BYTES];
+        rand::rngs::OsRng.fill_bytes(&mut seed);
+        let text = BASE64URL_NOPAD.encode(&seed);
+        (Self::stretch(&seed), text)
+    }
+
+    fn stretch(seed: &[u8]) -> Self {
+        use sha2::Digest;
+        let mut hash = sha2::Sha256::new();
+        hash.update(SHORT_KEY_DOMAIN);
+        hash.update(seed);
+        Self(hash.finalize().into())
+    }
+
     pub fn to_text(&self) -> String {
         BASE64URL_NOPAD.encode(&self.0)
     }
 
     pub fn from_text(text: &str) -> Result<Self, SealError> {
         let text = text.trim();
+        if text.len() == SHORT_KEY_TEXT_LEN {
+            let seed = BASE64URL_NOPAD.decode(text.as_bytes()).map_err(|_| SealError::BadKey)?;
+            return Ok(Self::stretch(&seed));
+        }
         if text.len() != KEY_TEXT_LEN {
             return Err(SealError::BadKey);
         }
@@ -122,6 +146,24 @@ mod tests {
         assert!(is_sealed(&sealed));
         assert!(!sealed.contains("hello"));
         assert_eq!(key.open(Purpose::Invite, &sealed).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn short_keys_open_what_they_sealed_and_nothing_else() {
+        let (key, text) = SealKey::generate_short();
+        assert_eq!(text.len(), SHORT_KEY_TEXT_LEN);
+        let sealed = key.seal(Purpose::Invite, b"hello");
+        assert_eq!(SealKey::from_text(&text).unwrap().open(Purpose::Invite, &sealed).unwrap(), b"hello");
+        let (_, other) = SealKey::generate_short();
+        assert_eq!(SealKey::from_text(&other).unwrap().open(Purpose::Invite, &sealed), Err(SealError::WrongKey));
+        assert_eq!(SealKey::from_text(&"*".repeat(SHORT_KEY_TEXT_LEN)), Err(SealError::BadKey));
+    }
+
+    #[test]
+    fn short_keys_stretch_the_same_way_the_website_does() {
+        let seed: Vec<u8> = (0u8..16).collect();
+        let key = SealKey::from_text(&BASE64URL_NOPAD.encode(&seed)).unwrap();
+        assert_eq!(key.to_text(), "DGRsa06xoR5OUNXHMW5Duet9o5gSIQIugDHjgdk8l3k");
     }
 
     #[test]
