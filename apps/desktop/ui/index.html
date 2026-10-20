@@ -412,6 +412,18 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-delete-server">
+      <h2 id="delete-server-title">Delete Server</h2>
+      <p>Every member is told the server was deleted and it leaves their list. Members who are offline find out the next time they connect. Your copy of its messages, channels and roles is removed from this device. This cannot be undone.</p>
+      <label class="field-label">Type the server name to confirm
+        <input id="delete-server-input" type="text" maxlength="100" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="delete-server-cancel">Cancel</button>
+        <button class="btn-danger" id="delete-server-go" disabled>Delete Server</button>
+      </div>
+    </div>
+
     <div class="modal modal-wide hidden" id="modal-rules">
       <h2 id="rules-title">Server Rules</h2>
       <div class="rules-body" id="rules-body"></div>
@@ -1321,6 +1333,7 @@
         <button class="settings-tab" data-tab="soundboard" id="tab-soundboard">Soundboard</button>
         <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
         <button class="settings-tab" data-tab="reports" id="tab-reports">Reports</button>
+        <button class="settings-tab" data-tab="audit" id="tab-audit">Audit Log</button>
         <div class="settings-nav-sep"></div>
         <button class="settings-tab danger" id="leave-server-btn">Leave Server</button>
       </div>
@@ -1401,6 +1414,16 @@
                 <div class="setting-sub">Copy this server's channels, categories, roles, rules and AFK setup as a code anyone can use to start a new server. Messages, members, invites, emoji, sounds and images are never included.</div>
               </div>
               <button class="btn-secondary btn-small" id="server-template-copy">Copy Template Code</button>
+            </div>
+          </div>
+          <div id="server-delete-section" class="hidden">
+            <h2 class="settings-subhead danger-head">Danger Zone</h2>
+            <div class="danger-zone">
+              <div>
+                <div class="setting-title">Delete this server</div>
+                <div class="setting-sub">Removes it for every member, along with your copy of its messages, channels and roles. This cannot be undone.</div>
+              </div>
+              <button class="btn-danger btn-small" id="server-delete-open">Delete Server</button>
             </div>
           </div>
         </section>
@@ -1535,6 +1558,16 @@
           <h1>Reports</h1>
           <div class="setting-sub expr-intro">Members can report people or messages to you as the owner. Reports arrive on this device only and are never shared with anyone else.</div>
           <div id="report-list" class="report-list"></div>
+        </section>
+
+        <section class="settings-page" data-page="audit">
+          <h1>Audit Log</h1>
+          <div class="setting-sub expr-intro">Changes to this server's settings, channels, roles and members, newest first. Each one is signed by whoever made it. The log is kept on this device and starts from when you joined.</div>
+          <div class="audit-filters">
+            <select id="audit-group" class="compact-select" aria-label="Kind of action"></select>
+            <select id="audit-actor" class="compact-select" aria-label="Member"></select>
+          </div>
+          <div id="audit-list" class="audit-list"></div>
         </section>
 
         <section class="settings-page" data-page="members">
@@ -1714,6 +1747,7 @@
   <script src="scripts/link-preview.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/pins.js"></script>
+  <script src="scripts/audit-log.js"></script>
   <script src="scripts/automod.js"></script>
   <script src="scripts/search.js"></script>
   <script src="scripts/presence.js"></script>

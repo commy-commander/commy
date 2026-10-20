@@ -56,6 +56,20 @@ function mockSearch({ serverId, terms, from, mentions, channelId }) {
   return { total: hits.length, hits: hits.slice(0, 50) };
 }
 
+function mockAuditLog() {
+  const ago = minutes => Date.now() - minutes * 60e3;
+  return [
+    { at: ago(4), by: "m2", by_name: "nova", kind: "message_delete", target: "m3", label: "sleepy", detail: "welcome" },
+    { at: ago(26), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "role_assign", target: "m2", label: "nova", detail: "Moderator" },
+    { at: ago(70), by: "m2", by_name: "nova", kind: "voice_moderate", target: "m3", label: "sleepy", detail: "muted" },
+    { at: ago(180), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "channel_rename", target: null, label: "chat", detail: "general" },
+    { at: ago(600), by: "m1", by_name: "ferris", kind: "emoji_add", target: null, label: "ferris_wave", detail: null },
+    { at: ago(1500), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "member_ban", target: "m9", label: "spam_bot", detail: null },
+    { at: ago(3000), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "channel_create", target: null, label: "news", detail: "announcement" },
+    { at: ago(4000), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "auto_mod", target: null, label: null, detail: null },
+  ];
+}
+
 function mockCrabImage() {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
@@ -299,7 +313,7 @@ async function mockInvoke(cmd, args = {}) {
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
-        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
@@ -496,6 +510,13 @@ async function mockInvoke(cmd, args = {}) {
     case "leave_server":
       delete mock.servers[args.serverId];
       return null;
+    case "delete_server": {
+      const s = mock.servers[args.serverId];
+      if (!s || args.confirmName.trim() !== s.name.trim()) throw "type the server name exactly as it is shown to delete it";
+      delete mock.servers[args.serverId];
+      return null;
+    }
+    case "audit_log": return mockAuditLog();
     case "start_mic_test":
     case "stop_mic_test":
       return null;
@@ -1427,6 +1448,54 @@ function openLeaveServer(serverId) {
   leavingServerId = serverId;
   $("leave-server-title").textContent = `Leave '${server.name}'`;
   showModal("modal-leave-server");
+}
+
+let deletingServerId = null;
+
+function openDeleteServer(server) {
+  deletingServerId = server.id;
+  $("delete-server-title").textContent = `Delete '${server.name}'`;
+  const input = $("delete-server-input");
+  input.value = "";
+  input.placeholder = server.name;
+  $("delete-server-go").disabled = true;
+  input.oninput = () => {
+    $("delete-server-go").disabled = input.value.trim() !== server.name.trim();
+  };
+  showModal("modal-delete-server");
+  input.focus();
+}
+
+async function confirmDeleteServer() {
+  const serverId = deletingServerId;
+  if (!serverId) return;
+  try {
+    await invoke("delete_server", { serverId, confirmName: $("delete-server-input").value });
+    deletingServerId = null;
+    hideModals();
+    await leaveServerView(serverId);
+    toast("Server deleted");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function leaveServerView(serverId) {
+  markServerRead(serverId);
+  if (state.currentServer && state.currentServer.id === serverId) {
+    await closeSettingsLayers();
+    state.currentServer = null;
+  }
+  if (state.voiceServer && state.voiceServer.id === serverId) {
+    state.voiceChannelId = null;
+    state.voiceServer = null;
+    state.sharing = false;
+  }
+  await refreshServers();
+  if (!state.currentServer) {
+    if (state.servers.length) await selectServer(state.servers[0].id);
+    else await enterDmMode();
+  }
 }
 
 async function confirmLeaveServer() {
@@ -5432,7 +5501,7 @@ async function removeRoleBanner(server, role) {
 const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff", "c05ccf", "ff6fa8", "99aab5"];
 
 const PERMISSION_GROUPS = [
-  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events"]],
+  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
   ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members"]],
 ];
@@ -9535,6 +9604,14 @@ function wireEvents() {
   };
   $("leave-server-go").onclick = confirmLeaveServer;
   $("leave-server-cancel").onclick = hideModals;
+  $("delete-server-go").onclick = confirmDeleteServer;
+  $("delete-server-cancel").onclick = hideModals;
+  $("delete-server-input").addEventListener("keydown", e => {
+    if (e.key === "Enter" && !$("delete-server-go").disabled) confirmDeleteServer();
+  });
+  $("server-delete-open").onclick = () => state.currentServer && openDeleteServer(state.currentServer);
+  $("audit-group").onchange = paintAuditLog;
+  $("audit-actor").onchange = paintAuditLog;
   $("fm-ungroup").onclick = () => {
     closeFloating();
     if (!menuFolder) return;
@@ -9926,6 +10003,10 @@ function wireEvents() {
       document.body.classList.toggle("server-muted", muted || deafened);
       renderChannels();
     });
+    window.__TAURI__.event.listen("server-deleted", async event => {
+      toast(`${event.payload.name || "A server"} was deleted by its owner`);
+      await leaveServerView(event.payload.server);
+    });
     window.__TAURI__.event.listen("banned", async event => {
       toast(`You were banned from ${event.payload.name || "a server"}`);
       if (state.voiceServer && state.voiceServer.id === event.payload.server) {
@@ -10070,6 +10151,7 @@ const PERMISSION_LABELS = [
   ["manage_roles", "Manage Roles"],
   ["kick_members", "Kick Members"],
   ["create_invites", "Create Invites"],
+  ["view_audit_log", "View Audit Log"],
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
   ["administrator", "Administrator"],
@@ -10397,6 +10479,9 @@ function openServerSettings(tab) {
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
   if (isOwner) renderReportSettings(server);
+  $("server-delete-section").classList.toggle("hidden", !isOwner);
+  $("tab-audit").classList.toggle("hidden", !server.can_view_audit_log);
+  if (server.can_view_audit_log) renderAuditLog(server);
   $("tab-emoji").classList.toggle("hidden", !canEmoji);
   $("tab-soundboard").classList.toggle("hidden", !canSounds);
   const allowed = {
@@ -10409,6 +10494,7 @@ function openServerSettings(tab) {
     rules: server.can_manage_server,
     automod: server.can_manage_server,
     members: canMembers,
+    audit: server.can_view_audit_log,
   };
   renderEmojiSettings(server);
   renderSoundboardSettings(server);
@@ -10438,6 +10524,60 @@ function openServerSettings(tab) {
   renderRoleSettings(server);
   renderMemberSettings(server);
   openSettingsLayer("server-settings", current);
+}
+
+const auditView = { serverId: null, entries: [] };
+
+async function renderAuditLog(server) {
+  try {
+    const entries = await invoke("audit_log", { serverId: server.id });
+    if (!state.currentServer || state.currentServer.id !== server.id) return;
+    const fresh = auditView.serverId !== server.id;
+    Object.assign(auditView, { serverId: server.id, entries });
+    fillAuditFilters(fresh);
+    paintAuditLog();
+  } catch (e) {
+    auditView.entries = [];
+    $("audit-list").replaceChildren(el("div", "manage-empty", String(e)));
+  }
+}
+
+function fillAuditFilters(reset) {
+  const group = $("audit-group");
+  const actor = $("audit-actor");
+  const keepGroup = reset ? "all" : group.value || "all";
+  const keepActor = reset ? "" : actor.value;
+  group.replaceChildren(...AUDIT_FILTERS.map(([id, label]) => new Option(label, id)));
+  group.value = keepGroup;
+  const actors = auditActors(auditView.entries);
+  actor.replaceChildren(new Option("Everyone", ""), ...actors.map(a => new Option(a.name, a.id)));
+  actor.value = actors.some(a => a.id === keepActor) ? keepActor : "";
+}
+
+function auditRow(entry) {
+  const row = el("div", "audit-row");
+  row.appendChild(makeAvatar(entry.by, entry.by_name, "avatar avatar-sm"));
+  const text = el("div", "audit-text");
+  for (const part of auditParts(entry)) text.appendChild(part.strong ? el("strong", null, part.text) : document.createTextNode(part.text));
+  text.title = auditText(entry);
+  row.appendChild(text);
+  const when = new Date(entry.at);
+  const time = el("time", "audit-time", formatTime(when.toISOString()));
+  time.dateTime = when.toISOString();
+  time.title = when.toLocaleString();
+  row.appendChild(time);
+  return row;
+}
+
+function paintAuditLog() {
+  const list = $("audit-list");
+  const shown = filterAudit(auditView.entries, { group: $("audit-group").value || "all", by: $("audit-actor").value });
+  if (!shown.length) {
+    const empty = auditView.entries.length ? "Nothing matches these filters." : "No changes yet. Settings, channel, role and member changes show up here.";
+    list.replaceChildren(el("div", "manage-empty", empty));
+    return;
+  }
+  list.replaceChildren(...shown.map(auditRow));
 }
 
 function renderUploadAccess(server) {

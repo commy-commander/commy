@@ -3336,6 +3336,33 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .report-also-block input { accent-color: var(--accent); margin: 0; }
 #report-preview { margin-top: 10px; }
 .report-list { display: flex; flex-direction: column; gap: 10px; }
+
+.audit-filters { display: flex; gap: 8px; margin-bottom: 12px; }
+.audit-list { display: flex; flex-direction: column; gap: 4px; }
+.audit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 12px;
+  background: var(--bg-dark);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  transition: border-color .12s;
+}
+.audit-row:hover { border-color: var(--bg-active); }
+.audit-row .avatar { flex-shrink: 0; }
+.audit-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.audit-text strong { color: var(--text-normal); font-weight: 600; }
+.audit-time { flex-shrink: 0; font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .report-card { background: var(--bg-dark); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .report-head { display: flex; align-items: center; gap: 10px; }
 .report-who { flex: 1; min-width: 0; }

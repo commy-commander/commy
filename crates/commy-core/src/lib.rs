@@ -1,4 +1,5 @@
 pub mod action;
+pub mod audit;
 pub mod automod;
 pub mod catchup;
 pub mod dm;
@@ -18,6 +19,7 @@ pub mod user;
 pub mod test_support;
 
 pub use action::{Action, SignedEvent};
+pub use audit::{AuditEntry, AuditKind};
 pub use automod::{AutoMod, Hold};
 pub use catchup::{BucketDigest, BucketKey};
 pub use dm::{DmMessage, DmStore};

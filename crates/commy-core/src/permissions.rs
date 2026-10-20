@@ -30,6 +30,7 @@ impl Permissions {
     pub const MANAGE_EVENTS: Permissions = Permissions(1 << 20);
     pub const PIN_MESSAGES: Permissions = Permissions(1 << 21);
     pub const POST_ANNOUNCEMENTS: Permissions = Permissions(1 << 22);
+    pub const VIEW_AUDIT_LOG: Permissions = Permissions(1 << 23);
 
     pub fn default_member() -> Permissions {
         Self::VIEW_CHANNELS
@@ -69,6 +70,10 @@ impl Permissions {
 
     pub fn can_announce(self) -> bool {
         self.allows(Self::POST_ANNOUNCEMENTS) || self.allows(Self::MANAGE_CHANNELS)
+    }
+
+    pub fn can_view_audit_log(self) -> bool {
+        self.allows(Self::VIEW_AUDIT_LOG) || self.allows(Self::MANAGE_SERVER)
     }
 }
 
@@ -131,6 +136,7 @@ mod tests {
         assert!(!p.allows(Permissions::CREATE_INVITES));
         assert!(!p.can_pin());
         assert!(!p.can_announce());
+        assert!(!p.can_view_audit_log());
     }
 
     #[test]
@@ -142,5 +148,9 @@ mod tests {
         assert!(Permissions::MANAGE_CHANNELS.can_announce());
         assert!(!Permissions::MANAGE_MESSAGES.can_announce());
         assert!(Permissions::ADMINISTRATOR.can_pin() && Permissions::ADMINISTRATOR.can_announce());
+        assert!(Permissions::VIEW_AUDIT_LOG.can_view_audit_log());
+        assert!(Permissions::MANAGE_SERVER.can_view_audit_log());
+        assert!(Permissions::ADMINISTRATOR.can_view_audit_log());
+        assert!(!Permissions::MANAGE_ROLES.can_view_audit_log());
     }
 }
