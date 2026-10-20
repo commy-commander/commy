@@ -9,8 +9,6 @@ const {
   CAMERA_BACKGROUNDS,
   parseCameraFx,
   cameraFxNeedsSegmenter,
-  cameraStars,
-  starAlpha,
   edgeStep,
   writeMaskAlpha,
   maskMemory,
@@ -26,39 +24,17 @@ test("camera settings fall back to no effect and a mirrored self view", () => {
   assert.deepEqual(parseCameraFx(null), { background: "off", mirror: true });
   assert.deepEqual(parseCameraFx("blur"), { background: "off", mirror: true });
   assert.deepEqual(parseCameraFx({ background: "confetti", mirror: "yes" }), { background: "off", mirror: true });
-  assert.deepEqual(parseCameraFx({ background: "stars", mirror: false }), { background: "stars", mirror: false });
+  assert.deepEqual(parseCameraFx({ background: "blur", mirror: false }), { background: "blur", mirror: false });
   assert.deepEqual(parseCameraFx({ background: "image", mirror: true }), { background: "image", mirror: true });
-  assert.deepEqual(CAMERA_BACKGROUNDS, ["off", "blur", "stars", "image"]);
+  assert.deepEqual(parseCameraFx({ background: "stars" }), { background: "off", mirror: true });
+  assert.deepEqual(CAMERA_BACKGROUNDS, ["off", "blur", "image"]);
 });
 
-test("every background except off loads the person segmenter", () => {
+test("blur and a custom image load the person segmenter", () => {
   assert.equal(cameraFxNeedsSegmenter({ background: "off" }), false);
   assert.equal(cameraFxNeedsSegmenter({ background: "blur" }), true);
-  assert.equal(cameraFxNeedsSegmenter({ background: "stars" }), true);
   assert.equal(cameraFxNeedsSegmenter({ background: "image" }), true);
   assert.equal(cameraFxNeedsSegmenter(undefined), false);
-});
-
-test("the starfield is the same on every device and stays inside the frame", () => {
-  const stars = cameraStars();
-  assert.deepEqual(stars, cameraStars());
-  assert.equal(stars.length, 140);
-  for (const star of stars) {
-    assert.ok(star.x >= 0 && star.x < 1 && star.y >= 0 && star.y < 1);
-    assert.ok(star.alpha > 0.3 && star.alpha <= 0.95);
-  }
-  assert.ok(stars.some(s => s.twinkle) && stars.some(s => !s.twinkle));
-});
-
-test("stars twinkle slowly and never vanish, still stars hold steady", () => {
-  const [twinkler] = cameraStars().filter(s => s.twinkle);
-  const [steady] = cameraStars().filter(s => !s.twinkle);
-  assert.equal(starAlpha(steady, 0), starAlpha(steady, 3.7));
-  const samples = Array.from({ length: 60 }, (_, i) => starAlpha(twinkler, i / 10));
-  assert.ok(Math.min(...samples) >= twinkler.alpha * 0.45 - 1e-9);
-  assert.ok(Math.max(...samples) <= twinkler.alpha + 1e-9);
-  assert.ok(Math.abs(starAlpha(twinkler, 0) - starAlpha(twinkler, 0.1)) < 0.05);
-  assert.ok(Math.abs(starAlpha(twinkler, 0) - starAlpha(twinkler, 6)) < 1e-9);
 });
 
 test("mask edges are soft between unsure and sure", () => {

@@ -1664,7 +1664,7 @@ function paintSidebarBanner() {
   header.classList.toggle("has-banner", Boolean(server));
   header.classList.toggle("plain", Boolean(server) && !ref);
   banner.style.backgroundImage = "";
-  header.style.setProperty("--slot", server ? starfield(server.id, serverColors(server.id).glow).css : "");
+  header.style.setProperty("--slot", server ? starfield(server.id).css : "");
   if (!ref) return;
   loadServerImage(ref).then(url => {
     if (url && state.currentServer && state.currentServer.banner === ref) {
@@ -7727,7 +7727,7 @@ function renderDmProfile(userId, name) {
 }
 
 function bannerColor(userId) {
-  return starfield(userId, hueGlow(tintHue(userId))).css;
+  return starfield(userId).css;
 }
 
 function roleGradient(hex) {
@@ -9443,7 +9443,6 @@ function wireEvents() {
   $("cam-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
   onCameraFxChange(renderCameraFx);
   renderCameraFx();
-  paintCameraSky($("cam-sky"));
   $("camera-device").addEventListener("change", async e => {
     try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch {}
     if (previewPipe) {

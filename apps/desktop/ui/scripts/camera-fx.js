@@ -1,8 +1,5 @@
-const CAMERA_BACKGROUNDS = ["off", "blur", "stars", "image"];
+const CAMERA_BACKGROUNDS = ["off", "blur", "image"];
 const CAMERA_FX_DEFAULTS = { background: "off", mirror: true };
-const CAMERA_STAR_COUNT = 140;
-const CAMERA_STAR_SEED = 20261014;
-const CAMERA_TWINKLE_SECONDS = 6;
 const MASK_EDGE_LOW = 0.3;
 const MASK_EDGE_HIGH = 0.7;
 const MASK_KEEP = 0.4;
@@ -20,38 +17,6 @@ function parseCameraFx(raw) {
 
 function cameraFxNeedsSegmenter(settings) {
   return parseCameraFx(settings).background !== "off";
-}
-
-function seededRandom(seed) {
-  let s = seed >>> 0;
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
-}
-
-function cameraStars(count = CAMERA_STAR_COUNT, seed = CAMERA_STAR_SEED) {
-  const next = seededRandom(seed);
-  const stars = [];
-  for (let i = 0; i < count; i++) {
-    const size = next();
-    stars.push({
-      x: next(),
-      y: next(),
-      r: size < 0.82 ? 0.6 : size < 0.96 ? 1 : 1.5,
-      alpha: 0.35 + next() * 0.6,
-      twinkle: i % 4 === 0,
-      phase: next(),
-    });
-  }
-  return stars;
-}
-
-function starAlpha(star, seconds) {
-  if (!star.twinkle) return star.alpha;
-  const turn = seconds / CAMERA_TWINKLE_SECONDS + star.phase;
-  const wave = (1 + Math.cos(turn * 2 * Math.PI)) / 2;
-  return star.alpha * (0.45 + 0.55 * wave);
 }
 
 function edgeStep(confidence) {
@@ -107,8 +72,6 @@ if (typeof module !== "undefined" && module.exports) {
     CAMERA_BACKGROUNDS,
     parseCameraFx,
     cameraFxNeedsSegmenter,
-    cameraStars,
-    starAlpha,
     edgeStep,
     writeMaskAlpha,
     maskMemory,

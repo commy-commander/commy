@@ -7,9 +7,7 @@ const CAMERA_MAX_WIDTH = 640;
 const CAMERA_SEGMENT_WIDTH = 256;
 const CAMERA_SLOW_GPU_MS = 30;
 const CAMERA_TIMING_RUNS = 4;
-const CAMERA_SKY_TOP = "#121630";
-const CAMERA_SKY_BOTTOM = "#0b0d17";
-const CAMERA_STAR_INK = "242, 239, 230";
+const CAMERA_SAMPLE_FILL = "#0b0d17";
 const CAMERA_FX_FILES = {
   bundle: "vendor/mediapipe/vision_bundle.mjs",
   loader: "vendor/mediapipe/wasm/vision_wasm_internal.js",
@@ -24,7 +22,6 @@ const cameraFx = {
   failed: false,
   lastTimestamp: 0,
   cost: 0,
-  stars: cameraStars(),
   backdrop: null,
   listeners: new Set(),
 };
@@ -123,7 +120,7 @@ function timeSegmenter(segmenter) {
   const sample = canvasWithContext();
   sample.canvas.width = CAMERA_SEGMENT_WIDTH;
   sample.canvas.height = Math.round(CAMERA_SEGMENT_WIDTH * 9 / 16);
-  sample.ctx.fillStyle = CAMERA_SKY_BOTTOM;
+  sample.ctx.fillStyle = CAMERA_SAMPLE_FILL;
   sample.ctx.fillRect(0, 0, sample.canvas.width, sample.canvas.height);
   const run = () => {
     const result = segmenter.segmentForVideo(sample.canvas, nextSegmentTimestamp());
@@ -229,9 +226,8 @@ function drawCameraFrame(pipe) {
     drawBlurredBackground(pipe, size);
     return;
   }
-  if (mode === "blur" || (mode === "image" && !cameraFx.backdrop)) drawBlurredBackground(pipe, size);
-  else if (mode === "image") drawBackdrop(pipe.ctx, size.width, size.height);
-  else drawStarBackground(pipe.ctx, size.width, size.height, performance.now() / 1000);
+  if (mode === "image" && cameraFx.backdrop) drawBackdrop(pipe.ctx, size.width, size.height);
+  else drawBlurredBackground(pipe, size);
   pipe.ctx.drawImage(pipe.person.canvas, 0, 0);
 }
 
@@ -316,23 +312,3 @@ function drawBackdrop(ctx, width, height) {
   ctx.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
 }
 
-function drawStarBackground(ctx, width, height, seconds) {
-  const sky = ctx.createLinearGradient(0, 0, 0, height);
-  sky.addColorStop(0, CAMERA_SKY_TOP);
-  sky.addColorStop(1, CAMERA_SKY_BOTTOM);
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, width, height);
-  const scale = Math.max(1, width / 320);
-  for (const star of cameraFx.stars) {
-    ctx.fillStyle = `rgba(${CAMERA_STAR_INK}, ${starAlpha(star, seconds).toFixed(3)})`;
-    ctx.beginPath();
-    ctx.arc(star.x * width, star.y * height, star.r * scale, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-function paintCameraSky(canvas) {
-  canvas.width = CAMERA_MAX_WIDTH;
-  canvas.height = Math.round(CAMERA_MAX_WIDTH * 9 / 16);
-  drawStarBackground(canvas.getContext("2d"), canvas.width, canvas.height, 0);
-}
