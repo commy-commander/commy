@@ -4909,6 +4909,17 @@ async fn store_catalog_emoji(app: tauri::State<'_, App>, name: String, data: Str
     Ok(commy_core::server::emoji_token(&name, &image))
 }
 
+#[tauri::command]
+async fn store_catalog_sticker(app: tauri::State<'_, App>, name: String, data: String) -> CmdResult<String> {
+    let name = check_expression_name(&name)?;
+    let bytes = decode_upload(&data)?;
+    if bytes.len() > expressions::MAX_STICKER_BYTES || expressions::image_mime(&bytes).is_none() {
+        return Err("stickers must be a PNG, GIF, JPEG or WebP under 512 KB".into());
+    }
+    let image = store_shared_blob(&app, bytes).await?;
+    Ok(commy_core::server::sticker_token(&name, &image))
+}
+
 fn can_upload_sounds(app: &App, state: &ServerState, user: UserId) -> bool {
     our_permissions(app, state, user).allows(Permissions::MANAGE_EXPRESSIONS)
         || (state.server.soundboard_open && state.server.is_member(user))
@@ -6887,6 +6898,7 @@ pub fn run() {
             search_emoji_catalog,
             fetch_catalog_image,
             store_catalog_emoji,
+            store_catalog_sticker,
             list_shareable_sounds,
             play_shared_sound,
             set_server_public,

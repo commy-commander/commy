@@ -5004,3 +5004,8 @@ h3.md-heading { font-size: 1.1em; }
 .person-row.in-group:hover { background: none; }
 .person-row.new-group { color: var(--text-normal); }
 .person-row.new-group .group-avatar { width: 32px; height: 32px; }
+.emoji-grid button.catalog-sticker:disabled { cursor: default; background: none; }
+.emoji-grid button.catalog-sticker img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.emoji-grid button.catalog-sticker.missing img { visibility: hidden; }
+.emoji-grid button.catalog-sticker.busy { opacity: 0.45; cursor: progress; }
+.emoji-grid .catalog-none.stickers { height: 120px; }

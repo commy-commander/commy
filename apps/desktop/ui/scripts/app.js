@@ -768,6 +768,11 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "search_emoji_catalog": return mockEmojiCatalog(args.query, args.category, args.page);
     case "fetch_catalog_image": return args.url;
+    case "store_catalog_sticker": {
+      const blob = `ggs${Object.keys(mock.expressions || {}).length}@mock`;
+      mock.expressions = { ...(mock.expressions || {}), [blob]: `data:image/png;base64,${args.data}` };
+      return `<sticker:${args.name}:${blob}>`;
+    }
     case "store_catalog_emoji": {
       const blob = `gg${Object.keys(mock.expressions || {}).length}@mock`;
       mock.expressions = { ...(mock.expressions || {}), [blob]: `data:image/png;base64,${args.data}` };
@@ -7404,21 +7409,38 @@ function catalogPickNamed(name) {
   return null;
 }
 
+const CATALOG_PICKER = {
+  emojis: { slots: CATALOG_PICKER_SLOTS, cls: "catalog-slot", use: (item, slot) => useCatalogEmoji(item, slot) },
+  stickers: { slots: 6, cls: "sticker-tile catalog-sticker", use: (item, slot) => useCatalogSticker(item, slot) },
+};
+
 function appendCatalogEmojis(grid, q) {
-  if (!account.server_emojis || !mayUseOtherServers()) return;
+  appendCatalogSection(grid, q, "emojis");
+}
+
+function appendCatalogSection(grid, q, kind) {
+  if (!mayUseOtherServers()) return false;
+  if (!account.server_emojis) {
+    if (!q) return false;
+    pickerSection(grid, "emoji.gg");
+    grid.appendChild(el("div", "picker-empty", "Your account server doesn't offer emoji.gg search yet."));
+    return true;
+  }
+  const spec = CATALOG_PICKER[kind];
   pickerSection(grid, "emoji.gg");
   const slots = [];
-  for (let i = 0; i < CATALOG_PICKER_SLOTS; i++) {
-    const slot = el("button", "catalog-slot");
+  for (let i = 0; i < spec.slots; i++) {
+    const slot = el("button", spec.cls);
     slot.type = "button";
     slot.disabled = true;
     grid.appendChild(slot);
     slots.push(slot);
   }
-  const fill = results => {
+  const fill = all => {
     if (!slots[0].isConnected) return;
+    const results = all.slice(0, spec.slots);
     if (!results.length) {
-      slots[0].replaceWith(el("div", "picker-empty catalog-none", "Nothing on emoji.gg matches that"));
+      slots[0].replaceWith(el("div", `picker-empty catalog-none ${kind}`, "Nothing on emoji.gg matches that"));
       for (const slot of slots.slice(1)) slot.remove();
       return;
     }
@@ -7434,13 +7456,13 @@ function appendCatalogEmojis(grid, q) {
       img.src = viaAccountServer(item.url);
       img.onerror = () => slot.classList.add("missing");
       slot.appendChild(img);
-      slot.onclick = () => useCatalogEmoji(item, slot);
+      slot.onclick = () => spec.use(item, slot);
     });
   };
   const cached = catalogPicker.results.get(q);
   if (cached) {
     fill(cached);
-    return;
+    return true;
   }
   const seq = ++catalogPicker.seq;
   clearTimeout(catalogPicker.timer);
@@ -7454,6 +7476,32 @@ function appendCatalogEmojis(grid, q) {
       if (seq === catalogPicker.seq) fill([]);
     }
   }, q ? 300 : 0);
+  return true;
+}
+
+const catalogStickers = new Map();
+
+async function useCatalogSticker(item, slot) {
+  if (slot.classList.contains("busy")) return;
+  const known = catalogStickers.get(item.id);
+  if (known) {
+    sendSticker(known);
+    return;
+  }
+  slot.classList.add("busy");
+  try {
+    const src = await invoke("fetch_catalog_image", { url: item.url });
+    const prepared = await prepareEmojiImage(src, CATALOG_SIZES.stickers);
+    const name = expressionName(item.title, "sticker");
+    const token = parseStickerToken(await invoke("store_catalog_sticker", { name, data: prepared.data }));
+    if (!token) throw new Error("that sticker could not be saved");
+    catalogStickers.set(item.id, token);
+    sendSticker(token);
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    slot.classList.remove("busy");
+  }
 }
 
 async function useCatalogEmoji(item, slot) {
@@ -11888,8 +11936,9 @@ function renderStickerTab(grid, q) {
     return btn;
   });
   if (!any && !q && !grid.childElementCount) {
-    grid.appendChild(el("div", "picker-empty", "No stickers yet. Servers add them in Server Settings, then Stickers."));
+    grid.appendChild(el("div", "picker-empty", "No stickers here yet. Servers add them in Server Settings, then Stickers."));
   }
+  appendCatalogSection(grid, q, "stickers");
 }
 
 function renderEmoticonTab(grid, q) {
