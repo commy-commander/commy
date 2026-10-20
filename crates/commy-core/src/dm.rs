@@ -33,12 +33,15 @@ pub enum DmAction {
         call: ChannelId,
         signal: CallSignal,
     },
+    GroupInvite {
+        ticket: String,
+    },
 }
 
 impl DmAction {
     pub fn target(&self) -> Option<MessageId> {
         match self {
-            DmAction::Post | DmAction::Call { .. } => None,
+            DmAction::Post | DmAction::Call { .. } | DmAction::GroupInvite { .. } => None,
             DmAction::Edit { target } | DmAction::Delete { target } | DmAction::React { target, .. } => Some(*target),
         }
     }
@@ -227,7 +230,7 @@ impl DmStore {
                     _ => false,
                 }
             }
-            DmAction::Post | DmAction::Call { .. } => false,
+            DmAction::Post | DmAction::Call { .. } | DmAction::GroupInvite { .. } => false,
         };
         if !changed {
             return false;
@@ -489,6 +492,18 @@ mod tests {
         assert!(store.post(them, target).is_none());
         assert_eq!(store.conversation(them).iter().filter(|m| m.action.target() == Some(target)).count(), 1);
         assert!(!store.apply(them, DmMessage::acting(them, me, DmAction::Edit { target }, "gone")));
+    }
+
+    #[test]
+    fn group_invites_are_kept_for_dedup_but_are_not_posts() {
+        let mut store = DmStore::new();
+        let (me, them) = (UserId::new(), UserId::new());
+        let invite = DmMessage::acting(them, me, DmAction::GroupInvite { ticket: "t".into() }, "");
+        assert!(store.apply(them, invite.clone()));
+        assert!(!store.apply(them, invite), "replayed invite");
+        assert_eq!(store.posts(them).count(), 0);
+        assert!(store.partners().is_empty());
+        assert_eq!(store.conversation(them).len(), 1);
     }
 
     #[test]

@@ -183,6 +183,8 @@ pub struct Server {
     #[serde(default)]
     pub public: bool,
     #[serde(default)]
+    pub group: bool,
+    #[serde(default)]
     pub pins: Vec<Pin>,
     #[serde(default)]
     pub stickers: Vec<Sticker>,
@@ -248,6 +250,7 @@ impl Server {
             banned: vec![],
             afk_timeout_minutes: None,
             public: false,
+            group: false,
             pins: vec![],
             stickers: vec![],
             emoticons: vec![],
@@ -372,6 +375,14 @@ impl Server {
             .iter()
             .filter(|r| member.roles.contains(&r.id) && wanted(r))
             .max_by_key(|r| r.position)
+    }
+
+    pub fn group(owner: UserId) -> Self {
+        let mut server = Self::new("", owner);
+        server.group = true;
+        server.channels = vec![Channel::new("chat", ChannelKind::Text, 0), Channel::new("call", ChannelKind::Voice, 1)];
+        server.afk_channel_id = None;
+        server
     }
 
     pub fn sorted_channels(&self) -> Vec<&Channel> {

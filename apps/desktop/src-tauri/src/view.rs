@@ -16,16 +16,37 @@ pub struct ServerSummary {
     pub member_count: usize,
     pub icon: Option<String>,
     pub can_invite: bool,
+    pub group: bool,
+}
+
+pub fn server_name(state: &ServerState, viewer: Option<UserId>) -> String {
+    if !state.server.group || !state.server.name.trim().is_empty() {
+        return state.server.name.clone();
+    }
+    let mut names: Vec<String> = state
+        .server
+        .members
+        .iter()
+        .filter(|m| Some(m.user) != viewer)
+        .map(|m| display_name(state, m.user))
+        .collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    match names.len() {
+        0 => "Just you".to_string(),
+        1..=3 => names.join(", "),
+        n => format!("{}, {} and {} others", names[0], names[1], n - 2),
+    }
 }
 
 impl ServerSummary {
     pub fn from_state(state: &ServerState, viewer: Option<UserId>) -> Self {
         Self {
             id: state.server.id.to_string(),
-            name: state.server.name.clone(),
+            name: server_name(state, viewer),
             member_count: state.server.members.len(),
             icon: state.server.icon.clone(),
             can_invite: viewer.is_some_and(|me| state.server.permissions_for(me).allows(Permissions::CREATE_INVITES)),
+            group: state.server.group,
         }
     }
 }
@@ -162,6 +183,7 @@ pub struct ServerView {
     pub emojis_shareable: bool,
     pub stickers_shareable: bool,
     pub emoticons_shareable: bool,
+    pub group: bool,
     pub add_restricted: AddRestrictions,
     pub can_add_emojis: bool,
     pub can_add_stickers: bool,
@@ -424,6 +446,7 @@ impl ServerView {
             emojis_shareable: state.server.emojis_shareable,
             stickers_shareable: state.server.stickers_shareable,
             emoticons_shareable: state.server.emoticons_shareable,
+            group: state.server.group,
             add_restricted: AddRestrictions {
                 emojis: everyone_lacks(state, Permissions::ADD_EMOJIS),
                 stickers: everyone_lacks(state, Permissions::ADD_STICKERS),
