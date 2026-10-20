@@ -4519,6 +4519,19 @@ h3.md-heading { font-size: 1.1em; }
   color: var(--text-faint);
 }
 .channel.unreadable .channel-label { opacity: .55; }
+.channel-bell {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--header-primary);
+  opacity: .55;
+}
+.channel-bell svg { width: 14px; height: 14px; }
+.channel .channel-gear { margin-left: auto; }
+.channel .channel-gear + .channel-bell { margin-left: 0; }
+.channel .channel-label + .channel-bell, .channel .channel-lock + .channel-bell, .channel .voice-count + .channel-bell { margin-left: auto; }
+.voice-channel .voice-count + .channel-bell { margin-left: 0; }
 
 .msg-sealed {
   display: flex;
