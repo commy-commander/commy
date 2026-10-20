@@ -35,6 +35,7 @@ mod updater;
 mod view;
 mod voice_keys;
 mod voice_message;
+mod voice_invite;
 mod wake;
 
 use media_engine::{should_dial, CameraSession, MicTest, ScreenShareSession, ScreenWatch, StreamAudioSink, VoiceSession};
@@ -7815,6 +7816,9 @@ pub fn run() {
             send_poll,
             vote_poll,
             close_poll,
+            voice_invite::send_voice_invite,
+            voice_invite::send_dm_voice_invite,
+            voice_invite::voice_channel_presence,
             search_messages,
             edit_message,
             delete_message,

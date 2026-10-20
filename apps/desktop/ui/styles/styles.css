@@ -6218,3 +6218,68 @@ h3.md-heading { font-size: 1.1em; }
 }
 .forum-tag-emoji:hover { color: var(--text-normal); }
 .channel-icon.forum-icon svg { width: 18px; height: 18px; }
+
+.voice-invite {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 460px;
+  height: 92px;
+  box-sizing: border-box;
+  margin-top: 6px;
+  padding: 12px 14px;
+  background: #151929;
+  border: 1px solid #1f2438;
+  border-radius: 12px;
+}
+.msg-content > .voice-invite:first-child { margin-top: 2px; }
+.voice-invite-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.voice-invite-kicker { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; line-height: 1; color: var(--text-faint); }
+.voice-invite-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--header-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-invite-row { display: flex; align-items: center; gap: 8px; height: 24px; }
+.voice-invite-faces { display: flex; align-items: center; flex: none; width: 114px; height: 24px; }
+.voice-invite-faces .avatar { flex: none; width: 24px; height: 24px; font-size: 10px; margin-right: -6px; box-shadow: 0 0 0 2px #151929; }
+.voice-invite-more {
+  flex: none;
+  min-width: 30px;
+  height: 20px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  background: var(--bg-active);
+  color: var(--header-primary);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+.voice-invite-more.empty { visibility: hidden; }
+.voice-invite-status { min-width: 0; font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voice-invite-join {
+  flex: none;
+  width: 76px;
+  height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.voice-invite-join:hover { background: var(--accent-hover); }
+.voice-invite-join:disabled { background: var(--bg-active); color: var(--text-muted); cursor: default; }
+.voice-invite-join:disabled:hover { background: var(--bg-active); }
+.voice-invite-where { font-family: var(--font-display); font-size: 15px; font-weight: 600; color: var(--header-primary); margin: -6px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vp-invite:hover { color: var(--accent); }

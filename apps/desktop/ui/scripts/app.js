@@ -337,6 +337,15 @@ function mockSeed() {
       content: "", created_at: new Date(Date.now() - 300e3).toISOString(), edited: false,
       attachments: [{ filename: VOICE_MESSAGE_FILENAME, size_bytes: 61440, is_image: false, mime: VOICE_MESSAGE_MIME, blob: "voice@mock", provider: null }] },
   ];
+  mock.messages[server.channels[1].id].push(
+    { id: "vi1", channel: server.channels[1].id, author_id: "m2", author_name: "nova", content: "",
+      created_at: new Date(Date.now() - 240e3).toISOString(), edited: false, attachments: [], reactions: [],
+      voice_invite: { server: server.id, channel: server.channels[4].id, invite_link: null, server_name: server.name, channel_name: server.channels[4].name } },
+  );
+  mock.dms.m1.messages.push(
+    { id: "d5", from: "m1", from_name: "ferris", content: "", created_at: new Date(Date.now() - 500e3).toISOString(), outgoing: false,
+      voice_invite: { server: crypto.randomUUID(), channel: crypto.randomUUID(), invite_link: `https://commy.chat/i/SYNTH2V4W#${"s".repeat(43)}`, server_name: "Synth Lounge", channel_name: "Jam Room" } },
+  );
   mock.readMarks = { [server.channels[1].id]: { id: "g0", at: Date.now() - 1200e3, set: Date.now() - 1100e3 } };
   (mock.voiceClips ||= {})["voice@mock"] = 14;
   mock.listPins = { dms: ["m1"], channels: [{ server: server.id, channel: server.channels[1].id }] };
@@ -851,6 +860,34 @@ async function mockInvoke(cmd, args = {}) {
         }
       }
       return null;
+    }
+    case "voice_channel_presence": {
+      const s = mock.servers[args.serverId];
+      if (!s) return null;
+      const c = s.channels.find(c => c.id === args.channelId);
+      if (!c) throw "that voice channel is gone";
+      const ids = c.voice_user_ids || [];
+      return { server_name: s.name, channel_name: c.name, user_limit: c.user_limit || 0, can_view: true, users: (c.voice_users || []).map((name, i) => ({ id: ids[i] || null, name })) };
+    }
+    case "send_voice_invite":
+    case "send_dm_voice_invite": {
+      const s = mock.servers[args.serverId];
+      const c = s && s.channels.find(c => c.id === args.channelId);
+      if (!c || c.kind !== "voice") throw "that is not a voice channel";
+      const voice_invite = { server: s.id, channel: c.id, invite_link: null, server_name: s.name, channel_name: c.name };
+      if (cmd === "send_voice_invite") {
+        const msg = { id: crypto.randomUUID(), channel: args.toChannelId, author_id: "me", author_name: mock.user.username, content: "",
+          created_at: new Date().toISOString(), edited: false, attachments: [], reactions: [], voice_invite };
+        (mock.messages[args.toChannelId] ||= []).push(msg);
+        return msg;
+      }
+      const dm = mock.dms[args.userId];
+      if (!dm) throw "no such conversation";
+      if (!s.group && !s.members.some(m => m.id === args.userId)) voice_invite.invite_link = `https://commy.chat/i/KQ7M3N4P#${"q".repeat(43)}`;
+      const sent = { id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: "", created_at: new Date().toISOString(),
+        outgoing: true, pending: false, reply_to: null, reply_preview: null, reactions: [], attachments: [], voice_invite };
+      dm.messages.push(sent);
+      return sent;
     }
     case "list_dm_threads":
       return Object.entries(mock.dms)
@@ -2150,6 +2187,7 @@ function openChannelMenu(channel, x, y) {
   $("chm-pin").textContent = channelIsPinned(server.id, channel.id) ? "Unpin Channel" : "Pin Channel";
   $("chm-settings").classList.toggle("hidden", !server.can_manage_channels);
   showVoiceStatusMenuItem(channel, server);
+  showVoiceCallMenuItems(channel);
   placeMenuAt($("channel-menu"), x, y);
 }
 
@@ -4846,6 +4884,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     for (const preview of message.previews || []) body.appendChild(renderLinkPreview(preview));
   }
   if (message.poll) body.appendChild(renderPoll(message));
+  if (message.voice_invite) body.appendChild(renderVoiceInvite(message));
   if (message.sealed) {
     const sealed = el("div", "msg-content msg-sealed");
     sealed.appendChild(svgIcon("lock", 14));
@@ -11541,6 +11580,7 @@ function renderVoicePanel() {
   $("vp-where").textContent = call ? `Call with ${vs.name}` : `${vs.channelName} / ${vs.name}`;
   renderVoiceTopic(call ? null : vs);
   $("vp-camera").classList.toggle("hidden", Boolean(call));
+  renderVoiceInviteButton(Boolean(call));
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
     : null;
@@ -12403,6 +12443,7 @@ function dmToRenderable(m) {
     reactions: m.reactions || [],
     attachments: m.attachments || [],
     pending: Boolean(m.pending),
+    voice_invite: m.voice_invite || null,
   };
 }
 
@@ -13572,6 +13613,7 @@ function wireEvents() {
 
   $("add-server-btn").onclick = () => showModal("modal-add-server");
   wireDiscover();
+  wireVoiceInvites();
   $("create-server-open").onclick = () => openCreateServer();
   $("create-server-back").onclick = () => showModal("modal-add-server");
   $("template-code-input").addEventListener("input", readTemplateCode);
@@ -16340,6 +16382,7 @@ async function refreshCurrentServer() {
   renderServerRail();
   renderMembers();
   renderChannels();
+  refreshVoiceInviteCards();
   syncRulesGate();
   syncAwaitedBar();
   syncAttachAccess();
@@ -16728,4 +16771,229 @@ function wireDiscover() {
   $("discovery-list").onclick = saveDiscoveryListing;
   $("discovery-update").onclick = saveDiscoveryListing;
   $("discovery-unlist").onclick = removeDiscoveryListing;
+}
+
+let voiceInviting = null;
+function showVoiceCallMenuItems(channel) {
+  const voice = channel.kind === "voice" && channel.can_view !== false;
+  $("chm-voice-join").textContent = state.voiceChannelId === channel.id ? "Disconnect" : "Join Voice";
+  $("chm-voice-join").classList.toggle("hidden", !voice);
+  $("chm-voice-invite").classList.toggle("hidden", !voice);
+}
+
+function voiceInviteSource(serverId, channelId) {
+  const current = state.currentServer && state.currentServer.id === serverId ? state.currentServer : null;
+  const channel = current ? current.channels.find(c => c.id === channelId) : null;
+  const connected = state.voiceServer && state.voiceServer.id === serverId && state.voiceChannelId === channelId ? state.voiceServer : null;
+  const summary = state.servers.find(s => s.id === serverId);
+  return {
+    serverName: (current && current.name) || (connected && connected.name) || (summary && summary.name) || "",
+    channelName: channel ? channelPlainName(channel) : (connected && connected.channelName) || "",
+  };
+}
+
+async function openVoiceInvite(serverId, channelId) {
+  voiceInviting = { server: serverId, channel: channelId, targets: null };
+  $("voice-invite-where").textContent = voiceInviteTitle(voiceInviteSource(serverId, channelId));
+  $("voice-invite-search").value = "";
+  renderVoiceInviteList();
+  showModal("modal-voice-invite");
+  $("voice-invite-search").focus();
+  const views = [];
+  for (const summary of state.servers) {
+    try {
+      views.push(await invoke("get_server", { serverId: summary.id }));
+    } catch {
+      continue;
+    }
+  }
+  let dms = [];
+  try {
+    dms = await invoke("list_dm_threads");
+  } catch {}
+  if (!voiceInviting || voiceInviting.server !== serverId || voiceInviting.channel !== channelId) return;
+  voiceInviting.targets = { servers: views.map(s => ({ ...s, channels: s.channels.map(c => ({ ...c, name: channelPlainName(c) })) })), dms };
+  renderVoiceInviteList();
+}
+
+function renderVoiceInviteList() {
+  const list = $("voice-invite-list");
+  list.replaceChildren();
+  if (!voiceInviting || !voiceInviting.targets) {
+    list.appendChild(el("div", "dm-list-empty", "Loading places to send to"));
+    return;
+  }
+  const targets = forwardTargets({ ...voiceInviting.targets, query: $("voice-invite-search").value });
+  for (const target of targets) {
+    const row = el("button", "person-row forward-row");
+    if (target.kind === "dm") row.appendChild(avatarWithPresence(target.name, target.user));
+    else if (target.kind === "group") row.appendChild(groupAvatar());
+    else row.appendChild(el("span", "server-chip", initials(target.sub)));
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", target.name));
+    meta.appendChild(el("div", "dm-preview", target.sub));
+    row.appendChild(meta);
+    row.onclick = () => sendVoiceInvite(target);
+    list.appendChild(row);
+  }
+  if (!targets.length) list.appendChild(el("div", "dm-list-empty", "Nowhere matches that name."));
+}
+
+async function sendVoiceInvite(target) {
+  const inviting = voiceInviting;
+  if (!inviting) return;
+  try {
+    if (target.kind === "dm") {
+      await invoke("send_dm_voice_invite", { serverId: inviting.server, channelId: inviting.channel, userId: target.user });
+    } else {
+      await invoke("send_voice_invite", { serverId: inviting.server, channelId: inviting.channel, toServerId: target.server, toChannelId: target.channel });
+    }
+    hideModals();
+    voiceInviting = null;
+    toast(`Invite sent to ${target.name}`);
+    if (target.kind !== "dm" && state.view === "server" && state.currentChannel && state.currentChannel.id === target.channel) await refreshChannelInPlace();
+    else if (target.kind === "dm" && inDmView() && state.currentDm && state.currentDm.user === target.user) await selectDm(target.user, target.name);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function voiceInviteLocalPresence(invite) {
+  const server = state.currentServer;
+  if (!server || server.id !== invite.server) return null;
+  const channel = server.channels.find(c => c.id === invite.channel);
+  if (!channel) return { known: true, gone: true };
+  const ids = channel.voice_user_ids || [];
+  return {
+    known: true,
+    server_name: server.name,
+    channel_name: channelPlainName(channel),
+    user_limit: channel.user_limit || 0,
+    can_view: channel.can_view !== false,
+    users: (channel.voice_users || []).map((name, i) => ({ id: ids[i] || null, name })),
+  };
+}
+
+function renderVoiceInvite(message) {
+  const invite = message.voice_invite;
+  const card = el("div", "voice-invite");
+  card.dataset.server = invite.server;
+  card.dataset.channel = invite.channel;
+  const body = el("div", "voice-invite-body");
+  body.appendChild(el("div", "voice-invite-kicker", "Voice call invite"));
+  body.appendChild(el("div", "voice-invite-title"));
+  const row = el("div", "voice-invite-row");
+  row.appendChild(el("div", "voice-invite-faces"));
+  row.appendChild(el("span", "voice-invite-more empty"));
+  row.appendChild(el("span", "voice-invite-status"));
+  body.appendChild(row);
+  card.appendChild(body);
+  const join = el("button", "voice-invite-join", "Join");
+  join.type = "button";
+  card.appendChild(join);
+  card.voiceInvite = invite;
+  const local = voiceInviteLocalPresence(invite);
+  paintVoiceInviteCard(card, invite, local);
+  if (!local) {
+    invoke("voice_channel_presence", { serverId: invite.server, channelId: invite.channel })
+      .then(presence => paintVoiceInviteCard(card, invite, presence ? { known: true, ...presence } : { known: false }))
+      .catch(() => paintVoiceInviteCard(card, invite, { known: true, gone: true }));
+  }
+  return card;
+}
+
+function paintVoiceInviteCard(card, invite, presence) {
+  const live = presence && presence.known && !presence.gone ? presence : null;
+  const inThisCall = Boolean(state.voiceServer) && state.voiceServer.id === invite.server && state.voiceChannelId === invite.channel;
+  const users = live ? live.users || [] : [];
+  const limit = live ? live.user_limit || 0 : 0;
+  const full = live ? voiceInviteIsFull({ users, limit, inThisCall }) : false;
+  card.querySelector(".voice-invite-title").textContent = voiceInviteTitle({ channelName: invite.channel_name, serverName: invite.server_name, live });
+  const summary = voiceInviteSummary(users);
+  const faces = card.querySelector(".voice-invite-faces");
+  faces.replaceChildren(...summary.shown.map(user => makeAvatar(user.id, user.name, "avatar avatar-sm")));
+  const more = card.querySelector(".voice-invite-more");
+  more.textContent = summary.overflowLabel;
+  more.classList.toggle("empty", !summary.overflow);
+  more.title = summary.overflow ? `${summary.count} people are in the call` : "";
+  const status = card.querySelector(".voice-invite-status");
+  status.textContent = presence
+    ? voiceInviteStatus({ known: presence.known, gone: presence.gone, canView: presence.can_view, users, limit })
+    : "Looking up the call";
+  const action = presence
+    ? voiceInviteAction({ known: presence.known, gone: presence.gone, canView: presence.can_view, inThisCall, hasLink: Boolean(invite.invite_link), full })
+    : { label: "Join", kind: "none", enabled: false, note: "" };
+  const join = card.querySelector(".voice-invite-join");
+  join.textContent = action.label;
+  join.disabled = !action.enabled;
+  join.title = action.note || "";
+  join.onclick = e => {
+    e.stopPropagation();
+    if (action.kind === "join") joinVoiceInvite(invite);
+    else if (action.kind === "link") openInviteLink(invite.invite_link);
+  };
+}
+
+function refreshVoiceInviteCards() {
+  for (const card of document.querySelectorAll(".voice-invite")) {
+    const invite = card.voiceInvite;
+    if (!invite) continue;
+    const local = voiceInviteLocalPresence(invite);
+    if (local) paintVoiceInviteCard(card, invite, local);
+  }
+}
+
+async function joinVoiceInvite(invite) {
+  if (!state.servers.some(s => s.id === invite.server)) {
+    if (invite.invite_link) return openInviteLink(invite.invite_link);
+    toast("Ask for an invite to this server");
+    return;
+  }
+  if (!state.currentServer || state.currentServer.id !== invite.server) await selectServer(invite.server);
+  const server = state.currentServer && state.currentServer.id === invite.server ? state.currentServer : null;
+  const channel = server ? server.channels.find(c => c.id === invite.channel) : null;
+  if (!channel) {
+    toast("That voice channel is gone");
+    return;
+  }
+  if (channel.can_view === false) {
+    toast(`Only ${accessWho(server, channel.view_roles)} can join this channel`);
+    return;
+  }
+  if (state.voiceChannelId === channel.id) return;
+  if (voiceFull(channel)) {
+    toast("That voice channel is full");
+    return;
+  }
+  await toggleVoice(channel);
+}
+
+function renderVoiceInviteButton(call) {
+  const button = $("vp-invite");
+  setIcon(button, "friendAdd", 18);
+  button.classList.toggle("hidden", call);
+}
+
+function wireVoiceInvites() {
+  $("vp-invite").onclick = () => {
+    const vs = state.voiceServer;
+    if (!vs || vs.call || !state.voiceChannelId) return;
+    openVoiceInvite(vs.id, state.voiceChannelId);
+  };
+  $("chm-voice-invite").onclick = () => {
+    closeFloating();
+    if (menuChannel && state.currentServer) openVoiceInvite(state.currentServer.id, menuChannel.id);
+  };
+  $("chm-voice-join").onclick = () => {
+    closeFloating();
+    const channel = menuChannel;
+    if (!channel) return;
+    if (voiceFull(channel)) {
+      toast("That voice channel is full");
+      return;
+    }
+    toggleVoice(channel);
+  };
+  $("voice-invite-cancel").onclick = hideModals;
+  $("voice-invite-search").addEventListener("input", renderVoiceInviteList);
 }

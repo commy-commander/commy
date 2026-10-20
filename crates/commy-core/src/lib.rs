@@ -19,6 +19,7 @@ pub mod server;
 pub mod store;
 pub mod template;
 pub mod user;
+pub mod voice_invite;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -41,3 +42,4 @@ pub use server::{Channel, ChannelKind, ForumPost, ForumTag, Member, Role, Server
 pub use store::{ReactionMark, ServerState, Snapshot, StoreError};
 pub use template::{BuiltinTemplate, ServerTemplate, TemplateError};
 pub use user::{Avatar, Presence, UserProfile};
+pub use voice_invite::VoiceInvite;

@@ -23,7 +23,7 @@ impl Attachment {
     }
 
     pub fn is_card(&self) -> bool {
-        self.is_link_preview() || self.is_poll()
+        self.is_link_preview() || self.is_poll() || self.is_voice_invite()
     }
 
     pub fn carries_a_file(&self) -> bool {
