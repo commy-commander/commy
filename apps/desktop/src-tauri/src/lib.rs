@@ -1143,6 +1143,7 @@ async fn set_voice_channel(
             start_voice_session(&app, &handle, sid, channel, &voice, profile.id);
             apply_personal_volumes(&app);
             refresh_forced_voice(&app, &handle);
+            refresh_priority_speakers(&app);
             dial_voice_members(&app, &handle, sid, channel, &profile);
             set_own_voice_state(&app, &handle, sid, &profile, &voice, Some(channel)).await
         }
@@ -4357,6 +4358,55 @@ async fn set_channel_slow_mode(app: tauri::State<'_, App>, handle: tauri::AppHan
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelSlowMode { server: sid, channel: cid, seconds }).await
 }
 
+#[tauri::command]
+async fn set_voice_status(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, channel_id: String, text: String) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    if text.trim().chars().count() > commy_core::server::MAX_VOICE_STATUS_CHARS {
+        return Err(format!("keep the status to {} characters", commy_core::server::MAX_VOICE_STATUS_CHARS));
+    }
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        let channel = state.server.channel(cid).ok_or("unknown channel")?;
+        if channel.kind != ChannelKind::Voice {
+            return Err("only voice channels have a status".into());
+        }
+        let in_channel = state.voice_states.get(&me.id) == Some(&cid);
+        if !our_permissions(&app, state, me.id).can_set_voice_status(in_channel) {
+            return Err("join the channel to set its status".into());
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::VoiceStatusSet { server: sid, channel: cid, text, by: me.id }).await
+}
+
+fn refresh_priority_speakers(app: &App) {
+    let Some((sid, channel, me)) = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel, s.me())) else {
+        return;
+    };
+    if sid == commy_core::ids::CALL_SERVER {
+        return;
+    }
+    let flags: Vec<(UserId, bool)> = {
+        let servers = app.servers.lock().unwrap();
+        let Some(state) = servers.get(&sid) else { return };
+        let holders: std::collections::HashSet<UserId> = state.priority_speakers(channel).into_iter().collect();
+        state
+            .voice_members(channel)
+            .into_iter()
+            .chain(std::iter::once(me))
+            .map(|user| (user, holders.contains(&user) || (user == me && our_permissions(app, state, me).is_priority_speaker())))
+            .collect()
+    };
+    if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
+        let mut mixer = session.mixer.lock().unwrap();
+        for (user, priority) in flags {
+            mixer.set_priority(media_engine::mixer_key(user), priority);
+        }
+    }
+}
+
 fn voice_channel_full(app: &App, state: &ServerState, channel: ChannelId, user: UserId) -> bool {
     let Some(c) = state.server.channel(channel) else { return false };
     if c.user_limit == 0 || our_permissions(app, state, user).allows(Permissions::MANAGE_CHANNELS) {
@@ -6797,6 +6847,16 @@ async fn run_net_loop(
                     app.share_seen.lock().unwrap().insert((server, *user), std::time::Instant::now());
                 }
                 let moderation = matches!(event, ServerEvent::VoiceModerate { .. } | ServerEvent::MemberTimeout { .. });
+                let priority = matches!(
+                    event,
+                    ServerEvent::VoiceState { .. }
+                        | ServerEvent::VoiceMove { .. }
+                        | ServerEvent::RoleAssign { .. }
+                        | ServerEvent::RoleUnassign { .. }
+                        | ServerEvent::RoleUpdate { .. }
+                        | ServerEvent::RoleDelete { .. }
+                        | ServerEvent::OwnerTransfer { .. }
+                );
                 let my_timeout = match &event {
                     ServerEvent::MemberTimeout { user, until, .. }
                         if app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == *user) =>
@@ -6885,6 +6945,9 @@ async fn run_net_loop(
                         }
                         if moderation {
                             refresh_forced_voice(&app, &handle);
+                        }
+                        if priority {
+                            refresh_priority_speakers(&app);
                         }
                         if let Some(until) = my_timeout {
                             let _ = handle.emit("timed-out", serde_json::json!({ "server": server.to_string(), "until": until }));
@@ -7633,6 +7696,7 @@ pub fn run() {
             set_channel_color,
             set_channel_kind,
             set_channel_sensitive,
+            set_voice_status,
             set_channel_access,
             pin_message,
             get_pins,

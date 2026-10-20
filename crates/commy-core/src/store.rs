@@ -689,6 +689,7 @@ impl ServerState {
             | E::ChannelKindSet { channel, .. }
             | E::ChannelAccessSet { channel, .. }
             | E::ChannelSensitiveSet { channel, .. }
+            | E::VoiceStatusSet { channel, .. }
             | E::ChannelKeyAdd { channel, .. }
             | E::ChannelKeyGrant { channel, .. } => server.channel(*channel).is_some(),
             E::RoleUpdate { role, .. } => server.roles.iter().any(|r| r.id == role.id),
@@ -888,9 +889,7 @@ impl ServerState {
                 self.same_server(server)?;
                 let before = self.server.members.len();
                 self.server.members.retain(|m| m.user != user);
-                self.voice_states.remove(&user);
-                self.voice_since.remove(&user);
-                self.voice_flags.remove(&user);
+                self.drop_voice_presence(user);
                 self.bots.remove(&user);
                 Ok(self.server.members.len() != before)
             }
@@ -986,20 +985,22 @@ impl ServerState {
                         return Err(StoreError::UnknownChannel);
                     }
                     live_room(&self.voice_states, user)?;
-                    let moved = self.voice_states.insert(user, ch) != Some(ch);
+                    let previous = self.voice_states.insert(user, ch);
+                    let moved = previous != Some(ch);
                     let flagged = self.voice_flags.insert(user, (muted, deafened)) != Some((muted, deafened));
                     if moved || !self.voice_since.contains_key(&user) {
                         let now = Utc::now().timestamp();
                         self.voice_since.insert(user, since.filter(|s| *s <= now).unwrap_or(now));
+                    }
+                    if let Some(left) = previous.filter(|_| moved) {
+                        self.clear_empty_voice_status(left);
                     }
                     Ok(moved || flagged)
                 }
                 None => {
                     self.screen_shares.remove(&user);
                     self.cameras.remove(&user);
-                    self.voice_since.remove(&user);
-                    self.voice_flags.remove(&user);
-                    Ok(self.voice_states.remove(&user).is_some())
+                    Ok(self.drop_voice_presence(user))
                 }
             },
             ServerEvent::ScreenShare {
@@ -1379,9 +1380,7 @@ impl ServerState {
                 }
                 self.server.banned.push(user);
                 self.server.members.retain(|m| m.user != user);
-                self.voice_states.remove(&user);
-                self.voice_since.remove(&user);
-                self.voice_flags.remove(&user);
+                self.drop_voice_presence(user);
                 self.screen_shares.remove(&user);
                 self.bots.remove(&user);
                 Ok(true)
@@ -1445,6 +1444,20 @@ impl ServerState {
                     return Ok(false);
                 }
                 Ok(replace(&mut target.sensitive, sensitive))
+            }
+            ServerEvent::VoiceStatusSet { server, channel, text, by } => {
+                self.same_server(server)?;
+                let in_channel = self.voice_states.get(&by) == Some(&channel);
+                if !self.server.permissions_for(by).can_set_voice_status(in_channel) {
+                    return Ok(false);
+                }
+                let Some(target) = self.server.channel_mut(channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                if target.kind != ChannelKind::Voice {
+                    return Ok(false);
+                }
+                Ok(replace(&mut target.voice_status, crate::server::clean_voice_status(&text)))
             }
             ServerEvent::MessagePin { server, channel, message, by, at, pinned } => {
                 self.same_server(server)?;
@@ -1635,9 +1648,7 @@ impl ServerState {
         let gone: Vec<UserId> =
             self.voice_states.iter().filter(|(u, c)| !server.can_view(**c, **u)).map(|(u, _)| *u).collect();
         for user in gone {
-            self.voice_states.remove(&user);
-            self.voice_since.remove(&user);
-            self.voice_flags.remove(&user);
+            self.drop_voice_presence(user);
         }
     }
 
@@ -2051,6 +2062,34 @@ impl ServerState {
             .filter(|(_, ch)| **ch == channel)
             .map(|(u, _)| *u)
             .collect()
+    }
+
+    pub fn voice_status(&self, channel: ChannelId) -> Option<&str> {
+        self.server.channel(channel).and_then(|c| c.voice_status.as_deref())
+    }
+
+    pub fn priority_speakers(&self, channel: ChannelId) -> Vec<UserId> {
+        self.voice_members(channel)
+            .into_iter()
+            .filter(|u| self.server.permissions_for(*u).is_priority_speaker())
+            .collect()
+    }
+
+    fn drop_voice_presence(&mut self, user: UserId) -> bool {
+        self.voice_since.remove(&user);
+        self.voice_flags.remove(&user);
+        let left = self.voice_states.remove(&user);
+        if let Some(channel) = left {
+            self.clear_empty_voice_status(channel);
+        }
+        left.is_some()
+    }
+
+    fn clear_empty_voice_status(&mut self, channel: ChannelId) -> bool {
+        if self.voice_states.values().any(|c| *c == channel) {
+            return false;
+        }
+        self.server.channel_mut(channel).is_some_and(|c| c.voice_status.take().is_some())
     }
 
     pub fn member_list(&self) -> Vec<&UserProfile> {
@@ -2836,6 +2875,108 @@ mod tests {
         assert_eq!(state.apply(set(voice_id, true)), Ok(false));
         assert!(!state.server.channel(voice_id).unwrap().sensitive);
         assert_eq!(state.apply(set(ChannelId::new(), true)), Err(StoreError::UnknownChannel));
+    }
+
+    fn enter_voice(state: &mut ServerState, user: UserId, channel: ChannelId) {
+        let event = ServerEvent::VoiceState { user, channel: Some(channel), muted: false, deafened: false, since: None };
+        state.apply(event).unwrap();
+    }
+
+    fn leave_voice(state: &mut ServerState, user: UserId) {
+        let event = ServerEvent::VoiceState { user, channel: None, muted: false, deafened: false, since: None };
+        state.apply(event).unwrap();
+    }
+
+    #[test]
+    fn voice_status_is_set_by_people_in_the_room_and_cleaned_on_the_way_in() {
+        let (mut state, text, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let member = join(&mut state, "member");
+        let outsider = join(&mut state, "outsider");
+        let set = |channel, by, t: &str| ServerEvent::VoiceStatusSet { server: sid, channel, text: t.into(), by };
+        assert_eq!(state.apply(set(voice, member, "Ranked grind")), Ok(false), "not in the channel yet");
+        enter_voice(&mut state, member, voice);
+        assert_eq!(state.apply(set(voice, member, "  Ranked \u{7}  grind \n")), Ok(true));
+        assert_eq!(state.voice_status(voice), Some("Ranked grind"));
+        assert_eq!(state.apply(set(voice, member, "Ranked grind")), Ok(false));
+        assert_eq!(state.apply(set(voice, outsider, "Hijack")), Ok(false), "outsiders without manage channels");
+        assert_eq!(state.voice_status(voice), Some("Ranked grind"));
+        assert_eq!(state.apply(set(voice, owner, "Owner says")), Ok(true), "managers set it from anywhere");
+        let long = "x".repeat(200);
+        assert_eq!(state.apply(set(voice, owner, &long)), Ok(true));
+        assert_eq!(state.voice_status(voice).map(|s| s.chars().count()), Some(crate::server::MAX_VOICE_STATUS_CHARS));
+        assert_eq!(state.apply(set(voice, owner, "   ")), Ok(true), "blank clears");
+        assert_eq!(state.voice_status(voice), None);
+        assert_eq!(state.apply(set(voice, owner, "")), Ok(false));
+        assert_eq!(state.apply(set(text, owner, "Not a voice channel")), Ok(false));
+        assert_eq!(state.apply(set(ChannelId::new(), owner, "x")), Err(StoreError::UnknownChannel));
+    }
+
+    #[test]
+    fn voice_status_clears_when_the_room_empties() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        enter_voice(&mut state, a, voice);
+        enter_voice(&mut state, b, voice);
+        let set = |t: &str| ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: t.into(), by: a };
+        assert_eq!(state.apply(set("Ranked grind")), Ok(true));
+        leave_voice(&mut state, a);
+        assert_eq!(state.voice_status(voice), Some("Ranked grind"), "someone is still there");
+        let lobby = Channel::new("Lobby", ChannelKind::Voice, 9);
+        let lobby_id = lobby.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: lobby }).unwrap();
+        enter_voice(&mut state, b, lobby_id);
+        assert_eq!(state.voice_status(voice), None, "the last person moved away");
+        enter_voice(&mut state, a, voice);
+        assert_eq!(state.apply(set("Round two")), Ok(true));
+        state.apply(ServerEvent::MemberLeave { server: sid, user: a }).unwrap();
+        assert_eq!(state.voice_status(voice), None, "leaving the server empties the room too");
+        enter_voice(&mut state, b, voice);
+        assert_eq!(state.apply(ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: "Three".into(), by: b }), Ok(true));
+        state.apply(ServerEvent::MemberBan { server: sid, user: b }).unwrap();
+        assert_eq!(state.voice_status(voice), None);
+        assert_eq!(state.apply(ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: "Empty".into(), by: owner }), Ok(true));
+        assert_eq!(state.voice_status(voice), Some("Empty"), "a manager may label an empty room until someone leaves it");
+    }
+
+    #[test]
+    fn priority_speakers_are_the_voice_members_holding_the_permission() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        let role = Role {
+            id: RoleId::new(),
+            name: "host".into(),
+            color: None,
+            permissions: Permissions::PRIORITY_SPEAKER,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        };
+        let rid = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: a, role: rid }).unwrap();
+        assert!(state.priority_speakers(voice).is_empty());
+        enter_voice(&mut state, a, voice);
+        enter_voice(&mut state, b, voice);
+        assert_eq!(state.priority_speakers(voice), vec![a]);
+        enter_voice(&mut state, owner, voice);
+        let mut speakers = state.priority_speakers(voice);
+        speakers.sort();
+        let mut expected = vec![a, owner];
+        expected.sort();
+        assert_eq!(speakers, expected, "the owner holds every permission");
+        leave_voice(&mut state, a);
+        assert_eq!(state.priority_speakers(voice), vec![owner]);
     }
 
     fn pin_event(state: &ServerState, channel: ChannelId, message: MessageId, by: UserId, pinned: bool) -> ServerEvent {

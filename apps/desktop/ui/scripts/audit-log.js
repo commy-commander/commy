@@ -71,6 +71,7 @@ const AUDIT_GROUP_OF = {
   expression_sharing: "expressions",
   channel_access: "channels",
   channel_sensitive: "channels",
+  voice_status_set: "channels",
 };
 
 const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", announcement: "announcement channel", category: "category" };
@@ -126,6 +127,7 @@ function describeAudit(entry) {
     case "channel_kind": return ["turned ", channel, ` into a ${CHANNEL_KIND_WORDS[detail] || "channel"}`];
     case "channel_access": return detail === "private" ? ["made ", channel, " private"] : detail === "send" ? ["limited who can send in ", channel] : ["opened ", channel, " to everyone"];
     case "channel_sensitive": return detail === "on" ? ["made ", channel, " age-restricted"] : ["removed the age restriction from ", channel];
+    case "voice_status_set": return detail ? ["set the status of ", channel, " to ", auditStrong(detail)] : ["cleared the status of ", channel];
     case "role_create": return ["created the role ", role];
     case "role_update": return ["updated the role ", role];
     case "role_delete": return label ? ["deleted the role ", role] : ["deleted a role"];

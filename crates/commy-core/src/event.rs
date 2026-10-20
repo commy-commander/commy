@@ -299,6 +299,12 @@ pub enum ServerEvent {
         locked: bool,
         by: UserId,
     },
+    VoiceStatusSet {
+        server: ServerId,
+        channel: ChannelId,
+        text: String,
+        by: UserId,
+    },
 }
 
 #[cfg(test)]
@@ -365,6 +371,7 @@ mod tests {
         let root = crate::ids::MessageId::new();
         let thread = ServerEvent::ThreadSet { server, channel, root, name: None, archived: false, locked: false, by: user };
         assert_eq!(wire_tag(thread), 74);
+        assert_eq!(wire_tag(ServerEvent::VoiceStatusSet { server, channel, text: "t".into(), by: user }), 75);
     }
 
     #[test]

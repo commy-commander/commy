@@ -39,6 +39,7 @@ pub struct Channel {
     pub sensitive: bool,
     #[serde(default)]
     pub threads: BTreeMap<MessageId, Thread>,
+    pub voice_status: Option<String>,
 }
 
 pub const MAX_ACCESS_ROLES: usize = 16;
@@ -73,6 +74,21 @@ pub fn valid_thread_name(name: &str) -> bool {
     clean_thread_name(name).as_deref() == Some(name) && name.chars().count() <= MAX_THREAD_NAME_CHARS
 }
 
+pub const MAX_VOICE_STATUS_CHARS: usize = 80;
+
+pub fn clean_voice_status(text: &str) -> Option<String> {
+    let cleaned: String = text
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cleaned: String = cleaned.chars().take(MAX_VOICE_STATUS_CHARS).collect();
+    let cleaned = cleaned.trim_end().to_string();
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
 impl Channel {
     pub fn new(name: impl Into<String>, kind: ChannelKind, position: u32) -> Self {
         Self {
@@ -91,6 +107,7 @@ impl Channel {
             slow_mode: 0,
             sensitive: false,
             threads: BTreeMap::new(),
+            voice_status: None,
         }
     }
 
@@ -1037,6 +1054,19 @@ mod community_tests {
         let e = event();
         assert!(!valid_event(&ScheduledEvent { end: Some(e.start), ..e.clone() }));
         assert!(valid_event(&ScheduledEvent { end: Some(e.start + chrono::Duration::hours(2)), ..e }));
+    }
+
+    #[test]
+    fn voice_statuses_are_one_tidy_line_of_at_most_eighty_characters() {
+        assert_eq!(clean_voice_status("Ranked grind"), Some("Ranked grind".into()));
+        assert_eq!(clean_voice_status("  Ranked \n\t grind  "), Some("Ranked grind".into()));
+        assert_eq!(clean_voice_status("Ran\u{0}ked"), Some("Ranked".into()));
+        assert_eq!(clean_voice_status(""), None);
+        assert_eq!(clean_voice_status(" \n "), None);
+        let long = "a".repeat(100);
+        assert_eq!(clean_voice_status(&long).map(|s| s.chars().count()), Some(MAX_VOICE_STATUS_CHARS));
+        let cut = format!("{} tail", "b".repeat(79));
+        assert_eq!(clean_voice_status(&cut), Some("b".repeat(79)), "no dangling space after the cut");
     }
 
     #[test]

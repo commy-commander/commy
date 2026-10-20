@@ -316,6 +316,25 @@ body {
 .voice-user-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vs-icon { display: inline-flex; color: var(--text-faint); }
 .vs-icon.off { color: var(--red); }
+.vs-icon.priority { color: var(--text-faint); flex-shrink: 0; }
+.vs-icon.priority svg { width: 14px; height: 14px; }
+.voice-user .voice-user-name { transition: opacity .15s ease; }
+.voice-user.attenuated .voice-user-name { opacity: .55; }
+.voice-status-line {
+  margin: -2px 0 2px 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vp-topic { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vp-topic.editable { cursor: pointer; }
+.vp-conn-meta:hover .vp-topic.editable { color: var(--text-normal); }
+.voice-status-heading { display: flex; align-items: center; gap: 8px; }
+.voice-status-heading svg { width: 18px; height: 18px; color: var(--text-muted); }
 
 .avatar.avatar-sm { width: 24px; height: 24px; font-size: 10px; }
 

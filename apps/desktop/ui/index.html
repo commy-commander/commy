@@ -81,6 +81,7 @@
           <div class="vp-conn-meta" id="vp-conn-meta" title="Go to voice channel">
             <div class="vp-status"><span class="vp-signal" id="vp-signal"></span><span id="vp-status-text">Voice Connected</span></div>
             <div class="vp-where" id="vp-where"></div>
+            <div class="vp-topic hidden" id="vp-topic"></div>
           </div>
           <button class="icon-btn vp-hangup" id="vp-disconnect" title="Disconnect"></button>
         </div>
@@ -795,6 +796,17 @@
         <button class="btn-secondary" id="nickname-cancel">Cancel</button>
         <button class="btn-secondary" id="nickname-clear">Clear</button>
         <button class="btn-primary" id="nickname-save">Save</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-voice-status" role="dialog" aria-labelledby="voice-status-title">
+      <h2 id="voice-status-title" class="voice-status-heading">Voice Channel Status</h2>
+      <p>A short line everyone sees under the channel name, like what you are playing. It clears when the last person leaves.</p>
+      <input id="voice-status-input" type="text" maxlength="80" autocomplete="off" placeholder="What is happening in here?" />
+      <div class="modal-actions">
+        <button class="btn-secondary" id="voice-status-cancel">Cancel</button>
+        <button class="btn-secondary" id="voice-status-clear">Clear</button>
+        <button class="btn-primary" id="voice-status-save">Save</button>
       </div>
     </div>
 
@@ -2277,6 +2289,7 @@
     <button class="ctx-radio" data-mute="forever">Until I turn it back on</button>
     <button class="ctx-check checked" id="chm-unmute"></button>
     <div class="ctx-sep"></div>
+    <button id="chm-voice-status" class="hidden">Set Voice Status</button>
     <button id="chm-settings">Edit Channel</button>
   </div>
   <div class="pop-menu ctx-menu hidden" id="folder-menu" role="menu">
@@ -2313,6 +2326,7 @@
   <script src="scripts/message-link.js"></script>
   <script src="scripts/slow-mode.js"></script>
   <script src="scripts/threads.js"></script>
+  <script src="scripts/voice-status.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>
