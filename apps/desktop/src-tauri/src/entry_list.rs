@@ -17,7 +17,7 @@ const KEY_FILE: &str = "entry-key.json";
 const LOCAL_FILE: &str = "entry-list.json";
 const VAULT_ITEM: &str = "servers";
 const NO_VAULT: &str = "Your account server cannot keep a server list yet.";
-const SIGNED_OUT: &str = "Your account server signed this device out.";
+pub(crate) const SIGNED_OUT: &str = "Your account server signed this device out.";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
@@ -106,11 +106,11 @@ struct LocalRecord {
     profile_edited: Option<DateTime<Utc>>,
 }
 
-fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+pub(crate) fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
-fn write<T: Serialize>(path: &Path, value: &T) {
+pub(crate) fn write<T: Serialize>(path: &Path, value: &T) {
     let Ok(json) = serde_json::to_string_pretty(value) else { return };
     let tmp = path.with_extension("json.tmp");
     if std::fs::write(&tmp, json).is_ok() {
@@ -119,7 +119,7 @@ fn write<T: Serialize>(path: &Path, value: &T) {
     }
 }
 
-fn load_key(dir: &Path, server: &str, account: &str) -> Option<SealKey> {
+pub(crate) fn load_key(dir: &Path, server: &str, account: &str) -> Option<SealKey> {
     let stored: StoredKey = read(&dir.join(KEY_FILE))?;
     if stored.server != server || stored.account != account {
         return None;
@@ -280,10 +280,10 @@ pub fn entry_list_status() -> EntryStatus {
     STATUS.lock().unwrap().clone().unwrap_or_else(|| EntryStatus { state: "off".into(), ..Default::default() })
 }
 
-struct Session {
-    server: String,
-    token: String,
-    account: String,
+pub(crate) struct Session {
+    pub(crate) server: String,
+    pub(crate) token: String,
+    pub(crate) account: String,
 }
 
 fn signed_in(app: &App) -> Result<(PathBuf, Session), String> {
@@ -292,7 +292,7 @@ fn signed_in(app: &App) -> Result<(PathBuf, Session), String> {
     Ok((dir, s))
 }
 
-fn session(app: &App) -> Option<Session> {
+pub(crate) fn session(app: &App) -> Option<Session> {
     let state = app.account.lock().unwrap();
     if !crate::account::is_signed_in(&state) {
         return None;
@@ -305,14 +305,14 @@ fn session(app: &App) -> Option<Session> {
 }
 
 #[derive(Debug, Deserialize)]
-struct VaultItem {
-    data: Option<String>,
-    version: u64,
+pub(crate) struct VaultItem {
+    pub(crate) data: Option<String>,
+    pub(crate) version: u64,
     #[serde(default)]
-    conflict: bool,
+    pub(crate) conflict: bool,
 }
 
-enum Fetched {
+pub(crate) enum Fetched {
     Item(VaultItem),
     Unsupported,
 }
@@ -339,8 +339,8 @@ async fn vault_item(res: reqwest::Response) -> Result<VaultItem, String> {
     res.json().await.map_err(|_| "Your account server sent an invalid reply".to_string())
 }
 
-async fn fetch(app: &App, s: &Session) -> Result<Fetched, String> {
-    let res = reach(account_api(app, s, reqwest::Method::GET, "vault").query(&[("name", VAULT_ITEM)])).await?;
+pub(crate) async fn fetch(app: &App, s: &Session, name: &str) -> Result<Fetched, String> {
+    let res = reach(account_api(app, s, reqwest::Method::GET, "vault").query(&[("name", name)])).await?;
     if res.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(Fetched::Unsupported);
     }
@@ -348,13 +348,13 @@ async fn fetch(app: &App, s: &Session) -> Result<Fetched, String> {
     vault_item(res).await.map(Fetched::Item)
 }
 
-enum Put {
+pub(crate) enum Put {
     Done,
     Conflict,
 }
 
-async fn put(app: &App, s: &Session, data: String, version: u64) -> Result<Put, String> {
-    let body = serde_json::json!({ "name": VAULT_ITEM, "data": data, "version": version });
+pub(crate) async fn put(app: &App, s: &Session, name: &str, data: String, version: u64) -> Result<Put, String> {
+    let body = serde_json::json!({ "name": name, "data": data, "version": version });
     let res = reach(account_api(app, s, reqwest::Method::POST, "vault/put").json(&body)).await?;
     if res.status() == reqwest::StatusCode::CONFLICT {
         let item = vault_item(res).await?;
@@ -412,7 +412,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
 
     let mut generated = false;
     for _ in 0..4 {
-        let item = match fetch(&app, &s).await {
+        let item = match fetch(&app, &s, VAULT_ITEM).await {
             Ok(Fetched::Item(item)) => item,
             Ok(Fetched::Unsupported) => return finish(handle, "unsupported", NO_VAULT, 0, false).await,
             Err(e) if e == SIGNED_OUT => {
@@ -498,7 +498,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
         if merged == shared && item.data.is_some() {
             return finish(handle, "synced", "", merged.servers.len(), true).await;
         }
-        match put(&app, &s, merged.seal(&key), item.version).await? {
+        match put(&app, &s, VAULT_ITEM, merged.seal(&key), item.version).await? {
             Put::Done => return finish(handle, "synced", "", merged.servers.len(), true).await,
             Put::Conflict => {
                 if generated {
@@ -514,6 +514,9 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
 
 async fn finish(handle: &AppHandle, state: &str, detail: &str, servers: usize, has_key: bool) -> Result<(), String> {
     set_status(handle, state, detail, servers, has_key);
+    if state == "synced" {
+        crate::read_state::schedule(handle);
+    }
     crate::settle::settle_key(handle).await;
     Ok(())
 }
@@ -784,7 +787,7 @@ pub async fn entry_list_use_recovery_code(handle: AppHandle, code: String) -> Re
     let app = handle.state::<App>();
     let (dir, s) = signed_in(&app)?;
     let key = SealKey::from_text(code.trim()).map_err(|_| "That is not a recovery code".to_string())?;
-    if let Fetched::Item(VaultItem { data: Some(data), .. }) = fetch(&app, &s).await? {
+    if let Fetched::Item(VaultItem { data: Some(data), .. }) = fetch(&app, &s, VAULT_ITEM).await? {
         EntryList::open(&key, &data)?;
     }
     save_key(&dir, &s.server, &s.account, &key);
@@ -801,11 +804,11 @@ pub async fn entry_list_start_over(handle: AppHandle) -> Result<EntryStatus, Str
         if load_key(&dir, &s.server, &s.account).is_some() {
             return Err("This device already has the key to your server list".into());
         }
-        let Fetched::Item(item) = fetch(&app, &s).await? else {
+        let Fetched::Item(item) = fetch(&app, &s, VAULT_ITEM).await? else {
             return Err(NO_VAULT.into());
         };
         let key = SealKey::generate();
-        match put(&app, &s, local_list(&app, &dir).seal(&key), item.version).await? {
+        match put(&app, &s, VAULT_ITEM, local_list(&app, &dir).seal(&key), item.version).await? {
             Put::Done => save_key(&dir, &s.server, &s.account, &key),
             Put::Conflict => return Err("Another device changed your server list just now. Try again.".into()),
         }

@@ -56,6 +56,17 @@ function mockSearch({ serverId, terms, from, mentions, channelId }) {
   return { total: hits.length, hits: hits.slice(0, 50) };
 }
 
+function mockReadView(channelIds) {
+  const channels = {};
+  for (const id of channelIds) {
+    const mark = (mock.readMarks || {})[id];
+    if (!mark) continue;
+    const server = Object.values(mock.servers).find(s => s.channels.some(c => c.id === id));
+    channels[id] = { mark, server: server ? server.id : null, unread: unreadAfter(mock.messages[id] || [], mark, "me") };
+  }
+  return { channels };
+}
+
 function mockAuditLog() {
   const ago = minutes => Date.now() - minutes * 60e3;
   return [
@@ -256,6 +267,7 @@ function mockSeed() {
       poll: { question: "Raid night this week?", multi: false, total: 4, closed: false, closes_at: new Date(Date.now() + 3 * 3600e3).toISOString(),
         options: [{ text: "Friday", votes: 3, mine: true }, { text: "Saturday", votes: 1, mine: false }, { text: "Sunday after lunch", votes: 0, mine: false }] } },
   ];
+  mock.readMarks = { [server.channels[1].id]: { id: "g0", at: Date.now() - 1200e3, set: Date.now() - 1100e3 } };
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
     { channel: c0, message: "x1", by: "m1", at: new Date(Date.now() - 3000e3).toISOString() },
@@ -1100,6 +1112,21 @@ async function mockInvoke(cmd, args = {}) {
       if (mock.user) mock.user.presence_until = args.presenceUntil;
       return mock.voice;
     case "set_unread": mock.unread = args.count; return null;
+    case "read_state_load": return mockReadView(Object.keys(mock.readMarks || {}));
+    case "read_state_set": mock.readMarks = mergeReadMaps(mock.readMarks, args.channels); return null;
+    case "read_state_mark_read": {
+      const server = mock.servers[args.serverId];
+      const touched = [];
+      for (const c of server ? server.channels : []) {
+        if (args.channelIds && !args.channelIds.includes(c.id)) continue;
+        const mark = latestMark(mock.messages[c.id] || []);
+        if (!mark) continue;
+        mock.readMarks = mergeReadMaps(mock.readMarks, { [c.id]: mark });
+        touched.push(c.id);
+      }
+      return mockReadView(touched);
+    }
+    case "read_state_sync": return mockReadView(Object.keys(mock.readMarks || {}));
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
     case "get_autostart": return !!mock.autostart;
@@ -1843,6 +1870,7 @@ function markServerRead(serverId) {
   }
   syncUnreadBadge();
   if (state.currentServer && state.currentServer.id === serverId) renderChannels();
+  markChannelsRead(serverId, null);
 }
 
 let leavingServerId = null;
@@ -2442,6 +2470,109 @@ function saveNotifyPrefs(prefs) {
 }
 
 const unread = { channels: new Map(), channelServer: new Map(), dms: new Map(), mentions: new Set() };
+const READ_FLUSH_DELAY_MS = 2000;
+const readState = { marks: {}, line: null, held: null, pending: {}, timer: null };
+
+function myId() {
+  return state.user ? state.user.id : null;
+}
+
+function skipsUnread(message) {
+  return isBlocked(message.author_id);
+}
+
+function queueReadMark(channelId, mark, flush = false) {
+  readState.pending[channelId] = mark;
+  clearTimeout(readState.timer);
+  readState.timer = null;
+  if (flush) return flushReadMarks();
+  readState.timer = setTimeout(flushReadMarks, READ_FLUSH_DELAY_MS);
+}
+
+function flushReadMarks() {
+  clearTimeout(readState.timer);
+  readState.timer = null;
+  const channels = readState.pending;
+  readState.pending = {};
+  if (!Object.keys(channels).length) return;
+  invoke("read_state_set", { channels, flush: true }).catch(() => {});
+}
+
+function advanceRead(channelId, messages, flush = false) {
+  if (!channelId || readState.held === channelId) return;
+  const mark = latestMark(messages);
+  if (!markAdvances(readState.marks[channelId], mark)) return;
+  readState.marks[channelId] = mark;
+  queueReadMark(channelId, mark, flush);
+}
+
+function openChannelWithLine(channel) {
+  if (readState.line && readState.line.channel === channel.id) return;
+  if (readState.line && readState.line.channel !== channel.id) flushReadMarks();
+  if (readState.held && readState.held !== channel.id) readState.held = null;
+  readState.line = { channel: channel.id, mark: readState.marks[channel.id] || null };
+}
+
+function applyReadView(view) {
+  const channels = (view && view.channels) || {};
+  let changed = false;
+  for (const [channelId, info] of Object.entries(channels)) {
+    if (!info || !info.mark) continue;
+    readState.marks[channelId] = newerMark(readState.marks[channelId], info.mark);
+    const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === channelId;
+    if (viewing && readState.held !== channelId) continue;
+    if (info.unread > 0) {
+      unread.channels.set(channelId, info.unread);
+      if (info.server) unread.channelServer.set(channelId, info.server);
+    } else {
+      unread.channels.delete(channelId);
+      unread.mentions.delete(channelId);
+    }
+    changed = true;
+  }
+  if (!changed) return;
+  syncUnreadBadge();
+  if (state.currentServer) renderChannels();
+  if (dmListShown()) renderDmThreads();
+}
+
+async function loadReadState() {
+  try {
+    applyReadView(await invoke("read_state_load"));
+  } catch {}
+}
+
+function markUnreadFrom(message) {
+  const messages = state.renderedMessages || [];
+  const index = messages.findIndex(m => m.id === message.id);
+  const channel = state.currentChannel;
+  if (index < 0 || !channel || !state.currentServer) return;
+  const mark = markBefore(messages, index);
+  readState.marks[channel.id] = mark;
+  readState.held = channel.id;
+  readState.line = { channel: channel.id, mark };
+  const count = unreadAfter(messages, mark, myId(), skipsUnread);
+  if (count) {
+    unread.channels.set(channel.id, count);
+    unread.channelServer.set(channel.id, state.currentServer.id);
+  } else {
+    unread.channels.delete(channel.id);
+  }
+  queueReadMark(channel.id, mark, true);
+  syncUnreadBadge();
+  renderChannels();
+  $("messages").dataset.view = "";
+  renderMessages(messages);
+}
+
+async function markChannelsRead(serverId, channelIds) {
+  for (const channelId of channelIds || [...unread.channelServer].filter(([, s]) => s === serverId).map(([c]) => c)) {
+    if (readState.held === channelId) readState.held = null;
+  }
+  try {
+    applyReadView(await invoke("read_state_mark_read", { serverId, channelIds: channelIds || null }));
+  } catch {}
+}
 
 function appFocused() {
   return document.visibilityState === "visible" && document.hasFocus();
@@ -2545,6 +2676,9 @@ function onMessageCreated(msg) {
     unread.channels.set(msg.channel, (unread.channels.get(msg.channel) || 0) + 1);
     unread.channelServer.set(msg.channel, msg.server);
     if (mentioned) unread.mentions.add(msg.channel);
+    if (viewing && readState.line && readState.line.channel === msg.channel && !readState.line.mark) {
+      readState.line.mark = readState.marks[msg.channel] || null;
+    }
     syncUnreadBadge();
     if (state.currentServer && state.currentServer.id === msg.server) renderChannels();
     else if (dmListShown() && isGroupServer(msg.server)) renderDmThreads();
@@ -3525,7 +3659,10 @@ function renderMessages(messages) {
   let lastTime = 0;
   let lastDay = null;
   let blockedRun = null;
-  for (const message of messages) {
+  const lineAt = state.view === "server" && state.currentChannel
+    ? newLineIndex(messages, lineFor(readState.line, state.currentChannel.id), myId(), skipsUnread)
+    : -1;
+  for (const [index, message] of messages.entries()) {
     const time = new Date(message.created_at).getTime();
     const day = new Date(message.created_at).toDateString();
     if (day !== lastDay) {
@@ -3533,6 +3670,7 @@ function renderMessages(messages) {
       lastDay = day;
       lastAuthor = null;
     }
+    if (index === lineAt) box.appendChild(newDivider());
     if (state.view === "server" && isBlocked(message.author_id) && !revealedBlocked.has(message.id)) {
       if (!blockedRun) {
         blockedRun = [];
@@ -3558,6 +3696,11 @@ function renderMessages(messages) {
     box.appendChild(historyPill());
   }
   box.scrollTop = sameView && !atBottom ? prevScroll : box.scrollHeight;
+  const line = !sameView && box.querySelector(".new-divider");
+  if (line) {
+    const above = line.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    if (above < 0) box.scrollTop += above - 8;
+  }
   if (state.threadRoot) renderThread();
 }
 
@@ -3600,6 +3743,14 @@ function buildChannelIntro(channel) {
 function dayDivider(date) {
   const row = el("div", "day-divider");
   row.appendChild(el("span", "day-divider-label", dayLabel(date)));
+  return row;
+}
+
+function newDivider() {
+  const row = el("div", "new-divider");
+  row.setAttribute("role", "separator");
+  row.setAttribute("aria-label", "New messages");
+  row.appendChild(el("span", "new-divider-label", "NEW"));
   return row;
 }
 
@@ -8703,6 +8854,7 @@ function openMessageMenu(message, anchor) {
     item("Copy Message Link", () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied"));
   }
   if (message.content) item("Forward", () => openForward(message));
+  if (state.view === "server" && state.currentChannel && !message.pending) item("Mark as Unread", () => markUnreadFrom(message));
   const r = anchor.getBoundingClientRect();
   placeMenuAt(menu, r.left, r.bottom + 4);
 }
@@ -9967,6 +10119,7 @@ async function sendDm() {
 
 async function selectChannel(channel) {
   state.currentChannel = channel;
+  if (channel) openChannelWithLine(channel);
   renderDmRequestBar(null);
   syncRulesGate();
   syncAwaitedBar();
@@ -9980,7 +10133,9 @@ async function selectChannel(channel) {
   syncSlowMode();
   renderTypingStrip();
   if (!channel) return renderMessages([]);
-  renderMessages(await fetchChannelMessages(channel));
+  const messages = await fetchChannelMessages(channel);
+  renderMessages(messages);
+  if (state.currentChannel === channel && !state.historyAnchor) advanceRead(channel.id, messages);
 }
 
 async function sendMessage() {
@@ -10001,6 +10156,8 @@ async function sendMessage() {
   typingSender.sent();
   $("messages").dataset.view = "";
   state.historyAnchor = null;
+  readState.line = null;
+  readState.held = null;
   cancelReply();
   try {
     const previewUrl = await previewUrlFor(content);
@@ -10987,6 +11144,7 @@ function wireEvents() {
       hideModals();
       renderUserPanel();
       await refreshServers();
+      await loadReadState();
       if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
     } catch (e) {
@@ -11779,6 +11937,7 @@ function wireEvents() {
     if (menuChannel) clearChannelUnread(menuChannel.id);
     closeFloating();
     renderChannels();
+    if (menuChannel && state.currentServer) markChannelsRead(state.currentServer.id, [menuChannel.id]);
   };
   $("chm-settings").onclick = () => {
     const channel = menuChannel;
@@ -11971,7 +12130,11 @@ function wireEvents() {
   $("notify-test").onclick = () =>
     invoke("notify", { title: "Commy", body: "Notifications are working." }).then(() => playSound("message")).catch(e => toast(String(e)));
   window.addEventListener("focus", () => {
-    if (state.view === "server" && state.currentChannel) clearChannelUnread(state.currentChannel.id);
+    if (state.view === "server" && state.currentChannel) {
+      if (readState.held === state.currentChannel.id) return;
+      clearChannelUnread(state.currentChannel.id);
+      if (!state.historyAnchor) advanceRead(state.currentChannel.id, state.renderedMessages || []);
+    }
     if (state.view === "dm" && state.currentDm) clearDmUnread(state.currentDm.user);
   });
 
@@ -12426,6 +12589,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("message-created", event => onMessageCreated(event.payload));
     window.__TAURI__.event.listen("typing", event => onTyping(event.payload));
     window.__TAURI__.event.listen("messages-caught-up", event => onMessagesCaughtUp(event.payload));
+    window.__TAURI__.event.listen("read-state-changed", event => applyReadView(event.payload));
     window.__TAURI__.event.listen("dm-received", event => onDmReceived(event.payload));
     window.__TAURI__.event.listen("dm-call", event => onDmCall(event.payload));
     invoke("get_dm_call").then(call => call && onDmCall(call)).catch(() => {});
@@ -13746,6 +13910,7 @@ async function continueBoot() {
   hideModals();
   renderUserPanel();
   await refreshServers();
+  await loadReadState();
   if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
 }
