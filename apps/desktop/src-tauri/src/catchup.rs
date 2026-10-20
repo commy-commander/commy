@@ -88,26 +88,13 @@ pub struct FreshChannel {
 }
 
 pub fn mentions(content: &str, names: &[&str]) -> bool {
-    let everyone: Vec<&str> = names.iter().copied().chain(["everyone", "here"]).collect();
-    names_mentioned(content, &everyone)
+    names_mentioned(content, names)
 }
 
-pub fn names_mentioned(content: &str, names: &[&str]) -> bool {
-    let lower = content.to_lowercase();
-    let targets = names.iter().map(|n| n.to_lowercase());
-    for name in targets.filter(|n| !n.is_empty()) {
-        let mut from = 0;
-        let needle = format!("@{name}");
-        while let Some(pos) = lower[from..].find(&needle) {
-            let end = from + pos + 1 + name.len();
-            let boundary = lower[end..].chars().next().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
-            if boundary {
-                return true;
-            }
-            from = end;
-        }
-    }
-    false
+pub use commy_core::mention::names_mentioned;
+
+pub fn mention_names(profile: &commy_core::UserProfile) -> Vec<String> {
+    [Some(profile.username.clone()), profile.display_name.clone()].into_iter().flatten().collect()
 }
 
 impl Catchup {
@@ -372,11 +359,7 @@ impl Unread {
         let profile = app.profile.lock().unwrap().clone();
         Self {
             me: profile.as_ref().map(|p| p.id),
-            names: profile
-                .iter()
-                .flat_map(|p| [Some(p.username.clone()), p.display_name.clone()])
-                .flatten()
-                .collect(),
+            names: profile.as_ref().map(mention_names).unwrap_or_default(),
             blocked: app.safety.lock().unwrap().blocked.iter().copied().collect(),
             silent: app.awaits_snapshot(server),
             keys: crate::channel_lock::KeyHolder::of(app),
@@ -385,10 +368,14 @@ impl Unread {
 
     fn fresh(&self, state: &ServerState, message: &Message) -> Fresh {
         let names: Vec<&str> = self.names.iter().map(String::as_str).collect();
-        match self.keys.open(state, message) {
-            Some(opened) => Fresh::of(&opened, &names),
-            None => Fresh::of(&Message { content: String::new(), ..message.clone() }, &names),
-        }
+        let Some(opened) = self.keys.open(state, message) else {
+            return Fresh::of(&Message { content: String::new(), ..message.clone() }, &names);
+        };
+        let mut fresh = Fresh::of(&opened, &names);
+        fresh.mentioned = self
+            .me
+            .is_some_and(|me| state.server.mentioned_by(opened.author, &opened.content, me, &names));
+        fresh
     }
 
     fn counts(&self, state: &ServerState, message: &Message) -> bool {
@@ -1346,8 +1333,8 @@ mod tests {
         assert!(mentions("hey @sam, lunch?", &["sam"]));
         assert!(mentions("HEY @Sam", &["sam"]));
         assert!(!mentions("hey @samantha", &["sam"]));
-        assert!(mentions("@everyone look", &[]));
-        assert!(mentions("ping @here", &["x"]));
+        assert!(!mentions("@everyone look", &[]), "everyone and here depend on who sent them");
+        assert!(!mentions("ping @here", &["x"]));
         assert!(!mentions("mail sam@example.org", &["sam"]));
         assert!(!mentions("@", &[""]));
         assert!(mentions("@Sam Smith is here", &["Sam Smith"]));

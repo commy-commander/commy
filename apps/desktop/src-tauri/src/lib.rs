@@ -1699,15 +1699,122 @@ fn known_profile_field<T>(app: &App, user: UserId, field: impl Fn(&UserProfile) 
     app.servers.lock().unwrap().values().find_map(|s| s.profiles.get(&user).and_then(&field))
 }
 
+async fn join_group(app: &App, handle: &tauri::AppHandle, from: UserId, ticket: &str) {
+    let Ok(ticket) = ServerTicket::decode(ticket) else {
+        tracing::debug!("ignored a group invite from {from} with a bad ticket");
+        return;
+    };
+    if app.servers.lock().unwrap().contains_key(&ticket.server_id) {
+        return;
+    }
+    match join_ticket(app, handle, ticket.clone()).await {
+        Ok(_) => {
+            entry_list::record_join(app, ticket.server_id);
+            entry_list::schedule(handle);
+        }
+        Err(e) => tracing::warn!("could not join a group from {from}: {e}"),
+    }
+}
+
+async fn invite_to_group(app: &App, handle: &tauri::AppHandle, me: &UserProfile, sid: ServerId, user_ids: Vec<String>) -> CmdResult<()> {
+    let ticket = app.vouched_ticket(sid).ok_or("no invite available; you may be offline")?.encode();
+    for raw in user_ids {
+        let (_, user) = dm_partner(app, &raw)?;
+        let already = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.is_current_member(user));
+        if already {
+            continue;
+        }
+        let invite = DmMessage::acting(me.id, user, DmAction::GroupInvite { ticket: ticket.clone() }, "");
+        post_dm(app, handle, me, user, invite).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn create_group_dm(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_ids: Vec<String>) -> CmdResult<ServerSummary> {
+    account::require_account(&app)?;
+    let me = current_profile(&app)?;
+    if user_ids.is_empty() {
+        return Err("pick at least one person".into());
+    }
+    let server_id = ServerId::new();
+    let hosting = async {
+        let mut net = app.net.lock().await;
+        let node = net.as_mut().ok_or("network is not ready yet")?;
+        let ticket = node.host_server(server_id, "", app.own_key_for_tickets()).await.map_err(err_to_string)?;
+        app.invites.lock().unwrap().insert(server_id, ticket.encode());
+        Ok(())
+    };
+    let (state, _, signing) = own_server_state_from(&app, server_id, hosting, commy_core::Server::group).await?;
+    let summary = ServerSummary::from_state(&state, Some(me.id));
+    app.servers.lock().unwrap().insert(server_id, state);
+    drop(signing);
+    app.persist_server(server_id);
+    app.persist_invites();
+    entry_list::record_join(&app, server_id);
+    entry_list::schedule(&handle);
+    let _ = handle.emit("servers-changed", ());
+    invite_to_group(&app, &handle, &me, server_id, user_ids).await?;
+    Ok(summary)
+}
+
+#[tauri::command]
+async fn add_group_members(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_ids: Vec<String>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let group = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.group && s.server.is_current_member(me.id));
+    if !group {
+        return Err("that is not a group you are in".into());
+    }
+    invite_to_group(&app, &handle, &me, sid, user_ids).await
+}
+
+fn group_thread_views(app: &App, me: UserId) -> Vec<DmThreadView> {
+    let servers = app.servers.lock().unwrap();
+    servers
+        .values()
+        .filter(|s| s.server.group)
+        .map(|state| {
+            let last = state
+                .server
+                .sorted_channels()
+                .into_iter()
+                .filter(|c| c.kind == ChannelKind::Text)
+                .flat_map(|c| state.messages(c.id).iter())
+                .max_by_key(|m| m.created_at);
+            DmThreadView {
+                user: state.server.id.to_string(),
+                name: view::server_name(state, Some(me)),
+                last_message: last
+                    .map(|m| {
+                        let who = if m.author == me { "You".to_string() } else { view::display_name(state, m.author) };
+                        let text = if m.content.is_empty() {
+                            m.files().next().map(|a| a.filename.clone()).unwrap_or_default()
+                        } else {
+                            safety::truncate(&m.content, 60)
+                        };
+                        format!("{who}: {text}")
+                    })
+                    .unwrap_or_default(),
+                last_at: last.map(|m| m.created_at.to_rfc3339()).unwrap_or_default(),
+                kind: "group".to_string(),
+            }
+        })
+        .collect()
+}
+
 #[tauri::command]
 fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
     let me = match app.profile.lock().unwrap().as_ref() {
         Some(p) => p.id,
         None => return Vec::new(),
     };
+    let groups = group_thread_views(&app, me);
     let dms = app.dms.lock().unwrap();
     let safety = app.safety.lock().unwrap();
     let mut views = dm_thread_views(&dms, me);
+    views.extend(groups);
+    views.sort_by(|a, b| b.last_at.cmp(&a.last_at));
     views.retain_mut(|view| {
         let Ok(partner) = view.user.parse::<UserId>() else { return true };
         if safety.is_blocked(partner) {
@@ -3872,6 +3979,7 @@ async fn update_role(
     hoist: Option<bool>,
     tag: Option<String>,
     permissions: Option<Vec<String>>,
+    mentionable: Option<bool>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
@@ -3896,7 +4004,16 @@ async fn update_role(
         let permissions = permissions
             .map(|names| permissions_from_names(&names))
             .unwrap_or(existing.permissions);
-        commy_core::server::Role { name, color, self_assignable, hoist: hoist.unwrap_or(existing.hoist), tag, permissions, ..existing.clone() }
+        commy_core::server::Role {
+            name,
+            color,
+            self_assignable,
+            hoist: hoist.unwrap_or(existing.hoist),
+            tag,
+            permissions,
+            mentionable: mentionable.unwrap_or(existing.mentionable),
+            ..existing.clone()
+        }
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
@@ -5688,6 +5805,7 @@ async fn create_role(
     tag: Option<String>,
     self_assignable: Option<bool>,
     hoist: Option<bool>,
+    mentionable: Option<bool>,
 ) -> CmdResult<String> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let name = name.trim().to_string();
@@ -5724,6 +5842,7 @@ async fn create_role(
             self_assignable: self_assignable.unwrap_or(false),
             tag,
             banner: None,
+            mentionable: mentionable.unwrap_or(false),
         }
     };
     let id = role.id.to_string();
@@ -6197,6 +6316,8 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             return;
         }
         let Some(message) = keys.open(state, message) else { return };
+        let names = app.profile.lock().unwrap().as_ref().map(catchup::mention_names).unwrap_or_default();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
         serde_json::json!({
             "server": sid.to_string(),
             "server_name": state.server.name,
@@ -6205,6 +6326,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "announcement": state.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement),
             "author": message.author.to_string(),
             "author_name": state.profiles.get(&message.author).map(|p| p.visible_name().to_string()).unwrap_or_else(|| "Someone".into()),
+            "mentioned": state.server.mentioned_by(message.author, &message.content, me, &names),
             "content": message.content,
             "has_attachments": message.files().next().is_some(),
         })
@@ -6284,6 +6406,7 @@ async fn run_dm_loop(
                 let _ = send_friend_signal(&app, to, signal).await;
             }
             outbox::Received::Call { from, call, signal } => calls::on_signal(&app, &handle, from, call, signal).await,
+            outbox::Received::GroupInvite { from, ticket } => join_group(&app, &handle, from, &ticket).await,
             outbox::Received::Dropped | outbox::Received::Taken => {}
         }
     }
@@ -6813,6 +6936,8 @@ pub fn run() {
             set_dm_reaction,
             attach_dm_file,
             attach_dm_bytes,
+            create_group_dm,
+            add_group_members,
             calls::start_dm_call,
             calls::answer_dm_call,
             calls::end_dm_call,

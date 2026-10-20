@@ -77,6 +77,8 @@ pub struct Role {
     pub tag: Option<String>,
     #[serde(default)]
     pub banner: Option<String>,
+    #[serde(default)]
+    pub mentionable: bool,
 }
 
 pub const EVERYONE_ROLE_POSITION: u32 = 0;
@@ -213,6 +215,8 @@ pub struct Server {
     #[serde(default)]
     pub public: bool,
     #[serde(default)]
+    pub group: bool,
+    #[serde(default)]
     pub pins: Vec<Pin>,
     #[serde(default)]
     pub stickers: Vec<Sticker>,
@@ -234,6 +238,7 @@ impl Server {
             position: EVERYONE_ROLE_POSITION,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -279,6 +284,7 @@ impl Server {
             banned: vec![],
             afk_timeout_minutes: None,
             public: false,
+            group: false,
             pins: vec![],
             stickers: vec![],
             emoticons: vec![],
@@ -424,6 +430,14 @@ impl Server {
             .max_by_key(|r| r.position)
     }
 
+    pub fn group(owner: UserId) -> Self {
+        let mut server = Self::new("", owner);
+        server.group = true;
+        server.channels = vec![Channel::new("chat", ChannelKind::Text, 0), Channel::new("call", ChannelKind::Voice, 1)];
+        server.afk_channel_id = None;
+        server
+    }
+
     pub fn sorted_channels(&self) -> Vec<&Channel> {
         let mut channels: Vec<&Channel> = self.channels.iter().collect();
         channels.sort_by_key(|c| (c.parent, c.position));
@@ -466,6 +480,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -477,6 +492,7 @@ mod tests {
             position: 2,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -505,6 +521,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -585,6 +602,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -611,6 +629,7 @@ mod tests {
             position: 1,
             hoist: true,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -641,6 +660,7 @@ mod tests {
             position: 2,
             hoist: true,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };

@@ -112,6 +112,7 @@ mod tests {
                 position: 1,
                 hoist: false,
                 self_assignable: false,
+                mentionable: false,
                 tag: None,
                 banner: None,
             };

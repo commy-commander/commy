@@ -3046,8 +3046,10 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   border-radius: 6px;
   padding: 0 3px;
 }
+.mention.role { background: var(--role-tint, rgba(255, 77, 77, .14)); color: var(--role-color, #ffb3b3); }
 .mention.me { background: rgba(255, 200, 61, .22); color: #ffd36b; }
 .msg:has(.mention.me) { background: rgba(255, 200, 61, .07); box-shadow: inset 2px 0 0 #ffc83d; }
+.mention-row .mention.role { font-size: 13px; line-height: 20px; }
 
 .mention-pop {
   position: fixed;
@@ -3974,6 +3976,10 @@ h3.md-heading { font-size: 1.1em; }
 .role-form .perm-grid input, .rf-admin input { accent-color: var(--accent); width: 16px; height: 16px; }
 .rf-admin { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin-top: 4px; padding: 10px 12px; border: 1px solid var(--bg-active); border-radius: 8px; color: var(--text-normal); font-size: 14px; cursor: pointer; }
 .rf-admin .setting-sub { flex-basis: 100%; margin: 0; padding-left: 24px; }
+.rf-mention { display: flex; align-items: center; gap: 12px; margin-top: 4px; padding: 10px 12px; border: 1px solid var(--bg-active); border-radius: 8px; cursor: pointer; }
+.rf-mention-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rf-mention-text .setting-title { margin: 0; font-size: 14px; }
+.rf-mention-text .setting-sub { margin: 0; }
 .role-form .form-actions { justify-content: space-between; margin-top: 4px; }
 .role-banner-row { display: flex; gap: 12px; align-items: center; }
 .role-banner-preview {
@@ -4982,3 +4988,13 @@ h3.md-heading { font-size: 1.1em; }
 .call-btn:hover { filter: brightness(1.1); }
 .call-btn:active { transform: scale(.95); }
 #dm-call-btn.active { color: var(--red); }
+.group-avatar { display: grid; place-items: center; background: var(--bg-active); color: var(--text-muted); }
+.group-avatar svg { width: 18px; height: 18px; }
+.dm-thread.active .group-avatar, .dm-thread:hover .group-avatar { color: var(--text-normal); }
+.person-row .pick { width: 18px; height: 18px; border-radius: 5px; border: 2px solid var(--text-muted); display: grid; place-items: center; color: transparent; flex-shrink: 0; margin-left: auto; }
+.person-row .pick svg { width: 14px; height: 14px; }
+.person-row.picked .pick { background: var(--accent); border-color: var(--accent); color: #fff; }
+.person-row.in-group { opacity: .5; cursor: default; }
+.person-row.in-group:hover { background: none; }
+.person-row.new-group { color: var(--text-normal); }
+.person-row.new-group .group-avatar { width: 32px; height: 32px; }
