@@ -36,7 +36,8 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   time, appear offline, and notification toasts.
 - **Game overlay.** On Windows, an in-game overlay shows who is talking and
   recent chat, in the screen corner you choose.
-- **Safety tools.** Block and report people, and invite links that can expire.
+- **Safety tools.** Block and report people, an audit log of server changes,
+  and invite links that expire or can be revoked.
 
 Windows is the primary platform today. macOS and Linux builds are published
 with each release; a few features, such as the game overlay and notification

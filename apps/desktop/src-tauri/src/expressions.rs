@@ -1,4 +1,5 @@
 pub const MAX_EMOJI_BYTES: usize = 256 * 1024;
+pub const MAX_STICKER_BYTES: usize = 512 * 1024;
 pub const MAX_SOUND_BYTES: usize = 1024 * 1024;
 const LONGEST_SOUND_SECS: usize = 15;
 const HIGHEST_SOUND_KBPS: usize = 320;
@@ -50,7 +51,7 @@ pub fn audio_mime(bytes: &[u8]) -> Option<&'static str> {
 
 pub fn expression_mime(bytes: &[u8]) -> Option<&'static str> {
     match (image_mime(bytes), audio_mime(bytes)) {
-        (Some(mime), _) if bytes.len() <= MAX_EMOJI_BYTES => Some(mime),
+        (Some(mime), _) if bytes.len() <= MAX_STICKER_BYTES => Some(mime),
         (None, Some(mime)) if bytes.len() <= MAX_SOUND_BYTES => Some(mime),
         _ => None,
     }
@@ -90,7 +91,7 @@ mod tests {
     #[test]
     fn enforces_size_per_kind() {
         let mut png = b"\x89PNG".to_vec();
-        png.resize(MAX_EMOJI_BYTES, 0);
+        png.resize(MAX_STICKER_BYTES, 0);
         assert!(expression_mime(&png).is_some());
         png.push(0);
         assert!(expression_mime(&png).is_none());

@@ -46,6 +46,16 @@ test("custom emoji come first, this server before others, one per name", () => {
   assert.equal(list[0].image, "a@p");
 });
 
+test("emoticons are suggested by name and insert their text", () => {
+  const faces = { name: "Commy", emojis: [], emoticons: [{ name: "shrug", text: "¯\\_(ツ)_/¯" }, { name: "table_flip", text: "(╯°□°)╯︵ ┻━┻" }] };
+  const list = emojiSuggestions("shr", [here, faces], STANDARD);
+  assert.deepEqual(list.map(e => [e.kind, e.name]), [["emoticon", "shrug"]]);
+  assert.equal(suggestionInsert(list[0]), "¯\\_(ツ)_/¯ ");
+  assert.deepEqual(emojiSuggestions("flip", [faces], STANDARD).map(e => e.text), ["(╯°□°)╯︵ ┻━┻"]);
+  const same = { name: "Art Club", emojis: [{ name: "shrug", image: "z@p" }], emoticons: [] };
+  assert.deepEqual(emojiSuggestions("shrug", [same, faces], STANDARD).map(e => e.kind), ["custom", "emoticon"], "an emoji and an emoticon may share a name");
+});
+
 test("standard emoji match any word of their name", () => {
   assert.deepEqual(emojiSuggestions("ta", [], STANDARD).map(e => e.emoji), ["\u{1F389}"]);
   assert.deepEqual(emojiSuggestions("thumbs_u", [], STANDARD).map(e => e.emoji), ["\u{1F44D}"]);

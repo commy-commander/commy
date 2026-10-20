@@ -62,6 +62,38 @@ pub struct VoiceSettings {
     pub muted_users: Vec<String>,
     #[serde(default = "default_true")]
     pub auto_update: bool,
+    #[serde(default)]
+    pub input_mode: crate::voice_keys::InputMode,
+    #[serde(default = "crate::voice_keys::default_talk_key")]
+    pub talk_key: String,
+    #[serde(default = "crate::voice_keys::default_talk_release_ms")]
+    pub talk_release_ms: u32,
+    #[serde(default)]
+    pub mute_hotkey: String,
+    #[serde(default)]
+    pub deafen_hotkey: String,
+    #[serde(default = "default_true")]
+    pub auto_sensitivity: bool,
+    #[serde(default = "crate::voice_keys::default_sensitivity_db")]
+    pub sensitivity_db: f32,
+}
+
+impl VoiceSettings {
+    pub fn voice_keys(&self) -> crate::voice_keys::VoiceKeys {
+        crate::voice_keys::VoiceKeys::from_settings(self.input_mode, &self.talk_key, &self.mute_hotkey, &self.deafen_hotkey)
+    }
+
+    pub fn sensitivity(&self) -> commy_audio::Sensitivity {
+        crate::voice_keys::sensitivity(self.auto_sensitivity, self.sensitivity_db)
+    }
+
+    pub fn apply_to(&self, processor: &mut VoiceProcessor) {
+        processor.set_noise_cancellation(self.noise_cancellation);
+        processor.set_muted(self.muted);
+        processor.set_input_gain(self.input_gain);
+        processor.set_push_to_talk(self.input_mode == crate::voice_keys::InputMode::PushToTalk);
+        processor.set_sensitivity(self.sensitivity());
+    }
 }
 
 pub(crate) fn default_true() -> bool {
@@ -103,6 +135,13 @@ impl Default for VoiceSettings {
             user_volumes: std::collections::HashMap::new(),
             muted_users: Vec::new(),
             auto_update: true,
+            input_mode: crate::voice_keys::InputMode::default(),
+            talk_key: crate::voice_keys::default_talk_key(),
+            talk_release_ms: crate::voice_keys::default_talk_release_ms(),
+            mute_hotkey: String::new(),
+            deafen_hotkey: String::new(),
+            auto_sensitivity: true,
+            sensitivity_db: crate::voice_keys::default_sensitivity_db(),
         }
     }
 }
@@ -131,6 +170,7 @@ pub struct App {
     pub auto_idle: std::sync::atomic::AtomicBool,
     pub overlay_visible: std::sync::atomic::AtomicBool,
     pub overlay_hotkeys_taken: Mutex<Vec<String>>,
+    pub talk_press: std::sync::atomic::AtomicU64,
     pub forced_mute: std::sync::atomic::AtomicBool,
     pub forced_deaf: std::sync::atomic::AtomicBool,
     pub share_seen: Mutex<HashMap<(ServerId, UserId), std::time::Instant>>,
@@ -150,6 +190,7 @@ pub struct App {
     pub rest: Mutex<crate::wake::Rest>,
     pub liveness: Mutex<crate::liveness::Liveness>,
     pub awaiting_snapshot: Mutex<HashSet<ServerId>>,
+    pub deleted: Mutex<crate::deleted::DeletedServers>,
     pub key_hold: Mutex<Option<Instant>>,
     pub signing: tokio::sync::RwLock<()>,
 }
@@ -182,6 +223,7 @@ impl Default for App {
             auto_idle: std::sync::atomic::AtomicBool::new(false),
             overlay_visible: std::sync::atomic::AtomicBool::new(true),
             overlay_hotkeys_taken: Mutex::new(Vec::new()),
+            talk_press: std::sync::atomic::AtomicU64::new(0),
             forced_mute: std::sync::atomic::AtomicBool::new(false),
             forced_deaf: std::sync::atomic::AtomicBool::new(false),
             share_seen: Mutex::new(HashMap::new()),
@@ -206,6 +248,7 @@ impl Default for App {
             rest: Mutex::new(crate::wake::Rest::default()),
             liveness: Mutex::new(crate::liveness::Liveness::default()),
             awaiting_snapshot: Mutex::new(HashSet::new()),
+            deleted: Mutex::new(crate::deleted::DeletedServers::default()),
             key_hold: Mutex::new(None),
             signing: tokio::sync::RwLock::new(()),
         }
@@ -432,6 +475,11 @@ impl App {
         let Some(dir) = self.data_dir() else { return };
         let storage = self.storage.lock().unwrap().clone();
         warn_unsaved("storage settings", crate::persist::save_storage(dir, &storage));
+    }
+
+    pub fn persist_deleted(&self) {
+        let Some(dir) = self.data_dir() else { return };
+        self.deleted.lock().unwrap().save(dir);
     }
 
     pub fn persist_outbox(&self) {

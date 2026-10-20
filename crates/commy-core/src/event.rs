@@ -187,6 +187,44 @@ pub enum ServerEvent {
         user: UserId,
         pronouns: Option<String>,
     },
+    ServerDelete {
+        server: ServerId,
+    },
+    InviteTrack {
+        server: ServerId,
+        invite: crate::invites::TrackedInvite,
+    },
+    InviteRevoke {
+        server: ServerId,
+        origin: String,
+        code: String,
+        creator: UserId,
+    },
+    InviteBackgroundSet {
+        server: ServerId,
+        background: Option<String>,
+    },
+    StickerAdd {
+        server: ServerId,
+        sticker: crate::server::Sticker,
+    },
+    StickerRemove {
+        server: ServerId,
+        name: String,
+    },
+    EmoticonAdd {
+        server: ServerId,
+        emoticon: crate::server::Emoticon,
+    },
+    EmoticonRemove {
+        server: ServerId,
+        name: String,
+    },
+    ExpressionSharingSet {
+        server: ServerId,
+        stickers: bool,
+        emoticons: bool,
+    },
 }
 
 #[cfg(test)]
@@ -233,6 +271,12 @@ mod tests {
         let play = ServerEvent::SharedSoundPlay { server, channel, user, name: "n".into(), blob: "b".into(), volume: 1.0 };
         assert_eq!(wire_tag(play), 51);
         assert_eq!(wire_tag(ServerEvent::PronounsSet { server, user, pronouns: None }), 52);
+        assert_eq!(wire_tag(ServerEvent::ServerDelete { server }), 53);
+        let revoke = ServerEvent::InviteRevoke { server, origin: "o".into(), code: "c".into(), creator: user };
+        assert_eq!(wire_tag(revoke), 55);
+        assert_eq!(wire_tag(ServerEvent::InviteBackgroundSet { server, background: None }), 56);
+        let sharing = ServerEvent::ExpressionSharingSet { server, stickers: true, emoticons: false };
+        assert_eq!(wire_tag(sharing), 61);
     }
 
     #[test]

@@ -28,6 +28,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 base64 = "0.22"
 n0-future = "0.3"
+sha2 = "0.11"
 
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 tokio = { workspace = true }

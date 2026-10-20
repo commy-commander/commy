@@ -135,6 +135,7 @@ pub struct ServerView {
     pub afk_channel: Option<String>,
     pub icon: Option<String>,
     pub banner: Option<String>,
+    pub invite_background: Option<String>,
     pub can_manage_server: bool,
     pub can_manage_channels: bool,
     pub can_manage_roles: bool,
@@ -143,6 +144,7 @@ pub struct ServerView {
     pub can_invite: bool,
     pub can_pin: bool,
     pub can_post_announcements: bool,
+    pub can_view_audit_log: bool,
     pub game_tags: Vec<String>,
     pub game_tag_meta: Vec<commy_core::server::GameTagMeta>,
     pub rules: Option<String>,
@@ -156,8 +158,17 @@ pub struct ServerView {
     pub can_mute: bool,
     pub can_ban: bool,
     pub emojis: Vec<EmojiView>,
+    pub stickers: Vec<EmojiView>,
+    pub emoticons: Vec<EmoticonView>,
     pub sounds: Vec<SoundView>,
     pub emojis_shareable: bool,
+    pub stickers_shareable: bool,
+    pub emoticons_shareable: bool,
+    pub add_restricted: AddRestrictions,
+    pub can_add_emojis: bool,
+    pub can_add_stickers: bool,
+    pub can_add_emoticons: bool,
+    pub can_use_external: bool,
     pub soundboard_open: bool,
     pub sounds_shareable: bool,
     pub uploads_restricted: bool,
@@ -173,6 +184,19 @@ pub struct ServerView {
 pub struct EmojiView {
     pub name: String,
     pub image: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EmoticonView {
+    pub name: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct AddRestrictions {
+    pub emojis: bool,
+    pub stickers: bool,
+    pub emoticons: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -296,6 +320,7 @@ impl ServerView {
         let perms = viewer
             .map(|v| state.server.permissions_for(v))
             .unwrap_or(Permissions::NONE);
+        let is_member = viewer.is_some_and(|v| state.server.is_member(v));
 
         let events = state
             .server
@@ -338,6 +363,7 @@ impl ServerView {
             afk_channel: state.server.afk_channel().map(|c| c.to_string()),
             icon: state.server.icon.clone(),
             banner: state.server.banner.clone(),
+            invite_background: state.invite_background().map(str::to_string),
             can_manage_server: perms.allows(Permissions::MANAGE_SERVER),
             can_manage_channels: perms.allows(Permissions::MANAGE_CHANNELS),
             can_manage_roles: perms.allows(Permissions::MANAGE_ROLES),
@@ -346,6 +372,7 @@ impl ServerView {
             can_invite: perms.allows(Permissions::CREATE_INVITES),
             can_pin: perms.can_pin(),
             can_post_announcements: perms.can_announce(),
+            can_view_audit_log: perms.can_view_audit_log(),
             game_tags: state.server.game_tags.clone(),
             game_tag_meta: state.server.game_tag_meta.clone(),
             rules: state.server.rules.clone(),
@@ -368,6 +395,18 @@ impl ServerView {
                 .iter()
                 .map(|e| EmojiView { name: e.name.clone(), image: e.blob.clone() })
                 .collect(),
+            stickers: state
+                .server
+                .stickers
+                .iter()
+                .map(|s| EmojiView { name: s.name.clone(), image: s.blob.clone() })
+                .collect(),
+            emoticons: state
+                .server
+                .emoticons
+                .iter()
+                .map(|e| EmoticonView { name: e.name.clone(), text: e.text.clone() })
+                .collect(),
             sounds: state
                 .server
                 .soundboard
@@ -375,23 +414,37 @@ impl ServerView {
                 .map(|s| SoundView { name: s.name.clone(), blob: s.blob.clone(), volume: s.volume, emoji: s.emoji.clone() })
                 .collect(),
             emojis_shareable: state.server.emojis_shareable,
+            stickers_shareable: state.server.stickers_shareable,
+            emoticons_shareable: state.server.emoticons_shareable,
+            add_restricted: AddRestrictions {
+                emojis: everyone_lacks(state, Permissions::ADD_EMOJIS),
+                stickers: everyone_lacks(state, Permissions::ADD_STICKERS),
+                emoticons: everyone_lacks(state, Permissions::ADD_EMOTICONS),
+            },
+            can_add_emojis: is_member && perms.can_add(Permissions::ADD_EMOJIS),
+            can_add_stickers: is_member && perms.can_add(Permissions::ADD_STICKERS),
+            can_add_emoticons: is_member && perms.can_add(Permissions::ADD_EMOTICONS),
+            can_use_external: perms.allows(Permissions::USE_EXTERNAL_EMOJIS),
             soundboard_open: state.server.soundboard_open,
             sounds_shareable: state.server.sounds_shareable,
-            uploads_restricted: state
-                .server
-                .roles
-                .iter()
-                .find(|r| r.position == EVERYONE_ROLE_POSITION)
-                .is_some_and(|r| !r.permissions.contains(Permissions::ATTACH_FILES)),
+            uploads_restricted: everyone_lacks(state, Permissions::ATTACH_FILES),
             can_attach_files: perms.allows(Permissions::ATTACH_FILES),
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
-            can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS)
-                || (state.server.soundboard_open && viewer.is_some_and(|v| state.server.is_member(v))),
+            can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS) || (state.server.soundboard_open && is_member),
             can_use_soundboard: perms.allows(Permissions::USE_SOUNDBOARD),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
         }
     }
+}
+
+fn everyone_lacks(state: &ServerState, permission: Permissions) -> bool {
+    state
+        .server
+        .roles
+        .iter()
+        .find(|r| r.position == EVERYONE_ROLE_POSITION)
+        .is_some_and(|r| !r.permissions.contains(permission))
 }
 
 pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
@@ -406,8 +459,13 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("ban_members", Permissions::BAN_MEMBERS),
     ("mute_members", Permissions::MUTE_MEMBERS),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
+    ("add_emojis", Permissions::ADD_EMOJIS),
+    ("add_stickers", Permissions::ADD_STICKERS),
+    ("add_emoticons", Permissions::ADD_EMOTICONS),
+    ("use_external_emojis", Permissions::USE_EXTERNAL_EMOJIS),
     ("manage_events", Permissions::MANAGE_EVENTS),
     ("create_invites", Permissions::CREATE_INVITES),
+    ("view_audit_log", Permissions::VIEW_AUDIT_LOG),
     ("administrator", Permissions::ADMINISTRATOR),
 ];
 

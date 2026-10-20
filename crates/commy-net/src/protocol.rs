@@ -200,6 +200,8 @@ fn encoded<T: Serialize>(item: &T) -> usize {
 pub fn build_sync_response(state: &ServerState, per_channel: usize, by: UserId) -> WirePayload {
     let mut server = state.server.clone();
     server.emojis.clear();
+    server.stickers.clear();
+    server.emoticons.clear();
     server.soundboard.clear();
     server.rules = None;
     server.events.clear();
@@ -741,11 +743,13 @@ mod tests {
 
     #[test]
     fn sync_response_leaves_out_expressions() {
-        use commy_core::server::{CustomEmoji, SoundboardSound};
+        use commy_core::server::{CustomEmoji, Emoticon, SoundboardSound, Sticker};
         let owner = UserId::new();
         let mut server = Server::new("s", owner);
         for i in 0..50 {
             server.emojis.push(CustomEmoji { name: format!("emoji{i}"), blob: format!("{}@{}", "a".repeat(64), "b".repeat(64)) });
+            server.stickers.push(Sticker { name: format!("sticker{i}"), blob: format!("{}@{}", "a".repeat(64), "b".repeat(64)) });
+            server.emoticons.push(Emoticon { name: format!("face{i}"), text: "(╯°□°)╯︵ ┻━┻".repeat(4) });
             server.soundboard.push(SoundboardSound { name: format!("s{i}"), blob: "a@b".into(), volume: 1.0, emoji: None });
         }
         let state = ServerState::new(server);
@@ -753,5 +757,6 @@ mod tests {
         assert!(gossip_size(&payload) <= MAX_GOSSIP_BYTES);
         let WirePayload::SyncResponse { server, .. } = payload else { panic!("wrong payload kind") };
         assert!(server.emojis.is_empty() && server.soundboard.is_empty());
+        assert!(server.stickers.is_empty() && server.emoticons.is_empty());
     }
 }

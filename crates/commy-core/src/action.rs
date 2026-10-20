@@ -119,6 +119,15 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
         E::ExpressionSettings { .. } => "expressions".into(),
         E::SoundSharingSet { .. } => "sound_sharing".into(),
+        E::ExpressionSharingSet { .. } => "expression_sharing".into(),
+        E::StickerAdd { sticker, .. } => format!("sticker:{}", sticker.name),
+        E::StickerRemove { name, .. } => format!("sticker:{name}"),
+        E::EmoticonAdd { emoticon, .. } => format!("emoticon:{}", emoticon.name),
+        E::EmoticonRemove { name, .. } => format!("emoticon:{name}"),
+        E::ServerDelete { .. } => "deleted".into(),
+        E::InviteTrack { invite, .. } => format!("invite:{}", invite.id()),
+        E::InviteRevoke { origin, code, .. } => format!("invite:{}", crate::invites::invite_id(origin, code)),
+        E::InviteBackgroundSet { .. } => "invite_background".into(),
         E::EmojiAdd { emoji, .. } => format!("emoji:{}", emoji.name),
         E::EmojiRemove { name, .. } => format!("emoji:{name}"),
         E::SoundAdd { sound, .. } => format!("sound:{}", sound.name),
@@ -155,12 +164,17 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 5] = ["emoji:", "sound:", "event:", "pin:", "bot:"];
-    subject == "rules" || subject == "automod" || OMITTED.iter().any(|p| subject.starts_with(p))
+    const OMITTED: [&str; 8] = ["emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:"];
+    const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
+    SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
 }
 
 pub fn relayable(event: &ServerEvent) -> bool {
     !matches!(event, ServerEvent::MemberJoin { .. }) && subject(event).is_some_and(|s| settles_authority(&s))
+}
+
+fn may_add(perms: Permissions, member: bool, kind: Permissions, taken: bool) -> bool {
+    perms.allows(Permissions::MANAGE_EXPRESSIONS) || (member && !taken && perms.allows(kind))
 }
 
 pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
@@ -204,13 +218,28 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::AfkChannelSet { .. }
         | E::AfkTimeoutSet { .. }
         | E::ExpressionSettings { .. }
-        | E::SoundSharingSet { .. } => allows(Permissions::MANAGE_SERVER),
+        | E::SoundSharingSet { .. }
+        | E::ExpressionSharingSet { .. } => allows(Permissions::MANAGE_SERVER),
         E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => {
             allows(Permissions::MANAGE_ROLES)
                 || (*user == by && server.roles.iter().any(|r| r.id == *role && r.self_assignable))
         }
-        E::EmojiAdd { .. } | E::EmojiRemove { .. } | E::SoundRemove { .. } => allows(Permissions::MANAGE_EXPRESSIONS),
+        E::EmojiRemove { .. } | E::StickerRemove { .. } | E::EmoticonRemove { .. } | E::SoundRemove { .. } => {
+            allows(Permissions::MANAGE_EXPRESSIONS)
+        }
+        E::EmojiAdd { emoji, .. } => {
+            let taken = server.emojis.iter().any(|e| e.name == emoji.name);
+            may_add(perms, member, Permissions::ADD_EMOJIS, taken)
+        }
+        E::StickerAdd { sticker, .. } => {
+            let taken = server.stickers.iter().any(|s| s.name == sticker.name);
+            may_add(perms, member, Permissions::ADD_STICKERS, taken)
+        }
+        E::EmoticonAdd { emoticon, .. } => {
+            let taken = server.emoticons.iter().any(|e| e.name == emoticon.name);
+            may_add(perms, member, Permissions::ADD_EMOTICONS, taken)
+        }
         E::SoundAdd { sound, .. } => {
             allows(Permissions::MANAGE_EXPRESSIONS)
                 || (server.soundboard_open && member && !server.soundboard.iter().any(|s| s.name == sound.name))
@@ -224,6 +253,10 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         }
         E::VoiceModerate { .. } => allows(Permissions::MUTE_MEMBERS) || allows(Permissions::DEAFEN_MEMBERS),
         E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
+        E::ServerDelete { .. } => by == server.owner,
+        E::InviteTrack { invite, .. } => member && invite.creator == by && allows(Permissions::CREATE_INVITES),
+        E::InviteRevoke { creator, .. } => allows(Permissions::MANAGE_SERVER) || (member && *creator == by),
+        E::InviteBackgroundSet { .. } => allows(Permissions::MANAGE_SERVER),
     }
 }
 
@@ -637,7 +670,7 @@ mod tests {
         let relayed = author.signed_actions()[0].clone();
         assert_eq!(other.apply_signed(&relayed), Ok(true));
         assert_eq!(other.server.emojis.len(), 1);
-        let own = SignedEvent::sign(sid, relayer, 2_000, emoji(sid, "fake"), &identity_for(relayer));
+        let own = SignedEvent::sign(sid, relayer, 2_000, emoji(sid, "wave"), &identity_for(relayer));
         assert_eq!(other.apply_signed(&own), Err(StoreError::NotAllowed), "relaying gives no right to change it");
     }
 
@@ -654,6 +687,65 @@ mod tests {
         assert_eq!(state.apply_signed(&rename), Ok(false), "what the snapshot carries stays as it said");
         assert!(snapshot_omits("rules") && snapshot_omits("pin:x") && !snapshot_omits("rules_accept:x"));
         assert!(snapshot_omits("automod"));
+    }
+
+    #[test]
+    fn members_add_new_expressions_but_only_managers_replace_or_remove_them() {
+        use crate::server::{Emoticon, Sticker};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let member = join(&mut state, "member");
+        let image = format!("{}@{}", "c".repeat(52), "0".repeat(64));
+        let sticker = |name: &str| ServerEvent::StickerAdd { server: sid, sticker: Sticker { name: name.into(), blob: image.clone() } };
+        let emoticon = |name: &str, text: &str| ServerEvent::EmoticonAdd { server: sid, emoticon: Emoticon { name: name.into(), text: text.into() } };
+        let by = |user, at, event| SignedEvent::sign(sid, user, at, event, &identity_for(user));
+        assert_eq!(state.apply_signed(&by(member, 1_000, emoji(sid, "wave"))), Ok(true));
+        assert_eq!(state.apply_signed(&by(member, 1_000, sticker("hi"))), Ok(true));
+        assert_eq!(state.apply_signed(&by(member, 1_000, emoticon("shrug", "¯\\_(ツ)_/¯"))), Ok(true));
+        assert_eq!(state.apply_signed(&by(member, 2_000, emoticon("shrug", "o_O"))), Err(StoreError::NotAllowed));
+        let gone = ServerEvent::StickerRemove { server: sid, name: "hi".into() };
+        assert_eq!(state.apply_signed(&by(member, 2_000, gone.clone())), Err(StoreError::NotAllowed));
+        assert_eq!(state.apply_signed(&by(owner, 3_000, emoticon("shrug", "o_O"))), Ok(true));
+        assert_eq!(state.apply_signed(&by(owner, 3_000, gone)), Ok(true));
+        assert_eq!(state.server.emoticons[0].text, "o_O");
+        assert!(state.server.stickers.is_empty());
+
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.remove(Permissions::ADD_STICKERS);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        assert_eq!(state.apply_signed(&by(member, 4_000, sticker("late"))), Err(StoreError::NotAllowed));
+        let artists = role(Permissions::ADD_STICKERS, false);
+        let rid = artists.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: artists }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: member, role: rid }).unwrap();
+        assert_eq!(state.apply_signed(&by(member, 5_000, sticker("late"))), Ok(true));
+        assert!(snapshot_omits("sticker:late") && snapshot_omits("emoticon:shrug"));
+    }
+
+    #[test]
+    fn only_the_owner_deletes_a_server_and_members_relay_it() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let admin = join(&mut state, "admin");
+        let admin_role = role(Permissions::ADMINISTRATOR, false);
+        let rid = admin_role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: admin_role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: admin, role: rid }).unwrap();
+        let delete = ServerEvent::ServerDelete { server: sid };
+        assert!(authorized(&state.server, owner, &delete));
+        assert!(!authorized(&state.server, admin, &delete), "not even an administrator");
+        assert!(relayable(&delete));
+        assert!(snapshot_omits(&subject(&delete).unwrap()));
+        let by_admin = SignedEvent::sign(sid, admin, 1_000, delete.clone(), &identity_for(admin));
+        assert_eq!(state.apply_signed(&by_admin), Err(StoreError::NotAllowed));
+        assert!(!state.is_deleted());
+        let real = SignedEvent::sign(sid, owner, 1_000, delete, &identity_for(owner));
+        assert_eq!(state.apply_signed(&real), Ok(true));
+        assert!(state.is_deleted());
+        assert_eq!(state.signed_actions(), vec![&real]);
+        let rename = SignedEvent::sign(sid, owner, 2_000, ServerEvent::ServerRename { server: sid, name: "after".into() }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&rename), Ok(false), "a deleted server takes no more changes");
+        assert!(crate::store::ServerState::from_snapshot(state.snapshot()).is_deleted());
     }
 
     #[test]

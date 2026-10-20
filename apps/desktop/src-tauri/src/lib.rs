@@ -4,6 +4,7 @@ mod activity;
 mod afk;
 mod entry_list;
 mod catchup;
+mod deleted;
 mod doorbell;
 mod expressions;
 mod media_engine;
@@ -27,6 +28,7 @@ mod toast;
 mod tray;
 mod updater;
 use commy_view as view;
+mod voice_keys;
 mod wake;
 
 use media_engine::{should_dial, CameraSession, MicTest, ScreenShareSession, ScreenWatch, VoiceSession};
@@ -199,6 +201,9 @@ async fn join_server(
 
 pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, ticket: ServerTicket) -> CmdResult<ServerSummary> {
     current_profile(app)?;
+    if app.deleted.lock().unwrap().contains(ticket.server_id) {
+        return Err("This server was deleted by its owner".into());
+    }
 
     let joining = async {
         let reached_peer = {
@@ -371,6 +376,7 @@ async fn send_message(
     let sid = server_id.parse().map_err(err_to_string)?;
     let cid = channel_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
+    let content = expressions_for_server(&app, sid, profile.id, content).await?;
     let mut message = Message::new(cid, profile.id, content);
     if let Some(raw) = reply_to {
         let target: MessageId = raw.parse().map_err(err_to_string)?;
@@ -450,6 +456,56 @@ async fn set_reaction(
     ).await
 }
 
+fn server_images(state: &ServerState) -> std::collections::HashSet<String> {
+    let images = state.server.emojis.iter().map(|e| &e.blob).chain(state.server.stickers.iter().map(|s| &s.blob));
+    images.filter_map(|r| commy_core::server::ImageRef::parse(r)).map(|r| r.blob).collect()
+}
+
+async fn expressions_for_server(app: &App, sid: ServerId, me: UserId, content: String) -> CmdResult<String> {
+    let (local, may_use_others) = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        (server_images(state), our_permissions(app, state, me).allows(Permissions::USE_EXTERNAL_EMOJIS))
+    };
+    let foreign = commy_core::server::image_tokens(&content).iter().any(|(_, _, image)| !local.contains(&image.blob));
+    if foreign && !may_use_others {
+        return Err("you can't use emojis or stickers from other servers here".into());
+    }
+    Ok(carry_expressions(app, content, &local).await)
+}
+
+async fn carry_expressions(app: &App, content: String, local: &std::collections::HashSet<String>) -> String {
+    let tokens = commy_core::server::image_tokens(&content);
+    if tokens.iter().all(|(_, _, image)| local.contains(&image.blob)) {
+        return content;
+    }
+    let ours = app.net.lock().await.as_ref().map(|n| n.node_id_hex());
+    let mut out = String::with_capacity(content.len());
+    let mut last = 0;
+    for (start, end, image) in tokens {
+        out.push_str(&content[last..start]);
+        let token = &content[start..end];
+        let carried = if local.contains(&image.blob) || ours.as_deref() == Some(image.provider.as_str()) {
+            None
+        } else {
+            match expression_bytes(app, &image.encode()).await {
+                Ok(bytes) => store_shared_blob(app, bytes).await.ok(),
+                Err(e) => {
+                    tracing::debug!("kept the original source for an image we could not load: {e}");
+                    None
+                }
+            }
+        };
+        match carried {
+            Some(ours) => out.push_str(&token.replacen(&image.encode(), &ours, 1)),
+            None => out.push_str(token),
+        }
+        last = end;
+    }
+    out.push_str(&content[last..]);
+    out
+}
+
 fn signed_fits_one_gossip_frame(signed: &Message) -> bool {
     let wire = WirePayload::Event(ServerEvent::MessageCreate { message: signed.clone() });
     commy_net::protocol::gossip_size(&wire) <= commy_net::protocol::MAX_GOSSIP_BYTES
@@ -501,6 +557,7 @@ async fn edit_message(
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
+    let content = expressions_for_server(&app, sid, me.id, content).await?;
     let _signing = app.signing.read().await;
     let identity = signing_key(&app)?;
     let edit = {
@@ -650,6 +707,27 @@ async fn get_attachment_video(
 
 fn data_url(mime: &str, bytes: &[u8]) -> String {
     format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+const MAX_PICKED_AVATAR_BYTES: u64 = 64 * 1024 * 1024;
+
+#[tauri::command]
+async fn pick_avatar_model() -> CmdResult<tauri::ipc::Response> {
+    let Some(picked) = rfd::AsyncFileDialog::new()
+        .set_title("Choose an avatar")
+        .add_filter("VRM avatars", &["vrm"])
+        .pick_file()
+        .await
+    else {
+        return Ok(tauri::ipc::Response::new(Vec::new()));
+    };
+    let path = picked.path().to_path_buf();
+    let size = tokio::fs::metadata(&path).await.map_err(err_to_string)?.len();
+    if size > MAX_PICKED_AVATAR_BYTES {
+        return Err("that avatar is larger than 64 MB".into());
+    }
+    let bytes = tokio::fs::read(&path).await.map_err(err_to_string)?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 const MAX_PICKED_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
@@ -1120,9 +1198,11 @@ fn servers_using_image(app: &App, image: &str) -> Vec<ServerId> {
         .filter(|state| {
             let server = &state.server;
             server.emojis.iter().any(|e| e.blob == image)
+                || server.stickers.iter().any(|s| s.blob == image)
                 || server.soundboard.iter().any(|s| s.blob == image)
                 || server.icon.as_deref() == Some(image)
                 || server.banner.as_deref() == Some(image)
+                || state.invite_background() == Some(image)
         })
         .map(|state| state.server.id)
         .collect()
@@ -1179,8 +1259,12 @@ async fn expression_bytes(app: &App, blob: &str) -> CmdResult<Vec<u8>> {
 }
 
 fn prefetch_emoji<A: catchup::AppAccess + Clone>(access: &A, event: &ServerEvent) {
-    let ServerEvent::EmojiAdd { emoji, .. } = event else { return };
-    let (access, blob) = (access.clone(), emoji.blob.clone());
+    let blob = match event {
+        ServerEvent::EmojiAdd { emoji, .. } => emoji.blob.clone(),
+        ServerEvent::StickerAdd { sticker, .. } => sticker.blob.clone(),
+        _ => return,
+    };
+    let access = access.clone();
     doorbell::spawn(async move {
         if let Err(e) = expression_bytes(access.app(), &blob).await {
             tracing::debug!("emoji image not fetched yet: {e}");
@@ -1927,6 +2011,7 @@ async fn send_dm(
 ) -> CmdResult<DmMessageView> {
     let content = clean_message(&content)?;
     let partner: UserId = user_id.parse().map_err(err_to_string)?;
+    let content = carry_expressions(&app, content, &std::collections::HashSet::new()).await;
     let _signing = app.signing.read().await;
     let me = current_profile(&app)?;
     if partner == me.id {
@@ -1976,6 +2061,11 @@ fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
 pub(crate) fn require_invite_permission(app: &App, sid: ServerId) -> CmdResult<()> {
     let me = current_profile(app)?;
     manage_check(app, sid, me.id, Permissions::CREATE_INVITES, "invite people")
+}
+
+pub(crate) fn require_manage_server(app: &App, sid: ServerId, action: &str) -> CmdResult<()> {
+    let me = current_profile(app)?;
+    manage_check(app, sid, me.id, Permissions::MANAGE_SERVER, action)
 }
 
 fn require_permission(
@@ -2058,6 +2148,12 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     for emoji in &state.server.emojis {
         events.push(ServerEvent::EmojiAdd { server: sid, emoji: emoji.clone() });
+    }
+    for sticker in &state.server.stickers {
+        events.push(ServerEvent::StickerAdd { server: sid, sticker: sticker.clone() });
+    }
+    for emoticon in &state.server.emoticons {
+        events.push(ServerEvent::EmoticonAdd { server: sid, emoticon: emoticon.clone() });
     }
     for sound in &state.server.soundboard {
         events.push(ServerEvent::SoundAdd { server: sid, sound: sound.clone() });
@@ -2161,6 +2257,14 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     if state.server.sounds_shareable && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::SoundSharingSet { server: sid, shareable: true });
+    }
+    let sharing = state.server.stickers_shareable || state.server.emoticons_shareable;
+    if sharing && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::ExpressionSharingSet {
+            server: sid,
+            stickers: state.server.stickers_shareable,
+            emoticons: state.server.emoticons_shareable,
+        });
     }
     if state.server.public && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::PublicSet { server: sid, public: true });
@@ -2950,29 +3054,177 @@ mod status_expiry_tests {
     }
 }
 
-fn register_overlay_hotkeys(handle: &tauri::AppHandle, settings: &overlay::OverlaySettings) {
+fn register_hotkeys(handle: &tauri::AppHandle, voice: &VoiceSettings) {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let shortcuts = handle.global_shortcut();
     let _ = shortcuts.unregister_all();
     let mut taken = Vec::new();
-    if settings.enabled {
-        for key in [&settings.toggle_hotkey, &settings.chat_hotkey] {
-            if let Err(e) = shortcuts.register(key.as_str()) {
-                tracing::warn!("could not register hotkey {key}: {e}");
-                taken.push(key.clone());
-            }
+    let overlay = &voice.overlay;
+    let mut wanted: Vec<&str> = Vec::new();
+    if overlay.enabled {
+        wanted.extend([overlay.toggle_hotkey.as_str(), overlay.chat_hotkey.as_str()]);
+    }
+    let keys = voice.voice_keys();
+    wanted.extend(keys.registered());
+    for key in wanted {
+        if let Err(e) = shortcuts.register(key) {
+            tracing::warn!("could not register hotkey {key}: {e}");
+            taken.push(key.to_string());
         }
     }
     *handle.state::<App>().overlay_hotkeys_taken.lock().unwrap() = taken;
 }
 
+fn taken_hotkeys(app: &App, keys: &[&str]) -> Vec<String> {
+    let taken = app.overlay_hotkeys_taken.lock().unwrap();
+    keys.iter().filter(|k| taken.iter().any(|t| t.eq_ignore_ascii_case(k))).map(|k| k.to_string()).collect()
+}
+
 #[tauri::command]
 fn overlay_hotkey_problems(app: tauri::State<'_, App>) -> Vec<String> {
-    app.overlay_hotkeys_taken.lock().unwrap().clone()
+    let overlay = app.voice.lock().unwrap().overlay.clone();
+    taken_hotkeys(&app, &[&overlay.toggle_hotkey, &overlay.chat_hotkey])
+}
+
+#[tauri::command]
+fn voice_hotkey_problems(app: tauri::State<'_, App>) -> Vec<String> {
+    let keys = app.voice.lock().unwrap().voice_keys();
+    taken_hotkeys(&app, &keys.registered())
 }
 
 fn hotkey_id(key: &str) -> Option<u32> {
     key.parse::<tauri_plugin_global_shortcut::Shortcut>().ok().map(|s| s.id())
+}
+
+fn on_hotkey(handle: &tauri::AppHandle, id: u32, pressed: bool) {
+    let app = handle.state::<App>();
+    let voice = app.voice.lock().unwrap().clone();
+    let keys = voice.voice_keys();
+    if keys.talk.as_deref().and_then(hotkey_id) == Some(id) {
+        set_talk_key(handle, pressed, voice.talk_release_ms);
+    } else if !pressed {
+    } else if keys.mute.as_deref().and_then(hotkey_id) == Some(id) {
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            let app = handle.state::<App>();
+            let muted = !app.voice.lock().unwrap().muted;
+            match set_muted(app, handle.clone(), muted).await {
+                Ok(snapshot) => emit_voice_settings(&handle, &snapshot),
+                Err(e) => tracing::warn!("mute hotkey: {e}"),
+            }
+        });
+    } else if keys.deafen.as_deref().and_then(hotkey_id) == Some(id) {
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            let app = handle.state::<App>();
+            let deafened = !app.voice.lock().unwrap().deafened;
+            match set_deafened(app, handle.clone(), deafened).await {
+                Ok(snapshot) => emit_voice_settings(&handle, &snapshot),
+                Err(e) => tracing::warn!("deafen hotkey: {e}"),
+            }
+        });
+    } else {
+        on_overlay_hotkey(handle, id);
+    }
+}
+
+fn emit_voice_settings(handle: &tauri::AppHandle, voice: &VoiceSettings) {
+    let _ = handle.emit("voice-settings-changed", voice);
+}
+
+fn set_talk_key(handle: &tauri::AppHandle, pressed: bool, release_ms: u32) {
+    let app = handle.state::<App>();
+    let press = app.talk_press.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    if pressed {
+        app.processor.lock().unwrap().set_talk_key_down(true);
+        let _ = handle.emit("talk-key", true);
+        return;
+    }
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(release_ms as u64)).await;
+        let app = handle.state::<App>();
+        if app.talk_press.load(std::sync::atomic::Ordering::SeqCst) != press {
+            return;
+        }
+        app.processor.lock().unwrap().set_talk_key_down(false);
+        let _ = handle.emit("talk-key", false);
+    });
+}
+
+#[tauri::command]
+fn set_input_mode(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    mode: String,
+    talk_key: String,
+    release_ms: u32,
+) -> CmdResult<VoiceSettings> {
+    let mode = voice_keys::InputMode::parse(&mode).ok_or("unknown input mode")?;
+    let talk_key = talk_key.trim().to_string();
+    if !overlay::valid_hotkey(&talk_key) {
+        return Err(format!("{talk_key} is not a key Commy can use for push to talk"));
+    }
+    let snapshot = app.update_voice(|voice| {
+        voice.input_mode = mode;
+        voice.talk_key = talk_key;
+        voice.talk_release_ms = voice_keys::clamp_release_ms(release_ms);
+    });
+    if let Some(clash) = voice_keys::clashing(&all_hotkeys(&snapshot)) {
+        return Err(format!("{clash} is already used by another Commy hotkey"));
+    }
+    let _ = app.talk_press.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    app.processor.lock().unwrap().set_push_to_talk(mode == voice_keys::InputMode::PushToTalk);
+    register_hotkeys(&handle, &snapshot);
+    Ok(snapshot)
+}
+
+fn all_hotkeys(voice: &VoiceSettings) -> Vec<String> {
+    let mut keys: Vec<String> = voice.voice_keys().registered().into_iter().map(str::to_string).collect();
+    if voice.overlay.enabled {
+        keys.extend([voice.overlay.toggle_hotkey.clone(), voice.overlay.chat_hotkey.clone()]);
+    }
+    keys
+}
+
+#[tauri::command]
+fn set_voice_hotkeys(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    mute: String,
+    deafen: String,
+) -> CmdResult<VoiceSettings> {
+    let mute = voice_keys::validate_optional_hotkey(&mute, "mute")?;
+    let deafen = voice_keys::validate_optional_hotkey(&deafen, "deafen")?;
+    let snapshot = app.update_voice(|voice| {
+        voice.mute_hotkey = mute;
+        voice.deafen_hotkey = deafen;
+    });
+    if let Some(clash) = voice_keys::clashing(&all_hotkeys(&snapshot)) {
+        return Err(format!("{clash} is already used by another Commy hotkey"));
+    }
+    register_hotkeys(&handle, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn set_sensitivity(app: tauri::State<'_, App>, auto: bool, threshold_db: f32) -> VoiceSettings {
+    let snapshot = app.update_voice(|voice| {
+        voice.auto_sensitivity = auto;
+        voice.sensitivity_db = voice_keys::clamp_sensitivity_db(threshold_db);
+    });
+    app.processor.lock().unwrap().set_sensitivity(snapshot.sensitivity());
+    snapshot
+}
+
+#[tauri::command]
+fn mic_level(app: tauri::State<'_, App>) -> f32 {
+    let listening = app.mic_test.lock().unwrap().is_some() || app.voice_session.lock().unwrap().is_some();
+    if listening {
+        app.processor.lock().unwrap().last_level_db()
+    } else {
+        commy_audio::SILENCE_DB
+    }
 }
 
 fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
@@ -3010,11 +3262,14 @@ async fn set_overlay_settings(
     if settings.toggle_hotkey.eq_ignore_ascii_case(&settings.chat_hotkey) {
         return Err("the two overlay hotkeys must be different".into());
     }
-    app.update_voice(|voice| voice.overlay = settings.clone());
+    let voice = app.update_voice(|voice| voice.overlay = settings.clone());
+    if let Some(clash) = voice_keys::clashing(&all_hotkeys(&voice)) {
+        return Err(format!("{clash} is already used by another Commy hotkey"));
+    }
     if settings.enabled {
         app.overlay_visible.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    register_overlay_hotkeys(&handle, &settings);
+    register_hotkeys(&handle, &voice);
     overlay::apply(&handle, &settings, app.overlay_visible.load(std::sync::atomic::Ordering::Relaxed));
     Ok(settings)
 }
@@ -3053,16 +3308,24 @@ async fn set_server_image(
         require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "change the server's images")?;
         (state.server.icon.clone(), state.server.banner.clone())
     };
-    let image = match data {
+    let bytes = data
+        .map(|b64| decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "server images must be a JPEG or PNG under 1 MB"))
+        .transpose()?;
+    if which == "invite" && bytes.as_ref().is_some_and(|b| b.len() > invite_link::MAX_INVITE_BACKGROUND_BYTES) {
+        return Err("invite backgrounds must be under 400 KB".into());
+    }
+    let image = match bytes {
         None => None,
-        Some(b64) => {
-            let bytes = decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "server images must be a JPEG or PNG under 1 MB")?;
-            Some(store_shared_blob(&app, bytes).await?)
-        }
+        Some(bytes) => Some(store_shared_blob(&app, bytes).await?),
     };
     let (icon, banner) = match which.as_str() {
         "icon" => (image, banner),
         "banner" => (icon, image),
+        "invite" => {
+            apply_and_broadcast(&app, &handle, sid, ServerEvent::InviteBackgroundSet { server: sid, background: image }).await?;
+            let _ = handle.emit("servers-changed", ());
+            return Ok(());
+        }
         _ => return Err("unknown server image".into()),
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ServerImages { server: sid, icon, banner }).await?;
@@ -3072,24 +3335,29 @@ async fn set_server_image(
 
 #[tauri::command]
 async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdResult<String> {
-    let image = commy_core::server::ImageRef::parse(&image).ok_or("bad image reference")?;
-    let path = server_image_path(&app, &image.blob);
-    let cached = path.as_ref().and_then(|p| std::fs::read(p).ok());
-    let bytes = match cached {
-        Some(bytes) => bytes,
-        None => {
-            let bytes = fetch_shared_image(&app, &image, MAX_SERVER_IMAGE_BYTES as u64).await?;
-            if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
-                return Err("server image is not a valid picture".into());
-            }
-            if let Some(path) = &path {
-                let _ = write_blob_cache(path, &bytes);
-            }
-            bytes
-        }
-    };
+    let bytes = server_image_bytes(&app, &image).await?;
+    Ok(picture_data_url(&bytes))
+}
+
+pub(crate) fn picture_data_url(bytes: &[u8]) -> String {
     let mime = if bytes.starts_with(&[0x89, b'P']) { "image/png" } else { "image/jpeg" };
-    Ok(data_url(mime, &bytes))
+    data_url(mime, bytes)
+}
+
+pub(crate) async fn server_image_bytes(app: &App, image: &str) -> CmdResult<Vec<u8>> {
+    let image = commy_core::server::ImageRef::parse(image).ok_or("bad image reference")?;
+    let path = server_image_path(app, &image.blob);
+    if let Some(bytes) = path.as_ref().and_then(|p| std::fs::read(p).ok()) {
+        return Ok(bytes);
+    }
+    let bytes = fetch_shared_image(app, &image, MAX_SERVER_IMAGE_BYTES as u64).await?;
+    if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
+        return Err("server image is not a valid picture".into());
+    }
+    if let Some(path) = &path {
+        let _ = write_blob_cache(path, &bytes);
+    }
+    Ok(bytes)
 }
 
 fn manage_check(app: &App, sid: ServerId, user: UserId, needed: Permissions, action: &str) -> CmdResult<()> {
@@ -3637,8 +3905,7 @@ async fn unban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberUnban { server: sid, user }).await
 }
 
-async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
-    let name = forget_server_locally(app, sid).map(|s| s.server.name);
+fn end_voice_in(app: &App, sid: ServerId) {
     let in_voice_there = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
     if in_voice_there {
         let testing = pause_mic_test(app);
@@ -3647,9 +3914,93 @@ async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
         app.own_preview.lock().unwrap().take();
         *app.screen_share.lock().unwrap() = None;
     }
+}
+
+async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
+    let name = forget_server_locally(app, sid).map(|s| s.server.name);
+    end_voice_in(app, sid);
     leave_server_topic(app, sid).await;
     let _ = handle.emit("banned", serde_json::json!({ "server": sid.to_string(), "name": name }));
     let _ = handle.emit("servers-changed", ());
+}
+
+fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: SignedEvent, owned: bool) -> String {
+    let ticket = (!owned).then(|| app.invites.lock().unwrap().get(&sid).cloned()).flatten();
+    let name = forget_server_locally(app, sid).map(|s| s.server.name).unwrap_or_default();
+    end_voice_in(app, sid);
+    let kept = deleted::DeletedServer { name: name.clone(), notice, ticket };
+    app.deleted.lock().unwrap().insert(sid, kept);
+    app.persist_deleted();
+    entry_list::record_leave(app, sid);
+    entry_list::schedule(handle);
+    let _ = handle.emit("servers-changed", ());
+    name
+}
+
+fn on_server_deleted(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: SignedEvent) {
+    let name = retire_deleted_server(app, handle, sid, notice, false);
+    let _ = handle.emit("server-deleted", serde_json::json!({ "server": sid.to_string(), "name": name }));
+}
+
+#[tauri::command]
+async fn delete_server(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    confirm_name: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let notice = {
+        let mut servers = app.servers.lock().unwrap();
+        let state = servers.get_mut(&sid).ok_or("unknown server")?;
+        if state.server.owner != me.id {
+            return Err("only the owner can delete this server".into());
+        }
+        if confirm_name.trim() != state.server.name.trim() {
+            return Err("type the server name exactly as it is shown to delete it".into());
+        }
+        let notice = app
+            .sign_event(sid, ServerEvent::ServerDelete { server: sid })
+            .ok_or("your account key is still being confirmed; try again in a moment")?;
+        state.apply_own(&notice).map_err(err_to_string)?;
+        notice
+    };
+    broadcast(&app, sid, WirePayload::Signed(notice.clone())).await;
+    retire_deleted_server(&app, &handle, sid, notice, true);
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct AuditEntryView {
+    at: i64,
+    by: String,
+    by_name: String,
+    kind: commy_core::AuditKind,
+    target: Option<String>,
+    label: Option<String>,
+    detail: Option<String>,
+}
+
+#[tauri::command]
+fn audit_log(app: tauri::State<App>, server_id: String) -> CmdResult<Vec<AuditEntryView>> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    if !our_permissions(&app, state, me.id).can_view_audit_log() {
+        return Err("you do not have permission to view the audit log".into());
+    }
+    let entries = state.audit_log().iter().rev().map(|entry| AuditEntryView {
+        at: entry.at,
+        by: entry.by.to_string(),
+        by_name: commy_core::audit::member_name(state, entry.by).unwrap_or_else(|| "Someone".into()),
+        kind: entry.kind,
+        target: entry.target.clone(),
+        label: entry.label.clone(),
+        detail: entry.detail.clone(),
+    });
+    Ok(entries.collect())
 }
 
 fn effective_volume(voice: &VoiceSettings, user: &str) -> f32 {
@@ -3835,6 +4186,17 @@ fn check_expression_name(name: &str) -> CmdResult<String> {
     }
 }
 
+fn check_can_add(app: &App, state: &ServerState, me: UserId, kind: Permissions, taken: bool, noun: &str) -> CmdResult<()> {
+    let perms = our_permissions(app, state, me);
+    if !state.server.is_member(me) || !perms.can_add(kind) {
+        return Err(format!("you can't add {noun}s in this server"));
+    }
+    if taken && !perms.allows(Permissions::MANAGE_EXPRESSIONS) {
+        return Err(format!("a {noun} with that name already exists"));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn add_emoji(
     app: tauri::State<'_, App>,
@@ -3849,8 +4211,8 @@ async fn add_emoji(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_EXPRESSIONS, "manage emojis")?;
         let replacing = state.server.emojis.iter().any(|e| e.name == name);
+        check_can_add(&app, state, me.id, Permissions::ADD_EMOJIS, replacing, "emoji")?;
         if !replacing && state.server.emojis.len() >= commy_core::server::MAX_EMOJIS {
             return Err(format!("servers can have up to {} emojis", commy_core::server::MAX_EMOJIS));
         }
@@ -3875,6 +4237,175 @@ async fn remove_emoji(
     let me = current_profile(&app)?;
     manage_check(&app, sid, me.id, Permissions::MANAGE_EXPRESSIONS, "manage emojis")?;
     apply_and_broadcast(&app, &handle, sid, ServerEvent::EmojiRemove { server: sid, name }).await
+}
+
+#[tauri::command]
+async fn add_sticker(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    name: String,
+    data: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let name = check_expression_name(&name)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        let replacing = state.server.stickers.iter().any(|s| s.name == name);
+        check_can_add(&app, state, me.id, Permissions::ADD_STICKERS, replacing, "sticker")?;
+        if !replacing && state.server.stickers.len() >= commy_core::server::MAX_STICKERS {
+            return Err(format!("servers can have up to {} stickers", commy_core::server::MAX_STICKERS));
+        }
+    }
+    let bytes = decode_upload(&data)?;
+    if bytes.len() > expressions::MAX_STICKER_BYTES || expressions::image_mime(&bytes).is_none() {
+        return Err("stickers must be a PNG, GIF, JPEG or WebP under 512 KB".into());
+    }
+    let blob = store_shared_blob(&app, bytes).await?;
+    let sticker = commy_core::server::Sticker { name, blob };
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::StickerAdd { server: sid, sticker }).await
+}
+
+#[tauri::command]
+async fn remove_sticker(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    name: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_EXPRESSIONS, "remove stickers")?;
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::StickerRemove { server: sid, name }).await
+}
+
+#[tauri::command]
+async fn add_emoticon(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    name: String,
+    text: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let name = check_expression_name(&name)?;
+    let text = commy_core::server::clean_emoticon(&text).ok_or(format!(
+        "emoticons are one line of up to {} characters",
+        commy_core::server::MAX_EMOTICON_CHARS
+    ))?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        let replacing = state.server.emoticons.iter().any(|e| e.name == name);
+        check_can_add(&app, state, me.id, Permissions::ADD_EMOTICONS, replacing, "emoticon")?;
+        if !replacing && state.server.emoticons.len() >= commy_core::server::MAX_EMOTICONS {
+            return Err(format!("servers can have up to {} emoticons", commy_core::server::MAX_EMOTICONS));
+        }
+    }
+    let emoticon = commy_core::server::Emoticon { name, text };
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::EmoticonAdd { server: sid, emoticon }).await
+}
+
+#[tauri::command]
+async fn remove_emoticon(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    name: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_EXPRESSIONS, "remove emoticons")?;
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::EmoticonRemove { server: sid, name }).await
+}
+
+#[tauri::command]
+async fn set_expression_sharing(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    stickers: bool,
+    emoticons: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change sharing")?;
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ExpressionSharingSet { server: sid, stickers, emoticons }).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct EmojiCatalogPage {
+    results: Vec<EmojiCatalogHit>,
+    #[serde(default)]
+    more: bool,
+    #[serde(default)]
+    categories: Vec<EmojiCatalogCategory>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct EmojiCatalogHit {
+    id: u64,
+    title: String,
+    url: String,
+    #[serde(default)]
+    animated: bool,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct EmojiCatalogCategory {
+    id: u32,
+    name: String,
+}
+
+const EMOJIGG_IMAGES: &str = "https://cdn3.emoji.gg/emojis/";
+const MAX_CATALOG_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+
+#[tauri::command]
+async fn search_emoji_catalog(
+    app: tauri::State<'_, App>,
+    query: String,
+    category: Option<u32>,
+    page: Option<u32>,
+) -> CmdResult<EmojiCatalogPage> {
+    let category = category.map(|c| c.to_string()).unwrap_or_default();
+    let page = page.unwrap_or(0).to_string();
+    let params = [("q", query.trim()), ("category", category.as_str()), ("page", page.as_str())];
+    let found: Option<EmojiCatalogPage> = account::server_search_with(&app, "emojis", &params).await?;
+    let mut found = found.ok_or("Sign in to an account server that offers emoji search")?;
+    found.results.retain(|hit| hit.url.starts_with(EMOJIGG_IMAGES));
+    Ok(found)
+}
+
+#[tauri::command]
+async fn fetch_catalog_image(app: tauri::State<'_, App>, url: String) -> CmdResult<String> {
+    let path = url.strip_prefix(EMOJIGG_IMAGES).ok_or("only emoji.gg images can be added")?;
+    if path.is_empty() || path.contains(['/', '?', '#']) || path.contains("..") {
+        return Err("only emoji.gg images can be added".into());
+    }
+    let (_, bytes) = account::fetch_media(&app, &url)
+        .await
+        .map_err(|status| format!("emoji.gg could not be reached right now ({status})"))?;
+    if bytes.len() > MAX_CATALOG_IMAGE_BYTES {
+        return Err("that image is too large".into());
+    }
+    let mime = expressions::image_mime(&bytes).ok_or("emoji.gg sent something that is not an image")?;
+    Ok(data_url(mime, &bytes))
+}
+
+#[tauri::command]
+async fn store_catalog_emoji(app: tauri::State<'_, App>, name: String, data: String) -> CmdResult<String> {
+    let name = check_expression_name(&name)?;
+    let bytes = decode_upload(&data)?;
+    if bytes.len() > expressions::MAX_EMOJI_BYTES || expressions::image_mime(&bytes).is_none() {
+        return Err("emojis must be a PNG, GIF, JPEG or WebP under 256 KB".into());
+    }
+    let image = store_shared_blob(&app, bytes).await?;
+    Ok(commy_core::server::emoji_token(&name, &image))
 }
 
 fn can_upload_sounds(app: &App, state: &ServerState, user: UserId) -> bool {
@@ -3999,46 +4530,60 @@ async fn set_sound_sharing(
     Ok(())
 }
 
+fn role_access_permission(access: &str) -> CmdResult<(Permissions, &'static str)> {
+    match access {
+        "files" => Ok((Permissions::ATTACH_FILES, "change who can send files")),
+        "emojis" => Ok((Permissions::ADD_EMOJIS, "change who can add emojis")),
+        "stickers" => Ok((Permissions::ADD_STICKERS, "change who can add stickers")),
+        "emoticons" => Ok((Permissions::ADD_EMOTICONS, "change who can add emoticons")),
+        _ => Err("unknown setting".into()),
+    }
+}
+
+fn role_access_updates(roles: &[Role], permission: Permissions, restricted: bool, allowed: &[RoleId]) -> Vec<Role> {
+    roles
+        .iter()
+        .filter_map(|r| {
+            let mut role = r.clone();
+            if r.is_everyone() {
+                role.permissions.remove(permission);
+                if !restricted {
+                    role.permissions.insert(permission);
+                }
+            } else if restricted {
+                if allowed.contains(&r.id) {
+                    role.permissions.insert(permission);
+                } else {
+                    role.permissions.remove(permission);
+                }
+            }
+            (role.permissions != r.permissions).then_some(role)
+        })
+        .collect()
+}
+
 #[tauri::command]
-async fn set_upload_access(
+async fn set_role_access(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
     server_id: String,
+    access: String,
     restricted: bool,
     role_ids: Vec<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let (permission, action) = role_access_permission(&access)?;
     let me = current_profile(&app)?;
     let allowed = role_ids
         .iter()
         .map(|r| r.parse::<RoleId>())
         .collect::<Result<Vec<RoleId>, _>>()
         .map_err(err_to_string)?;
-    let updates: Vec<commy_core::server::Role> = {
+    let updates = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "change who can send files")?;
-        state
-            .server
-            .roles
-            .iter()
-            .filter_map(|r| {
-                let mut role = r.clone();
-                if r.is_everyone() {
-                    role.permissions.remove(Permissions::ATTACH_FILES);
-                    if !restricted {
-                        role.permissions.insert(Permissions::ATTACH_FILES);
-                    }
-                } else if restricted {
-                    if allowed.contains(&r.id) {
-                        role.permissions.insert(Permissions::ATTACH_FILES);
-                    } else {
-                        role.permissions.remove(Permissions::ATTACH_FILES);
-                    }
-                }
-                (role.permissions != r.permissions).then_some(role)
-            })
-            .collect()
+        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, action)?;
+        role_access_updates(&state.server.roles, permission, restricted, &allowed)
     };
     for role in updates {
         apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await?;
@@ -4251,23 +4796,62 @@ struct SharedEmojiView {
     image: String,
 }
 
-#[tauri::command]
-fn list_shareable_emojis(app: tauri::State<'_, App>) -> Vec<SharedEmojiView> {
-    let servers = app.servers.lock().unwrap();
+#[derive(Clone, serde::Serialize)]
+struct SharedEmoticonView {
+    server: String,
+    server_name: String,
+    name: String,
+    text: String,
+}
+
+#[derive(serde::Serialize)]
+struct SharedExpressions {
+    emojis: Vec<SharedEmojiView>,
+    stickers: Vec<SharedEmojiView>,
+    emoticons: Vec<SharedEmoticonView>,
+}
+
+fn shared_images<'a>(
+    servers: impl Iterator<Item = &'a ServerState>,
+    pick: impl Fn(&'a ServerState) -> Vec<(&'a str, &'a str)>,
+) -> Vec<SharedEmojiView> {
     let mut out: Vec<SharedEmojiView> = servers
-        .values()
-        .filter(|s| s.server.emojis_shareable)
         .flat_map(|s| {
-            s.server.emojis.iter().map(|e| SharedEmojiView {
+            pick(s).into_iter().map(move |(name, image)| SharedEmojiView {
                 server: s.server.id.to_string(),
                 server_name: s.server.name.clone(),
-                name: e.name.clone(),
-                image: e.blob.clone(),
+                name: name.to_string(),
+                image: image.to_string(),
             })
         })
         .collect();
     out.sort_by(|a, b| a.server_name.cmp(&b.server_name).then(a.name.cmp(&b.name)));
     out
+}
+
+#[tauri::command]
+fn list_shareable_expressions(app: tauri::State<'_, App>) -> SharedExpressions {
+    let servers = app.servers.lock().unwrap();
+    let emojis = shared_images(servers.values().filter(|s| s.server.emojis_shareable), |s| {
+        s.server.emojis.iter().map(|e| (e.name.as_str(), e.blob.as_str())).collect()
+    });
+    let stickers = shared_images(servers.values().filter(|s| s.server.stickers_shareable), |s| {
+        s.server.stickers.iter().map(|e| (e.name.as_str(), e.blob.as_str())).collect()
+    });
+    let mut emoticons: Vec<SharedEmoticonView> = servers
+        .values()
+        .filter(|s| s.server.emoticons_shareable)
+        .flat_map(|s| {
+            s.server.emoticons.iter().map(|e| SharedEmoticonView {
+                server: s.server.id.to_string(),
+                server_name: s.server.name.clone(),
+                name: e.name.clone(),
+                text: e.text.clone(),
+            })
+        })
+        .collect();
+    emoticons.sort_by(|a, b| a.server_name.cmp(&b.server_name).then(a.name.cmp(&b.name)));
+    SharedExpressions { emojis, stickers, emoticons }
 }
 
 #[tauri::command]
@@ -4381,7 +4965,7 @@ async fn set_profile_banner(
     Ok(profile)
 }
 
-fn is_jpeg_or_png(bytes: &[u8]) -> bool {
+pub(crate) fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0xd8, 0xff]) || bytes.starts_with(&[0x89, b'P', b'N', b'G'])
 }
 
@@ -5041,6 +5625,9 @@ async fn run_net_loop(
                     ServerEvent::VoiceState { user, channel, .. } => Some((*user, *channel)),
                     _ => None,
                 };
+                let deletion = deleted::is_notice(&event)
+                    .then(|| action.map(|action| SignedEvent { action, event: event.clone() }))
+                    .flatten();
                 let holdable = catchup::holdable(&event);
                 let kept = (holdable || action.is_some()).then(|| event.clone());
                 let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
@@ -5076,6 +5663,10 @@ async fn run_net_loop(
                     Ok(true) => {
                         if banned_me {
                             on_banned(&app, &handle, server).await;
+                            continue;
+                        }
+                        if let Some(notice) = deletion {
+                            on_server_deleted(&app, &handle, server, notice);
                             continue;
                         }
                         app.persist_server(server);
@@ -5117,6 +5708,11 @@ async fn run_net_loop(
             }
             NetEvent::VoiceDial { .. } => {}
             NetEvent::NeighborUp { server, peer } => {
+                let notice = app.deleted.lock().unwrap().notice(server);
+                if let Some(notice) = notice {
+                    broadcast(&app, server, WirePayload::Signed(notice)).await;
+                    continue;
+                }
                 let me = app.profile.lock().unwrap().clone();
                 let Some(me) = me else { continue };
                 let my_id = me.id;
@@ -5365,9 +5961,8 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|handle, shortcut, event| {
-                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        on_overlay_hotkey(handle, shortcut.id());
-                    }
+                    let pressed = event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed;
+                    on_hotkey(handle, shortcut.id(), pressed);
                 })
                 .build(),
         )
@@ -5395,9 +5990,9 @@ pub fn run() {
                 let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    let settings = handle.state::<App>().voice.lock().unwrap().overlay.clone();
-                    register_overlay_hotkeys(&handle, &settings);
-                    overlay::apply(&handle, &settings, true);
+                    let voice = handle.state::<App>().voice.lock().unwrap().clone();
+                    register_hotkeys(&handle, &voice);
+                    overlay::apply(&handle, &voice.overlay, true);
                 });
             }
             updater::init(&handle);
@@ -5456,11 +6051,7 @@ pub fn run() {
                     }
                 }
                 if let Some(voice) = persist::load_voice(&dir) {
-                    let mut processor = app.processor.lock().unwrap();
-                    processor.set_noise_cancellation(voice.noise_cancellation);
-                    processor.set_muted(voice.muted);
-                    processor.set_input_gain(voice.input_gain);
-                    drop(processor);
+                    voice.apply_to(&mut app.processor.lock().unwrap());
                     let (app_choice, tray_choice) = (voice.app_icon.clone(), voice.tray_icon.clone());
                     *app.voice.lock().unwrap() = voice;
                     app_icon::apply(&handle, Some(dir.as_path()), &app_choice, &tray_choice);
@@ -5471,6 +6062,7 @@ pub fn run() {
                         servers.insert(state.server.id, state);
                     }
                 }
+                *app.deleted.lock().unwrap() = deleted::DeletedServers::load(&dir, chrono::Utc::now().timestamp_millis());
                 let mut awaiting = persist::load_awaiting(&dir);
                 {
                     let servers = app.servers.lock().unwrap();
@@ -5563,6 +6155,17 @@ pub fn run() {
                             }
                         }
                         app.persist_invites();
+                        let retired = app.deleted.lock().unwrap().to_rejoin();
+                        for (id, gone) in retired {
+                            let rejoined = match gone.ticket.as_deref().map(ServerTicket::decode) {
+                                Some(Ok(ticket)) => node.rejoin_server(&ticket).await,
+                                Some(Err(e)) => Err(e.into()),
+                                None => node.host_server(id, &gone.name, app.own_key_for_tickets()).await.map(|_| ()),
+                            };
+                            if let Err(e) = rejoined {
+                                tracing::debug!("could not stay on a deleted server to pass on its deletion: {e}");
+                            }
+                        }
 
                         let afk_channels: Vec<(ServerId, ServerEvent)> = {
                             let mut servers = app.servers.lock().unwrap();
@@ -5667,6 +6270,11 @@ pub fn run() {
             gif_search,
             get_overlay_settings,
             overlay_hotkey_problems,
+            voice_hotkey_problems,
+            set_input_mode,
+            set_voice_hotkeys,
+            set_sensitivity,
+            mic_level,
             set_overlay_settings,
             set_game_tags,
             set_rules,
@@ -5696,7 +6304,15 @@ pub fn run() {
             set_sound_emoji,
             set_expression_settings,
             set_sound_sharing,
-            set_upload_access,
+            set_role_access,
+            add_sticker,
+            remove_sticker,
+            add_emoticon,
+            remove_emoticon,
+            set_expression_sharing,
+            search_emoji_catalog,
+            fetch_catalog_image,
+            store_catalog_emoji,
             list_shareable_sounds,
             play_shared_sound,
             set_server_public,
@@ -5707,7 +6323,7 @@ pub fn run() {
             stream_deck::answer_stream_deck_pairing,
             fetch_expression,
             pick_sound,
-            list_shareable_emojis,
+            list_shareable_expressions,
             ui_ready,
             init_user,
             get_user,
@@ -5721,6 +6337,8 @@ pub fn run() {
             get_invite,
             invite_link::resolve_invite_link,
             invite_link::create_invite_link,
+            invite_link::list_invites,
+            invite_link::revoke_invite,
             invite_link::account_server_info,
             invite_link::take_pending_invite_link,
             entry_list::entry_list_status,
@@ -5772,6 +6390,7 @@ pub fn run() {
             fetch_server_image,
             set_reaction,
             pick_image,
+            pick_avatar_model,
             share_source_preview,
             own_share_frame,
             set_volumes,
@@ -5787,6 +6406,8 @@ pub fn run() {
             delete_channel,
             kick_member,
             leave_server,
+            delete_server,
+            audit_log,
             update_profile,
             start_mic_test,
             stop_mic_test,
