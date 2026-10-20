@@ -645,7 +645,12 @@ impl CommyNode {
                 None
             }
         };
-        Self::spawn_with(secret, relays).await
+        let fallback = relays.as_ref().map(crate::relays::fallback_relays).unwrap_or_default();
+        let spawned = Self::spawn_with(secret, relays).await?;
+        if !fallback.is_empty() {
+            n0_future::task::spawn(crate::relays::fall_back_when_unreachable(spawned.0.endpoint(), fallback));
+        }
+        Ok(spawned)
     }
 
     pub async fn spawn_with(
