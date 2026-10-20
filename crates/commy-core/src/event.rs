@@ -249,6 +249,11 @@ pub enum ServerEvent {
         at: DateTime<Utc>,
         until: Option<DateTime<Utc>>,
     },
+    MemberNickname {
+        server: ServerId,
+        user: UserId,
+        nickname: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -304,6 +309,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 62);
         let timeout = ServerEvent::MemberTimeout { server, user, by: user, at: chrono::Utc::now(), until: None };
         assert_eq!(wire_tag(timeout), 65);
+        assert_eq!(wire_tag(ServerEvent::MemberNickname { server, user, nickname: None }), 66);
     }
 
     #[test]

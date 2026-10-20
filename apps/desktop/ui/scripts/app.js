@@ -64,6 +64,7 @@ function mockAuditLog() {
     { at: ago(70), by: "m2", by_name: "nova", kind: "voice_moderate", target: "m3", label: "sleepy", detail: "muted" },
     { at: ago(180), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "channel_rename", target: null, label: "chat", detail: "general" },
     { at: ago(600), by: "m1", by_name: "ferris", kind: "emoji_add", target: null, label: "ferris_wave", detail: null },
+    { at: ago(900), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "member_nickname", target: "m3", label: "sleepy", detail: "Sleepy Sam" },
     { at: ago(1500), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "member_ban", target: "m9", label: "spam_bot", detail: null },
     { at: ago(3000), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "channel_create", target: null, label: "news", detail: "announcement" },
     { at: ago(4000), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "auto_mod", target: null, label: null, detail: null },
@@ -386,10 +387,10 @@ async function mockInvoke(cmd, args = {}) {
     case "get_server": {
       const s = mock.servers[args.serverId];
       if (!s) throw "unknown server";
-      const members = [...s.members];
+      const members = s.members.map(m => ({ username: m.username || m.name, nickname: m.nickname || null, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: mock.user.username, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
+        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
         const vc = s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -415,7 +416,7 @@ async function mockInvoke(cmd, args = {}) {
         add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
         can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
         can_add_emoticons: !mock.plainMember || !(s.add_restricted || {}).emoticons, can_use_external: s.can_use_external !== false,
-        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_manage_nicknames: !mock.plainMember, can_change_nickname: true, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
@@ -924,6 +925,20 @@ async function mockInvoke(cmd, args = {}) {
       if (args.volume !== null) mock.voice.user_volumes[args.userId] = args.volume;
       if (args.muted !== null) mock.voice.muted_users = args.muted ? [...mock.voice.muted_users, args.userId] : mock.voice.muted_users.filter(u => u !== args.userId);
       return mock.voice;
+    }
+    case "set_nickname": {
+      const s = mock.servers[args.serverId];
+      const nickname = args.nickname || null;
+      if (args.userId === "me") {
+        s.myNickname = nickname;
+        return null;
+      }
+      const m = s.members.find(x => x.id === args.userId);
+      if (!m) throw "that person is not a member of this server";
+      m.username = m.username || m.name;
+      m.nickname = nickname;
+      m.name = nickname || m.username;
+      return null;
     }
     case "moderate_voice": {
       const s = mock.servers[args.serverId];
@@ -2216,7 +2231,9 @@ function appFocused() {
 }
 
 function myMentionNames() {
-  return state.user ? [state.user.username, state.user.display_name] : [];
+  if (!state.user) return [];
+  const me = state.view === "server" ? currentServerMember(state.user.id) : null;
+  return [state.user.username, state.user.display_name, me && me.nickname];
 }
 
 function mentionsMe(content) {
@@ -6072,6 +6089,9 @@ function openMemberCard(member, anchor) {
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) name.after(botTag());
   if (member.pronouns) name.after(el("span", "mc-pronouns", member.pronouns));
+  const accountLine = nicknameAccountLine(member);
+  $("mc-username").textContent = accountLine || "";
+  $("mc-username").classList.toggle("hidden", !accountLine);
   const status = $("mc-status");
   status.replaceChildren();
   const line = subLine(member);
@@ -6127,6 +6147,7 @@ function openMemberCard(member, anchor) {
     const active = timeoutActive(currentTimeoutOf(member));
     action("clock", timeoutActionLabel(member), () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
   }
+  if (isMe && canChangeOwnNickname()) action("pencil", "Nickname", () => openNicknameModal(currentServerMember(member.id)));
   $("mc-composer").classList.toggle("hidden", isMe || member.bot || isBlocked(member.id));
   const input = $("mc-input");
   input.value = "";
@@ -6219,7 +6240,7 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
   ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "mention_everyone", "create_invites"]],
-  ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members"]],
+  ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "manage_nicknames", "change_nickname"]],
 ];
 
 function roleForm(server, role, onClose) {
@@ -6684,7 +6705,8 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
-  if (inServer && member.id !== server.owner && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out)) {
+  const moderates = server.can_mute || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames;
+  if (inServer && member.id !== server.owner && moderates) {
     sep();
     if (server.can_mute) {
       const sm = (server.server_muted || []).includes(member.id);
@@ -6692,6 +6714,7 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
       item("Server Mute", () => moderateVoice(member, !sm, sd), "ctx-check" + (sm ? " checked" : ""));
       item("Server Deafen", () => moderateVoice(member, sm, !sd), "ctx-check" + (sd ? " checked" : ""));
     }
+    if (server.can_manage_nicknames) item("Change Nickname", () => openNicknameModal(member));
     if (canTimeOut(server, member, state.user && state.user.id)) {
       const active = timeoutActive(currentTimeoutOf(member));
       item(active ? "Remove timeout" : `Time out ${member.name}`, () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
@@ -6740,6 +6763,7 @@ function openSelfVoiceMenu(x, y) {
   };
 
   item("Profile", () => openMemberCard(fullMember(state.user), { getBoundingClientRect: () => ({ left: x, top: y }) }));
+  if (canChangeOwnNickname()) item("Change Nickname", () => openNicknameModal(currentServerMember(state.user.id)));
   sep();
   item(state.voice.muted ? "Unmute" : "Mute", async () => {
     state.voice = await invoke("set_muted", { muted: !state.voice.muted });
@@ -6876,6 +6900,55 @@ function wireTimeoutModal() {
   $("timeout-custom").onkeydown = e => {
     if (e.key === "Enter" && !$("timeout-go").disabled) confirmTimeout();
   };
+}
+
+function canChangeOwnNickname() {
+  const server = state.view === "server" ? state.currentServer : null;
+  return Boolean(server && state.user && server.can_change_nickname && currentServerMember(state.user.id));
+}
+
+let nicknameTarget = null;
+
+function openNicknameModal(member) {
+  const server = state.currentServer;
+  if (!member || !server) return;
+  closeFloating();
+  nicknameTarget = { serverId: server.id, userId: member.id };
+  $("nickname-hint").textContent = nicknamePrompt(member, server, state.user && state.user.id);
+  const input = $("nickname-input");
+  input.value = member.nickname || "";
+  input.placeholder = member.username || "Nickname";
+  $("nickname-clear").disabled = !member.nickname;
+  showModal("modal-nickname");
+  input.focus();
+  input.select();
+}
+
+async function saveNickname(nickname) {
+  const target = nicknameTarget;
+  if (!target) return;
+  const problem = nickname === null ? null : nicknameProblem(nickname);
+  if (problem) {
+    toast(problem);
+    return;
+  }
+  try {
+    await invoke("set_nickname", { serverId: target.serverId, userId: target.userId, nickname: nickname === null ? null : cleanNickname(nickname) });
+    hideModals();
+    nicknameTarget = null;
+    await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireNicknameModal() {
+  $("nickname-save").onclick = () => saveNickname($("nickname-input").value);
+  $("nickname-clear").onclick = () => saveNickname(null);
+  $("nickname-cancel").onclick = hideModals;
+  $("nickname-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") saveNickname(e.currentTarget.value);
+  });
 }
 
 async function moderateVoice(member, muted, deafened) {
@@ -11229,6 +11302,7 @@ function wireEvents() {
     if (e.key === "Enter") saveFolderName();
   });
   $("rename-folder-cancel").onclick = hideModals;
+  wireNicknameModal();
 
   const uploadServerImage = async which => {
     try {
@@ -12136,6 +12210,8 @@ const PERMISSION_LABELS = [
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
   ["time_out_members", "Time Out Members"],
+  ["manage_nicknames", "Manage Nicknames"],
+  ["change_nickname", "Change Nickname"],
   ["administrator", "Administrator"],
 ];
 

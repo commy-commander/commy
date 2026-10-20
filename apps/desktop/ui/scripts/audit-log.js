@@ -41,6 +41,7 @@ const AUDIT_GROUP_OF = {
   voice_moderate: "members",
   member_timeout: "members",
   member_timeout_clear: "members",
+  member_nickname: "members",
   emoji_add: "expressions",
   emoji_remove: "expressions",
   sound_add: "expressions",
@@ -122,6 +123,7 @@ function describeAudit(entry) {
     case "voice_moderate": return VOICE_MODERATION_WORDS[detail] ? [`${VOICE_MODERATION_WORDS[detail]} `, member] : ["lifted the server mute on ", member];
     case "member_timeout": return detail ? ["timed out ", member, ` for ${detail}`] : ["timed out ", member];
     case "member_timeout_clear": return ["removed the timeout on ", member];
+    case "member_nickname": return detail ? ["changed ", member, "'s nickname to ", auditStrong(detail)] : ["cleared ", member, "'s nickname"];
     case "emoji_add": return ["added the emoji ", auditStrong(`:${label || "emoji"}:`)];
     case "emoji_remove": return ["removed the emoji ", auditStrong(`:${label || "emoji"}:`)];
     case "sticker_add": return ["added the sticker ", named("a sticker")];

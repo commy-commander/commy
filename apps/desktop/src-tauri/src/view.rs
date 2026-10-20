@@ -80,6 +80,8 @@ pub struct ChannelView {
 pub struct MemberView {
     pub id: String,
     pub name: String,
+    pub username: String,
+    pub nickname: Option<String>,
     pub presence: Presence,
     pub presence_until: Option<i64>,
     pub custom_status: Option<String>,
@@ -182,6 +184,8 @@ pub struct ServerView {
     pub can_ban: bool,
     pub can_time_out: bool,
     pub my_timeout_until: Option<i64>,
+    pub can_manage_nicknames: bool,
+    pub can_change_nickname: bool,
     pub emojis: Vec<EmojiView>,
     pub stickers: Vec<EmojiView>,
     pub emoticons: Vec<EmoticonView>,
@@ -280,7 +284,9 @@ impl ServerView {
                 let (voice_muted, voice_deafened) = state.voice_flags(p.id);
                 MemberView {
                     id: p.id.to_string(),
-                    name: p.visible_name().to_string(),
+                    name: display_name(state, p.id),
+                    username: p.username.clone(),
+                    nickname: nickname_of(state, p.id),
                     presence: p.presence,
                     presence_until: p.presence_until,
                     custom_status: p.custom_status.clone(),
@@ -432,6 +438,8 @@ impl ServerView {
             can_ban: perms.allows(Permissions::BAN_MEMBERS),
             can_time_out: perms.allows(Permissions::TIME_OUT_MEMBERS),
             my_timeout_until: viewer.and_then(|v| state.server.timeout_of(v, now)).map(|t| t.until.timestamp_millis()),
+            can_manage_nicknames: perms.allows(Permissions::MANAGE_NICKNAMES),
+            can_change_nickname: is_member && perms.can_change_own_nickname(),
             emojis: state
                 .server
                 .emojis
@@ -503,6 +511,8 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("ban_members", Permissions::BAN_MEMBERS),
     ("mute_members", Permissions::MUTE_MEMBERS),
     ("time_out_members", Permissions::TIME_OUT_MEMBERS),
+    ("manage_nicknames", Permissions::MANAGE_NICKNAMES),
+    ("change_nickname", Permissions::CHANGE_NICKNAME),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("add_emojis", Permissions::ADD_EMOJIS),
     ("add_stickers", Permissions::ADD_STICKERS),
@@ -891,8 +901,16 @@ pub fn message_views_around(
     Some(visible_views(state, &all[start..end], pending, viewer, keys))
 }
 
+pub fn nickname_of(state: &ServerState, user: UserId) -> Option<String> {
+    state.server.member(user).and_then(|m| m.nickname.clone())
+}
+
+pub fn known_name_of(state: &ServerState, user: UserId) -> Option<String> {
+    nickname_of(state, user).or_else(|| state.profiles.get(&user).map(|p| p.visible_name().to_string()))
+}
+
 pub fn display_name(state: &ServerState, user: commy_core::UserId) -> String {
-    name_or_unknown(state.profiles.get(&user))
+    known_name_of(state, user).unwrap_or_else(|| UNKNOWN_USER.to_string())
 }
 
 pub const UNKNOWN_USER: &str = "Unknown User";
@@ -1030,6 +1048,43 @@ mod tests {
         let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
         assert!(badge(bot_id));
         assert!(!badge(owner.id));
+    }
+
+    #[test]
+    fn nicknames_replace_names_inside_the_server_and_keep_the_account_name_beside_them() {
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(Identity::generate().public());
+        let server = Server::new("s", owner.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let friend_key = Identity::generate();
+        let mut friend = UserProfile::new("sam");
+        friend.display_name = Some("Sam".into());
+        friend.identity = Some(friend_key.public());
+        let friend_id = friend.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: friend }).unwrap();
+        let mut message = Message::new(channel, friend_id, "hi");
+        message.sign(sid, &friend_key);
+        state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        state.apply(ServerEvent::MemberNickname { server: sid, user: friend_id, nickname: Some("Sammy".into()) }).unwrap();
+        let keys = KeyHolder::default();
+        let view = ServerView::for_viewer(&state, Some(friend_id), &keys);
+        let member = view.members.iter().find(|m| m.id == friend_id.to_string()).unwrap();
+        assert_eq!((member.name.as_str(), member.username.as_str(), member.nickname.as_deref()), ("Sammy", "sam", Some("Sammy")));
+        let me = view.members.iter().find(|m| m.id == owner.id.to_string()).unwrap();
+        assert_eq!((me.name.as_str(), me.nickname.as_deref()), ("owner", None));
+        assert!(view.can_change_nickname && !view.can_manage_nicknames);
+        let as_owner = ServerView::for_viewer(&state, Some(owner.id), &keys);
+        assert!(as_owner.can_change_nickname && as_owner.can_manage_nicknames);
+        assert!(!ServerView::for_viewer(&state, Some(UserId::new()), &keys).can_change_nickname);
+        let messages = message_views(&state, channel, 10, &HashSet::new(), Some(owner.id), &keys);
+        assert_eq!(messages[0].author_name, "Sammy");
+        assert_eq!(display_name(&state, friend_id), "Sammy");
+        assert_eq!(known_name_of(&state, UserId::new()), None);
+        let names = permission_names(Permissions::CHANGE_NICKNAME | Permissions::MANAGE_NICKNAMES);
+        assert_eq!(names, vec!["manage_nicknames".to_string(), "change_nickname".to_string()]);
+        assert_eq!(permissions_from_names(&names), Permissions::CHANGE_NICKNAME | Permissions::MANAGE_NICKNAMES);
     }
 
     #[test]

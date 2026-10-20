@@ -59,6 +59,7 @@ pub enum AuditKind {
     ChannelAccess,
     MemberTimeout,
     MemberTimeoutClear,
+    MemberNickname,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +101,10 @@ pub fn member_name(state: &ServerState, user: UserId) -> Option<String> {
         .or_else(|| profile.and_then(|p| p.display_name.clone()))
         .or_else(|| profile.map(|p| p.username.clone()))?;
     Some(clip(&name))
+}
+
+fn account_name(state: &ServerState, user: UserId) -> Option<String> {
+    state.profiles.get(&user).map(|p| clip(p.visible_name()))
 }
 
 fn channel_name(state: &ServerState, channel: crate::ids::ChannelId) -> Option<String> {
@@ -235,6 +240,9 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
                 }
                 None => (K::MemberTimeoutClear, target, label, None),
             }
+        }
+        E::MemberNickname { user, nickname, .. } => {
+            (K::MemberNickname, Some(user.to_string()), account_name(state, *user), nickname.as_deref().map(clip))
         }
         E::EmojiAdd { emoji, .. } => (K::EmojiAdd, None, Some(clip(&emoji.name)), None),
         E::EmojiRemove { name, .. } => (K::EmojiRemove, None, Some(clip(name)), None),
@@ -463,6 +471,26 @@ mod tests {
         assert_eq!(log[1].detail.as_deref(), Some("mods"));
         assert_eq!(log[1].label.as_deref(), Some("sam"));
         assert_eq!(log[2].kind, AuditKind::MemberKick);
+    }
+
+    #[test]
+    fn nickname_changes_name_the_account_and_the_new_nickname() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "sam");
+        let sign = |at, event| SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        let rename = |nickname: Option<&str>| ServerEvent::MemberNickname { server: sid, user, nickname: nickname.map(Into::into) };
+        state.apply_signed(&sign(1_000, rename(Some("Sammy")))).unwrap();
+        state.apply_signed(&sign(2_000, rename(Some("Sammy")))).unwrap();
+        state.apply_signed(&sign(3_000, rename(None))).unwrap();
+        let log = state.audit_log();
+        assert_eq!(log.len(), 2, "a repeat changes nothing");
+        assert_eq!(log[0].kind, AuditKind::MemberNickname);
+        assert_eq!(log[0].target.as_deref(), Some(user.to_string().as_str()));
+        assert_eq!(log[0].label.as_deref(), Some("sam"));
+        assert_eq!(log[0].detail.as_deref(), Some("Sammy"));
+        assert_eq!(log[1].label.as_deref(), Some("sam"), "the account name, not the nickname being cleared");
+        assert_eq!(log[1].detail, None);
     }
 
     #[test]

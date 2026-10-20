@@ -627,6 +627,17 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-nickname" role="dialog" aria-labelledby="nickname-title">
+      <h2 id="nickname-title">Change Nickname</h2>
+      <p id="nickname-hint"></p>
+      <input id="nickname-input" type="text" maxlength="32" autocomplete="off" placeholder="Nickname" />
+      <div class="modal-actions">
+        <button class="btn-secondary" id="nickname-cancel">Cancel</button>
+        <button class="btn-secondary" id="nickname-clear">Clear</button>
+        <button class="btn-primary" id="nickname-save">Save</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-rename-folder">
       <h2>Rename Folder</h2>
       <input id="rename-folder-input" type="text" maxlength="32" placeholder="Folder name" />
@@ -1912,6 +1923,7 @@
     <div class="mc-head"><div class="avatar avatar-lg" id="mc-avatar"></div></div>
     <div class="mc-body">
       <div class="mc-name-row"><span class="mc-name" id="mc-name"></span></div>
+      <div class="mc-username hidden" id="mc-username"></div>
       <div class="mc-status" id="mc-status"></div>
       <div class="mc-actions" id="mc-actions"></div>
       <div class="mc-about hidden" id="mc-about"></div>
@@ -2004,6 +2016,7 @@
   <script src="scripts/markdown.js"></script>
   <script src="scripts/voice-input.js"></script>
   <script src="scripts/typing.js"></script>
+  <script src="scripts/nicknames.js"></script>
   <script src="scripts/message-link.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
