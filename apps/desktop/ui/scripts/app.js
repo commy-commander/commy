@@ -256,6 +256,8 @@ function mockSeed() {
   server.members[0].voice_channel = general.id;
   server.members[0].voice_since = general.voice_since[0];
   server.members[0].voice_muted = true;
+  server.members[0].priority_speaker = true;
+  general.voice_status = "Ranked grind";
   server.members[0].tag = "RAID";
   server.members[0].tag_color = "9b7bff";
   server.members[0].color = "9b7bff";
@@ -503,6 +505,10 @@ function mockProfileFor(member) {
   return publicProfile(member, canSeeProfile(member.profile_policy, { friend, sharesServer: true }));
 }
 
+function mockCanSetVoiceStatus(channel) {
+  return channel.kind === "voice" && (!mock.plainMember || (channel.voice_user_ids || []).includes("me"));
+}
+
 async function mockInvoke(cmd, args = {}) {
   switch (cmd) {
     case "get_user": return mock.user;
@@ -536,7 +542,7 @@ async function mockInvoke(cmd, args = {}) {
     case "get_server": {
       const s = mock.servers[args.serverId];
       if (!s) throw "unknown server";
-      const members = s.members.map(m => mockProfileFor({ username: m.username || m.name, nickname: m.nickname || null, ...m }));
+      const members = s.members.map(m => mockProfileFor({ username: m.username || m.name, nickname: m.nickname || null, priority_speaker: false, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
         const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
@@ -555,7 +561,7 @@ async function mockInvoke(cmd, args = {}) {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
             const sees = admits(c.view_roles);
             const sendable = admits(c.send_roles);
-            return { parent: null, position: i, user_limit: 0, slow_mode: 0, threads: [], pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], ...c, can_view: sees, can_send: sees && sendable, key_ready: sees };
+            return { parent: null, position: i, user_limit: 0, slow_mode: 0, threads: [], pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], voice_status: null, ...c, can_view: sees, can_send: sees && sendable, key_ready: sees, can_set_voice_status: mockCanSetVoiceStatus(c) };
           })
           .filter(c => c.can_view || !mock.plainMember),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
@@ -796,6 +802,7 @@ async function mockInvoke(cmd, args = {}) {
         if (c.kind !== "voice") continue;
         const at = (c.voice_user_ids || []).indexOf("me");
         if (at >= 0) for (const k of ["voice_users", "voice_user_ids", "voice_since", "voice_muted", "voice_deafened"]) (c[k] || []).splice(at, 1);
+        if (at >= 0 && !(c.voice_user_ids || []).length) c.voice_status = null;
         if (c.id === args.channelId) {
           (c.voice_user_ids ||= []).push("me");
           (c.voice_since ||= []).push(Math.floor(Date.now() / 1000));
@@ -1195,6 +1202,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_channel_limit": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).user_limit = args.limit; return null;
     case "set_channel_slow_mode": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).slow_mode = args.seconds; return null;
+    case "set_voice_status": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).voice_status = cleanVoiceStatus(args.text) || null; return null;
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
       Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag, mentionable: Boolean(args.mentionable) });
@@ -2075,7 +2083,116 @@ function openChannelMenu(channel, x, y) {
   $("chm-unmute").textContent = mute === null ? "" : muteWords(mute);
   $("chm-pin").textContent = channelIsPinned(server.id, channel.id) ? "Unpin Channel" : "Pin Channel";
   $("chm-settings").classList.toggle("hidden", !server.can_manage_channels);
+  showVoiceStatusMenuItem(channel, server);
   placeMenuAt($("channel-menu"), x, y);
+}
+
+function showVoiceStatusMenuItem(channel, server) {
+  const allowed = canSetVoiceStatus({ channel, server, me: state.user && state.user.id });
+  const item = $("chm-voice-status");
+  item.classList.toggle("hidden", !allowed);
+  item.textContent = channel.voice_status ? "Change Voice Status" : "Set Voice Status";
+  $("chm-read").classList.toggle("hidden", channel.kind === "voice");
+}
+
+let voiceStatusChannel = null;
+
+function openVoiceStatusModal(channel) {
+  if (!channel || !state.currentServer) return;
+  voiceStatusChannel = { serverId: state.currentServer.id, channelId: channel.id };
+  $("voice-status-title").replaceChildren(svgIcon("speaker", 18), channelNameNode(channel));
+  $("voice-status-input").value = channel.voice_status || "";
+  showModal("modal-voice-status");
+  $("voice-status-input").focus();
+  $("voice-status-input").select();
+}
+
+async function saveVoiceStatus(text) {
+  const target = voiceStatusChannel;
+  if (!target) return;
+  const problem = voiceStatusProblem(text);
+  if (problem) {
+    toast(problem);
+    return;
+  }
+  try {
+    await invoke("set_voice_status", { serverId: target.serverId, channelId: target.channelId, text: cleanVoiceStatus(text) });
+    hideModals();
+    voiceStatusChannel = null;
+    if (state.currentServer && state.currentServer.id === target.serverId) await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireVoiceStatus() {
+  $("chm-voice-status").onclick = () => {
+    const channel = menuChannel;
+    closeFloating();
+    openVoiceStatusModal(channel);
+  };
+  $("voice-status-save").onclick = () => saveVoiceStatus($("voice-status-input").value);
+  $("voice-status-clear").onclick = () => saveVoiceStatus("");
+  $("voice-status-cancel").onclick = hideModals;
+  $("voice-status-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") saveVoiceStatus($("voice-status-input").value);
+  });
+  $("vp-topic").onclick = () => {
+    const server = state.currentServer;
+    const channel = server && state.voiceServer && server.id === state.voiceServer.id
+      ? server.channels.find(c => c.id === state.voiceChannelId)
+      : null;
+    if (channel && canSetVoiceStatus({ channel, server, me: state.user && state.user.id })) openVoiceStatusModal(channel);
+  };
+  $("vp-conn-meta").oncontextmenu = e => {
+    const server = state.currentServer;
+    const channel = server && state.voiceServer && server.id === state.voiceServer.id
+      ? server.channels.find(c => c.id === state.voiceChannelId)
+      : null;
+    if (!channel) return;
+    e.preventDefault();
+    openChannelMenu(channel, e.clientX, e.clientY);
+  };
+}
+
+function voiceStatusLine(channel) {
+  const line = el("div", "voice-status-line", channel.voice_status);
+  line.title = channel.voice_status;
+  return line;
+}
+
+function decorateVoiceUser(node, channel, userId) {
+  const server = state.currentServer;
+  if (!server || !userId) return;
+  const member = (server.members || []).find(m => m.id === userId);
+  if (member && member.priority_speaker) {
+    const badge = el("span", "vs-icon priority");
+    badge.appendChild(svgIcon("megaphone", 14));
+    badge.title = "Priority speaker";
+    node.appendChild(badge);
+  }
+  node.classList.toggle("attenuated", attenuatedUsers(channel, server.members, state.speaking).has(userId));
+}
+
+function paintAttenuation() {
+  const server = state.currentServer;
+  const channel = server && state.voiceChannelId ? server.channels.find(c => c.id === state.voiceChannelId) : null;
+  const ducked = channel ? attenuatedUsers(channel, server.members, state.speaking) : new Set();
+  for (const node of document.querySelectorAll(".voice-user[data-user]")) {
+    node.classList.toggle("attenuated", ducked.has(node.dataset.user));
+  }
+}
+
+function renderVoiceTopic(vs) {
+  const topic = $("vp-topic");
+  const server = state.currentServer && vs && state.currentServer.id === vs.id ? state.currentServer : null;
+  const channel = server ? server.channels.find(c => c.id === state.voiceChannelId) : null;
+  const text = channel && channel.voice_status ? channel.voice_status : "";
+  topic.textContent = text;
+  topic.classList.toggle("hidden", !text);
+  const editable = Boolean(channel) && canSetVoiceStatus({ channel, server, me: state.user && state.user.id });
+  topic.classList.toggle("editable", editable);
+  topic.title = editable ? "Change the channel status" : text;
 }
 
 function placeMenuAt(menu, x, y) {
@@ -2352,6 +2469,7 @@ function renderChannels() {
         makeDropTarget(row, () => dropChannel(section, channel.id));
       }
       list.appendChild(row);
+      if (channel.kind === "voice" && channel.voice_status) list.appendChild(voiceStatusLine(channel));
       if (channel.kind === "voice") appendVoiceUsers(list, channel);
     }
   }
@@ -2486,6 +2604,10 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
     }
     toggleVoice(channel);
   };
+  row.oncontextmenu = e => {
+    e.preventDefault();
+    openChannelMenu(channel, e.clientX, e.clientY);
+  };
   if (canCreate) row.appendChild(channelGear(channel));
   channelBellSlot(row, channel);
   return row;
@@ -2504,6 +2626,7 @@ function appendVoiceUsers(list, channel) {
     }
     vu.appendChild(makeAvatar(userId, user, "avatar avatar-sm"));
     vu.appendChild(el("span", "voice-user-name", user));
+    decorateVoiceUser(vu, channel, userId);
     const since = (channel.voice_since || [])[i];
     if (since) vu.appendChild(liveElapsed(since, "clock", "voice-user-time"));
     vu.appendChild(el("span", "vs-icon")).appendChild(svgIcon("mic", 14));
@@ -3960,6 +4083,7 @@ function setSpeaking(userId, speaking) {
   if (state.user && userId === state.user.id) {
     document.querySelector(".user-panel").classList.toggle("speaking", speaking);
   }
+  paintAttenuation();
 }
 
 function clearSpeaking() {
@@ -8080,6 +8204,7 @@ const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
   ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
+  ["Voice", ["priority_speaker"]],
 ];
 
 function roleForm(server, role, onClose) {
@@ -10988,6 +11113,7 @@ function renderVoicePanel() {
   const call = vs.call ? state.call : null;
   $("vp-status-text").textContent = call && call.state !== "active" ? "Calling" : "Voice Connected";
   $("vp-where").textContent = call ? `Call with ${vs.name}` : `${vs.channelName} / ${vs.name}`;
+  renderVoiceTopic(call ? null : vs);
   $("vp-camera").classList.toggle("hidden", Boolean(call));
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
@@ -13968,6 +14094,7 @@ function wireEvents() {
   });
   $("rename-folder-cancel").onclick = hideModals;
   wireNicknameModal();
+  wireVoiceStatus();
 
   const uploadServerImage = async which => {
     try {
@@ -14929,6 +15056,7 @@ const PERMISSION_LABELS = [
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
   ["time_out_members", "Time Out Members"],
+  ["priority_speaker", "Priority Speaker"],
   ["manage_nicknames", "Manage Nicknames"],
   ["change_nickname", "Change Nickname"],
   ["move_members", "Move Members"],

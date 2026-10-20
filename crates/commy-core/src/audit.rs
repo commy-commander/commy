@@ -70,6 +70,7 @@ pub enum AuditKind {
     ThreadRename,
     ThreadArchive,
     ThreadLock,
+    VoiceStatusSet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,6 +230,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::ChannelSensitiveSet { channel: id, sensitive, .. } => {
             let (target, label) = channel(id);
             (K::ChannelSensitive, target, label, Some(if *sensitive { "on" } else { "off" }.into()))
+        }
+        E::VoiceStatusSet { channel: id, text, .. } => {
+            let (target, label) = channel(id);
+            (K::VoiceStatusSet, target, label, crate::server::clean_voice_status(text))
         }
         E::RoleCreate { role, .. } => (K::RoleCreate, Some(role.id.to_string()), Some(clip(&role.name)), None),
         E::RoleUpdate { role, .. } => (K::RoleUpdate, Some(role.id.to_string()), Some(clip(&role.name)), None),
@@ -586,6 +591,27 @@ mod tests {
         assert_eq!(log[0].target.as_deref(), Some(channel.to_string().as_str()));
         assert_eq!(log[0].detail.as_deref(), Some("on"));
         assert_eq!(log[1].detail.as_deref(), Some("off"));
+    }
+
+    #[test]
+    fn voice_status_changes_are_logged_with_the_text_or_its_clearing() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let sign = |at, text: &str| {
+            let event = ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: text.into(), by: owner };
+            SignedEvent::sign(sid, owner, at, event, &identity_for(owner))
+        };
+        state.apply_signed(&sign(1_000, "  Ranked   grind ")).unwrap();
+        state.apply_signed(&sign(2_000, "Ranked grind")).unwrap();
+        state.apply_signed(&sign(3_000, "")).unwrap();
+        let log = state.audit_log();
+        assert_eq!(log.len(), 2, "a repeat changes nothing");
+        assert_eq!(log[0].kind, AuditKind::VoiceStatusSet);
+        assert_eq!(log[0].target.as_deref(), Some(voice.to_string().as_str()));
+        assert_eq!(log[0].label.as_deref(), Some("General"));
+        assert_eq!(log[0].detail.as_deref(), Some("Ranked grind"));
+        assert_eq!(log[1].detail, None);
     }
 
     #[test]
