@@ -44,6 +44,8 @@ id_type!(ChannelId);
 id_type!(MessageId);
 id_type!(RoleId);
 
+pub const CALL_SERVER: ServerId = ServerId(Uuid::nil());
+
 const MESSAGE_ID_DOMAIN: &[u8] = b"commy-message-id/v1";
 
 impl MessageId {

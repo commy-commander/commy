@@ -24,7 +24,7 @@ pub use action::{Action, SignedEvent};
 pub use audit::{AuditEntry, AuditKind};
 pub use automod::{AutoMod, Hold};
 pub use catchup::{BucketDigest, BucketKey};
-pub use dm::{DmAction, DmMessage, DmStore};
+pub use dm::{CallSignal, DmAction, DmMessage, DmStore};
 pub use event::ServerEvent;
 pub use identity::{Identity, IdentityKey, Signature};
 pub use invites::TrackedInvite;

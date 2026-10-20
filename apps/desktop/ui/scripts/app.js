@@ -555,6 +555,15 @@ async function mockInvoke(cmd, args = {}) {
       return sent;
     }
     case "attach_dm_file": return null;
+    case "start_dm_call": {
+      const dm = mock.dms[args.userId];
+      if (!dm) throw "no such conversation";
+      return { state: "ringing", user: args.userId, name: dm.name, outgoing: true, seconds: 0, reason: null };
+    }
+    case "answer_dm_call":
+    case "end_dm_call":
+    case "get_dm_call":
+      return null;
     case "edit_dm": {
       const m = (mock.dms[args.userId] || { messages: [] }).messages.find(x => x.id === args.messageId);
       if (!m || !m.outgoing) throw "you can only edit your own messages";
@@ -1015,6 +1024,7 @@ function el(tag, className, text) {
 }
 
 const ICONS = {
+  phone: "M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z",
   speaker: "M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z",
   mic: "M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z",
   micOff: "M19 11h-1.7c0 .7-.2 1.4-.4 2l1.2 1.2c.6-.9.9-2 .9-3.2zm-4 .2V5a3 3 0 0 0-5.9-.8L15 10.1v1.1zM4.3 3 3 4.3l6 6V11a3 3 0 0 0 4.2 2.8l1.6 1.6A5 5 0 0 1 7 11H5a7 7 0 0 0 6 6.9V21h2v-3.1c.9-.1 1.8-.4 2.5-.9l4.2 4.2 1.3-1.3z",
@@ -8218,12 +8228,15 @@ function renderVoicePanel() {
   panel.classList.toggle("hidden", !(state.voiceChannelId && vs));
   if (!state.voiceChannelId || !vs) return;
 
-  $("vp-where").textContent = `${vs.channelName} / ${vs.name}`;
+  const call = vs.call ? state.call : null;
+  $("vp-status-text").textContent = call && call.state !== "active" ? "Calling" : "Voice Connected";
+  $("vp-where").textContent = call ? `Call with ${vs.name}` : `${vs.channelName} / ${vs.name}`;
+  $("vp-camera").classList.toggle("hidden", Boolean(call));
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
     : null;
   const gameBtn = $("vp-game-share");
-  gameBtn.classList.toggle("hidden", !playing);
+  gameBtn.classList.toggle("hidden", !playing || Boolean(call));
   if (playing) {
     gameBtn.replaceChildren(svgIcon("screen", 16), el("span", null, `Share ${playing}`));
     gameBtn.title = `Stream ${playing} to your voice channel at 60 fps`;
@@ -8265,6 +8278,7 @@ function renderVoicePanel() {
 
 async function disconnectVoice() {
   if (!state.voiceServer) return;
+  if (state.voiceServer.call) return endDmCall();
   try {
     await invoke("set_voice_channel", { serverId: state.voiceServer.id, channelId: null });
     state.voiceChannelId = null;
@@ -8336,6 +8350,7 @@ function applyMembersLayout() {
 function setViewMode(mode) {
   state.view = mode;
   const dm = mode === "dm";
+  $("dm-call-btn").classList.toggle("hidden", !dm);
   $("members-btn").classList.toggle("hidden", dm);
   $("member-list").classList.toggle("hidden", dm);
   $("invite-btn").classList.toggle("hidden", dm);
@@ -8613,11 +8628,106 @@ async function selectDm(userId, name) {
   renderDmHeader(userId, name);
   $("message-input").placeholder = `Message @${name}`;
   $("dm-profile-btn").classList.remove("hidden");
+  renderCallButton();
   const threads = await renderDmThreads();
   renderDmRequestBar(threads.find(t => t.user === userId) || null);
   const messages = await invoke("get_dm_messages", { userId });
   renderMessages(messages.map(dmToRenderable));
   renderTypingStrip();
+}
+
+function renderCallButton() {
+  const btn = $("dm-call-btn");
+  const dm = inDmView();
+  btn.classList.toggle("hidden", !dm);
+  if (!dm) return;
+  const talking = state.call && state.call.user === state.currentDm.user;
+  btn.replaceChildren(svgIcon(talking ? "hangup" : "phone", 20));
+  btn.title = talking ? "End Call" : "Start Voice Call";
+  btn.classList.toggle("active", Boolean(talking));
+}
+
+let callRing = null;
+
+function stopCallRing() {
+  if (callRing) clearInterval(callRing);
+  callRing = null;
+}
+
+function callPanel(view) {
+  state.voiceChannelId = view ? "call" : null;
+  state.voiceServer = view ? { id: null, call: view.user, name: view.name, channelName: "Call" } : null;
+  renderVoicePanel();
+  renderCallButton();
+}
+
+async function startDmCall() {
+  if (!inDmView()) return;
+  if (state.call && state.call.user === state.currentDm.user) return endDmCall();
+  try {
+    onDmCall(await invoke("start_dm_call", { userId: state.currentDm.user }));
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function answerDmCall(accept) {
+  try {
+    await invoke("answer_dm_call", { accept });
+    if (!accept) onDmCall({ ...(state.call || {}), state: "ended", reason: "declined" });
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function endDmCall() {
+  try {
+    await invoke("end_dm_call");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function callEndedLine(view) {
+  const name = view.name || "They";
+  switch (view.reason) {
+    case "declined": return `${name} declined the call`;
+    case "unanswered": return `${name} did not answer`;
+    case "missed": return `Missed call from ${name}`;
+    case "failed": return "The call could not connect";
+    default: return "Call ended";
+  }
+}
+
+function onDmCall(view) {
+  const wasActive = state.call && state.call.state === "active";
+  if (view.state === "ended") {
+    state.call = null;
+    stopCallRing();
+    if (!$("modal-call").classList.contains("hidden")) hideModals();
+    clearSpeaking();
+    callPanel(null);
+    toast(callEndedLine(view));
+    if (wasActive) playSound("leave");
+    return;
+  }
+  state.call = view;
+  if (view.state === "ringing" && !view.outgoing) {
+    const avatar = $("call-avatar");
+    avatar.replaceChildren(makeAvatar(view.user, view.name, "avatar avatar-xl"));
+    $("call-name").textContent = view.name;
+    showModal("modal-call");
+    stopCallRing();
+    playSound("dm");
+    callRing = setInterval(() => playSound("dm"), 3000);
+    return;
+  }
+  if (view.state === "active") {
+    stopCallRing();
+    if (!$("modal-call").classList.contains("hidden")) hideModals();
+    if (!wasActive) playSound("join");
+  }
+  callPanel(view);
 }
 
 function renderDmHeader(userId, name) {
@@ -10697,10 +10807,17 @@ function wireEvents() {
     else closeConnPop();
   });
   $("vp-conn-meta").onclick = () => {
-    if (state.voiceServer && (!state.currentServer || state.currentServer.id !== state.voiceServer.id)) {
+    if (!state.voiceServer) return;
+    if (state.voiceServer.call) return messageUser(state.voiceServer.call, state.voiceServer.name);
+    if (!state.currentServer || state.currentServer.id !== state.voiceServer.id) {
       selectServer(state.voiceServer.id);
     }
   };
+  $("dm-call-btn").onclick = startDmCall;
+  $("call-accept").onclick = () => answerDmCall(true);
+  $("call-decline").onclick = () => answerDmCall(false);
+  setIcon($("call-accept"), "phone", 26);
+  setIcon($("call-decline"), "hangup", 26);
   $("vp-nc").onclick = async () => {
     try {
       state.voice = await invoke("set_noise_cancellation", { enabled: !state.voice.noise_cancellation });
@@ -10970,6 +11087,8 @@ function wireEvents() {
     window.__TAURI__.event.listen("typing", event => onTyping(event.payload));
     window.__TAURI__.event.listen("messages-caught-up", event => onMessagesCaughtUp(event.payload));
     window.__TAURI__.event.listen("dm-received", event => onDmReceived(event.payload));
+    window.__TAURI__.event.listen("dm-call", event => onDmCall(event.payload));
+    invoke("get_dm_call").then(call => call && onDmCall(call)).catch(() => {});
     window.__TAURI__.event.listen("notification-clicked", event => openNotificationTarget(event.payload));
     window.__TAURI__.event.listen("tray-toggle-mute", () => $("mute-btn").click());
     window.__TAURI__.event.listen("voice-settings-changed", event => {
