@@ -927,6 +927,7 @@ function selectSettingsTab(id, tab) {
   }
   layer.querySelector(".settings-content").scrollTop = 0;
   layer.dataset.tab = tab;
+  if (tab === "voice") prepareAvatarStage();
 }
 
 function openSettingsLayerId() {
@@ -2147,6 +2148,11 @@ function stopCameraPreview() {
 
 const CAMERA_FX_NOTES = {
   idle: "Effects run on this device. People in the call see what this preview shows.",
+  "avatar-loading": "Getting your avatar ready. People in the call never see your camera picture.",
+  "avatar-ready": "Your avatar follows your face on this device. People see it, never your camera.",
+  "avatar-still": "Face tracking is not available here, so your avatar holds still.",
+  "avatar-missing": "Choose a VRM avatar file to use your own. People see a plain background until then.",
+  "avatar-failed": "Avatars are not available here, so your picture is blurred. Pick Off under Avatar.",
   loading: "Getting background effects ready. Your picture stays blurred until then.",
   ready: "Effects run on this device. People in the call see what this preview shows.",
   failed: "Effects are not available here, so your whole picture is blurred. Pick Off to send it clear.",
@@ -2159,11 +2165,57 @@ function renderCameraFx(status = cameraFxStatus()) {
     button.classList.toggle("active", on);
     button.setAttribute("aria-checked", String(on));
   }
+  renderAvatarPicker();
   $("cam-mirror").checked = mirror;
   document.body.dataset.camMirror = mirror ? "on" : "off";
   const note = $("cam-fx-note");
   note.textContent = CAMERA_FX_NOTES[status];
-  note.classList.toggle("warn", status === "failed");
+  note.classList.toggle("warn", status === "failed" || status === "avatar-failed");
+}
+
+function renderAvatarPicker() {
+  const { avatar } = cameraFx.settings;
+  for (const button of $("cam-avatar").querySelectorAll("button")) {
+    const on = button.dataset.avatar === avatar;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-checked", String(on));
+    const img = button.querySelector("img");
+    const src = cameraAvatar.thumbnails[button.dataset.avatar];
+    if (img && src && img.getAttribute("src") !== src) img.src = src;
+    if (img && !src) img.removeAttribute("src");
+  }
+}
+
+function pickAvatarBytes() {
+  if (IS_TAURI) return invoke("pick_avatar_model");
+  const input = $("vrm-file");
+  return new Promise(resolve => {
+    input.value = "";
+    input.onchange = () => resolve(input.files && input.files[0] ? input.files[0].arrayBuffer() : null);
+    input.click();
+  });
+}
+
+async function chooseCameraAvatar() {
+  try {
+    const bytes = await pickAvatarBytes();
+    if (!bytes || !bytes.byteLength) return;
+    await setCustomAvatar(bytes);
+    updateCameraFx({ avatar: "custom" });
+  } catch (e) {
+    toast(e && e.message ? e.message : String(e));
+  }
+}
+
+async function pickCameraAvatar(kind) {
+  if (kind === "custom") {
+    await prepareAvatarStage();
+    if (!cameraAvatar.stage || !cameraAvatar.stage.hasCustom()) {
+      chooseCameraAvatar();
+      return;
+    }
+  }
+  updateCameraFx({ avatar: kind });
 }
 
 async function chooseCameraBackdrop() {
@@ -9440,6 +9492,10 @@ function wireEvents() {
     };
   }
   $("cam-backdrop-btn").onclick = chooseCameraBackdrop;
+  for (const button of $("cam-avatar").querySelectorAll("button")) {
+    button.onclick = () => pickCameraAvatar(button.dataset.avatar);
+  }
+  $("cam-avatar-btn").onclick = chooseCameraAvatar;
   $("cam-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
   onCameraFxChange(renderCameraFx);
   renderCameraFx();

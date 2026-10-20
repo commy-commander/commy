@@ -617,6 +617,27 @@ fn data_url(mime: &str, bytes: &[u8]) -> String {
     format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
+const MAX_PICKED_AVATAR_BYTES: u64 = 64 * 1024 * 1024;
+
+#[tauri::command]
+async fn pick_avatar_model() -> CmdResult<tauri::ipc::Response> {
+    let Some(picked) = rfd::AsyncFileDialog::new()
+        .set_title("Choose an avatar")
+        .add_filter("VRM avatars", &["vrm"])
+        .pick_file()
+        .await
+    else {
+        return Ok(tauri::ipc::Response::new(Vec::new()));
+    };
+    let path = picked.path().to_path_buf();
+    let size = tokio::fs::metadata(&path).await.map_err(err_to_string)?.len();
+    if size > MAX_PICKED_AVATAR_BYTES {
+        return Err("that avatar is larger than 64 MB".into());
+    }
+    let bytes = tokio::fs::read(&path).await.map_err(err_to_string)?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 const MAX_PICKED_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 
 #[tauri::command]
@@ -5636,6 +5657,7 @@ pub fn run() {
             fetch_server_image,
             set_reaction,
             pick_image,
+            pick_avatar_model,
             share_source_preview,
             own_share_frame,
             set_volumes,

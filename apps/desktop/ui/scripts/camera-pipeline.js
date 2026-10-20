@@ -68,6 +68,7 @@ function updateCameraFx(patch) {
   cameraFx.settings = parseCameraFx({ ...cameraFx.settings, ...patch });
   try { localStorage.setItem(CAMERA_FX_KEY, JSON.stringify(cameraFx.settings)); } catch {}
   if (cameraFxNeedsSegmenter(cameraFx.settings)) prepareCameraSegmenter();
+  if (cameraFxShowsAvatar(cameraFx.settings)) prepareCameraAvatar();
   notifyCameraFx();
 }
 
@@ -80,6 +81,7 @@ function notifyCameraFx() {
 }
 
 function cameraFxStatus() {
+  if (cameraFxShowsAvatar(cameraFx.settings)) return `avatar-${cameraAvatarStatus()}`;
   if (!cameraFxNeedsSegmenter(cameraFx.settings)) return "idle";
   if (cameraFx.failed) return "failed";
   if (cameraFx.segmenter) return "ready";
@@ -187,6 +189,7 @@ function createCameraPipeline(stream) {
     timer: null,
   };
   if (cameraFxNeedsSegmenter(cameraFx.settings)) prepareCameraSegmenter();
+  if (cameraFxShowsAvatar(cameraFx.settings)) prepareCameraAvatar();
   pipe.timer = setInterval(() => drawCameraFrame(pipe), Math.round(1000 / CAMERA_DRAW_FPS));
   return pipe;
 }
@@ -208,6 +211,10 @@ function drawCameraFrame(pipe) {
     pipe.canvas.height = size.height;
   }
   pipe.drawn = true;
+  if (cameraFxShowsAvatar(cameraFx.settings)) {
+    drawAvatarFrame(pipe, size);
+    return;
+  }
   const mode = cameraFx.settings.background;
   if (mode === "off") {
     pipe.ctx.drawImage(pipe.video, 0, 0, size.width, size.height);
