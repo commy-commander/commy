@@ -37,7 +37,8 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   straight to their devices, with offline messages that arrive when the other
   person comes back.
 - **Presence and notifications.** Status, Do Not Disturb with a "back at"
-  time, appear offline, and notification toasts.
+  time, appear offline, notification toasts, and a notification level or a
+  timed mute for each server and each channel.
 - **Game overlay.** On Windows, an in-game overlay shows who is talking and
   recent chat, in the screen corner you choose.
 - **Safety tools.** Block and report people, an audit log of server changes,

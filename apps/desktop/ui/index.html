@@ -1988,6 +1988,26 @@
     <div class="ctx-sep"></div>
     <button id="sm-leave" class="danger">Leave Server</button>
   </div>
+  <div class="pop-menu ctx-menu hidden" id="channel-menu" role="menu">
+    <div class="ctx-title" id="channel-menu-title"></div>
+    <button id="chm-read">Mark As Read</button>
+    <div class="ctx-sep"></div>
+    <div class="ctx-label">Notifications</div>
+    <button class="ctx-radio" data-level="default">Use server setting</button>
+    <button class="ctx-radio" data-level="all">All messages</button>
+    <button class="ctx-radio" data-level="mentions">Only @mentions</button>
+    <button class="ctx-radio" data-level="none">Nothing</button>
+    <div class="ctx-sep"></div>
+    <div class="ctx-label">Mute Channel</div>
+    <button class="ctx-radio" data-mute="15m">For 15 minutes</button>
+    <button class="ctx-radio" data-mute="1h">For 1 hour</button>
+    <button class="ctx-radio" data-mute="8h">For 8 hours</button>
+    <button class="ctx-radio" data-mute="24h">For 24 hours</button>
+    <button class="ctx-radio" data-mute="forever">Until I turn it back on</button>
+    <button class="ctx-check checked" id="chm-unmute"></button>
+    <div class="ctx-sep"></div>
+    <button id="chm-settings">Edit Channel</button>
+  </div>
   <div class="pop-menu ctx-menu hidden" id="folder-menu" role="menu">
     <button id="fm-rename">Rename Folder</button>
     <button id="fm-ungroup">Ungroup Folder</button>

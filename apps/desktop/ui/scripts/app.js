@@ -1141,6 +1141,7 @@ const ICONS = {
   uploadFile: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z",
   movie: "M4 6.47 5.76 10H20v8H4V6.47M22 4h-4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2z",
   gifBox: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H5V5h14zM9.5 13v-1h1v1a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1h-2v2zm3 1h-1v-4h1zm4-3h-2v.5H16v1h-1.5V14h-1v-4h3z",
+  bellOff: "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6zM3.3 4.7l1.4-1.4 16 16-1.4 1.4z",
   lock: "M12 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6-9h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zM8.9 6a3.1 3.1 0 0 1 6.2 0v2H8.9zM18 20H6V10h12z",
   people: "M16.5 13c-1.2 0-3.07.34-4.5 1-1.43-.67-3.3-1-4.5-1C5.33 13 1 14.08 1 16.25V19h22v-2.75c0-2.17-4.33-3.25-6.5-3.25zm-4 4.5h-10v-1.25c0-.54 2.56-1.75 5-1.75s5 1.21 5 1.75v1.25zm9 0H14v-1.25c0-.46-.2-.86-.52-1.22.88-.3 1.96-.53 3.02-.53 2.44 0 5 1.21 5 1.75v1.25zM7.5 12c1.93 0 3.5-1.57 3.5-3.5S9.43 5 7.5 5 4 6.57 4 8.5 5.57 12 7.5 12zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 5.5c1.93 0 3.5-1.57 3.5-3.5S18.43 5 16.5 5 13 6.57 13 8.5s1.57 3.5 3.5 3.5zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z",
   gamepad: "M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H3V8h18v8zM6 15h2v-2h2v-2H8V9H6v2H4v2h2v2zm8.5-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
@@ -1502,11 +1503,18 @@ function makeRailDropTarget(node, target) {
   });
 }
 
+function shownUnread(serverId, channelId) {
+  const count = unread.channels.get(channelId) || 0;
+  if (!count) return 0;
+  if (!unread.mentions.has(channelId) && isChannelMuted(serverId, channelId)) return 0;
+  return count;
+}
+
 function serverUnreadCount(serverId) {
   if (isServerMuted(serverId)) return 0;
   let total = 0;
   for (const [channel, server] of unread.channelServer) {
-    if (server === serverId) total += unread.channels.get(channel) || 0;
+    if (server === serverId) total += shownUnread(serverId, channel);
   }
   return total;
 }
@@ -1643,6 +1651,56 @@ function isServerMuted(serverId) {
   return serverPrefs(serverId).muted;
 }
 
+function nowSecs() {
+  return Math.floor(Date.now() / 1000);
+}
+
+function channelMute(serverId, channelId) {
+  const own = channelPref(notifyPrefs(), serverId, channelId);
+  if (!own) return null;
+  if (own.mute === true) return true;
+  return typeof own.mute === "number" && own.mute > nowSecs() ? own.mute : null;
+}
+
+function isChannelMuted(serverId, channelId) {
+  return isMuted(notifyPrefs(), serverId, channelId, nowSecs());
+}
+
+function updateChannelPrefs(serverId, channelId, change) {
+  saveNotifyPrefs(withChannelPref(notifyPrefs(), serverId, channelId, change));
+  syncUnreadBadge();
+  if (state.currentServer && state.currentServer.id === serverId) renderChannels();
+}
+
+function muteWords(mute) {
+  if (mute === true) return "Muted until you turn it back on";
+  const at = new Date(mute * 1000);
+  const today = at.toDateString() === new Date().toDateString();
+  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return today ? `Muted until ${time}` : `Muted until ${at.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
+
+let menuChannel = null;
+
+function openChannelMenu(channel, x, y) {
+  closeFloating();
+  const server = state.currentServer;
+  if (!server) return;
+  menuChannel = channel;
+  const own = channelPref(notifyPrefs(), server.id, channel.id) || {};
+  const level = own.level || "default";
+  const mute = channelMute(server.id, channel.id);
+  $("channel-menu-title").replaceChildren(document.createTextNode("# "), channelNameNode(channel));
+  for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-level]")) {
+    btn.classList.toggle("checked", btn.dataset.level === level);
+  }
+  for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-mute]")) btn.classList.toggle("hidden", mute !== null);
+  $("chm-unmute").classList.toggle("hidden", mute === null);
+  $("chm-unmute").textContent = mute === null ? "" : muteWords(mute);
+  $("chm-settings").classList.toggle("hidden", !server.can_manage_channels);
+  placeMenuAt($("channel-menu"), x, y);
+}
+
 function placeMenuAt(menu, x, y) {
   menu.classList.remove("hidden");
   const r = menu.getBoundingClientRect();
@@ -1698,7 +1756,10 @@ function updateServerPrefs(serverId, change) {
 
 function markServerRead(serverId) {
   for (const [channel, server] of [...unread.channelServer]) {
-    if (server === serverId) unread.channels.delete(channel);
+    if (server === serverId) {
+      unread.channels.delete(channel);
+      unread.mentions.delete(channel);
+    }
   }
   syncUnreadBadge();
   if (state.currentServer && state.currentServer.id === serverId) renderChannels();
@@ -1873,7 +1934,25 @@ function renderChannels() {
       if (channel.kind === "voice") appendVoiceUsers(list, channel);
     }
   }
+  scheduleMuteExpiry(server);
   pushOverlayRoster();
+}
+
+let muteExpiryTimer = null;
+
+function scheduleMuteExpiry(server) {
+  clearTimeout(muteExpiryTimer);
+  muteExpiryTimer = null;
+  const now = nowSecs();
+  const soonest = server.channels
+    .map(c => channelMute(server.id, c.id))
+    .filter(mute => typeof mute === "number" && mute > now)
+    .reduce((a, b) => Math.min(a, b), Infinity);
+  if (!Number.isFinite(soonest)) return;
+  muteExpiryTimer = setTimeout(() => {
+    if (state.currentServer && state.currentServer.id === server.id) renderChannels();
+    syncUnreadBadge();
+  }, Math.min((soonest - now) * 1000 + 500, 2_147_000_000));
 }
 
 function channelMark(channel, size = 18) {
@@ -1896,6 +1975,17 @@ function channelLockMark(row, channel) {
   if (channel.can_view === false) row.classList.add("unreadable");
 }
 
+function channelBellSlot(row, channel) {
+  const slot = el("span", "channel-bell");
+  const serverId = state.currentServer && state.currentServer.id;
+  if (serverId && channel.kind !== "voice" && isChannelMuted(serverId, channel.id) && !isServerMuted(serverId)) {
+    slot.appendChild(svgIcon("bellOff", 14));
+    slot.title = muteWords(channelMute(serverId, channel.id));
+    row.classList.add("muted");
+  }
+  row.appendChild(slot);
+}
+
 function textChannelRow(channel, canCreate) {
   const row = el("div", "channel");
   row.appendChild(channelMark(channel));
@@ -1903,12 +1993,17 @@ function textChannelRow(channel, canCreate) {
   channelLockMark(row, channel);
   paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
-  if (unread.channels.get(channel.id)) row.classList.add("unread");
+  if (shownUnread(state.currentServer.id, channel.id)) row.classList.add("unread");
   row.onclick = () => {
     state.historyAnchor = null;
     selectChannel(channel);
   };
+  row.oncontextmenu = e => {
+    e.preventDefault();
+    openChannelMenu(channel, e.clientX, e.clientY);
+  };
   if (canCreate) row.appendChild(channelGear(channel));
+  channelBellSlot(row, channel);
   return row;
 }
 
@@ -1945,6 +2040,7 @@ function voiceChannelRow(channel, canCreate) {
     toggleVoice(channel);
   };
   if (canCreate) row.appendChild(channelGear(channel));
+  channelBellSlot(row, channel);
   return row;
 }
 
@@ -2224,7 +2320,7 @@ function saveNotifyPrefs(prefs) {
   try { localStorage.setItem(NOTIFY_KEY, JSON.stringify(prefs)); } catch {}
 }
 
-const unread = { channels: new Map(), channelServer: new Map(), dms: new Map() };
+const unread = { channels: new Map(), channelServer: new Map(), dms: new Map(), mentions: new Set() };
 
 function appFocused() {
   return document.visibilityState === "visible" && document.hasFocus();
@@ -2260,6 +2356,7 @@ function syncUnreadBadge() {
 }
 
 function clearChannelUnread(channelId) {
+  unread.mentions.delete(channelId);
   if (unread.channels.delete(channelId)) syncUnreadBadge();
 }
 
@@ -2321,16 +2418,17 @@ function onMessageCreated(msg) {
   if (isBlocked(msg.author)) return;
   const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === msg.channel;
   const focusedOnIt = viewing && appFocused();
+  const announcement = Boolean(msg.announcement);
+  const mentioned = typeof msg.mentioned === "boolean" ? msg.mentioned : messageMentionsMeIn(msg.server, msg.author, msg.content);
   if (!focusedOnIt) {
     unread.channels.set(msg.channel, (unread.channels.get(msg.channel) || 0) + 1);
     unread.channelServer.set(msg.channel, msg.server);
+    if (mentioned) unread.mentions.add(msg.channel);
     syncUnreadBadge();
     if (state.currentServer && state.currentServer.id === msg.server) renderChannels();
     else if (dmListShown() && isGroupServer(msg.server)) renderDmThreads();
   }
-  const level = levelForServer(notifyPrefs(), msg.server);
-  const announcement = Boolean(msg.announcement);
-  const mentioned = typeof msg.mentioned === "boolean" ? msg.mentioned : messageMentionsMeIn(msg.server, msg.author, msg.content);
+  const level = levelForChannel(notifyPrefs(), msg.server, msg.channel, nowSecs());
   if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement })) {
     const notice = messageNotice(msg, plainText);
     invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
@@ -2345,21 +2443,23 @@ function onMessagesCaughtUp(payload) {
   if (!server || !channels || typeof channels !== "object") return;
   let changed = false;
   const notices = [];
-  const now = Math.floor(Date.now() / 1000);
-  const level = levelForServer(notifyPrefs(), server);
+  const now = nowSecs();
+  const prefs = notifyPrefs();
   for (const [channel, value] of Object.entries(channels)) {
     const info = typeof value === "object" && value ? value : bareCountFromOlderBuild(value);
     const count = Number(info.count);
     if (!Number.isInteger(count) || count <= 0) continue;
     const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === channel;
     const focusedOnIt = viewing && appFocused();
+    const mentioned = Boolean(info.mentioned) || mentionsMe(info.content);
     if (!focusedOnIt) {
       unread.channels.set(channel, (unread.channels.get(channel) || 0) + count);
       unread.channelServer.set(channel, server);
+      if (mentioned) unread.mentions.add(channel);
       changed = true;
     }
     if (info.channel_name === undefined || isBlocked(info.author) || !isRecent(Number(info.at), now)) continue;
-    const mentioned = Boolean(info.mentioned) || mentionsMe(info.content);
+    const level = levelForChannel(prefs, server, channel, now);
     if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement: Boolean(info.announcement) })) {
       const notice = caughtUpNotice({ ...info, count, server_name: payload.server_name }, plainText);
       notices.push({ ...notice, target: `channel:${server}:${channel}` });
@@ -2714,7 +2814,7 @@ function placePopup(popup, anchor, prefer = "above") {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "msg-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -11191,6 +11291,40 @@ function wireEvents() {
   $("sm-read").onclick = () => {
     if (menuServer) markServerRead(menuServer.id);
     closeFloating();
+  };
+  for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-level]")) {
+    btn.onclick = () => {
+      if (!menuChannel || !state.currentServer) return;
+      updateChannelPrefs(state.currentServer.id, menuChannel.id, { level: btn.dataset.level });
+      closeFloating();
+      toast(`#${menuChannel.name}: ${btn.textContent}`);
+    };
+  }
+  for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-mute]")) {
+    btn.onclick = () => {
+      if (!menuChannel || !state.currentServer) return;
+      const choice = MUTE_CHOICES.find(c => c.id === btn.dataset.mute);
+      if (!choice) return;
+      updateChannelPrefs(state.currentServer.id, menuChannel.id, { mute: muteUntil(choice, nowSecs()) });
+      closeFloating();
+      toast(`Muted #${menuChannel.name} ${choice.label.replace(/^For /, "for ").replace(/^Until/, "until")}`);
+    };
+  }
+  $("chm-unmute").onclick = () => {
+    if (!menuChannel || !state.currentServer) return;
+    updateChannelPrefs(state.currentServer.id, menuChannel.id, { mute: false });
+    closeFloating();
+    toast(`Unmuted #${menuChannel.name}`);
+  };
+  $("chm-read").onclick = () => {
+    if (menuChannel) clearChannelUnread(menuChannel.id);
+    closeFloating();
+    renderChannels();
+  };
+  $("chm-settings").onclick = () => {
+    const channel = menuChannel;
+    closeFloating();
+    if (channel) openChannelSettings(channel.id);
   };
   const fromMenu = action => async () => {
     closeFloating();
