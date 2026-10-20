@@ -197,10 +197,10 @@ function searchSummary(total, shown) {
   return n > shown ? `${label}, showing the newest ${shown}` : label;
 }
 
-function unknownFilterText(unknown) {
+function unknownFilterText(unknown, where = "in this server") {
   if (!unknown || !unknown.length) return "";
   const first = unknown[0];
-  return first.filter === "in" ? `No channel called #${first.name} here` : `Nobody called @${first.name} in this server`;
+  return first.filter === "in" ? `No channel called #${first.name} here` : `Nobody called @${first.name} ${where}`;
 }
 
 if (typeof module !== "undefined" && module.exports) {

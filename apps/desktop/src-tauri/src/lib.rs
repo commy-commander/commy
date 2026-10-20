@@ -335,6 +335,7 @@ fn search_messages(
     from: Option<String>,
     mentions: Option<String>,
     channel_id: Option<String>,
+    offset: Option<usize>,
 ) -> CmdResult<search::SearchResults> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let from: Option<UserId> = from.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
@@ -345,7 +346,28 @@ fn search_messages(
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
-    Ok(search::search(state, &query, me, search::MAX_HITS, &keys))
+    Ok(search::search(state, &query, me, offset.map_or(search::Page::newest(), search::Page::at), &keys))
+}
+
+#[tauri::command]
+fn search_dms(
+    app: tauri::State<App>,
+    terms: Vec<String>,
+    from: Option<String>,
+    mentions: Option<String>,
+    user_id: Option<String>,
+    offset: Option<usize>,
+) -> CmdResult<search::DmSearchResults> {
+    let from: Option<UserId> = from.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let mentions: Option<UserId> = mentions.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let partner: Option<UserId> = user_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let query = search::SearchQuery::new(&terms, from, mentions, None);
+    let keys = channel_lock::KeyHolder::of(&app);
+    let me = current_profile(&app)?.id;
+    let blocked = app.safety.lock().unwrap().blocked.clone();
+    let servers = app.servers.lock().unwrap();
+    let dms = app.dms.lock().unwrap();
+    Ok(search::search_dms(&dms, &servers, &query, me, partner, &blocked, offset.map_or(search::Page::newest(), search::Page::at), &keys))
 }
 
 fn slow_mode_words(seconds: i64) -> String {
@@ -7912,6 +7934,7 @@ pub fn run() {
             voice_invite::send_dm_voice_invite,
             voice_invite::voice_channel_presence,
             search_messages,
+            search_dms,
             edit_message,
             delete_message,
             list_audio_devices,
