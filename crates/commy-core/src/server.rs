@@ -97,12 +97,42 @@ pub struct Pin {
 
 pub const MAX_PINS_PER_CHANNEL: usize = 50;
 
+pub const MAX_TIMEOUT_SECS: i64 = 28 * 24 * 60 * 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Timeout {
+    pub since: DateTime<Utc>,
+    pub until: DateTime<Utc>,
+    pub by: UserId,
+}
+
+impl Timeout {
+    pub fn new(since: DateTime<Utc>, until: DateTime<Utc>, by: UserId) -> Option<Self> {
+        let length = until.signed_duration_since(since).num_seconds();
+        (length > 0 && length <= MAX_TIMEOUT_SECS).then_some(Self { since, until, by })
+    }
+
+    pub fn active_at(&self, now: DateTime<Utc>) -> bool {
+        now < self.until
+    }
+
+    pub fn covers(&self, at: DateTime<Utc>) -> bool {
+        self.since <= at && at < self.until
+    }
+
+    pub fn remaining_secs(&self, now: DateTime<Utc>) -> i64 {
+        self.until.signed_duration_since(now).num_seconds().max(0)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
     pub user: UserId,
     pub nickname: Option<String>,
     pub roles: Vec<RoleId>,
     pub joined_at: DateTime<Utc>,
+    #[serde(default)]
+    pub timeout: Option<Timeout>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -225,6 +255,7 @@ impl Server {
                 nickname: None,
                 roles: vec![],
                 joined_at: Utc::now(),
+                timeout: None,
             }],
             emojis: vec![],
             soundboard: vec![],
@@ -278,6 +309,25 @@ impl Server {
 
     pub fn is_current_member(&self, user: UserId) -> bool {
         self.is_member(user) && !self.banned.contains(&user)
+    }
+
+    pub fn timeout_of(&self, user: UserId, now: DateTime<Utc>) -> Option<Timeout> {
+        self.member(user)?.timeout.filter(|t| t.active_at(now))
+    }
+
+    pub fn is_timed_out(&self, user: UserId, now: DateTime<Utc>) -> bool {
+        self.timeout_of(user, now).is_some()
+    }
+
+    pub fn timed_out_at(&self, user: UserId, at: DateTime<Utc>) -> bool {
+        self.member(user).and_then(|m| m.timeout).is_some_and(|t| t.covers(at))
+    }
+
+    pub fn timed_out_members(&self, now: DateTime<Utc>) -> Vec<(UserId, Timeout)> {
+        self.members
+            .iter()
+            .filter_map(|m| m.timeout.filter(|t| t.active_at(now)).map(|t| (m.user, t)))
+            .collect()
     }
 
     pub fn permissions_for(&self, user: UserId) -> Permissions {
@@ -461,7 +511,7 @@ mod tests {
         let rid = role.id;
         server.roles.push(role);
         for (user, roles) in [(plain, vec![]), (announcer, vec![rid])] {
-            server.members.push(Member { user, nickname: None, roles, joined_at: Utc::now() });
+            server.members.push(Member { user, nickname: None, roles, joined_at: Utc::now(), timeout: None });
         }
         assert!(server.can_post_in(general, plain));
         assert!(!server.can_post_in(news_id, plain));
@@ -512,6 +562,7 @@ mod tests {
             nickname: None,
             roles: vec![],
             joined_at: Utc::now(),
+            timeout: None,
         });
         let perms = server.permissions_for(user);
         assert!(perms.allows(Permissions::SEND_MESSAGES));
@@ -540,7 +591,7 @@ mod tests {
         let rid = invite_role.id;
         server.roles.push(invite_role);
         for (user, roles) in [(plain, vec![]), (inviter, vec![rid])] {
-            server.members.push(Member { user, nickname: None, roles, joined_at: Utc::now() });
+            server.members.push(Member { user, nickname: None, roles, joined_at: Utc::now(), timeout: None });
         }
         assert!(!server.permissions_for(plain).allows(Permissions::CREATE_INVITES));
         assert!(server.permissions_for(inviter).allows(Permissions::CREATE_INVITES));
@@ -568,6 +619,7 @@ mod tests {
             nickname: None,
             roles: vec![mod_role.id],
             joined_at: Utc::now(),
+            timeout: None,
         });
         server.roles.push(mod_role);
         let perms = server.permissions_for(user);
@@ -597,6 +649,7 @@ mod tests {
             nickname: None,
             roles: vec![admin_role.id],
             joined_at: Utc::now(),
+            timeout: None,
         });
         server.roles.push(admin_role);
         assert!(server.permissions_for(user).allows(Permissions::BAN_MEMBERS));

@@ -81,6 +81,8 @@ pub struct MemberView {
     pub tag_color: Option<String>,
     pub role_banner: Option<String>,
     pub bot: bool,
+    pub timeout_until: Option<i64>,
+    pub timeout_by: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -155,6 +157,8 @@ pub struct ServerView {
     pub afk_timeout_minutes: Option<u32>,
     pub can_mute: bool,
     pub can_ban: bool,
+    pub can_time_out: bool,
+    pub my_timeout_until: Option<i64>,
     pub emojis: Vec<EmojiView>,
     pub stickers: Vec<EmojiView>,
     pub emoticons: Vec<EmoticonView>,
@@ -243,6 +247,7 @@ impl ServerView {
             })
             .collect();
 
+        let now = chrono::Utc::now();
         let members = state
             .member_list()
             .into_iter()
@@ -291,6 +296,8 @@ impl ServerView {
                     tag: tag.map(|(t, _)| t),
                     role_banner: state.server.top_role_with(p.id, |r| r.banner.is_some()).and_then(|r| r.banner.clone()),
                     bot: state.is_bot(p.id),
+                    timeout_until: state.server.timeout_of(p.id, now).map(|t| t.until.timestamp_millis()),
+                    timeout_by: state.server.timeout_of(p.id, now).map(|t| t.by.to_string()),
                 }
             })
             .collect();
@@ -397,6 +404,8 @@ impl ServerView {
             afk_timeout_minutes: state.server.afk_timeout_minutes,
             can_mute: perms.allows(Permissions::MUTE_MEMBERS),
             can_ban: perms.allows(Permissions::BAN_MEMBERS),
+            can_time_out: perms.allows(Permissions::TIME_OUT_MEMBERS),
+            my_timeout_until: viewer.and_then(|v| state.server.timeout_of(v, now)).map(|t| t.until.timestamp_millis()),
             emojis: state
                 .server
                 .emojis
@@ -466,6 +475,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("kick_members", Permissions::KICK_MEMBERS),
     ("ban_members", Permissions::BAN_MEMBERS),
     ("mute_members", Permissions::MUTE_MEMBERS),
+    ("time_out_members", Permissions::TIME_OUT_MEMBERS),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("add_emojis", Permissions::ADD_EMOJIS),
     ("add_stickers", Permissions::ADD_STICKERS),

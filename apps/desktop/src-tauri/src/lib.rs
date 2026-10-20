@@ -387,6 +387,10 @@ async fn send_typing(app: tauri::State<'_, App>, server_id: String, channel_id: 
     if !allowed {
         return Err("unknown channel".into());
     }
+    let silenced = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.is_timed_out(me, chrono::Utc::now()));
+    if silenced {
+        return Ok(());
+    }
     broadcast_event(&app, sid, ServerEvent::TypingStart { channel, user: me }).await;
     Ok(())
 }
@@ -481,7 +485,9 @@ async fn set_reaction(
     let me = current_profile(&app)?;
     {
         let servers = app.servers.lock().unwrap();
-        require_can_view(servers.get(&sid).ok_or("unknown server")?, me.id, cid)?;
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_can_view(state, me.id, cid)?;
+        require_not_timed_out(state, me.id)?;
     }
     apply_and_broadcast(
         &app,
@@ -3654,8 +3660,19 @@ fn require_can_view(state: &ServerState, user: UserId, channel: ChannelId) -> Cm
     }
 }
 
+fn require_not_timed_out(state: &ServerState, user: UserId) -> CmdResult<()> {
+    match state.server.timeout_of(user, chrono::Utc::now()) {
+        Some(timeout) => {
+            let left = commy_core::audit::duration_words(timeout.remaining_secs(chrono::Utc::now()).max(1));
+            Err(format!("you are timed out in this server for another {left}"))
+        }
+        None => Ok(()),
+    }
+}
+
 fn require_can_post(app: &App, state: &ServerState, user: UserId, channel: ChannelId) -> CmdResult<()> {
     require_can_view(state, user, channel)?;
+    require_not_timed_out(state, user)?;
     let restricted = state.server.channel(channel).is_some_and(|c| c.is_restricted());
     if restricted && !state.server.can_post_in(channel, user) {
         return Err("only some roles can send messages in this channel".into());
@@ -4183,6 +4200,49 @@ async fn ban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server
         }
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberBan { server: sid, user }).await
+}
+
+fn timeout_event(sid: ServerId, user: UserId, by: UserId, seconds: Option<u32>) -> CmdResult<ServerEvent> {
+    let at = chrono::Utc::now();
+    let until = match seconds {
+        Some(secs) if i64::from(secs) > commy_core::server::MAX_TIMEOUT_SECS => {
+            return Err("a timeout can last four weeks at most".into());
+        }
+        Some(0) => return Err("choose how long the timeout lasts".into()),
+        Some(secs) => Some(at + chrono::Duration::seconds(i64::from(secs))),
+        None => None,
+    };
+    Ok(ServerEvent::MemberTimeout { server: sid, user, by, at, until })
+}
+
+async fn set_member_timeout(app: &App, handle: &tauri::AppHandle, server_id: String, user_id: String, seconds: Option<u32>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let me = current_profile(app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(app, state, me.id, Permissions::TIME_OUT_MEMBERS, "time out members")?;
+        if user == state.server.owner || user == me.id {
+            return Err("you cannot time out that member".into());
+        }
+        if !state.server.is_member(user) {
+            return Err("that member is no longer in the server".into());
+        }
+    }
+    apply_and_broadcast(app, handle, sid, timeout_event(sid, user, me.id, seconds)?).await?;
+    refresh_forced_voice(app, handle);
+    Ok(())
+}
+
+#[tauri::command]
+async fn time_out_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String, seconds: u32) -> CmdResult<()> {
+    set_member_timeout(&app, &handle, server_id, user_id, Some(seconds)).await
+}
+
+#[tauri::command]
+async fn clear_timeout(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String) -> CmdResult<()> {
+    set_member_timeout(&app, &handle, server_id, user_id, None).await
 }
 
 #[tauri::command]
@@ -4953,6 +5013,7 @@ async fn play_sound_in_voice(app: &App, handle: &tauri::AppHandle, sid: ServerId
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
+        require_not_timed_out(state, me.id)?;
         soundboard_play_view(state, channel, me.id, &name).ok_or("that sound no longer exists")?
     };
     broadcast_event(app, sid, ServerEvent::SoundboardPlay { server: sid, channel, user: me.id, name })
@@ -5835,6 +5896,21 @@ fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
         }),
         _ => (false, false),
     };
+    if let Some(sid) = server {
+        let timeouts = {
+            let servers = app.servers.lock().unwrap();
+            servers.get(&sid).map(|s| {
+                s.server
+                    .timed_out_members(chrono::Utc::now())
+                    .into_iter()
+                    .map(|(user, timeout)| (user, timeout.until.timestamp_millis()))
+                    .collect::<std::collections::HashMap<_, _>>()
+            })
+        };
+        if let (Some(session), Some(timeouts)) = (app.voice_session.lock().unwrap().as_mut(), timeouts) {
+            session.set_timeouts(timeouts);
+        }
+    }
     let was = (
         app.forced_mute.swap(muted, std::sync::atomic::Ordering::Relaxed),
         app.forced_deaf.swap(deafened, std::sync::atomic::Ordering::Relaxed),
@@ -5917,7 +5993,15 @@ async fn run_net_loop(
                 if let ServerEvent::ScreenShare { user, active: true, .. } = &event {
                     app.share_seen.lock().unwrap().insert((server, *user), std::time::Instant::now());
                 }
-                let moderation = matches!(event, ServerEvent::VoiceModerate { .. });
+                let moderation = matches!(event, ServerEvent::VoiceModerate { .. } | ServerEvent::MemberTimeout { .. });
+                let my_timeout = match &event {
+                    ServerEvent::MemberTimeout { user, until, .. }
+                        if app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == *user) =>
+                    {
+                        Some(until.map(|t| t.timestamp_millis()))
+                    }
+                    _ => None,
+                };
                 let access = matches!(
                     event,
                     ServerEvent::ChannelAccessSet { .. }
@@ -5983,6 +6067,9 @@ async fn run_net_loop(
                         }
                         if moderation {
                             refresh_forced_voice(&app, &handle);
+                        }
+                        if let Some(until) = my_timeout {
+                            let _ = handle.emit("timed-out", serde_json::json!({ "server": server.to_string(), "until": until }));
                         }
                         if access {
                             leave_unseen_voice(&app, &handle, server).await;
@@ -6578,6 +6665,8 @@ pub fn run() {
             moderate_voice,
             ban_member,
             unban_member,
+            time_out_member,
+            clear_timeout,
             set_user_voice,
             set_role_banner,
             get_integrations,

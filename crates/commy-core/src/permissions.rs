@@ -34,6 +34,7 @@ impl Permissions {
     pub const ADD_EMOJIS: Permissions = Permissions(1 << 24);
     pub const ADD_STICKERS: Permissions = Permissions(1 << 25);
     pub const ADD_EMOTICONS: Permissions = Permissions(1 << 26);
+    pub const TIME_OUT_MEMBERS: Permissions = Permissions(1 << 27);
 
     pub fn default_member() -> Permissions {
         Self::VIEW_CHANNELS
@@ -133,6 +134,7 @@ mod tests {
     fn administrator_allows_everything() {
         let p = Permissions::ADMINISTRATOR;
         assert!(p.allows(Permissions::BAN_MEMBERS));
+        assert!(p.allows(Permissions::TIME_OUT_MEMBERS));
         assert!(p.allows(Permissions::MANAGE_SERVER));
         assert!(!p.contains(Permissions::BAN_MEMBERS));
     }
@@ -142,6 +144,7 @@ mod tests {
         let p = Permissions::default_member();
         assert!(p.allows(Permissions::SEND_MESSAGES));
         assert!(!p.allows(Permissions::KICK_MEMBERS));
+        assert!(!p.allows(Permissions::TIME_OUT_MEMBERS));
         assert!(!p.allows(Permissions::MANAGE_SERVER));
         assert!(!p.allows(Permissions::CREATE_INVITES));
         assert!(!p.can_pin());

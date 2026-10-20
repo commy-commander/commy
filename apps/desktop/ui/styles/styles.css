@@ -4431,6 +4431,37 @@ h3.md-heading { font-size: 1.1em; }
   flex-shrink: 0;
 }
 
+.timeout-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  border-radius: 6px;
+  background: var(--bg-active);
+  color: var(--yellow);
+  vertical-align: 2px;
+}
+.timeout-badge svg { width: 12px; height: 12px; }
+.mc-name-row .timeout-badge { margin-left: 6px; }
+.timeout-left { color: var(--header-primary); font-variant-numeric: tabular-nums; }
+.timeout-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.timeout-choice {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-darkest);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 8px;
+  cursor: pointer;
+}
+.timeout-choice:hover { color: var(--text-normal); background: var(--bg-hover); }
+.timeout-choice.active { color: #fff; background: var(--bg-active); border-color: var(--bg-active); }
+
 .update-card .update-state { min-height: calc(2 * 1.4em); }
 .update-card .update-action { flex: 0 0 152px; width: 152px; white-space: nowrap; }
 #settings-btn { position: relative; }

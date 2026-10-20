@@ -384,7 +384,7 @@ async function mockInvoke(cmd, args = {}) {
         add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
         can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
         can_add_emoticons: !mock.plainMember || !(s.add_restricted || {}).emoticons, can_use_external: s.can_use_external !== false,
-        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
@@ -899,6 +899,16 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "unban_member": { const s = mock.servers[args.serverId]; s.banned = (s.banned || []).filter(b => b[0] !== args.userId); return null; }
+    case "time_out_member": {
+      const m = mock.servers[args.serverId].members.find(x => x.id === args.userId);
+      if (m) m.timeout_until = Date.now() + args.seconds * 1000;
+      return null;
+    }
+    case "clear_timeout": {
+      const m = mock.servers[args.serverId].members.find(x => x.id === args.userId);
+      if (m) m.timeout_until = null;
+      return null;
+    }
     case "set_channel_banner": {
       const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
       const ref = args.data ? `mock${Date.now()}@mock` : null;
@@ -3090,6 +3100,7 @@ function renderMembers() {
       if (member.color) nameRow.style.color = `#${member.color}`;
       if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
+      if (timeoutActive(member.timeout_until)) nameRow.appendChild(timeoutBadge(member.timeout_until));
       if (sharers.has(member.id)) {
         const live = el("span", "live-badge", "LIVE");
         live.title = "Watch screen";
@@ -5162,13 +5173,20 @@ function syncRulesGate() {
   const gated = state.view === "server" && Boolean(state.currentServer && state.currentServer.needs_rules);
   $("rules-gate").classList.toggle("hidden", !gated);
   const where = { view: state.view, server: state.currentServer, channel: state.currentChannel };
-  const accessLock = gated ? null : channelAccessLock(where);
-  const lock = gated ? null : accessLock || composerLock(where);
+  const timedOut = gated ? null : timeoutLock(where);
+  const accessLock = gated || timedOut ? null : channelAccessLock(where);
+  const lock = gated ? null : timedOut || accessLock || composerLock(where);
   $("announce-gate").classList.toggle("hidden", !lock);
   if (lock) {
-    $("announce-gate-icon").replaceChildren(svgIcon(accessLock ? "lock" : "megaphone", 22));
+    $("announce-gate-icon").replaceChildren(svgIcon(timedOut ? "clock" : accessLock ? "lock" : "megaphone", 22));
     $("announce-gate-title").textContent = lock.title;
-    $("announce-gate-text").textContent = lock.text;
+    const text = $("announce-gate-text");
+    text.textContent = lock.text;
+    if (timedOut) {
+      const left = el("strong", "timeout-left", timeoutLeftText(timedOut.until));
+      left.dataset.until = String(timedOut.until);
+      text.append(left, document.createTextNode("."));
+    }
   }
   if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || Boolean(lock));
   if (gated && !rulesPrompted.has(state.currentServer.id)) {
@@ -5952,7 +5970,8 @@ function openMemberCard(member, anchor) {
   const name = $("mc-name");
   name.textContent = member.name;
   name.style.color = member.color ? `#${member.color}` : "";
-  name.parentElement.querySelectorAll(".role-tag, .bot-tag, .mc-pronouns").forEach(n => n.remove());
+  name.parentElement.querySelectorAll(".role-tag, .bot-tag, .mc-pronouns, .timeout-badge").forEach(n => n.remove());
+  if (timeoutActive(member.timeout_until)) name.after(timeoutBadge(member.timeout_until));
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) name.after(botTag());
   if (member.pronouns) name.after(el("span", "mc-pronouns", member.pronouns));
@@ -6007,6 +6026,10 @@ function openMemberCard(member, anchor) {
     action("serverAdd", "Invite", e => openInviteMenu(member, e.currentTarget));
   }
   action("person", "Full Profile", () => openFullProfile(member));
+  if (state.view === "server" && canTimeOut(state.currentServer, member, state.user && state.user.id)) {
+    const active = timeoutActive(currentTimeoutOf(member));
+    action("clock", timeoutActionLabel(member), () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
+  }
   $("mc-composer").classList.toggle("hidden", isMe || member.bot || isBlocked(member.id));
   const input = $("mc-input");
   input.value = "";
@@ -6099,7 +6122,7 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
   ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "create_invites"]],
-  ["Members", ["kick_members", "ban_members", "mute_members"]],
+  ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members"]],
 ];
 
 function roleForm(server, role, onClose) {
@@ -6550,13 +6573,17 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
-  if (inServer && member.id !== server.owner && (server.can_mute || server.can_kick || server.can_ban)) {
+  if (inServer && member.id !== server.owner && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out)) {
     sep();
     if (server.can_mute) {
       const sm = (server.server_muted || []).includes(member.id);
       const sd = (server.server_deafened || []).includes(member.id);
       item("Server Mute", () => moderateVoice(member, !sm, sd), "ctx-check" + (sm ? " checked" : ""));
       item("Server Deafen", () => moderateVoice(member, sm, !sd), "ctx-check" + (sd ? " checked" : ""));
+    }
+    if (canTimeOut(server, member, state.user && state.user.id)) {
+      const active = timeoutActive(currentTimeoutOf(member));
+      item(active ? "Remove timeout" : `Time out ${member.name}`, () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
     }
     if (server.can_kick) {
       item(`Kick ${member.name}`, async () => {
@@ -6634,6 +6661,110 @@ async function setUserVoice(userId, { volume, muted }) {
   } catch (e) {
     toast(String(e));
   }
+}
+
+function currentTimeoutOf(member) {
+  const fresh = currentServerMember(member.id);
+  return fresh ? fresh.timeout_until : member.timeout_until;
+}
+
+function timeoutBadge(untilMs) {
+  const badge = el("span", "timeout-badge");
+  badge.dataset.until = String(untilMs);
+  badge.title = timeoutBadgeTitle(untilMs);
+  badge.setAttribute("aria-label", badge.title);
+  badge.appendChild(svgIcon("clock", 12));
+  return badge;
+}
+
+setInterval(() => {
+  for (const node of document.querySelectorAll(".timeout-badge[data-until]")) {
+    const until = Number(node.dataset.until);
+    if (!timeoutActive(until)) node.remove();
+    else node.title = timeoutBadgeTitle(until);
+  }
+  const left = document.querySelector(".timeout-left[data-until]");
+  if (left) {
+    const until = Number(left.dataset.until);
+    if (timeoutActive(until)) left.textContent = timeoutLeftText(until);
+    else syncRulesGate();
+  }
+}, 1000);
+
+let timeoutTarget = null;
+
+function openTimeoutPicker(member) {
+  const server = state.currentServer;
+  if (!server || !canTimeOut(server, member, state.user && state.user.id)) return;
+  closeFloating();
+  timeoutTarget = { serverId: server.id, member, seconds: TIMEOUT_CHOICES[1].seconds };
+  $("timeout-title").textContent = `Time out ${member.name}`;
+  $("timeout-custom").value = "";
+  renderTimeoutChoices();
+  showModal("modal-timeout");
+}
+
+function renderTimeoutChoices() {
+  const grid = $("timeout-choices");
+  grid.replaceChildren();
+  const raw = $("timeout-custom").value.trim();
+  const custom = customTimeoutSeconds(raw);
+  for (const choice of TIMEOUT_CHOICES) {
+    const picked = !raw && Boolean(timeoutTarget) && timeoutTarget.seconds === choice.seconds;
+    const btn = el("button", "timeout-choice" + (picked ? " active" : ""), choice.label);
+    btn.type = "button";
+    btn.setAttribute("role", "radio");
+    btn.setAttribute("aria-checked", String(picked));
+    btn.onclick = () => {
+      if (!timeoutTarget) return;
+      timeoutTarget.seconds = choice.seconds;
+      $("timeout-custom").value = "";
+      renderTimeoutChoices();
+    };
+    grid.appendChild(btn);
+  }
+  $("timeout-go").disabled = !timeoutTarget || !(custom || (!raw && timeoutTarget.seconds));
+}
+
+async function confirmTimeout() {
+  if (!timeoutTarget) return;
+  const { serverId, member } = timeoutTarget;
+  const raw = $("timeout-custom").value.trim();
+  const seconds = raw ? customTimeoutSeconds(raw) : timeoutTarget.seconds;
+  if (!seconds) return;
+  hideModals();
+  timeoutTarget = null;
+  try {
+    await invoke("time_out_member", { serverId, userId: member.id, seconds });
+    await refreshCurrentServer();
+    toast(timeoutSummary(member.name, seconds));
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function clearMemberTimeout(member) {
+  const server = state.currentServer;
+  if (!server) return;
+  try {
+    await invoke("clear_timeout", { serverId: server.id, userId: member.id });
+    await refreshCurrentServer();
+    toast(`Removed the timeout on ${member.name}`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireTimeoutModal() {
+  $("timeout-cancel").onclick = () => {
+    hideModals();
+    timeoutTarget = null;
+  };
+  $("timeout-go").onclick = confirmTimeout;
+  $("timeout-custom").oninput = renderTimeoutChoices;
+  $("timeout-custom").onkeydown = e => {
+    if (e.key === "Enter" && !$("timeout-go").disabled) confirmTimeout();
+  };
 }
 
 async function moderateVoice(member, muted, deafened) {
@@ -10987,6 +11118,10 @@ function wireEvents() {
       document.body.classList.toggle("server-muted", muted || deafened);
       renderChannels();
     });
+    window.__TAURI__.event.listen("timed-out", event => {
+      const { until } = event.payload || {};
+      toast(timeoutActive(until) ? `A moderator timed you out for ${timeoutLeftText(until)}` : "A moderator removed your timeout");
+    });
     window.__TAURI__.event.listen("server-deleted", async event => {
       toast(`${event.payload.name || "A server"} was deleted by its owner`);
       await leaveServerView(event.payload.server);
@@ -11489,6 +11624,7 @@ const PERMISSION_LABELS = [
   ["view_audit_log", "View Audit Log"],
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
+  ["time_out_members", "Time Out Members"],
   ["administrator", "Administrator"],
 ];
 
@@ -12260,6 +12396,19 @@ function renderMemberSettings(server) {
     top.appendChild(who);
     const isSelf = state.user && member.id === state.user.id;
     const isOwner = member.id === server.owner;
+    if (canTimeOut(server, member, state.user && state.user.id)) {
+      const active = timeoutActive(member.timeout_until);
+      const timeOut = el("button", (active ? "btn-secondary" : "btn-danger") + " btn-small", timeoutActionLabel(member));
+      timeOut.onclick = async () => {
+        if (active) {
+          await clearMemberTimeout(member);
+          openServerSettings();
+        } else {
+          openTimeoutPicker(member);
+        }
+      };
+      top.appendChild(timeOut);
+    }
     if (server.can_kick && !isSelf && !isOwner) {
       const kick = el("button", "btn-danger btn-small", "Kick");
       kick.onclick = async () => {
@@ -12351,6 +12500,7 @@ function wireActivityPing() {
 
 async function boot() {
   wireEvents();
+  wireTimeoutModal();
   wireActivityPing();
   if (IS_TAURI) {
     await invoke("ui_ready");

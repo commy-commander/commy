@@ -1093,7 +1093,7 @@ fn snapshot_vouched(app: &App, server: ServerId, payload: &WirePayload) -> bool 
 
 fn member_of(m: commy_net::protocol::SyncMember) -> commy_core::Member {
     let joined_at = chrono::DateTime::from_timestamp_millis(m.joined_ms).unwrap_or_default();
-    commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at }
+    commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at, timeout: None }
 }
 
 pub fn invite_nodes(raw: &str) -> Option<Vec<[u8; 32]>> {

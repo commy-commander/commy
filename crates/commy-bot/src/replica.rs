@@ -257,5 +257,5 @@ fn awaits_create(pending: &VecDeque<Pending>, event: &ServerEvent) -> bool {
 
 fn member_of(m: SyncMember) -> commy_core::Member {
     let joined_at = chrono::DateTime::from_timestamp_millis(m.joined_ms).unwrap_or_default();
-    commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at }
+    commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at, timeout: None }
 }

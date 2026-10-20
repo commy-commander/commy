@@ -3,7 +3,7 @@ use commy_media::{Mixer, OutputHandle, StreamGuards};
 use commy_net::media::MediaPacket;
 use commy_net::node::MediaChannel;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
@@ -17,6 +17,10 @@ pub fn mixer_key(user: UserId) -> u64 {
     u64::from_le_bytes(bytes[..8].try_into().unwrap())
 }
 
+pub fn silenced(until_ms: &AtomicI64) -> bool {
+    chrono::Utc::now().timestamp_millis() < until_ms.load(Ordering::Relaxed)
+}
+
 pub struct VoiceSession {
     pub server: ServerId,
     pub channel: ChannelId,
@@ -24,6 +28,10 @@ pub struct VoiceSession {
     pub deafened: Arc<AtomicBool>,
     pub mic_broadcast: broadcast::Sender<(u32, Arc<Vec<u8>>)>,
     pub last_activity: Arc<std::sync::atomic::AtomicI64>,
+    me: UserId,
+    own_silence: Arc<AtomicI64>,
+    timeouts: HashMap<UserId, i64>,
+    peer_silence: HashMap<UserId, Arc<AtomicI64>>,
     peers: HashMap<UserId, JoinHandle<()>>,
     links: HashMap<UserId, (commy_net::node::Connection, Arc<Mutex<JitterMeter>>)>,
     dialing: HashSet<UserId>,
@@ -104,10 +112,12 @@ impl VoiceSession {
         let (mic_broadcast, _) = broadcast::channel(64);
         let now = || chrono::Utc::now().timestamp();
         let last_activity = Arc::new(std::sync::atomic::AtomicI64::new(now()));
+        let own_silence = Arc::new(AtomicI64::new(0));
         let seq_task = {
             let mic_broadcast = mic_broadcast.clone();
             let last_activity = last_activity.clone();
             let on_speaking = on_speaking.clone();
+            let own_silence = own_silence.clone();
             tokio::spawn(async move {
                 let mut mic_rx = mic_rx;
                 let mut seq: u32 = 0;
@@ -122,6 +132,9 @@ impl VoiceSession {
                             heard_since_tick = true;
                             if commy_media::frame_has_signal(&pcm) {
                                 last_activity.store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
+                            }
+                            if silenced(&own_silence) {
+                                continue;
                             }
                             if let Some(speaking) = detector.push(&pcm) {
                                 on_speaking(me, speaking);
@@ -152,6 +165,10 @@ impl VoiceSession {
             deafened: Arc::new(AtomicBool::new(deafened)),
             mic_broadcast,
             last_activity,
+            me,
+            own_silence,
+            timeouts: HashMap::new(),
+            peer_silence: HashMap::new(),
             peers: HashMap::new(),
             links: HashMap::new(),
             dialing: HashSet::new(),
@@ -202,6 +219,15 @@ impl VoiceSession {
         self.dialing.remove(&user);
     }
 
+    pub fn set_timeouts(&mut self, timeouts: HashMap<UserId, i64>) {
+        let until = |user: UserId| timeouts.get(&user).copied().unwrap_or(0);
+        self.own_silence.store(until(self.me), Ordering::Relaxed);
+        for (user, silence) in &self.peer_silence {
+            silence.store(until(*user), Ordering::Relaxed);
+        }
+        self.timeouts = timeouts;
+    }
+
     pub fn live_peers(&self) -> Vec<UserId> {
         self.peers.iter().filter(|(_, task)| !task.is_finished()).map(|(user, _)| *user).collect()
     }
@@ -230,6 +256,8 @@ impl VoiceSession {
         let deafened = self.deafened.clone();
         let mut mic_rx = self.mic_broadcast.subscribe();
         let on_speaking = self.on_speaking.clone();
+        let silence = Arc::new(AtomicI64::new(self.timeouts.get(&user).copied().unwrap_or(0)));
+        self.peer_silence.insert(user, silence.clone());
 
         let task = tokio::spawn(async move {
             let mut decoder = commy_audio::codec::VoiceDecoder::new();
@@ -247,6 +275,9 @@ impl VoiceSession {
                         }
                     }
                     packet = incoming.recv() => {
+                        if packet.is_some() && silenced(&silence) {
+                            continue;
+                        }
                         let (seq, pcm) = match packet {
                             Some(MediaPacket::Opus { seq, data }) => {
                                 heard_since_tick = true;
@@ -323,6 +354,7 @@ impl VoiceSession {
 
     pub fn detach_peer(&mut self, user: UserId) {
         self.links.remove(&user);
+        self.peer_silence.remove(&user);
         if let Some(task) = self.peers.remove(&user) {
             task.abort();
         }
@@ -754,6 +786,59 @@ mod link_tests {
         drop(wire);
         until(|| !session.has_peer(friend)).await;
         assert!(session.claim_dial(friend));
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_peer_is_not_heard_until_the_timeout_runs_out() {
+        let mut session = session();
+        let loud = UserId::new();
+        let far = chrono::Utc::now().timestamp_millis() + 60_000;
+        session.set_timeouts(HashMap::from([(loud, far)]));
+        let wire = link(&mut session, loud);
+        for seq in 0..5 {
+            wire.send(voice(seq, 100)).unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mixer = session.mixer.clone();
+        assert_eq!(mixer.lock().unwrap().peer_count(), 0, "their frames are dropped");
+        session.set_timeouts(HashMap::new());
+        wire.send(voice(5, 200)).unwrap();
+        until(|| mixer.lock().unwrap().peer_count() == 1).await;
+        assert_eq!(mixer.lock().unwrap().next_frame()[0], 200);
+        let past = chrono::Utc::now().timestamp_millis() - 1;
+        session.set_timeouts(HashMap::from([(loud, past)]));
+        wire.send(voice(6, 150)).unwrap();
+        until(|| mixer.lock().unwrap().next_frame()[0] == 150).await;
+    }
+
+    #[tokio::test]
+    async fn our_own_mic_stays_quiet_while_we_are_timed_out() {
+        let (mic_tx, mic_rx) = mpsc::unbounded_channel();
+        let me = UserId::new();
+        let mut session = VoiceSession::start(
+            ServerId::new(),
+            ChannelId::new(),
+            StreamGuards { mic: None, speaker: None },
+            mic_rx,
+            mic_tx.clone(),
+            false,
+            me,
+            Arc::new(|_, _| {}),
+        );
+        let mut heard = session.mic_broadcast.subscribe();
+        session.set_timeouts(HashMap::from([(me, chrono::Utc::now().timestamp_millis() + 60_000)]));
+        assert!(silenced(&session.own_silence));
+        for _ in 0..3 {
+            mic_tx.send(vec![1000; commy_audio::FRAME_SIZE]).unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(matches!(heard.try_recv(), Err(broadcast::error::TryRecvError::Empty)), "nothing was encoded");
+        session.set_timeouts(HashMap::new());
+        assert!(!silenced(&session.own_silence));
+        for _ in 0..3 {
+            mic_tx.send(vec![1000; commy_audio::FRAME_SIZE]).unwrap();
+        }
+        until(|| !matches!(heard.try_recv(), Err(broadcast::error::TryRecvError::Empty))).await;
     }
 
     #[tokio::test]
