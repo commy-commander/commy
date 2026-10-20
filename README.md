@@ -26,8 +26,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Message search.** Search a server by keyword, phrase, author, mention or
   channel. Search runs on your device over the history it keeps, and a result
   jumps straight to the message, even weeks back.
-- **Voice.** Opus voice with a one-click noise cancellation toggle, per-person
-  volume, shared mute and deafen, and a soundboard with per-server clips.
+- **Voice.** Opus voice with one-click noise cancellation and echo
+  cancellation toggles, per-person volume, shared mute and deafen, and a
+  soundboard with per-server clips.
 - **Screen and game streaming.** Share a whole monitor or a single window with
   a Sharp, Balanced or Smooth quality preset. Windows uses Windows Graphics
   Capture, so games stream cleanly.

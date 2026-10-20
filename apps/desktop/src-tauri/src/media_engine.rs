@@ -172,6 +172,7 @@ impl VoiceSession {
         input: Option<String>,
         output: Option<String>,
     ) {
+        let far_end = processor.lock().unwrap().far_end_sink();
         self.devices.mic = None;
         self.devices.mic = match commy_media::start_microphone(processor, self.mic_tx.clone(), input) {
             Ok(mic) => Some(mic),
@@ -181,7 +182,7 @@ impl VoiceSession {
             }
         };
         self.devices.speaker = None;
-        self.devices.speaker = match commy_media::start_playback(self.mixer.clone(), output) {
+        self.devices.speaker = match commy_media::start_playback(self.mixer.clone(), output, Some(far_end)) {
             Ok(speaker) => Some(speaker),
             Err(e) => {
                 tracing::warn!("speaker switch failed: {e}");
@@ -558,9 +559,10 @@ impl MicTest {
         output: Option<String>,
     ) -> anyhow::Result<Self> {
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<i16>>();
+        let far_end = processor.lock().unwrap().far_end_sink();
         let mic = commy_media::start_microphone(processor, tx, input)?;
         let mixer = Arc::new(Mutex::new(Mixer::new()));
-        let speaker = commy_media::start_playback(mixer.clone(), output)?;
+        let speaker = commy_media::start_playback(mixer.clone(), output, Some(far_end))?;
         let task = tokio::spawn(async move {
             let mut encoder = commy_audio::codec::VoiceEncoder::new();
             let mut decoder = commy_audio::codec::VoiceDecoder::new();

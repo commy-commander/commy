@@ -1,5 +1,6 @@
 use crate::mixer::Mixer;
 use anyhow::{anyhow, Context, Result};
+use commy_audio::echo::FarEndSink;
 use commy_audio::{VoiceProcessor, FRAME_SIZE, SAMPLE_RATE};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::VecDeque;
@@ -271,10 +272,12 @@ pub fn start_microphone(
         let channels = config.channels();
         let mut assembler = FrameAssembler::new(sample_rate, channels);
 
-        let mut data_cb = move |data: &[f32]| {
+        let mut data_cb = move |data: &[f32], latency: Option<std::time::Duration>| {
             assembler.push(data);
+            let mut processor = processor.lock().unwrap();
+            processor.note_capture_latency(latency);
             while let Some(frame) = assembler.next_frame() {
-                let processed = processor.lock().unwrap().process(&frame);
+                let processed = processor.process(&frame);
                 if let Ok(processed) = processed {
                     if processed.should_transmit {
                         let pcm: Vec<i16> = processed
@@ -295,7 +298,7 @@ pub fn start_microphone(
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_input_stream(
                 &config.into(),
-                move |data: &[f32], _| data_cb(data),
+                move |data: &[f32], info| data_cb(data, capture_latency(info)),
                 err_cb,
                 None,
             )?,
@@ -303,10 +306,10 @@ pub fn start_microphone(
                 let mut floats: Vec<f32> = Vec::new();
                 device.build_input_stream(
                     &config.into(),
-                    move |data: &[i16], _| {
+                    move |data: &[i16], info| {
                         floats.clear();
                         floats.extend(data.iter().map(|s| *s as f32 / 32768.0));
-                        data_cb(&floats);
+                        data_cb(&floats, capture_latency(info));
                     },
                     err_cb,
                     None,
@@ -316,10 +319,10 @@ pub fn start_microphone(
                 let mut floats: Vec<f32> = Vec::new();
                 device.build_input_stream(
                     &config.into(),
-                    move |data: &[u16], _| {
+                    move |data: &[u16], info| {
                         floats.clear();
                         floats.extend(data.iter().map(|s| (*s as f32 - 32768.0) / 32768.0));
-                        data_cb(&floats);
+                        data_cb(&floats, capture_latency(info));
                     },
                     err_cb,
                     None,
@@ -331,9 +334,24 @@ pub fn start_microphone(
     })
 }
 
-pub fn start_playback(mixer: Arc<Mutex<Mixer>>, device_name: Option<String>) -> Result<OutputHandle> {
+fn capture_latency(info: &cpal::InputCallbackInfo) -> Option<std::time::Duration> {
+    let stamp = info.timestamp();
+    stamp.callback.duration_since(&stamp.capture)
+}
+
+fn playback_latency(info: &cpal::OutputCallbackInfo) -> Option<std::time::Duration> {
+    let stamp = info.timestamp();
+    stamp.playback.duration_since(&stamp.callback)
+}
+
+pub fn start_playback(
+    mixer: Arc<Mutex<Mixer>>,
+    device_name: Option<String>,
+    far_end: Option<FarEndSink>,
+) -> Result<OutputHandle> {
     run_stream_thread("playback thread died", move |fault| {
         let mixer = mixer.clone();
+        let far_end = far_end.clone();
         let host = cpal::default_host();
         let device = find_device(&host, false, device_name.as_deref())
             .ok_or_else(|| anyhow!("no output device found"))?;
@@ -346,8 +364,15 @@ pub fn start_playback(mixer: Arc<Mutex<Mixer>>, device_name: Option<String>) -> 
 
         let stream = device.build_output_stream(
             &config.into(),
-            move |data: &mut [f32], _| {
-                shaper.fill(data, channels, || mixer.lock().unwrap().next_frame());
+            move |data: &mut [f32], info| {
+                let latency = playback_latency(info);
+                shaper.fill(data, channels, || {
+                    let frame = mixer.lock().unwrap().next_frame();
+                    if let Some(sink) = &far_end {
+                        sink.push(&frame, latency);
+                    }
+                    frame
+                });
             },
             move |e| {
                 tracing::error!("playback stream error: {e}");
