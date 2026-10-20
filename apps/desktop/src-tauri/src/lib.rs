@@ -2650,6 +2650,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
         if state.server.rules.is_some() {
             events.push(ServerEvent::RulesSet { server: sid, rules: state.server.rules.clone() });
         }
+        if state.server.onboarding.is_some() {
+            events.push(ServerEvent::OnboardingSet { server: sid, onboarding: state.server.onboarding.clone() });
+        }
         if state.server.afk_timeout_minutes.is_some() {
             events.push(ServerEvent::AfkTimeoutSet { server: sid, minutes: state.server.afk_timeout_minutes });
         }
@@ -3915,6 +3918,63 @@ async fn set_rules(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_
         return Err("rules are too long; keep them under about 3000 characters".into());
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RulesSet { server: sid, rules }).await
+}
+
+#[tauri::command]
+async fn set_onboarding(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    onboarding: Option<commy_core::Onboarding>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change the onboarding questions")?;
+    let roles = {
+        let servers = app.servers.lock().unwrap();
+        servers.get(&sid).ok_or("unknown server")?.server.roles.clone()
+    };
+    let onboarding = onboarding
+        .map(|o| o.tidied(|r| commy_core::onboarding::grantable(&roles, r)))
+        .filter(|o| !o.questions.is_empty());
+    if onboarding.as_ref().is_some_and(|o| !o.fits()) {
+        return Err(onboarding_limits());
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::OnboardingSet { server: sid, onboarding }).await
+}
+
+fn onboarding_limits() -> String {
+    use commy_core::onboarding::{MAX_ROLE_REFS, MAX_TEXT_BYTES};
+    format!("keep the questions and answers under {MAX_TEXT_BYTES} characters in all, with at most {MAX_ROLE_REFS} roles across every answer")
+}
+
+#[tauri::command]
+async fn answer_onboarding(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    grant: Vec<String>,
+    revoke: Vec<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let parse = |ids: Vec<String>| ids.iter().map(|id| id.parse::<RoleId>().map_err(err_to_string)).collect::<CmdResult<Vec<RoleId>>>();
+    let (grant, revoke) = (parse(grant)?, parse(revoke)?);
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        let allowed = grant.iter().chain(&revoke).all(|r| commy_core::onboarding::may_self_assign(&state.server, me.id, *r));
+        if !allowed {
+            return Err("this server's questions do not hand out that role".into());
+        }
+    }
+    for role in revoke {
+        apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUnassign { server: sid, user: me.id, role }).await?;
+    }
+    for role in grant {
+        apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleAssign { server: sid, user: me.id, role }).await?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -7250,6 +7310,8 @@ pub fn run() {
             set_rules,
             set_automod,
             accept_rules,
+            set_onboarding,
+            answer_onboarding,
             save_event,
             delete_event,
             set_rsvp,

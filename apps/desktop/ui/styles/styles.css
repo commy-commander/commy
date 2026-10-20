@@ -5283,3 +5283,50 @@ h3.md-heading { font-size: 1.1em; }
 }
 .age-gate-btn.btn-primary { background: var(--accent); color: var(--accent-ink); }
 .age-gate-btn.btn-primary:hover { background: var(--accent-hover); }
+.ob-preview-badge { margin-left: auto; align-self: flex-start; flex: none; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 3px 8px; }
+.ob-questions { display: flex; flex-direction: column; gap: 18px; max-height: 55vh; overflow-y: auto; padding: 2px 2px 2px 0; }
+.ob-question { display: flex; flex-direction: column; gap: 10px; }
+.ob-question-title { font-family: var(--font-display); font-size: 16px; font-weight: 600; color: var(--header-primary); letter-spacing: -.01em; }
+.ob-question-sub { font-size: 13px; color: var(--text-muted); line-height: 1.4; margin-top: -6px; }
+.ob-answers { display: flex; flex-direction: column; gap: 6px; }
+.ob-answer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 16px 0 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background: var(--bg-dark);
+  color: var(--text-normal);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.ob-answer:hover { background: var(--bg-active); }
+.ob-answer.picked { border-color: var(--accent); }
+.ob-check { flex: none; display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid var(--text-faint); color: transparent; }
+.ob-answer.multiple .ob-check { border-radius: 6px; }
+.ob-answer.picked .ob-check { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ob-answer-label { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-answer-roles { display: flex; align-items: center; gap: 2px; flex: none; }
+.ob-answer-roles .role-dot { width: 8px; height: 8px; margin: 0; }
+.ob-actions #ob-later { margin-right: auto; }
+.ob-editor { display: flex; flex-direction: column; }
+.ob-card-head { display: flex; align-items: center; gap: 12px; }
+.ob-card-head .setting-title { flex: 1; min-width: 0; }
+.ob-field { display: flex; flex-direction: column; gap: 6px; }
+.ob-field input[type="text"] { width: 100%; }
+.ob-type-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ob-answer-rows { display: flex; flex-direction: column; gap: 10px; }
+.ob-answer-row { display: grid; grid-template-columns: minmax(0, 1fr) 28px; gap: 6px 8px; align-items: center; padding: 10px 12px; border-radius: 10px; background: var(--bg-mid); }
+.ob-answer-row input[type="text"] { min-width: 0; }
+.ob-role-chips { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 32px; }
+.ob-role-chip { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 6px 0 8px; border-radius: var(--radius-pill); background: var(--bg-raised); font-size: 12px; font-weight: 600; color: var(--text-normal); }
+.ob-role-chip .role-dot { width: 8px; height: 8px; margin-right: 2px; }
+.ob-role-chip .game-chip-x { width: 16px; height: 16px; align-items: center; justify-content: center; }
+.ob-role-chips select.compact-select { min-width: 0; width: 150px; padding: 4px 8px; font-size: 13px; }
+.ob-icon-btn { flex: none; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; }
+.ob-icon-btn:hover { background: var(--bg-active); color: var(--header-primary); }
+.ob-add-answer { align-self: flex-start; }

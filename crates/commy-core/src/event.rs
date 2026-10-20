@@ -286,6 +286,10 @@ pub enum ServerEvent {
         channel: ChannelId,
         sensitive: bool,
     },
+    OnboardingSet {
+        server: ServerId,
+        onboarding: Option<crate::onboarding::Onboarding>,
+    },
 }
 
 #[cfg(test)]
@@ -348,6 +352,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::PollVote { server, channel, message, user, choices: vec![0] }), 69);
         assert_eq!(wire_tag(ServerEvent::PollClose { server, channel, message, by: user }), 70);
         assert_eq!(wire_tag(ServerEvent::ChannelSensitiveSet { server, channel, sensitive: true }), 72);
+        assert_eq!(wire_tag(ServerEvent::OnboardingSet { server, onboarding: None }), 73);
     }
 
     #[test]

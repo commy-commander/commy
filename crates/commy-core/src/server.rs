@@ -242,6 +242,8 @@ pub struct Server {
     pub stickers_shareable: bool,
     #[serde(default)]
     pub emoticons_shareable: bool,
+    #[serde(default)]
+    pub onboarding: Option<crate::onboarding::Onboarding>,
 }
 
 impl Server {
@@ -306,6 +308,7 @@ impl Server {
             emoticons: vec![],
             stickers_shareable: false,
             emoticons_shareable: false,
+            onboarding: None,
         }
     }
 

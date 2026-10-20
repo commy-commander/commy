@@ -591,6 +591,7 @@
       </div>
       <div class="modal-actions">
         <button class="btn-secondary danger-text" id="si-leave">Leave Server</button>
+        <button class="btn-secondary hidden" id="si-answers">Change My Answers</button>
         <button class="btn-primary" id="si-close">Done</button>
       </div>
     </div>
@@ -601,6 +602,24 @@
       <div class="pins-list pins-list-wide" id="pins-modal-list"></div>
       <div class="modal-actions">
         <button class="btn-primary" id="pins-modal-close">Done</button>
+      </div>
+    </div>
+
+    <div class="modal modal-wide hidden" id="modal-onboarding" role="dialog" aria-label="Onboarding questions">
+      <div class="sw-head">
+        <div class="server-icon sw-icon" id="ob-icon"></div>
+        <div class="sw-titles">
+          <h2 id="ob-title">A few questions</h2>
+          <p id="ob-sub"></p>
+        </div>
+        <span class="ob-preview-badge hidden" id="ob-preview-badge">Preview</span>
+      </div>
+      <div class="sw-steps hidden" id="ob-steps"></div>
+      <div class="ob-questions" id="ob-questions"></div>
+      <div class="modal-actions ob-actions">
+        <button class="btn-secondary" id="ob-later">Later</button>
+        <button class="btn-secondary hidden" id="ob-back">Back</button>
+        <button class="btn-primary" id="ob-next">Next</button>
       </div>
     </div>
 
@@ -1591,6 +1610,7 @@
         <button class="settings-tab" data-tab="channels" id="tab-channels">Channels</button>
         <button class="settings-tab" data-tab="roles" id="tab-roles">Roles</button>
         <button class="settings-tab" data-tab="rules" id="tab-rules">Rules</button>
+        <button class="settings-tab" data-tab="onboarding" id="tab-onboarding">Onboarding</button>
         <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
         <button class="settings-tab" data-tab="emoji" id="tab-emoji">Emoji</button>
         <button class="settings-tab" data-tab="stickers" id="tab-stickers">Stickers</button>
@@ -1822,6 +1842,19 @@
             <button class="btn-primary btn-small" id="rules-save">Save Rules</button>
             <button class="btn-link danger hidden" id="rules-remove">Remove Rules</button>
             <span class="expr-count" id="rules-count"></span>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="onboarding">
+          <h1>Onboarding</h1>
+          <div class="setting-sub expr-intro">Ask new members a few questions when they join, right after the rules. Each answer can hand out roles, and channels limited to those roles open up with them. Roles that can manage the server, roles or everything are never offered. Members can change their answers later from the server menu.</div>
+          <div class="ob-editor" id="ob-editor"></div>
+          <div class="expr-toolbar">
+            <button class="btn-secondary btn-small" id="ob-add-question">Add Question</button>
+            <button class="btn-primary btn-small" id="ob-save">Save</button>
+            <button class="btn-secondary btn-small" id="ob-preview">Preview</button>
+            <button class="btn-link danger hidden" id="ob-remove">Remove Questions</button>
+            <span class="expr-count" id="ob-count"></span>
           </div>
         </section>
 
@@ -2061,6 +2094,7 @@
     <button id="sm-events">Events</button>
     <button id="sm-rules" class="hidden">Server Rules</button>
     <button id="sm-roles" class="hidden">Choose Roles</button>
+    <button id="sm-onboarding" class="hidden">Change My Answers</button>
     <button id="sm-settings">Server Settings</button>
     <button id="sm-ungroup" class="hidden">Remove From Folder</button>
     <div class="ctx-sep"></div>
@@ -2116,6 +2150,7 @@
   <script src="scripts/stream-audio.js"></script>
   <script src="scripts/typing.js"></script>
   <script src="scripts/nicknames.js"></script>
+  <script src="scripts/onboarding.js"></script>
   <script src="scripts/message-link.js"></script>
   <script src="scripts/slow-mode.js"></script>
   <script src="scripts/emoji.js"></script>

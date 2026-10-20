@@ -212,6 +212,7 @@ pub struct ServerView {
     pub can_upload_sounds: bool,
     pub can_use_soundboard: bool,
     pub automod: Option<AutoMod>,
+    pub onboarding: Option<commy_core::Onboarding>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -494,6 +495,9 @@ impl ServerView {
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS) || (state.server.soundboard_open && is_member),
             can_use_soundboard: perms.allows(Permissions::USE_SOUNDBOARD),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
+            onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {
+                o.tidied(|r| commy_core::onboarding::grantable(&state.server.roles, r))
+            }),
         }
     }
 }
@@ -1107,6 +1111,40 @@ mod tests {
         let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
         assert!(badge(bot_id));
         assert!(!badge(owner.id));
+    }
+
+    #[test]
+    fn onboarding_questions_reach_members_without_roles_that_can_no_longer_be_handed_out() {
+        use commy_core::onboarding::{Answer, Onboarding, Question};
+        use commy_core::{Permissions, Role, RoleId};
+        let owner = UserProfile::new("owner");
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let role = |perms| Role { id: RoleId::new(), name: "r".into(), color: None, permissions: perms, position: 1, hoist: false, self_assignable: false, mentionable: false, tag: None, banner: None };
+        let plain = role(Permissions::NONE);
+        let admin = role(Permissions::ADMINISTRATOR);
+        let gone = RoleId::new();
+        for r in [plain.clone(), admin.clone()] {
+            state.apply(ServerEvent::RoleCreate { server: sid, role: r }).unwrap();
+        }
+        let onboarding = Onboarding {
+            questions: vec![Question {
+                title: "Q".into(),
+                description: String::new(),
+                multiple: false,
+                answers: vec![Answer { label: "A".into(), roles: vec![plain.id, admin.id, gone] }, Answer { label: "B".into(), roles: vec![] }],
+            }],
+        };
+        state.apply(ServerEvent::OnboardingSet { server: sid, onboarding: Some(onboarding) }).unwrap();
+        let keys = KeyHolder::default();
+        let view = ServerView::for_viewer(&state, Some(owner.id), &keys);
+        let shown = view.onboarding.as_ref().expect("members see the questions");
+        assert_eq!(shown.questions[0].answers[0].roles, vec![plain.id]);
+        assert!(ServerView::for_viewer(&state, Some(UserId::new()), &keys).onboarding.is_none(), "strangers do not");
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["onboarding"]["questions"][0]["answers"][1]["label"], "B");
     }
 
     #[test]

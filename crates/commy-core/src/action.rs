@@ -119,6 +119,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::PublicSet { .. } => "public".into(),
         E::GameTagsSet { .. } => "game_tags".into(),
         E::RulesSet { .. } => "rules".into(),
+        E::OnboardingSet { .. } => "onboarding".into(),
         E::AutoModSet { .. } => "automod".into(),
         E::BotSet { user, .. } => format!("bot:{user}"),
         E::PronounsSet { user, .. } => format!("pronouns:{user}"),
@@ -252,6 +253,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::PublicSet { .. }
         | E::GameTagsSet { .. }
         | E::RulesSet { .. }
+        | E::OnboardingSet { .. }
         | E::AutoModSet { .. }
         | E::AfkChannelSet { .. }
         | E::AfkTimeoutSet { .. }
@@ -262,6 +264,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => {
             allows(Permissions::MANAGE_ROLES)
                 || (*user == by && server.roles.iter().any(|r| r.id == *role && r.self_assignable))
+                || (*user == by && crate::onboarding::may_self_assign(server, by, *role))
         }
         E::EmojiRemove { .. } | E::StickerRemove { .. } | E::EmoticonRemove { .. } | E::SoundRemove { .. } => {
             allows(Permissions::MANAGE_EXPRESSIONS)
@@ -554,6 +557,52 @@ mod tests {
         assert!(!authorized(&state.server, user, &grant(user, mods_id)), "not that one");
         assert!(!authorized(&state.server, user, &grant(mod_, picks_id)), "only for oneself");
         assert!(authorized(&state.server, user, &ServerEvent::RoleUnassign { server: sid, user, role: picks_id }));
+    }
+
+    #[test]
+    fn onboarding_answers_let_members_take_only_the_roles_they_hand_out() {
+        use crate::onboarding::{Answer, Onboarding, Question};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "user");
+        let other = join(&mut state, "other");
+        let gamers = role(Permissions::NONE, false);
+        let artists = role(Permissions::NONE, false);
+        let admins = role(Permissions::ADMINISTRATOR, false);
+        let (gamers_id, artists_id, admins_id) = (gamers.id, artists.id, admins.id);
+        for r in [gamers, artists, admins] {
+            state.apply(ServerEvent::RoleCreate { server: sid, role: r }).unwrap();
+        }
+        let questions = Onboarding {
+            questions: vec![Question {
+                title: "What do you do?".into(),
+                description: String::new(),
+                multiple: true,
+                answers: vec![
+                    Answer { label: "Play".into(), roles: vec![gamers_id] },
+                    Answer { label: "Run things".into(), roles: vec![admins_id] },
+                ],
+            }],
+        };
+        let set = ServerEvent::OnboardingSet { server: sid, onboarding: Some(questions) };
+        assert!(authorized(&state.server, owner, &set));
+        assert!(!authorized(&state.server, user, &set), "manage server only");
+        let grant = |who, role| ServerEvent::RoleAssign { server: sid, user: who, role };
+        assert!(!authorized(&state.server, user, &grant(user, gamers_id)), "before any questions exist");
+        state.apply(set).unwrap();
+        assert!(authorized(&state.server, user, &grant(user, gamers_id)));
+        assert!(authorized(&state.server, user, &ServerEvent::RoleUnassign { server: sid, user, role: gamers_id }));
+        assert!(!authorized(&state.server, user, &grant(user, artists_id)), "no answer grants it");
+        assert!(!authorized(&state.server, user, &grant(user, admins_id)), "never administrator");
+        assert!(!authorized(&state.server, user, &grant(other, gamers_id)), "only for oneself");
+        assert!(!authorized(&state.server, UserId::new(), &grant(UserId::new(), gamers_id)), "members only");
+        let signed = SignedEvent::sign(sid, user, 1_000, grant(user, gamers_id), &identity_for(user));
+        assert_eq!(state.apply_signed(&signed), Ok(true));
+        assert!(state.server.member(user).unwrap().roles.contains(&gamers_id));
+        let forged = SignedEvent::sign(sid, user, 2_000, grant(user, admins_id), &identity_for(user));
+        assert_eq!(state.apply_signed(&forged), Err(StoreError::NotAllowed));
+        assert_eq!(subject(&ServerEvent::OnboardingSet { server: sid, onboarding: None }).as_deref(), Some("onboarding"));
+        assert!(!snapshot_omits("onboarding"), "the server snapshot carries the questions");
     }
 
     #[test]
