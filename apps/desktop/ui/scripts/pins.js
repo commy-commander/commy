@@ -1,7 +1,7 @@
 const MAX_PINS_PER_CHANNEL = 50;
 
 function holdsMessages(channel) {
-  return Boolean(channel) && (channel.kind === "text" || channel.kind === "announcement");
+  return Boolean(channel) && (channel.kind === "text" || channel.kind === "announcement" || channel.kind === "forum");
 }
 
 function sortPins(pins) {

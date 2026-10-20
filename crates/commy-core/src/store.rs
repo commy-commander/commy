@@ -373,7 +373,8 @@ impl ServerState {
         if !self.messages.values().flatten().any(|m| m.created_at < floor) {
             return 0;
         }
-        let pinned: HashSet<MessageId> = self.server.pins.iter().map(|p| p.message).collect();
+        let mut pinned: HashSet<MessageId> = self.server.pins.iter().map(|p| p.message).collect();
+        pinned.extend(self.server.channels.iter().flat_map(|c| c.posts.keys().copied()));
         let parents: HashMap<MessageId, MessageId> =
             self.messages.values().flatten().filter_map(|m| Some((m.id, m.reply_to?))).collect();
         let mut keep: HashSet<MessageId> = self
@@ -691,7 +692,8 @@ impl ServerState {
             | E::ChannelSensitiveSet { channel, .. }
             | E::VoiceStatusSet { channel, .. }
             | E::ChannelKeyAdd { channel, .. }
-            | E::ChannelKeyGrant { channel, .. } => server.channel(*channel).is_some(),
+            | E::ChannelKeyGrant { channel, .. }
+            | E::ForumTagsSet { channel, .. } => server.channel(*channel).is_some(),
             E::RoleUpdate { role, .. } => server.roles.iter().any(|r| r.id == role.id),
             E::RoleDelete { role, .. } | E::RoleAssign { role, .. } | E::RoleUnassign { role, .. } => {
                 server.roles.iter().any(|r| r.id == *role)
@@ -1284,10 +1286,23 @@ impl ServerState {
             ServerEvent::ChannelSlowMode { server, channel, seconds } => {
                 self.same_server(server)?;
                 let Some(target) = self.server.channel_mut(channel) else { return Ok(false) };
-                if !matches!(target.kind, crate::server::ChannelKind::Text | crate::server::ChannelKind::Announcement) || seconds > crate::server::MAX_SLOW_MODE {
+                if !target.kind.holds_messages() || seconds > crate::server::MAX_SLOW_MODE {
                     return Ok(false);
                 }
                 Ok(replace(&mut target.slow_mode, seconds))
+            }
+            ServerEvent::ForumTagsSet { server, channel, tags, .. } => {
+                self.same_server(server)?;
+                let Some(target) = self.server.channel_mut(channel) else { return Err(StoreError::UnknownChannel) };
+                let Some(tags) = crate::server::clean_forum_tags(&tags).filter(|_| target.is_forum()) else { return Ok(false) };
+                if target.tags == tags {
+                    return Ok(false);
+                }
+                target.tags = tags;
+                for post in target.posts.values_mut() {
+                    post.tags.retain(|t| target.tags.iter().any(|known| known.id == *t));
+                }
+                Ok(true)
             }
             ServerEvent::ThreadSet { server, channel, root, name, archived, locked, by } => {
                 self.same_server(server)?;
@@ -1304,7 +1319,7 @@ impl ServerState {
                     return Ok(false);
                 }
                 let target = self.server.channel_mut(channel).ok_or(StoreError::UnknownChannel)?;
-                if !matches!(target.kind, ChannelKind::Text | ChannelKind::Announcement) {
+                if !target.kind.holds_messages() {
                     return Ok(false);
                 }
                 let thread = crate::server::Thread { name, archived, locked, by };
@@ -1319,6 +1334,42 @@ impl ServerState {
                 }
                 target.threads.insert(root, thread);
                 Ok(true)
+            }
+            ServerEvent::ForumPost { server, channel, message, title, tags, by } => {
+                self.same_server(server)?;
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                let root_fits = match self.index.get(&message) {
+                    Some(home) => *home == channel && self.message(message).is_some_and(|m| m.reply_to.is_none()),
+                    None => true,
+                };
+                if !root_fits || self.deleted_messages.contains(&message) || self.tombstones.contains_key(&message) {
+                    return Ok(false);
+                }
+                let Some(target) = self.server.channel_mut(channel).filter(|c| c.is_forum()) else { return Ok(false) };
+                let Some(title) = crate::server::clean_post_title(&title) else { return Ok(false) };
+                let tags = crate::server::clean_post_tags(&tags, &target.tags);
+                match target.posts.get_mut(&message) {
+                    Some(post) => {
+                        if post.title == title && post.tags == tags {
+                            return Ok(false);
+                        }
+                        post.title = title;
+                        post.tags = tags;
+                        Ok(true)
+                    }
+                    None => {
+                        if !message.is_bound_to(by) {
+                            return Ok(false);
+                        }
+                        if target.posts.len() >= crate::server::MAX_FORUM_POSTS {
+                            return Err(StoreError::Limit);
+                        }
+                        target.posts.insert(message, crate::server::ForumPost { title, tags, author: by });
+                        Ok(true)
+                    }
+                }
             }
             ServerEvent::VoiceModerate { server, user, muted, deafened } => {
                 self.same_server(server)?;
@@ -1440,7 +1491,7 @@ impl ServerState {
                 let Some(target) = self.server.channel_mut(channel) else {
                     return Err(StoreError::UnknownChannel);
                 };
-                if !matches!(target.kind, ChannelKind::Text | ChannelKind::Announcement) {
+                if !target.kind.holds_messages() {
                     return Ok(false);
                 }
                 Ok(replace(&mut target.sensitive, sensitive))
@@ -1893,6 +1944,7 @@ impl ServerState {
             self.closed_polls.remove(&proof.message);
             if let Some(target) = self.server.channel_mut(channel) {
                 target.threads.remove(&proof.message);
+                target.posts.remove(&proof.message);
             }
             self.store_proof(proof, Some(author));
             return Ok(true);
@@ -3700,6 +3752,119 @@ mod tests {
         assert_eq!(state.apply(limit(voice, 4)), Ok(true));
         assert_eq!(state.apply(limit(voice, 500)), Ok(false));
         assert_eq!(state.apply(limit(text, 4)), Ok(false), "text channels have no limit");
+    }
+
+    fn forum_fixture() -> (ServerState, ChannelId, UserId) {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let forum = Channel::new("ideas", ChannelKind::Forum, 7);
+        let fid = forum.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: forum }).unwrap();
+        (state, fid, owner)
+    }
+
+    fn tag(name: &str, emoji: Option<&str>) -> crate::server::ForumTag {
+        crate::server::ForumTag { id: crate::ids::TagId::new(), name: name.into(), emoji: emoji.map(String::from) }
+    }
+
+    fn post_event(state: &ServerState, channel: ChannelId, message: MessageId, title: &str, tags: Vec<crate::ids::TagId>, by: UserId) -> ServerEvent {
+        ServerEvent::ForumPost { server: state.server.id, channel, message, title: title.into(), tags, by }
+    }
+
+    #[test]
+    fn forum_tags_are_set_by_channel_managers_and_cleaned() {
+        let (mut state, forum, owner) = forum_fixture();
+        let sid = state.server.id;
+        let text = state.server.channels[0].id;
+        let member = join(&mut state, "plain");
+        let tags = vec![tag(" Feature  request ", Some("\u{1F4A1}")), tag("feature request", None), tag("Bug", Some("nope")), tag("", None)];
+        let set = |channel, tags: Vec<crate::server::ForumTag>, by| ServerEvent::ForumTagsSet { server: sid, channel, tags, by };
+        assert!(!crate::action::authorized(&state.server, member, &set(forum, tags.clone(), member)), "members cannot set tags");
+        assert!(!crate::action::authorized(&state.server, owner, &set(forum, tags.clone(), member)), "signed by someone else");
+        assert!(crate::action::authorized(&state.server, owner, &set(forum, tags.clone(), owner)));
+        assert_eq!(state.apply(set(text, tags.clone(), owner)), Ok(false), "only forums hold tags");
+        assert_eq!(state.apply(set(forum, tags.clone(), owner)), Ok(true));
+        let kept = &state.server.channel(forum).unwrap().tags;
+        assert_eq!(kept.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), vec!["Feature request", "Bug"]);
+        assert_eq!(kept[0].emoji.as_deref(), Some("\u{1F4A1}"));
+        assert_eq!(kept[1].emoji, None, "alphanumeric text is not an emoji");
+        assert_eq!(state.apply(set(forum, kept.clone(), owner)), Ok(false), "unchanged");
+        let long = vec![tag(&"x".repeat(crate::server::MAX_FORUM_TAG_CHARS + 1), None)];
+        assert_eq!(state.apply(set(forum, long, owner)), Ok(false));
+        let many: Vec<_> = (0..=crate::server::MAX_FORUM_TAGS).map(|i| tag(&format!("t{i}"), None)).collect();
+        assert_eq!(state.apply(set(forum, many, owner)), Ok(false));
+        assert_eq!(state.apply(set(ChannelId::new(), vec![], owner)), Err(StoreError::UnknownChannel));
+    }
+
+    #[test]
+    fn posting_needs_the_send_permission_in_a_forum() {
+        let (mut state, forum, owner) = forum_fixture();
+        let sid = state.server.id;
+        let text = state.server.channels[0].id;
+        let member = join(&mut state, "poster");
+        let stranger = UserId::new();
+        state.apply(ServerEvent::ForumTagsSet { server: sid, channel: forum, tags: vec![tag("Bug", None), tag("Idea", None)], by: owner }).unwrap();
+        let tags: Vec<_> = state.server.channel(forum).unwrap().tags.iter().map(|t| t.id).collect();
+        let root = post(&state, forum, member, "the body of the post");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: root.clone() }), Ok(true));
+        let event = post_event(&state, forum, root.id, "  Borrow checker   woes ", vec![tags[1], tags[1], crate::ids::TagId::new()], member);
+        assert!(crate::action::authorized(&state.server, member, &event));
+        assert!(!crate::action::authorized(&state.server, stranger, &event), "not a member");
+        assert!(!crate::action::authorized(&state.server, owner, &event), "signed by someone else than the poster");
+        let foreign = post_event(&state, forum, MessageId::for_author(member), "mine", vec![], owner);
+        assert!(!crate::action::authorized(&state.server, owner, &foreign), "the root must be the poster's own message");
+        let in_text = post_event(&state, text, MessageId::for_author(member), "nope", vec![], member);
+        assert!(!crate::action::authorized(&state.server, member, &in_text), "text channels have no posts");
+        assert_eq!(state.apply(in_text), Ok(false));
+        let role = Role { id: RoleId::new(), name: "writers".into(), color: None, permissions: Permissions::NONE, position: 1, hoist: false, self_assignable: false, mentionable: false, tag: None, banner: None };
+        let writers = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        state.apply(ServerEvent::ChannelAccessSet { server: sid, channel: forum, view: vec![], send: vec![writers] }).unwrap();
+        assert!(!crate::action::authorized(&state.server, member, &event), "the send roles gate posts like messages");
+        state.apply(ServerEvent::ChannelAccessSet { server: sid, channel: forum, view: vec![], send: vec![] }).unwrap();
+        assert_eq!(state.apply(event.clone()), Ok(true));
+        let kept = state.server.channel(forum).unwrap().posts.get(&root.id).unwrap().clone();
+        assert_eq!(kept.title, "Borrow checker woes");
+        assert_eq!(kept.tags, vec![tags[1]], "unknown and repeated tags drop out");
+        assert_eq!(kept.author, member);
+        assert_eq!(state.apply(event), Ok(false), "unchanged");
+        let reply = signed(&state, Message { reply_to: Some(root.id), ..Message::new(forum, member, "a reply") });
+        state.apply(ServerEvent::MessageCreate { message: reply.clone() }).unwrap();
+        assert_eq!(state.apply(post_event(&state, forum, reply.id, "reply as post", vec![], member)), Ok(false), "replies are not roots");
+        let early = MessageId::for_author(member);
+        assert_eq!(state.apply(post_event(&state, forum, early, "arrives first", vec![], member)), Ok(true), "the post may land before its root");
+        assert_eq!(state.apply(post_event(&state, forum, MessageId::for_author(owner), "not mine", vec![], member)), Ok(false));
+        assert_eq!(state.apply(post_event(&state, forum, root.id, "", vec![], member)), Ok(false), "a title is needed");
+        state.apply(delete(&state, &root, member)).unwrap();
+        assert!(!state.server.channel(forum).unwrap().posts.contains_key(&root.id), "deleting the root removes the post");
+        assert_eq!(state.apply(post_event(&state, forum, root.id, "back", vec![], member)), Ok(false), "deleted roots stay gone");
+    }
+
+    #[test]
+    fn a_post_title_changes_by_its_author_or_a_moderator_only() {
+        let (mut state, forum, owner) = forum_fixture();
+        let sid = state.server.id;
+        let author = join(&mut state, "author");
+        let other = join(&mut state, "other");
+        let moderator = join_moderator(&mut state, "mod");
+        state.apply(ServerEvent::ForumTagsSet { server: sid, channel: forum, tags: vec![tag("Bug", None), tag("Idea", None)], by: owner }).unwrap();
+        let tags: Vec<_> = state.server.channel(forum).unwrap().tags.iter().map(|t| t.id).collect();
+        let root = post(&state, forum, author, "body");
+        state.apply(ServerEvent::MessageCreate { message: root.clone() }).unwrap();
+        state.apply(post_event(&state, forum, root.id, "First title", vec![tags[0]], author)).unwrap();
+        let retitle = |by| post_event(&state, forum, root.id, "Second title", vec![tags[0], tags[1]], by);
+        assert!(crate::action::authorized(&state.server, author, &retitle(author)));
+        assert!(!crate::action::authorized(&state.server, other, &retitle(other)), "strangers cannot retitle");
+        assert!(crate::action::authorized(&state.server, moderator, &retitle(moderator)));
+        assert!(crate::action::authorized(&state.server, owner, &retitle(owner)));
+        assert_eq!(state.apply(retitle(moderator)), Ok(true));
+        let kept = state.server.channel(forum).unwrap().posts.get(&root.id).unwrap().clone();
+        assert_eq!((kept.title.as_str(), kept.tags.len(), kept.author), ("Second title", 2, author), "the author stays the poster");
+        state.apply(ServerEvent::ForumTagsSet { server: sid, channel: forum, tags: vec![state.server.channel(forum).unwrap().tags[1].clone()], by: owner }).unwrap();
+        assert_eq!(state.server.channel(forum).unwrap().posts.get(&root.id).unwrap().tags, vec![tags[1]], "removed tags leave the posts");
+        let snapshot = state.snapshot();
+        let back = ServerState::from_snapshot(snapshot);
+        assert_eq!(back.server.channel(forum).unwrap().posts, state.server.channel(forum).unwrap().posts);
     }
 
     #[test]

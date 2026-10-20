@@ -71,6 +71,8 @@ pub enum AuditKind {
     ThreadArchive,
     ThreadLock,
     VoiceStatusSet,
+    ForumTags,
+    ForumPostEdit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -328,6 +330,17 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             (K::InviteRevoke, target, Some(clip(code)), made_by)
         }
         E::InviteBackgroundSet { background, .. } => (K::InviteBackground, None, None, set_or_removed(background.is_some())),
+        E::ForumTagsSet { channel: id, tags, .. } => {
+            let (target, label) = channel(id);
+            (K::ForumTags, target, label, Some(tags.len().to_string()))
+        }
+        E::ForumPost { channel: id, message, title, .. } => {
+            let post = server.channel(*id)?.posts.get(message)?;
+            if post.author == by {
+                return None;
+            }
+            (K::ForumPostEdit, Some(message.to_string()), channel_name(state, *id), Some(clip(title)))
+        }
         _ => return None,
     })
 }
@@ -641,6 +654,29 @@ mod tests {
         let signed = SignedEvent::sign(sid, owner, 1_000, ServerEvent::ChannelCreate { server: sid, channel: voice }, &identity_for(owner));
         state.apply_signed(&signed).unwrap();
         assert_eq!(state.audit_log()[0].detail.as_deref(), Some("voice"));
+    }
+
+    #[test]
+    fn forum_tags_and_moderator_retitles_are_logged_but_own_posts_are_not() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let forum = Channel::new("ideas", ChannelKind::Forum, 5);
+        let fid = forum.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: forum }).unwrap();
+        let member = join(&mut state, "poster");
+        let sign = |by: UserId, at: i64, event: ServerEvent| SignedEvent::sign(sid, by, at, event, &identity_for(by));
+        let tags = vec![crate::server::ForumTag { id: crate::ids::TagId::new(), name: "Bug".into(), emoji: None }];
+        state.apply_signed(&sign(owner, 1_000, ServerEvent::ForumTagsSet { server: sid, channel: fid, tags, by: owner })).unwrap();
+        assert_eq!((state.audit_log()[0].kind, state.audit_log()[0].detail.as_deref()), (AuditKind::ForumTags, Some("1")));
+        let root = crate::test_support::post(&state, fid, member, "body");
+        state.apply(ServerEvent::MessageCreate { message: root.clone() }).unwrap();
+        let post = |by: UserId, title: &str| ServerEvent::ForumPost { server: sid, channel: fid, message: root.id, title: title.into(), tags: vec![], by };
+        state.apply_signed(&sign(member, 2_000, post(member, "My post"))).unwrap();
+        state.apply_signed(&sign(member, 3_000, post(member, "My renamed post"))).unwrap();
+        assert_eq!(state.audit_log().len(), 1, "own posts and own edits stay out");
+        state.apply_signed(&sign(owner, 4_000, post(owner, "Tidier title"))).unwrap();
+        let entry = &state.audit_log()[1];
+        assert_eq!((entry.kind, entry.detail.as_deref(), entry.label.as_deref()), (AuditKind::ForumPostEdit, Some("Tidier title"), Some("ideas")));
     }
 
     #[test]

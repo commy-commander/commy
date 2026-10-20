@@ -208,6 +208,7 @@ pub fn server_json(state: &ServerState, with_members: bool) -> Value {
         ChannelKind::Voice => "voice",
         ChannelKind::Announcement => "announcement",
         ChannelKind::Category => "category",
+        ChannelKind::Forum => "forum",
     };
     let mut value = json!({
         "id": server.id.to_string(),
