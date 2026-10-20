@@ -1040,7 +1040,8 @@ fn start_voice_session(
         me,
         on_speaking,
     );
-    let speaker = match commy_media::start_playback(session.mixer.clone(), voice.output_device.clone()) {
+    let far_end = app.processor.lock().unwrap().far_end_sink();
+    let speaker = match commy_media::start_playback(session.mixer.clone(), voice.output_device.clone(), Some(far_end)) {
         Ok(handle) => Some(handle),
         Err(e) => {
             tracing::warn!("speaker unavailable: {e}");
@@ -5960,6 +5961,14 @@ fn set_noise_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSetting
 }
 
 #[tauri::command]
+fn set_echo_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
+    app.update_voice(|voice| {
+        voice.echo_cancellation = enabled;
+        app.processor.lock().unwrap().set_echo_cancellation(enabled);
+    })
+}
+
+#[tauri::command]
 async fn set_muted(app: tauri::State<'_, App>, handle: tauri::AppHandle, muted: bool) -> CmdResult<VoiceSettings> {
     let snapshot = app.update_voice(|voice| voice.muted = muted);
     apply_voice_gates(&app);
@@ -6962,6 +6971,7 @@ pub fn run() {
             stop_watching,
             get_voice_settings,
             set_noise_cancellation,
+            set_echo_cancellation,
             set_muted,
             set_deafened,
         ])
