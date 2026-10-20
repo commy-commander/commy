@@ -2686,7 +2686,7 @@ function placePopup(popup, anchor, prefer = "above") {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "msg-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -4218,6 +4218,7 @@ function messageActions(message, inThread = false) {
     add("pencil", "Edit", () => startEditMessage(message.id));
   }
   if (!isOwnMessage(message)) add("eyeOff", "Hide for Me", () => setHidden(message.id, true));
+  if (message.content && !parseStickerToken(message.content)) add("more", "More", e => openMessageMenu(message, e.currentTarget));
   if (state.view === "server" && reportableIn(state.currentServer, message.author_id)) {
     add("flag", "Report Message", () => openReport({
       serverId: state.currentServer.id,
@@ -8093,13 +8094,144 @@ function buildMessageContent(text, authorId = null) {
     div.appendChild(inviteCard(text));
     return div;
   }
+  if (isBareMessageLink(text)) {
+    div.appendChild(jumpCard(parseMessageLink(text)));
+    return div;
+  }
   renderingMessage.author = authorId;
   renderBlocks(div, parseMessage(text));
   renderingMessage.author = null;
   if (isEmojiOnly(text)) div.classList.add("jumbo");
   const invite = inviteCard(text);
   if (invite) div.appendChild(invite);
+  const linked = parseMessageLink(text);
+  if (linked) div.appendChild(jumpCard(linked));
   return div;
+}
+
+function jumpCard(target) {
+  const card = el("div", "jump-card");
+  card.appendChild(svgIcon("link", 18));
+  const known = state.servers.find(s => s.id === target.server);
+  card.appendChild(el("span", "jump-card-text", known ? `Message in ${known.name}` : "Message in a server you are not in"));
+  const go = el("button", "btn-primary btn-small", "Jump");
+  go.disabled = !known;
+  go.onclick = () => openMessageLink(target);
+  card.appendChild(go);
+  return card;
+}
+
+async function openMessageLink(target) {
+  if (!state.currentServer || state.currentServer.id !== target.server) {
+    if (!state.servers.some(s => s.id === target.server)) {
+      toast("That message is in a server you are not in");
+      return;
+    }
+    await selectServer(target.server);
+  }
+  const channel = state.currentServer && state.currentServer.channels.find(c => c.id === target.channel);
+  if (!channel) {
+    toast("That channel is gone");
+    return;
+  }
+  if (!state.currentChannel || state.currentChannel.id !== channel.id) await selectChannel(channel);
+  await jumpToMessage(target.message);
+}
+
+function copyText(text, done) {
+  navigator.clipboard.writeText(text).then(() => toast(done), () => toast("Could not copy"));
+}
+
+function openMessageMenu(message, anchor) {
+  closeFloating();
+  const menu = $("msg-menu");
+  menu.replaceChildren();
+  const { item } = contextMenuBuilder(menu);
+  if (message.content) item("Copy Text", () => copyText(plainText(message.content), "Text copied"));
+  if (state.view === "server" && state.currentChannel && !state.currentServer.group) {
+    item("Copy Message Link", () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied"));
+  }
+  if (message.content) item("Forward", () => openForward(message));
+  const r = anchor.getBoundingClientRect();
+  placeMenuAt(menu, r.left, r.bottom + 4);
+}
+
+let forwarding = null;
+
+async function openForward(message) {
+  forwarding = message;
+  const preview = $("forward-preview");
+  preview.replaceChildren();
+  preview.appendChild(makeAvatar(message.author_id, message.author_name));
+  const body = el("div", "msg-body");
+  const head = el("div", "msg-head");
+  head.appendChild(el("span", "msg-author", message.author_name));
+  head.appendChild(el("span", "msg-time", formatTime(message.created_at)));
+  body.appendChild(head);
+  body.appendChild(el("div", "msg-content", plainText(message.content)));
+  preview.appendChild(body);
+  $("forward-files-note").classList.toggle("hidden", !(message.attachments || []).some(a => a.filename));
+  $("forward-search").value = "";
+  showModal("modal-forward");
+  $("forward-search").focus();
+  const views = [];
+  for (const summary of state.servers) {
+    try {
+      views.push(await invoke("get_server", { serverId: summary.id }));
+    } catch {
+      continue;
+    }
+  }
+  let dms = [];
+  try {
+    dms = await invoke("list_dm_threads");
+  } catch {}
+  forwarding.targets = { servers: views.map(s => ({ ...s, channels: s.channels.map(c => ({ ...c, name: channelPlainName(c) })) })), dms };
+  renderForwardList();
+}
+
+function renderForwardList() {
+  const list = $("forward-list");
+  list.innerHTML = "";
+  if (!forwarding || !forwarding.targets) {
+    list.appendChild(el("div", "dm-list-empty", "Loading places to send to"));
+    return;
+  }
+  const targets = forwardTargets({ ...forwarding.targets, query: $("forward-search").value });
+  for (const target of targets) {
+    const row = el("button", "person-row forward-row");
+    if (target.kind === "dm") row.appendChild(avatarWithPresence(target.name, target.user));
+    else if (target.kind === "group") row.appendChild(groupAvatar());
+    else row.appendChild(el("span", "server-chip", initials(target.sub)));
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", target.name));
+    meta.appendChild(el("div", "dm-preview", target.sub));
+    row.appendChild(meta);
+    row.onclick = () => sendForward(target);
+    list.appendChild(row);
+  }
+  if (!targets.length) list.appendChild(el("div", "dm-list-empty", "Nowhere matches that name."));
+}
+
+function forwardOrigin() {
+  if (inDmView()) return null;
+  if (isGroupView()) return state.currentServer.name;
+  return state.currentChannel ? `#${channelPlainName(state.currentChannel)}` : null;
+}
+
+async function sendForward(target) {
+  const message = forwarding;
+  if (!message) return;
+  const content = forwardBody({ content: message.content, author: message.author_name, where: forwardOrigin() });
+  try {
+    if (target.kind === "dm") await invoke("send_dm", { userId: target.user, content, replyTo: null });
+    else await invoke("send_message", { serverId: target.server, channelId: target.channel, content, replyTo: null, previewUrl: null });
+    hideModals();
+    forwarding = null;
+    toast(`Forwarded to ${target.name}`);
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function imageSourceFromHtml(html) {
@@ -11067,6 +11199,8 @@ function wireEvents() {
   wireSuggestions($("thread-input"));
 
   $("delete-message-go").onclick = () => pendingDelete && deleteMessage(pendingDelete);
+  $("forward-cancel").onclick = hideModals;
+  $("forward-search").addEventListener("input", renderForwardList);
   $("delete-message-cancel").onclick = hideModals;
   $("message-input").addEventListener("keydown", e => {
     if (e.key !== "ArrowUp" || e.target.value || state.view !== "server") return;
