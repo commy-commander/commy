@@ -281,6 +281,11 @@ pub enum ServerEvent {
         user: UserId,
         channel: Option<ChannelId>,
     },
+    ChannelSensitiveSet {
+        server: ServerId,
+        channel: ChannelId,
+        sensitive: bool,
+    },
 }
 
 #[cfg(test)]
@@ -342,6 +347,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::ChannelSlowMode { server, channel, seconds: 5 }), 68);
         assert_eq!(wire_tag(ServerEvent::PollVote { server, channel, message, user, choices: vec![0] }), 69);
         assert_eq!(wire_tag(ServerEvent::PollClose { server, channel, message, by: user }), 70);
+        assert_eq!(wire_tag(ServerEvent::ChannelSensitiveSet { server, channel, sensitive: true }), 72);
     }
 
     #[test]

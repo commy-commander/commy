@@ -109,6 +109,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ChannelColor { channel, .. } => format!("channel.color:{channel}"),
         E::ChannelKindSet { channel, .. } => format!("channel.kind:{channel}"),
         E::ChannelAccessSet { channel, .. } => format!("channel.access:{channel}"),
+        E::ChannelSensitiveSet { channel, .. } => format!("channel.sensitive:{channel}"),
         E::ChannelKeyAdd { channel, key, .. } => format!("channel.key:{channel}:{}", key.id.to_hex()),
         E::ChannelKeyGrant { channel, user, .. } => format!("channel.grant:{channel}:{user}"),
         E::AfkChannelSet { .. } => "afk_channel".into(),
@@ -244,7 +245,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::ChannelBanner { .. }
         | E::ChannelColor { .. }
         | E::ChannelKindSet { .. }
-        | E::ChannelAccessSet { .. } => allows(Permissions::MANAGE_CHANNELS),
+        | E::ChannelAccessSet { .. }
+        | E::ChannelSensitiveSet { .. } => allows(Permissions::MANAGE_CHANNELS),
         E::ServerRename { .. }
         | E::ServerImages { .. }
         | E::PublicSet { .. }

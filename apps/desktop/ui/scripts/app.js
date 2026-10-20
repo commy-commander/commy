@@ -30,6 +30,7 @@ const state = {
   dmThreads: [],
   showDmProfile: true,
   historyAnchor: null,
+  previousChannel: null,
 };
 
 const mock = {
@@ -156,6 +157,7 @@ function mockSeed() {
       ch("General", "voice"),
       ch("mod-lounge", "text", "For the moderators"),
       ch("Lounge", "voice"),
+      ch("after-dark", "text", "Grown-up talk, after hours"),
     ],
     members: [
       { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
@@ -194,6 +196,13 @@ function mockSeed() {
   server.channels[0].banner = "welcome-banner@mock";
   server.channels[1].color = "9b7bff";
   server.channels[5].view_roles = ["r2"];
+  server.channels[6].sensitive = true;
+  mock.messages[server.channels[6].id] = [
+    { id: "ad1", channel: server.channels[6].id, author_id: "m2", author_name: "nova",
+      content: "Friday's game night runs late, bring your own drinks.", created_at: new Date(Date.now() - 2400e3).toISOString(), edited: false, attachments: [] },
+    { id: "ad2", channel: server.channels[6].id, author_id: "m1", author_name: "ferris",
+      content: "Noted. Keep the welcome channel tidy, this one is for the grown-ups.", created_at: new Date(Date.now() - 2100e3).toISOString(), edited: false, attachments: [] },
+  ];
   server.rules = "# Welcome\n1. Be kind to each other\n2. **No spam** or self promotion\n3. Keep it on topic, see https://commy.chat";
   server.needs_rules = true;
   const general = server.channels.find(c => c.kind === "voice");
@@ -750,6 +759,12 @@ async function mockInvoke(cmd, args = {}) {
       c.color = args.color || null;
       return null;
     }
+    case "set_channel_sensitive": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      if (!holdsMessages(c)) throw "only text channels can be age-restricted";
+      c.sensitive = Boolean(args.sensitive);
+      return null;
+    }
     case "delete_channel": {
       const s = mock.servers[args.serverId];
       s.channels = s.channels.filter(c => c.id !== args.channelId);
@@ -1259,6 +1274,7 @@ const ICONS = {
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
   link: "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 0-10z",
   download: "M18 15v3H6v-3H4v3c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-3zm-1-4-1.41-1.41L13 12.17V4h-2v8.17L8.41 9.59 7 11l5 5z",
+  warning: "M12 5.99 19.53 19H4.47L12 5.99M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v4h2v-4z",
   openExternal: "M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3z",
 };
 
@@ -2135,11 +2151,19 @@ function channelBellSlot(row, channel) {
   row.appendChild(slot);
 }
 
+function channelSensitiveMark(row, channel) {
+  if (!showsSensitiveBadge(channel)) return;
+  const mark = el("span", "channel-age", "18+");
+  mark.title = "Age-restricted channel";
+  row.appendChild(mark);
+}
+
 function textChannelRow(channel, canCreate) {
   const row = el("div", "channel");
   row.appendChild(channelMark(channel));
   row.appendChild(channelNameNode(channel, "channel-label"));
   channelLockMark(row, channel);
+  channelSensitiveMark(row, channel);
   paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
   if (shownUnread(state.currentServer.id, channel.id)) row.classList.add("unread");
@@ -2685,7 +2709,7 @@ function onMessageCreated(msg) {
   }
   const level = levelForChannel(notifyPrefs(), msg.server, msg.channel, nowSecs());
   if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement })) {
-    const notice = messageNotice(msg, plainText);
+    const notice = messageNotice(sensitiveNotice(msg, msg.channel, sensitiveConfirmed()), plainText);
     invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
     playSound("message");
   }
@@ -2716,7 +2740,7 @@ function onMessagesCaughtUp(payload) {
     if (info.channel_name === undefined || isBlocked(info.author) || !isRecent(Number(info.at), now)) continue;
     const level = levelForChannel(prefs, server, channel, now);
     if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement: Boolean(info.announcement) })) {
-      const notice = caughtUpNotice({ ...info, count, server_name: payload.server_name }, plainText);
+      const notice = caughtUpNotice(sensitiveNotice({ ...info, count, server_name: payload.server_name }, channel, sensitiveConfirmed()), plainText);
       notices.push({ ...notice, target: `channel:${server}:${channel}` });
     }
   }
@@ -3238,6 +3262,8 @@ function openChannelSettings(channelId, tab = "overview") {
   $("channel-edit-prefix").replaceChildren(voice ? svgIcon("speaker", 16) : announcement ? svgIcon("megaphone", 16) : document.createTextNode("#"));
   $("channel-announce-row").classList.toggle("hidden", voice);
   $("channel-edit-announce").checked = announcement;
+  $("channel-sensitive-row").classList.toggle("hidden", !holdsMessages(channel));
+  $("channel-edit-sensitive").checked = Boolean(channel.sensitive);
   $("channel-edit-name").value = channel.name;
   const retention = String(channel.retention_days || 0);
   const select = $("channel-edit-retention");
@@ -3642,8 +3668,73 @@ function renderMembers() {
   for (const g of groupMembers(state.currentServer.members, state.currentServer.roles)) group(g.title, g.members, !!g.dim, g.color);
 }
 
+function sensitiveConfirmed() {
+  try {
+    return readConfirmed(localStorage.getItem(SENSITIVE_KEY));
+  } catch {
+    return new Set();
+  }
+}
+
+function ageGated(channel) {
+  return sensitiveGated({ view: state.view, channel, confirmed: sensitiveConfirmed() });
+}
+
+function buildSensitiveGate(channel) {
+  const wrap = el("div", "age-gate-wrap");
+  const panel = el("div", "age-gate");
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Age-restricted channel");
+  const icon = el("div", "age-gate-icon");
+  icon.appendChild(svgIcon("warning", 40));
+  const name = el("div", "age-gate-channel");
+  name.append(document.createTextNode("#"), channelNameNode(channel));
+  const text = sensitiveGateText(channelPlainName(channel));
+  const actions = el("div", "age-gate-actions");
+  const no = el("button", "btn-secondary age-gate-btn", "Nevermind");
+  no.type = "button";
+  no.onclick = leaveSensitiveChannel;
+  const yes = el("button", "btn-primary age-gate-btn", "Continue");
+  yes.type = "button";
+  yes.onclick = () => confirmSensitiveChannel(channel);
+  actions.append(no, yes);
+  panel.append(icon, name, el("h2", null, text.title), el("p", null, text.body), actions);
+  wrap.appendChild(panel);
+  return wrap;
+}
+
+async function confirmSensitiveChannel(channel) {
+  const confirmed = sensitiveConfirmed();
+  confirmed.add(channel.id);
+  try { localStorage.setItem(SENSITIVE_KEY, writeConfirmed(confirmed)); } catch {}
+  $("messages").dataset.view = "";
+  if (state.currentChannel && state.currentChannel.id === channel.id) await selectChannel(channel);
+}
+
+async function leaveSensitiveChannel() {
+  if (!state.currentServer) return;
+  const next = fallbackChannel({ channels: state.currentServer.channels, previous: state.previousChannel, confirmed: sensitiveConfirmed() });
+  state.historyAnchor = null;
+  await selectChannel(next);
+}
+
+async function resetSensitiveConfirmations() {
+  try { localStorage.removeItem(SENSITIVE_KEY); } catch {}
+  toast("Age-restricted channels will ask again");
+  if (state.view === "server" && ageGated(state.currentChannel)) {
+    $("messages").dataset.view = "";
+    await selectChannel(state.currentChannel);
+  }
+}
+
 function renderMessages(messages) {
   const box = $("messages");
+  if (state.view === "server" && ageGated(state.currentChannel)) {
+    box.dataset.view = "";
+    box.replaceChildren(buildSensitiveGate(state.currentChannel));
+    state.renderedMessages = [];
+    return;
+  }
   const viewKey = state.view === "dm" ? `dm:${state.currentDm && state.currentDm.user}` : `ch:${state.currentChannel && state.currentChannel.id}`;
   const sameView = box.dataset.view === viewKey;
   const prevScroll = box.scrollTop;
@@ -3975,9 +4066,10 @@ function pinRow(pin, { jump, showChannel = false } = {}) {
   head.appendChild(el("span", "pin-time", formatTime(message.created_at)));
   if (showChannel) head.appendChild(el("span", "pin-channel", `#${pin.channel_name}`));
   body.appendChild(head);
-  const text = pinExcerpt(message, plainText);
+  const pinChannel = state.currentServer && state.currentServer.channels.find(c => c.id === pin.channel);
+  const text = sensitivePreview({ channel: pinChannel, confirmed: sensitiveConfirmed(), text: pinExcerpt(message, plainText) });
   const excerpt = el("div", "pin-text", text);
-  if (!text) excerpt.classList.add("muted");
+  if (!text || text === SENSITIVE_PREVIEW) excerpt.classList.add("muted");
   body.appendChild(excerpt);
   const images = (message.attachments || []).filter(a => a.is_image && (loadsImageOnItsOwn(a) || imagePreviewCache.has(a.blob)));
   if (images.length) {
@@ -4212,7 +4304,8 @@ function searchResultRow(hit, terms) {
   decorateAuthor(author, message.author_id);
   const channel = state.currentServer.channels.find(c => c.id === hit.channel);
   head.append(author, el("span", "pin-time", formatTime(message.created_at)), el("span", "pin-channel", `#${channel ? channelPlainName(channel) : hit.channel_name}`));
-  body.append(head, highlightedExcerpt(message, terms));
+  const gated = sensitiveGated({ view: "server", channel, confirmed: sensitiveConfirmed() });
+  body.append(head, gated ? el("div", "pin-text search-text muted", SENSITIVE_PREVIEW) : highlightedExcerpt(message, terms));
   row.appendChild(body);
   return pickableRow(row, () => openSearchHit(hit));
 }
@@ -5710,7 +5803,8 @@ function syncRulesGate() {
   const timedOut = gated ? null : timeoutLock(where);
   const accessLock = gated || timedOut ? null : channelAccessLock(where);
   const lock = gated ? null : timedOut || accessLock || composerLock(where);
-  $("announce-gate").classList.toggle("hidden", !lock);
+  const aged = state.view === "server" && ageGated(state.currentChannel);
+  $("announce-gate").classList.toggle("hidden", !lock || aged);
   if (lock) {
     $("announce-gate-icon").replaceChildren(svgIcon(timedOut ? "clock" : accessLock ? "lock" : "megaphone", 22));
     $("announce-gate-title").textContent = lock.title;
@@ -5722,7 +5816,7 @@ function syncRulesGate() {
       text.append(left, document.createTextNode("."));
     }
   }
-  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || Boolean(lock));
+  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || aged || Boolean(lock));
   if (gated && !rulesPrompted.has(state.currentServer.id)) {
     rulesPrompted.add(state.currentServer.id);
     openServerWelcome("rules");
@@ -8815,7 +8909,9 @@ function jumpCard(target) {
   const card = el("div", "jump-card");
   card.appendChild(svgIcon("link", 18));
   const known = state.servers.find(s => s.id === target.server);
-  card.appendChild(el("span", "jump-card-text", known ? `Message in ${known.name}` : "Message in a server you are not in"));
+  const here = state.currentServer && state.currentServer.id === target.server ? state.currentServer.channels.find(c => c.id === target.channel) : null;
+  const gated = sensitiveGated({ view: "server", channel: here, confirmed: sensitiveConfirmed() });
+  card.appendChild(el("span", "jump-card-text", gated ? `${SENSITIVE_PREVIEW} in ${known.name}` : known ? `Message in ${known.name}` : "Message in a server you are not in"));
   const go = el("button", "btn-primary btn-small", "Jump");
   go.disabled = !known;
   go.onclick = () => openMessageLink(target);
@@ -10118,6 +10214,7 @@ async function sendDm() {
 }
 
 async function selectChannel(channel) {
+  if (state.currentChannel && (!channel || channel.id !== state.currentChannel.id)) state.previousChannel = state.currentChannel;
   state.currentChannel = channel;
   if (channel) openChannelWithLine(channel);
   renderDmRequestBar(null);
@@ -10132,7 +10229,7 @@ async function selectChannel(channel) {
   syncPinButton();
   syncSlowMode();
   renderTypingStrip();
-  if (!channel) return renderMessages([]);
+  if (!channel || ageGated(channel)) return renderMessages([]);
   const messages = await fetchChannelMessages(channel);
   renderMessages(messages);
   if (state.currentChannel === channel && !state.historyAnchor) advanceRead(channel.id, messages);
@@ -12229,6 +12326,21 @@ function wireEvents() {
       toast(String(err));
     }
   };
+  $("channel-edit-sensitive").onchange = async e => {
+    const channel = editingChannel();
+    if (!channel || !state.currentServer) return;
+    const sensitive = e.target.checked;
+    try {
+      await invoke("set_channel_sensitive", { serverId: state.currentServer.id, channelId: channel.id, sensitive });
+      toast(sensitive ? "Channel is now age-restricted" : "Age restriction removed");
+      await refreshCurrentServer();
+      openChannelSettings(channel.id);
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(String(err));
+    }
+  };
+  $("sensitive-reset").onclick = resetSensitiveConfirmations;
   $("pins-btn").onclick = togglePinsPanel;
   wireSearch();
   $("pins-all").onclick = openServerPins;
