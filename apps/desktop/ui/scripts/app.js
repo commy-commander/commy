@@ -4500,6 +4500,194 @@ function wireSearch() {
   });
 }
 
+const SWITCHER_RECENT_KEY = "commy.switcher.recent";
+const SWITCHER_MOD = /mac/i.test(navigator.platform || "") ? "Cmd" : "Ctrl";
+const switcher = { items: [], shown: [], at: 0, views: {}, open: false, recent: [] };
+
+function loadSwitcherRecent() {
+  try {
+    return readRecent(localStorage.getItem(SWITCHER_RECENT_KEY));
+  } catch {
+    return [];
+  }
+}
+
+function rememberSwitcherRecent(key) {
+  switcher.recent = rememberRecent(loadSwitcherRecent(), key);
+  try { localStorage.setItem(SWITCHER_RECENT_KEY, JSON.stringify(switcher.recent)); } catch {}
+}
+
+function switcherActions() {
+  return [
+    { id: "settings", name: "Settings", subtitle: "Account, voice, appearance" },
+    { id: "create-server", name: "Create a server", subtitle: "From scratch or a template" },
+  ];
+}
+
+function switcherPresence(userId) {
+  return PRESENCE_LABELS[personPresence(userId)] || "";
+}
+
+async function refreshSwitcherViews() {
+  const views = {};
+  for (const summary of state.servers) {
+    try {
+      views[summary.id] = await invoke("get_server", { serverId: summary.id });
+    } catch {
+      continue;
+    }
+  }
+  switcher.views = views;
+}
+
+function rebuildSwitcherItems() {
+  switcher.items = buildSwitcherItems({
+    servers: state.servers, views: switcher.views, threads: state.dmThreads || [], friends: friends.friends,
+    presence: switcherPresence, plainName: channelPlainName, actions: switcherActions(),
+  });
+}
+
+async function openSwitcher() {
+  if (!state.user) return;
+  const input = $("switcher-input");
+  switcher.open = true;
+  switcher.at = 0;
+  switcher.recent = loadSwitcherRecent();
+  $("switcher-backdrop").classList.remove("hidden");
+  input.value = "";
+  rebuildSwitcherItems();
+  renderSwitcher();
+  input.focus();
+  await refreshSwitcherViews();
+  if (!switcher.open) return;
+  try {
+    state.dmThreads = await invoke("list_dm_threads");
+  } catch {}
+  if (!switcher.open) return;
+  rebuildSwitcherItems();
+  renderSwitcher();
+}
+
+function closeSwitcher() {
+  switcher.open = false;
+  $("switcher-backdrop").classList.add("hidden");
+}
+
+function renderSwitcher() {
+  const list = $("switcher-list");
+  switcher.shown = rankSwitcher(switcher.items, $("switcher-input").value, switcher.recent);
+  switcher.at = Math.min(switcher.at, Math.max(0, switcher.shown.length - 1));
+  list.innerHTML = "";
+  if (!switcher.shown.length) {
+    list.appendChild(el("div", "switcher-empty", switcher.items.length ? "Nothing matches" : "Join or create a server first"));
+    return;
+  }
+  switcher.shown.forEach((item, at) => {
+    const row = el("div", "switcher-row");
+    row.setAttribute("role", "option");
+    row.appendChild(switcherGlyph(item));
+    const text = el("div", "switcher-text");
+    text.appendChild(el("span", "switcher-name", item.name));
+    if (item.subtitle) text.appendChild(el("span", "switcher-sub", item.subtitle));
+    row.appendChild(text);
+    row.onmousemove = () => {
+      if (switcher.at !== at) highlightSwitcher(at, false);
+    };
+    row.onmousedown = e => e.preventDefault();
+    row.onclick = () => runSwitcherItem(item);
+    list.appendChild(row);
+  });
+  highlightSwitcher(switcher.at, true);
+}
+
+function switcherGlyph(item) {
+  if (item.kind === "person" && !item.group) return makeAvatar(item.userId, item.name, "avatar switcher-avatar");
+  const glyph = el("div", "switcher-glyph");
+  if (item.kind === "server") {
+    const summary = state.servers.find(s => s.id === item.serverId);
+    glyph.classList.add("switcher-server-icon");
+    if (summary) paintServerIcon(glyph, summary);
+    return glyph;
+  }
+  if (item.kind === "person") glyph.appendChild(svgIcon("people", 18));
+  else if (item.kind === "action") glyph.appendChild(svgIcon(item.action === "settings" ? "gear" : "plus", 18));
+  else if (item.channelKind === "voice") glyph.appendChild(svgIcon("speaker", 18));
+  else if (item.channelKind === "announcement") glyph.appendChild(svgIcon("megaphone", 18));
+  else glyph.textContent = "#";
+  return glyph;
+}
+
+function highlightSwitcher(at, scroll) {
+  const rows = $("switcher-list").querySelectorAll(".switcher-row");
+  if (!rows.length) return;
+  switcher.at = (at + rows.length) % rows.length;
+  rows.forEach((row, i) => {
+    row.classList.toggle("active", i === switcher.at);
+    row.setAttribute("aria-selected", i === switcher.at ? "true" : "false");
+  });
+  if (scroll) rows[switcher.at].scrollIntoView({ block: "nearest" });
+}
+
+async function runSwitcherItem(item) {
+  closeSwitcher();
+  if (openSettingsLayerId()) await closeSettingsLayers();
+  if (item.kind === "action") {
+    if (item.action === "settings") openUserSettings("voice");
+    else await openCreateServer();
+    return;
+  }
+  if (item.kind === "server" || item.group) return selectServer(item.serverId);
+  if (item.kind === "person") {
+    const known = (state.dmThreads || []).some(t => t.user === item.userId);
+    return known ? selectDm(item.userId, item.name) : messageUser(item.userId, item.name);
+  }
+  if (!state.currentServer || state.currentServer.id !== item.serverId) await selectServer(item.serverId);
+  const channel = state.currentServer && state.currentServer.channels.find(c => c.id === item.channelId);
+  if (!channel) return toast("That channel is gone");
+  if (channel.kind === "voice") {
+    if (state.voiceChannelId !== channel.id) await toggleVoice(channel);
+    return;
+  }
+  await selectChannel(channel);
+}
+
+function wireSwitcher() {
+  const input = $("switcher-input");
+  $("switcher-icon").appendChild(svgIcon("search", 18));
+  for (const node of document.querySelectorAll("[data-shortcut]")) node.textContent = `${SWITCHER_MOD}+${node.dataset.shortcut}`;
+  input.addEventListener("input", () => {
+    switcher.at = 0;
+    renderSwitcher();
+  });
+  input.addEventListener("keydown", e => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      highlightSwitcher(switcher.at + 1, true);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      highlightSwitcher(switcher.at - 1, true);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const item = switcher.shown[switcher.at];
+      if (item) runSwitcherItem(item);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeSwitcher();
+    }
+  });
+  $("switcher-backdrop").addEventListener("mousedown", e => {
+    if (e.target === e.currentTarget) closeSwitcher();
+  });
+  document.addEventListener("keydown", e => {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "k") return;
+    if (!state.user) return;
+    e.preventDefault();
+    if (switcher.open) closeSwitcher();
+    else if ($("modal-backdrop").classList.contains("hidden")) openSwitcher();
+  });
+}
+
 function replyReference(message) {
   const ref = el("div", "reply-ref");
   const preview = message.reply_preview;
@@ -9972,6 +10160,7 @@ async function selectServer(serverId) {
   state.historyAnchor = null;
   setViewMode("server");
   state.currentDm = null;
+  if (state.currentServer.group) rememberSwitcherRecent(`group:${serverId}`);
   const firstText = state.currentServer.channels.find(c => c.kind === "text" && c.can_view !== false);
   renderServerRail();
   renderMembers();
@@ -10355,6 +10544,7 @@ function openGroupMenu(thread, x, y) {
 async function selectDm(userId, name) {
   if (!state.currentDm || state.currentDm.user !== userId) cancelReply();
   state.currentDm = { user: userId, name };
+  rememberSwitcherRecent(`dm:${userId}`);
   clearDmUnread(userId);
   if (state.view !== "dm") setViewMode("dm");
   $("chat-hash").textContent = "@";
@@ -10684,6 +10874,7 @@ async function sendDm() {
 async function selectChannel(channel) {
   if (state.currentChannel && (!channel || channel.id !== state.currentChannel.id)) state.previousChannel = state.currentChannel;
   state.currentChannel = channel;
+  if (channel && state.currentServer && !state.currentServer.group) rememberSwitcherRecent(`channel:${channel.id}`);
   if (channel) openChannelWithLine(channel);
   renderDmRequestBar(null);
   syncRulesGate();
@@ -12913,6 +13104,7 @@ function wireEvents() {
   $("sensitive-reset").onclick = resetSensitiveConfirmations;
   $("pins-btn").onclick = togglePinsPanel;
   wireSearch();
+  wireSwitcher();
   $("pins-all").onclick = openServerPins;
   $("pins-modal-close").onclick = hideModals;
   $("announce-gate-icon").appendChild(svgIcon("megaphone", 22));
@@ -13024,7 +13216,8 @@ function wireEvents() {
   $("lightbox").onclick = closeLightbox;
   window.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
-    if (!$("lightbox").classList.contains("hidden")) closeLightbox();
+    if (switcher.open) closeSwitcher();
+    else if (!$("lightbox").classList.contains("hidden")) closeLightbox();
     else if (!$("modal-backdrop").classList.contains("hidden") && state.user) hideModals();
     else if (openSettingsLayerId()) closeSettingsLayers();
   });
