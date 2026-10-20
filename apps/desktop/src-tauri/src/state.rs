@@ -13,6 +13,14 @@ fn default_gain() -> f32 {
     1.0
 }
 
+fn default_app_icon() -> String {
+    crate::app_icon::CLASSIC.to_string()
+}
+
+fn default_tray_icon() -> String {
+    crate::app_icon::FOLLOW_APP.to_string()
+}
+
 fn default_afk_minutes() -> u32 {
     crate::afk::DEFAULT_TIMEOUT_MINUTES
 }
@@ -36,6 +44,10 @@ pub struct VoiceSettings {
     pub output_device: Option<String>,
     #[serde(default = "default_true")]
     pub close_to_tray: bool,
+    #[serde(default = "default_app_icon")]
+    pub app_icon: String,
+    #[serde(default = "default_tray_icon")]
+    pub tray_icon: String,
     #[serde(default)]
     pub presence_until: Option<i64>,
     #[serde(default)]
@@ -80,6 +92,8 @@ impl Default for VoiceSettings {
             input_device: None,
             output_device: None,
             close_to_tray: true,
+            app_icon: default_app_icon(),
+            tray_icon: default_tray_icon(),
             presence_until: None,
             status_until: None,
             overlay: crate::overlay::OverlaySettings::default(),

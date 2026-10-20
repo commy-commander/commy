@@ -4315,3 +4315,13 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .upload-roles { display: flex; flex-wrap: wrap; gap: 6px 18px; min-height: 28px; }
 .upload-roles.off { opacity: 0.45; }
 #attach-btn.locked { opacity: 0.4; cursor: not-allowed; }
+
+.icon-card { gap: 14px; }
+.icon-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+.icon-tile { width: 84px; height: 96px; padding: 10px 6px 8px; display: flex; flex-direction: column; align-items: center; gap: 8px; background: var(--bg-darkest); border: 1px solid transparent; border-radius: 12px; color: var(--text-muted); font-family: inherit; cursor: pointer; }
+.icon-tile:hover { color: var(--text-normal); }
+.icon-tile.active { border-color: var(--accent); color: #fff; }
+.icon-art { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; overflow: hidden; }
+.icon-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.icon-label { font-size: 12px; font-weight: 600; text-align: center; line-height: 1.15; }
+.icon-replace { align-self: center; }
