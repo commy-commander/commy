@@ -3682,6 +3682,7 @@ async fn update_role(
     hoist: Option<bool>,
     tag: Option<String>,
     permissions: Option<Vec<String>>,
+    mentionable: Option<bool>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
@@ -3706,7 +3707,16 @@ async fn update_role(
         let permissions = permissions
             .map(|names| permissions_from_names(&names))
             .unwrap_or(existing.permissions);
-        commy_core::server::Role { name, color, self_assignable, hoist: hoist.unwrap_or(existing.hoist), tag, permissions, ..existing.clone() }
+        commy_core::server::Role {
+            name,
+            color,
+            self_assignable,
+            hoist: hoist.unwrap_or(existing.hoist),
+            tag,
+            permissions,
+            mentionable: mentionable.unwrap_or(existing.mentionable),
+            ..existing.clone()
+        }
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
@@ -5454,6 +5464,7 @@ async fn create_role(
     tag: Option<String>,
     self_assignable: Option<bool>,
     hoist: Option<bool>,
+    mentionable: Option<bool>,
 ) -> CmdResult<String> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let name = name.trim().to_string();
@@ -5490,6 +5501,7 @@ async fn create_role(
             self_assignable: self_assignable.unwrap_or(false),
             tag,
             banner: None,
+            mentionable: mentionable.unwrap_or(false),
         }
     };
     let id = role.id.to_string();
@@ -5937,6 +5949,8 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             return;
         }
         let Some(message) = keys.open(state, message) else { return };
+        let names = app.profile.lock().unwrap().as_ref().map(catchup::mention_names).unwrap_or_default();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
         serde_json::json!({
             "server": sid.to_string(),
             "server_name": state.server.name,
@@ -5945,6 +5959,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "announcement": state.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement),
             "author": message.author.to_string(),
             "author_name": state.profiles.get(&message.author).map(|p| p.visible_name().to_string()).unwrap_or_else(|| "Someone".into()),
+            "mentioned": state.server.mentioned_by(message.author, &message.content, me, &names),
             "content": message.content,
             "has_attachments": message.files().next().is_some(),
         })

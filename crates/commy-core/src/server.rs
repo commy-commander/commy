@@ -77,6 +77,8 @@ pub struct Role {
     pub tag: Option<String>,
     #[serde(default)]
     pub banner: Option<String>,
+    #[serde(default)]
+    pub mentionable: bool,
 }
 
 pub const EVERYONE_ROLE_POSITION: u32 = 0;
@@ -204,6 +206,7 @@ impl Server {
             position: EVERYONE_ROLE_POSITION,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -416,6 +419,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -427,6 +431,7 @@ mod tests {
             position: 2,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -455,6 +460,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -534,6 +540,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -560,6 +567,7 @@ mod tests {
             position: 1,
             hoist: true,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -589,6 +597,7 @@ mod tests {
             position: 2,
             hoist: true,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };

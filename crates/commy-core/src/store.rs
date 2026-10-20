@@ -1215,7 +1215,7 @@ impl ServerState {
                     return Ok(false);
                 }
                 let Some(existing) = self.server.roles.iter_mut().find(|r| r.id == role.id) else { return Ok(false) };
-                if existing.is_everyone() && (role.name != existing.name || role.self_assignable) {
+                if existing.is_everyone() && (role.name != existing.name || role.self_assignable || role.mentionable) {
                     return Ok(false);
                 }
                 if *existing == role {
@@ -2288,6 +2288,7 @@ mod tests {
             position: 1,
             hoist: true,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2342,6 +2343,7 @@ mod tests {
             position: 0,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2363,6 +2365,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2631,6 +2634,7 @@ mod tests {
             position: 2,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2743,6 +2747,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -3165,6 +3170,8 @@ mod tests {
         let everyone = state.server.roles[0].clone();
         let pickable = crate::server::Role { self_assignable: true, ..everyone.clone() };
         assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: pickable }), Ok(false), "everyone is not pickable");
+        let pingable = crate::server::Role { mentionable: true, ..everyone.clone() };
+        assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: pingable }), Ok(false), "everyone is not a mentionable role");
         let tagged = crate::server::Role { tag: Some("GG".into()), ..everyone.clone() };
         assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: tagged }), Ok(true));
         let custom = crate::server::Role { tag: Some("<:gg:ab12@cd34>".into()), banner: Some("ab@cd".into()), ..everyone.clone() };
@@ -4216,6 +4223,7 @@ mod tests {
                 position: 1,
                 hoist: false,
                 self_assignable: false,
+                mentionable: false,
                 tag: None,
                 banner: None,
             });
@@ -4228,6 +4236,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
