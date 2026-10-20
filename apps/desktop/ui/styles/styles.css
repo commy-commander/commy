@@ -1193,6 +1193,9 @@ body {
 .link-draft-title { font-size: 13px; font-weight: 600; color: var(--header-primary); }
 .link-draft-site { font-size: 12px; color: var(--text-faint); }
 .link-draft .icon-btn { width: 28px; height: 28px; flex-shrink: 0; }
+.link-draft.off { border-style: dashed; }
+.link-draft.off .link-draft-thumb { color: var(--text-faint); }
+.link-draft.off .link-draft-title { color: var(--text-muted); }
 .link-draft .icon-btn > svg { width: 16px; height: 16px; }
 .embed-source {
   display: inline-block;
@@ -1381,7 +1384,16 @@ input[type="range"]::-webkit-slider-thumb {
   font-size: 13px;
   color: var(--text-muted);
 }
-.perm-grid label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.perm-grid label { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.perm-grid input { flex: none; margin: 2px 0 0; }
+.perm-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.perm-name { line-height: 18px; color: var(--text-normal); }
+.perm-hint { font-size: 12px; line-height: 16px; color: var(--text-faint); }
+.chat-access .chat-access-row { padding: 10px 0 0; border-top: 1px solid var(--line); }
+.chat-access .chat-access-row > div { flex: 1; min-width: 0; }
+.chat-access .chat-access-row .setting-title { margin: 0; font-size: 14px; }
+.chat-access .chat-access-row .setting-sub { margin: 2px 0 0; }
+.chat-access .switch { flex: none; }
 
 .role-dot {
   width: 12px;
@@ -5224,6 +5236,21 @@ h3.md-heading { font-size: 1.1em; }
 .search-page-btn:disabled:hover { background: var(--bg-active); color: var(--header-primary); }
 .search-run-head { margin-top: 6px; }
 .search-run-head:first-child { margin-top: 0; }
+
+.history-notice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  margin: 16px 16px 4px;
+  flex: none;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.history-notice svg { width: 16px; height: 16px; color: var(--text-faint); }
 
 .history-pill {
   position: sticky;

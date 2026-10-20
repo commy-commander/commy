@@ -499,13 +499,13 @@ impl Server {
         let Some(member) = self.member(user) else {
             return Permissions::NONE;
         };
-        let mut perms = self
-            .roles
-            .iter()
-            .filter(|r| r.is_everyone() || member.roles.contains(&r.id))
-            .fold(Permissions::NONE, |acc, r| acc | permissions_granted_by(r));
+        let applicable: Vec<&Role> = self.roles.iter().filter(|r| r.is_everyone() || member.roles.contains(&r.id)).collect();
+        let mut perms = applicable.iter().fold(Permissions::NONE, |acc, r| acc | permissions_granted_by(r)) & !Permissions::RESTRICTIONS;
         if perms.contains(Permissions::ADMINISTRATOR) {
-            perms = Permissions::all();
+            return Permissions::all();
+        }
+        if !applicable.is_empty() {
+            perms |= applicable.iter().fold(Permissions::RESTRICTIONS, |acc, r| acc & r.permissions);
         }
         perms
     }
@@ -733,6 +733,59 @@ mod tests {
     fn non_member_has_no_permissions() {
         let server = Server::new("s", UserId::new());
         assert_eq!(server.permissions_for(UserId::new()), Permissions::NONE);
+    }
+
+    fn role_with(name: &str, permissions: Permissions, position: u32) -> Role {
+        Role {
+            id: RoleId::new(),
+            name: name.into(),
+            color: None,
+            permissions,
+            position,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        }
+    }
+
+    #[test]
+    fn restrictions_hold_only_when_every_applicable_role_carries_them() {
+        let owner = UserId::new();
+        let mut server = Server::new("s", owner);
+        let member = UserId::new();
+        server.members.push(Member { user: member, nickname: None, roles: vec![], joined_at: Utc::now(), timeout: None });
+        assert!(server.permissions_for(member).can_send_polls(), "no role mentions the bit, so it is allowed");
+        assert!(!server.permissions_for(member).contains(Permissions::RESTRICTIONS));
+        server.roles[0].permissions.insert(Permissions::NO_SEND_POLLS | Permissions::NO_EMBED_LINKS);
+        let restricted = server.permissions_for(member);
+        assert!(!restricted.can_send_polls() && !restricted.can_embed_links(), "everyone restricted and no other role: restricted");
+        assert!(restricted.can_read_history(), "only the bits every role carries hold");
+        let trusted = role_with("trusted", Permissions::NONE, 1);
+        let trusted_id = trusted.id;
+        server.roles.push(trusted);
+        server.member_mut(member).unwrap().roles.push(trusted_id);
+        let lifted = server.permissions_for(member);
+        assert!(lifted.can_send_polls() && lifted.can_embed_links(), "a role without the restriction lets its members through");
+        assert!(lifted.allows(Permissions::SEND_MESSAGES), "grants stay a union");
+        let other = UserId::new();
+        server.members.push(Member { user: other, nickname: None, roles: vec![], joined_at: Utc::now(), timeout: None });
+        assert!(!server.permissions_for(other).can_send_polls(), "members without the role stay restricted");
+        server.roles[0].permissions.remove(Permissions::RESTRICTIONS);
+        let lone = role_with("quiet", Permissions::NO_SEND_POLLS, 2);
+        let lone_id = lone.id;
+        server.roles.push(lone);
+        server.member_mut(other).unwrap().roles.push(lone_id);
+        assert!(server.permissions_for(other).can_send_polls(), "a lone restricted role on top of a permissive everyone does nothing");
+        server.roles[0].permissions.insert(Permissions::RESTRICTIONS);
+        let admins = role_with("admins", Permissions::ADMINISTRATOR | Permissions::RESTRICTIONS, 3);
+        let admins_id = admins.id;
+        server.roles.push(admins);
+        server.member_mut(other).unwrap().roles.push(admins_id);
+        assert_eq!(server.permissions_for(other), Permissions::all(), "administrator clears everything");
+        assert!(server.permissions_for(other).can_read_history());
+        assert_eq!(server.permissions_for(owner), Permissions::all());
     }
 
     #[test]

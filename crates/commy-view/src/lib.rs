@@ -321,6 +321,12 @@ pub struct ServerView {
     pub can_attach_files: bool,
     pub can_send_voice_messages: bool,
     pub can_send_tts_messages: bool,
+    pub can_embed_links: bool,
+    pub can_read_history: bool,
+    pub can_create_threads: bool,
+    pub can_send_polls: bool,
+    pub can_create_events: bool,
+    pub chat_restricted: ChatRestrictions,
     pub public: bool,
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
@@ -374,6 +380,15 @@ pub struct AddRestrictions {
     pub emojis: bool,
     pub stickers: bool,
     pub emoticons: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ChatRestrictions {
+    pub embed_links: bool,
+    pub read_history: bool,
+    pub create_threads: bool,
+    pub send_polls: bool,
+    pub create_events: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -665,6 +680,18 @@ impl ServerView {
             can_attach_files: perms.allows(Permissions::ATTACH_FILES),
             can_send_voice_messages: perms.allows(Permissions::SEND_VOICE_MESSAGES),
             can_send_tts_messages: perms.can_send_tts(),
+            can_embed_links: perms.can_embed_links(),
+            can_read_history: perms.can_read_history(),
+            can_create_threads: is_member && perms.can_create_threads(),
+            can_send_polls: is_member && perms.can_send_polls(),
+            can_create_events: is_member && perms.can_create_events(),
+            chat_restricted: ChatRestrictions {
+                embed_links: everyone_holds(state, Permissions::NO_EMBED_LINKS),
+                read_history: everyone_holds(state, Permissions::NO_READ_MESSAGE_HISTORY),
+                create_threads: everyone_holds(state, Permissions::NO_CREATE_THREADS),
+                send_polls: everyone_holds(state, Permissions::NO_SEND_POLLS),
+                create_events: everyone_holds(state, Permissions::NO_CREATE_EVENTS),
+            },
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS) || (state.server.soundboard_open && is_member),
@@ -680,6 +707,15 @@ impl ServerView {
                 .collect(),
         }
     }
+}
+
+fn everyone_holds(state: &ServerState, permission: Permissions) -> bool {
+    state
+        .server
+        .roles
+        .iter()
+        .find(|r| r.position == EVERYONE_ROLE_POSITION)
+        .is_some_and(|r| r.permissions.contains(permission))
 }
 
 fn everyone_lacks(state: &ServerState, permission: Permissions) -> bool {
@@ -700,6 +736,10 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("attach_files", Permissions::ATTACH_FILES),
     ("send_voice_messages", Permissions::SEND_VOICE_MESSAGES),
     ("send_tts_messages", Permissions::SEND_TTS_MESSAGES),
+    ("embed_links", Permissions::NO_EMBED_LINKS),
+    ("read_message_history", Permissions::NO_READ_MESSAGE_HISTORY),
+    ("create_threads", Permissions::NO_CREATE_THREADS),
+    ("send_polls", Permissions::NO_SEND_POLLS),
     ("post_announcements", Permissions::POST_ANNOUNCEMENTS),
     ("manage_roles", Permissions::MANAGE_ROLES),
     ("kick_members", Permissions::KICK_MEMBERS),
@@ -715,6 +755,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("add_stickers", Permissions::ADD_STICKERS),
     ("add_emoticons", Permissions::ADD_EMOTICONS),
     ("use_external_emojis", Permissions::USE_EXTERNAL_EMOJIS),
+    ("create_events", Permissions::NO_CREATE_EVENTS),
     ("manage_events", Permissions::MANAGE_EVENTS),
     ("create_invites", Permissions::CREATE_INVITES),
     ("view_audit_log", Permissions::VIEW_AUDIT_LOG),
@@ -874,6 +915,7 @@ pub struct MessageView {
     pub poll: Option<PollView>,
     pub tts: bool,
     pub command: Option<CommandUseView>,
+    pub embeds: bool,
     pub pending: bool,
     pub pinned: bool,
     pub held: Option<String>,
@@ -1029,6 +1071,7 @@ impl MessageView {
         let sealed = opened.is_none();
         let message = opened.as_ref().unwrap_or(message);
         let (content, attachments) = if sealed { (String::new(), &[][..]) } else { (message.content.clone(), &message.attachments[..]) };
+        let author_permissions = state.server.permissions_for(message.author);
         Self {
             id: message.id.to_string(),
             channel: message.channel.to_string(),
@@ -1082,10 +1125,11 @@ impl MessageView {
                     provider: a.provider.clone(),
                 })
                 .collect(),
-            previews: message.link_previews().take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
+            previews: message.previews_for(author_permissions).take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
             poll: (!sealed).then(|| PollView::build(message, state, keys.user())).flatten(),
-            tts: !sealed && message.speaks_for(state.server.permissions_for(message.author)),
+            tts: !sealed && message.speaks_for(author_permissions),
             command: (!sealed).then(|| CommandUseView::build(message, state)).flatten(),
+            embeds: message.embeds_for(author_permissions),
             pending: false,
             pinned: state.server.is_pinned(message.id),
             held: None,
@@ -1106,6 +1150,23 @@ impl MessageView {
 
 const HELD_EXCERPT: &str = "Held by auto moderation";
 
+pub type ChannelOpens = HashMap<ChannelId, chrono::DateTime<chrono::Utc>>;
+
+pub fn history_floor(
+    state: &ServerState,
+    viewer: Option<UserId>,
+    opens: &ChannelOpens,
+    channel: ChannelId,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let reads = viewer.is_none_or(|v| state.server.permissions_for(v).can_read_history());
+    (!reads).then(|| opens.get(&channel).copied().unwrap_or(now))
+}
+
+pub fn within_history(floor: Option<chrono::DateTime<chrono::Utc>>, message: &Message) -> bool {
+    floor.is_none_or(|from| message.created_at >= from)
+}
+
 pub fn message_views(
     state: &ServerState,
     channel: ChannelId,
@@ -1113,8 +1174,13 @@ pub fn message_views(
     pending: &HashSet<MessageId>,
     viewer: Option<UserId>,
     keys: &KeyHolder,
+    floor: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Vec<MessageView> {
-    visible_views(state, state.page(channel, None, limit), pending, viewer, keys)
+    let all = state.messages(channel);
+    let start = all.iter().position(|m| within_history(floor, m)).unwrap_or(all.len());
+    let recent = &all[start..];
+    let page = &recent[recent.len().saturating_sub(limit)..];
+    visible_views(state, page, pending, viewer, keys)
 }
 
 pub fn sees_message<'a>(state: &'a ServerState, viewer: Option<UserId>, keys: &'a KeyHolder) -> impl Fn(&Message) -> bool + 'a {
@@ -1150,13 +1216,15 @@ pub fn message_views_around(
     pending: &HashSet<MessageId>,
     viewer: Option<UserId>,
     keys: &KeyHolder,
+    floor: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Option<Vec<MessageView>> {
     let all = state.messages(channel);
     let at = all.iter().position(|m| m.id == around)?;
-    if !sees_message(state, viewer, keys)(&all[at]) {
+    if !sees_message(state, viewer, keys)(&all[at]) || !within_history(floor, &all[at]) {
         return None;
     }
-    let start = at.saturating_sub(AROUND_EACH_SIDE);
+    let first = all.iter().position(|m| within_history(floor, m)).unwrap_or(all.len());
+    let start = at.saturating_sub(AROUND_EACH_SIDE).max(first);
     let end = (at + AROUND_EACH_SIDE + 1).min(all.len());
     Some(visible_views(state, &all[start..end], pending, viewer, keys))
 }
@@ -1209,7 +1277,7 @@ mod tests {
         }
         let pending = HashSet::from([ids[1]]);
         let keys = KeyHolder::default();
-        let views = message_views(&state, channel, 100, &pending, Some(owner.id), &keys);
+        let views = message_views(&state, channel, 100, &pending, Some(owner.id), &keys, None);
         let flags: Vec<(&str, bool)> = views.iter().map(|v| (v.content.as_str(), v.pending)).collect();
         assert_eq!(flags, vec![("sent", false), ("waiting", true)]);
         assert!(!MessageView::build(state.message(ids[1]).unwrap(), &state, &keys).pending);
@@ -1248,7 +1316,7 @@ mod tests {
         let rules = AutoMod { blocked_terms: vec!["gold".into()], ..AutoMod::default() };
         state.apply(ServerEvent::AutoModSet { server: sid, rules }).unwrap();
         let seen = |viewer| {
-            message_views(&state, channel, 100, &HashSet::new(), Some(viewer), &KeyHolder::default())
+            message_views(&state, channel, 100, &HashSet::new(), Some(viewer), &KeyHolder::default(), None)
                 .into_iter()
                 .map(|v| (v.content, v.held))
                 .collect::<Vec<_>>()
@@ -1257,9 +1325,9 @@ mod tests {
         assert_eq!(seen(owner.id), all);
         assert_eq!(seen(author), all);
         assert_eq!(seen(reader), vec![("fine".to_string(), None)]);
-        let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader), &KeyHolder::default()).remove(0);
+        let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader), &KeyHolder::default(), None).remove(0);
         assert_eq!(reply.reply_preview.unwrap().excerpt, HELD_EXCERPT);
-        let around = |viewer| message_views_around(&state, channel, bad, &HashSet::new(), Some(viewer), &KeyHolder::default()).map(|v| v.len());
+        let around = |viewer| message_views_around(&state, channel, bad, &HashSet::new(), Some(viewer), &KeyHolder::default(), None).map(|v| v.len());
         assert_eq!(around(owner.id), Some(2));
         assert_eq!(around(reader), None);
     }
@@ -1282,14 +1350,107 @@ mod tests {
             state.apply(ServerEvent::MessageCreate { message }).unwrap();
         }
         let none = HashSet::new();
-        let middle = message_views_around(&state, channel, ids[120], &none, Some(owner.id), &KeyHolder::default()).unwrap();
+        let middle = message_views_around(&state, channel, ids[120], &none, Some(owner.id), &KeyHolder::default(), None).unwrap();
         assert_eq!(middle.len(), 2 * AROUND_EACH_SIDE + 1);
         assert_eq!((middle[0].content.as_str(), middle[AROUND_EACH_SIDE].content.as_str()), ("m70", "m120"));
-        let first = message_views_around(&state, channel, ids[3], &none, Some(owner.id), &KeyHolder::default()).unwrap();
+        let first = message_views_around(&state, channel, ids[3], &none, Some(owner.id), &KeyHolder::default(), None).unwrap();
         assert_eq!((first[0].content.as_str(), first.len()), ("m0", 3 + AROUND_EACH_SIDE + 1));
-        let last = message_views_around(&state, channel, ids[299], &none, Some(owner.id), &KeyHolder::default()).unwrap();
+        let last = message_views_around(&state, channel, ids[299], &none, Some(owner.id), &KeyHolder::default(), None).unwrap();
         assert_eq!(last.last().unwrap().content, "m299");
-        assert!(message_views_around(&state, channel, MessageId::for_author(owner.id), &none, Some(owner.id), &KeyHolder::default()).is_none());
+        assert!(message_views_around(&state, channel, MessageId::for_author(owner.id), &none, Some(owner.id), &KeyHolder::default(), None).is_none());
+    }
+
+    fn keyed(name: &str) -> (UserProfile, Identity) {
+        let identity = Identity::generate();
+        let mut profile = UserProfile::new(name);
+        profile.identity = Some(identity.public());
+        (profile, identity)
+    }
+
+    #[test]
+    fn without_read_message_history_only_what_arrives_after_opening_the_channel_shows() {
+        let (owner, owner_key) = keyed("owner");
+        let server = Server::new("s", owner.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let (reader, _) = keyed("reader");
+        let reader_id = reader.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: reader }).unwrap();
+        let now = chrono::Utc::now();
+        let mut ids = Vec::new();
+        for (text, seconds_ago) in [("old", 1800), ("recent", 300), ("new", 1)] {
+            let mut message = Message::new(channel, owner.id, text);
+            message.created_at = now - chrono::Duration::seconds(seconds_ago);
+            message.sign(sid, &owner_key);
+            ids.push(message.id);
+            state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        }
+        let none = HashSet::new();
+        let keys = KeyHolder::default();
+        let opens: ChannelOpens = HashMap::from([(channel, now - chrono::Duration::minutes(10))]);
+        assert_eq!(history_floor(&state, Some(reader_id), &opens, channel, now), None, "readers see everything by default");
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.insert(Permissions::NO_READ_MESSAGE_HISTORY);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        assert_eq!(history_floor(&state, Some(owner.id), &opens, channel, now), None, "the owner keeps history");
+        let floor = history_floor(&state, Some(reader_id), &opens, channel, now);
+        assert_eq!(floor, Some(now - chrono::Duration::minutes(10)));
+        let texts = |views: Vec<MessageView>| views.into_iter().map(|v| v.content).collect::<Vec<_>>();
+        assert_eq!(texts(message_views(&state, channel, 100, &none, Some(reader_id), &keys, floor)), ["recent", "new"]);
+        assert_eq!(texts(message_views(&state, channel, 1, &none, Some(reader_id), &keys, floor)), ["new"]);
+        assert_eq!(texts(message_views(&state, channel, 100, &none, Some(reader_id), &keys, None)), ["old", "recent", "new"]);
+        let unopened = history_floor(&state, Some(reader_id), &ChannelOpens::new(), channel, now);
+        assert_eq!(unopened, Some(now));
+        assert!(message_views(&state, channel, 100, &none, Some(reader_id), &keys, unopened).is_empty(), "a channel never opened shows nothing yet");
+        assert!(message_views_around(&state, channel, ids[0], &none, Some(reader_id), &keys, floor).is_none(), "no jumping into hidden history");
+        let around = message_views_around(&state, channel, ids[2], &none, Some(reader_id), &keys, floor).unwrap();
+        assert_eq!(texts(around), ["recent", "new"], "a window stops at the floor");
+    }
+
+    #[test]
+    fn link_cards_and_embeds_follow_the_authors_embed_links_permission() {
+        let (owner, _) = keyed("owner");
+        let server = Server::new("s", owner.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let (author, author_key) = keyed("author");
+        let author_id = author.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: author }).unwrap();
+        let preview = commy_core::LinkPreview {
+            url: "https://example.org/a".into(),
+            site: String::new(),
+            title: "A page".into(),
+            description: String::new(),
+            image: None,
+        };
+        let mut message = Message::new(channel, author_id, "see https://example.org/a");
+        message.attachments.push(preview.into_attachment(None));
+        message.sign(sid, &author_key);
+        let id = message.id;
+        state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        let keys = KeyHolder::default();
+        let view = MessageView::build(state.message(id).unwrap(), &state, &keys);
+        assert!(view.embeds);
+        assert_eq!(view.previews.len(), 1);
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.insert(Permissions::NO_EMBED_LINKS);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        let view = MessageView::build(state.message(id).unwrap(), &state, &keys);
+        assert!(!view.embeds, "readers drop the card once the author may not embed");
+        assert!(view.previews.is_empty());
+        assert_eq!(view.content, "see https://example.org/a", "the text itself still posts");
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["embeds"], false);
+        let server_view = ServerView::for_viewer(&state, Some(author_id), &keys);
+        assert!(!server_view.can_embed_links && server_view.chat_restricted.embed_links);
+        assert!(server_view.can_read_history && !server_view.chat_restricted.read_history);
+        assert!(server_view.can_create_threads && server_view.can_send_polls && server_view.can_create_events);
+        assert!(!server_view.can_manage_events);
+        assert!(permission_names(Permissions::NO_CREATE_EVENTS | Permissions::NO_EMBED_LINKS).contains(&"create_events".to_string()), "a listed name means the restriction is set");
+        assert_eq!(permissions_from_names(&["send_polls".to_string(), "read_message_history".to_string()]), Permissions::NO_SEND_POLLS | Permissions::NO_READ_MESSAGE_HISTORY);
+        assert!(permission_names(Permissions::default_member()).iter().all(|n| !["embed_links", "send_polls", "create_events"].contains(&n.as_str())));
     }
 
     #[test]
@@ -1467,7 +1628,7 @@ mod tests {
         let as_owner = ServerView::for_viewer(&state, Some(owner.id), &keys);
         assert!(as_owner.can_change_nickname && as_owner.can_manage_nicknames);
         assert!(!ServerView::for_viewer(&state, Some(UserId::new()), &keys).can_change_nickname);
-        let messages = message_views(&state, channel, 10, &HashSet::new(), Some(owner.id), &keys);
+        let messages = message_views(&state, channel, 10, &HashSet::new(), Some(owner.id), &keys, None);
         assert_eq!(messages[0].author_name, "Sammy");
         assert_eq!(display_name(&state, friend_id), "Sammy");
         assert_eq!(known_name_of(&state, UserId::new()), None);

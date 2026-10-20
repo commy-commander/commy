@@ -250,7 +250,10 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
     let sees = |event: &ServerEvent| channel_of(event).is_none_or(|channel| server.can_view(channel, by));
     let speaks = !server.is_timed_out(by, chrono::Utc::now());
     match event {
-        E::MessageCreate { message } => allows(Permissions::MANAGE_MESSAGES) || !replies_into_locked_thread(server, message),
+        E::MessageCreate { message } => {
+            let polls = message.poll().is_none() || perms.can_send_polls();
+            polls && (allows(Permissions::MANAGE_MESSAGES) || !replies_into_locked_thread(server, message))
+        }
         E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
         E::MemberJoin { .. } => actor(event) == Some(by),
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
@@ -272,8 +275,10 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin() && sees(event),
         E::PollVote { .. } => member && speaks && actor(event) == Some(by) && sees(event),
         E::PollClose { .. } => member && actor(event) == Some(by) && sees(event),
-        E::ThreadSet { root, .. } => {
-            member && actor(event) == Some(by) && sees(event) && (root.is_bound_to(by) || allows(Permissions::MANAGE_MESSAGES))
+        E::ThreadSet { channel, root, .. } => {
+            let exists = server.channel(*channel).is_some_and(|c| c.threads.contains_key(root));
+            let own = root.is_bound_to(by) && (exists || perms.can_create_threads());
+            member && actor(event) == Some(by) && sees(event) && (own || allows(Permissions::MANAGE_MESSAGES))
         }
         E::VoiceStatusSet { .. } => {
             member && speaks && actor(event) == Some(by) && sees(event) && perms.can_set_voice_status(true)
@@ -342,10 +347,10 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
             allows(Permissions::MANAGE_EXPRESSIONS)
                 || (server.soundboard_open && member && !server.soundboard.iter().any(|s| s.name == sound.name))
         }
-        E::EventUpsert { event, .. } => {
-            allows(Permissions::MANAGE_EVENTS)
-                || (event.creator == by && server.events.iter().any(|e| e.id == event.id && e.creator == by))
-        }
+        E::EventUpsert { event, .. } => match server.events.iter().find(|e| e.id == event.id) {
+            Some(existing) => allows(Permissions::MANAGE_EVENTS) || (event.creator == by && existing.creator == by),
+            None => allows(Permissions::MANAGE_EVENTS) || (member && event.creator == by && perms.can_create_events()),
+        },
         E::EventDelete { event, .. } => {
             allows(Permissions::MANAGE_EVENTS) || server.events.iter().any(|e| e.id == *event && e.creator == by)
         }
@@ -720,7 +725,10 @@ mod tests {
             rsvps: Vec::new(),
         };
         let upsert = ServerEvent::EventUpsert { server: sid, event: event.clone() };
-        assert!(!authorized(&state.server, user, &upsert), "creating takes manage events");
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.insert(Permissions::NO_CREATE_EVENTS);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        assert!(!authorized(&state.server, user, &upsert), "creating takes create or manage events");
         assert!(authorized(&state.server, owner, &upsert));
         state.apply(upsert.clone()).unwrap();
         assert!(authorized(&state.server, user, &upsert), "editing one's own");
@@ -729,6 +737,110 @@ mod tests {
         assert!(!authorized(&state.server, other, &upsert));
         assert!(authorized(&state.server, user, &ServerEvent::EventRsvp { server: sid, event: "e1".into(), user, rsvp: None }));
         assert!(!authorized(&state.server, other, &ServerEvent::EventRsvp { server: sid, event: "e1".into(), user, rsvp: None }));
+    }
+
+    fn scheduled(id: &str, channel: ChannelId, creator: UserId) -> crate::server::ScheduledEvent {
+        crate::server::ScheduledEvent {
+            id: id.into(),
+            title: "night".into(),
+            description: String::new(),
+            start: chrono::Utc::now(),
+            end: None,
+            channel: Some(channel),
+            creator,
+            rsvps: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn create_events_lets_members_schedule_but_only_managers_touch_the_events_of_others() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let planner = join(&mut state, "planner");
+        let other = join(&mut state, "other");
+        let upsert = |event: crate::server::ScheduledEvent| ServerEvent::EventUpsert { server: sid, event };
+        assert!(authorized(&state.server, planner, &upsert(scheduled("e1", channel, planner))), "everyone may create by default");
+        assert!(!authorized(&state.server, planner, &upsert(scheduled("e1", channel, other))), "but only in their own name");
+        assert!(!authorized(&state.server, UserId::new(), &upsert(scheduled("e1", channel, UserId::new()))), "members only");
+        state.apply(upsert(scheduled("e1", channel, planner))).unwrap();
+        assert!(authorized(&state.server, planner, &upsert(scheduled("e1", channel, planner))), "editing one's own");
+        assert!(!authorized(&state.server, other, &upsert(scheduled("e1", channel, planner))), "editing someone else's takes manage events");
+        assert!(!authorized(&state.server, other, &upsert(scheduled("e1", channel, other))), "nor by claiming it");
+        assert!(!authorized(&state.server, other, &ServerEvent::EventDelete { server: sid, event: "e1".into() }));
+        assert!(authorized(&state.server, owner, &upsert(scheduled("e1", channel, planner))));
+        let managers = role(Permissions::MANAGE_EVENTS, false);
+        let rid = managers.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: managers }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: other, role: rid }).unwrap();
+        assert!(authorized(&state.server, other, &upsert(scheduled("e1", channel, planner))), "managers edit anyone's");
+        assert!(authorized(&state.server, other, &ServerEvent::EventDelete { server: sid, event: "e1".into() }));
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.insert(Permissions::NO_CREATE_EVENTS);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        assert!(!authorized(&state.server, planner, &upsert(scheduled("e2", channel, planner))), "restricted, no new events");
+        assert!(authorized(&state.server, planner, &upsert(scheduled("e1", channel, planner))), "existing ones stay editable");
+        assert!(authorized(&state.server, other, &upsert(scheduled("e2", channel, other))), "manage events covers creating even though the role lacks nothing");
+        let mut managers_restricted = state.server.roles.iter().find(|r| r.id == rid).unwrap().clone();
+        managers_restricted.permissions.insert(Permissions::NO_CREATE_EVENTS);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: managers_restricted }).unwrap();
+        assert!(authorized(&state.server, other, &upsert(scheduled("e3", channel, other))), "manage events bypasses the restriction");
+    }
+
+    #[test]
+    fn create_threads_gates_naming_a_new_thread_but_not_tending_an_existing_one() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let starter = join(&mut state, "starter");
+        let moderator = crate::test_support::join_moderator(&mut state, "mod");
+        let root = crate::test_support::post(&state, channel, starter, "where should we meet");
+        state.apply(ServerEvent::MessageCreate { message: root.clone() }).unwrap();
+        let set = |by, name: Option<&str>, archived| ServerEvent::ThreadSet {
+            server: sid,
+            channel,
+            root: root.id,
+            name: name.map(str::to_string),
+            archived,
+            locked: false,
+            by,
+        };
+        assert!(authorized(&state.server, starter, &set(starter, Some("meetup"), false)), "everyone may start threads by default");
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.insert(Permissions::NO_CREATE_THREADS);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        assert!(!authorized(&state.server, starter, &set(starter, Some("meetup"), false)), "restricted, the author cannot name a new thread");
+        assert!(authorized(&state.server, moderator, &set(moderator, Some("meetup"), false)), "manage messages covers it");
+        assert!(authorized(&state.server, owner, &set(owner, Some("meetup"), false)));
+        state.apply(set(moderator, Some("meetup"), false)).unwrap();
+        assert!(authorized(&state.server, starter, &set(starter, Some("meetup"), true)), "an existing thread is still the author's to archive");
+        let threaders = role(Permissions::NONE, false);
+        let rid = threaders.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: threaders }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: starter, role: rid }).unwrap();
+        let second = crate::test_support::post(&state, channel, starter, "another one");
+        state.apply(ServerEvent::MessageCreate { message: second.clone() }).unwrap();
+        let fresh = ServerEvent::ThreadSet { server: sid, channel, root: second.id, name: Some("two".into()), archived: false, locked: false, by: starter };
+        assert!(authorized(&state.server, starter, &fresh), "a role without the restriction lets its members through");
+    }
+
+    #[test]
+    fn polls_in_messages_take_the_send_polls_permission() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let member = join(&mut state, "member");
+        let poll = crate::poll::Poll { question: "Day?".into(), options: vec!["Fri".into(), "Sat".into()], multi: false, closes_at: None };
+        let posted = |state: &crate::store::ServerState, author| {
+            let mut m = crate::message::Message::new(channel, author, "");
+            m.attachments.push(poll.clone().into_attachment());
+            ServerEvent::MessageCreate { message: crate::test_support::signed(state, m) }
+        };
+        assert!(authorized(&state.server, member, &posted(&state, member)));
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.insert(Permissions::NO_SEND_POLLS);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        assert!(!authorized(&state.server, member, &posted(&state, member)));
+        assert!(authorized(&state.server, owner, &posted(&state, owner)));
+        let words = ServerEvent::MessageCreate { message: crate::test_support::post(&state, channel, member, "plain words") };
+        assert!(authorized(&state.server, member, &words), "plain messages are untouched");
     }
 
     #[test]

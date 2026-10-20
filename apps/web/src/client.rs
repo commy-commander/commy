@@ -72,9 +72,9 @@ impl Client {
         let servers = self.servers.lock().unwrap();
         let state = servers.get(&server).ok_or("This server is still loading")?;
         match around {
-            Some(id) => commy_view::message_views_around(state, channel, id, &self.pending, me, &keys)
+            Some(id) => commy_view::message_views_around(state, channel, id, &self.pending, me, &keys, None)
                 .ok_or_else(|| "That message is not loaded in this browser".to_string()),
-            None => Ok(commy_view::message_views(state, channel, PAGE, &self.pending, me, &keys)),
+            None => Ok(commy_view::message_views(state, channel, PAGE, &self.pending, me, &keys, None)),
         }
     }
 

@@ -20,7 +20,8 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   ask new members what they are here for and hand out the roles, and so the
   channels, that match; answers can be changed later.
 - **Roles and moderation.** Colored roles with fine-grained permissions,
-  kick, ban and timeouts, per-server nicknames, server mute and deafen,
+  down to who may embed links, read message history, start threads, post
+  polls or schedule events, kick, ban and timeouts, per-server nicknames, server mute and deafen,
   moving people between voice channels, pinned messages and announcements,
   and auto moderation that holds messages with blocked words, links, too many
   mentions or flooding. A moderation bot you run yourself can remove new ones
