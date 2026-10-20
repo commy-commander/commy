@@ -14,6 +14,9 @@ pub struct Attachment {
     pub provider: Option<String>,
 }
 
+pub const VOICE_MESSAGE_FILENAME: &str = "voice-message.ogg";
+pub const VOICE_MESSAGE_MIME: &str = "audio/ogg";
+
 impl Attachment {
     pub fn is_image(&self) -> bool {
         self.mime_type.starts_with("image/")
@@ -26,6 +29,29 @@ impl Attachment {
     pub fn carries_a_file(&self) -> bool {
         !self.is_card() || !self.blob.is_empty()
     }
+
+    pub fn voice_message(blob: String, size_bytes: u64, provider: Option<String>) -> Self {
+        Self { blob, filename: VOICE_MESSAGE_FILENAME.into(), size_bytes, mime_type: VOICE_MESSAGE_MIME.into(), provider }
+    }
+
+    pub fn is_voice_message(&self) -> bool {
+        self.mime_type == VOICE_MESSAGE_MIME && self.filename == VOICE_MESSAGE_FILENAME
+    }
+
+    pub fn is_plain_file(&self) -> bool {
+        self.carries_a_file() && !self.is_voice_message()
+    }
+}
+
+pub fn only_a_voice_message<'a>(content: &str, attachments: impl Iterator<Item = &'a Attachment>) -> bool {
+    let mut any = false;
+    for attachment in attachments {
+        if !attachment.is_voice_message() {
+            return false;
+        }
+        any = true;
+    }
+    any && content.trim().is_empty()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,6 +322,25 @@ mod tests {
             ..att
         };
         assert!(!doc.is_image());
+    }
+
+    #[test]
+    fn a_voice_message_is_told_apart_by_its_fixed_name_and_mime() {
+        let voice = Attachment::voice_message("blob".into(), 4096, None);
+        assert!(voice.is_voice_message());
+        assert!(voice.carries_a_file());
+        assert!(!voice.is_plain_file());
+        assert!(!voice.is_image());
+        let renamed = Attachment { filename: "clip.ogg".into(), ..voice.clone() };
+        assert!(!renamed.is_voice_message());
+        assert!(renamed.is_plain_file());
+        let other_mime = Attachment { mime_type: "audio/mpeg".into(), ..voice.clone() };
+        assert!(!other_mime.is_voice_message());
+        assert!(only_a_voice_message("", std::iter::once(&voice)));
+        assert!(only_a_voice_message("  ", std::iter::once(&voice)));
+        assert!(!only_a_voice_message("hear this", std::iter::once(&voice)));
+        assert!(!only_a_voice_message("", std::iter::empty()));
+        assert!(!only_a_voice_message("", [&voice, &renamed].into_iter()));
     }
 
     fn sample(identity: &Identity, server: ServerId) -> Message {

@@ -49,6 +49,8 @@ pub enum StoreError {
     NotAnnouncer,
     #[error("members without the send files permission cannot attach files here")]
     NoUploads,
+    #[error("members without the send voice messages permission cannot send voice messages here")]
+    NoVoiceMessages,
     #[error("the signer may not do that here")]
     NotAllowed,
     #[error("unsigned event from a member whose key is known")]
@@ -1647,10 +1649,16 @@ impl ServerState {
             }
         }
         if !held
-            && message.attachments.iter().any(Attachment::carries_a_file)
+            && message.attachments.iter().any(Attachment::is_plain_file)
             && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::ATTACH_FILES)
         {
             return Err(StoreError::NoUploads);
+        }
+        if !held
+            && message.attachments.iter().any(Attachment::is_voice_message)
+            && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::SEND_VOICE_MESSAGES)
+        {
+            return Err(StoreError::NoVoiceMessages);
         }
         if !held {
             if let Some(changed) = self.bind_proofs(&message) {
@@ -2973,6 +2981,39 @@ mod tests {
         state.apply(ServerEvent::RoleAssign { server: sid, user: plain, role: rid }).unwrap();
         let allowed = with_file(&state, plain);
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: allowed }), Ok(true));
+    }
+
+    #[test]
+    fn voice_messages_need_their_own_permission_and_not_the_files_one() {
+        let (mut state, channel, _owner) = fixture();
+        let sid = state.server.id;
+        let plain = join(&mut state, "plain");
+        let with_voice = |state: &ServerState, author| {
+            let mut m = Message::new(channel, author, "");
+            m.attachments.push(crate::message::Attachment::voice_message("abc".into(), 10, None));
+            crate::test_support::signed(state, m)
+        };
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.remove(Permissions::ATTACH_FILES);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone.clone() }).unwrap();
+        let first = with_voice(&state, plain);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first.clone() }), Ok(true), "voice needs no send files permission");
+        everyone.permissions.remove(Permissions::SEND_VOICE_MESSAGES);
+        everyone.permissions.insert(Permissions::ATTACH_FILES);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        let blocked = with_voice(&state, plain);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: blocked }), Err(StoreError::NoVoiceMessages));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first }), Ok(false), "held messages stay");
+        let mut file = Message::new(channel, plain, "look");
+        file.attachments.push(crate::message::Attachment {
+            blob: "abc".into(),
+            filename: "cat.png".into(),
+            size_bytes: 10,
+            mime_type: "image/png".into(),
+            provider: None,
+        });
+        let file = crate::test_support::signed(&state, file);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: file }), Ok(true), "files still follow their own permission");
     }
 
     #[test]

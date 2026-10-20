@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -47,6 +47,16 @@ test("an announcement is named as one in its notification", () => {
   assert.deepEqual(messageNotice({ ...msg, announcement: true }, strip), { title: "Announcement in #news (Rust Hangout)", body: "ferris: Patch day" });
   assert.deepEqual(messageNotice(msg, strip), { title: "ferris (#news, Rust Hangout)", body: "Patch day" });
   assert.equal(messageNotice({ ...msg, content: "", has_attachments: true }, strip).body, "Sent an attachment");
+});
+
+test("a message that is only a voice message is announced as one", () => {
+  const msg = { author_name: "nova", channel_name: "general", server_name: "Rust Hangout", content: "", has_attachments: true, voice_message: true };
+  assert.equal(messageNotice(msg, plain).body, "Voice message");
+  assert.equal(messageNotice({ ...msg, content: "hear this" }, plain).body, "hear this");
+  assert.equal(messageNotice({ ...msg, voice_message: false }, plain).body, "Sent an attachment");
+  assert.equal(caughtUpNotice({ ...msg, count: 3 }, plain).body, "Voice message · 2 more messages");
+  assert.equal(noticeText("", false, plain, true), "Voice message");
+  assert.equal(noticeText("", false, plain, false), "");
 });
 
 test("muted and per-server choices win over the global level", () => {

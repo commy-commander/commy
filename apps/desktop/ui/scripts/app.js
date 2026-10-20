@@ -141,6 +141,30 @@ function mockBannerImage() {
   return c.toDataURL("image/jpeg", 0.85);
 }
 
+function mockVoiceAttachment(secs) {
+  const blob = `voice-${Date.now()}@mock`;
+  (mock.voiceClips ||= {})[blob] = secs;
+  return { filename: VOICE_MESSAGE_FILENAME, size_bytes: 400 + secs * 4000, is_image: false, mime: VOICE_MESSAGE_MIME, blob, provider: null };
+}
+
+function mockOgg(secs) {
+  const page = (granule, body, flags) => {
+    const out = new Uint8Array(28 + body.length);
+    out.set([0x4f, 0x67, 0x67, 0x53, 0, flags]);
+    new DataView(out.buffer).setUint32(6, granule, true);
+    out[26] = 1;
+    out[27] = body.length;
+    out.set(body, 28);
+    return out;
+  };
+  const head = new Uint8Array([79, 112, 117, 115, 72, 101, 97, 100, 1, 1, 56, 1, 128, 187, 0, 0, 0, 0, 0]);
+  const pages = [page(0, head, 2), page(312 + secs * 48000, new Uint8Array(4), 4)];
+  const out = new Uint8Array(pages[0].length + pages[1].length);
+  out.set(pages[0]);
+  out.set(pages[1], pages[0].length);
+  return out.buffer;
+}
+
 function mockSeed() {
   const ch = (name, kind, topic) => ({
     id: crypto.randomUUID(), name, kind, topic: topic || null, voice_users: [],
@@ -289,8 +313,12 @@ function mockSeed() {
       content: "", created_at: new Date(Date.now() - 300e3).toISOString(), edited: false, attachments: [],
       poll: { question: "Raid night this week?", multi: false, total: 4, closed: false, closes_at: new Date(Date.now() + 3 * 3600e3).toISOString(),
         options: [{ text: "Friday", votes: 3, mine: true }, { text: "Saturday", votes: 1, mine: false }, { text: "Sunday after lunch", votes: 0, mine: false }] } },
+    { id: "g3", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
+      content: "", created_at: new Date(Date.now() - 300e3).toISOString(), edited: false,
+      attachments: [{ filename: VOICE_MESSAGE_FILENAME, size_bytes: 61440, is_image: false, mime: VOICE_MESSAGE_MIME, blob: "voice@mock", provider: null }] },
   ];
   mock.readMarks = { [server.channels[1].id]: { id: "g0", at: Date.now() - 1200e3, set: Date.now() - 1100e3 } };
+  (mock.voiceClips ||= {})["voice@mock"] = 14;
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
     { channel: c0, message: "x1", by: "m1", at: new Date(Date.now() - 3000e3).toISOString() },
@@ -464,6 +492,7 @@ async function mockInvoke(cmd, args = {}) {
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
+        can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         stickers: s.stickers || [], emoticons: s.emoticons || [], stickers_shareable: !!s.stickers_shareable, emoticons_shareable: !!s.emoticons_shareable,
         add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
         can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
@@ -685,6 +714,29 @@ async function mockInvoke(cmd, args = {}) {
       return sent;
     }
     case "attach_dm_file": return null;
+    case "start_voice_recording":
+      mock.recordingSince = Date.now();
+      return null;
+    case "cancel_voice_recording":
+      mock.recordingSince = null;
+      return null;
+    case "send_voice_message":
+    case "send_dm_voice_message": {
+      const secs = Math.max(1, Math.round((Date.now() - (mock.recordingSince || Date.now())) / 1000));
+      mock.recordingSince = null;
+      const att = mockVoiceAttachment(secs);
+      if (cmd === "send_dm_voice_message") {
+        const dm = mock.dms[args.userId];
+        if (!dm) throw "unknown conversation";
+        const sent = { id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: "", created_at: new Date().toISOString(), outgoing: true, pending: false, reply_to: null, reply_preview: null, reactions: [], attachments: [att] };
+        dm.messages.push(sent);
+        return sent;
+      }
+      const sent = { id: crypto.randomUUID(), channel: args.channelId, author_id: "me", author_name: mock.user.username, content: "", created_at: new Date().toISOString(), edited: false, attachments: [att], reactions: [] };
+      (mock.messages[args.channelId] ||= []).push(sent);
+      return sent;
+    }
+    case "get_voice_message": return mockOgg((mock.voiceClips || {})[args.blob] ?? 30);
     case "start_dm_call": {
       const dm = mock.dms[args.userId];
       if (!dm) throw "no such conversation";
@@ -1258,6 +1310,8 @@ const ICONS = {
   reply: "M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z",
   smilePlus: "M20 4V2h-2v2h-2v2h2v2h2V6h2V4zM12 20a8 8 0 0 1 0-16 7.9 7.9 0 0 1 2 .26V2.2A10 10 0 1 0 21.8 10h-2.06A7.9 7.9 0 0 1 20 12a8 8 0 0 1-8 8zm-3.5-9A1.5 1.5 0 1 0 7 9.5 1.5 1.5 0 0 0 8.5 11zm7 0A1.5 1.5 0 1 0 14 9.5 1.5 1.5 0 0 0 15.5 11zm-8 3a5 5 0 0 0 9 0z",
   play: "M8 5v14l11-7z",
+  pause: "M6 5h4v14H6zm8 0h4v14h-4z",
+  send: "M3 20v-6l11-2-11-2V4l19 8z",
   folder: "M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z",
   camera: "M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11z",
   cameraOff: "M21 6.5l-4 4V7a1 1 0 0 0-1-1H9.82L21 17.18zM3.27 2 2 3.27 4.73 6H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 .55-.17L19.73 21 21 19.73z",
@@ -2804,7 +2858,8 @@ function onDmReceived(dm) {
   }
   const prefs = notifyPrefs();
   if (shouldNotify({ level: prefs.level, presence: state.user?.presence, focusedOnIt, isDm: true, mentioned: true })) {
-    invoke("notify", { title: dm.name, body: plainText(dm.content), target: `dm:${dm.user}` }).catch(() => {});
+    const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "");
+    invoke("notify", { title: dm.name, body, target: `dm:${dm.user}` }).catch(() => {});
     playSound("dm");
   }
 }
@@ -4907,13 +4962,107 @@ function formatSize(bytes) {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
+const voiceClips = new Map();
+let voicePlaying = null;
+
+function voicePlaybackSupported() {
+  if (typeof Audio === "undefined") return false;
+  return new Audio().canPlayType(VOICE_PLAYBACK_TYPE) !== "";
+}
+
+async function loadVoiceClip(att) {
+  if (voiceClips.has(att.blob)) return voiceClips.get(att.blob);
+  const bytes = await invoke("get_voice_message", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null });
+  const clip = { url: URL.createObjectURL(new Blob([bytes], { type: VOICE_PLAYBACK_TYPE })), duration: oggDuration(new Uint8Array(bytes)) };
+  voiceClips.set(att.blob, clip);
+  return clip;
+}
+
+function renderVoiceMessage(att) {
+  const box = el("div", "voice-msg");
+  box.title = "Voice message";
+  const play = el("button", "voice-play");
+  play.type = "button";
+  play.title = "Play";
+  play.appendChild(svgIcon("play", 16));
+  const wave = el("div", "voice-wave");
+  const bars = waveformBars(att.blob).map(height => {
+    const bar = el("i");
+    bar.style.height = `${Math.round(height * 100)}%`;
+    wave.appendChild(bar);
+    return bar;
+  });
+  const elapsed = el("span", "voice-elapsed", "0:00");
+  const total = el("span", "voice-total", "–:––");
+  const time = el("span", "voice-time");
+  time.append(elapsed, el("span", "voice-sep", "/"), total);
+  box.append(play, wave, time);
+  let audio = null;
+  let duration = null;
+  const paint = progress => {
+    const played = playedBars(progress, bars.length);
+    bars.forEach((bar, i) => bar.classList.toggle("played", i < played));
+  };
+  const showPlaying = playing => {
+    play.replaceChildren(svgIcon(playing ? "pause" : "play", 16));
+    play.title = playing ? "Pause" : "Play";
+    box.classList.toggle("playing", playing);
+  };
+  loadVoiceClip(att).then(clip => {
+    duration = clip.duration;
+    if (duration !== null) total.textContent = formatClock(duration);
+  }).catch(() => {});
+  play.onclick = async () => {
+    if (audio && !audio.paused) {
+      audio.pause();
+      return;
+    }
+    if (!audio) {
+      play.disabled = true;
+      try {
+        const clip = await loadVoiceClip(att);
+        audio = new Audio(clip.url);
+        audio.preload = "auto";
+        audio.ontimeupdate = () => {
+          const length = duration || audio.duration || 0;
+          elapsed.textContent = formatClock(audio.currentTime);
+          paint(length > 0 ? audio.currentTime / length : 0);
+        };
+        audio.onplay = () => {
+          if (voicePlaying && voicePlaying !== audio) voicePlaying.pause();
+          voicePlaying = audio;
+          showPlaying(true);
+        };
+        audio.onpause = () => showPlaying(false);
+        audio.onended = () => {
+          showPlaying(false);
+          elapsed.textContent = "0:00";
+          paint(0);
+        };
+        audio.onerror = () => {
+          showPlaying(false);
+          toast("This voice message could not be played");
+        };
+      } catch (e) {
+        toast(String(e));
+        play.disabled = false;
+        return;
+      }
+      play.disabled = false;
+    }
+    audio.play().catch(() => toast("This voice message could not be played"));
+  };
+  return box;
+}
+
 function renderAttachment(att) {
+  if (isVoiceMessage(att) && voicePlaybackSupported()) return renderVoiceMessage(att);
   const box = el("div", "attachment");
   const icon = el("span", "file-icon");
   icon.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5z"/></svg>';
   box.appendChild(icon);
   const meta = el("div", "file-meta");
-  meta.appendChild(el("div", "file-name", att.filename));
+  meta.appendChild(el("div", "file-name", isVoiceMessage(att) ? voiceMessageText(null) : att.filename));
   meta.appendChild(el("div", "file-size", formatSize(att.size_bytes)));
   box.appendChild(meta);
   const btn = el("button", "btn-secondary btn-small", "Download");
@@ -7072,7 +7221,7 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
-  ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
+  ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
 ];
 
@@ -10848,8 +10997,10 @@ function openGifPicker(query = "", target = null) {
 
 function toggleComposerMenu() {
   const menu = $("composer-menu");
-  if (state.view === "server" && !canAttachHere()) {
-    toast("You can't send files or images in this server");
+  const files = state.view !== "server" || canAttachHere();
+  const voice = state.view !== "server" || canSendVoiceHere();
+  if (!files && !voice) {
+    toast("You can't send files or voice messages in this server");
     return;
   }
   if (!menu.classList.contains("hidden")) {
@@ -10858,7 +11009,10 @@ function toggleComposerMenu() {
   }
   closeFloating("composer-menu");
   closeGifPicker();
-  $("cm-gif").classList.toggle("hidden", !gifSettings().key && !serverHasGifs());
+  $("cm-file").classList.toggle("hidden", !files);
+  $("cm-video").classList.toggle("hidden", !files);
+  $("cm-gif").classList.toggle("hidden", !files || (!gifSettings().key && !serverHasGifs()));
+  $("cm-voice").classList.toggle("hidden", !voice || voiceRec.target !== null);
   $("cm-poll").classList.toggle("hidden", state.view !== "server");
   placePopup(menu, $("attach-btn"), "above");
 }
@@ -10945,6 +11099,67 @@ async function sendPoll() {
   }
 }
 
+const voiceRec = { target: null, startedAt: 0, timer: null, busy: false };
+
+function voiceRecordingTarget() {
+  if (inDmView()) return { dm: state.currentDm.user, name: state.currentDm.name };
+  if (state.view === "server" && state.currentServer && state.currentChannel) {
+    return { server: state.currentServer.id, channel: state.currentChannel.id };
+  }
+  return null;
+}
+
+function showVoiceRecorder(shown) {
+  $("voice-rec").classList.toggle("hidden", !shown);
+  $("voice-rec-send").disabled = false;
+  $("voice-rec-cancel").disabled = false;
+  if (!shown) $("voice-rec-time").textContent = "0:00";
+}
+
+function stopVoiceTimer() {
+  if (voiceRec.timer) clearInterval(voiceRec.timer);
+  voiceRec.timer = null;
+}
+
+function tickVoiceRecording() {
+  const { label, done } = recordingTimer((Date.now() - voiceRec.startedAt) / 1000);
+  $("voice-rec-time").textContent = label;
+  if (done) sendVoiceRecording();
+}
+
+async function startVoiceRecording() {
+  closeFloating();
+  const target = voiceRecordingTarget();
+  if (!target || voiceRec.target) return;
+  if (target.server && !canSendVoiceHere()) {
+    toast("You can't send voice messages in this server");
+    return;
+  }
+  try {
+    await invoke("start_voice_recording");
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  voiceRec.target = target;
+  voiceRec.startedAt = Date.now();
+  showVoiceRecorder(true);
+  tickVoiceRecording();
+  voiceRec.timer = setInterval(tickVoiceRecording, 250);
+}
+
+async function cancelVoiceRecording() {
+  if (!voiceRec.target || voiceRec.busy) return;
+  stopVoiceTimer();
+  voiceRec.target = null;
+  showVoiceRecorder(false);
+  try {
+    await invoke("cancel_voice_recording");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 function renderPoll(message) {
   const poll = message.poll;
   const now = Date.now();
@@ -11018,6 +11233,29 @@ async function closePoll(message) {
   } catch (e) {
     toast(String(e));
   }
+}
+
+async function sendVoiceRecording() {
+  if (!voiceRec.target || voiceRec.busy) return;
+  voiceRec.busy = true;
+  stopVoiceTimer();
+  $("voice-rec-send").disabled = true;
+  $("voice-rec-cancel").disabled = true;
+  const target = voiceRec.target;
+  try {
+    if (target.dm) {
+      const sent = await invoke("send_dm_voice_message", { userId: target.dm });
+      if (sent && inDmView() && state.currentDm.user === target.dm) await selectDm(target.dm, target.name);
+    } else {
+      const sent = await invoke("send_voice_message", { serverId: target.server, channelId: target.channel });
+      if (sent && state.currentChannel && state.currentChannel.id === target.channel) await selectChannel(state.currentChannel);
+    }
+  } catch (e) {
+    toast(String(e));
+  }
+  voiceRec.busy = false;
+  voiceRec.target = null;
+  showVoiceRecorder(false);
 }
 
 async function attachFromMenu(kind) {
@@ -11979,8 +12217,12 @@ function wireEvents() {
   $("cm-video").prepend(svgIcon("movie", 18));
   $("cm-gif").prepend(svgIcon("gifBox", 18));
   $("cm-poll").prepend(svgIcon("poll", 18));
+  $("cm-voice").prepend(svgIcon("mic", 18));
   $("cm-file").onclick = () => attachFromMenu("file");
   $("cm-video").onclick = () => attachFromMenu("video");
+  $("cm-voice").onclick = startVoiceRecording;
+  $("voice-rec-cancel").onclick = cancelVoiceRecording;
+  $("voice-rec-send").onclick = sendVoiceRecording;
   $("cm-gif").onclick = () => {
     closeFloating();
     openGifPicker("");
@@ -13422,6 +13664,7 @@ const PERMISSION_LABELS = [
   ["pin_messages", "Pin Messages"],
   ["bypass_slow_mode", "Bypass Slow Mode"],
   ["attach_files", "Send Files and Images"],
+  ["send_voice_messages", "Send Voice Messages"],
   ["add_emojis", "Add Emojis"],
   ["add_stickers", "Add Stickers"],
   ["add_emoticons", "Add Emoticons"],
@@ -14118,10 +14361,14 @@ function canAttachHere() {
   return !state.currentServer || state.currentServer.can_attach_files !== false;
 }
 
+function canSendVoiceHere() {
+  return !state.currentServer || state.currentServer.can_send_voice_messages !== false;
+}
+
 function syncAttachAccess() {
-  const locked = state.view === "server" && !canAttachHere();
+  const locked = state.view === "server" && !canAttachHere() && !canSendVoiceHere();
   $("attach-btn").classList.toggle("locked", locked);
-  $("attach-btn").title = locked ? "You can't send files or images in this server" : "Attach";
+  $("attach-btn").title = locked ? "You can't send files or voice messages in this server" : "Attach";
 }
 
 function renderRoleSettings(server) {
