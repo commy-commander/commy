@@ -821,6 +821,14 @@
                 <button data-bg="blur" role="radio"><strong>Blur</strong></button>
                 <button data-bg="image" role="radio"><strong>Image</strong></button>
               </div>
+              <div class="field-label" id="cam-avatar-label">Avatar</div>
+              <div class="segmented cam-avatars" id="cam-avatar" role="radiogroup" aria-labelledby="cam-avatar-label">
+                <button data-avatar="off" role="radio" title="No avatar"><strong>Off</strong></button>
+                <button data-avatar="cat" role="radio" title="Cat"><img alt="Cat" /></button>
+                <button data-avatar="bot" role="radio" title="Robot"><img alt="Robot" /></button>
+                <button data-avatar="alien" role="radio" title="Alien"><img alt="Alien" /></button>
+                <button data-avatar="custom" role="radio" title="Your own VRM avatar"><img alt="Your own avatar" /><strong class="cam-avatar-add">+</strong></button>
+              </div>
               <label class="setting-row cam-mirror-row">
                 <span class="setting-title">Mirror my video</span>
                 <input type="checkbox" id="cam-mirror" class="switch" />
@@ -829,6 +837,7 @@
               <div class="cam-actions">
                 <button class="btn-secondary btn-small" id="cam-preview-btn">Test Camera</button>
                 <button class="btn-secondary btn-small" id="cam-backdrop-btn">Choose Image</button>
+                <button class="btn-secondary btn-small" id="cam-avatar-btn">Choose Avatar</button>
               </div>
             </div>
           </div>
@@ -1728,6 +1737,7 @@
     <button id="avatar-remove" class="danger">Remove Avatar</button>
   </div>
   <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
+  <input type="file" id="vrm-file" accept=".vrm" class="hidden" />
   <div class="emoji-pop hidden" id="emoji-pop">
     <input id="emoji-pop-search" type="text" placeholder="Search emojis" autocomplete="off" />
     <div class="emoji-grid" id="emoji-pop-grid"></div>
@@ -1762,6 +1772,8 @@
   <script src="scripts/server-templates.js"></script>
   <script src="scripts/camera-fx.js"></script>
   <script src="scripts/camera-pipeline.js"></script>
+  <script src="scripts/avatar-rig.js"></script>
+  <script src="scripts/camera-avatar.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
   <script src="scripts/entry-list.js"></script>
