@@ -1,0 +1,170 @@
+use crate::handler::Act;
+use crate::Bot;
+use chrono::{DateTime, Duration, Utc};
+use commy_core::server::valid_reaction;
+use commy_core::{
+    action, Message, Permissions, ServerEvent, ServerId, ServerState, SignedEvent, TombstoneProof, UserId,
+};
+use commy_net::protocol::{gossip_size, MAX_GOSSIP_BYTES};
+use commy_net::WirePayload;
+
+pub const MAX_CONTENT_BYTES: usize = 4000;
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ActError {
+    #[error("the bot is not in that server")]
+    UnknownServer,
+    #[error("the bot has no copy of that server yet; it gets one when the owner's app is online")]
+    NotReady,
+    #[error("the bot is not a member of that server any more")]
+    NotMember,
+    #[error("no such channel")]
+    UnknownChannel,
+    #[error("no such message (the bot keeps one day of messages)")]
+    UnknownMessage,
+    #[error("no such member")]
+    UnknownMember,
+    #[error("no such role")]
+    UnknownRole,
+    #[error("the bot needs a role with {0}")]
+    Missing(&'static str),
+    #[error("the bot can only edit its own messages")]
+    NotOwn,
+    #[error("the server owner cannot be removed")]
+    Owner,
+    #[error("the bot cannot remove itself")]
+    Itself,
+    #[error("a message needs some text")]
+    Empty,
+    #[error("that message is too long")]
+    TooLong,
+    #[error("this server's auto moderation would hold that message ({0})")]
+    Held(String),
+    #[error("a reaction is one emoji, or a custom emoji of this server written as :name:")]
+    BadEmoji,
+    #[error("the server did not accept that: {0}")]
+    Refused(String),
+}
+
+impl Act {
+    fn needs(&self) -> &'static str {
+        match self {
+            Act::Send { .. } | Act::Edit { .. } => "Send Messages in that channel",
+            Act::React { .. } => "Add Reactions",
+            Act::Remove { .. } => "Manage Messages",
+            Act::Kick { .. } => "Kick Members",
+            Act::Ban { .. } => "Ban Members",
+            Act::AddRole { .. } | Act::RemoveRole { .. } => "Manage Roles",
+        }
+    }
+}
+
+impl Bot {
+    pub fn perform(&mut self, server: ServerId, act: Act, wall: DateTime<Utc>) -> Result<WirePayload, ActError> {
+        let me = self.profile.id;
+        let needs = act.needs();
+        let replica = self.replicas.get_mut(&server).ok_or(ActError::UnknownServer)?;
+        let state = replica.state.as_mut().ok_or(ActError::NotReady)?;
+        if !state.server.is_current_member(me) {
+            return Err(ActError::NotMember);
+        }
+        let identity = &self.identity;
+        let signed = |event: ServerEvent| WirePayload::Signed(SignedEvent::sign(server, me, wall.timestamp_millis(), event, identity));
+        let payload = match act {
+            Act::Send { channel, content, reply_to } => {
+                state.server.channel(channel).ok_or(ActError::UnknownChannel)?;
+                if !state.server.can_post_in(channel, me) {
+                    return Err(ActError::Missing(needs));
+                }
+                let mut message = Message::new(channel, me, clean(&content)?);
+                message.created_at = wall;
+                message.reply_to = reply_to.filter(|id| state.has_message(*id));
+                if let Some(hold) = state.hold(&message) {
+                    return Err(ActError::Held(hold.describe().to_string()));
+                }
+                message.sign(server, identity);
+                WirePayload::Event(ServerEvent::MessageCreate { message })
+            }
+            Act::Edit { message, content } => {
+                let original = state.message(message).ok_or(ActError::UnknownMessage)?.clone();
+                if original.author != me {
+                    return Err(ActError::NotOwn);
+                }
+                let content = clean(&content)?;
+                let edited_at = match original.edited_at {
+                    Some(last) if wall <= last => last + Duration::milliseconds(1),
+                    _ => wall,
+                };
+                let edited = Message { content: content.clone(), edited_at: Some(edited_at), ..original.clone() };
+                if let Some(hold) = state.hold(&edited) {
+                    return Err(ActError::Held(hold.describe().to_string()));
+                }
+                WirePayload::Event(original.edit_event(server, content, edited_at, identity))
+            }
+            Act::Remove { message } => {
+                let found = state.message(message).ok_or(ActError::UnknownMessage)?;
+                if found.author != me && !state.server.permissions_for(me).allows(Permissions::MANAGE_MESSAGES) {
+                    return Err(ActError::Missing(needs));
+                }
+                let proof = TombstoneProof::sign(server, found.channel, message, me, wall, identity);
+                WirePayload::Event(proof.into_event())
+            }
+            Act::React { message, emoji, active } => {
+                let emoji = emoji.trim().to_string();
+                if !valid_reaction(&emoji) {
+                    return Err(ActError::BadEmoji);
+                }
+                let channel = state.message(message).ok_or(ActError::UnknownMessage)?.channel;
+                signed(ServerEvent::ReactionSet { channel, message, emoji, user: me, active })
+            }
+            Act::Kick { user } => signed(ServerEvent::MemberLeave { server, user: removable(state, me, user)? }),
+            Act::Ban { user } => signed(ServerEvent::MemberBan { server, user: removable(state, me, user)? }),
+            Act::AddRole { user, role } => signed(ServerEvent::RoleAssign { server, user: member(state, user)?, role: known_role(state, role)? }),
+            Act::RemoveRole { user, role } => {
+                signed(ServerEvent::RoleUnassign { server, user: member(state, user)?, role: known_role(state, role)? })
+            }
+        };
+        if gossip_size(&payload) > MAX_GOSSIP_BYTES {
+            return Err(ActError::TooLong);
+        }
+        let applied = match &payload {
+            WirePayload::Signed(signed) => {
+                if !action::authorized(&state.server, me, &signed.event) {
+                    return Err(ActError::Missing(needs));
+                }
+                state.apply_signed(signed)
+            }
+            WirePayload::Event(event) => state.apply(event.clone()),
+            _ => Ok(false),
+        };
+        applied.map_err(|e| ActError::Refused(e.to_string()))?;
+        Ok(payload)
+    }
+}
+
+fn clean(content: &str) -> Result<String, ActError> {
+    let content = content.trim();
+    match content.len() {
+        0 => Err(ActError::Empty),
+        n if n > MAX_CONTENT_BYTES => Err(ActError::TooLong),
+        _ => Ok(content.to_string()),
+    }
+}
+
+fn member(state: &ServerState, user: UserId) -> Result<UserId, ActError> {
+    state.server.is_current_member(user).then_some(user).ok_or(ActError::UnknownMember)
+}
+
+fn removable(state: &ServerState, me: UserId, user: UserId) -> Result<UserId, ActError> {
+    if user == me {
+        return Err(ActError::Itself);
+    }
+    if user == state.server.owner {
+        return Err(ActError::Owner);
+    }
+    member(state, user)
+}
+
+fn known_role(state: &ServerState, role: commy_core::RoleId) -> Result<commy_core::RoleId, ActError> {
+    state.server.roles.iter().any(|r| r.id == role).then_some(role).ok_or(ActError::UnknownRole)
+}

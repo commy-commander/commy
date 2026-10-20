@@ -1,6 +1,7 @@
+use crate::handler::BotEvent;
 use commy_core::{
     action, Action, Identity, Message, MessageId, ServerEvent, ServerId, ServerState, SignedEvent, StoreError,
-    TombstoneProof, UserProfile,
+    TombstoneProof, UserId, UserProfile,
 };
 use commy_net::catchup::{apply_items, apply_profiles, ApplyReport};
 use commy_net::protocol::{verify_sync_response, SyncMember};
@@ -50,7 +51,7 @@ impl Replica {
         me: &UserProfile,
         now: Instant,
         now_ms: i64,
-    ) -> Option<Vec<Message>> {
+    ) -> Option<Vec<BotEvent>> {
         if self.state.is_some() || !self.vouched(&payload, now_ms) {
             return None;
         }
@@ -69,24 +70,25 @@ impl Replica {
         if let Err(e) = state.apply(ServerEvent::MemberJoin { server: sid, profile: me.clone() }) {
             tracing::warn!("could not join {} from its snapshot: {e}", state.server.name);
         }
-        let mut fresh = Vec::new();
+        let mut fresh_ids = Vec::new();
         for message in recent_messages {
             let id = message.id;
             if state.apply(ServerEvent::MessageCreate { message }) == Ok(true) {
-                fresh.push(id);
+                fresh_ids.push(id);
             }
         }
         for entry in voice.into_iter().filter(|v| v.user != me.id) {
             let _ = state.apply(entry.into_event());
         }
-        let mut fresh: Vec<Message> = fresh.into_iter().filter_map(|id| state.message(id).cloned()).collect();
+        let mut fresh = vec![BotEvent::Ready];
+        fresh.extend(fresh_ids.into_iter().filter_map(|id| state.message(id).cloned()).map(BotEvent::MessageCreate));
         self.state = Some(state);
         let early: VecDeque<Pending> = self.early.drain(..).filter(|(at, ..)| now.duration_since(*at) < PENDING_FOR).collect();
         fresh.extend(self.run(early, now));
         Some(fresh)
     }
 
-    pub fn apply(&mut self, event: ServerEvent, action: Option<Action>, now: Instant) -> Vec<Message> {
+    pub fn apply(&mut self, event: ServerEvent, action: Option<Action>, now: Instant) -> Vec<BotEvent> {
         if self.state.is_none() {
             keep(&mut self.early, (now, event, action));
             return Vec::new();
@@ -99,20 +101,20 @@ impl Replica {
         messages: Vec<Message>,
         tombstones: Vec<TombstoneProof>,
         now: Instant,
-    ) -> (ApplyReport, Vec<Message>) {
+    ) -> (ApplyReport, Vec<BotEvent>) {
         let Some(state) = self.state.as_mut() else {
             let rejected = messages.iter().map(|m| m.id).chain(tombstones.iter().map(|p| p.message)).collect();
             return (ApplyReport { rejected, ..ApplyReport::default() }, Vec::new());
         };
         let (report, held) = apply_items(state, messages, tombstones);
-        let fresh = report.applied.iter().filter_map(|id| state.message(*id).cloned()).collect();
+        let fresh = report.applied.iter().filter_map(|id| state.message(*id).cloned()).map(BotEvent::MessageCreate).collect();
         for event in held {
             keep(&mut self.pending, (now, event, None));
         }
         (report, fresh)
     }
 
-    pub fn learn_profiles(&mut self, profiles: Vec<UserProfile>, now: Instant) -> Vec<Message> {
+    pub fn learn_profiles(&mut self, profiles: Vec<UserProfile>, now: Instant) -> Vec<BotEvent> {
         let Some(state) = self.state.as_mut() else { return Vec::new() };
         if apply_profiles(state, profiles).is_empty() {
             return Vec::new();
@@ -126,18 +128,18 @@ impl Replica {
         self.pending.drain(..).collect()
     }
 
-    fn run(&mut self, mut queue: VecDeque<Pending>, now: Instant) -> Vec<Message> {
+    fn run(&mut self, mut queue: VecDeque<Pending>, now: Instant) -> Vec<BotEvent> {
         let mut fresh = Vec::new();
         let Some(state) = self.state.as_mut() else { return fresh };
         while let Some((at, event, action)) = queue.pop_front() {
-            let (applied, created, pinned) = apply_live(state, event.clone(), action);
+            let (applied, happened, pinned) = apply_live(state, event.clone(), action);
             match applied {
                 Err(StoreError::UnknownAuthorKey(_)) => keep(&mut self.pending, (at, event, action)),
                 Err(_) if awaits_create(&self.pending, &event) => keep(&mut self.pending, (at, event, action)),
                 Err(e) => tracing::debug!("rejected an event: {e}"),
                 Ok(_) => {}
             }
-            fresh.extend(created);
+            fresh.extend(happened);
             if pinned {
                 self.pending.retain(|(at, ..)| now.duration_since(*at) < PENDING_FOR);
                 queue.extend(self.pending.drain(..));
@@ -178,12 +180,8 @@ impl Replica {
     }
 }
 
-fn apply_live(state: &mut ServerState, event: ServerEvent, action: Option<Action>) -> (Result<bool, StoreError>, Option<Message>, bool) {
-    let created = match &event {
-        ServerEvent::MessageCreate { message } if !state.has_message(message.id) => Some(message.id),
-        ServerEvent::MessageEdit { message, .. } => Some(*message),
-        _ => None,
-    };
+fn apply_live(state: &mut ServerState, event: ServerEvent, action: Option<Action>) -> (Result<bool, StoreError>, Option<BotEvent>, bool) {
+    let before = Before::of(state, &event);
     let keyless = match &event {
         ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } => {
             Some(profile.id).filter(|user| state.identity_of(*user).is_none())
@@ -194,9 +192,55 @@ fn apply_live(state: &mut ServerState, event: ServerEvent, action: Option<Action
         Some(action) => state.apply_signed(&SignedEvent { action, event }),
         None => state.apply_unsigned(event),
     };
-    let created = created.filter(|_| matches!(applied, Ok(true))).and_then(|id| state.message(id).cloned());
     let pinned = keyless.is_some_and(|user| applied.is_ok() && state.identity_of(user).is_some());
-    (applied, created, pinned)
+    let happened = matches!(applied, Ok(true)).then(|| before.after(state)).flatten();
+    (applied, happened, pinned)
+}
+
+enum Before {
+    Nothing,
+    Created(MessageId),
+    Edited(MessageId),
+    Deleted(commy_core::ChannelId, MessageId),
+    Reacted(commy_core::ChannelId, MessageId, UserId, String),
+    Joined(UserId),
+    Left(UserId),
+}
+
+impl Before {
+    fn of(state: &ServerState, event: &ServerEvent) -> Self {
+        use ServerEvent as E;
+        let server = &state.server;
+        match event {
+            E::MessageCreate { message } if !state.has_message(message.id) => Before::Created(message.id),
+            E::MessageEdit { message, .. } => Before::Edited(*message),
+            E::MessageDelete { channel, message, .. } if state.has_message(*message) => Before::Deleted(*channel, *message),
+            E::ReactionSet { channel, message, emoji, user, .. } | E::ReactionToggle { channel, message, emoji, user } => {
+                Before::Reacted(*channel, *message, *user, emoji.clone())
+            }
+            E::MemberJoin { profile, .. } if !server.is_current_member(profile.id) => Before::Joined(profile.id),
+            E::MemberLeave { user, .. } | E::MemberBan { user, .. } if server.is_current_member(*user) => Before::Left(*user),
+            _ => Before::Nothing,
+        }
+    }
+
+    fn after(self, state: &ServerState) -> Option<BotEvent> {
+        Some(match self {
+            Before::Created(id) => BotEvent::MessageCreate(state.message(id)?.clone()),
+            Before::Edited(id) => BotEvent::MessageUpdate(state.message(id)?.clone()),
+            Before::Deleted(channel, message) => BotEvent::MessageDelete { channel, message },
+            Before::Reacted(channel, message, user, emoji) => {
+                let on = state.message(message)?.reactions.iter().any(|r| r.emoji == emoji && r.users.contains(&user));
+                match on {
+                    true => BotEvent::ReactionAdd { channel, message, user, emoji },
+                    false => BotEvent::ReactionRemove { channel, message, user, emoji },
+                }
+            }
+            Before::Joined(user) if state.server.is_current_member(user) => BotEvent::MemberJoin(user),
+            Before::Left(user) if !state.server.is_current_member(user) => BotEvent::MemberLeave(user),
+            Before::Nothing | Before::Joined(_) | Before::Left(_) => return None,
+        })
+    }
 }
 
 fn keep(queue: &mut VecDeque<Pending>, item: Pending) {
