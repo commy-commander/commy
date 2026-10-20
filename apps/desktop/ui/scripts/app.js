@@ -2,6 +2,8 @@
 
 const IS_TAURI = Boolean(window.__TAURI__);
 const invoke = IS_TAURI ? window.__TAURI__.core.invoke : mockInvoke;
+const discoverState = { open: false, q: "", category: null, cursor: null, entries: [], busy: false, request: 0 };
+const discoveryState = { listing: null, dirty: false };
 
 window.addEventListener("error", e => {
   try { toast(`UI error: ${e.message}`); } catch (_) {}
@@ -257,6 +259,20 @@ function mockSeed() {
   server.members[0].tag_color = "9b7bff";
   server.members[0].color = "9b7bff";
   mock.servers[server.id] = server;
+  mock.directory = [
+    { code: "KQ7M3N4P", key: "q".repeat(43), name: "Rust Hangout", category: "tech", members: 250, description: "Borrow checker support group, weekly code reviews and a friendly place to ask the questions you were afraid to ask. Beginners welcome, lifetimes optional." },
+    { code: "pixel-club", key: "Zx9-_".repeat(4) + "aA", name: "Pixel Club", category: "art", members: 100, description: "Pixel art, palettes and tiny animations. Share your work in progress and get kind, concrete feedback." },
+    { code: "SYNTH2V4W", key: "s".repeat(43), name: "Synth Lounge", category: "music", members: 500, description: "Modular jams every Friday night, patch notes, gear talk and the occasional live set over voice." },
+    { code: "RAIDN8GHT", key: "r".repeat(43), name: "Raid Night", category: "gaming", members: 1000, description: "Co-op raids, weekend tournaments and a soundboard that is honestly out of control." },
+    { code: "STARGAZ3R", key: "t".repeat(43), name: "Stargazers", category: "science", members: 50, description: "Backyard astronomy, telescope builds and clear-sky alerts for the northern hemisphere." },
+    { code: "LERNLAT1N", key: "l".repeat(43), name: "Lingua Franca", category: "languages", members: 25, description: "Practice Spanish, Portuguese and Italian with patient speakers. Voice tables every evening." },
+    { code: "STUDYHALL", key: "u".repeat(43), name: "Study Hall", category: "education", members: 100, description: "Quiet focus rooms, exam countdowns and shared notes for university students." },
+    { code: "SUNDAYRUN", key: "n".repeat(43), name: "Sunday Runners", category: "sports", members: 25, description: "Long runs, race day plans and far too many photos of shoes." },
+    { code: "COZYCRN3R", key: "c".repeat(43), name: "Cozy Corner", category: "friends", members: 10, description: "" },
+    { code: "BOARDGAM3", key: "b".repeat(43), name: "Board Game Night", category: "gaming", members: 50, description: "Tabletop over video, from quick card games to six-hour campaigns. New players always get a seat." },
+    { code: "FILMCLUB2", key: "f".repeat(43), name: "Midnight Film Club", category: "other", members: 25, description: "One film a week, watched together with the soundtrack on voice, then argued about for days." },
+    { code: "MAKERSPCE", key: "m".repeat(43), name: "Makerspace", category: "tech", members: 10, description: "3D printing, soldering irons and home automation that mostly works." },
+  ];
   mock.dms.m2 = {
     name: "nova",
     kind: "request",
@@ -554,6 +570,38 @@ async function mockInvoke(cmd, args = {}) {
       if (s) s.public = args.public;
       return null;
     }
+    case "browse_directory": {
+      const words = normalizeDirectorySearch(args.q).split(" ").filter(Boolean);
+      const rows = (mock.directory || [])
+        .filter(l => !args.category || l.category === args.category)
+        .filter(l => words.every(w => `${l.name} ${l.description}`.toLowerCase().includes(w)))
+        .sort((a, b) => b.members - a.members || a.name.localeCompare(b.name));
+      const start = Number(args.cursor) || 0;
+      const page = rows.slice(start, start + 24);
+      return { host: "commy.chat", next_cursor: start + 24 < rows.length ? String(start + 24) : null,
+        entries: page.map(l => ({ code: l.code, name: l.name, description: l.description, category: l.category, members: l.members, link: `https://commy.chat/i/${l.code}#${l.key}` })) };
+    }
+    case "publish_listing": {
+      const s = mock.servers[args.serverId];
+      if (!s) throw "unknown server";
+      if (!s.public) throw "Make the server public before listing it in Discover";
+      const existing = (mock.listings || {})[args.serverId];
+      const code = existing ? existing.code : "KQ7M3N4P";
+      const listing = { origin: "https://commy.chat", code, link: `https://commy.chat/i/${code}#${"q".repeat(43)}`, category: args.category,
+        description: args.description, members: memberBucket(s.members.length), listed_at: Date.now() };
+      mock.listings = { ...(mock.listings || {}), [args.serverId]: listing };
+      mock.directory = (mock.directory || []).filter(l => l.code !== code)
+        .concat({ code, key: "q".repeat(43), name: s.name, category: listing.category, members: listing.members, description: listing.description });
+      return listing;
+    }
+    case "unlist_server": {
+      const listing = (mock.listings || {})[args.serverId];
+      if (!listing) throw "This server was not listed from this device";
+      delete mock.listings[args.serverId];
+      mock.directory = (mock.directory || []).filter(l => l.code !== listing.code);
+      return null;
+    }
+    case "server_listing": return (mock.listings || {})[args.serverId] || null;
     case "resolve_invite_link": {
       const host = /commy:\/\/i\/([^/]+)\//.exec(args.link)?.[1] || new URL(args.link).host;
       const background = Object.values(mock.servers).map(s => s.invite_background).find(Boolean);
@@ -10432,6 +10480,7 @@ function applyMembersLayout() {
 }
 
 function setViewMode(mode) {
+  closeDiscover();
   state.view = mode;
   const dm = mode === "dm";
   const group = mode === "server" && Boolean(state.currentServer && state.currentServer.group);
@@ -12338,6 +12387,7 @@ function wireEvents() {
   });
 
   $("add-server-btn").onclick = () => showModal("modal-add-server");
+  wireDiscover();
   $("create-server-open").onclick = () => openCreateServer();
   $("create-server-back").onclick = () => showModal("modal-add-server");
   $("template-code-input").addEventListener("input", readTemplateCode);
@@ -12566,6 +12616,7 @@ function wireEvents() {
     try {
       await invoke("set_server_public", { serverId: server.id, public: e.target.checked });
       server.public = e.target.checked;
+      paintDiscoverySettings(server);
     } catch (err) {
       toast(String(err));
       e.target.checked = Boolean(server.public);
@@ -14535,6 +14586,8 @@ function openServerSettings(tab) {
   $("server-public-toggle").checked = Boolean(server.public);
   $("server-public-toggle").disabled = !server.can_manage_server;
   $("server-public-row").classList.toggle("readonly", !server.can_manage_server);
+  discoveryState.dirty = false;
+  paintDiscoverySettings(server);
   $("server-template-section").classList.toggle("hidden", !server.can_manage_server);
   const afkSelect = $("afk-channel-select");
   fillVoiceChannelSelect(afkSelect, "No AFK channel", server, server.afk_channel || "");
@@ -15258,3 +15311,206 @@ function renderAccountSettings() {
 }
 
 boot().catch(e => toast(String(e)));
+
+function closeDiscover() {
+  if (!discoverState.open) return;
+  discoverState.open = false;
+  $("discover").classList.add("hidden");
+  const button = $("discover-btn");
+  button.classList.remove("active");
+  button.setAttribute("aria-pressed", "false");
+}
+
+async function openDiscover() {
+  if (discoverState.open) return;
+  discoverState.open = true;
+  $("discover").classList.remove("hidden");
+  const button = $("discover-btn");
+  button.classList.add("active");
+  button.setAttribute("aria-pressed", "true");
+  renderDiscoverChips();
+  if (!discoverState.entries.length) await loadDiscover(true);
+  $("discover-search").focus();
+}
+
+function renderDiscoverChips() {
+  const box = $("discover-chips");
+  box.innerHTML = "";
+  const chips = [{ id: null, label: "All" }, ...DIRECTORY_CATEGORIES];
+  for (const chip of chips) {
+    const button = el("button", "discover-chip", chip.label);
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(discoverState.category === chip.id));
+    button.onclick = () => {
+      if (discoverState.category === chip.id) return;
+      discoverState.category = chip.id;
+      renderDiscoverChips();
+      loadDiscover(true);
+    };
+    box.appendChild(button);
+  }
+}
+
+async function loadDiscover(reset) {
+  if (discoverState.busy) return;
+  discoverState.busy = true;
+  const more = $("discover-more");
+  more.disabled = true;
+  const request = ++discoverState.request;
+  try {
+    const page = await invoke("browse_directory", {
+      q: normalizeDirectorySearch(discoverState.q) || null,
+      category: discoverState.category,
+      cursor: reset ? null : discoverState.cursor,
+    });
+    if (request !== discoverState.request) return;
+    discoverState.entries = reset ? page.entries : discoverState.entries.concat(page.entries);
+    discoverState.cursor = page.next_cursor || null;
+    if (page.host) $("discover-sub").textContent = `Public servers listed by the people who run them, through ${page.host}.`;
+    renderDiscoverCards();
+  } catch (e) {
+    if (reset) discoverState.entries = [];
+    discoverState.cursor = null;
+    renderDiscoverCards(String(e));
+  } finally {
+    discoverState.busy = false;
+    more.disabled = false;
+  }
+}
+
+function renderDiscoverCards(error) {
+  const grid = $("discover-grid");
+  grid.innerHTML = "";
+  for (const entry of discoverState.entries) grid.appendChild(discoverCard(entry));
+  const empty = $("discover-empty");
+  const none = !discoverState.entries.length;
+  empty.classList.toggle("hidden", !none);
+  if (none) {
+    $("discover-empty-art").replaceChildren(svgIcon("search", 48));
+    $("discover-empty-title").textContent = error ? "Could not load Discover" : "No servers found";
+    $("discover-empty-text").textContent = error || "Try another word or category, or list your own public server from Server Settings.";
+  }
+  $("discover-more").classList.toggle("hidden", !discoverState.cursor);
+}
+
+function discoverCard(entry) {
+  const card = el("div", "discover-card");
+  card.appendChild(el("div", "discover-card-name", entry.name));
+  const meta = el("div", "discover-card-meta");
+  meta.appendChild(el("span", null, directoryCategoryLabel(entry.category)));
+  meta.appendChild(el("span", "discover-dot"));
+  meta.appendChild(el("span", null, memberBucketLabel(entry.members)));
+  card.appendChild(meta);
+  card.appendChild(el("div", "discover-card-text", directoryExcerpt(entry.description, 300)));
+  const foot = el("div", "discover-card-foot");
+  const join = el("button", "btn-primary btn-small", "Join");
+  join.onclick = () => openInviteLink(entry.link);
+  foot.appendChild(join);
+  card.appendChild(foot);
+  return card;
+}
+
+function fillDiscoveryCategories() {
+  const select = $("discovery-category");
+  if (select.options.length) return;
+  for (const category of DIRECTORY_CATEGORIES) {
+    const option = document.createElement("option");
+    option.value = category.id;
+    option.textContent = category.label;
+    select.appendChild(option);
+  }
+}
+
+function paintDiscoveryCounter() {
+  const counter = directoryDescriptionCounter($("discovery-description").value);
+  $("discovery-count").textContent = counter.text;
+  $("discovery-count").classList.toggle("over", counter.over);
+}
+
+async function paintDiscoverySettings(server) {
+  fillDiscoveryCategories();
+  let listing = null;
+  try {
+    listing = await invoke("server_listing", { serverId: server.id });
+  } catch {
+    listing = null;
+  }
+  if (!state.currentServer || state.currentServer.id !== server.id) return;
+  discoveryState.listing = listing;
+  const view = discoverySettingsState({ server, listing });
+  $("discovery-card").classList.toggle("readonly", !view.enabled);
+  $("discovery-hint").textContent = view.hint;
+  const description = $("discovery-description");
+  const category = $("discovery-category");
+  description.disabled = !view.enabled;
+  category.disabled = !view.enabled;
+  if (listing) {
+    description.value = listing.description || "";
+    category.value = listing.category;
+  } else if (!discoveryState.dirty) {
+    description.value = "";
+    category.value = "other";
+  }
+  paintDiscoveryCounter();
+  $("discovery-list").classList.toggle("hidden", view.listed);
+  $("discovery-list").disabled = !view.enabled;
+  $("discovery-update").classList.toggle("hidden", !view.listed);
+  $("discovery-update").disabled = !view.enabled;
+  $("discovery-unlist").classList.toggle("hidden", !view.listed);
+  $("discovery-unlist").disabled = !view.enabled;
+}
+
+async function saveDiscoveryListing() {
+  const server = state.currentServer;
+  if (!server) return;
+  const counter = directoryDescriptionCounter($("discovery-description").value);
+  if (counter.over) return toast(`Keep the description under ${DIRECTORY_DESCRIPTION_MAX} characters`);
+  const buttons = [$("discovery-list"), $("discovery-update")];
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    await invoke("publish_listing", { serverId: server.id, description: $("discovery-description").value, category: $("discovery-category").value });
+    discoveryState.dirty = false;
+    discoverState.entries = [];
+    toast(discoveryState.listing ? "Listing updated" : "Listed in Discover");
+    await paintDiscoverySettings(server);
+  } catch (e) {
+    toast(String(e));
+    buttons.forEach(b => { b.disabled = false; });
+  }
+}
+
+async function removeDiscoveryListing() {
+  const server = state.currentServer;
+  if (!server) return;
+  $("discovery-unlist").disabled = true;
+  try {
+    await invoke("unlist_server", { serverId: server.id });
+    discoveryState.dirty = false;
+    discoverState.entries = [];
+    toast("Removed from Discover");
+    await paintDiscoverySettings(server);
+  } catch (e) {
+    toast(String(e));
+    $("discovery-unlist").disabled = false;
+  }
+}
+
+function wireDiscover() {
+  $("discover-btn").onclick = openDiscover;
+  $("discover-search-icon").replaceChildren(svgIcon("search", 16));
+  let timer = null;
+  $("discover-search").addEventListener("input", e => {
+    discoverState.q = e.target.value;
+    clearTimeout(timer);
+    timer = setTimeout(() => loadDiscover(true), 250);
+  });
+  $("discover-more").onclick = () => loadDiscover(false);
+  $("discovery-description").addEventListener("input", () => {
+    discoveryState.dirty = true;
+    paintDiscoveryCounter();
+  });
+  $("discovery-category").addEventListener("change", () => { discoveryState.dirty = true; });
+  $("discovery-list").onclick = saveDiscoveryListing;
+  $("discovery-update").onclick = saveDiscoveryListing;
+  $("discovery-unlist").onclick = removeDiscoveryListing;
+}

@@ -19,6 +19,9 @@
       <button class="rail-btn rail-add" id="add-server-btn" title="Add a Server">
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
       </button>
+      <button class="rail-btn rail-add rail-discover" id="discover-btn" title="Discover Servers" aria-pressed="false">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 10.9c-.61 0-1.1.49-1.1 1.1s.49 1.1 1.1 1.1c.61 0 1.1-.49 1.1-1.1s-.49-1.1-1.1-1.1zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm2.19 12.19L6 18l3.81-8.19L18 6l-3.81 8.19zM12 20c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+      </button>
       <div class="rail-spacer"></div>
       <footer class="user-panel">
       <button class="user-chip" id="user-chip" title="Set status">
@@ -173,6 +176,30 @@
       </div>
       <div class="cam-grid hidden" id="cam-grid"></div>
       <div class="messages" id="messages"></div>
+      <section class="discover hidden" id="discover" aria-label="Discover Servers">
+        <header class="discover-head">
+          <div class="discover-title">
+            <h2>Discover</h2>
+            <p id="discover-sub">Public servers listed by the people who run them.</p>
+          </div>
+          <label class="discover-search">
+            <span class="discover-search-icon" id="discover-search-icon"></span>
+            <input id="discover-search" type="text" placeholder="Search servers" autocomplete="off" spellcheck="false" aria-label="Search public servers" />
+          </label>
+        </header>
+        <div class="discover-chips" id="discover-chips" role="group" aria-label="Category"></div>
+        <div class="discover-body">
+          <div class="discover-grid" id="discover-grid"></div>
+          <div class="empty-state discover-empty hidden" id="discover-empty">
+            <div class="discover-empty-art" id="discover-empty-art"></div>
+            <h3 id="discover-empty-title">No servers found</h3>
+            <p id="discover-empty-text">Try another word or category, or list your own public server from Server Settings.</p>
+          </div>
+          <div class="discover-foot">
+            <button class="btn-secondary discover-more hidden" id="discover-more">Load more</button>
+          </div>
+        </div>
+      </section>
       <div class="emoji-picker hidden" id="emoji-picker">
         <div class="picker-tabs" id="picker-tabs" role="tablist">
           <button type="button" role="tab" data-kind="emojis" class="active">Emoji</button>
@@ -1702,9 +1729,27 @@
             </div>
             <input type="checkbox" id="server-public-toggle" class="switch" />
           </label>
+          <h2 class="settings-subhead">Server discovery</h2>
+          <div class="settings-card discovery-card" id="discovery-card">
+            <div class="setting-sub" id="discovery-hint"></div>
+            <label class="field-label">Description
+              <textarea id="discovery-description" rows="4" maxlength="300" placeholder="What is this server about, and who is it for?"></textarea>
+            </label>
+            <div class="discovery-row">
+              <label class="field-label discovery-category">Category
+                <select id="discovery-category" class="compact-select"></select>
+              </label>
+              <span class="expr-count" id="discovery-count">0 / 300</span>
+            </div>
+            <div class="discovery-actions">
+              <button class="btn-primary btn-small" id="discovery-list">List in Discover</button>
+              <button class="btn-primary btn-small hidden" id="discovery-update">Update Listing</button>
+              <button class="btn-link danger hidden" id="discovery-unlist">Unlist</button>
+            </div>
+          </div>
           <h2 class="settings-subhead">Games</h2>
           <div class="settings-card">
-            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name and will power server discovery later.</div>
+            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name.</div>
             <div class="tag-editor" id="game-tag-editor">
               <div class="tag-chips" id="game-tag-chips"></div>
               <input id="game-tag-input" type="text" maxlength="32" autocomplete="off" placeholder="Add a game and press Enter" />
@@ -2224,6 +2269,7 @@
   <script src="scripts/sensitive.js"></script>
   <script src="scripts/audit-log.js"></script>
   <script src="scripts/invites.js"></script>
+  <script src="scripts/directory.js"></script>
   <script src="scripts/automod.js"></script>
   <script src="scripts/search.js"></script>
   <script src="scripts/switcher.js"></script>

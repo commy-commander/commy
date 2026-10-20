@@ -6,6 +6,7 @@ import pg from "pg";
 import { hasAccess } from "./access.js";
 import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
+import { commyDirectory } from "./directory.js";
 import { commyDoorbell } from "./doorbell.js";
 import { commyInvites } from "./invites.js";
 import { commyMedia } from "./media.js";
@@ -43,6 +44,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
       requireAccount: config.invitesRequireAccount,
       maxPermanent: config.invitesMaxPermanent,
     }),
+    commyDirectory(),
     commyMedia({ secret: config.secret, klipyKey: config.klipyKey, igdb: config.igdb, fetch }),
     commyVault(),
     twoFactor({ issuer: config.instanceName, allowPasswordless: true }),
@@ -198,6 +200,9 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/commy/invites/resolve": { window: 60, max: 60 },
         "/commy/invites/background": { window: 60, max: 60 },
         "/commy/invites/revoke": { window: 60, max: 30 },
+        "/commy/directory/publish": { window: 600, max: 20 },
+        "/commy/directory/unlist": { window: 60, max: 30 },
+        "/commy/directory/list": { window: 60, max: 60 },
         "/commy/gifs/search": { window: 60, max: 60 },
         "/commy/stickers/search": { window: 60, max: 60 },
         "/commy/games/search": { window: 60, max: 60 },
