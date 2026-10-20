@@ -1550,6 +1550,21 @@ function paintRailContext() {
   const icon = $("rail-context-icon");
   paintServerIcon(icon, server);
   icon.style.background = serverTint(server.id);
+  requestAnimationFrame(fitRailContext);
+}
+
+function fitRailContext() {
+  const box = $("rail-context");
+  box.style.maxWidth = "";
+  box.classList.remove("crowded");
+  if (!box.classList.contains("on")) return;
+  const rail = $("rail").getBoundingClientRect();
+  const center = rail.left + rail.width / 2;
+  const leftEdge = $("add-server-btn").getBoundingClientRect().right;
+  const rightEdge = document.querySelector(".rail .user-panel").getBoundingClientRect().left;
+  const room = Math.min(center - leftEdge, rightEdge - center) * 2 - 32;
+  box.classList.toggle("crowded", room < 96);
+  if (room >= 96) box.style.maxWidth = `${Math.min(320, Math.floor(room))}px`;
 }
 
 function renderServerRail() {
@@ -11489,6 +11504,7 @@ function wireEvents() {
     applyMembersLayout();
   };
   window.addEventListener("resize", applyMembersLayout);
+  window.addEventListener("resize", fitRailContext);
   applyMembersLayout();
   $("dm-profile-btn").onclick = () => {
     state.showDmProfile = !state.showDmProfile;
