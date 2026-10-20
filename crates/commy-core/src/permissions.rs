@@ -37,6 +37,7 @@ impl Permissions {
     pub const MENTION_EVERYONE: Permissions = Permissions(1 << 27);
     pub const TIME_OUT_MEMBERS: Permissions = Permissions(1 << 28);
     pub const BYPASS_SLOW_MODE: Permissions = Permissions(1 << 29);
+    pub const MOVE_MEMBERS: Permissions = Permissions(1 << 30);
     pub const CHANGE_NICKNAME: Permissions = Permissions(1 << 31);
     pub const MANAGE_NICKNAMES: Permissions = Permissions(1 << 32);
 

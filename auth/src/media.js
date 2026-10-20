@@ -44,6 +44,8 @@ const IGDB_GAP_MARGIN_MS = 10;
 const IGDB_GAP_MS = 1000 / IGDB_MAX_REQUESTS_PER_SECOND + IGDB_GAP_MARGIN_MS;
 const TOKEN_REFRESH_EARLY_SECS = 60;
 const MAX_QUERY = 100;
+const MAX_STICKER_BYTES = 512 * 1024;
+const STICKER_FORMATS = ["webp", "gif"];
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
 const IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -112,6 +114,39 @@ export function klipyResults(body) {
       };
     })
     .filter((g) => g.preview && g.url);
+}
+
+function stickerFile(file, sizes, fits) {
+  for (const size of sizes) {
+    for (const format of STICKER_FORMATS) {
+      const r = file?.[size]?.[format];
+      if (httpsUrl(r?.url) && fits(r)) return r;
+    }
+  }
+  return null;
+}
+
+function stickerFits(r) {
+  const size = Number(r?.size);
+  return r?.size == null || (size > 0 && size <= MAX_STICKER_BYTES);
+}
+
+export function klipyStickerResults(body) {
+  const items = Array.isArray(body?.data) ? body.data : Array.isArray(body?.data?.data) ? body.data.data : [];
+  return items
+    .map((item) => {
+      const preview = stickerFile(item?.file, ["sm", "xs", "md"], () => true);
+      const send = stickerFile(item?.file, ["md", "sm", "xs"], stickerFits);
+      const ratio = preview?.width && preview?.height ? Number(preview.height) / Number(preview.width) : 0;
+      return {
+        id: String(item?.slug ?? item?.id ?? "").slice(0, 120),
+        preview: preview?.url ?? null,
+        url: send?.url ?? null,
+        ratio: Number.isFinite(ratio) ? ratio : 0,
+        title: String(item?.title || "Sticker").slice(0, 200),
+      };
+    })
+    .filter((s) => s.id && s.preview && s.url);
 }
 
 export function emojiggCatalog(body) {
@@ -278,6 +313,7 @@ async function requireSession(ctx) {
 
 export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetch = (...args) => globalThis.fetch(...args) }) => {
   const gifCache = createCache();
+  const stickerCache = createCache();
   const gameCache = createCache();
   const imageCache = createImageCache();
   let igdbToken = null;
@@ -322,6 +358,41 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
 
   function maskKlipyKey(message) {
     return String(message).replaceAll(klipyKey, "***");
+  }
+
+  const KLIPY_KINDS = {
+    gifs: { cache: gifCache, what: "GIF search", service: "The GIF service", formats: "gif", results: klipyResults },
+    stickers: { cache: stickerCache, what: "Sticker search", service: "The sticker service", formats: "webp,gif", results: klipyStickerResults },
+  };
+
+  async function klipySearch(ctx, kind) {
+    const spec = KLIPY_KINDS[kind];
+    if (!klipyKey) throw unavailable(spec.what);
+    const session = await requireSession(ctx);
+    const q = cleanQuery(ctx.query?.q);
+    const key = q.toLowerCase();
+    const cached = spec.cache.get(key);
+    if (cached) return ctx.json({ results: cached, provider: "klipy" });
+
+    const url = new URL(`${KLIPY_API}/${encodeURIComponent(klipyKey)}/${kind}/${q ? "search" : "trending"}`);
+    if (q) url.searchParams.set("q", q);
+    url.searchParams.set("per_page", "24");
+    url.searchParams.set("page", "1");
+    url.searchParams.set("content_filter", "medium");
+    url.searchParams.set("format_filter", spec.formats);
+    url.searchParams.set("customer_id", customerId(secret, session.user.id));
+    let body;
+    try {
+      const res = await doFetch(url);
+      body = await res.json().catch(() => ({}));
+      if (!res.ok || body.result === false) throw new Error(`KLIPY answered ${res.status}`);
+    } catch (err) {
+      console.warn(`[auth] ${spec.what} failed: ${maskKlipyKey(err.message)}`);
+      throw new APIError("BAD_GATEWAY", { message: `${spec.service} is not answering right now` });
+    }
+    const results = spec.results(body);
+    spec.cache.set(key, results);
+    return ctx.json({ results, provider: "klipy" });
   }
 
   function paced(task) {
@@ -385,34 +456,13 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
       searchCommyGifs: createAuthEndpoint(
         "/commy/gifs/search",
         { method: "GET", query: z.object({ q: z.string().optional() }) },
-        async (ctx) => {
-          if (!klipyKey) throw unavailable("GIF search");
-          const session = await requireSession(ctx);
-          const q = cleanQuery(ctx.query?.q);
-          const key = q.toLowerCase();
-          const cached = gifCache.get(key);
-          if (cached) return ctx.json({ results: cached, provider: "klipy" });
+        async (ctx) => klipySearch(ctx, "gifs"),
+      ),
 
-          const url = new URL(`${KLIPY_API}/${encodeURIComponent(klipyKey)}/gifs/${q ? "search" : "trending"}`);
-          if (q) url.searchParams.set("q", q);
-          url.searchParams.set("per_page", "24");
-          url.searchParams.set("page", "1");
-          url.searchParams.set("content_filter", "medium");
-          url.searchParams.set("format_filter", "gif");
-          url.searchParams.set("customer_id", customerId(secret, session.user.id));
-          let body;
-          try {
-            const res = await doFetch(url);
-            body = await res.json().catch(() => ({}));
-            if (!res.ok || body.result === false) throw new Error(`KLIPY answered ${res.status}`);
-          } catch (err) {
-            console.warn(`[auth] GIF search failed: ${maskKlipyKey(err.message)}`);
-            throw new APIError("BAD_GATEWAY", { message: "The GIF service is not answering right now" });
-          }
-          const results = klipyResults(body);
-          gifCache.set(key, results);
-          return ctx.json({ results, provider: "klipy" });
-        },
+      searchCommyStickers: createAuthEndpoint(
+        "/commy/stickers/search",
+        { method: "GET", query: z.object({ q: z.string().optional() }) },
+        async (ctx) => klipySearch(ctx, "stickers"),
       ),
 
       searchCommyEmojis: createAuthEndpoint(

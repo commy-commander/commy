@@ -182,6 +182,7 @@ export function discoveryDocument(config) {
       createInvite: `${api}/commy/invites/create`,
       resolveInvite: `${api}/commy/invites/resolve`,
       gifSearch: `${api}/commy/gifs/search`,
+      stickerSearch: `${api}/commy/stickers/search`,
       gameSearch: `${api}/commy/games/search`,
       emojiSearch: `${api}/commy/emojis/search`,
       media: `${api}/commy/media`,
@@ -192,6 +193,7 @@ export function discoveryDocument(config) {
     },
     features: {
       gifs: Boolean(config.klipyKey),
+      stickers: Boolean(config.klipyKey),
       games: Boolean(config.igdb),
       emojis: true,
       media: true,

@@ -72,6 +72,7 @@ pub struct ChannelView {
     pub view_roles: Vec<String>,
     pub send_roles: Vec<String>,
     pub slow_mode: u32,
+    pub sensitive: bool,
     pub can_view: bool,
     pub can_send: bool,
     pub key_ready: bool,
@@ -183,6 +184,7 @@ pub struct ServerView {
     pub banned: Vec<(String, String)>,
     pub afk_timeout_minutes: Option<u32>,
     pub can_mute: bool,
+    pub can_move: bool,
     pub can_ban: bool,
     pub can_time_out: bool,
     pub my_timeout_until: Option<i64>,
@@ -210,6 +212,7 @@ pub struct ServerView {
     pub can_upload_sounds: bool,
     pub can_use_soundboard: bool,
     pub automod: Option<AutoMod>,
+    pub onboarding: Option<commy_core::Onboarding>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -271,6 +274,7 @@ impl ServerView {
                     view_roles: c.view_roles.iter().map(|r| r.to_string()).collect(),
                     send_roles: c.send_roles.iter().map(|r| r.to_string()).collect(),
                     slow_mode: c.slow_mode,
+                    sensitive: c.sensitive,
                     can_view,
                     can_send: can_view && viewer.is_some_and(|v| state.server.can_post_in(c.id, v)),
                     key_ready: can_view && keys.key_ready(state, c.id),
@@ -439,6 +443,7 @@ impl ServerView {
             },
             afk_timeout_minutes: state.server.afk_timeout_minutes,
             can_mute: perms.allows(Permissions::MUTE_MEMBERS),
+            can_move: perms.allows(Permissions::MOVE_MEMBERS),
             can_ban: perms.allows(Permissions::BAN_MEMBERS),
             can_time_out: perms.allows(Permissions::TIME_OUT_MEMBERS),
             my_timeout_until: viewer.and_then(|v| state.server.timeout_of(v, now)).map(|t| t.until.timestamp_millis()),
@@ -490,6 +495,9 @@ impl ServerView {
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS) || (state.server.soundboard_open && is_member),
             can_use_soundboard: perms.allows(Permissions::USE_SOUNDBOARD),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
+            onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {
+                o.tidied(|r| commy_core::onboarding::grantable(&state.server.roles, r))
+            }),
         }
     }
 }
@@ -518,6 +526,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("time_out_members", Permissions::TIME_OUT_MEMBERS),
     ("manage_nicknames", Permissions::MANAGE_NICKNAMES),
     ("change_nickname", Permissions::CHANGE_NICKNAME),
+    ("move_members", Permissions::MOVE_MEMBERS),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("add_emojis", Permissions::ADD_EMOJIS),
     ("add_stickers", Permissions::ADD_STICKERS),
@@ -673,9 +682,53 @@ pub struct MessageView {
     pub reactions: Vec<ReactionView>,
     pub attachments: Vec<AttachmentView>,
     pub previews: Vec<LinkPreviewView>,
+    pub poll: Option<PollView>,
     pub pending: bool,
     pub pinned: bool,
     pub held: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PollView {
+    pub question: String,
+    pub options: Vec<PollOptionView>,
+    pub multi: bool,
+    pub total: usize,
+    pub closed: bool,
+    pub closes_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PollOptionView {
+    pub text: String,
+    pub votes: usize,
+    pub mine: bool,
+}
+
+impl PollView {
+    fn build(message: &Message, state: &ServerState, viewer: Option<UserId>) -> Option<Self> {
+        let poll = message.poll()?;
+        let tally = state.poll_tally(message.id, chrono::Utc::now())?;
+        let mine = viewer.map(|me| state.poll_choices(message.id, me)).unwrap_or(&[]);
+        let options = poll
+            .options
+            .iter()
+            .enumerate()
+            .map(|(i, text)| PollOptionView {
+                text: text.clone(),
+                votes: tally.counts.get(i).copied().unwrap_or(0),
+                mine: mine.contains(&(i as u8)),
+            })
+            .collect();
+        Some(Self {
+            question: poll.question,
+            options,
+            multi: poll.multi,
+            total: tally.voters,
+            closed: tally.closed,
+            closes_at: poll.closes_at.map(|t| t.to_rfc3339()),
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -798,8 +851,12 @@ impl MessageView {
                 let stored = state.message(id).filter(|m| m.channel == message.channel)?;
                 let original = keys.open(state, stored)?;
                 let mut excerpt = crate::safety::truncate(&original.content, 120);
-                if excerpt.is_empty() && original.files().next().is_some() {
-                    excerpt = "Click to see attachment".to_string();
+                if excerpt.is_empty() {
+                    if let Some(poll) = original.poll() {
+                        excerpt = crate::safety::truncate(&poll.question, 120);
+                    } else if original.files().next().is_some() {
+                        excerpt = "Click to see attachment".to_string();
+                    }
                 }
                 if keys.hold(state, stored).is_some() {
                     excerpt = HELD_EXCERPT.to_string();
@@ -821,7 +878,7 @@ impl MessageView {
                 .collect(),
             attachments: attachments
                 .iter()
-                .filter(|a| !a.is_link_preview())
+                .filter(|a| !a.is_card())
                 .map(|a| AttachmentView {
                     filename: a.filename.clone(),
                     size_bytes: a.size_bytes,
@@ -832,6 +889,7 @@ impl MessageView {
                 })
                 .collect(),
             previews: message.link_previews().take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
+            poll: (!sealed).then(|| PollView::build(message, state, keys.user())).flatten(),
             pending: false,
             pinned: state.server.is_pinned(message.id),
             held: None,
@@ -1053,6 +1111,40 @@ mod tests {
         let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
         assert!(badge(bot_id));
         assert!(!badge(owner.id));
+    }
+
+    #[test]
+    fn onboarding_questions_reach_members_without_roles_that_can_no_longer_be_handed_out() {
+        use commy_core::onboarding::{Answer, Onboarding, Question};
+        use commy_core::{Permissions, Role, RoleId};
+        let owner = UserProfile::new("owner");
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let role = |perms| Role { id: RoleId::new(), name: "r".into(), color: None, permissions: perms, position: 1, hoist: false, self_assignable: false, mentionable: false, tag: None, banner: None };
+        let plain = role(Permissions::NONE);
+        let admin = role(Permissions::ADMINISTRATOR);
+        let gone = RoleId::new();
+        for r in [plain.clone(), admin.clone()] {
+            state.apply(ServerEvent::RoleCreate { server: sid, role: r }).unwrap();
+        }
+        let onboarding = Onboarding {
+            questions: vec![Question {
+                title: "Q".into(),
+                description: String::new(),
+                multiple: false,
+                answers: vec![Answer { label: "A".into(), roles: vec![plain.id, admin.id, gone] }, Answer { label: "B".into(), roles: vec![] }],
+            }],
+        };
+        state.apply(ServerEvent::OnboardingSet { server: sid, onboarding: Some(onboarding) }).unwrap();
+        let keys = KeyHolder::default();
+        let view = ServerView::for_viewer(&state, Some(owner.id), &keys);
+        let shown = view.onboarding.as_ref().expect("members see the questions");
+        assert_eq!(shown.questions[0].answers[0].roles, vec![plain.id]);
+        assert!(ServerView::for_viewer(&state, Some(UserId::new()), &keys).onboarding.is_none(), "strangers do not");
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["onboarding"]["questions"][0]["answers"][1]["label"], "B");
     }
 
     #[test]

@@ -199,6 +199,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/commy/invites/background": { window: 60, max: 60 },
         "/commy/invites/revoke": { window: 60, max: 30 },
         "/commy/gifs/search": { window: 60, max: 60 },
+        "/commy/stickers/search": { window: 60, max: 60 },
         "/commy/games/search": { window: 60, max: 60 },
         "/commy/emojis/search": { window: 60, max: 60 },
         "/commy/doorbell/ring": { window: 60, max: 300 },

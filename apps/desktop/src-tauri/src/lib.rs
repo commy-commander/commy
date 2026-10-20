@@ -18,6 +18,7 @@ mod liveness;
 mod outbox;
 mod overlay;
 mod persist;
+mod read_state;
 mod safety;
 mod search;
 mod settle;
@@ -450,6 +451,104 @@ async fn send_message(
         return Err("that message is too long to send; try splitting it up".into());
     }
     commit_message(&app, &handle, sid, message).await
+}
+
+#[tauri::command]
+async fn send_poll(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    question: String,
+    options: Vec<String>,
+    multi: bool,
+    hours: Option<u32>,
+) -> CmdResult<MessageView> {
+    use commy_core::poll::{MAX_DURATION_HOURS, MAX_OPTIONS, MAX_OPTION_CHARS, MAX_QUESTION_CHARS, MIN_OPTIONS};
+    let sid = server_id.parse().map_err(err_to_string)?;
+    let cid = channel_id.parse().map_err(err_to_string)?;
+    let profile = current_profile(&app)?;
+    let hours = hours.filter(|h| *h > 0);
+    if hours.is_some_and(|h| h > MAX_DURATION_HOURS) {
+        return Err(format!("a poll runs for up to {} days", MAX_DURATION_HOURS / 24));
+    }
+    let closes_at = hours.map(|h| chrono::Utc::now() + chrono::Duration::hours(i64::from(h)));
+    let poll = commy_core::Poll { question, options, multi, closes_at }.tidy().ok_or_else(|| {
+        format!(
+            "a poll needs a question of up to {MAX_QUESTION_CHARS} characters and {MIN_OPTIONS} to {MAX_OPTIONS} answers of up to {MAX_OPTION_CHARS} characters each"
+        )
+    })?;
+    let mut message = Message::new(cid, profile.id, "");
+    message.attachments.push(poll.into_attachment());
+    let _signing = app.signing.read().await;
+    seal_and_sign(&app, sid, &mut message)?;
+    if !signed_fits_one_gossip_frame(&message) {
+        return Err("that poll is too long to send; shorten the question or the answers".into());
+    }
+    commit_message(&app, &handle, sid, message).await
+}
+
+fn poll_target(state: &ServerState, mid: MessageId, me: UserId) -> CmdResult<(ChannelId, Message, commy_core::Poll)> {
+    let message = state.message(mid).ok_or("that message no longer exists")?;
+    require_can_view(state, me, message.channel)?;
+    let poll = message.poll().ok_or("that message is not a poll")?;
+    Ok((message.channel, message.clone(), poll))
+}
+
+#[tauri::command]
+async fn vote_poll(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    message_id: String,
+    choices: Vec<u8>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let mid: MessageId = message_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let (channel, choices) = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        let (channel, _, poll) = poll_target(state, mid, me.id)?;
+        if state.poll_closed(mid, chrono::Utc::now()) {
+            return Err("that poll has closed".into());
+        }
+        let choices = poll.normalize_choices(&choices).ok_or(if poll.multi {
+            "pick answers from the poll"
+        } else {
+            "this poll takes one answer"
+        })?;
+        (channel, choices)
+    };
+    let event = ServerEvent::PollVote { server: sid, channel, message: mid, user: me.id, choices };
+    apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+#[tauri::command]
+async fn close_poll(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    message_id: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let mid: MessageId = message_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let channel = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        let (channel, message, _) = poll_target(state, mid, me.id)?;
+        let moderates = our_permissions(&app, state, me.id).allows(Permissions::MANAGE_MESSAGES);
+        if message.author != me.id && !moderates {
+            return Err("only the poll's author or a moderator can close it".into());
+        }
+        if state.poll_closed(mid, chrono::Utc::now()) {
+            return Err("that poll has already closed".into());
+        }
+        channel
+    };
+    let event = ServerEvent::PollClose { server: sid, channel, message: mid, by: me.id };
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 async fn preview_card(app: &App, sid: ServerId, message: &Message, url: Option<&str>) -> Option<Attachment> {
@@ -2551,6 +2650,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
         if state.server.rules.is_some() {
             events.push(ServerEvent::RulesSet { server: sid, rules: state.server.rules.clone() });
         }
+        if state.server.onboarding.is_some() {
+            events.push(ServerEvent::OnboardingSet { server: sid, onboarding: state.server.onboarding.clone() });
+        }
         if state.server.afk_timeout_minutes.is_some() {
             events.push(ServerEvent::AfkTimeoutSet { server: sid, minutes: state.server.afk_timeout_minutes });
         }
@@ -2589,6 +2691,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             }
             if channel.kind == ChannelKind::Announcement {
                 events.push(ServerEvent::ChannelKindSet { server: sid, channel: channel.id, kind: channel.kind });
+            }
+            if channel.sensitive {
+                events.push(ServerEvent::ChannelSensitiveSet { server: sid, channel: channel.id, sensitive: true });
             }
             if channel.is_restricted() {
                 events.push(ServerEvent::ChannelAccessSet {
@@ -3325,6 +3430,7 @@ mod placeholder_tests {
             Permissions::KICK_MEMBERS,
             Permissions::BAN_MEMBERS,
             Permissions::MUTE_MEMBERS,
+            Permissions::MOVE_MEMBERS,
             Permissions::MANAGE_ROLES,
             Permissions::MANAGE_EXPRESSIONS,
             Permissions::MANAGE_EVENTS,
@@ -3815,6 +3921,63 @@ async fn set_rules(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_
 }
 
 #[tauri::command]
+async fn set_onboarding(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    onboarding: Option<commy_core::Onboarding>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change the onboarding questions")?;
+    let roles = {
+        let servers = app.servers.lock().unwrap();
+        servers.get(&sid).ok_or("unknown server")?.server.roles.clone()
+    };
+    let onboarding = onboarding
+        .map(|o| o.tidied(|r| commy_core::onboarding::grantable(&roles, r)))
+        .filter(|o| !o.questions.is_empty());
+    if onboarding.as_ref().is_some_and(|o| !o.fits()) {
+        return Err(onboarding_limits());
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::OnboardingSet { server: sid, onboarding }).await
+}
+
+fn onboarding_limits() -> String {
+    use commy_core::onboarding::{MAX_ROLE_REFS, MAX_TEXT_BYTES};
+    format!("keep the questions and answers under {MAX_TEXT_BYTES} characters in all, with at most {MAX_ROLE_REFS} roles across every answer")
+}
+
+#[tauri::command]
+async fn answer_onboarding(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    grant: Vec<String>,
+    revoke: Vec<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let parse = |ids: Vec<String>| ids.iter().map(|id| id.parse::<RoleId>().map_err(err_to_string)).collect::<CmdResult<Vec<RoleId>>>();
+    let (grant, revoke) = (parse(grant)?, parse(revoke)?);
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        let allowed = grant.iter().chain(&revoke).all(|r| commy_core::onboarding::may_self_assign(&state.server, me.id, *r));
+        if !allowed {
+            return Err("this server's questions do not hand out that role".into());
+        }
+    }
+    for role in revoke {
+        apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUnassign { server: sid, user: me.id, role }).await?;
+    }
+    for role in grant {
+        apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleAssign { server: sid, user: me.id, role }).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn accept_rules(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
@@ -4200,6 +4363,29 @@ async fn set_channel_kind(
 }
 
 #[tauri::command]
+async fn set_channel_sensitive(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    sensitive: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
+        let channel = state.server.channel(cid).ok_or("unknown channel")?;
+        if !matches!(channel.kind, ChannelKind::Text | ChannelKind::Announcement) {
+            return Err("only text channels can be age-restricted".into());
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelSensitiveSet { server: sid, channel: cid, sensitive }).await
+}
+
+#[tauri::command]
 async fn set_channel_access(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -4320,13 +4506,15 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
         let session = session.as_ref().ok_or("not in voice")?;
         (session.link_stats(), session.server)
     };
-    let names: Vec<String> = {
+    let server_names: Vec<Option<String>> = {
         let servers = app.servers.lock().unwrap();
-        stats
-            .iter()
-            .map(|s| servers.get(&sid).map(|st| view::display_name(st, s.user)).unwrap_or_else(|| "Someone".into()))
-            .collect()
+        stats.iter().map(|s| servers.get(&sid).map(|st| view::display_name(st, s.user))).collect()
     };
+    let names: Vec<String> = stats
+        .iter()
+        .zip(server_names)
+        .map(|(s, name)| name.unwrap_or_else(|| known_name(&app, s.user)))
+        .collect();
     let links = stats
         .into_iter()
         .zip(names)
@@ -4409,6 +4597,45 @@ async fn set_nickname(
         }
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberNickname { server: sid, user, nickname: cleaned }).await
+}
+
+#[tauri::command]
+async fn move_voice_member(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    user_id: String,
+    channel_id: Option<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let channel: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MOVE_MEMBERS, "move members between voice channels")?;
+        if user == state.server.owner || user == me.id {
+            return Err("you cannot move that member".into());
+        }
+        let Some(current) = state.voice_states.get(&user).copied() else {
+            return Err("that member is not in voice here".into());
+        };
+        if let Some(target) = channel {
+            match state.server.channel(target) {
+                Some(c) if c.kind == ChannelKind::Voice => {}
+                _ => return Err("that is not a voice channel".into()),
+            }
+            require_can_view(state, me.id, target)?;
+            if target == current {
+                return Err("they are already in that channel".into());
+            }
+            if voice_channel_full(&app, state, target, user) {
+                return Err("that voice channel is full".into());
+            }
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::VoiceMove { server: sid, user, channel }).await
 }
 
 #[tauri::command]
@@ -4982,20 +5209,76 @@ async fn search_emoji_catalog(
     Ok(found)
 }
 
+const KLIPY_IMAGES: &str = "https://static.klipy.com/";
+
+fn catalog_source(url: &str) -> Option<&'static str> {
+    let (source, path) = match (url.strip_prefix(EMOJIGG_IMAGES), url.strip_prefix(KLIPY_IMAGES)) {
+        (Some(path), _) if !path.contains('/') => ("emoji.gg", path),
+        (_, Some(path)) => ("KLIPY", path),
+        _ => return None,
+    };
+    if path.is_empty() || path.contains(['?', '#', '\\']) || path.contains("..") {
+        return None;
+    }
+    Some(source)
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    #[test]
+    fn catalog_images_come_from_emoji_gg_or_klipy_only() {
+        assert_eq!(catalog_source("https://cdn3.emoji.gg/emojis/12_cat.png"), Some("emoji.gg"));
+        assert_eq!(catalog_source("https://static.klipy.com/ii/ab12/e8/3a/5LM0jRpL.webp"), Some("KLIPY"));
+        for url in [
+            "https://cdn3.emoji.gg/emojis/a/b.png",
+            "https://cdn3.emoji.gg/emojis/",
+            "https://static.klipy.com/ii/../x.gif",
+            "https://static.klipy.com/a.gif?x=1",
+            "https://static.klipy.com.evil.example/a.gif",
+            "http://static.klipy.com/a.gif",
+            "https://example.com/a.gif",
+        ] {
+            assert_eq!(catalog_source(url), None, "{url}");
+        }
+    }
+}
+
 #[tauri::command]
 async fn fetch_catalog_image(app: tauri::State<'_, App>, url: String) -> CmdResult<String> {
-    let path = url.strip_prefix(EMOJIGG_IMAGES).ok_or("only emoji.gg images can be added")?;
-    if path.is_empty() || path.contains(['/', '?', '#']) || path.contains("..") {
-        return Err("only emoji.gg images can be added".into());
-    }
+    let source = catalog_source(&url).ok_or("only emoji.gg and KLIPY images can be added")?;
     let (_, bytes) = account::fetch_media(&app, &url)
         .await
-        .map_err(|status| format!("emoji.gg could not be reached right now ({status})"))?;
+        .map_err(|status| format!("{source} could not be reached right now ({status})"))?;
     if bytes.len() > MAX_CATALOG_IMAGE_BYTES {
         return Err("that image is too large".into());
     }
-    let mime = expressions::image_mime(&bytes).ok_or("emoji.gg sent something that is not an image")?;
+    let mime = expressions::image_mime(&bytes).ok_or_else(|| format!("{source} sent something that is not an image"))?;
     Ok(data_url(mime, &bytes))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StickerHit {
+    id: String,
+    preview: String,
+    url: String,
+    #[serde(default)]
+    ratio: f64,
+    #[serde(default)]
+    title: String,
+}
+
+#[tauri::command]
+async fn sticker_search(app: tauri::State<'_, App>, query: String) -> CmdResult<Option<Vec<StickerHit>>> {
+    let query = safety::truncate(query.trim(), 100);
+    let hits = account::server_search::<StickerHit>(&app, "stickers", &query).await?;
+    Ok(hits.map(|hits| {
+        hits.into_iter()
+            .filter(|s| catalog_source(&s.url) == Some("KLIPY") && catalog_source(&s.preview) == Some("KLIPY"))
+            .map(|s| StickerHit { id: safety::truncate(&s.id, 120), title: safety::truncate(&s.title, 200), ..s })
+            .collect()
+    }))
 }
 
 #[tauri::command]
@@ -6189,6 +6472,29 @@ fn announce_new_owner(app: &App, handle: &tauri::AppHandle, sid: ServerId, user:
     );
 }
 
+async fn follow_voice_move(handle: &tauri::AppHandle, sid: ServerId, channel: Option<ChannelId>) {
+    let app = handle.state::<App>();
+    let in_voice_here = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
+    if !in_voice_here {
+        return;
+    }
+    let name = channel.and_then(|c| {
+        let servers = app.servers.lock().unwrap();
+        servers.get(&sid).and_then(|s| s.server.channel(c)).map(|c| c.name.clone())
+    });
+    if channel.is_some() && name.is_none() {
+        return;
+    }
+    tracing::info!("a moderator moved us to {name:?}");
+    let moved = set_voice_channel(handle.state::<App>(), handle.clone(), sid.to_string(), channel.map(|c| c.to_string())).await;
+    if moved.is_ok() {
+        let _ = handle.emit(
+            "voice-moved",
+            serde_json::json!({ "server": sid.to_string(), "channel": channel.map(|c| c.to_string()), "name": name }),
+        );
+    }
+}
+
 fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
@@ -6319,6 +6625,14 @@ async fn run_net_loop(
                     ServerEvent::OwnerTransfer { user, .. } => Some(*user),
                     _ => None,
                 };
+                let moved_me = match &event {
+                    ServerEvent::VoiceMove { user, channel, .. }
+                        if app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == *user) =>
+                    {
+                        Some(*channel)
+                    }
+                    _ => None,
+                };
                 let voice_update = match &event {
                     ServerEvent::VoiceState { user, channel, .. } => Some((*user, *channel)),
                     _ => None,
@@ -6379,6 +6693,9 @@ async fn run_net_loop(
                         }
                         if let Some(until) = my_timeout {
                             let _ = handle.emit("timed-out", serde_json::json!({ "server": server.to_string(), "until": until }));
+                        }
+                        if let Some(channel) = moved_me {
+                            follow_voice_move(&handle, server, channel).await;
                         }
                         if access {
                             leave_unseen_voice(&app, &handle, server).await;
@@ -6515,6 +6832,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "channel": message.channel.to_string(),
             "channel_name": state.server.channel(message.channel).map(|c| c.name.clone()).unwrap_or_default(),
             "announcement": state.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement),
+            "sensitive": state.server.channel(message.channel).is_some_and(|c| c.sensitive),
             "author": message.author.to_string(),
             "author_name": view::known_name_of(state, message.author).unwrap_or_else(|| "Someone".into()),
             "mentioned": state.server.mentioned_by(message.author, &message.content, me, &names),
@@ -6943,6 +7261,7 @@ pub fn run() {
                                 entry_list::schedule(&handle);
                             });
                         }
+                        tauri::async_runtime::spawn(read_state::run(handle.clone()));
                         tauri::async_runtime::spawn(run_share_heartbeat(handle.clone()));
                         tauri::async_runtime::spawn(liveness::run(handle.clone()));
                         tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
@@ -6980,6 +7299,7 @@ pub fn run() {
             set_pronouns,
             moderate_voice,
             set_nickname,
+            move_voice_member,
             ban_member,
             unban_member,
             time_out_member,
@@ -6991,6 +7311,7 @@ pub fn run() {
             search_games,
             game_details,
             gif_search,
+            sticker_search,
             get_overlay_settings,
             overlay_hotkey_problems,
             voice_hotkey_problems,
@@ -7004,6 +7325,8 @@ pub fn run() {
             set_rules,
             set_automod,
             accept_rules,
+            set_onboarding,
+            answer_onboarding,
             save_event,
             delete_event,
             set_rsvp,
@@ -7073,6 +7396,10 @@ pub fn run() {
             entry_list::entry_list_use_recovery_code,
             entry_list::entry_list_start_over,
             entry_list::answer_entry_key_request,
+            read_state::read_state_load,
+            read_state::read_state_set,
+            read_state::read_state_mark_read,
+            read_state::read_state_sync,
             get_messages,
             send_message,
             attach_file,
@@ -7091,9 +7418,13 @@ pub fn run() {
             set_channel_banner,
             set_channel_color,
             set_channel_kind,
+            set_channel_sensitive,
             set_channel_access,
             pin_message,
             get_pins,
+            send_poll,
+            vote_poll,
+            close_poll,
             search_messages,
             edit_message,
             delete_message,
