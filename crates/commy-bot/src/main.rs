@@ -150,9 +150,10 @@ async fn main() -> Result<()> {
         ["webhook", "add", server, channel, name @ ..] => {
             require_profile(&args.data)?;
             let hook = add_webhook(&args.data, server, channel, &name.join(" "))?;
+            let saved = args.data.webhook_url_file(&hook.id);
             println!("Added {} ({}).", hook.name, hook.id);
-            println!("POST JSON like {{\"content\": \"hello\"}} to http://127.0.0.1:{}{}", webhook::DEFAULT_PORT, hook.path());
-            println!("Keep the URL secret; start the bot with: commy-bot run --webhooks");
+            println!("Its secret URL is in {}. POST JSON like {{\"content\": \"hello\"}} to it.", saved.display());
+            println!("Keep the URL private; start the bot with: commy-bot run --webhooks");
         }
         ["webhook", "list"] => {
             let hooks = args.data.webhooks()?;
@@ -160,7 +161,7 @@ async fn main() -> Result<()> {
                 println!("No webhooks yet. Add one with: commy-bot webhook add SERVER CHANNEL [NAME]");
             }
             for hook in hooks {
-                println!("{}  {}  {}", hook.id, hook.name, hook.path());
+                println!("{}  {}  URL in {}", hook.id, hook.name, args.data.webhook_url_file(&hook.id).display());
             }
         }
         ["webhook", "remove", id] => match args.data.remove_webhook(id)? {

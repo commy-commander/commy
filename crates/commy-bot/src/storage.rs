@@ -13,6 +13,7 @@ pub const PROFILE_FILE: &str = "profile.json";
 pub const SERVERS_DIR: &str = "servers";
 pub const TOKEN_FILE: &str = "bridge.token";
 pub const WEBHOOKS_FILE: &str = "webhooks.json";
+pub const WEBHOOK_URLS_DIR: &str = "webhooks";
 pub const MAX_NAME_CHARS: usize = 32;
 
 #[derive(Serialize, Deserialize)]
@@ -147,7 +148,13 @@ impl DataDir {
         }
         hooks.push(hook.clone());
         self.save_webhooks(&hooks)?;
+        let url = format!("http://127.0.0.1:{}{}\n", crate::webhook::DEFAULT_PORT, hook.path());
+        write_atomically(&self.root.join(WEBHOOK_URLS_DIR), &self.webhook_url_file(&hook.id), url.as_bytes())?;
         Ok(hook)
+    }
+
+    pub fn webhook_url_file(&self, id: &str) -> PathBuf {
+        self.root.join(WEBHOOK_URLS_DIR).join(format!("{}.url", id.trim()))
     }
 
     pub fn remove_webhook(&self, id: &str) -> Result<bool> {
@@ -158,6 +165,7 @@ impl DataDir {
             return Ok(false);
         }
         self.save_webhooks(&hooks)?;
+        let _ = std::fs::remove_file(self.webhook_url_file(id));
         Ok(true)
     }
 

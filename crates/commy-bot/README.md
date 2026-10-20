@@ -214,7 +214,8 @@ commy-bot webhook add "Rust Hangout" builds "Build server"
 commy-bot run --webhooks
 ```
 
-`webhook add` prints the URL. Send it a POST with a JSON body:
+`webhook add` saves the secret URL to `webhooks/ID.url` in the data folder,
+so it does not end up in your terminal history. Send it a POST with a JSON body:
 
 ```sh
 curl -X POST -H "Content-Type: application/json" \
@@ -228,7 +229,7 @@ webhook, 413 body over 32 KiB, 422 empty or blocked by auto moderation,
 429 more than 30 posts a minute, 403 the bot lacks permission to post there,
 410 the channel or server is gone, 503 the bot has no copy of the server yet.
 
-`commy-bot webhook list` shows them, and `commy-bot webhook remove ID` stops one
+`commy-bot webhook list` shows them (without their secrets), and `commy-bot webhook remove ID` stops one
 working at once. Webhooks listen on 127.0.0.1 only unless you pass an address.
 For a service on the internet to reach one, put the port behind a reverse proxy
 with HTTPS on the machine that runs the bot, and treat each URL like a password.

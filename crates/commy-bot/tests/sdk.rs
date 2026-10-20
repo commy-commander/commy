@@ -221,6 +221,8 @@ async fn webhooks_post_into_their_channel_until_removed() {
     let data = DataDir::new(&dir);
     let hook = data.add_webhook(Webhook::new("Builds\u{7}", sid, channel)).unwrap();
     assert_eq!(hook.name, "Builds");
+    let url = std::fs::read_to_string(data.webhook_url_file(&hook.id)).unwrap();
+    assert!(url.trim().ends_with(&hook.path()));
     let (out, mut outgoing) = tokio::sync::mpsc::unbounded_channel();
     let store = Arc::new(BotStore::new(Arc::new(Mutex::new(bot)), out));
     let hooks = Arc::new(Webhooks::new(store.clone(), DataDir::new(&dir)));
@@ -253,6 +255,7 @@ async fn webhooks_post_into_their_channel_until_removed() {
     assert_eq!(hooks.post(&hook.id, &hook.secret, body.as_bytes()).0.as_u16(), 429, "refused posts count too");
 
     assert!(data.remove_webhook(&hook.id).unwrap());
+    assert!(!data.webhook_url_file(&hook.id).exists());
     assert_eq!(hooks.post(&hook.id, &hook.secret, body.as_bytes()).0.as_u16(), 404);
     std::fs::remove_dir_all(dir).unwrap();
 }
