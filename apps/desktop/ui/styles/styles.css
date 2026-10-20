@@ -4605,6 +4605,7 @@ body.mobile-app .desktop-only { display: none !important; }
   .app[data-pane="list"] > :is(.main, .members, .thread-panel, .dm-profile) { display: none !important; }
   .app[data-pane="chat"] > :is(.rail, .sidebar, .members, .dm-profile) { display: none !important; }
   .app[data-pane="chat"].thread-open > .main { display: none; }
+  .app[data-pane="chat"].thread-open > .thread-panel { grid-row: 1; }
   .app[data-pane="people"] { grid-template-rows: auto minmax(0, 1fr); }
   .app[data-pane="people"] > :is(.rail, .sidebar, .thread-panel) { display: none !important; }
   .app[data-pane="people"] > .main { grid-row: 1; background: none; }

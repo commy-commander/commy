@@ -34,7 +34,7 @@ pub async fn pick_file(
         return Err(too_large.into());
     }
     let bytes = tokio::fs::read(path).await.map_err(err_to_string)?;
-    Ok(Some(Picked { name: named_for_contents(last_name_part(&picked.file_name()), &bytes), bytes }))
+    Ok(Some(Picked { name: picked.file_name(), bytes }))
 }
 
 #[cfg(desktop)]
@@ -115,6 +115,7 @@ fn picked_name(path: &tauri_plugin_fs::FilePath) -> String {
     last_name_part(raw.as_deref().unwrap_or(""))
 }
 
+#[cfg(any(mobile, test))]
 pub fn last_name_part(raw: &str) -> String {
     let decoded = raw.replace("%20", " ").replace("%3A", ":").replace("%3a", ":").replace("%2F", "/").replace("%2f", "/");
     let name = decoded.rsplit([':', '/']).next().unwrap_or("").trim();
@@ -125,6 +126,7 @@ pub fn last_name_part(raw: &str) -> String {
     }
 }
 
+#[cfg(any(mobile, test))]
 pub fn named_for_contents(name: String, bytes: &[u8]) -> String {
     let has_extension = name.rsplit_once('.').is_some_and(|(stem, ext)| !stem.is_empty() && !ext.is_empty());
     match sniffed_extension(bytes) {
@@ -133,6 +135,7 @@ pub fn named_for_contents(name: String, bytes: &[u8]) -> String {
     }
 }
 
+#[cfg(any(mobile, test))]
 fn sniffed_extension(bytes: &[u8]) -> Option<&'static str> {
     if let Ok(format) = image::guess_format(bytes) {
         return format.extensions_str().first().copied();

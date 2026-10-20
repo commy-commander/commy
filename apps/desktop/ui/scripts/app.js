@@ -2067,6 +2067,7 @@ async function openNotificationTarget(target) {
       const thread = (await invoke("list_dm_threads")).find(t => t.user === a);
       await selectDm(a, thread ? thread.name : "Direct Message");
     }
+    phoneShowChat();
   } catch (e) {
     toast(String(e));
   }
@@ -3575,6 +3576,7 @@ async function jumpToMessage(id) {
     toast("That message is no longer on this device");
     return;
   }
+  phoneShowChat();
   row.scrollIntoView({ behavior: "smooth", block: "center" });
   row.classList.remove("flash");
   void row.offsetWidth;
@@ -5438,7 +5440,7 @@ async function openFullProfile(member) {
     row.appendChild(el("span", null, s.name));
     row.onclick = () => {
       hideModals();
-      selectServer(s.id);
+      selectServer(s.id).then(phoneShowChat);
     };
     return row;
   }));
@@ -7737,6 +7739,13 @@ function phoneStep(action) {
   return true;
 }
 
+function phoneShowChat() {
+  if (!isPhoneWidth(window.innerWidth)) return;
+  const pane = phonePane();
+  if (pane === "people") phoneStep("back");
+  else if (pane === "list") phoneStep("open");
+}
+
 function wirePhoneLayout() {
   $("app").dataset.pane = "list";
   window.addEventListener("popstate", e => setPhonePane((e.state && e.state.pane) || "list", { fromHistory: true }));
@@ -8066,7 +8075,7 @@ function renderDmProfile(userId, name) {
     const row = el("button", "dm-profile-server");
     row.appendChild(el("span", "server-chip", initials(server.name)));
     row.appendChild(el("span", null, server.name));
-    row.onclick = () => selectServer(server.id);
+    row.onclick = () => selectServer(server.id).then(phoneShowChat);
     list.appendChild(row);
   }
   if (!servers.length) list.appendChild(el("div", "dm-preview", "No servers in common right now"));
@@ -8206,6 +8215,7 @@ async function messageUser(userId, name) {
     const thread = await invoke("open_dm", { userId });
     state.currentDm = { user: thread.user, name: thread.name };
     await enterDmMode();
+    phoneShowChat();
   } catch (e) {
     toast(String(e));
   }
