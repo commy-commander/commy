@@ -7,8 +7,10 @@ import { join } from "node:path";
 const require = createRequire(import.meta.url);
 const {
   CAMERA_BACKGROUNDS,
+  CAMERA_AVATARS,
   parseCameraFx,
   cameraFxNeedsSegmenter,
+  cameraFxShowsAvatar,
   edgeStep,
   writeMaskAlpha,
   maskMemory,
@@ -21,13 +23,15 @@ const {
 const ui = join(import.meta.dirname, "..");
 
 test("camera settings fall back to no effect and a mirrored self view", () => {
-  assert.deepEqual(parseCameraFx(null), { background: "off", mirror: true });
-  assert.deepEqual(parseCameraFx("blur"), { background: "off", mirror: true });
-  assert.deepEqual(parseCameraFx({ background: "confetti", mirror: "yes" }), { background: "off", mirror: true });
-  assert.deepEqual(parseCameraFx({ background: "blur", mirror: false }), { background: "blur", mirror: false });
-  assert.deepEqual(parseCameraFx({ background: "image", mirror: true }), { background: "image", mirror: true });
-  assert.deepEqual(parseCameraFx({ background: "stars" }), { background: "off", mirror: true });
+  const plain = { background: "off", mirror: true, avatar: "off" };
+  assert.deepEqual(parseCameraFx(null), plain);
+  assert.deepEqual(parseCameraFx("blur"), plain);
+  assert.deepEqual(parseCameraFx({ background: "confetti", mirror: "yes", avatar: "dragon" }), plain);
+  assert.deepEqual(parseCameraFx({ background: "blur", mirror: false }), { ...plain, background: "blur", mirror: false });
+  assert.deepEqual(parseCameraFx({ background: "image", avatar: "cat" }), { ...plain, background: "image", avatar: "cat" });
+  assert.deepEqual(parseCameraFx({ background: "stars" }), plain);
   assert.deepEqual(CAMERA_BACKGROUNDS, ["off", "blur", "image"]);
+  assert.deepEqual(CAMERA_AVATARS, ["off", "cat", "bot", "alien", "custom"]);
 });
 
 test("blur and a custom image load the person segmenter", () => {
@@ -35,6 +39,13 @@ test("blur and a custom image load the person segmenter", () => {
   assert.equal(cameraFxNeedsSegmenter({ background: "blur" }), true);
   assert.equal(cameraFxNeedsSegmenter({ background: "image" }), true);
   assert.equal(cameraFxNeedsSegmenter(undefined), false);
+});
+
+test("an avatar replaces the camera picture, so it needs no person cut-out", () => {
+  assert.equal(cameraFxShowsAvatar({ avatar: "bot" }), true);
+  assert.equal(cameraFxShowsAvatar({ avatar: "off", background: "blur" }), false);
+  assert.equal(cameraFxNeedsSegmenter({ avatar: "alien", background: "blur" }), false);
+  assert.equal(cameraFxNeedsSegmenter({ avatar: "custom", background: "image" }), false);
 });
 
 test("mask edges are soft between unsure and sure", () => {
@@ -83,6 +94,28 @@ test("every file the background effects load ships with the app", () => {
   assert.ok(existsSync(join(ui, "vendor", "mediapipe", "LICENSE")));
 });
 
+test("every file the avatars load ships with the app", () => {
+  const source = readFileSync(join(ui, "scripts", "camera-avatar.js"), "utf8");
+  const block = /const AVATAR_FILES = \{([\s\S]*?)\};/.exec(source)[1];
+  const paths = [...block.matchAll(/"((?:vendor|scripts)\/[^"]+)"/g)].map(m => m[1]);
+  assert.equal(paths.length, 2);
+  for (const path of paths) assert.ok(existsSync(join(ui, path)), `${path} is missing`);
+  const scene = readFileSync(join(ui, "scripts", "avatar-scene.mjs"), "utf8");
+  const bundle = /from "\.\.\/(vendor\/[^"]+)"/.exec(scene)[1];
+  assert.ok(existsSync(join(ui, bundle)), `${bundle} is missing`);
+  assert.ok(existsSync(join(ui, "vendor", "three", "LICENSE")));
+});
+
+test("the avatar renderer never phones home and avatar files only load what they carry", () => {
+  const bundle = readFileSync(join(ui, "vendor", "three", "three_bundle.mjs"), "utf8");
+  assert.doesNotMatch(bundle, /sendBeacon|XMLHttpRequest\(\)\.open\("POST"|googleapis/);
+  const hosts = new Set([...bundle.matchAll(/https?:\/\/([^/"'\s)]+)/g)].map(m => m[1]));
+  assert.deepEqual([...hosts].sort(), ["github.com", "hacksoflife.blogspot.ch", "jcgt.org", "vrm.dev", "www.w3.org"]);
+  const scene = readFileSync(join(ui, "scripts", "avatar-scene.mjs"), "utf8");
+  assert.match(scene, /setURLModifier\(rejectRemoteUrls\)/);
+  assert.doesNotMatch(scene, /https?:\/\//);
+});
+
 test("the bundled segmenter never phones home", () => {
   const bundle = readFileSync(join(ui, "vendor", "mediapipe", "vision_bundle.mjs"), "utf8");
   const loader = readFileSync(join(ui, "vendor", "mediapipe", "wasm", "vision_wasm_internal.js"), "utf8");
@@ -94,7 +127,7 @@ test("the bundled segmenter never phones home", () => {
 
 test("the camera scripts load before the app that uses them", () => {
   const html = readFileSync(join(ui, "index.html"), "utf8");
-  const order = ["scripts/camera-fx.js", "scripts/camera-pipeline.js", "scripts/app.js"].map(src => html.indexOf(`<script src="${src}">`));
+  const order = ["scripts/camera-fx.js", "scripts/camera-pipeline.js", "scripts/avatar-rig.js", "scripts/camera-avatar.js", "scripts/app.js"].map(src => html.indexOf(`<script src="${src}">`));
   assert.ok(order.every(i => i > 0));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
