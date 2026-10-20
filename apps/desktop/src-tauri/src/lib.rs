@@ -520,6 +520,11 @@ async fn send_message(
         }
         message.reply_to = Some(target);
     }
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_inside_post(state, cid, message.reply_to)?;
+    }
     let card = preview_card(&app, sid, &message, preview_url.as_deref()).await;
     let carries_card = card.is_some();
     let draft = message.clone();
@@ -1216,7 +1221,11 @@ async fn set_voice_channel(
         Some(channel) => {
             {
                 let servers = app.servers.lock().unwrap();
-                require_can_view(servers.get(&sid).ok_or("unknown server")?, profile.id, channel)?;
+                let state = servers.get(&sid).ok_or("unknown server")?;
+                if !state.server.channel(channel).is_some_and(|c| c.kind.is_voice()) {
+                    return Err("that is not a voice channel".into());
+                }
+                require_can_view(state, profile.id, channel)?;
             }
             let full = app.servers.lock().unwrap().get(&sid).is_some_and(|s| voice_channel_full(&app, s, channel, profile.id));
             if full {
@@ -4516,6 +4525,38 @@ fn parse_tag_picks(raw: Vec<String>) -> CmdResult<Vec<commy_core::TagId>> {
     raw.iter().map(|t| t.parse::<commy_core::TagId>().map_err(|_| "that tag no longer exists".to_string())).collect()
 }
 
+fn require_known_tags(forum: &Channel, picks: &[commy_core::TagId]) -> CmdResult<()> {
+    if picks.iter().all(|pick| forum.tags.iter().any(|t| t.id == *pick)) {
+        Ok(())
+    } else {
+        Err("that tag is not on this forum".into())
+    }
+}
+
+fn forum_post_root(state: &ServerState, channel: ChannelId, from: MessageId) -> Option<MessageId> {
+    let messages = state.messages(channel);
+    let mut current = messages.iter().find(|m| m.id == from)?;
+    let mut seen = std::collections::HashSet::new();
+    while let Some(parent) = current.reply_to.and_then(|p| messages.iter().find(|m| m.id == p)) {
+        if !seen.insert(current.id) {
+            break;
+        }
+        current = parent;
+    }
+    Some(current.id)
+}
+
+fn require_inside_post(state: &ServerState, channel: ChannelId, reply_to: Option<MessageId>) -> CmdResult<()> {
+    let Some(forum) = state.server.channel(channel).filter(|c| c.is_forum()) else { return Ok(()) };
+    let Some(target) = reply_to else {
+        return Err("start a post to write in a forum channel".into());
+    };
+    match forum_post_root(state, channel, target) {
+        Some(root) if forum.posts.contains_key(&root) => Ok(()),
+        _ => Err("replies in a forum go inside a post".into()),
+    }
+}
+
 #[tauri::command]
 async fn set_forum_tags(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, channel_id: String, tags: Vec<ForumTagInput>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
@@ -4564,7 +4605,7 @@ async fn post_forum(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        forum_channel(state, cid)?;
+        require_known_tags(forum_channel(state, cid)?, &tags)?;
         require_can_post(&app, state, profile.id, cid)?;
     }
     let content = expressions_for_server(&app, sid, profile.id, content).await?;
@@ -4601,7 +4642,9 @@ async fn edit_forum_post(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        let post = forum_channel(state, cid)?.posts.get(&mid).ok_or("that post no longer exists")?;
+        let forum = forum_channel(state, cid)?;
+        require_known_tags(forum, &tags)?;
+        let post = forum.posts.get(&mid).ok_or("that post no longer exists")?;
         if post.author != me.id && !our_permissions(&app, state, me.id).allows(Permissions::MANAGE_MESSAGES) {
             return Err("you can only change your own posts".into());
         }
