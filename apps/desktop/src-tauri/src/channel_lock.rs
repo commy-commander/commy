@@ -43,8 +43,12 @@ impl KeyHolder {
         }
         let mut opened =
             self.with_ring(state, message.channel, |ring| channel_key::read_message(state.server.id, message, ring))??;
-        if !state.server.permissions_for(opened.author).allows(Permissions::ATTACH_FILES) {
-            opened.attachments.retain(|a| !a.carries_a_file());
+        let perms = state.server.permissions_for(opened.author);
+        if !perms.allows(Permissions::ATTACH_FILES) {
+            opened.attachments.retain(|a| !a.is_plain_file());
+        }
+        if !perms.allows(Permissions::SEND_VOICE_MESSAGES) {
+            opened.attachments.retain(|a| !a.is_voice_message());
         }
         Some(opened)
     }

@@ -40,6 +40,7 @@ impl Permissions {
     pub const MOVE_MEMBERS: Permissions = Permissions(1 << 30);
     pub const CHANGE_NICKNAME: Permissions = Permissions(1 << 31);
     pub const MANAGE_NICKNAMES: Permissions = Permissions(1 << 32);
+    pub const SEND_VOICE_MESSAGES: Permissions = Permissions(1 << 33);
 
     pub fn default_member() -> Permissions {
         Self::VIEW_CHANNELS
@@ -55,6 +56,7 @@ impl Permissions {
             | Self::ADD_STICKERS
             | Self::ADD_EMOTICONS
             | Self::CHANGE_NICKNAME
+            | Self::SEND_VOICE_MESSAGES
     }
 
     pub fn all() -> Permissions {
@@ -161,6 +163,7 @@ mod tests {
     fn default_member_cannot_moderate() {
         let p = Permissions::default_member();
         assert!(p.allows(Permissions::SEND_MESSAGES));
+        assert!(p.allows(Permissions::SEND_VOICE_MESSAGES));
         assert!(!p.allows(Permissions::KICK_MEMBERS));
         assert!(!p.allows(Permissions::TIME_OUT_MEMBERS));
         assert!(!p.allows(Permissions::MANAGE_SERVER));

@@ -121,6 +121,7 @@ fn known_permissions() -> Permissions {
         Permissions::CHANGE_NICKNAME,
         Permissions::MANAGE_NICKNAMES,
         Permissions::MOVE_MEMBERS,
+        Permissions::SEND_VOICE_MESSAGES,
     ]
     .into_iter()
     .fold(Permissions::NONE, |acc, p| acc | p)

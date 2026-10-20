@@ -31,6 +31,7 @@ mod tray;
 mod updater;
 mod view;
 mod voice_keys;
+mod voice_message;
 mod wake;
 
 use media_engine::{should_dial, CameraSession, MicTest, ScreenShareSession, ScreenWatch, StreamAudioSink, VoiceSession};
@@ -781,13 +782,7 @@ async fn send_attachment(
         require_permission(app, state, profile.id, Permissions::ATTACH_FILES, "send files or images here")?;
     }
     let size_bytes = bytes.len() as u64;
-
-    let (blob, provider) = {
-        let net = app.net.lock().await;
-        let node = net.as_ref().ok_or("network is not ready yet")?;
-        let hash = node.add_blob(bytes).await.map_err(err_to_string)?;
-        (hash, Some(node.node_id_hex()))
-    };
+    let (blob, provider) = store_blob(app, bytes).await?;
 
     let mime_type = mime_guess::from_path(&filename)
         .first_raw()
@@ -805,6 +800,102 @@ async fn send_attachment(
     let _signing = app.signing.read().await;
     seal_and_sign(app, sid, &mut message)?;
     commit_message(app, handle, sid, message).await
+}
+
+async fn store_blob(app: &App, bytes: Vec<u8>) -> CmdResult<(String, Option<String>)> {
+    let net = app.net.lock().await;
+    let node = net.as_ref().ok_or("network is not ready yet")?;
+    let hash = node.add_blob(bytes).await.map_err(err_to_string)?;
+    Ok((hash, Some(node.node_id_hex())))
+}
+
+#[tauri::command]
+async fn start_voice_recording(app: tauri::State<'_, App>) -> CmdResult<()> {
+    let stale = app.voice_recorder.lock().unwrap().take();
+    if let Some(stale) = stale {
+        stale.discard().await;
+    }
+    let voice = app.voice.lock().unwrap().clone();
+    let recorder = voice_message::VoiceRecorder::start(&voice).map_err(|e| format!("could not start recording: {e}"))?;
+    *app.voice_recorder.lock().unwrap() = Some(recorder);
+    Ok(())
+}
+
+#[tauri::command]
+async fn cancel_voice_recording(app: tauri::State<'_, App>) -> CmdResult<()> {
+    let recorder = app.voice_recorder.lock().unwrap().take();
+    if let Some(recorder) = recorder {
+        recorder.discard().await;
+    }
+    Ok(())
+}
+
+async fn take_recording(app: &App) -> CmdResult<voice_message::Recording> {
+    let recorder = app.voice_recorder.lock().unwrap().take().ok_or("no voice message is being recorded")?;
+    let clip = recorder.stop().await.map_err(|e| format!("recording failed: {e}"))?;
+    if clip.duration_ms < voice_message::MIN_VOICE_MESSAGE_MS {
+        return Err("that voice message is too short to send".into());
+    }
+    if clip.bytes.len() as u64 > voice_message::MAX_VOICE_MESSAGE_BYTES {
+        return Err("that voice message is too long to send".into());
+    }
+    Ok(clip)
+}
+
+#[tauri::command]
+async fn send_voice_message(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+) -> CmdResult<MessageView> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let clip = take_recording(&app).await?;
+    let profile = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, profile.id, Permissions::SEND_VOICE_MESSAGES, "send voice messages here")?;
+    }
+    let size_bytes = clip.bytes.len() as u64;
+    let (blob, provider) = store_blob(&app, clip.bytes).await?;
+    let mut message = Message::new(cid, profile.id, String::new());
+    message.attachments.push(Attachment::voice_message(blob, size_bytes, provider));
+    let _signing = app.signing.read().await;
+    seal_and_sign(&app, sid, &mut message)?;
+    commit_message(&app, &handle, sid, message).await
+}
+
+#[tauri::command]
+async fn send_dm_voice_message(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    user_id: String,
+) -> CmdResult<DmMessageView> {
+    let (me, partner) = dm_partner(&app, &user_id)?;
+    let clip = take_recording(&app).await?;
+    let size_bytes = clip.bytes.len() as u64;
+    let (blob, provider) = store_blob(&app, clip.bytes).await?;
+    let mut message = DmMessage::new(me.id, partner, String::new());
+    message.attachments.push(Attachment::voice_message(blob, size_bytes, provider));
+    let view = post_dm(&app, &handle, &me, partner, message).await?;
+    view.ok_or_else(|| "voice message not sent".to_string())
+}
+
+#[tauri::command]
+async fn get_voice_message(
+    app: tauri::State<'_, App>,
+    blob: String,
+    provider: Option<String>,
+    size_bytes: Option<u64>,
+) -> CmdResult<tauri::ipc::Response> {
+    let max = voice_message::MAX_VOICE_MESSAGE_BYTES;
+    if size_bytes.is_some_and(|size| size > max) {
+        return Err("voice message too large to play here".into());
+    }
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[tauri::command]
@@ -2467,12 +2558,7 @@ async fn send_dm_attachment(
     }
     let (me, partner) = dm_partner(app, user_id)?;
     let size_bytes = bytes.len() as u64;
-    let (blob, provider) = {
-        let net = app.net.lock().await;
-        let node = net.as_ref().ok_or("network is not ready yet")?;
-        let hash = node.add_blob(bytes).await.map_err(err_to_string)?;
-        (hash, Some(node.node_id_hex()))
-    };
+    let (blob, provider) = store_blob(app, bytes).await?;
     let mime_type = mime_guess::from_path(&filename)
         .first_raw()
         .unwrap_or("application/octet-stream")
@@ -6824,6 +6910,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "mentioned": state.server.mentioned_by(message.author, &message.content, me, &names),
             "content": message.content,
             "has_attachments": message.files().next().is_some(),
+            "voice_message": commy_core::message::only_a_voice_message(&message.content, message.attachments.iter()),
         })
     };
     let _ = handle.emit("message-created", payload);
@@ -7470,6 +7557,11 @@ pub fn run() {
             get_storage_settings,
             set_history_window,
             get_attachment_video,
+            start_voice_recording,
+            cancel_voice_recording,
+            send_voice_message,
+            send_dm_voice_message,
+            get_voice_message,
             start_screen_share,
             stop_screen_share,
             share_audio_supported,

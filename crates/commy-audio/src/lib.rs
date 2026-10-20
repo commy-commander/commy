@@ -8,6 +8,7 @@ const RNNOISE_I16_FULL_SCALE: f32 = 32767.0;
 
 pub mod codec;
 pub mod echo;
+pub mod ogg;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum AudioError {

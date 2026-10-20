@@ -9,16 +9,19 @@ function shouldNotify({ level, presence, focusedOnIt, isDm, mentioned, announcem
   return level === "mentions" && Boolean(mentioned || announcement);
 }
 
-function noticeText(content, hasAttachments, plain) {
-  return plain(content || "") || (hasAttachments ? "Sent an attachment" : "");
+function noticeText(content, hasAttachments, plain, voiceMessage) {
+  const text = plain(content || "");
+  if (text) return text;
+  if (voiceMessage) return "Voice message";
+  return hasAttachments ? "Sent an attachment" : "";
 }
 
 function noticeTitle(authorName, channelName, serverName) {
   return `${authorName || "Someone"} (#${channelName}, ${serverName})`;
 }
 
-function messageNotice({ author_name, channel_name, server_name, content, has_attachments, announcement }, plain) {
-  const body = noticeText(content, has_attachments, plain);
+function messageNotice({ author_name, channel_name, server_name, content, has_attachments, announcement, voice_message }, plain) {
+  const body = noticeText(content, has_attachments, plain, voice_message);
   if (announcement) {
     return { title: `Announcement in #${channel_name} (${server_name})`, body: `${author_name || "Someone"}: ${body}` };
   }
@@ -94,8 +97,8 @@ function isRecent(atSecs, nowSecs) {
   return Number.isFinite(atSecs) && nowSecs - atSecs <= RECENT_SECS;
 }
 
-function caughtUpNotice({ count, author_name, channel_name, server_name, content, has_attachments }, plain) {
-  const text = noticeText(content, has_attachments, plain);
+function caughtUpNotice({ count, author_name, channel_name, server_name, content, has_attachments, voice_message }, plain) {
+  const text = noticeText(content, has_attachments, plain, voice_message);
   const rest = count - 1;
   const more = rest > 0 ? `${rest} more message${rest === 1 ? "" : "s"}` : "";
   return {
@@ -106,7 +109,7 @@ function caughtUpNotice({ count, author_name, channel_name, server_name, content
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted,
+    DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted,
     channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice,
   };
 }

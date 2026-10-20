@@ -235,6 +235,14 @@
           </span>
           <button class="icon-btn" id="link-draft-dismiss" title="Send Without Preview"></button>
         </div>
+        <div class="voice-rec hidden" id="voice-rec" role="status" aria-live="polite">
+          <span class="voice-rec-dot" aria-hidden="true"></span>
+          <span class="voice-rec-label">Recording</span>
+          <span class="voice-rec-time" id="voice-rec-time">0:00</span>
+          <span class="voice-rec-hint">up to 5:00</span>
+          <button class="btn-secondary btn-small" id="voice-rec-cancel" type="button">Cancel</button>
+          <button class="btn-primary btn-small voice-rec-send" id="voice-rec-send" type="button">Send</button>
+        </div>
         <button class="icon-btn composer-attach" id="attach-btn" title="Add Files and GIFs">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4z"/></svg>
         </button>
@@ -2075,6 +2083,7 @@
     <button id="cm-video" role="menuitem">Post a Video</button>
     <button id="cm-gif" role="menuitem">GIF</button>
     <button id="cm-poll" role="menuitem">Create a Poll</button>
+    <button id="cm-voice" role="menuitem">Record a Voice Message</button>
   </div>
 
   <div class="pop-menu ctx-menu hidden" id="server-menu" role="menu">
@@ -2157,6 +2166,7 @@
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>
   <script src="scripts/embeds.js"></script>
+  <script src="scripts/voice-message.js"></script>
   <script src="scripts/link-preview.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/mentions.js"></script>

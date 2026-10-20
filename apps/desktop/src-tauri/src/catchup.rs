@@ -63,6 +63,7 @@ pub struct Fresh {
     pub author: UserId,
     pub content: String,
     pub has_attachments: bool,
+    pub voice_message: bool,
     pub at: i64,
     pub mentioned: bool,
 }
@@ -74,6 +75,7 @@ impl Fresh {
             author: message.author,
             content: message.content.clone(),
             has_attachments: message.files().next().is_some(),
+            voice_message: commy_core::message::only_a_voice_message(&message.content, message.attachments.iter()),
             at: message.created_at.timestamp(),
             mentioned: mentions(&message.content, names),
         }
@@ -502,6 +504,7 @@ pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChann
                     .unwrap_or_else(|| "Someone".into()),
                 "content": latest.content,
                 "has_attachments": latest.has_attachments,
+                "voice_message": latest.voice_message,
                 "at": latest.at,
             });
             (channel.to_string(), value)
@@ -1309,6 +1312,7 @@ mod tests {
             author,
             content: content.into(),
             has_attachments: false,
+            voice_message: false,
             at,
             mentioned: mentions(content, &["me"]),
         };
