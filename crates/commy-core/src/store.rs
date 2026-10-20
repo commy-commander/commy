@@ -1083,6 +1083,17 @@ impl ServerState {
                     Some(Some(text)) => Ok(self.server.pronouns.insert(user, text.clone()).as_deref() != Some(text.as_str())),
                 }
             }
+            ServerEvent::MemberNickname { server, user, nickname } => {
+                self.same_server(server)?;
+                let Some(member) = self.server.member_mut(user) else {
+                    return Ok(false);
+                };
+                match nickname.as_deref().map(crate::server::clean_nickname) {
+                    None => Ok(replace(&mut member.nickname, None)),
+                    Some(None) => Ok(false),
+                    Some(cleaned) => Ok(replace(&mut member.nickname, cleaned)),
+                }
+            }
             ServerEvent::RulesAccept { server, user } => {
                 self.same_server(server)?;
                 if self.server.rules_accepted.contains(&user) || !self.server.is_member(user) {
@@ -2804,6 +2815,32 @@ mod tests {
         let signed = |by, user| crate::SignedEvent::sign(sid, by, 1, set(user, Some("he / him")), &identity_for(by));
         assert!(crate::action::authorized(&state.server, friend, &signed(friend, friend).event));
         assert!(!crate::action::authorized(&state.server, owner, &signed(owner, friend).event));
+    }
+
+    #[test]
+    fn nicknames_are_trimmed_kept_short_and_cleared_with_none() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let set = |user, text: Option<&str>| ServerEvent::MemberNickname { server: sid, user, nickname: text.map(Into::into) };
+        let nickname_of = |state: &ServerState, user| state.server.member(user).and_then(|m| m.nickname.clone());
+        assert_eq!(state.apply(set(friend, Some("  Sammy "))), Ok(true));
+        assert_eq!(nickname_of(&state, friend).as_deref(), Some("Sammy"));
+        assert_eq!(state.apply(set(friend, Some("Sammy"))), Ok(false), "unchanged");
+        assert_eq!(state.apply(set(friend, Some("   "))), Ok(false), "blank is not a nickname");
+        assert_eq!(state.apply(set(friend, Some("Sam\u{7}my"))), Ok(false), "control characters");
+        assert_eq!(state.apply(set(friend, Some(&"n".repeat(33)))), Ok(false), "too long");
+        assert_eq!(state.apply(set(friend, Some(&"n".repeat(32)))), Ok(true), "the longest allowed");
+        assert_eq!(nickname_of(&state, friend).as_deref(), Some("n".repeat(32).as_str()));
+        assert_eq!(state.apply(set(UserId::new(), Some("ghost"))), Ok(false), "strangers have none");
+        assert_eq!(state.apply(set(owner, Some("Boss"))), Ok(true), "the owner is a member like any other");
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        let restored = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert_eq!(nickname_of(&restored, owner).as_deref(), Some("Boss"));
+        assert_eq!(state.apply(set(friend, None)), Ok(true));
+        assert_eq!(state.apply(set(friend, None)), Ok(false), "already cleared");
+        assert_eq!(nickname_of(&state, friend), None);
+        assert_eq!(state.apply(ServerEvent::MemberNickname { server: ServerId::new(), user: owner, nickname: None }), Err(StoreError::WrongServer));
     }
 
     #[test]

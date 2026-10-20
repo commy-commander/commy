@@ -143,6 +143,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => format!("role:{role}:{user}"),
         E::VoiceModerate { user, .. } => format!("voice_moderate:{user}"),
         E::MemberTimeout { user, .. } => format!("timeout:{user}"),
+        E::MemberNickname { user, .. } => format!("nickname:{user}"),
         E::MessagePin { message, .. } => format!("pin:{message}"),
         E::ReactionToggle { message, emoji, user, .. } | E::ReactionSet { message, emoji, user, .. } => {
             format!("reaction:{message}:{emoji}:{user}")
@@ -274,6 +275,11 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
             allows(Permissions::MANAGE_EVENTS) || server.events.iter().any(|e| e.id == *event && e.creator == by)
         }
         E::VoiceModerate { .. } => allows(Permissions::MUTE_MEMBERS) || allows(Permissions::DEAFEN_MEMBERS),
+        E::MemberNickname { user, .. } => {
+            let own = *user == by && allows(Permissions::CHANGE_NICKNAME);
+            let others = *user != server.owner && allows(Permissions::MANAGE_NICKNAMES);
+            member && (own || others)
+        }
         E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
         E::MemberTimeout { user, .. } => *user != by && actor(event) == Some(by) && allows(Permissions::TIME_OUT_MEMBERS),
         E::ServerDelete { .. } => by == server.owner,
@@ -400,6 +406,7 @@ mod tests {
             ServerEvent::RoleDelete { server: sid, role: rid },
             ServerEvent::MemberLeave { server: sid, user: admin },
             ServerEvent::VoiceModerate { server: sid, user: plain, muted: true, deafened: false },
+            ServerEvent::MemberNickname { server: sid, user: admin, nickname: Some("Ad".into()) },
         ];
         for event in &events {
             assert!(authorized(&state.server, owner, event), "{event:?}");
@@ -433,6 +440,31 @@ mod tests {
         assert!(authorized(&state.server, owner, &pin(owner)));
         assert!(!authorized(&state.server, a, &pin(a)), "no pin permission");
         assert!(!authorized(&state.server, owner, &pin(a)), "pins name their pinner");
+    }
+
+    #[test]
+    fn nicknames_are_your_own_unless_you_manage_them() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        let nick = |user| ServerEvent::MemberNickname { server: sid, user, nickname: Some("Nick".into()) };
+        assert!(authorized(&state.server, a, &nick(a)), "members may rename themselves");
+        assert!(!authorized(&state.server, a, &nick(b)));
+        assert!(!authorized(&state.server, a, &nick(owner)));
+        assert!(authorized(&state.server, owner, &nick(a)));
+        assert!(authorized(&state.server, owner, &nick(owner)));
+        assert!(!authorized(&state.server, UserId::new(), &nick(a)), "strangers");
+        let managers = role(Permissions::MANAGE_NICKNAMES, false);
+        let rid = managers.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: managers }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: b, role: rid }).unwrap();
+        assert!(authorized(&state.server, b, &nick(a)));
+        assert!(!authorized(&state.server, b, &nick(owner)), "only the owner renames the owner");
+        let everyone = state.server.roles.iter_mut().find(|r| r.is_everyone()).unwrap();
+        everyone.permissions.remove(Permissions::CHANGE_NICKNAME);
+        assert!(!authorized(&state.server, a, &nick(a)), "no change nickname permission");
+        assert!(authorized(&state.server, b, &nick(b)), "managing covers one's own");
     }
 
     #[test]

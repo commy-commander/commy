@@ -4305,6 +4305,40 @@ async fn moderate_voice(
 }
 
 #[tauri::command]
+async fn set_nickname(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    user_id: String,
+    nickname: Option<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let cleaned = match nickname.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        None => None,
+        Some(text) => Some(commy_core::server::clean_nickname(text).ok_or_else(|| {
+            format!("nicknames can be up to {} characters", commy_core::server::MAX_NICKNAME_CHARS)
+        })?),
+    };
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        if !state.server.is_member(user) {
+            return Err("that person is not a member of this server".into());
+        }
+        let own = user == me.id && our_permissions(&app, state, me.id).allows(Permissions::CHANGE_NICKNAME);
+        if !own {
+            require_permission(&app, state, me.id, Permissions::MANAGE_NICKNAMES, "change nicknames")?;
+            if user == state.server.owner {
+                return Err("only the server owner can change their own nickname".into());
+            }
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberNickname { server: sid, user, nickname: cleaned }).await
+}
+
+#[tauri::command]
 async fn ban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
@@ -6325,7 +6359,8 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             return;
         }
         let Some(message) = keys.open(state, message) else { return };
-        let names = app.profile.lock().unwrap().as_ref().map(catchup::mention_names).unwrap_or_default();
+        let mut names = app.profile.lock().unwrap().as_ref().map(catchup::mention_names).unwrap_or_default();
+        names.extend(view::nickname_of(state, me));
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         serde_json::json!({
             "server": sid.to_string(),
@@ -6334,7 +6369,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "channel_name": state.server.channel(message.channel).map(|c| c.name.clone()).unwrap_or_default(),
             "announcement": state.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement),
             "author": message.author.to_string(),
-            "author_name": state.profiles.get(&message.author).map(|p| p.visible_name().to_string()).unwrap_or_else(|| "Someone".into()),
+            "author_name": view::known_name_of(state, message.author).unwrap_or_else(|| "Someone".into()),
             "mentioned": state.server.mentioned_by(message.author, &message.content, me, &names),
             "content": message.content,
             "has_attachments": message.files().next().is_some(),
@@ -6795,6 +6830,7 @@ pub fn run() {
             get_custom_icon,
             set_pronouns,
             moderate_voice,
+            set_nickname,
             ban_member,
             unban_member,
             time_out_member,

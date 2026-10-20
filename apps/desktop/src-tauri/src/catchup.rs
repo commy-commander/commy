@@ -497,8 +497,7 @@ pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChann
                 "announcement": found.is_some_and(|c| c.kind == commy_core::ChannelKind::Announcement),
                 "author": latest.author.to_string(),
                 "author_name": state
-                    .and_then(|s| s.profiles.get(&latest.author))
-                    .map(|p| p.visible_name().to_string())
+                    .and_then(|s| crate::view::known_name_of(s, latest.author))
                     .unwrap_or_else(|| "Someone".into()),
                 "content": latest.content,
                 "has_attachments": latest.has_attachments,

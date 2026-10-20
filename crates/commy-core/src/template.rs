@@ -116,6 +116,8 @@ fn known_permissions() -> Permissions {
         Permissions::ADD_STICKERS,
         Permissions::ADD_EMOTICONS,
         Permissions::MENTION_EVERYONE,
+        Permissions::CHANGE_NICKNAME,
+        Permissions::MANAGE_NICKNAMES,
     ]
     .into_iter()
     .fold(Permissions::NONE, |acc, p| acc | p)

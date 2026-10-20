@@ -137,6 +137,15 @@ pub struct Member {
     pub timeout: Option<Timeout>,
 }
 
+pub const MAX_NICKNAME_CHARS: usize = 32;
+
+pub fn clean_nickname(raw: &str) -> Option<String> {
+    let text = raw.trim();
+    let length = text.chars().count();
+    let fits = (1..=MAX_NICKNAME_CHARS).contains(&length) && !text.chars().any(char::is_control);
+    fits.then(|| text.to_string())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SoundboardSound {
     pub name: String,

@@ -36,6 +36,8 @@ impl Permissions {
     pub const ADD_EMOTICONS: Permissions = Permissions(1 << 26);
     pub const MENTION_EVERYONE: Permissions = Permissions(1 << 27);
     pub const TIME_OUT_MEMBERS: Permissions = Permissions(1 << 28);
+    pub const CHANGE_NICKNAME: Permissions = Permissions(1 << 31);
+    pub const MANAGE_NICKNAMES: Permissions = Permissions(1 << 32);
 
     pub fn default_member() -> Permissions {
         Self::VIEW_CHANNELS
@@ -50,6 +52,7 @@ impl Permissions {
             | Self::ADD_EMOJIS
             | Self::ADD_STICKERS
             | Self::ADD_EMOTICONS
+            | Self::CHANGE_NICKNAME
     }
 
     pub fn all() -> Permissions {
@@ -90,6 +93,10 @@ impl Permissions {
 
     pub fn can_mention_everyone(self) -> bool {
         self.allows(Self::MENTION_EVERYONE)
+    }
+
+    pub fn can_change_own_nickname(self) -> bool {
+        self.allows(Self::CHANGE_NICKNAME) || self.allows(Self::MANAGE_NICKNAMES)
     }
 }
 
@@ -156,6 +163,17 @@ mod tests {
         assert!(!p.can_announce());
         assert!(!p.can_view_audit_log());
         assert!(!p.can_mention_everyone());
+        assert!(p.can_change_own_nickname());
+        assert!(!p.allows(Permissions::MANAGE_NICKNAMES));
+    }
+
+    #[test]
+    fn managing_nicknames_covers_your_own_too() {
+        assert!(Permissions::CHANGE_NICKNAME.can_change_own_nickname());
+        assert!(Permissions::MANAGE_NICKNAMES.can_change_own_nickname());
+        assert!(Permissions::ADMINISTRATOR.can_change_own_nickname());
+        assert!(!Permissions::SEND_MESSAGES.can_change_own_nickname());
+        assert_ne!(Permissions::CHANGE_NICKNAME, Permissions::MANAGE_NICKNAMES);
     }
 
     #[test]

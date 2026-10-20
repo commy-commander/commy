@@ -52,6 +52,9 @@ test("sentences name the actor, the target and the change", () => {
   assert.equal(auditText(entry("expression_sharing", { detail: "" })), "Mia stopped sharing this server's stickers and emoticons");
   assert.equal(auditText(entry("voice_moderate", { label: "Sam", detail: "muted" })), "Mia server-muted Sam");
   assert.equal(auditText(entry("voice_moderate", { label: "Sam", detail: "cleared" })), "Mia lifted the server mute on Sam");
+  assert.equal(auditText(entry("member_nickname", { label: "Sam", detail: "Sammy" })), "Mia changed Sam's nickname to Sammy");
+  assert.equal(auditText(entry("member_nickname", { label: "Sam" })), "Mia cleared Sam's nickname");
+  assert.equal(auditGroup("member_nickname"), "members");
   assert.equal(auditText(entry("message_delete", { label: "Nova", detail: "general" })), "Mia deleted a message by Nova in general");
   assert.equal(auditText(entry("channel_access", { label: "mods", detail: "private" })), "Mia made mods private");
   assert.equal(auditText(entry("channel_access", { label: "news", detail: "send" })), "Mia limited who can send in news");
