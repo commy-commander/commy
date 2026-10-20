@@ -10,6 +10,7 @@ mod media_engine;
 mod igdb;
 mod instance;
 mod invite_link;
+mod link_preview;
 mod liveness;
 mod outbox;
 mod overlay;
@@ -363,6 +364,7 @@ async fn send_message(
     channel_id: String,
     content: String,
     reply_to: Option<String>,
+    preview_url: Option<String>,
 ) -> CmdResult<MessageView> {
     let content = clean_message(&content)?;
     let sid = server_id.parse().map_err(err_to_string)?;
@@ -382,12 +384,43 @@ async fn send_message(
         }
         message.reply_to = Some(target);
     }
+    let card = preview_card(&app, sid, &message, preview_url.as_deref()).await;
+    let carries_card = card.is_some();
+    message.attachments.extend(card);
     let _signing = app.signing.read().await;
     sign_message(&app, sid, &mut message)?;
+    if carries_card && !signed_fits_one_gossip_frame(&message) {
+        message.attachments.clear();
+        sign_message(&app, sid, &mut message)?;
+    }
     if !signed_fits_one_gossip_frame(&message) {
         return Err("that message is too long to send; try splitting it up".into());
     }
     commit_message(&app, &handle, sid, message).await
+}
+
+async fn preview_card(app: &App, sid: ServerId, message: &Message, url: Option<&str>) -> Option<Attachment> {
+    let url = url.filter(|u| message.content.contains(u))?;
+    let prepared = link_preview::prepared(url)?;
+    let may_share_pictures = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid)?;
+        our_permissions(app, state, message.author).allows(Permissions::ATTACH_FILES)
+    };
+    let picture = match prepared.picture {
+        Some(bytes) if may_share_pictures => {
+            let size_bytes = bytes.len() as u64;
+            let net = app.net.lock().await;
+            let node = net.as_ref()?;
+            node.add_blob(bytes).await.ok().map(|blob| commy_core::PreviewPicture {
+                blob,
+                size_bytes,
+                provider: Some(node.node_id_hex()),
+            })
+        }
+        _ => None,
+    };
+    Some(prepared.preview.into_attachment(picture))
 }
 
 #[tauri::command]
@@ -5172,7 +5205,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "author": message.author.to_string(),
             "author_name": state.profiles.get(&message.author).map(|p| p.visible_name().to_string()).unwrap_or_else(|| "Someone".into()),
             "content": message.content,
-            "has_attachments": !message.attachments.is_empty(),
+            "has_attachments": message.files().next().is_some(),
         })
     };
     let _ = handle.emit("message-created", payload);
@@ -5604,6 +5637,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             doorbell::get_awaited,
+            link_preview::prepare_link_preview,
             account::account_status,
             account::set_account_server,
             account::account_begin_sign_in,

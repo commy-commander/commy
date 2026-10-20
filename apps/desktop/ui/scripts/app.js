@@ -877,6 +877,9 @@ const ICONS = {
   paste: "M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z",
   search: "M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z",
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
+  link: "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 0-10z",
+  download: "M18 15v3H6v-3H4v3c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-3zm-1-4-1.41-1.41L13 12.17V4h-2v8.17L8.41 9.59 7 11l5 5z",
+  openExternal: "M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3z",
 };
 
 function svgIcon(name, size = 20) {
@@ -2847,9 +2850,10 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
       inlineMark = false;
       body.appendChild(content);
     }
-    for (const url of imageLinks(message.content)) {
-      body.appendChild(renderImageEmbed(url));
-    }
+    body.append(...imageEmbeds(imageLinks(message.content)));
+  }
+  if (linkPreviewPrefs().show) {
+    for (const preview of message.previews || []) body.appendChild(renderLinkPreview(preview));
   }
   if (inlineMark) body.prepend(pendingMark());
   for (const att of message.attachments || []) {
@@ -3504,6 +3508,7 @@ async function sendThreadReply() {
       channelId: state.currentChannel.id,
       content: encodeCustomEmojis(content),
       replyTo: state.threadRoot,
+      previewUrl: await previewUrlFor(content),
     });
     await selectChannel(state.currentChannel);
   } catch (e) {
@@ -3777,23 +3782,26 @@ function renderAttachment(att) {
   btn.onclick = async () => {
     btn.disabled = true;
     btn.textContent = "Fetching";
-    try {
-      const path = await invoke("download_attachment", {
-        blob: att.blob,
-        filename: att.filename,
-        provider: att.provider ?? null,
-        sizeBytes: att.size_bytes ?? null,
-      });
-      toast(path ? `Saved to ${path}` : "Download cancelled");
-    } catch (e) {
-      toast(String(e));
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Download";
-    }
+    await saveAttachment(att);
+    btn.disabled = false;
+    btn.textContent = "Download";
   };
   box.appendChild(btn);
   return box;
+}
+
+async function saveAttachment(att) {
+  try {
+    const path = await invoke("download_attachment", {
+      blob: att.blob,
+      filename: att.filename,
+      provider: att.provider ?? null,
+      sizeBytes: att.size_bytes ?? null,
+    });
+    toast(path ? `Saved to ${path}` : "Download cancelled");
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 let updateStatus = null;
@@ -7094,6 +7102,48 @@ function wireExternalLink(a, url) {
   return a;
 }
 
+function imageEmbeds(urls) {
+  if (urls.length < 2) return urls.map(renderImageEmbed);
+  const grid = el("div", imageGridClass(urls.length));
+  for (const url of urls) grid.appendChild(renderImageEmbed(url));
+  return [grid];
+}
+
+function renderLinkPreview(preview) {
+  const layout = previewLayout(preview);
+  const card = el("div", `link-card ${layout}`);
+  const text = el("div", "link-card-text");
+  const site = previewSite(preview);
+  if (site) text.appendChild(el("div", "link-card-site", site));
+  if (preview.title) {
+    const title = wireExternalLink(el("a", "link-card-title", preview.title), preview.url);
+    title.title = `Open ${preview.url}`;
+    text.appendChild(title);
+  }
+  if (preview.description) text.appendChild(el("div", "link-card-description", preview.description));
+  card.appendChild(text);
+  if (layout !== "text") card.appendChild(linkCardImage(preview, layout));
+  return card;
+}
+
+function linkCardImage(preview, layout) {
+  const image = preview.image;
+  const box = previewImageBox(image, layout);
+  const frame = el("div", "link-card-image");
+  frame.style.width = `${box.width}px`;
+  frame.style.aspectRatio = `${box.width} / ${box.height}`;
+  const img = el("img");
+  img.alt = "";
+  img.onclick = () => openLightbox(img.src, preview.url, null);
+  loadImagePreview({ blob: image.blob, provider: image.provider, mime: image.mime, size_bytes: image.size_bytes }, false)
+    .then(src => {
+      img.src = src;
+      frame.appendChild(img);
+    })
+    .catch(() => frame.classList.add("missing"));
+  return frame;
+}
+
 function renderImageEmbed(url) {
   const host = imageHost(url) || url;
   const wrap = el("div", "image-embed");
@@ -7115,8 +7165,14 @@ function renderImageEmbed(url) {
 
 function embedImage(url) {
   const img = el("img", "chat-image");
+  holdPlaceUntilLoaded(img);
   img.onclick = () => openLightbox(img.src, url, null);
   return img;
+}
+
+function holdPlaceUntilLoaded(img) {
+  img.classList.add("waiting");
+  img.addEventListener("load", () => img.classList.remove("waiting"), { once: true });
 }
 
 function imageGate(url, host) {
@@ -7149,8 +7205,21 @@ function imageGate(url, host) {
   return gate;
 }
 
-function openLightbox(src, sourceUrl, filename) {
+function openLightbox(src, sourceUrl, filename, att = null) {
+  if (!src) return;
   $("lightbox-img").src = src;
+  const open = $("lightbox-open");
+  open.classList.toggle("hidden", !sourceUrl);
+  open.onclick = e => {
+    e.stopPropagation();
+    invoke("open_url", { url: sourceUrl }).catch(err => toast(String(err)));
+  };
+  const save = $("lightbox-save");
+  save.classList.toggle("hidden", !att);
+  save.onclick = e => {
+    e.stopPropagation();
+    saveAttachment(att);
+  };
   const source = $("lightbox-source");
   source.textContent = sourceUrl || filename || "";
   source.classList.toggle("hidden", !(sourceUrl || filename));
@@ -7196,10 +7265,9 @@ function loadImagePreview(att, clicked) {
 function chatImage(att) {
   const img = el("img", "chat-image");
   keepScrolledOnLoad(img);
+  holdPlaceUntilLoaded(img);
   img.alt = att.filename;
-  img.onclick = () => {
-    if (img.src) openLightbox(img.src, null, att.filename);
-  };
+  img.onclick = () => openLightbox(img.src, null, att.filename, att);
   return img;
 }
 
@@ -7929,11 +7997,14 @@ async function sendMessage() {
   state.historyAnchor = null;
   cancelReply();
   try {
+    const previewUrl = await previewUrlFor(content);
+    clearLinkDraft();
     await invoke("send_message", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
       content: encodeCustomEmojis(content),
       replyTo,
+      previewUrl,
     });
     pushOverlayChat(state.user.id, state.user.display_name || state.user.username, encodeCustomEmojis(content), false);
     await selectChannel(state.currentChannel);
@@ -7941,6 +8012,107 @@ async function sendMessage() {
     input.value = content;
     toast(String(e));
   }
+}
+
+const LINK_PREVIEW_KEY = "commy.linkPreviews";
+const SEND_PREVIEW_WAIT_MS = 2500;
+const LINK_DRAFT_DELAY_MS = 350;
+const linkDraft = { url: null, dismissed: null, preview: null, loading: null, token: 0, timer: null };
+
+function linkPreviewPrefs() {
+  try {
+    return readLinkPreviewPrefs(localStorage.getItem(LINK_PREVIEW_KEY));
+  } catch {
+    return readLinkPreviewPrefs(null);
+  }
+}
+
+function saveLinkPreviewPrefs(prefs) {
+  try { localStorage.setItem(LINK_PREVIEW_KEY, JSON.stringify(prefs)); } catch {}
+}
+
+function renderLinkPreviewSettings() {
+  const prefs = linkPreviewPrefs();
+  $("link-preview-send-toggle").checked = prefs.send;
+  $("link-preview-show-toggle").checked = prefs.show;
+}
+
+function onLinkPreviewSettingsChange() {
+  saveLinkPreviewPrefs({ send: $("link-preview-send-toggle").checked, show: $("link-preview-show-toggle").checked });
+  clearLinkDraft();
+  if (state.view === "server" && state.currentChannel) selectChannel(state.currentChannel);
+}
+
+function previewableDraftLink(text) {
+  if (state.view !== "server" || !linkPreviewPrefs().send) return null;
+  return previewableLink(text, url => imageLinks(url).length > 0 || Boolean(findInviteLink(url)));
+}
+
+function scheduleLinkDraft(delay = LINK_DRAFT_DELAY_MS) {
+  clearTimeout(linkDraft.timer);
+  linkDraft.timer = setTimeout(refreshLinkDraft, delay);
+}
+
+function refreshLinkDraft() {
+  const url = previewableDraftLink($("message-input").value);
+  if (url === linkDraft.url) return;
+  linkDraft.url = url;
+  linkDraft.preview = null;
+  linkDraft.loading = null;
+  const token = ++linkDraft.token;
+  renderLinkDraft();
+  if (!url || url === linkDraft.dismissed) return;
+  linkDraft.loading = invoke("prepare_link_preview", { url })
+    .catch(() => null)
+    .then(preview => {
+      if (token === linkDraft.token) {
+        linkDraft.preview = preview;
+        renderLinkDraft();
+      }
+      return preview;
+    });
+}
+
+function clearLinkDraft() {
+  clearTimeout(linkDraft.timer);
+  linkDraft.token++;
+  Object.assign(linkDraft, { url: null, dismissed: null, preview: null, loading: null });
+  renderLinkDraft();
+}
+
+function renderLinkDraft() {
+  const bar = $("link-draft");
+  const preview = linkDraft.preview;
+  const visible = Boolean(preview) && linkDraft.url !== linkDraft.dismissed && state.view === "server";
+  bar.classList.toggle("hidden", !visible);
+  if (!visible) return;
+  const thumb = $("link-draft-thumb");
+  thumb.replaceChildren();
+  if (preview.image) {
+    const img = el("img");
+    img.alt = "";
+    img.src = preview.image;
+    thumb.appendChild(img);
+  } else {
+    thumb.appendChild(svgIcon("link", 18));
+  }
+  $("link-draft-title").textContent = preview.title || preview.description || preview.url;
+  $("link-draft-site").textContent = previewSite(preview);
+}
+
+function dismissLinkDraft() {
+  linkDraft.dismissed = linkDraft.url;
+  renderLinkDraft();
+}
+
+async function previewUrlFor(content) {
+  const url = previewableDraftLink(content);
+  if (!url || url === linkDraft.dismissed) return null;
+  const pending = url === linkDraft.url && linkDraft.loading
+    ? linkDraft.loading
+    : invoke("prepare_link_preview", { url }).catch(() => null);
+  const preview = await Promise.race([pending, new Promise(resolve => setTimeout(() => resolve(null), SEND_PREVIEW_WAIT_MS))]);
+  return preview ? url : null;
 }
 
 const GIF_KEY = "commy.gif";
@@ -9646,6 +9818,17 @@ function wireEvents() {
       sendMessage();
     }
   });
+
+  $("message-input").addEventListener("input", e => scheduleLinkDraft(e.inputType === "insertFromPaste" ? 0 : LINK_DRAFT_DELAY_MS));
+  setIcon($("link-draft-dismiss"), "close", 16);
+  $("link-draft-dismiss").onclick = dismissLinkDraft;
+  setIcon($("lightbox-open"), "openExternal", 16);
+  $("lightbox-open").append("Open original");
+  setIcon($("lightbox-save"), "download", 16);
+  $("lightbox-save").append("Save");
+  renderLinkPreviewSettings();
+  $("link-preview-send-toggle").addEventListener("change", onLinkPreviewSettingsChange);
+  $("link-preview-show-toggle").addEventListener("change", onLinkPreviewSettingsChange);
 
   $("message-input").addEventListener("paste", e => {
     const files = Array.from(e.clipboardData?.files || []);
