@@ -741,6 +741,21 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-add-friend" role="dialog" aria-labelledby="add-friend-title">
+      <h2 id="add-friend-title">Add Friend</h2>
+      <p>They see your note under your name on the request.</p>
+      <div class="add-friend-who">
+        <div class="avatar avatar-sm" id="add-friend-avatar"></div>
+        <input id="add-friend-username" type="text" readonly aria-label="Username" />
+      </div>
+      <input id="add-friend-note" type="text" maxlength="200" autocomplete="off" placeholder="Add a note (optional)" aria-describedby="add-friend-count" />
+      <div class="add-friend-count" id="add-friend-count">0/200</div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="add-friend-cancel">Cancel</button>
+        <button class="btn-primary" id="add-friend-send">Send Request</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-block">
       <h2 id="block-title">Block</h2>
       <p id="block-body">They will not be able to send you direct messages, and their messages in servers will be collapsed for you. They will not be told.</p>
@@ -1455,6 +1470,20 @@
               </div>
               <input type="checkbox" id="spam-filter-toggle" class="switch" />
             </label>
+          </div>
+          <h2 class="settings-subhead">Profile</h2>
+          <div class="settings-card">
+            <div class="setting-row">
+              <div>
+                <div class="setting-title">Who can see your profile</div>
+                <div class="setting-sub">Your bio, banner, pronouns and what you're playing. Everyone still sees your name and avatar so the chat reads normally. Friends only also hides these from the servers you share.</div>
+              </div>
+              <select id="profile-policy" class="compact-select">
+                <option value="everyone">Everyone</option>
+                <option value="shared_servers">Friends and servers we share</option>
+                <option value="friends">Friends only</option>
+              </select>
+            </div>
           </div>
           <h2 class="settings-subhead">Links</h2>
           <div class="settings-card">
@@ -2309,6 +2338,7 @@
   <script src="scripts/presence.js"></script>
   <script src="scripts/activity.js"></script>
   <script src="scripts/people.js"></script>
+  <script src="scripts/profile-privacy.js"></script>
   <script src="scripts/timers.js"></script>
   <script src="scripts/timeouts.js"></script>
   <script src="scripts/server-colors.js"></script>

@@ -60,7 +60,10 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Game overlay.** On Windows, an in-game overlay shows who is talking and
   recent chat, in the screen corner you choose.
 - **Safety tools.** Block and report people, an audit log of server changes,
-  and invite links that expire or can be revoked.
+  and invite links that expire or can be revoked. Choose who can see your
+  profile details (everyone, friends and the servers you share, or friends
+  only); your name and avatar always show. Friend requests can carry a short
+  note so the other person knows who is asking.
 
 Windows is the primary platform today. macOS and Linux builds are published
 with each release; a few features, such as the game overlay and notification

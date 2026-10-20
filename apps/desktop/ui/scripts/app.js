@@ -186,11 +186,12 @@ function mockSeed() {
       ch("after-dark", "text", "Grown-up talk, after hours"),
     ],
     members: [
-      { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
+      { id: "m1", name: "ferris", presence: "online", custom_status: "heads down", about: "Crab by day, raid lead by night.", profile_policy: "friends",
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
       { id: "m2", name: "nova", pronouns: "they / them", presence: "idle", custom_status: null, roles: ["r2"],
         activity: "Playing Portal 2", activity_cover: "co1rs4", activity_since: Math.floor(Date.now() / 1000) - 983 },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
+      { id: "m5", name: "quill", presence: "offline", custom_status: null, about: "Only friends get to read this.", pronouns: "she / her", profile_policy: "friends" },
       { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
     ],
   };
@@ -485,6 +486,23 @@ function mockTemplateFromCode(code) {
   }
 }
 
+function mockSafety() {
+  return mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true, profile_policy: "everyone" });
+}
+
+function mockFriends() {
+  return mock.friends || (mock.friends = {
+    friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }],
+    incoming: [{ id: "m2", name: "nova", note: "We were in the Hangout call last night, the one where we planned Friday's raid" }],
+    outgoing: [],
+  });
+}
+
+function mockProfileFor(member) {
+  const friend = mockFriends().friends.some(f => f.id === member.id);
+  return publicProfile(member, canSeeProfile(member.profile_policy, { friend, sharesServer: true }));
+}
+
 async function mockInvoke(cmd, args = {}) {
   switch (cmd) {
     case "get_user": return mock.user;
@@ -518,7 +536,7 @@ async function mockInvoke(cmd, args = {}) {
     case "get_server": {
       const s = mock.servers[args.serverId];
       if (!s) throw "unknown server";
-      const members = s.members.map(m => ({ username: m.username || m.name, nickname: m.nickname || null, ...m }));
+      const members = s.members.map(m => mockProfileFor({ username: m.username || m.name, nickname: m.nickname || null, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
         const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
@@ -1183,9 +1201,9 @@ async function mockInvoke(cmd, args = {}) {
       if (args.permissions) r.permissions = args.permissions;
       return null;
     }
-    case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] };
+    case "list_friends": return mockFriends();
     case "friend_action": {
-      const f = mock.friends || (mock.friends = { friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] });
+      const f = mockFriends();
       const name = (Object.values(mock.servers)[0].members.find(m => m.id === args.userId) || { name: "Someone" }).name;
       f.incoming = f.incoming.filter(x => x.id !== args.userId);
       if (args.action === "accept") f.friends.push({ id: args.userId, name });
@@ -1309,21 +1327,22 @@ async function mockInvoke(cmd, args = {}) {
       return s;
     }
     case "get_safety": {
-      const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
+      const s = mockSafety();
       return { ...s, blocked: s.blocked.map(id => ({ id, name: (Object.values(mock.servers)[0].members.find(m => m.id === id) || { name: "Someone" }).name })) };
     }
     case "set_blocked": {
-      const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
+      const s = mockSafety();
       s.blocked = s.blocked.filter(id => id !== args.userId);
       if (args.blocked) s.blocked.push(args.userId);
       return null;
     }
     case "set_dm_settings": {
-      const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
+      const s = mockSafety();
       s.dm_policy = args.policy;
       s.spam_filter = args.spamFilter;
       return null;
     }
+    case "set_profile_privacy": mockSafety().profile_policy = args.policy; return null;
     case "accept_dm_request": if (mock.dms[args.userId]) mock.dms[args.userId].kind = "inbox"; return null;
     case "decline_dm_request": delete mock.dms[args.userId]; return null;
     case "report_user": console.info("report", args); return null;
@@ -7648,9 +7667,9 @@ function friendState(userId) {
   return "none";
 }
 
-async function friendAction(userId, action, name) {
+async function friendAction(userId, action, name, note) {
   try {
-    await invoke("friend_action", { userId, action });
+    await invoke("friend_action", { userId, action, note: note || null });
     await loadFriends();
     const done = { request: `Friend request sent to ${name}`, accept: `You and ${name} are now friends`, decline: "Request declined", remove: `Removed ${name} from friends` };
     toast(done[action] || "Done");
@@ -7668,12 +7687,61 @@ function friendButton(person, onDone) {
   btn.appendChild(el("span", null, labels[st]));
   btn.title = st === "friend" ? "Remove friend" : st === "outgoing" ? "Cancel request" : labels[st];
   btn.onclick = async () => {
-    const action = st === "none" ? "request" : st === "incoming" ? "accept" : "remove";
+    if (st === "none") {
+      openAddFriend(person, onDone);
+      return;
+    }
+    const action = st === "incoming" ? "accept" : "remove";
     if (action === "remove" && st === "friend" && !confirm(`Remove ${person.name} from your friends?`)) return;
     await friendAction(person.id, action, person.name);
     if (onDone) onDone();
   };
   return btn;
+}
+
+let addFriendTarget = null;
+
+function openAddFriend(person, onDone) {
+  closeFloating();
+  addFriendTarget = { person, onDone };
+  const av = $("add-friend-avatar");
+  av.replaceChildren();
+  paintAvatar(av, person.id, person.name);
+  $("add-friend-username").value = person.username ? `@${person.username}` : person.name;
+  $("add-friend-note").value = "";
+  renderFriendNoteCounter();
+  showModal("modal-add-friend");
+  $("add-friend-note").focus();
+}
+
+function renderFriendNoteCounter() {
+  $("add-friend-count").textContent = friendNoteState($("add-friend-note").value).counter;
+}
+
+async function sendAddFriend() {
+  const target = addFriendTarget;
+  if (!target) return;
+  const note = friendNoteState($("add-friend-note").value).text;
+  addFriendTarget = null;
+  hideModals();
+  await friendAction(target.person.id, "request", target.person.name, note);
+  if (target.onDone) target.onDone();
+}
+
+function wireProfilePrivacy() {
+  $("profile-policy").addEventListener("change", saveProfilePrivacy);
+  $("add-friend-note").addEventListener("input", renderFriendNoteCounter);
+  $("add-friend-note").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendAddFriend();
+    }
+  });
+  $("add-friend-cancel").onclick = () => {
+    addFriendTarget = null;
+    hideModals();
+  };
+  $("add-friend-send").onclick = sendAddFriend;
 }
 
 function invitableServers(userId) {
@@ -8267,7 +8335,7 @@ function roleForm(server, role, onClose) {
   return form;
 }
 
-let safety = { blocked: [], dm_policy: "everyone", spam_filter: true };
+let safety = { blocked: [], dm_policy: "everyone", spam_filter: true, profile_policy: "everyone" };
 const revealedBlocked = new Set();
 
 async function loadSafety() {
@@ -8325,7 +8393,22 @@ async function setHistoryWindow(serverId, keep) {
   renderStorageSettings();
 }
 
+function renderProfilePrivacy() {
+  $("profile-policy").value = safety.profile_policy || "everyone";
+}
+
+async function saveProfilePrivacy() {
+  try {
+    await invoke("set_profile_privacy", { policy: $("profile-policy").value });
+    await loadSafety();
+  } catch (e) {
+    toast(String(e));
+  }
+  renderProfilePrivacy();
+}
+
 function renderSafetySettings() {
+  renderProfilePrivacy();
   $("dm-policy").value = safety.dm_policy;
   $("spam-filter-toggle").checked = safety.spam_filter;
   const list = $("blocked-list");
@@ -11329,7 +11412,9 @@ async function renderDmThreads() {
       row.appendChild(avatarWithPresence(req.name, req.id));
       const meta = el("div", "dm-meta");
       meta.appendChild(el("div", "dm-name", req.name));
-      meta.appendChild(el("div", "dm-preview", "Wants to be friends"));
+      const line = el("div", "dm-preview friend-note", friendRequestLine(req));
+      line.title = req.note || "";
+      meta.appendChild(line);
       row.appendChild(meta);
       const yes = el("button", "icon-btn friend-yes");
       yes.title = "Accept";
@@ -13540,6 +13625,7 @@ function wireEvents() {
   wireHotkeyInput($("overlay-chat-key"), combo => saveOverlaySettings({ chat_hotkey: combo }));
   wireVoiceInputSettings();
   $("dm-policy").addEventListener("change", saveDmSettings);
+  wireProfilePrivacy();
   $("keep-default").addEventListener("change", e => setHistoryWindow(null, e.target.value));
   $("spam-filter-toggle").addEventListener("change", saveDmSettings);
   $("block-cancel").onclick = hideModals;
@@ -14296,7 +14382,8 @@ function wireEvents() {
       const p = event.payload || {};
       if (p.signal === "request" && friendState(p.user) === "incoming") {
         toast(`${p.name} sent you a friend request`);
-        invoke("notify", { title: "Friend request", body: `${p.name} wants to be friends`, target: `dm:${p.user}` }).catch(() => {});
+        const body = p.note ? `${p.name}: ${p.note}` : `${p.name} wants to be friends`;
+        invoke("notify", { title: "Friend request", body, target: `dm:${p.user}` }).catch(() => {});
         playSound("message");
       } else if (p.signal === "accept" && friendState(p.user) === "friend") {
         toast(`You and ${p.name} are now friends`);
