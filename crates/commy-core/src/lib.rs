@@ -1,4 +1,5 @@
 pub mod action;
+pub mod activity;
 pub mod audit;
 pub mod automod;
 pub mod catchup;
@@ -26,6 +27,7 @@ pub mod voice_invite;
 pub mod test_support;
 
 pub use action::{Action, SignedEvent};
+pub use activity::{Activity, ActivityInput, ActivityKind, WatchSource};
 pub use audit::{AuditEntry, AuditKind};
 pub use automod::{AutoMod, Hold};
 pub use catchup::{BucketDigest, BucketKey};

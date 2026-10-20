@@ -94,6 +94,7 @@ pub struct ChannelView {
     pub key_ready: bool,
     pub speakers: Vec<String>,
     pub hands: Vec<String>,
+    pub activity: Option<commy_core::Activity>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -447,6 +448,7 @@ impl ServerView {
                     key_ready: can_view && keys.key_ready(state, c.id),
                     speakers: c.speakers.iter().map(|u| u.to_string()).collect(),
                     hands: if can_view { state.hands_in(c.id).iter().map(|u| u.to_string()).collect() } else { Vec::new() },
+                    activity: if can_view { state.activities.get(&c.id).cloned() } else { None },
                 }
             })
             .collect();

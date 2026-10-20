@@ -107,6 +107,7 @@ pub struct ServerState {
     pub screen_shares: HashMap<UserId, ChannelId>,
     pub cameras: HashMap<UserId, ChannelId>,
     pub hands: HashMap<UserId, ChannelId>,
+    pub activities: HashMap<ChannelId, crate::activity::Activity>,
     deleted_messages: HashSet<MessageId>,
     tombstones: HashMap<MessageId, Vec<StoredProof>>,
     unapplied: Option<HashMap<UserId, BTreeSet<UnappliedKey>>>,
@@ -194,6 +195,7 @@ impl ServerState {
             screen_shares: HashMap::new(),
             cameras: HashMap::new(),
             hands: HashMap::new(),
+            activities: HashMap::new(),
             deleted_messages: Default::default(),
             tombstones: HashMap::new(),
             unapplied: None,
@@ -1027,6 +1029,7 @@ impl ServerState {
                     let moved = previous != Some(ch);
                     if moved {
                         self.hands.remove(&user);
+                        self.activities.retain(|room, a| a.starter != user || *room == ch);
                     }
                     let flagged = self.voice_flags.insert(user, (muted, deafened)) != Some((muted, deafened));
                     if moved || !self.voice_since.contains_key(&user) {
@@ -1150,7 +1153,17 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.invite_background, background))
             }
-            ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } => Ok(false),
+            ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } | ServerEvent::ActivityInput { .. } => Ok(false),
+            ServerEvent::ActivitySet { server, channel, activity, by } => {
+                self.same_server(server)?;
+                if !crate::activity::admits_set(self, by, channel, activity.as_ref()) {
+                    return Ok(false);
+                }
+                match activity {
+                    Some(next) => Ok(self.activities.insert(channel, next.clone()) != Some(next)),
+                    None => Ok(self.activities.remove(&channel).is_some()),
+                }
+            }
             ServerEvent::StickerAdd { server, sticker } => {
                 self.same_server(server)?;
                 if !crate::server::valid_expression_name(&sticker.name)
@@ -2235,6 +2248,7 @@ impl ServerState {
         self.voice_since.remove(&user);
         self.voice_flags.remove(&user);
         self.hands.remove(&user);
+        self.activities.retain(|_, a| a.starter != user);
         let left = self.voice_states.remove(&user);
         if let Some(channel) = left {
             self.clear_empty_voice_status(channel);

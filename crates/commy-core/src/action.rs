@@ -84,8 +84,10 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::VoiceStatusSet { by, .. }
         | E::ForumTagsSet { by, .. }
         | E::ForumPost { by, .. }
-        | E::StageSet { by, .. } => Some(*by),
-        E::BotCommandsSet { by, .. } => Some(*by),
+        | E::StageSet { by, .. }
+        | E::BotCommandsSet { by, .. }
+        | E::ActivitySet { by, .. }
+        | E::ActivityInput { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -182,7 +184,9 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         | E::DoorbellSet { .. }
         | E::TypingStart { .. }
         | E::SoundboardPlay { .. }
-        | E::SharedSoundPlay { .. } => return None,
+        | E::SharedSoundPlay { .. }
+        | E::ActivitySet { .. }
+        | E::ActivityInput { .. } => return None,
     };
     Some(s)
 }
@@ -226,7 +230,9 @@ fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
         | E::VoiceStatusSet { channel, .. }
         | E::ForumPost { channel, .. }
         | E::StageSet { channel, .. }
-        | E::HandRaise { channel, .. } => Some(*channel),
+        | E::HandRaise { channel, .. }
+        | E::ActivitySet { channel, .. }
+        | E::ActivityInput { channel, .. } => Some(*channel),
         _ => None,
     }
 }
@@ -259,6 +265,10 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::SoundboardPlay { .. } | E::SharedSoundPlay { .. } => {
             member && speaks && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD) && sees(event)
         }
+        E::ActivitySet { activity, .. } => {
+            member && speaks && actor(event) == Some(by) && sees(event) && activity.as_ref().is_none_or(|a| a.starter == by && a.valid())
+        }
+        E::ActivityInput { .. } => member && speaks && actor(event) == Some(by) && sees(event),
         E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin() && sees(event),
         E::PollVote { .. } => member && speaks && actor(event) == Some(by) && sees(event),
         E::PollClose { .. } => member && actor(event) == Some(by) && sees(event),

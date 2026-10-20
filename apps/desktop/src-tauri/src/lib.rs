@@ -50,7 +50,7 @@ use view::{
 use base64::Engine as _;
 use commy_core::SignedEvent;
 use commy_core::{
-    Attachment, Channel, ChannelId, ChannelKind, DmAction, DmMessage, Identity, Message, MessageId, Permissions,
+    Activity, ActivityInput, Attachment, Channel, ChannelId, ChannelKind, DmAction, DmMessage, Identity, Message, MessageId, Permissions,
     Presence, RoleId, ServerEvent, ServerId, ServerState, Signature, StoreError, TombstoneProof, UserId,
     UserProfile, MAX_MESSAGE_BYTES,
 };
@@ -6138,6 +6138,106 @@ fn on_remote_shared_sound(app: &tauri::State<'_, App>, handle: &tauri::AppHandle
     }
 }
 
+#[derive(Clone, serde::Serialize)]
+struct ActivitySetView {
+    server: String,
+    channel: String,
+    activity: Option<Activity>,
+    by: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct ActivityInputView {
+    server: String,
+    channel: String,
+    seq: u64,
+    input: ActivityInput,
+    by: String,
+}
+
+fn activity_set_view(sid: ServerId, channel: ChannelId, activity: &Option<Activity>, by: UserId) -> ActivitySetView {
+    ActivitySetView { server: sid.to_string(), channel: channel.to_string(), activity: activity.clone(), by: by.to_string() }
+}
+
+fn my_voice_channel(app: &App, sid: ServerId) -> CmdResult<ChannelId> {
+    let session = app.voice_session.lock().unwrap();
+    let s = session.as_ref().ok_or("join a voice channel first")?;
+    if s.server != sid {
+        return Err("join a voice channel in this server first".into());
+    }
+    Ok(s.channel)
+}
+
+#[tauri::command]
+async fn set_activity(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    activity: Option<Activity>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let channel = my_voice_channel(&app, sid)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_not_timed_out(state, me.id)?;
+        if activity.as_ref().is_some_and(|a| !a.valid()) {
+            return Err("paste a direct https link to an .mp4, .webm or .ogg file".into());
+        }
+        if !commy_core::activity::admits_set(state, me.id, channel, activity.as_ref()) {
+            return Err(match (&activity, state.activities.get(&channel)) {
+                (Some(_), Some(_)) => "another activity is already running in this channel",
+                (None, Some(_)) => "only the person who started it or a moderator can end it",
+                (None, None) => "nothing is running in this channel",
+                (Some(_), None) => "you are not in this voice channel",
+            }
+            .into());
+        }
+    }
+    let event = ServerEvent::ActivitySet { server: sid, channel, activity: activity.clone(), by: me.id };
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    let _ = handle.emit("activity-set", activity_set_view(sid, channel, &activity, me.id));
+    Ok(())
+}
+
+#[tauri::command]
+async fn send_activity_input(
+    app: tauri::State<'_, App>,
+    server_id: String,
+    seq: u64,
+    input: ActivityInput,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let channel = my_voice_channel(&app, sid)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_not_timed_out(state, me.id)?;
+        if !commy_core::activity::admits_input(state, me.id, channel, &input) {
+            return Err("that is not possible in the running activity".into());
+        }
+    }
+    broadcast_event(&app, sid, ServerEvent::ActivityInput { server: sid, channel, seq, input, by: me.id }).await;
+    Ok(())
+}
+
+fn on_remote_activity_input(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, seq: u64, input: &ActivityInput, by: UserId) {
+    let mine = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+    if mine != Some((sid, channel)) {
+        return;
+    }
+    let allowed = {
+        let servers = app.servers.lock().unwrap();
+        servers.get(&sid).is_some_and(|state| commy_core::activity::admits_input(state, by, channel, input))
+    };
+    if allowed {
+        let view = ActivityInputView { server: sid.to_string(), channel: channel.to_string(), seq, input: input.clone(), by: by.to_string() };
+        let _ = handle.emit("activity-input", view);
+    }
+}
+
 fn on_remote_soundboard(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, user: UserId, name: &str) {
     let mine = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
     if mine != Some((sid, channel)) {
@@ -7077,6 +7177,16 @@ async fn run_net_loop(
                     }
                     continue;
                 }
+                if let ServerEvent::ActivityInput { channel, seq, input, by, .. } = &event {
+                    if remote_action_ok(&app, server, &event, action) {
+                        on_remote_activity_input(&app, &handle, server, *channel, *seq, input, *by);
+                    }
+                    continue;
+                }
+                let activity_set = match &event {
+                    ServerEvent::ActivitySet { channel, activity, by, .. } => Some(activity_set_view(server, *channel, activity, *by)),
+                    _ => None,
+                };
                 if matches!(event, ServerEvent::DoorbellSet { .. }) {
                     doorbell::on_announce(&app, server, &event);
                     continue;
@@ -7201,6 +7311,9 @@ async fn run_net_loop(
                         }
                         if let Some(channel) = moved_me {
                             follow_voice_move(&handle, server, channel).await;
+                        }
+                        if let Some(view) = activity_set {
+                            let _ = handle.emit("activity-set", view);
                         }
                         if access {
                             leave_unseen_voice(&app, &handle, server).await;
@@ -7885,6 +7998,8 @@ pub fn run() {
             play_shared_sound,
             set_server_public,
             play_soundboard,
+            set_activity,
+            send_activity_input,
             stream_deck::get_stream_deck,
             stream_deck::set_stream_deck_enabled,
             stream_deck::forget_stream_deck,

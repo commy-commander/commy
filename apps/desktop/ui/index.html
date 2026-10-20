@@ -102,6 +102,7 @@
           </div>
           <button class="icon-btn" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
         </div>
+        <button class="vp-activities" id="vp-activities" title="Start something together with everyone in the channel"></button>
         <button class="vp-game-share hidden" id="vp-game-share"></button>
       </section>
 
@@ -211,6 +212,42 @@
         </div>
       </div>
       <div class="cam-grid hidden" id="cam-grid"></div>
+      <section class="activity-panel hidden" id="activity-panel" aria-label="Activity">
+        <header class="activity-head">
+          <span class="activity-icon" id="activity-icon"></span>
+          <div class="activity-heading">
+            <span class="activity-title" id="activity-title">Activity</span>
+            <span class="activity-sub" id="activity-sub"></span>
+          </div>
+          <div class="activity-people" id="activity-people"></div>
+          <div class="activity-actions">
+            <button class="vp-pill" id="activity-join">Join</button>
+            <button class="vp-pill hidden" id="activity-leave">Leave</button>
+            <button class="vp-pill danger" id="activity-end">End</button>
+            <button class="icon-btn" id="activity-close" title="Back to chat" aria-label="Back to chat"></button>
+          </div>
+        </header>
+        <div class="activity-body">
+          <div class="activity-game hidden" id="activity-game">
+            <div class="activity-turn" id="activity-turn"></div>
+            <div class="ttt-board" id="ttt-board" role="grid" aria-label="Tic-tac-toe board"></div>
+            <div class="activity-slot">
+              <button class="btn-primary btn-small hidden" id="ttt-rematch">Rematch</button>
+              <span class="activity-hint" id="ttt-hint"></span>
+            </div>
+          </div>
+          <div class="activity-watch hidden" id="activity-watch">
+            <div class="activity-screen">
+              <video id="activity-video" controls playsinline preload="metadata"></video>
+              <div class="activity-screen-wait hidden" id="activity-video-wait"><div class="spinner"></div><span>Loading video</span></div>
+            </div>
+            <div class="activity-watch-line">
+              <span class="activity-watch-title" id="activity-watch-title"></span>
+              <span class="activity-sync" id="activity-sync"></span>
+            </div>
+          </div>
+        </div>
+      </section>
       <div class="messages" id="messages"></div>
       <section class="discover hidden" id="discover" aria-label="Discover Servers">
         <header class="discover-head">
@@ -436,6 +473,29 @@
       <div class="modal-divider">OR</div>
       <input id="join-ticket-input" type="text" placeholder="Paste an invite link or commy... invite" />
       <button class="btn-secondary" id="join-server-save">Join Server</button>
+    </div>
+
+    <div class="modal modal-activities hidden" id="modal-activities" role="dialog" aria-labelledby="activities-title">
+      <h2 id="activities-title">Activities</h2>
+      <p>Everyone in your voice channel can take part. One activity runs at a time.</p>
+      <div class="activity-cards" id="activity-cards" role="radiogroup" aria-label="Activity"></div>
+      <div class="activity-setup" id="activity-setup">
+        <div class="activity-setup-game" id="activity-setup-game">
+          <div class="activity-setup-title">You play X</div>
+          <div class="setting-sub">The first person to press Join plays O. Everyone else in the channel watches, and a Rematch swaps who starts.</div>
+        </div>
+        <div class="activity-setup-watch hidden" id="activity-setup-watch">
+          <label class="field-label">Video link
+            <input id="activity-link-input" type="text" placeholder="https://… ending in .mp4, .webm or .ogg" spellcheck="false" autocomplete="off" />
+          </label>
+          <div class="activity-chips" id="activity-chips"></div>
+          <div class="setting-sub">Each viewer's computer fetches the file itself, like a link preview. Only direct video files play, nothing else loads.</div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="activity-cancel">Cancel</button>
+        <button class="btn-primary" id="activity-start">Start</button>
+      </div>
     </div>
 
     <div class="modal modal-template hidden" id="modal-create-server">
@@ -2487,6 +2547,7 @@
   <script src="scripts/saved.js"></script>
   <script src="scripts/polls.js"></script>
   <script src="scripts/voice-invite.js"></script>
+  <script src="scripts/activities.js"></script>
   <script src="scripts/read-state.js"></script>
   <script src="scripts/channel-access.js"></script>
   <script src="scripts/sensitive.js"></script>
