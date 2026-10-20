@@ -34,7 +34,10 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   picker when the server operator has set up a GIF provider key.
 - **Message search.** Search a server by keyword, phrase, author, mention or
   channel. Search runs on your device over the history it keeps, and a result
-  jumps straight to the message, even weeks back.
+  jumps straight to the message, even weeks back. Save any message to a
+  per-device Saved list, or ask for a reminder about it in 20 minutes, an
+  hour, three hours, tomorrow morning or at a time you pick; the reminder
+  shows a notification when it is due.
 - **Voice.** Opus voice with one-click noise cancellation and echo
   cancellation toggles, per-person volume, shared mute and deafen, and a
   soundboard with per-server clips.
@@ -57,7 +60,10 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Game overlay.** On Windows, an in-game overlay shows who is talking and
   recent chat, in the screen corner you choose.
 - **Safety tools.** Block and report people, an audit log of server changes,
-  and invite links that expire or can be revoked.
+  and invite links that expire or can be revoked. Choose who can see your
+  profile details (everyone, friends and the servers you share, or friends
+  only); your name and avatar always show. Friend requests can carry a short
+  note so the other person knows who is asking.
 
 Windows is the primary platform today. macOS and Linux builds are published
 with each release; a few features, such as the game overlay and notification

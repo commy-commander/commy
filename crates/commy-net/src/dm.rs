@@ -9,9 +9,34 @@ pub const LEGACY_DM_ALPN: &[u8] = b"commy/dm/2";
 pub struct DmEnvelope {
     pub message: DmMessage,
     pub sender: UserProfile,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BareDmEnvelope {
+    message: DmMessage,
+    sender: UserProfile,
 }
 
 impl DmEnvelope {
+    pub fn new(message: DmMessage, sender: UserProfile) -> Self {
+        Self { message, sender, note: None }
+    }
+
+    pub fn with_note(mut self, note: Option<String>) -> Self {
+        self.note = note;
+        self
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        if let Ok(envelope) = postcard::from_bytes::<DmEnvelope>(bytes) {
+            return Some(envelope);
+        }
+        let BareDmEnvelope { message, sender } = postcard::from_bytes(bytes).ok()?;
+        Some(DmEnvelope::new(message, sender))
+    }
+
     pub fn signed_by_sender(&self) -> bool {
         self.message.from == self.sender.id
             && self
@@ -67,7 +92,7 @@ impl LegacyDmEnvelope {
     pub fn upgrade(self) -> DmEnvelope {
         let LegacyDmMessage { id, from, to, content, created_at, from_node, sig } = self.message;
         let message = DmMessage { id, from, to, content, created_at, from_node, sig, ..DmMessage::new(from, to, "") };
-        DmEnvelope { message, sender: self.sender }
+        DmEnvelope::new(message, self.sender)
     }
 }
 
@@ -90,7 +115,7 @@ mod tests {
         let identity = crate::test_support::identity_for(sender.id);
         let mut message = DmMessage::new(sender.id, UserId::new(), content);
         message.sign(&data_encoding::HEXLOWER.encode(&NODE), &identity);
-        (DmEnvelope { message, sender }, identity)
+        (DmEnvelope::new(message, sender), identity)
     }
 
     #[test]
@@ -172,13 +197,34 @@ mod tests {
         assert!(upgraded.signed_by_sender());
     }
 
+    #[derive(Serialize)]
+    struct OlderDmEnvelope<'a> {
+        message: &'a DmMessage,
+        sender: &'a UserProfile,
+    }
+
+    #[test]
+    fn a_note_rides_after_the_fields_older_builds_know() {
+        let (envelope, _) = signed_envelope("[[commy-friend]]\"request\"");
+        let older = postcard::to_stdvec(&OlderDmEnvelope { message: &envelope.message, sender: &envelope.sender }).unwrap();
+        let decoded = DmEnvelope::decode(&older).expect("an envelope from an older build still decodes");
+        assert_eq!(decoded, envelope);
+        assert_eq!(decoded.note, None);
+        assert!(decoded.signed_by_sender());
+
+        let noted = envelope.clone().with_note(Some("we met at the raid".into()));
+        let bytes = postcard::to_stdvec(&noted).unwrap();
+        assert_eq!(DmEnvelope::decode(&bytes), Some(noted.clone()));
+        let as_older_build: BareDmEnvelope = postcard::from_bytes(&bytes).expect("older builds skip the trailing note");
+        assert_eq!(as_older_build.message, noted.message);
+        assert_eq!(as_older_build.sender, noted.sender);
+        assert_eq!(DmEnvelope::decode(b"\x01\x02"), None);
+    }
+
     #[tokio::test]
     async fn envelope_and_ack_roundtrip() {
         let (mut a, mut b) = tokio::io::duplex(16 * 1024);
-        let envelope = DmEnvelope {
-            message: DmMessage::new(UserId::new(), UserId::new(), "psst"),
-            sender: UserProfile::new("whisperer"),
-        };
+        let envelope = DmEnvelope::new(DmMessage::new(UserId::new(), UserId::new(), "psst"), UserProfile::new("whisperer"));
         write_frame(&mut a, &envelope).await.unwrap();
         let got: DmEnvelope = read_frame(&mut b).await.unwrap().unwrap();
         assert_eq!(got, envelope);

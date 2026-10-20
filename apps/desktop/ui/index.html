@@ -117,6 +117,10 @@
             <span class="pin-count hidden" id="pins-count"></span>
           </button>
           <button class="icon-btn hidden" id="threads-btn" title="Threads" aria-haspopup="dialog"></button>
+          <button class="icon-btn" id="saved-btn" title="Saved Messages" aria-haspopup="dialog">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2zm0 15-5-2.18L7 18V5h10z"/></svg>
+            <span class="pin-count hidden" id="saved-count"></span>
+          </button>
           <button class="icon-btn hidden" id="members-btn" title="Hide Members" aria-pressed="true">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zM8 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05A4.2 4.2 0 0 1 17 16.5V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
           </button>
@@ -155,6 +159,17 @@
           <span class="threads-pop-sub" id="threads-pop-sub"></span>
         </header>
         <div class="pins-list threads-list" id="threads-list"></div>
+      </section>
+      <section class="saved-view hidden" id="saved-view" role="dialog" aria-label="Saved Messages">
+        <header class="saved-head">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2zm0 15-5-2.18L7 18V5h10z"/></svg>
+          <span class="saved-title">Saved</span>
+          <span class="saved-sub">Only on this device</span>
+          <button class="icon-btn" id="saved-close" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7l1.4-1.4 6.3 6.3 6.3-6.3z"/></svg>
+          </button>
+        </header>
+        <div class="saved-list" id="saved-list"></div>
       </section>
       <div class="stage hidden" id="video-pane">
         <div class="stage-view" id="stage-view">
@@ -723,6 +738,21 @@
           <div class="mc-label">Friendship</div>
           <div class="fp-friend" id="fp-friend"></div>
         </div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-add-friend" role="dialog" aria-labelledby="add-friend-title">
+      <h2 id="add-friend-title">Add Friend</h2>
+      <p>They see your note under your name on the request.</p>
+      <div class="add-friend-who">
+        <div class="avatar avatar-sm" id="add-friend-avatar"></div>
+        <input id="add-friend-username" type="text" readonly aria-label="Username" />
+      </div>
+      <input id="add-friend-note" type="text" maxlength="200" autocomplete="off" placeholder="Add a note (optional)" aria-describedby="add-friend-count" />
+      <div class="add-friend-count" id="add-friend-count">0/200</div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="add-friend-cancel">Cancel</button>
+        <button class="btn-primary" id="add-friend-send">Send Request</button>
       </div>
     </div>
 
@@ -1440,6 +1470,20 @@
               </div>
               <input type="checkbox" id="spam-filter-toggle" class="switch" />
             </label>
+          </div>
+          <h2 class="settings-subhead">Profile</h2>
+          <div class="settings-card">
+            <div class="setting-row">
+              <div>
+                <div class="setting-title">Who can see your profile</div>
+                <div class="setting-sub">Your bio, banner, pronouns and what you're playing. Everyone still sees your name and avatar so the chat reads normally. Friends only also hides these from the servers you share.</div>
+              </div>
+              <select id="profile-policy" class="compact-select">
+                <option value="everyone">Everyone</option>
+                <option value="shared_servers">Friends and servers we share</option>
+                <option value="friends">Friends only</option>
+              </select>
+            </div>
           </div>
           <h2 class="settings-subhead">Links</h2>
           <div class="settings-card">
@@ -2182,6 +2226,7 @@
 
   <div class="pop-menu ctx-menu hidden" id="member-menu" role="menu"></div>
   <div class="pop-menu ctx-menu hidden" id="msg-menu" role="menu"></div>
+  <div class="pop-menu ctx-menu remind-pop hidden" id="remind-pop" role="menu"></div>
   <div class="pop-menu composer-menu hidden" id="composer-menu" role="menu">
     <button id="cm-file" role="menuitem">Upload a File</button>
     <button id="cm-video" role="menuitem">Post a Video</button>
@@ -2279,6 +2324,7 @@
   <script src="scripts/mentions.js"></script>
   <script src="scripts/pins.js"></script>
   <script src="scripts/pins-order.js"></script>
+  <script src="scripts/saved.js"></script>
   <script src="scripts/polls.js"></script>
   <script src="scripts/read-state.js"></script>
   <script src="scripts/channel-access.js"></script>
@@ -2292,6 +2338,7 @@
   <script src="scripts/presence.js"></script>
   <script src="scripts/activity.js"></script>
   <script src="scripts/people.js"></script>
+  <script src="scripts/profile-privacy.js"></script>
   <script src="scripts/timers.js"></script>
   <script src="scripts/timeouts.js"></script>
   <script src="scripts/server-colors.js"></script>

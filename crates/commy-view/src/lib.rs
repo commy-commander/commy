@@ -4,9 +4,9 @@ use crate::keys::KeyHolder;
 use commy_core::server::Rsvp;
 use commy_core::{
     AutoMod, ChannelId, ChannelKind, DmMessage, DmStore, Hold, Message, MessageId, Permissions, Presence, ServerState,
-    UserId,
+    UserId, UserProfile,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 
 const EVERYONE_ROLE_POSITION: u32 = 0;
@@ -275,6 +275,21 @@ pub struct SoundView {
 }
 
 impl ServerView {
+    pub fn with_friend_details(mut self, friends: &HashSet<UserId>, contacts: &HashMap<UserId, UserProfile>) -> Self {
+        for member in &mut self.members {
+            let Some(contact) = member.id.parse::<UserId>().ok().filter(|id| friends.contains(id)).and_then(|id| contacts.get(&id)) else {
+                continue;
+            };
+            if member.about.is_none() {
+                member.about = contact.about.as_deref().map(|a| truncate(a, commy_core::user::MAX_ABOUT_CHARS));
+            }
+            if member.banner.is_none() {
+                member.banner = contact.banner.clone().filter(|b| commy_core::user::valid_banner(b));
+            }
+        }
+        self
+    }
+
     pub fn for_viewer(state: &ServerState, viewer: Option<UserId>, keys: &KeyHolder) -> Self {
         let manages_channels = viewer.is_some_and(|v| state.server.permissions_for(v).allows(Permissions::MANAGE_CHANNELS));
         let sees = |c: ChannelId| viewer.is_some_and(|v| state.server.can_view(c, v));
@@ -1146,6 +1161,37 @@ mod tests {
         let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
         assert!(badge(bot_id));
         assert!(!badge(owner.id));
+    }
+
+    #[test]
+    fn friends_fill_in_the_details_a_server_was_not_shown() {
+        let owner = UserProfile::new("owner");
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let mut quiet = UserProfile::new("quiet");
+        quiet.about = Some("from a DM".into());
+        quiet.banner = Some("blob:dmbanner".into());
+        let mut loud = UserProfile::new("loud");
+        loud.about = Some("gossiped".into());
+        for p in [quiet.without_details(), loud.clone()] {
+            state.apply(ServerEvent::MemberJoin { server: sid, profile: p }).unwrap();
+        }
+        let mut loud_contact = loud.clone();
+        loud_contact.about = Some("stale DM bio".into());
+        let contacts: HashMap<UserId, UserProfile> = [(quiet.id, quiet.clone()), (loud.id, loud_contact)].into_iter().collect();
+        let about = |view: &ServerView, id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().about.clone();
+        let banner = |view: &ServerView, id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().banner.clone();
+
+        let strangers = ServerView::for_viewer(&state, Some(owner.id), &KeyHolder::default()).with_friend_details(&HashSet::new(), &contacts);
+        assert_eq!(about(&strangers, quiet.id), None, "a DM contact who is not a friend adds nothing");
+
+        let friends: HashSet<UserId> = [quiet.id, loud.id].into_iter().collect();
+        let view = ServerView::for_viewer(&state, Some(owner.id), &KeyHolder::default()).with_friend_details(&friends, &contacts);
+        assert_eq!(about(&view, quiet.id).as_deref(), Some("from a DM"));
+        assert_eq!(banner(&view, quiet.id).as_deref(), Some("blob:dmbanner"));
+        assert_eq!(about(&view, loud.id).as_deref(), Some("gossiped"), "what the server was shown wins");
     }
 
     #[test]

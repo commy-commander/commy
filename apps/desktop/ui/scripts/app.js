@@ -186,11 +186,12 @@ function mockSeed() {
       ch("after-dark", "text", "Grown-up talk, after hours"),
     ],
     members: [
-      { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
+      { id: "m1", name: "ferris", presence: "online", custom_status: "heads down", about: "Crab by day, raid lead by night.", profile_policy: "friends",
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
       { id: "m2", name: "nova", pronouns: "they / them", presence: "idle", custom_status: null, roles: ["r2"],
         activity: "Playing Portal 2", activity_cover: "co1rs4", activity_since: Math.floor(Date.now() / 1000) - 983 },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
+      { id: "m5", name: "quill", presence: "offline", custom_status: null, about: "Only friends get to read this.", pronouns: "she / her", profile_policy: "friends" },
       { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
     ],
   };
@@ -356,6 +357,15 @@ function mockSeed() {
     { root: "g1", name: "Clip of the week", archived: false, locked: true, by: "m2" },
     { root: "g0", name: null, archived: true, locked: false, by: "m2" },
   ];
+  mock.saved = {
+    saved: [
+      { message: "x2", server: server.id, server_name: server.name, channel: c0, channel_name: "welcome", dm: null, dm_name: null, author_id: "m2", author_name: "nova", content: "No central servers, no paywall. Everything peer to peer.", attachment: null, created_at: mock.messages[c0][1].created_at, saved_at: Date.now() - 600e3 },
+      { message: "d4", server: null, server_name: null, channel: null, channel_name: null, dm: "m1", dm_name: "ferris", author_id: "m1", author_name: "ferris", content: "", attachment: "voice-fix-notes.txt", created_at: mock.dms.m1.messages[2].created_at, saved_at: Date.now() - 86400e3 },
+    ],
+    reminders: [
+      { id: "r-x1", due: Date.now() + 50 * 60e3, entry: { message: "x1", server: server.id, server_name: server.name, channel: c0, channel_name: "welcome", dm: null, dm_name: null, author_id: "m1", author_name: "ferris", content: "Welcome to Commy, a private P2P chat app.", attachment: null, created_at: mock.messages[c0][0].created_at } },
+    ],
+  };
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
     { channel: c0, message: "x1", by: "m1", at: new Date(Date.now() - 3000e3).toISOString() },
@@ -368,6 +378,11 @@ function mockSeed() {
   ];
   mock.pins.push({ channel: news, message: "n1", by: "m1", at: new Date(Date.now() - 7000e3).toISOString() });
   server.awaited = 2;
+}
+
+function mockSavedStore() {
+  mock.saved ||= { saved: [], reminders: [] };
+  return mock.saved;
 }
 
 function mockPinViews(channelId) {
@@ -471,6 +486,23 @@ function mockTemplateFromCode(code) {
   }
 }
 
+function mockSafety() {
+  return mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true, profile_policy: "everyone" });
+}
+
+function mockFriends() {
+  return mock.friends || (mock.friends = {
+    friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }],
+    incoming: [{ id: "m2", name: "nova", note: "We were in the Hangout call last night, the one where we planned Friday's raid" }],
+    outgoing: [],
+  });
+}
+
+function mockProfileFor(member) {
+  const friend = mockFriends().friends.some(f => f.id === member.id);
+  return publicProfile(member, canSeeProfile(member.profile_policy, { friend, sharesServer: true }));
+}
+
 async function mockInvoke(cmd, args = {}) {
   switch (cmd) {
     case "get_user": return mock.user;
@@ -504,7 +536,7 @@ async function mockInvoke(cmd, args = {}) {
     case "get_server": {
       const s = mock.servers[args.serverId];
       if (!s) throw "unknown server";
-      const members = s.members.map(m => ({ username: m.username || m.name, nickname: m.nickname || null, ...m }));
+      const members = s.members.map(m => mockProfileFor({ username: m.username || m.name, nickname: m.nickname || null, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
         const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
@@ -637,6 +669,26 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "search_messages": return mockSearch(args);
     case "get_pins": return mockPinViews(args.channelId || null);
+    case "saved_list": return mockSavedStore();
+    case "saved_set": {
+      const store = mockSavedStore();
+      store.saved = store.saved.filter(s => s.message !== args.entry.message);
+      if (args.saved) store.saved.unshift({ ...args.entry, saved_at: Date.now() });
+      return store;
+    }
+    case "reminder_set": {
+      const store = mockSavedStore();
+      if (args.due <= Date.now()) throw "pick a time that is still ahead";
+      store.reminders = store.reminders.filter(r => r.entry.message !== args.entry.message);
+      store.reminders.push({ id: `${args.due}-${args.entry.message}`, due: args.due, entry: args.entry });
+      store.reminders.sort((a, b) => a.due - b.due);
+      return store;
+    }
+    case "reminder_cancel": {
+      const store = mockSavedStore();
+      store.reminders = store.reminders.filter(r => r.id !== args.id);
+      return store;
+    }
     case "pin_message": {
       mock.pins = (mock.pins || []).filter(p => p.message !== args.messageId);
       if (args.pinned) mock.pins.push({ channel: args.channelId, message: args.messageId, by: "me", at: new Date().toISOString() });
@@ -1149,9 +1201,9 @@ async function mockInvoke(cmd, args = {}) {
       if (args.permissions) r.permissions = args.permissions;
       return null;
     }
-    case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] };
+    case "list_friends": return mockFriends();
     case "friend_action": {
-      const f = mock.friends || (mock.friends = { friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] });
+      const f = mockFriends();
       const name = (Object.values(mock.servers)[0].members.find(m => m.id === args.userId) || { name: "Someone" }).name;
       f.incoming = f.incoming.filter(x => x.id !== args.userId);
       if (args.action === "accept") f.friends.push({ id: args.userId, name });
@@ -1275,21 +1327,22 @@ async function mockInvoke(cmd, args = {}) {
       return s;
     }
     case "get_safety": {
-      const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
+      const s = mockSafety();
       return { ...s, blocked: s.blocked.map(id => ({ id, name: (Object.values(mock.servers)[0].members.find(m => m.id === id) || { name: "Someone" }).name })) };
     }
     case "set_blocked": {
-      const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
+      const s = mockSafety();
       s.blocked = s.blocked.filter(id => id !== args.userId);
       if (args.blocked) s.blocked.push(args.userId);
       return null;
     }
     case "set_dm_settings": {
-      const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
+      const s = mockSafety();
       s.dm_policy = args.policy;
       s.spam_filter = args.spamFilter;
       return null;
     }
+    case "set_profile_privacy": mockSafety().profile_policy = args.policy; return null;
     case "accept_dm_request": if (mock.dms[args.userId]) mock.dms[args.userId].kind = "inbox"; return null;
     case "decline_dm_request": delete mock.dms[args.userId]; return null;
     case "report_user": console.info("report", args); return null;
@@ -1468,6 +1521,9 @@ const ICONS = {
   steam: "M11.979 0C5.678 0 .511 4.86.022 11.037l6.432 2.658c.545-.371 1.203-.59 1.912-.59.063 0 .125.004.188.006l2.861-4.142V8.91c0-2.495 2.028-4.524 4.524-4.524 2.494 0 4.524 2.031 4.524 4.527s-2.03 4.525-4.524 4.525h-.105l-4.076 2.911c0 .052.004.105.004.159 0 1.875-1.515 3.396-3.39 3.396-1.635 0-3.016-1.173-3.331-2.727L.436 15.27C1.862 20.307 6.486 24 11.979 24c6.627 0 11.999-5.373 11.999-12S18.605 0 11.979 0zM7.54 18.21l-1.473-.61c.262.543.714.999 1.314 1.25 1.297.539 2.793-.076 3.332-1.375.263-.63.264-1.319.005-1.949s-.75-1.121-1.377-1.383c-.624-.26-1.29-.249-1.878-.03l1.523.63c.956.4 1.409 1.5 1.009 2.455-.397.957-1.497 1.41-2.454 1.012H7.54zm11.415-9.303c0-1.662-1.353-3.015-3.015-3.015-1.665 0-3.015 1.353-3.015 3.015 0 1.665 1.35 3.015 3.015 3.015 1.663 0 3.015-1.35 3.015-3.015zm-5.273-.005c0-1.252 1.013-2.266 2.265-2.266 1.249 0 2.266 1.014 2.266 2.266 0 1.251-1.017 2.265-2.266 2.265-1.253 0-2.265-1.014-2.265-2.265z",
   warning: "M12 5.99 19.53 19H4.47L12 5.99M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v4h2v-4z",
   openExternal: "M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3z",
+  bookmark: "M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2zm0 15-5-2.18L7 18V5h10z",
+  bookmarkOn: "M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z",
+  bell: "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z",
 };
 
 function svgIcon(name, size = 20) {
@@ -5434,6 +5490,7 @@ function messageActions(message, inThread = false) {
     add("pencil", "Edit", () => startEditMessage(message.id));
   }
   if (!isOwnMessage(message)) add("eyeOff", "Hide for Me", () => setHidden(message.id, true));
+  savedMessageActions(add, message);
   if (message.content && !parseStickerToken(message.content)) add("more", "More", e => openMessageMenu(message, e.currentTarget));
   if (state.view === "server" && reportableIn(state.currentServer, message.author_id)) {
     add("flag", "Report Message", () => openReport({
@@ -7610,9 +7667,9 @@ function friendState(userId) {
   return "none";
 }
 
-async function friendAction(userId, action, name) {
+async function friendAction(userId, action, name, note) {
   try {
-    await invoke("friend_action", { userId, action });
+    await invoke("friend_action", { userId, action, note: note || null });
     await loadFriends();
     const done = { request: `Friend request sent to ${name}`, accept: `You and ${name} are now friends`, decline: "Request declined", remove: `Removed ${name} from friends` };
     toast(done[action] || "Done");
@@ -7630,12 +7687,61 @@ function friendButton(person, onDone) {
   btn.appendChild(el("span", null, labels[st]));
   btn.title = st === "friend" ? "Remove friend" : st === "outgoing" ? "Cancel request" : labels[st];
   btn.onclick = async () => {
-    const action = st === "none" ? "request" : st === "incoming" ? "accept" : "remove";
+    if (st === "none") {
+      openAddFriend(person, onDone);
+      return;
+    }
+    const action = st === "incoming" ? "accept" : "remove";
     if (action === "remove" && st === "friend" && !confirm(`Remove ${person.name} from your friends?`)) return;
     await friendAction(person.id, action, person.name);
     if (onDone) onDone();
   };
   return btn;
+}
+
+let addFriendTarget = null;
+
+function openAddFriend(person, onDone) {
+  closeFloating();
+  addFriendTarget = { person, onDone };
+  const av = $("add-friend-avatar");
+  av.replaceChildren();
+  paintAvatar(av, person.id, person.name);
+  $("add-friend-username").value = person.username ? `@${person.username}` : person.name;
+  $("add-friend-note").value = "";
+  renderFriendNoteCounter();
+  showModal("modal-add-friend");
+  $("add-friend-note").focus();
+}
+
+function renderFriendNoteCounter() {
+  $("add-friend-count").textContent = friendNoteState($("add-friend-note").value).counter;
+}
+
+async function sendAddFriend() {
+  const target = addFriendTarget;
+  if (!target) return;
+  const note = friendNoteState($("add-friend-note").value).text;
+  addFriendTarget = null;
+  hideModals();
+  await friendAction(target.person.id, "request", target.person.name, note);
+  if (target.onDone) target.onDone();
+}
+
+function wireProfilePrivacy() {
+  $("profile-policy").addEventListener("change", saveProfilePrivacy);
+  $("add-friend-note").addEventListener("input", renderFriendNoteCounter);
+  $("add-friend-note").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendAddFriend();
+    }
+  });
+  $("add-friend-cancel").onclick = () => {
+    addFriendTarget = null;
+    hideModals();
+  };
+  $("add-friend-send").onclick = sendAddFriend;
 }
 
 function invitableServers(userId) {
@@ -8229,7 +8335,7 @@ function roleForm(server, role, onClose) {
   return form;
 }
 
-let safety = { blocked: [], dm_policy: "everyone", spam_filter: true };
+let safety = { blocked: [], dm_policy: "everyone", spam_filter: true, profile_policy: "everyone" };
 const revealedBlocked = new Set();
 
 async function loadSafety() {
@@ -8287,7 +8393,22 @@ async function setHistoryWindow(serverId, keep) {
   renderStorageSettings();
 }
 
+function renderProfilePrivacy() {
+  $("profile-policy").value = safety.profile_policy || "everyone";
+}
+
+async function saveProfilePrivacy() {
+  try {
+    await invoke("set_profile_privacy", { policy: $("profile-policy").value });
+    await loadSafety();
+  } catch (e) {
+    toast(String(e));
+  }
+  renderProfilePrivacy();
+}
+
 function renderSafetySettings() {
+  renderProfilePrivacy();
   $("dm-policy").value = safety.dm_policy;
   $("spam-filter-toggle").checked = safety.spam_filter;
   const list = $("blocked-list");
@@ -10178,9 +10299,307 @@ function openMessageMenu(message, anchor) {
     item("Copy Message Link", () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied"));
   }
   if (message.content) item("Forward", () => openForward(message));
+  savedMenuItems(item, message);
   if (state.view === "server" && state.currentChannel && !message.pending) item("Mark as Unread", () => markUnreadFrom(message));
   const r = anchor.getBoundingClientRect();
   placeMenuAt(menu, r.left, r.bottom + 4);
+}
+
+const savedState = { saved: [], reminders: [], open: false, timer: null };
+
+function isSavedMessage(id) {
+  return savedState.saved.some(s => s.message === id);
+}
+
+function applySavedStore(store) {
+  savedState.saved = sortSaved(store && store.saved);
+  savedState.reminders = sortReminders(store && store.reminders);
+  syncSavedButton();
+  if (savedState.open) renderSavedView();
+}
+
+async function loadSaved() {
+  try {
+    applySavedStore(await invoke("saved_list"));
+  } catch {
+    applySavedStore(null);
+  }
+  await checkReminders();
+  if (!savedState.timer) savedState.timer = setInterval(checkReminders, REMINDER_CHECK_MS);
+}
+
+function savedContext() {
+  if (inDmView()) return { dm: state.currentDm };
+  const channel = state.currentChannel ? { id: state.currentChannel.id, name: channelPlainName(state.currentChannel) } : null;
+  return { server: state.currentServer, channel };
+}
+
+async function toggleSaved(message) {
+  const saved = !isSavedMessage(message.id);
+  try {
+    applySavedStore(await invoke("saved_set", { entry: messageEntry(message, savedContext()), saved }));
+    toast(saved ? "Message saved" : "Removed from Saved");
+    renderMessages(state.renderedMessages || []);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function savedMessageActions(add, message) {
+  if (message.pending || message.held) return;
+  const saved = isSavedMessage(message.id);
+  add(saved ? "bookmarkOn" : "bookmark", saved ? "Unsave" : "Save", () => toggleSaved(message));
+  add("bell", "Remind Me", e => openRemindPop(message, e.currentTarget));
+}
+
+function savedMenuItems(item, message) {
+  if (message.pending || message.held) return;
+  item(isSavedMessage(message.id) ? "Remove from Saved" : "Save Message", () => toggleSaved(message));
+  item("Remind Me", () => openRemindPop(message, messageRow(message.id) || $("messages")));
+}
+
+function openRemindPop(message, anchor) {
+  closeFloating();
+  const pop = $("remind-pop");
+  pop.replaceChildren(el("div", "ctx-title", "Remind me about this"));
+  const choose = (label, onPick) => {
+    const btn = el("button", null, label);
+    btn.onclick = () => {
+      closeRemindPop();
+      onPick();
+    };
+    pop.appendChild(btn);
+  };
+  for (const preset of REMINDER_PRESETS) {
+    if (preset.id === "custom") continue;
+    choose(preset.label, () => setReminder(message, reminderDue(preset.id, Date.now())));
+  }
+  pop.appendChild(el("div", "ctx-sep"));
+  const pick = el("div", "remind-pick");
+  pick.appendChild(el("span", "remind-pick-label", "Pick a time"));
+  const input = el("input");
+  input.type = "datetime-local";
+  input.min = toDateTimeLocal(Date.now() + 60e3);
+  input.value = toDateTimeLocal(Date.now() + 3600e3);
+  input.setAttribute("aria-label", "Reminder time");
+  pick.appendChild(input);
+  const set = el("button", "btn-primary btn-small", "Set");
+  set.onclick = () => {
+    const due = parseReminderTime(input.value, Date.now());
+    if (!due) {
+      toast("Pick a time that is still ahead");
+      return;
+    }
+    closeRemindPop();
+    setReminder(message, due);
+  };
+  pick.appendChild(set);
+  pop.appendChild(pick);
+  const r = anchor.getBoundingClientRect();
+  placeMenuAt(pop, r.left, r.bottom + 4);
+}
+
+function closeRemindPop() {
+  $("remind-pop").classList.add("hidden");
+}
+
+async function setReminder(message, due) {
+  if (!due) return;
+  try {
+    applySavedStore(await invoke("reminder_set", { entry: messageEntry(message, savedContext()), due }));
+    toast(`Reminder set · ${reminderLabel(due, Date.now())}`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function cancelReminder(id) {
+  try {
+    applySavedStore(await invoke("reminder_cancel", { id }));
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function checkReminders() {
+  for (const reminder of dueReminders(savedState.reminders, Date.now())) {
+    const notice = reminderNotice(reminder);
+    invoke("notify", { ...notice, target: savedTarget(reminder.entry) }).catch(() => {});
+    toast(notice.title);
+    playSound("message");
+    await cancelReminder(reminder.id);
+  }
+}
+
+function syncSavedButton() {
+  const now = Date.now();
+  const upcoming = savedState.reminders.filter(r => r.due > now).length;
+  const btn = $("saved-btn");
+  btn.title = savedButtonTitle(savedState.reminders, now);
+  const count = $("saved-count");
+  count.textContent = pinBadgeText(upcoming);
+  count.classList.toggle("hidden", !upcoming);
+  const entry = document.querySelector(".saved-entry .dm-preview");
+  if (entry) entry.textContent = savedSummary(savedState.saved, savedState.reminders, now);
+}
+
+function savedSidebarRow() {
+  const row = el("div", "channel dm-thread saved-entry");
+  if (savedState.open) row.classList.add("active");
+  const mark = el("div", "avatar saved-entry-mark");
+  mark.appendChild(svgIcon("bookmark", 18));
+  row.appendChild(mark);
+  const meta = el("div", "dm-meta");
+  meta.appendChild(el("div", "dm-name", "Saved"));
+  meta.appendChild(el("div", "dm-preview", savedSummary(savedState.saved, savedState.reminders, Date.now())));
+  row.appendChild(meta);
+  row.onclick = toggleSavedView;
+  return row;
+}
+
+function toggleSavedView() {
+  if (savedState.open) closeSavedView();
+  else openSavedView();
+}
+
+function openSavedView() {
+  closeFloating();
+  savedState.open = true;
+  $("saved-view").classList.remove("hidden");
+  $("saved-btn").classList.add("active");
+  for (const row of document.querySelectorAll(".saved-entry")) row.classList.add("active");
+  renderSavedView();
+}
+
+function closeSavedView() {
+  savedState.open = false;
+  $("saved-view").classList.add("hidden");
+  $("saved-btn").classList.remove("active");
+  for (const row of document.querySelectorAll(".saved-entry")) row.classList.remove("active");
+}
+
+function savedSectionHead(label, count) {
+  const head = el("div", "saved-section");
+  head.appendChild(el("span", null, label));
+  head.appendChild(el("span", null, String(count)));
+  return head;
+}
+
+function renderSavedView() {
+  const list = $("saved-list");
+  list.replaceChildren();
+  const now = Date.now();
+  if (savedState.reminders.length) {
+    list.appendChild(savedSectionHead("Reminders", savedState.reminders.length));
+    for (const reminder of savedState.reminders) list.appendChild(savedRow(reminder.entry, { reminder, now }));
+  }
+  list.appendChild(savedSectionHead("Saved messages", savedState.saved.length));
+  if (!savedState.saved.length) {
+    list.appendChild(savedEmptyState());
+    return;
+  }
+  for (const entry of savedState.saved) list.appendChild(savedRow(entry, { now }));
+}
+
+function savedEmptyState() {
+  const empty = el("div", "saved-empty");
+  const mark = el("div", "saved-empty-mark");
+  mark.appendChild(svgIcon("bookmark", 26));
+  empty.appendChild(mark);
+  empty.appendChild(el("strong", null, "Nothing saved yet"));
+  empty.appendChild(el("span", null, "Hover a message and choose Save to keep it here, or Remind Me to hear about it later. Saved messages stay on this device."));
+  return empty;
+}
+
+function savedRow(entry, { reminder = null, now }) {
+  const row = el("div", "saved-row");
+  row.dataset.id = entry.message;
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
+  row.appendChild(makeAvatar(entry.author_id, entry.author_name));
+  const body = el("div", "saved-body");
+  const line = el("div", "saved-line");
+  line.appendChild(el("span", "saved-author", entry.author_name || "Someone"));
+  line.appendChild(el("span", "saved-origin", savedOrigin(entry)));
+  if (reminder) {
+    const chip = el("span", "saved-chip" + (reminder.due <= now ? " due" : ""));
+    chip.appendChild(svgIcon("bell", 14));
+    chip.appendChild(el("span", null, reminderLabel(reminder.due, now)));
+    line.appendChild(chip);
+  } else {
+    line.appendChild(el("span", "saved-time", formatTime(entry.created_at)));
+  }
+  body.appendChild(line);
+  const text = savedExcerpt(entry, plainText);
+  const excerpt = el("div", "saved-text", text);
+  if (!entry.content) excerpt.classList.add("muted");
+  body.appendChild(excerpt);
+  row.appendChild(body);
+  const remove = el("button", "saved-remove");
+  remove.title = reminder ? "Cancel Reminder" : "Unsave";
+  remove.setAttribute("aria-label", remove.title);
+  remove.appendChild(svgIcon("close", 16));
+  remove.onclick = async e => {
+    e.stopPropagation();
+    if (reminder) await cancelReminder(reminder.id);
+    else await unsaveEntry(entry);
+  };
+  row.appendChild(remove);
+  const jump = () => jumpToSaved(entry);
+  row.onclick = jump;
+  row.onkeydown = e => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      jump();
+    }
+  };
+  return row;
+}
+
+async function unsaveEntry(entry) {
+  try {
+    applySavedStore(await invoke("saved_set", { entry, saved: false }));
+    renderMessages(state.renderedMessages || []);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function jumpToSaved(entry) {
+  closeSavedView();
+  try {
+    if (entry.dm) {
+      if (state.view !== "dm") {
+        setViewMode("dm");
+        state.currentServer = null;
+        state.currentChannel = null;
+        renderServerRail();
+      }
+      if (!state.currentDm || state.currentDm.user !== entry.dm) await selectDm(entry.dm, entry.dm_name || "Direct Message");
+      await jumpToMessage(entry.message);
+    } else if (entry.server && entry.channel) {
+      await openMessageLink({ server: entry.server, channel: entry.channel, message: entry.message });
+    } else {
+      toast("That message has no place to jump to");
+    }
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireSaved() {
+  $("saved-btn").onclick = toggleSavedView;
+  $("saved-close").onclick = closeSavedView;
+  document.addEventListener("click", e => {
+    const pop = $("remind-pop");
+    if (!pop.classList.contains("hidden") && !pop.contains(e.target) && !e.target.closest(".msg-actions, #msg-menu")) closeRemindPop();
+    if (savedState.open && !$("saved-view").contains(e.target) && !e.target.closest("#saved-btn, .saved-entry, #modal-backdrop, .pop-menu")) closeSavedView();
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    closeRemindPop();
+    if (savedState.open) closeSavedView();
+  });
 }
 
 let forwarding = null;
@@ -10957,6 +11376,7 @@ async function renderDmThreads() {
   list.innerHTML = "";
   const threads = await invoke("list_dm_threads");
   state.dmThreads = threads;
+  list.appendChild(savedSidebarRow());
   const query = $("dm-search").value.trim().toLowerCase();
   const matches = threads.filter(t => !query || t.name.toLowerCase().includes(query));
   const shown = matches.filter(t => t.kind === "inbox" || t.kind === "group");
@@ -10992,7 +11412,9 @@ async function renderDmThreads() {
       row.appendChild(avatarWithPresence(req.name, req.id));
       const meta = el("div", "dm-meta");
       meta.appendChild(el("div", "dm-name", req.name));
-      meta.appendChild(el("div", "dm-preview", "Wants to be friends"));
+      const line = el("div", "dm-preview friend-note", friendRequestLine(req));
+      line.title = req.note || "";
+      meta.appendChild(line);
       row.appendChild(meta);
       const yes = el("button", "icon-btn friend-yes");
       yes.title = "Accept";
@@ -12585,6 +13007,7 @@ function wireEvents() {
       await refreshServers();
       await loadReadState();
       await loadPins();
+      await loadSaved();
       if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
     } catch (e) {
@@ -13202,6 +13625,7 @@ function wireEvents() {
   wireHotkeyInput($("overlay-chat-key"), combo => saveOverlaySettings({ chat_hotkey: combo }));
   wireVoiceInputSettings();
   $("dm-policy").addEventListener("change", saveDmSettings);
+  wireProfilePrivacy();
   $("keep-default").addEventListener("change", e => setHistoryWindow(null, e.target.value));
   $("spam-filter-toggle").addEventListener("change", saveDmSettings);
   $("block-cancel").onclick = hideModals;
@@ -13958,7 +14382,8 @@ function wireEvents() {
       const p = event.payload || {};
       if (p.signal === "request" && friendState(p.user) === "incoming") {
         toast(`${p.name} sent you a friend request`);
-        invoke("notify", { title: "Friend request", body: `${p.name} wants to be friends`, target: `dm:${p.user}` }).catch(() => {});
+        const body = p.note ? `${p.name}: ${p.note}` : `${p.name} wants to be friends`;
+        invoke("notify", { title: "Friend request", body, target: `dm:${p.user}` }).catch(() => {});
         playSound("message");
       } else if (p.signal === "accept" && friendState(p.user) === "friend") {
         toast(`You and ${p.name} are now friends`);
@@ -15395,6 +15820,7 @@ function wireActivityPing() {
 
 async function boot() {
   wireEvents();
+  wireSaved();
   wireTimeoutModal();
   wireActivityPing();
   if (IS_TAURI) {
@@ -15430,6 +15856,7 @@ async function continueBoot() {
   await refreshServers();
   await loadReadState();
   await loadPins();
+  await loadSaved();
   if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
   await primeFriendPresence();
