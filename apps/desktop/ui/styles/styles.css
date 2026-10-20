@@ -2345,7 +2345,7 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .cam-mirror-row .setting-title { font-size: 14px; }
 .cam-fx-note { min-height: 56px; }
 .cam-fx-note.warn { color: var(--yellow); }
-#cam-preview-btn { align-self: flex-start; }
+.cam-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 [data-cam-mirror="on"] .cam-self { transform: scaleX(-1); }
 
 .server-icon, .rail-home { position: relative; overflow: visible; }

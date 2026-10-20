@@ -2166,6 +2166,17 @@ function renderCameraFx(status = cameraFxStatus()) {
   note.classList.toggle("warn", status === "failed");
 }
 
+async function chooseCameraBackdrop() {
+  try {
+    const src = await chooseImage("Choose a camera background", $("server-image-file"));
+    if (!src) return;
+    setCameraBackdrop(await cropImageFile(src, CAMERA_BACKDROP_WIDTH, CAMERA_BACKDROP_HEIGHT));
+    updateCameraFx({ background: "image" });
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 function fillDeviceSelect(select, names, chosen) {
   select.replaceChildren();
   select.appendChild(new Option("Default", ""));
@@ -9423,8 +9434,12 @@ function wireEvents() {
   $("vp-camera").onclick = () => (state.cameraOn ? stopCamera() : startCamera());
   $("cam-preview-btn").onclick = toggleCameraPreview;
   for (const button of $("cam-bg").querySelectorAll("button")) {
-    button.onclick = () => updateCameraFx({ background: button.dataset.bg });
+    button.onclick = () => {
+      if (button.dataset.bg === "image" && !hasCameraBackdrop()) chooseCameraBackdrop();
+      else updateCameraFx({ background: button.dataset.bg });
+    };
   }
+  $("cam-backdrop-btn").onclick = chooseCameraBackdrop;
   $("cam-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
   onCameraFxChange(renderCameraFx);
   renderCameraFx();

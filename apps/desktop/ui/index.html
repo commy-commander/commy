@@ -791,13 +791,17 @@
               <div class="segmented cam-bg" id="cam-bg" role="radiogroup" aria-labelledby="cam-bg-label">
                 <button data-bg="off" role="radio"><strong>Off</strong></button>
                 <button data-bg="blur" role="radio"><strong>Blur</strong></button>
+                <button data-bg="image" role="radio"><strong>Image</strong></button>
               </div>
               <label class="setting-row cam-mirror-row">
                 <span class="setting-title">Mirror my video</span>
                 <input type="checkbox" id="cam-mirror" class="switch" />
               </label>
               <div class="setting-sub cam-fx-note" id="cam-fx-note"></div>
-              <button class="btn-secondary btn-small" id="cam-preview-btn">Test Camera</button>
+              <div class="cam-actions">
+                <button class="btn-secondary btn-small" id="cam-preview-btn">Test Camera</button>
+                <button class="btn-secondary btn-small" id="cam-backdrop-btn">Choose Image</button>
+              </div>
             </div>
           </div>
           <div class="settings-card">

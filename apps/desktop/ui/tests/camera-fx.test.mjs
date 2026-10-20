@@ -14,6 +14,7 @@ const {
   maskMemory,
   segmentStride,
   averageCost,
+  coverCrop,
   cameraFrameSize,
 } = require("../scripts/camera-fx.js");
 
@@ -24,13 +25,15 @@ test("camera settings fall back to no effect and a mirrored self view", () => {
   assert.deepEqual(parseCameraFx("blur"), { background: "off", mirror: true });
   assert.deepEqual(parseCameraFx({ background: "confetti", mirror: "yes" }), { background: "off", mirror: true });
   assert.deepEqual(parseCameraFx({ background: "blur", mirror: false }), { background: "blur", mirror: false });
+  assert.deepEqual(parseCameraFx({ background: "image", mirror: true }), { background: "image", mirror: true });
   assert.deepEqual(parseCameraFx({ background: "stars" }), { background: "off", mirror: true });
-  assert.deepEqual(CAMERA_BACKGROUNDS, ["off", "blur"]);
+  assert.deepEqual(CAMERA_BACKGROUNDS, ["off", "blur", "image"]);
 });
 
-test("only blur loads the person segmenter", () => {
+test("blur and a custom image load the person segmenter", () => {
   assert.equal(cameraFxNeedsSegmenter({ background: "off" }), false);
   assert.equal(cameraFxNeedsSegmenter({ background: "blur" }), true);
+  assert.equal(cameraFxNeedsSegmenter({ background: "image" }), true);
   assert.equal(cameraFxNeedsSegmenter(undefined), false);
 });
 
@@ -94,4 +97,11 @@ test("the camera scripts load before the app that uses them", () => {
   const order = ["scripts/camera-fx.js", "scripts/camera-pipeline.js", "scripts/app.js"].map(src => html.indexOf(`<script src="${src}">`));
   assert.ok(order.every(i => i > 0));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
+});
+
+test("a custom background fills the frame from its centre without stretching", () => {
+  assert.deepEqual(coverCrop(960, 540, 640, 360), { sx: 0, sy: 0, sw: 960, sh: 540 });
+  assert.deepEqual(coverCrop(960, 540, 640, 480), { sx: 120, sy: 0, sw: 720, sh: 540 });
+  assert.deepEqual(coverCrop(1000, 1000, 640, 360), { sx: 0, sy: 218.75, sw: 1000, sh: 562.5 });
+  assert.equal(coverCrop(0, 540, 640, 360), null);
 });
