@@ -75,6 +75,7 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::DoorbellSet { user, .. }
         | E::BotSet { user, .. }
         | E::PollVote { user, .. }
+        | E::HandRaise { user, .. }
         | E::PronounsSet { user, .. } => Some(*user),
         E::MessagePin { by, .. }
         | E::MemberTimeout { by, .. }
@@ -82,7 +83,8 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::ThreadSet { by, .. }
         | E::VoiceStatusSet { by, .. }
         | E::ForumTagsSet { by, .. }
-        | E::ForumPost { by, .. } => Some(*by),
+        | E::ForumPost { by, .. }
+        | E::StageSet { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -112,6 +114,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ChannelLimit { channel, .. } => format!("channel.limit:{channel}"),
         E::ChannelSlowMode { channel, .. } => format!("channel.slow_mode:{channel}"),
         E::ThreadSet { channel, root, .. } => format!("thread:{channel}:{root}"),
+        E::StageSet { channel, user, .. } => format!("stage:{channel}:{user}"),
+        E::HandRaise { user, .. } => format!("hand:{user}"),
         E::ChannelBanner { channel, .. } => format!("channel.banner:{channel}"),
         E::ChannelColor { channel, .. } => format!("channel.color:{channel}"),
         E::ChannelKindSet { channel, .. } => format!("channel.kind:{channel}"),
@@ -182,7 +186,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
 }
 
 pub fn settles_authority(subject: &str) -> bool {
-    const LIVE: [&str; 8] = ["presence:", "voice:", "share:", "camera:", "reaction:", "rsvp:", "profile:", "voice_move:"];
+    const LIVE: [&str; 9] = ["presence:", "voice:", "share:", "camera:", "reaction:", "rsvp:", "profile:", "voice_move:", "hand:"];
     !LIVE.iter().any(|p| subject.starts_with(p))
 }
 
@@ -218,7 +222,9 @@ fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
         | E::MessagePin { channel, .. }
         | E::ThreadSet { channel, .. }
         | E::VoiceStatusSet { channel, .. }
-        | E::ForumPost { channel, .. } => Some(*channel),
+        | E::ForumPost { channel, .. }
+        | E::StageSet { channel, .. }
+        | E::HandRaise { channel, .. } => Some(*channel),
         _ => None,
     }
 }
@@ -270,6 +276,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
                 None => speaks && message.is_bound_to(by) && server.can_post_in(*channel, by),
             }
         }
+        E::HandRaise { .. } => member && actor(event) == Some(by) && sees(event),
+        E::StageSet { .. } => member && actor(event) == Some(by) && perms.can_manage_stage() && sees(event),
         E::ChannelKeyAdd { channel, .. } | E::ChannelKeyGrant { channel, .. } => {
             member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)
         }

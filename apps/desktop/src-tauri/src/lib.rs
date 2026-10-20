@@ -3116,7 +3116,8 @@ async fn create_channel(
         "voice" => ChannelKind::Voice,
         "announcement" => ChannelKind::Announcement,
         "forum" => ChannelKind::Forum,
-        _ => return Err("channel kind must be text, voice, announcement or forum".into()),
+        "stage" => ChannelKind::Stage,
+        _ => return Err("channel kind must be text, voice, stage, announcement or forum".into()),
     };
     let me = current_profile(&app)?;
     let channel = {
@@ -4932,6 +4933,63 @@ async fn moderate_voice(
 }
 
 #[tauri::command]
+async fn set_stage_speaker(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    user_id: String,
+    speaker: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let channel: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        if !our_permissions(&app, state, me.id).can_manage_stage() {
+            return Err("you need to manage channels or voice to choose stage speakers".into());
+        }
+        require_can_view(state, me.id, channel)?;
+        if !state.server.channel(channel).is_some_and(|c| c.is_stage()) {
+            return Err("that is not a stage channel".into());
+        }
+        if !state.server.is_member(user) {
+            return Err("that person is not a member of this server".into());
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::StageSet { server: sid, channel, user, speaker, by: me.id }).await?;
+    refresh_forced_voice(&app, &handle);
+    Ok(())
+}
+
+#[tauri::command]
+async fn raise_hand(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, raised: bool) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let channel = app
+        .voice_session
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|s| s.server == sid)
+        .map(|s| s.channel)
+        .ok_or("you are not in a stage channel here")?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        if !state.server.channel(channel).is_some_and(|c| c.is_stage()) {
+            return Err("hands go up in stage channels".into());
+        }
+        if raised && !state.server.in_audience(channel, me.id) {
+            return Err("you already have the floor".into());
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::HandRaise { server: sid, channel, user: me.id, raised }).await
+}
+
+#[tauri::command]
 async fn set_nickname(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -4989,7 +5047,7 @@ async fn move_voice_member(
         };
         if let Some(target) = channel {
             match state.server.channel(target) {
-                Some(c) if c.kind == ChannelKind::Voice => {}
+                Some(c) if c.kind.is_voice() => {}
                 _ => return Err("that is not a voice channel".into()),
             }
             require_can_view(state, me.id, target)?;
@@ -6792,7 +6850,7 @@ async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHa
         let voice = app.voice.lock().unwrap();
         (voice.muted, voice.deafened)
     };
-    let event = {
+    let (event, hand) = {
         let mut servers = app.servers.lock().unwrap();
         let Some(state) = servers.get_mut(&sid) else { return };
         let since = state.voice_since(profile.id).unwrap_or_else(|| chrono::Utc::now().timestamp());
@@ -6804,9 +6862,14 @@ async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHa
             since: Some(since),
         };
         let _ = state.apply(event.clone());
-        event
+        let hand = (state.hand_of(profile.id) == Some(channel))
+            .then(|| ServerEvent::HandRaise { server: sid, channel, user: profile.id, raised: true });
+        (event, hand)
     };
     broadcast_event(app, sid, event).await;
+    if let Some(hand) = hand {
+        broadcast_event(app, sid, hand).await;
+    }
     let _ = handle.emit("server-event", &sid.to_string());
 }
 
@@ -6817,8 +6880,9 @@ fn apply_voice_gates(app: &App) {
     };
     let forced_mute = app.forced_mute.load(std::sync::atomic::Ordering::Relaxed);
     let forced_deaf = app.forced_deaf.load(std::sync::atomic::Ordering::Relaxed);
+    let audience = app.audience.load(std::sync::atomic::Ordering::Relaxed);
     let deaf = deafened || forced_deaf;
-    app.processor.lock().unwrap().set_muted(muted || deaf || forced_mute);
+    app.processor.lock().unwrap().set_muted(muted || deaf || forced_mute || audience);
     if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
         session.deafened.store(deaf, std::sync::atomic::Ordering::Relaxed);
     }
@@ -6863,12 +6927,13 @@ async fn follow_voice_move(handle: &tauri::AppHandle, sid: ServerId, channel: Op
 
 fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
-    let (muted, deafened) = match (me, server) {
-        (Some(me), Some(sid)) => app.servers.lock().unwrap().get(&sid).map_or((false, false), |s| {
-            (s.server.server_muted.contains(&me), s.server.server_deafened.contains(&me))
+    let session = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+    let server = session.map(|(sid, _)| sid);
+    let (muted, deafened, audience) = match (me, session) {
+        (Some(me), Some((sid, channel))) => app.servers.lock().unwrap().get(&sid).map_or((false, false, false), |s| {
+            (s.server.server_muted.contains(&me), s.server.server_deafened.contains(&me), s.server.in_audience(channel, me))
         }),
-        _ => (false, false),
+        _ => (false, false, false),
     };
     if let Some(sid) = server {
         let timeouts = {
@@ -6889,9 +6954,13 @@ fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
         app.forced_mute.swap(muted, std::sync::atomic::Ordering::Relaxed),
         app.forced_deaf.swap(deafened, std::sync::atomic::Ordering::Relaxed),
     );
+    let was_audience = app.audience.swap(audience, std::sync::atomic::Ordering::Relaxed);
     apply_voice_gates(app);
     if was != (muted, deafened) {
         let _ = handle.emit("voice-moderated", serde_json::json!({ "muted": muted, "deafened": deafened }));
+    }
+    if was_audience != audience {
+        let _ = handle.emit("stage-role", serde_json::json!({ "audience": audience }));
     }
 }
 
@@ -6967,7 +7036,16 @@ async fn run_net_loop(
                 if let ServerEvent::ScreenShare { user, active: true, .. } = &event {
                     app.share_seen.lock().unwrap().insert((server, *user), std::time::Instant::now());
                 }
-                let moderation = matches!(event, ServerEvent::VoiceModerate { .. } | ServerEvent::MemberTimeout { .. });
+                let moderation = matches!(
+                    event,
+                    ServerEvent::VoiceModerate { .. }
+                        | ServerEvent::MemberTimeout { .. }
+                        | ServerEvent::StageSet { .. }
+                        | ServerEvent::RoleAssign { .. }
+                        | ServerEvent::RoleUnassign { .. }
+                        | ServerEvent::RoleUpdate { .. }
+                        | ServerEvent::RoleDelete { .. }
+                );
                 let priority = matches!(
                     event,
                     ServerEvent::VoiceState { .. }
@@ -7684,6 +7762,8 @@ pub fn run() {
             get_custom_icon,
             set_pronouns,
             moderate_voice,
+            set_stage_speaker,
+            raise_hand,
             set_nickname,
             move_voice_member,
             ban_member,

@@ -77,6 +77,11 @@
           <button class="vp-pill" id="vp-stop-watch">Stop Watching</button>
         </div>
         <div class="vp-streams" id="vp-streams"></div>
+        <div class="vp-stage hidden" id="vp-stage">
+          <span class="vp-stage-icon" id="vp-stage-icon"></span>
+          <span class="vp-stage-text" id="vp-stage-text"></span>
+          <button class="vp-pill vp-hand" id="vp-hand" type="button">Raise hand</button>
+        </div>
         <div class="vp-conn">
           <div class="vp-conn-meta" id="vp-conn-meta" title="Go to voice channel">
             <div class="vp-status"><span class="vp-signal" id="vp-signal"></span><span id="vp-status-text">Voice Connected</span></div>
@@ -917,6 +922,11 @@
         <button class="kind-option" data-kind="voice">
           <span class="kind-icon" id="create-voice-icon"></span>
           <span class="kind-text"><strong>Voice</strong><span>Hang out together with voice and screen share</span></span>
+          <span class="kind-radio"></span>
+        </button>
+        <button class="kind-option" data-kind="stage">
+          <span class="kind-icon" id="create-stage-icon"></span>
+          <span class="kind-text"><strong>Stage</strong><span>Speakers talk, the audience listens and can raise a hand</span></span>
           <span class="kind-radio"></span>
         </button>
         <button class="kind-option" data-kind="announcement">
@@ -1976,6 +1986,7 @@
               <select id="new-channel-kind">
                 <option value="text">Text</option>
                 <option value="voice">Voice</option>
+                <option value="stage">Stage</option>
               </select>
               <button class="btn-primary btn-small" id="new-channel-save">Create</button>
             </div>
@@ -2409,6 +2420,7 @@
   <script src="scripts/threads.js"></script>
   <script src="scripts/voice-status.js"></script>
   <script src="scripts/forum.js"></script>
+  <script src="scripts/stage.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>

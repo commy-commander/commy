@@ -121,6 +121,10 @@ impl Permissions {
     pub fn can_send_tts(self) -> bool {
         self.allows(Self::SEND_TTS_MESSAGES)
     }
+
+    pub fn can_manage_stage(self) -> bool {
+        self.allows(Self::MANAGE_CHANNELS) || self.allows(Self::MUTE_MEMBERS) || self.allows(Self::MOVE_MEMBERS)
+    }
 }
 
 impl BitOr for Permissions {
@@ -209,6 +213,16 @@ mod tests {
         assert!(!Permissions::SEND_VOICE_MESSAGES.can_send_tts());
         assert_ne!(Permissions::SEND_TTS_MESSAGES, Permissions::SEND_VOICE_MESSAGES);
         assert_eq!(Permissions::SEND_TTS_MESSAGES.0, 1 << 35);
+    }
+
+    #[test]
+    fn stage_hosts_are_channel_managers_and_voice_moderators() {
+        assert!(Permissions::MANAGE_CHANNELS.can_manage_stage());
+        assert!(Permissions::MUTE_MEMBERS.can_manage_stage());
+        assert!(Permissions::MOVE_MEMBERS.can_manage_stage());
+        assert!(Permissions::ADMINISTRATOR.can_manage_stage());
+        assert!(!Permissions::default_member().can_manage_stage());
+        assert!(!Permissions::MANAGE_MESSAGES.can_manage_stage());
     }
 
     #[test]

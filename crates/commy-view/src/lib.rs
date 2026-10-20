@@ -92,6 +92,8 @@ pub struct ChannelView {
     pub can_view: bool,
     pub can_send: bool,
     pub key_ready: bool,
+    pub speakers: Vec<String>,
+    pub hands: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -293,6 +295,7 @@ pub struct ServerView {
     pub afk_timeout_minutes: Option<u32>,
     pub can_mute: bool,
     pub can_move: bool,
+    pub can_manage_stage: bool,
     pub can_ban: bool,
     pub can_time_out: bool,
     pub my_timeout_until: Option<i64>,
@@ -414,6 +417,8 @@ impl ServerView {
                     can_view,
                     can_send: can_view && viewer.is_some_and(|v| state.server.can_post_in(c.id, v)),
                     key_ready: can_view && keys.key_ready(state, c.id),
+                    speakers: c.speakers.iter().map(|u| u.to_string()).collect(),
+                    hands: if can_view { state.hands_in(c.id).iter().map(|u| u.to_string()).collect() } else { Vec::new() },
                 }
             })
             .collect();
@@ -581,6 +586,7 @@ impl ServerView {
             afk_timeout_minutes: state.server.afk_timeout_minutes,
             can_mute: perms.allows(Permissions::MUTE_MEMBERS),
             can_move: perms.allows(Permissions::MOVE_MEMBERS),
+            can_manage_stage: perms.can_manage_stage(),
             can_ban: perms.allows(Permissions::BAN_MEMBERS),
             can_time_out: perms.allows(Permissions::TIME_OUT_MEMBERS),
             my_timeout_until: viewer.and_then(|v| state.server.timeout_of(v, now)).map(|t| t.until.timestamp_millis()),
