@@ -41,7 +41,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Voice.** Opus voice with one-click noise cancellation and echo
   cancellation toggles, per-person volume, shared mute and deafen, priority
   speakers who turn everyone else down while they talk, a status line per
-  voice channel, and a soundboard with per-server clips.
+  voice channel, and a soundboard with per-server clips. Invite a friend or
+  a channel to a call with a card that shows who is in it right now and a
+  Join button.
 - **Screen and game streaming.** Share a whole monitor or a single window with
   a Sharp, Balanced or Smooth quality preset. Windows uses Windows Graphics
   Capture, so games stream cleanly, and can send what your computer plays

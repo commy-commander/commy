@@ -708,6 +708,7 @@ pub struct DmMessageView {
     pub reply_preview: Option<ReplyPreview>,
     pub reactions: Vec<ReactionView>,
     pub attachments: Vec<AttachmentView>,
+    pub voice_invite: Option<crate::voice_invite::VoiceInviteView>,
 }
 
 fn dm_author_name(msg_from: UserId, me: UserId, dms: &DmStore) -> String {
@@ -721,7 +722,10 @@ fn dm_author_name(msg_from: UserId, me: UserId, dms: &DmStore) -> String {
 pub fn dm_excerpt(msg: &DmMessage) -> String {
     let excerpt = crate::safety::truncate(&msg.content, 120);
     if excerpt.is_empty() {
-        if let Some(file) = msg.attachments.first() {
+        if let Some(invite) = msg.voice_invite() {
+            return crate::voice_invite::excerpt(&invite);
+        }
+        if let Some(file) = msg.attachments.iter().find(|a| !a.is_card()) {
             return file.filename.clone();
         }
     }
@@ -760,6 +764,7 @@ pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore, pending: bool
         attachments: msg
             .attachments
             .iter()
+            .filter(|a| !a.is_card())
             .map(|a| AttachmentView {
                 filename: a.filename.clone(),
                 size_bytes: a.size_bytes,
@@ -769,6 +774,7 @@ pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore, pending: bool
                 provider: a.provider.clone(),
             })
             .collect(),
+        voice_invite: crate::voice_invite::dm_view_of(msg),
     }
 }
 
@@ -814,6 +820,7 @@ pub struct MessageView {
     pub pending: bool,
     pub pinned: bool,
     pub held: Option<String>,
+    pub voice_invite: Option<crate::voice_invite::VoiceInviteView>,
 }
 
 #[derive(Debug, Serialize)]
@@ -982,6 +989,8 @@ impl MessageView {
                 if excerpt.is_empty() {
                     if let Some(poll) = original.poll() {
                         excerpt = crate::safety::truncate(&poll.question, 120);
+                    } else if let Some(invite) = original.voice_invite() {
+                        excerpt = crate::voice_invite::excerpt(&invite);
                     } else if original.files().next().is_some() {
                         excerpt = "Click to see attachment".to_string();
                     }
@@ -1021,6 +1030,7 @@ impl MessageView {
             pending: false,
             pinned: state.server.is_pinned(message.id),
             held: None,
+            voice_invite: (!sealed).then(|| crate::voice_invite::view_of(message)).flatten(),
         }
     }
 
