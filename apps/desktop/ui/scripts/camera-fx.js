@@ -1,4 +1,4 @@
-const CAMERA_BACKGROUNDS = ["off", "blur", "stars"];
+const CAMERA_BACKGROUNDS = ["off", "blur", "stars", "image"];
 const CAMERA_FX_DEFAULTS = { background: "off", mirror: true };
 const CAMERA_STAR_COUNT = 140;
 const CAMERA_STAR_SEED = 20261014;
@@ -88,6 +88,14 @@ function averageCost(previous, sample) {
   return previous + (sample - previous) * COST_SMOOTHING;
 }
 
+function coverCrop(sourceWidth, sourceHeight, width, height) {
+  if (!sourceWidth || !sourceHeight || !width || !height) return null;
+  const scale = Math.max(width / sourceWidth, height / sourceHeight);
+  const sw = width / scale;
+  const sh = height / scale;
+  return { sx: (sourceWidth - sw) / 2, sy: (sourceHeight - sh) / 2, sw, sh };
+}
+
 function cameraFrameSize(width, height, maxWidth) {
   if (!width || !height) return null;
   const scale = Math.min(1, maxWidth / width);
@@ -106,6 +114,7 @@ if (typeof module !== "undefined" && module.exports) {
     maskMemory,
     segmentStride,
     averageCost,
+    coverCrop,
     cameraFrameSize,
   };
 }
