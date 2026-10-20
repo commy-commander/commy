@@ -362,7 +362,7 @@ fn search_dms(
     let mentions: Option<UserId> = mentions.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let partner: Option<UserId> = user_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let query = search::SearchQuery::new(&terms, from, mentions, None);
-    let keys = channel_lock::KeyHolder::of(&app);
+    let keys = channel_lock::holder_of(&app);
     let me = current_profile(&app)?.id;
     let blocked = app.safety.lock().unwrap().blocked.clone();
     let servers = app.servers.lock().unwrap();
