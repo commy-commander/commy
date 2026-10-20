@@ -1,4 +1,7 @@
 const CAMERA_FX_KEY = "commy.cameraEffects";
+const CAMERA_BACKDROP_KEY = "commy.cameraBackdrop";
+const CAMERA_BACKDROP_WIDTH = 960;
+const CAMERA_BACKDROP_HEIGHT = 540;
 const CAMERA_DRAW_FPS = 15;
 const CAMERA_MAX_WIDTH = 640;
 const CAMERA_SEGMENT_WIDTH = 256;
@@ -19,8 +22,39 @@ const cameraFx = {
   failed: false,
   lastTimestamp: 0,
   cost: 0,
+  backdrop: null,
   listeners: new Set(),
 };
+
+loadCameraBackdrop(readCameraBackdrop());
+
+function readCameraBackdrop() {
+  try {
+    return localStorage.getItem(CAMERA_BACKDROP_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function loadCameraBackdrop(src) {
+  if (!src) return;
+  const img = new Image();
+  img.onload = () => {
+    cameraFx.backdrop = img;
+    notifyCameraFx();
+  };
+  img.src = src;
+}
+
+function hasCameraBackdrop() {
+  return Boolean(cameraFx.backdrop || readCameraBackdrop());
+}
+
+function setCameraBackdrop(base64Jpeg) {
+  const src = `data:image/jpeg;base64,${base64Jpeg}`;
+  try { localStorage.setItem(CAMERA_BACKDROP_KEY, src); } catch {}
+  loadCameraBackdrop(src);
+}
 
 function readCameraFx() {
   try {
@@ -192,7 +226,8 @@ function drawCameraFrame(pipe) {
     drawBlurredBackground(pipe, size);
     return;
   }
-  drawBlurredBackground(pipe, size);
+  if (mode === "image" && cameraFx.backdrop) drawBackdrop(pipe.ctx, size.width, size.height);
+  else drawBlurredBackground(pipe, size);
   pipe.ctx.drawImage(pipe.person.canvas, 0, 0);
 }
 
@@ -266,5 +301,14 @@ function drawBlurredBackground(pipe, size) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(small.canvas, 0, 0, size.width, size.height);
+}
+
+function drawBackdrop(ctx, width, height) {
+  const img = cameraFx.backdrop;
+  const crop = coverCrop(img.naturalWidth, img.naturalHeight, width, height);
+  if (!crop) return;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
 }
 

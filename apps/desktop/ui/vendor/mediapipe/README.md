@@ -1,6 +1,6 @@
 # MediaPipe Tasks Vision
 
-Background blur and the starry background use the person segmenter from MediaPipe Tasks Vision, bundled so it runs on the device with no network requests.
+Background blur and custom background images use the person segmenter from MediaPipe Tasks Vision, bundled so it runs on the device with no network requests.
 
 | File | Source | SHA-256 |
 | --- | --- | --- |

@@ -1999,6 +1999,7 @@ async fn rename_server(
 }
 
 fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
+    let pronouns = app.voice.lock().unwrap().pronouns.clone();
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
     let perms = our_permissions(app, state, me);
@@ -2047,6 +2048,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     if state.server.rules_accepted.contains(&me) {
         events.push(ServerEvent::RulesAccept { server: sid, user: me });
+    }
+    if let Some(pronouns) = pronouns {
+        events.push(ServerEvent::PronounsSet { server: sid, user: me, pronouns: Some(pronouns) });
     }
     for event in &state.server.events {
         events.push(ServerEvent::EventUpsert { server: sid, event: event.clone() });
@@ -2481,6 +2485,29 @@ async fn update_profile(
     entry_list::record_profile_edit(&app);
     entry_list::schedule(&handle);
     Ok(profile)
+}
+
+#[tauri::command]
+async fn set_pronouns(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    pronouns: Option<String>,
+) -> CmdResult<VoiceSettings> {
+    let me = current_profile(&app)?;
+    let cleaned = match pronouns.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        None => None,
+        Some(text) => Some(commy_core::user::clean_pronouns(text).ok_or_else(|| {
+            format!("pronouns can be up to {} characters", commy_core::user::MAX_PRONOUNS_CHARS)
+        })?),
+    };
+    let settings = app.update_voice(|voice| voice.pronouns = cleaned.clone());
+    let server_ids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    for sid in server_ids {
+        let event = ServerEvent::PronounsSet { server: sid, user: me.id, pronouns: cleaned.clone() };
+        let _ = apply_and_broadcast(&app, &handle, sid, event).await;
+    }
+    let _ = handle.emit("servers-changed", ());
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -5631,6 +5658,7 @@ pub fn run() {
             list_friends,
             friend_action,
             set_about,
+            set_pronouns,
             moderate_voice,
             ban_member,
             unban_member,

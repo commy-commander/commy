@@ -37,6 +37,8 @@ pub struct VoiceSettings {
     #[serde(default = "default_true")]
     pub close_to_tray: bool,
     #[serde(default)]
+    pub pronouns: Option<String>,
+    #[serde(default)]
     pub presence_until: Option<i64>,
     #[serde(default)]
     pub status_until: Option<i64>,
@@ -80,6 +82,7 @@ impl Default for VoiceSettings {
             input_device: None,
             output_device: None,
             close_to_tray: true,
+            pronouns: None,
             presence_until: None,
             status_until: None,
             overlay: crate::overlay::OverlaySettings::default(),
