@@ -10,9 +10,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 ## What you can do
 
 - **Servers and channels.** Create a server from scratch or a starter
-  template, add text and voice channels, group servers into folders, and
-  invite people with a link, and list a public server in Discover so others
-  can find it. A Ctrl+K quick switcher jumps to any channel, conversation or
+  template, add text and voice channels, forum channels for posts with tags,
+  group servers into folders, and invite people with a link, and list a
+  public server in Discover so others can find it. A Ctrl+K quick switcher jumps to any channel, conversation or
   server by name. Mark a channel age-restricted and it asks people to confirm
   they are 18 or older before showing anything. Copy any server's channels,
   roles and rules as a template code so others can start from the same
@@ -41,7 +41,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Voice.** Opus voice with one-click noise cancellation and echo
   cancellation toggles, per-person volume, shared mute and deafen, priority
   speakers who turn everyone else down while they talk, a status line per
-  voice channel, and a soundboard with per-server clips.
+  voice channel, and a soundboard with per-server clips. Invite a friend or
+  a channel to a call with a card that shows who is in it right now and a
+  Join button.
 - **Screen and game streaming.** Share a whole monitor or a single window with
   a Sharp, Balanced or Smooth quality preset. Windows uses Windows Graphics
   Capture, so games stream cleanly, and can send what your computer plays

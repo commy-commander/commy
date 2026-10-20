@@ -1,4 +1,4 @@
-use crate::ids::{ChannelId, MessageId, RoleId, ServerId, UserId};
+use crate::ids::{ChannelId, MessageId, RoleId, ServerId, TagId, UserId};
 use crate::permissions::Permissions;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,28 @@ pub enum ChannelKind {
     Voice,
     Announcement,
     Category,
+    Forum,
+}
+
+impl ChannelKind {
+    pub fn holds_messages(self) -> bool {
+        matches!(self, ChannelKind::Text | ChannelKind::Announcement | ChannelKind::Forum)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForumTag {
+    pub id: TagId,
+    pub name: String,
+    #[serde(default)]
+    pub emoji: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForumPost {
+    pub title: String,
+    pub tags: Vec<TagId>,
+    pub author: UserId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +62,10 @@ pub struct Channel {
     #[serde(default)]
     pub threads: BTreeMap<MessageId, Thread>,
     pub voice_status: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<ForumTag>,
+    #[serde(default)]
+    pub posts: std::collections::BTreeMap<MessageId, ForumPost>,
 }
 
 pub const MAX_ACCESS_ROLES: usize = 16;
@@ -89,6 +115,48 @@ pub fn clean_voice_status(text: &str) -> Option<String> {
     (!cleaned.is_empty()).then_some(cleaned)
 }
 
+pub const MAX_FORUM_TAGS: usize = 20;
+pub const MAX_FORUM_TAG_CHARS: usize = 20;
+pub const MAX_POST_TAGS: usize = 5;
+pub const MAX_POST_TITLE_CHARS: usize = 100;
+pub const MAX_FORUM_POSTS: usize = 1000;
+
+pub fn clean_forum_tags(tags: &[ForumTag]) -> Option<Vec<ForumTag>> {
+    let mut out: Vec<ForumTag> = Vec::new();
+    for tag in tags {
+        let name = tag.name.split_whitespace().collect::<Vec<_>>().join(" ");
+        if name.is_empty() {
+            continue;
+        }
+        if name.chars().count() > MAX_FORUM_TAG_CHARS {
+            return None;
+        }
+        if out.iter().any(|t| t.id == tag.id || t.name.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        let emoji = tag.emoji.as_deref().map(str::trim).filter(|e| valid_sound_emoji(e)).map(String::from);
+        out.push(ForumTag { id: tag.id, name, emoji });
+    }
+    (out.len() <= MAX_FORUM_TAGS).then_some(out)
+}
+
+pub fn clean_post_title(title: &str) -> Option<String> {
+    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let fits = (1..=MAX_POST_TITLE_CHARS).contains(&title.chars().count()) && !title.chars().any(char::is_control);
+    fits.then_some(title)
+}
+
+pub fn clean_post_tags(picks: &[TagId], known: &[ForumTag]) -> Vec<TagId> {
+    let mut out: Vec<TagId> = Vec::new();
+    for pick in picks {
+        if known.iter().any(|t| t.id == *pick) && !out.contains(pick) {
+            out.push(*pick);
+        }
+    }
+    out.truncate(MAX_POST_TAGS);
+    out
+}
+
 impl Channel {
     pub fn new(name: impl Into<String>, kind: ChannelKind, position: u32) -> Self {
         Self {
@@ -108,7 +176,13 @@ impl Channel {
             sensitive: false,
             threads: BTreeMap::new(),
             voice_status: None,
+            tags: Vec::new(),
+            posts: std::collections::BTreeMap::new(),
         }
+    }
+
+    pub fn is_forum(&self) -> bool {
+        self.kind == ChannelKind::Forum
     }
 
     pub fn is_private(&self) -> bool {

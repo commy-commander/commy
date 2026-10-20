@@ -80,7 +80,9 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::MemberTimeout { by, .. }
         | E::PollClose { by, .. }
         | E::ThreadSet { by, .. }
-        | E::VoiceStatusSet { by, .. } => Some(*by),
+        | E::VoiceStatusSet { by, .. }
+        | E::ForumTagsSet { by, .. }
+        | E::ForumPost { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -116,6 +118,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ChannelAccessSet { channel, .. } => format!("channel.access:{channel}"),
         E::ChannelSensitiveSet { channel, .. } => format!("channel.sensitive:{channel}"),
         E::VoiceStatusSet { channel, .. } => format!("voice-status:{channel}"),
+        E::ForumTagsSet { channel, .. } => format!("channel.forum_tags:{channel}"),
+        E::ForumPost { message, .. } => format!("forum.post:{message}"),
         E::ChannelKeyAdd { channel, key, .. } => format!("channel.key:{channel}:{}", key.id.to_hex()),
         E::ChannelKeyGrant { channel, user, .. } => format!("channel.grant:{channel}:{user}"),
         E::AfkChannelSet { .. } => "afk_channel".into(),
@@ -213,7 +217,8 @@ fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
         | E::PollClose { channel, .. }
         | E::MessagePin { channel, .. }
         | E::ThreadSet { channel, .. }
-        | E::VoiceStatusSet { channel, .. } => Some(*channel),
+        | E::VoiceStatusSet { channel, .. }
+        | E::ForumPost { channel, .. } => Some(*channel),
         _ => None,
     }
 }
@@ -253,6 +258,17 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         }
         E::VoiceStatusSet { .. } => {
             member && speaks && actor(event) == Some(by) && sees(event) && perms.can_set_voice_status(true)
+        }
+        E::ForumTagsSet { .. } => actor(event) == Some(by) && allows(Permissions::MANAGE_CHANNELS),
+        E::ForumPost { channel, message, .. } => {
+            let Some(forum) = server.channel(*channel).filter(|c| c.is_forum()) else { return false };
+            if actor(event) != Some(by) || !member || !sees(event) {
+                return false;
+            }
+            match forum.posts.get(message) {
+                Some(post) => post.author == by || allows(Permissions::MANAGE_MESSAGES),
+                None => speaks && message.is_bound_to(by) && server.can_post_in(*channel, by),
+            }
         }
         E::ChannelKeyAdd { channel, .. } | E::ChannelKeyGrant { channel, .. } => {
             member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)

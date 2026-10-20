@@ -33,6 +33,8 @@ const AUDIT_GROUP_OF = {
   channel_banner: "channels",
   channel_color: "channels",
   channel_kind: "channels",
+  forum_tags: "channels",
+  forum_post_edit: "messages",
   role_create: "roles",
   role_update: "roles",
   role_delete: "roles",
@@ -74,7 +76,7 @@ const AUDIT_GROUP_OF = {
   voice_status_set: "channels",
 };
 
-const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", announcement: "announcement channel", category: "category" };
+const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", announcement: "announcement channel", category: "category", forum: "forum channel" };
 
 const VOICE_MODERATION_WORDS = {
   muted: "server-muted",
@@ -125,6 +127,8 @@ function describeAudit(entry) {
     case "channel_banner": return [detail === "removed" ? "removed the banner of " : "changed the banner of ", channel];
     case "channel_color": return [detail ? "changed the color of " : "removed the color of ", channel];
     case "channel_kind": return ["turned ", channel, ` into a ${CHANNEL_KIND_WORDS[detail] || "channel"}`];
+    case "forum_tags": return count > 0 ? [`set ${auditCount(count, "post tag", "post tags")} in `, channel] : ["removed the post tags in ", channel];
+    case "forum_post_edit": return ["changed the post ", auditStrong(detail || "a post"), " in ", channel];
     case "channel_access": return detail === "private" ? ["made ", channel, " private"] : detail === "send" ? ["limited who can send in ", channel] : ["opened ", channel, " to everyone"];
     case "channel_sensitive": return detail === "on" ? ["made ", channel, " age-restricted"] : ["removed the age restriction from ", channel];
     case "voice_status_set": return detail ? ["set the status of ", channel, " to ", auditStrong(detail)] : ["cleared the status of ", channel];

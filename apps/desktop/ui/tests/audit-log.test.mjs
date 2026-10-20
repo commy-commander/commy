@@ -55,6 +55,10 @@ test("sentences name the actor, the target and the change", () => {
   assert.equal(auditText(entry("thread_archive", { label: "general", detail: "off" })), "Mia reopened a thread in general");
   assert.equal(auditText(entry("thread_lock", { label: "general", detail: "on" })), "Mia locked a thread in general");
   assert.equal(auditText(entry("thread_lock", { label: "general", detail: "off" })), "Mia unlocked a thread in general");
+  assert.equal(auditText(entry("channel_create", { label: "ideas", detail: "forum" })), "Mia created the forum channel ideas");
+  assert.equal(auditText(entry("forum_tags", { label: "ideas", detail: "3" })), "Mia set 3 post tags in ideas");
+  assert.equal(auditText(entry("forum_tags", { label: "ideas", detail: "0" })), "Mia removed the post tags in ideas");
+  assert.equal(auditText(entry("forum_post_edit", { label: "ideas", detail: "Dark mode" })), "Mia changed the post Dark mode in ideas");
   assert.equal(auditText(entry("sticker_add", { label: "party" })), "Mia added the sticker party");
   assert.equal(auditText(entry("emoticon_remove", { label: "shrug" })), "Mia removed the emoticon :shrug");
   assert.equal(auditText(entry("expression_sharing", { detail: "stickers and emoticons" })), "Mia let members use this server's stickers and emoticons in other servers and DMs");

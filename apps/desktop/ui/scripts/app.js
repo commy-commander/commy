@@ -337,6 +337,15 @@ function mockSeed() {
       content: "", created_at: new Date(Date.now() - 300e3).toISOString(), edited: false,
       attachments: [{ filename: VOICE_MESSAGE_FILENAME, size_bytes: 61440, is_image: false, mime: VOICE_MESSAGE_MIME, blob: "voice@mock", provider: null }] },
   ];
+  mock.messages[server.channels[1].id].push(
+    { id: "vi1", channel: server.channels[1].id, author_id: "m2", author_name: "nova", content: "",
+      created_at: new Date(Date.now() - 240e3).toISOString(), edited: false, attachments: [], reactions: [],
+      voice_invite: { server: server.id, channel: server.channels[4].id, invite_link: null, server_name: server.name, channel_name: server.channels[4].name } },
+  );
+  mock.dms.m1.messages.push(
+    { id: "d5", from: "m1", from_name: "ferris", content: "", created_at: new Date(Date.now() - 500e3).toISOString(), outgoing: false,
+      voice_invite: { server: crypto.randomUUID(), channel: crypto.randomUUID(), invite_link: `https://commy.chat/i/SYNTH2V4W#${"s".repeat(43)}`, server_name: "Synth Lounge", channel_name: "Jam Room" } },
+  );
   mock.readMarks = { [server.channels[1].id]: { id: "g0", at: Date.now() - 1200e3, set: Date.now() - 1100e3 } };
   (mock.voiceClips ||= {})["voice@mock"] = 14;
   mock.listPins = { dms: ["m1"], channels: [{ server: server.id, channel: server.channels[1].id }] };
@@ -380,6 +389,43 @@ function mockSeed() {
   ];
   mock.pins.push({ channel: news, message: "n1", by: "m1", at: new Date(Date.now() - 7000e3).toISOString() });
   server.awaited = 2;
+  const ideas = ch("ideas", "forum", "Pitch a feature, report a bug or ask a question");
+  ideas.tags = [
+    { id: "ft1", name: "Feature", emoji: "\u{1F4A1}" },
+    { id: "ft2", name: "Bug", emoji: "\u{1F41B}" },
+    { id: "ft3", name: "Question", emoji: "\u2753" },
+    { id: "ft4", name: "Voice", emoji: null },
+  ];
+  server.channels.push(ideas);
+  const post = (id, author, name, content, minutesAgo, replyTo = null) => ({
+    id, channel: ideas.id, author_id: author, author_name: name, content, created_at: new Date(Date.now() - minutesAgo * 60e3).toISOString(),
+    edited: false, attachments: [], reactions: [], reply_to: replyTo,
+  });
+  mock.messages[ideas.id] = [
+    post("f1", "m2", "nova", "It would be great to pick a **different sound** for each channel so raid pings stand out from chatter.\n\n- short clip per channel\n- falls back to the server sound", 2880),
+    post("f1a", "m1", "ferris", "yes, and let the soundboard clips be picked too", 2700, "f1"),
+    post("f1b", "m3", "sleepy", "as long as there is an off switch", 1500, "f1a"),
+    post("f2", "m1", "ferris", "When two people share a screen in the same voice channel the second stream shows the first person's name until I click away. Windows build, both on the latest version.", 1440),
+    post("f2a", "m2", "nova", "I can reproduce this. Looks like the label only updates on the first frame.", 1380, "f2"),
+    post("f3", "m3", "sleepy", "Is there a way to keep the overlay on a second monitor? Mine always lands on the game screen.", 600),
+    post("f3a", "me", mock.user ? mock.user.username : "you", "Not yet, the overlay follows the game window. A corner picker per monitor is on the list.", 540, "f3"),
+    post("f3b", "m3", "sleepy", "thanks, that works for now", 90, "f3a"),
+    post("f4", "me", mock.user ? mock.user.username : "you", "Noise cancellation eats the first syllable when I start talking after a long pause. Toggling it off and on fixes it until the next pause.", 240),
+    post("f5", "m2", "nova", "Can we get a quick poll for picking raid nights? Reactions work but counting them is a chore.", 45),
+  ];
+  mock.forumPosts = { ...(mock.forumPosts || {}), [ideas.id]: [
+    { message: "f1", title: "Per-channel notification sounds", tags: ["ft1"], author: "m2" },
+    { message: "f2", title: "Second screen share shows the wrong name", tags: ["ft2", "ft4"], author: "m1" },
+    { message: "f3", title: "Overlay on a second monitor?", tags: ["ft3"], author: "m3" },
+    { message: "f4", title: "Noise cancellation clips the first word", tags: ["ft2", "ft4"], author: "me" },
+    { message: "f5", title: "Polls for raid nights", tags: ["ft1"], author: "m2" },
+  ] };
+}
+
+function mockMemberName(id) {
+  if (id === "me") return mock.user ? mock.user.username : "you";
+  const member = Object.values(mock.servers).flatMap(s => s.members).find(m => m.id === id);
+  return member ? member.name : "Someone";
 }
 
 function mockSavedStore() {
@@ -561,7 +607,9 @@ async function mockInvoke(cmd, args = {}) {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
             const sees = admits(c.view_roles);
             const sendable = admits(c.send_roles);
-            return { parent: null, position: i, user_limit: 0, slow_mode: 0, threads: [], pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], voice_status: null, ...c, can_view: sees, can_send: sees && sendable, key_ready: sees, can_set_voice_status: mockCanSetVoiceStatus(c) };
+            const view = { parent: null, position: i, user_limit: 0, slow_mode: 0, tags: [], threads: [], pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], voice_status: null, ...c, can_view: sees, can_send: sees && sendable, key_ready: sees, can_set_voice_status: mockCanSetVoiceStatus(c) };
+            view.posts = c.kind === "forum" && sees ? forumPostViews((mock.forumPosts || {})[c.id] || [], mock.messages[c.id] || [], mockMemberName) : [];
+            return view;
           })
           .filter(c => c.can_view || !mock.plainMember),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
@@ -813,6 +861,34 @@ async function mockInvoke(cmd, args = {}) {
       }
       return null;
     }
+    case "voice_channel_presence": {
+      const s = mock.servers[args.serverId];
+      if (!s) return null;
+      const c = s.channels.find(c => c.id === args.channelId);
+      if (!c) throw "that voice channel is gone";
+      const ids = c.voice_user_ids || [];
+      return { server_name: s.name, channel_name: c.name, user_limit: c.user_limit || 0, can_view: true, users: (c.voice_users || []).map((name, i) => ({ id: ids[i] || null, name })) };
+    }
+    case "send_voice_invite":
+    case "send_dm_voice_invite": {
+      const s = mock.servers[args.serverId];
+      const c = s && s.channels.find(c => c.id === args.channelId);
+      if (!c || c.kind !== "voice") throw "that is not a voice channel";
+      const voice_invite = { server: s.id, channel: c.id, invite_link: null, server_name: s.name, channel_name: c.name };
+      if (cmd === "send_voice_invite") {
+        const msg = { id: crypto.randomUUID(), channel: args.toChannelId, author_id: "me", author_name: mock.user.username, content: "",
+          created_at: new Date().toISOString(), edited: false, attachments: [], reactions: [], voice_invite };
+        (mock.messages[args.toChannelId] ||= []).push(msg);
+        return msg;
+      }
+      const dm = mock.dms[args.userId];
+      if (!dm) throw "no such conversation";
+      if (!s.group && !s.members.some(m => m.id === args.userId)) voice_invite.invite_link = `https://commy.chat/i/KQ7M3N4P#${"q".repeat(43)}`;
+      const sent = { id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: "", created_at: new Date().toISOString(),
+        outgoing: true, pending: false, reply_to: null, reply_preview: null, reactions: [], attachments: [], voice_invite };
+      dm.messages.push(sent);
+      return sent;
+    }
     case "list_dm_threads":
       return Object.entries(mock.dms)
         .map(([user, d]) => {
@@ -974,7 +1050,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_channel_sensitive": {
       const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
-      if (!holdsMessages(c)) throw "only text channels can be age-restricted";
+      if (!holdsMessages(c)) throw "only text and forum channels can be age-restricted";
       c.sensitive = Boolean(args.sensitive);
       return null;
     }
@@ -1203,6 +1279,30 @@ async function mockInvoke(cmd, args = {}) {
     case "set_channel_limit": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).user_limit = args.limit; return null;
     case "set_channel_slow_mode": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).slow_mode = args.seconds; return null;
     case "set_voice_status": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).voice_status = cleanVoiceStatus(args.text) || null; return null;
+    case "set_forum_tags": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      c.tags = args.tags.map(t => ({ id: t.id || crypto.randomUUID(), name: t.name, emoji: t.emoji || null }));
+      for (const p of (mock.forumPosts || {})[c.id] || []) p.tags = p.tags.filter(t => c.tags.some(k => k.id === t));
+      return null;
+    }
+    case "post_forum": {
+      if (mock.plainMember && mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId).send_roles?.length) throw "only some roles can send messages in this channel";
+      const msg = {
+        id: crypto.randomUUID(), channel: args.channelId, author_id: "me", author_name: mock.user.username, content: args.content,
+        created_at: new Date().toISOString(), edited: false, attachments: [], reactions: [], reply_to: null,
+      };
+      (mock.messages[args.channelId] ||= []).push(msg);
+      ((mock.forumPosts ||= {})[args.channelId] ||= []).push({ message: msg.id, title: args.title, tags: [...args.tags], author: "me" });
+      return msg;
+    }
+    case "edit_forum_post": {
+      const p = ((mock.forumPosts || {})[args.channelId] || []).find(x => x.message === args.messageId);
+      if (!p) throw "that post no longer exists";
+      if (p.author !== "me" && mock.plainMember) throw "you can only change your own posts";
+      p.title = args.title;
+      p.tags = [...args.tags];
+      return null;
+    }
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
       Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag, mentionable: Boolean(args.mentionable) });
@@ -1469,6 +1569,9 @@ const ICONS = {
   headsetOff: "M12 4a7 7 0 0 0-5.2 2.3L5.4 4.9A9 9 0 0 1 21 12v7c0 .3-.1.6-.2.9L19 18.1V14h-3v1.1L8.2 7.7A7 7 0 0 1 19 13v-1a7 7 0 0 0-7-7zM3.3 3 2 4.3l1.7 1.7A9 9 0 0 0 3 12v7a2 2 0 0 0 2 2h3v-8H5v-1c0-1.2.3-2.4.9-3.4L19.7 21 21 19.7z",
   chat: "M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-2 12H6v-2h12zm0-3H6V9h12zm0-3H6V6h12z",
   plus: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z",
+  forum: "M4 3h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2v4h16V5H4zm0 8h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2zm0 2v4h16v-4H4zm2-9h5v2H6V6zm0 10h8v2H6v-2z",
+  grid: "M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h8v8h-8v-8zm2 2v4h4v-4h-4z",
+  list: "M3 5h2v2H3V5zm4 0h14v2H7V5zM3 11h2v2H3v-2zm4 0h14v2H7v-2zM3 17h2v2H3v-2zm4 0h14v2H7v-2z",
   screen: "M20 3H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h5v2H7v2h10v-2h-2v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 13H4V5h16zm-9-2 5-3.5L11 7z",
   screenOff: "M21 16V5a2 2 0 0 0-2-2H6.8l2 2H19v10.2zM2.4 2.1 1.1 3.4 3 5.3V16a2 2 0 0 0 2 2h5v2H8v2h8v-2h-2v-2h3.7l3 3 1.3-1.3zM5 16V7.3l8.7 8.7z",
   hangup: "M12 9c-1.6 0-3.1.3-4.6.7v3.1c0 .4-.2.7-.6.9-1 .5-1.9 1.1-2.6 1.8a1 1 0 0 1-1.4 0L.3 13.1a1 1 0 0 1 0-1.4C3.3 8.8 7.5 7 12 7s8.7 1.8 11.7 4.7a1 1 0 0 1 0 1.4l-2.5 2.5a1 1 0 0 1-1.4 0c-.8-.7-1.6-1.3-2.6-1.8a1 1 0 0 1-.6-.9V9.7C15.1 9.3 13.6 9 12 9z",
@@ -2084,6 +2187,7 @@ function openChannelMenu(channel, x, y) {
   $("chm-pin").textContent = channelIsPinned(server.id, channel.id) ? "Unpin Channel" : "Pin Channel";
   $("chm-settings").classList.toggle("hidden", !server.can_manage_channels);
   showVoiceStatusMenuItem(channel, server);
+  showVoiceCallMenuItems(channel);
   placeMenuAt($("channel-menu"), x, y);
 }
 
@@ -2516,7 +2620,30 @@ function channelMark(channel, size = 18) {
     icon.appendChild(svgIcon("megaphone", size));
     return icon;
   }
+  if (isForumChannel(channel)) {
+    const icon = el("span", "channel-icon forum-icon");
+    icon.appendChild(svgIcon("forum", size));
+    return icon;
+  }
   return el("span", "hash", "#");
+}
+
+function channelHeaderMark(channel) {
+  if (channel && channel.kind === "announcement") return svgIcon("megaphone", 22);
+  if (isForumChannel(channel)) return svgIcon("forum", 22);
+  return document.createTextNode("#");
+}
+
+function channelKindMark(kind, size = 16) {
+  if (kind === "voice") return svgIcon("speaker", size);
+  if (kind === "category") return svgIcon("chevronDown", size);
+  if (kind === "announcement") return svgIcon("megaphone", size);
+  if (kind === "forum") return svgIcon("forum", size);
+  return document.createTextNode("#");
+}
+
+function kindHoldsMessages(kind) {
+  return kind === "text" || kind === "announcement" || kind === "forum";
 }
 
 function channelLockMark(row, channel) {
@@ -3754,9 +3881,9 @@ function openChannelSettings(channelId, tab = "overview") {
   if (!channel) return;
   const voice = channel.kind === "voice";
   const announcement = channel.kind === "announcement";
-  $("channel-settings-title").replaceChildren(...(voice ? [] : [document.createTextNode("# ")]), channelNameNode(channel));
-  $("channel-edit-prefix").replaceChildren(voice ? svgIcon("speaker", 16) : announcement ? svgIcon("megaphone", 16) : document.createTextNode("#"));
-  $("channel-announce-row").classList.toggle("hidden", voice);
+  $("channel-settings-title").replaceChildren(...(voice || isForumChannel(channel) ? [] : [document.createTextNode("# ")]), channelNameNode(channel));
+  $("channel-edit-prefix").replaceChildren(channelKindMark(channel.kind, 16));
+  $("channel-announce-row").classList.toggle("hidden", voice || isForumChannel(channel));
   $("channel-edit-announce").checked = announcement;
   $("channel-sensitive-row").classList.toggle("hidden", !holdsMessages(channel));
   $("channel-edit-sensitive").checked = Boolean(channel.sensitive);
@@ -3777,6 +3904,7 @@ function openChannelSettings(channelId, tab = "overview") {
   paintChannelBandPreview();
   syncChannelDirty();
   paintChannelBannerCard(channel);
+  paintForumTagsCard(channel);
   $("channel-tab-permissions").classList.toggle("hidden", channel.kind === "category");
   accessDraft = { view: [...(channel.view_roles || [])], send: [...(channel.send_roles || [])] };
   paintChannelAccess();
@@ -4034,15 +4162,14 @@ function setCreateChannelKind(kind) {
   for (const opt of $("create-channel-kinds").querySelectorAll(".kind-option")) {
     opt.classList.toggle("active", opt.dataset.kind === kind);
   }
-  $("create-channel-prefix").replaceChildren(
-    kind === "voice" ? svgIcon("speaker", 16) : kind === "category" ? svgIcon("chevronDown", 16) : kind === "announcement" ? svgIcon("megaphone", 16) : document.createTextNode("#"));
-  $("create-channel-name").placeholder = kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : "new-channel";
+  $("create-channel-prefix").replaceChildren(channelKindMark(kind, 16));
+  $("create-channel-name").placeholder = kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : kind === "forum" ? "ideas" : "new-channel";
   syncCreateChannelName();
 }
 
 function syncCreateChannelName() {
   const input = $("create-channel-name");
-  if (createChannelKind === "text" || createChannelKind === "announcement") {
+  if (kindHoldsMessages(createChannelKind)) {
     const pos = input.selectionStart;
     const cleaned = input.value.toLowerCase().replace(/\s+/g, "-");
     if (cleaned !== input.value) {
@@ -4065,7 +4192,7 @@ async function saveCreateChannel() {
     hideModals();
     toast(`Created ${createChannelKind === "text" ? "#" : ""}${name}`);
     await refreshCurrentServer();
-    if (createChannelKind === "text" || createChannelKind === "announcement") {
+    if (kindHoldsMessages(createChannelKind)) {
       const made = state.currentServer.channels.filter(c => c.kind === createChannelKind).pop();
       if (made) await selectChannel(made);
     }
@@ -4227,6 +4354,7 @@ async function resetSensitiveConfirmations() {
 
 function renderMessages(messages) {
   const box = $("messages");
+  showForumView(false);
   if (state.view === "server" && ageGated(state.currentChannel)) {
     box.dataset.view = "";
     box.replaceChildren(buildSensitiveGate(state.currentChannel));
@@ -4292,6 +4420,341 @@ function renderMessages(messages) {
     if (above < 0) box.scrollTop += above - 8;
   }
   if (state.threadRoot) renderThread();
+}
+
+const FORUM_MODE_KEY = "commy.forumMode";
+const forumUi = { mode: "list", filter: new Map(), draft: null, tagEmoji: null };
+
+function storedForumMode() {
+  try {
+    return forumMode(localStorage.getItem(FORUM_MODE_KEY));
+  } catch {
+    return forumMode(null);
+  }
+}
+
+function setForumMode(mode) {
+  forumUi.mode = forumMode(mode);
+  try { localStorage.setItem(FORUM_MODE_KEY, forumUi.mode); } catch {}
+  for (const [id, value] of [["forum-mode-list", "list"], ["forum-mode-gallery", "gallery"]]) {
+    $(id).classList.toggle("active", forumUi.mode === value);
+    $(id).setAttribute("aria-pressed", String(forumUi.mode === value));
+  }
+  if (isForumChannel(state.currentChannel) && state.view === "server") renderForumPosts(state.currentChannel);
+}
+
+function showForumView(on) {
+  $("forum-view").classList.toggle("hidden", !on);
+  $("messages").classList.toggle("hidden", on);
+}
+
+function renderChannelLog(messages) {
+  if (isForumChannel(state.currentChannel)) renderForum(messages);
+  else renderMessages(messages);
+}
+
+function renderForum(messages) {
+  const channel = state.currentChannel;
+  state.renderedMessages = messages;
+  showForumView(true);
+  $("forum-new").classList.toggle("hidden", channel.can_send === false || channel.can_view === false);
+  renderForumTags(channel);
+  renderForumPosts(channel);
+  if (state.threadRoot) renderThread();
+}
+
+function forumFilterFor(channel) {
+  const picked = forumUi.filter.get(channel.id) || null;
+  return picked && (channel.tags || []).some(t => t.id === picked) ? picked : null;
+}
+
+function renderForumTags(channel) {
+  const row = $("forum-tags");
+  row.replaceChildren();
+  const picked = forumFilterFor(channel);
+  const chip = (label, id) => {
+    const button = el("button", "forum-chip" + (picked === id ? " picked" : ""), label);
+    button.type = "button";
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(picked === id));
+    button.onclick = () => {
+      if (id) forumUi.filter.set(channel.id, id);
+      else forumUi.filter.delete(channel.id);
+      renderForumTags(channel);
+      renderForumPosts(channel);
+    };
+    return button;
+  };
+  row.appendChild(chip("All", null));
+  for (const tag of channel.tags || []) row.appendChild(chip(tagLabel(tag), tag.id));
+}
+
+function forumTagPills(channel, ids) {
+  const byId = forumTagsById(channel.tags);
+  const wrap = el("span", "forum-pills");
+  for (const id of ids || []) {
+    const tag = byId.get(id);
+    if (tag) wrap.appendChild(el("span", "forum-pill", tagLabel(tag)));
+  }
+  return wrap;
+}
+
+function forumPostMeta(post) {
+  const meta = el("span", "forum-meta");
+  meta.append(
+    el("span", "forum-meta-author", post.author_name),
+    el("span", "forum-meta-dot", "\u00b7"),
+    el("span", null, replyCountLabel(post.replies)),
+    el("span", "forum-meta-dot", "\u00b7"),
+    el("span", null, activityLabel(post.last_activity)),
+  );
+  return meta;
+}
+
+function forumEditButton(post) {
+  const me = state.user && state.user.id;
+  const manages = Boolean(state.currentServer && state.currentServer.can_manage_messages);
+  if (!canEditPost(post, me, manages)) return el("span", "forum-edit-slot");
+  const button = el("button", "icon-btn forum-edit");
+  button.type = "button";
+  button.title = "Edit post";
+  button.appendChild(svgIcon("pencil", 16));
+  button.onclick = e => {
+    e.stopPropagation();
+    openForumComposer(post);
+  };
+  return button;
+}
+
+function forumOpenOn(node, post) {
+  node.setAttribute("role", "button");
+  node.tabIndex = 0;
+  node.onclick = () => openForumPost(post);
+  node.onkeydown = e => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openForumPost(post);
+    }
+  };
+}
+
+function forumPostRow(channel, post) {
+  const row = el("div", "forum-post" + (state.threadRoot === post.message ? " open" : ""));
+  const main = el("div", "forum-post-main");
+  const head = el("div", "forum-post-head");
+  head.append(el("span", "forum-post-title", post.title), forumTagPills(channel, post.tags));
+  main.append(head, forumPostMeta(post));
+  row.append(main, forumEditButton(post));
+  forumOpenOn(row, post);
+  return row;
+}
+
+function forumPostBody(post) {
+  const loaded = (state.renderedMessages || []).find(m => m.id === post.message);
+  return loaded ? loaded.content : post.excerpt || "";
+}
+
+function forumPostCard(channel, post) {
+  const card = el("div", "forum-card" + (state.threadRoot === post.message ? " open" : ""));
+  const top = el("div", "forum-card-top");
+  top.append(el("div", "forum-post-title", post.title), forumEditButton(post));
+  const foot = el("div", "forum-card-foot");
+  foot.append(forumTagPills(channel, post.tags), forumPostMeta(post));
+  card.append(top, el("p", "forum-card-excerpt", postExcerpt(forumPostBody(post), 200) || "No text"), foot);
+  forumOpenOn(card, post);
+  return card;
+}
+
+function renderForumPosts(channel) {
+  const box = $("forum-posts");
+  box.className = `forum-posts ${forumUi.mode}`;
+  box.replaceChildren();
+  const all = channel.posts || [];
+  const posts = sortPostsByActivity(filterPostsByTag(all, forumFilterFor(channel)));
+  if (!posts.length) {
+    const empty = el("div", "forum-empty");
+    const mark = el("div", "channel-intro-mark");
+    mark.appendChild(svgIcon("forum", 32));
+    const filtered = all.length > 0;
+    empty.append(
+      mark,
+      el("h2", null, filtered ? "No posts with this tag" : "No posts yet"),
+      el("p", null, filtered ? "Pick another tag or show all posts." : channel.topic || "Start the first post. Replies gather under it like a thread."),
+    );
+    box.appendChild(empty);
+    return;
+  }
+  for (const post of posts) box.appendChild(forumUi.mode === "gallery" ? forumPostCard(channel, post) : forumPostRow(channel, post));
+}
+
+async function openForumPost(post) {
+  const channel = state.currentChannel;
+  if (!channel) return;
+  if (!(state.renderedMessages || []).some(m => m.id === post.message)) {
+    state.historyAnchor = { channel: channel.id, message: post.message };
+    const messages = await fetchChannelMessages(channel);
+    if (state.currentChannel !== channel) return;
+    renderForum(messages);
+  }
+  openThread(post.message);
+  renderForumPosts(channel);
+}
+
+function forumPostFor(rootId) {
+  const channel = state.currentChannel;
+  if (!isForumChannel(channel)) return null;
+  return (channel.posts || []).find(p => p.message === rootId) || null;
+}
+
+function openForumComposer(post = null) {
+  const channel = state.currentChannel;
+  if (!isForumChannel(channel)) return;
+  forumUi.draft = { editing: post ? post.message : null, tags: post ? [...post.tags] : [] };
+  $("forum-post-heading").textContent = post ? "Edit post" : "New post";
+  $("forum-post-title").value = post ? post.title : "";
+  $("forum-post-body").value = "";
+  $("forum-post-body-label").classList.toggle("hidden", Boolean(post));
+  $("forum-post-save").textContent = post ? "Save" : "Post";
+  paintForumPostTags();
+  syncForumDraft();
+  showModal("modal-forum-post");
+  $("forum-post-title").focus();
+}
+
+function paintForumPostTags() {
+  const channel = state.currentChannel;
+  const draft = forumUi.draft;
+  const box = $("forum-post-tags");
+  box.replaceChildren();
+  if (!draft) return;
+  const tags = (channel && channel.tags) || [];
+  if (!tags.length) box.appendChild(el("span", "forum-no-tags", "This forum has no tags yet."));
+  for (const tag of tags) {
+    const chip = el("button", "access-chip" + (draft.tags.includes(tag.id) ? " picked" : ""), tagLabel(tag));
+    chip.type = "button";
+    chip.onclick = () => {
+      draft.tags = togglePostTag(draft.tags, tag.id);
+      paintForumPostTags();
+      syncForumDraft();
+    };
+    box.appendChild(chip);
+  }
+  $("forum-post-tags-left").textContent = tags.length ? `${draft.tags.length} of ${MAX_POST_TAGS}` : "";
+}
+
+function forumDraftState() {
+  const draft = forumUi.draft;
+  if (!draft) return null;
+  const body = draft.editing ? "kept" : $("forum-post-body").value;
+  return postDraftState({ title: $("forum-post-title").value, body, tags: draft.tags });
+}
+
+function syncForumDraft() {
+  const draft = forumDraftState();
+  $("forum-post-save").disabled = !(draft && draft.canSave);
+}
+
+async function saveForumPost() {
+  const draft = forumDraftState();
+  const channel = state.currentChannel;
+  if (!draft || !draft.canSave || !channel || !state.currentServer) return;
+  const editing = forumUi.draft.editing;
+  const args = { serverId: state.currentServer.id, channelId: channel.id, title: draft.title, tags: draft.tags };
+  try {
+    if (editing) await invoke("edit_forum_post", { ...args, messageId: editing });
+    else await invoke("post_forum", { ...args, content: encodeOutgoing(draft.body) });
+    hideModals();
+    forumUi.draft = null;
+    toast(editing ? "Post updated" : "Posted");
+    await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function setForumTagEmoji(picked) {
+  forumUi.tagEmoji = picked || null;
+  const button = $("channel-forum-emoji");
+  button.replaceChildren(picked ? el("span", "forum-tag-emoji-pick", picked) : svgIcon("smile", 18));
+  button.title = picked ? "Change the emoji" : "Pick an emoji";
+}
+
+function paintForumTagsCard(channel) {
+  const forum = isForumChannel(channel);
+  $("channel-forum-card").classList.toggle("hidden", !forum);
+  if (!forum) return;
+  const rows = $("channel-forum-tags");
+  rows.replaceChildren();
+  const tags = channel.tags || [];
+  if (!tags.length) rows.appendChild(el("div", "forum-tag-empty", "No tags yet. Add a few so posts can be filtered."));
+  tags.forEach((tag, i) => {
+    const row = el("div", "forum-tag-row");
+    const remove = el("button", "icon-btn forum-tag-remove");
+    remove.type = "button";
+    remove.title = "Remove tag";
+    remove.appendChild(svgIcon("close", 16));
+    remove.onclick = () => saveForumTags(tagsAfterRemove(tags, i));
+    row.append(el("span", "forum-tag-row-emoji", tag.emoji || ""), el("span", "forum-tag-row-name", tag.name), remove);
+    rows.appendChild(row);
+  });
+  $("channel-forum-name").value = "";
+  $("channel-forum-add").disabled = true;
+  setForumTagEmoji(null);
+}
+
+async function addForumTag() {
+  const channel = editingChannel();
+  if (!channel) return;
+  const next = tagsAfterAdd(channel.tags || [], $("channel-forum-name").value, forumUi.tagEmoji);
+  if (!next) {
+    toast(`A tag with that name is already here, or the forum has its ${MAX_FORUM_TAGS} tags`);
+    return;
+  }
+  await saveForumTags(next);
+}
+
+async function saveForumTags(tags) {
+  const channel = editingChannel();
+  if (!channel || !state.currentServer) return;
+  try {
+    await invoke("set_forum_tags", {
+      serverId: state.currentServer.id,
+      channelId: channel.id,
+      tags: tags.map(t => ({ id: t.id || null, name: t.name, emoji: t.emoji || null })),
+    });
+    await refreshCurrentServer();
+    openChannelSettings(channel.id);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireForum() {
+  setIcon($("forum-mode-list"), "list", 18);
+  setIcon($("forum-mode-gallery"), "grid", 18);
+  setForumMode(storedForumMode());
+  $("forum-mode-list").onclick = () => setForumMode("list");
+  $("forum-mode-gallery").onclick = () => setForumMode("gallery");
+  $("forum-new").onclick = () => openForumComposer();
+  $("forum-post-title").addEventListener("input", syncForumDraft);
+  $("forum-post-body").addEventListener("input", syncForumDraft);
+  $("forum-post-title").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (forumUi.draft && forumUi.draft.editing) saveForumPost();
+      else $("forum-post-body").focus();
+    }
+  });
+  $("forum-post-save").onclick = saveForumPost;
+  $("forum-post-cancel").onclick = hideModals;
+  $("channel-forum-name").addEventListener("input", () => {
+    $("channel-forum-add").disabled = !cleanTagName($("channel-forum-name").value);
+  });
+  $("channel-forum-name").addEventListener("keydown", e => {
+    if (e.key === "Enter" && !$("channel-forum-add").disabled) addForumTag();
+  });
+  $("channel-forum-add").onclick = addForumTag;
+  $("channel-forum-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => setForumTagEmoji(parseEmojiToken(picked) ? null : picked));
 }
 
 function buildGroupIntro(server) {
@@ -4421,6 +4884,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     for (const preview of message.previews || []) body.appendChild(renderLinkPreview(preview));
   }
   if (message.poll) body.appendChild(renderPoll(message));
+  if (message.voice_invite) body.appendChild(renderVoiceInvite(message));
   if (message.sealed) {
     const sealed = el("div", "msg-content msg-sealed");
     sealed.appendChild(svgIcon("lock", 14));
@@ -5239,7 +5703,8 @@ function renderThreadHead(root, replies) {
   const renaming = Boolean(root) && threadRenaming === root.id && manages;
   if (!renaming) threadRenaming = null;
   const title = $("thread-title");
-  title.textContent = root ? threadName(root, meta, plainText) : "Thread";
+  const post = root ? forumPostFor(root.id) : null;
+  title.textContent = post ? post.title : root ? threadName(root, meta, plainText) : "Thread";
   title.disabled = !manages;
   title.title = manages ? "Rename Thread" : "";
   title.classList.toggle("hidden", renaming);
@@ -6912,7 +7377,7 @@ function syncRulesGate() {
       text.append(left, document.createTextNode("."));
     }
   }
-  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || aged || Boolean(lock));
+  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || aged || Boolean(lock) || isForumChannel(state.currentChannel));
   if (gated && !rulesPrompted.has(state.currentServer.id)) {
     rulesPrompted.add(state.currentServer.id);
     openServerWelcome("rules");
@@ -11115,6 +11580,7 @@ function renderVoicePanel() {
   $("vp-where").textContent = call ? `Call with ${vs.name}` : `${vs.channelName} / ${vs.name}`;
   renderVoiceTopic(call ? null : vs);
   $("vp-camera").classList.toggle("hidden", Boolean(call));
+  renderVoiceInviteButton(Boolean(call));
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
     : null;
@@ -11977,6 +12443,7 @@ function dmToRenderable(m) {
     reactions: m.reactions || [],
     attachments: m.attachments || [],
     pending: Boolean(m.pending),
+    voice_invite: m.voice_invite || null,
   };
 }
 
@@ -12024,7 +12491,7 @@ async function selectChannel(channel) {
   if (channel) clearChannelUnread(channel.id);
   renderChannels();
   $("channel-name").replaceChildren(channel ? channelNameNode(channel) : document.createTextNode("no channel"));
-  $("chat-hash").replaceChildren(channel && channel.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
+  $("chat-hash").replaceChildren(channelHeaderMark(channel));
   $("channel-topic").textContent = (channel && channel.topic) || "";
   $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
   syncPinButton();
@@ -12032,7 +12499,7 @@ async function selectChannel(channel) {
   renderTypingStrip();
   if (!channel || ageGated(channel)) return renderMessages([]);
   const messages = await fetchChannelMessages(channel);
-  renderMessages(messages);
+  renderChannelLog(messages);
   if (state.currentChannel === channel && !state.historyAnchor) advanceRead(channel.id, messages);
 }
 
@@ -13146,6 +13613,7 @@ function wireEvents() {
 
   $("add-server-btn").onclick = () => showModal("modal-add-server");
   wireDiscover();
+  wireVoiceInvites();
   $("create-server-open").onclick = () => openCreateServer();
   $("create-server-back").onclick = () => showModal("modal-add-server");
   $("template-code-input").addEventListener("input", readTemplateCode);
@@ -14310,6 +14778,8 @@ function wireEvents() {
   }
   $("create-voice-icon").appendChild(svgIcon("speaker", 22));
   $("create-announcement-icon").appendChild(svgIcon("megaphone", 22));
+  $("create-forum-icon").appendChild(svgIcon("forum", 22));
+  wireForum();
   $("create-channel-name").addEventListener("input", syncCreateChannelName);
   $("create-channel-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("create-channel-name"), picked), { custom: "local" });
   $("create-channel-name").addEventListener("keydown", e => {
@@ -15912,6 +16382,7 @@ async function refreshCurrentServer() {
   renderServerRail();
   renderMembers();
   renderChannels();
+  refreshVoiceInviteCards();
   syncRulesGate();
   syncAwaitedBar();
   syncAttachAccess();
@@ -15923,9 +16394,10 @@ async function refreshCurrentServer() {
       syncPinButton();
       syncRulesGate();
       if (still.kind !== keepChannel.kind) {
-        $("chat-hash").replaceChildren(still.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
+        $("chat-hash").replaceChildren(channelHeaderMark(still));
+        syncRulesGate();
       }
-      renderMessages(await fetchChannelMessages(still));
+      renderChannelLog(await fetchChannelMessages(still));
       return;
     }
   }
@@ -16299,4 +16771,229 @@ function wireDiscover() {
   $("discovery-list").onclick = saveDiscoveryListing;
   $("discovery-update").onclick = saveDiscoveryListing;
   $("discovery-unlist").onclick = removeDiscoveryListing;
+}
+
+let voiceInviting = null;
+function showVoiceCallMenuItems(channel) {
+  const voice = channel.kind === "voice" && channel.can_view !== false;
+  $("chm-voice-join").textContent = state.voiceChannelId === channel.id ? "Disconnect" : "Join Voice";
+  $("chm-voice-join").classList.toggle("hidden", !voice);
+  $("chm-voice-invite").classList.toggle("hidden", !voice);
+}
+
+function voiceInviteSource(serverId, channelId) {
+  const current = state.currentServer && state.currentServer.id === serverId ? state.currentServer : null;
+  const channel = current ? current.channels.find(c => c.id === channelId) : null;
+  const connected = state.voiceServer && state.voiceServer.id === serverId && state.voiceChannelId === channelId ? state.voiceServer : null;
+  const summary = state.servers.find(s => s.id === serverId);
+  return {
+    serverName: (current && current.name) || (connected && connected.name) || (summary && summary.name) || "",
+    channelName: channel ? channelPlainName(channel) : (connected && connected.channelName) || "",
+  };
+}
+
+async function openVoiceInvite(serverId, channelId) {
+  voiceInviting = { server: serverId, channel: channelId, targets: null };
+  $("voice-invite-where").textContent = voiceInviteTitle(voiceInviteSource(serverId, channelId));
+  $("voice-invite-search").value = "";
+  renderVoiceInviteList();
+  showModal("modal-voice-invite");
+  $("voice-invite-search").focus();
+  const views = [];
+  for (const summary of state.servers) {
+    try {
+      views.push(await invoke("get_server", { serverId: summary.id }));
+    } catch {
+      continue;
+    }
+  }
+  let dms = [];
+  try {
+    dms = await invoke("list_dm_threads");
+  } catch {}
+  if (!voiceInviting || voiceInviting.server !== serverId || voiceInviting.channel !== channelId) return;
+  voiceInviting.targets = { servers: views.map(s => ({ ...s, channels: s.channels.map(c => ({ ...c, name: channelPlainName(c) })) })), dms };
+  renderVoiceInviteList();
+}
+
+function renderVoiceInviteList() {
+  const list = $("voice-invite-list");
+  list.replaceChildren();
+  if (!voiceInviting || !voiceInviting.targets) {
+    list.appendChild(el("div", "dm-list-empty", "Loading places to send to"));
+    return;
+  }
+  const targets = forwardTargets({ ...voiceInviting.targets, query: $("voice-invite-search").value });
+  for (const target of targets) {
+    const row = el("button", "person-row forward-row");
+    if (target.kind === "dm") row.appendChild(avatarWithPresence(target.name, target.user));
+    else if (target.kind === "group") row.appendChild(groupAvatar());
+    else row.appendChild(el("span", "server-chip", initials(target.sub)));
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", target.name));
+    meta.appendChild(el("div", "dm-preview", target.sub));
+    row.appendChild(meta);
+    row.onclick = () => sendVoiceInvite(target);
+    list.appendChild(row);
+  }
+  if (!targets.length) list.appendChild(el("div", "dm-list-empty", "Nowhere matches that name."));
+}
+
+async function sendVoiceInvite(target) {
+  const inviting = voiceInviting;
+  if (!inviting) return;
+  try {
+    if (target.kind === "dm") {
+      await invoke("send_dm_voice_invite", { serverId: inviting.server, channelId: inviting.channel, userId: target.user });
+    } else {
+      await invoke("send_voice_invite", { serverId: inviting.server, channelId: inviting.channel, toServerId: target.server, toChannelId: target.channel });
+    }
+    hideModals();
+    voiceInviting = null;
+    toast(`Invite sent to ${target.name}`);
+    if (target.kind !== "dm" && state.view === "server" && state.currentChannel && state.currentChannel.id === target.channel) await refreshChannelInPlace();
+    else if (target.kind === "dm" && inDmView() && state.currentDm && state.currentDm.user === target.user) await selectDm(target.user, target.name);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function voiceInviteLocalPresence(invite) {
+  const server = state.currentServer;
+  if (!server || server.id !== invite.server) return null;
+  const channel = server.channels.find(c => c.id === invite.channel);
+  if (!channel) return { known: true, gone: true };
+  const ids = channel.voice_user_ids || [];
+  return {
+    known: true,
+    server_name: server.name,
+    channel_name: channelPlainName(channel),
+    user_limit: channel.user_limit || 0,
+    can_view: channel.can_view !== false,
+    users: (channel.voice_users || []).map((name, i) => ({ id: ids[i] || null, name })),
+  };
+}
+
+function renderVoiceInvite(message) {
+  const invite = message.voice_invite;
+  const card = el("div", "voice-invite");
+  card.dataset.server = invite.server;
+  card.dataset.channel = invite.channel;
+  const body = el("div", "voice-invite-body");
+  body.appendChild(el("div", "voice-invite-kicker", "Voice call invite"));
+  body.appendChild(el("div", "voice-invite-title"));
+  const row = el("div", "voice-invite-row");
+  row.appendChild(el("div", "voice-invite-faces"));
+  row.appendChild(el("span", "voice-invite-more empty"));
+  row.appendChild(el("span", "voice-invite-status"));
+  body.appendChild(row);
+  card.appendChild(body);
+  const join = el("button", "voice-invite-join", "Join");
+  join.type = "button";
+  card.appendChild(join);
+  card.voiceInvite = invite;
+  const local = voiceInviteLocalPresence(invite);
+  paintVoiceInviteCard(card, invite, local);
+  if (!local) {
+    invoke("voice_channel_presence", { serverId: invite.server, channelId: invite.channel })
+      .then(presence => paintVoiceInviteCard(card, invite, presence ? { known: true, ...presence } : { known: false }))
+      .catch(() => paintVoiceInviteCard(card, invite, { known: true, gone: true }));
+  }
+  return card;
+}
+
+function paintVoiceInviteCard(card, invite, presence) {
+  const live = presence && presence.known && !presence.gone ? presence : null;
+  const inThisCall = Boolean(state.voiceServer) && state.voiceServer.id === invite.server && state.voiceChannelId === invite.channel;
+  const users = live ? live.users || [] : [];
+  const limit = live ? live.user_limit || 0 : 0;
+  const full = live ? voiceInviteIsFull({ users, limit, inThisCall }) : false;
+  card.querySelector(".voice-invite-title").textContent = voiceInviteTitle({ channelName: invite.channel_name, serverName: invite.server_name, live });
+  const summary = voiceInviteSummary(users);
+  const faces = card.querySelector(".voice-invite-faces");
+  faces.replaceChildren(...summary.shown.map(user => makeAvatar(user.id, user.name, "avatar avatar-sm")));
+  const more = card.querySelector(".voice-invite-more");
+  more.textContent = summary.overflowLabel;
+  more.classList.toggle("empty", !summary.overflow);
+  more.title = summary.overflow ? `${summary.count} people are in the call` : "";
+  const status = card.querySelector(".voice-invite-status");
+  status.textContent = presence
+    ? voiceInviteStatus({ known: presence.known, gone: presence.gone, canView: presence.can_view, users, limit })
+    : "Looking up the call";
+  const action = presence
+    ? voiceInviteAction({ known: presence.known, gone: presence.gone, canView: presence.can_view, inThisCall, hasLink: Boolean(invite.invite_link), full })
+    : { label: "Join", kind: "none", enabled: false, note: "" };
+  const join = card.querySelector(".voice-invite-join");
+  join.textContent = action.label;
+  join.disabled = !action.enabled;
+  join.title = action.note || "";
+  join.onclick = e => {
+    e.stopPropagation();
+    if (action.kind === "join") joinVoiceInvite(invite);
+    else if (action.kind === "link") openInviteLink(invite.invite_link);
+  };
+}
+
+function refreshVoiceInviteCards() {
+  for (const card of document.querySelectorAll(".voice-invite")) {
+    const invite = card.voiceInvite;
+    if (!invite) continue;
+    const local = voiceInviteLocalPresence(invite);
+    if (local) paintVoiceInviteCard(card, invite, local);
+  }
+}
+
+async function joinVoiceInvite(invite) {
+  if (!state.servers.some(s => s.id === invite.server)) {
+    if (invite.invite_link) return openInviteLink(invite.invite_link);
+    toast("Ask for an invite to this server");
+    return;
+  }
+  if (!state.currentServer || state.currentServer.id !== invite.server) await selectServer(invite.server);
+  const server = state.currentServer && state.currentServer.id === invite.server ? state.currentServer : null;
+  const channel = server ? server.channels.find(c => c.id === invite.channel) : null;
+  if (!channel) {
+    toast("That voice channel is gone");
+    return;
+  }
+  if (channel.can_view === false) {
+    toast(`Only ${accessWho(server, channel.view_roles)} can join this channel`);
+    return;
+  }
+  if (state.voiceChannelId === channel.id) return;
+  if (voiceFull(channel)) {
+    toast("That voice channel is full");
+    return;
+  }
+  await toggleVoice(channel);
+}
+
+function renderVoiceInviteButton(call) {
+  const button = $("vp-invite");
+  setIcon(button, "friendAdd", 18);
+  button.classList.toggle("hidden", call);
+}
+
+function wireVoiceInvites() {
+  $("vp-invite").onclick = () => {
+    const vs = state.voiceServer;
+    if (!vs || vs.call || !state.voiceChannelId) return;
+    openVoiceInvite(vs.id, state.voiceChannelId);
+  };
+  $("chm-voice-invite").onclick = () => {
+    closeFloating();
+    if (menuChannel && state.currentServer) openVoiceInvite(state.currentServer.id, menuChannel.id);
+  };
+  $("chm-voice-join").onclick = () => {
+    closeFloating();
+    const channel = menuChannel;
+    if (!channel) return;
+    if (voiceFull(channel)) {
+      toast("That voice channel is full");
+      return;
+    }
+    toggleVoice(channel);
+  };
+  $("voice-invite-cancel").onclick = hideModals;
+  $("voice-invite-search").addEventListener("input", renderVoiceInviteList);
 }

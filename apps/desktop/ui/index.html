@@ -83,6 +83,7 @@
             <div class="vp-where" id="vp-where"></div>
             <div class="vp-topic hidden" id="vp-topic"></div>
           </div>
+          <button class="icon-btn vp-invite" id="vp-invite" title="Invite to Call"></button>
           <button class="icon-btn vp-hangup" id="vp-disconnect" title="Disconnect"></button>
         </div>
         <div class="vp-voice">
@@ -223,6 +224,19 @@
             <button class="btn-secondary discover-more hidden" id="discover-more">Load more</button>
           </div>
         </div>
+      </section>
+      <section class="forum hidden" id="forum-view" aria-label="Forum posts">
+        <div class="forum-toolbar">
+          <div class="forum-tags" id="forum-tags" role="tablist" aria-label="Filter posts by tag"></div>
+          <div class="forum-tools">
+            <div class="forum-modes" role="group" aria-label="Layout">
+              <button class="forum-mode active" id="forum-mode-list" type="button" title="List" aria-pressed="true"></button>
+              <button class="forum-mode" id="forum-mode-gallery" type="button" title="Gallery" aria-pressed="false"></button>
+            </div>
+            <button class="btn-primary btn-small forum-new" id="forum-new" type="button">New post</button>
+          </div>
+        </div>
+        <div class="forum-posts list" id="forum-posts"></div>
       </section>
       <div class="emoji-picker hidden" id="emoji-picker">
         <div class="picker-tabs" id="picker-tabs" role="tablist">
@@ -840,6 +854,17 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-voice-invite">
+      <h2>Invite to Call</h2>
+      <div class="voice-invite-where" id="voice-invite-where"></div>
+      <div class="setting-sub">The invite shows who is in the call right now and a Join button.</div>
+      <input id="voice-invite-search" type="text" autocomplete="off" placeholder="Find a channel or person" />
+      <div class="people-list" id="voice-invite-list"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="voice-invite-cancel">Cancel</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-delete-message">
       <h2>Delete Message</h2>
       <p>Are you sure you want to delete this message? It is removed for everyone.</p>
@@ -899,6 +924,11 @@
           <span class="kind-text"><strong>Announcement</strong><span>Only members allowed to post announcements write here; everyone reads</span></span>
           <span class="kind-radio"></span>
         </button>
+        <button class="kind-option" data-kind="forum">
+          <span class="kind-icon" id="create-forum-icon"></span>
+          <span class="kind-text"><strong>Forum</strong><span>Posts with a title and tags; replies gather under each post</span></span>
+          <span class="kind-radio"></span>
+        </button>
         <button class="kind-option" data-kind="category">
           <span class="kind-icon" id="create-category-icon"></span>
           <span class="kind-text"><strong>Category</strong><span>A collapsible section that groups channels</span></span>
@@ -917,6 +947,22 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="create-channel-cancel">Cancel</button>
         <button class="btn-primary" id="create-channel-save" disabled>Create Channel</button>
+      </div>
+    </div>
+
+    <div class="modal modal-forum-post hidden" id="modal-forum-post" role="dialog" aria-labelledby="forum-post-heading">
+      <h2 id="forum-post-heading">New post</h2>
+      <label class="field-label">Title
+        <input id="forum-post-title" type="text" maxlength="100" placeholder="What is this post about?" autocomplete="off" />
+      </label>
+      <label class="field-label" id="forum-post-body-label">Post
+        <textarea id="forum-post-body" rows="6" maxlength="4000" placeholder="Write the first message of the post"></textarea>
+      </label>
+      <div class="field-label forum-tags-label">Tags <span class="forum-post-tags-left" id="forum-post-tags-left"></span></div>
+      <div class="access-chips forum-pick-tags" id="forum-post-tags"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="forum-post-cancel" type="button">Cancel</button>
+        <button class="btn-primary" id="forum-post-save" type="button" disabled>Post</button>
       </div>
     </div>
 
@@ -1700,6 +1746,18 @@
             </div>
             <select id="channel-slow" class="compact-select"></select>
           </div>
+          <div class="settings-card hidden" id="channel-forum-card">
+            <div class="setting-title">Post Tags</div>
+            <div class="setting-sub">Members pick up to five of these when they post. Removing a tag takes it off every post.</div>
+            <div class="forum-tag-rows" id="channel-forum-tags"></div>
+            <div class="forum-tag-add">
+              <button type="button" class="forum-tag-emoji" id="channel-forum-emoji" title="Pick an emoji">
+                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 17.5c2.3 0 4.3-1.4 5.1-3.5H6.9c.8 2.1 2.8 3.5 5.1 3.5z"/></svg>
+              </button>
+              <input id="channel-forum-name" type="text" maxlength="20" placeholder="New tag" autocomplete="off" />
+              <button type="button" class="btn-secondary btn-small" id="channel-forum-add" disabled>Add</button>
+            </div>
+          </div>
           <div class="settings-card setting-row hidden" id="channel-limit-row">
             <div>
               <div class="setting-title">User Limit <span id="channel-limit-label">No limit</span></div>
@@ -2273,6 +2331,8 @@
   <div class="pop-menu ctx-menu hidden" id="channel-menu" role="menu">
     <div class="ctx-title" id="channel-menu-title"></div>
     <button id="chm-read">Mark As Read</button>
+    <button id="chm-voice-join" class="hidden">Join Voice</button>
+    <button id="chm-voice-invite" class="hidden">Invite to Call</button>
     <button id="chm-pin">Pin Channel</button>
     <div class="ctx-sep"></div>
     <div class="ctx-label">Notifications</div>
@@ -2327,6 +2387,7 @@
   <script src="scripts/slow-mode.js"></script>
   <script src="scripts/threads.js"></script>
   <script src="scripts/voice-status.js"></script>
+  <script src="scripts/forum.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>
@@ -2340,6 +2401,7 @@
   <script src="scripts/pins-order.js"></script>
   <script src="scripts/saved.js"></script>
   <script src="scripts/polls.js"></script>
+  <script src="scripts/voice-invite.js"></script>
   <script src="scripts/read-state.js"></script>
   <script src="scripts/channel-access.js"></script>
   <script src="scripts/sensitive.js"></script>

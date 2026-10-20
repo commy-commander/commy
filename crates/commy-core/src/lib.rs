@@ -19,6 +19,7 @@ pub mod server;
 pub mod store;
 pub mod template;
 pub mod user;
+pub mod voice_invite;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -31,13 +32,14 @@ pub use dm::{CallSignal, DmAction, DmMessage, DmStore};
 pub use event::ServerEvent;
 pub use identity::{Identity, IdentityKey, Signature};
 pub use invites::TrackedInvite;
-pub use ids::{ChannelId, MessageId, RoleId, ServerId, UserId};
+pub use ids::{ChannelId, MessageId, RoleId, ServerId, TagId, UserId};
 pub use link_preview::{LinkPreview, PreviewImage, PreviewPicture};
 pub use onboarding::Onboarding;
 pub use message::{Attachment, Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES};
 pub use permissions::Permissions;
 pub use poll::{Poll, PollTally};
-pub use server::{Channel, ChannelKind, Member, Role, Server, SoundboardSound};
+pub use server::{Channel, ChannelKind, ForumPost, ForumTag, Member, Role, Server, SoundboardSound};
 pub use store::{ReactionMark, ServerState, Snapshot, StoreError};
 pub use template::{BuiltinTemplate, ServerTemplate, TemplateError};
 pub use user::{Avatar, Presence, UserProfile};
+pub use voice_invite::VoiceInvite;
