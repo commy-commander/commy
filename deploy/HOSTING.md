@@ -200,6 +200,18 @@ accepts new ones.
   expiry inside the invite as well, so a row kept past its expiry still will
   not open. Creating links is limited to 30 per hour per IP; set
   `INVITES_REQUIRE_ACCOUNT=true` to only allow signed in apps.
+- Someone who can manage a server can pick a custom name instead of a random
+  code, like `https://<DOMAIN>/i/pixel-pioneers#<KEY>`. Custom names need a
+  signed in app, are first come first served, and each account holds up to 10.
+  They still carry a short key, so the account server cannot tell which server
+  a name opens.
+- A server can set an invite background. The app seals the image with the
+  link's key and sends it with the link (only from a signed in app), so the
+  account server stores it as unreadable bytes next to the code and drops it
+  when the link expires or is revoked.
+- Each link also gets a revoke secret that only the server's members hold; the
+  account server keeps a SHA-256 hash of it. Server Settings > Invites lists a
+  server's active links, and its managers can revoke any of them from there.
 - The app warns before joining from a link whose server is not the account
   server it is set to, since anyone can run a Commy server.
 - Inside the seal is what any Commy invite contains: the server id and name,
@@ -326,7 +338,8 @@ never reach this stack. The auth database holds:
 - linked devices: iroh node id, first and last link time (no device or
   computer name; apps no longer send one and older names are dropped at startup)
 - invite links: the code, the sealed invite (unreadable without the link),
-  creator account if the app was signed in, expiry
+  creator account if the app was signed in, expiry, a hash of its revoke
+  secret, and the sealed invite background if the server set one
 - each account's sealed server list (`vaultItem`): bytes sealed with a key
   only that account's devices hold, plus a version and the last change time.
   The operator can see its size, not which servers are in it

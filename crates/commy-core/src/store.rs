@@ -1,5 +1,6 @@
 use crate::action::{self, Action, SignedEvent};
 use crate::audit::{AuditEntry, AuditKind};
+use crate::invites::TrackedInvite;
 use crate::automod::{AutoMod, Hold};
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
@@ -11,7 +12,7 @@ use crate::server::{ChannelKind, Member, Server};
 use crate::user::{Presence, UserProfile};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -106,6 +107,8 @@ pub struct ServerState {
     bots: BTreeSet<UserId>,
     audit: Vec<AuditEntry>,
     deleted: bool,
+    invites: BTreeMap<String, TrackedInvite>,
+    invite_background: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,6 +146,10 @@ pub struct Snapshot {
     pub audit: Vec<AuditEntry>,
     #[serde(default)]
     pub deleted: bool,
+    #[serde(default)]
+    pub invites: Vec<TrackedInvite>,
+    #[serde(default)]
+    pub invite_background: Option<String>,
 }
 
 impl ServerState {
@@ -174,6 +181,8 @@ impl ServerState {
             bots: BTreeSet::new(),
             audit: Vec::new(),
             deleted: false,
+            invites: BTreeMap::new(),
+            invite_background: None,
         }
     }
 
@@ -208,6 +217,8 @@ impl ServerState {
             bots: self.bots.iter().copied().collect(),
             audit: self.audit.clone(),
             deleted: self.deleted,
+            invites: self.invites.values().cloned().collect(),
+            invite_background: self.invite_background.clone(),
         }
     }
 
@@ -252,6 +263,8 @@ impl ServerState {
         state.bots = snapshot.bots.into_iter().filter(|user| state.server.is_member(*user)).collect();
         state.audit = crate::audit::tidy(snapshot.audit);
         state.deleted = snapshot.deleted;
+        state.invites = snapshot.invites.into_iter().filter(TrackedInvite::valid).map(|i| (i.id(), i)).collect();
+        state.invite_background = snapshot.invite_background;
         for signed in snapshot.signed_actions {
             if let Some(subject) = action::subject(&signed.event) {
                 if state.action_times.get(&subject) == Some(&signed.action.at) {
@@ -292,7 +305,30 @@ impl ServerState {
         if pruned {
             *unapplied = None;
         }
+        self.prune_invites(now.timestamp_millis());
         removed
+    }
+
+    fn prune_invites(&mut self, now_ms: i64) {
+        let expired: Vec<String> = self.invites.values().filter(|i| !i.live(now_ms)).map(TrackedInvite::id).collect();
+        for id in expired {
+            self.invites.remove(&id);
+            self.signed_actions.remove(&format!("invite:{id}"));
+        }
+    }
+
+    pub fn tracked_invites(&self, now_ms: i64) -> Vec<&TrackedInvite> {
+        let mut live: Vec<&TrackedInvite> = self.invites.values().filter(|i| i.live(now_ms)).collect();
+        live.sort_by_key(|i| std::cmp::Reverse(i.created_at));
+        live
+    }
+
+    pub fn tracked_invite(&self, origin: &str, code: &str) -> Option<&TrackedInvite> {
+        self.invites.get(&crate::invites::invite_id(origin, code))
+    }
+
+    pub fn invite_background(&self) -> Option<&str> {
+        self.invite_background.as_deref()
     }
 
     pub fn roll_off(&mut self, floor: Option<DateTime<Utc>>) -> usize {
@@ -916,6 +952,37 @@ impl ServerState {
                 self.same_server(server)?;
                 self.deleted = true;
                 Ok(true)
+            }
+            ServerEvent::InviteTrack { server, invite } => {
+                self.same_server(server)?;
+                let now = Utc::now().timestamp_millis();
+                if !invite.valid() || !invite.live(now) || self.invites.contains_key(&invite.id()) {
+                    return Ok(false);
+                }
+                if self.invites.len() >= crate::invites::MAX_TRACKED_INVITES {
+                    self.prune_invites(now);
+                }
+                if self.invites.len() >= crate::invites::MAX_TRACKED_INVITES {
+                    return Err(StoreError::Limit);
+                }
+                self.invites.insert(invite.id(), invite);
+                Ok(true)
+            }
+            ServerEvent::InviteRevoke { server, origin, code, creator } => {
+                self.same_server(server)?;
+                let id = crate::invites::invite_id(&origin, &code);
+                if self.invites.get(&id).is_none_or(|i| i.creator != creator) {
+                    return Ok(false);
+                }
+                self.invites.remove(&id);
+                Ok(true)
+            }
+            ServerEvent::InviteBackgroundSet { server, background } => {
+                self.same_server(server)?;
+                if background.as_deref().is_some_and(|b| crate::server::ImageRef::parse(b).is_none()) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.invite_background, background))
             }
             ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } => Ok(false),
             ServerEvent::StickerAdd { server, sticker } => {

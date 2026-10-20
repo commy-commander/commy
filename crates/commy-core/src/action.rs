@@ -125,6 +125,9 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::EmoticonAdd { emoticon, .. } => format!("emoticon:{}", emoticon.name),
         E::EmoticonRemove { name, .. } => format!("emoticon:{name}"),
         E::ServerDelete { .. } => "deleted".into(),
+        E::InviteTrack { invite, .. } => format!("invite:{}", invite.id()),
+        E::InviteRevoke { origin, code, .. } => format!("invite:{}", crate::invites::invite_id(origin, code)),
+        E::InviteBackgroundSet { .. } => "invite_background".into(),
         E::EmojiAdd { emoji, .. } => format!("emoji:{}", emoji.name),
         E::EmojiRemove { name, .. } => format!("emoji:{name}"),
         E::SoundAdd { sound, .. } => format!("sound:{}", sound.name),
@@ -161,8 +164,9 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 7] = ["emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:"];
-    subject == "rules" || subject == "automod" || subject == "deleted" || OMITTED.iter().any(|p| subject.starts_with(p))
+    const OMITTED: [&str; 8] = ["emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:"];
+    const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
+    SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
 }
 
 pub fn relayable(event: &ServerEvent) -> bool {
@@ -250,6 +254,9 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::VoiceModerate { .. } => allows(Permissions::MUTE_MEMBERS) || allows(Permissions::DEAFEN_MEMBERS),
         E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
         E::ServerDelete { .. } => by == server.owner,
+        E::InviteTrack { invite, .. } => member && invite.creator == by && allows(Permissions::CREATE_INVITES),
+        E::InviteRevoke { creator, .. } => allows(Permissions::MANAGE_SERVER) || (member && *creator == by),
+        E::InviteBackgroundSet { .. } => allows(Permissions::MANAGE_SERVER),
     }
 }
 

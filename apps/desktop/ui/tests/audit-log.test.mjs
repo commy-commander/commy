@@ -48,6 +48,9 @@ test("sentences name the actor, the target and the change", () => {
   assert.equal(auditText(entry("emoji_add", { label: "wave" })), "Mia added the emoji :wave:");
   assert.equal(auditText(entry("server_public", { detail: "off" })), "Mia made the server private");
   assert.equal(auditText(entry("afk_timeout", { detail: "15" })), "Mia set the server AFK timer to 15 minutes");
+  assert.equal(auditText(entry("invite_create", { label: "pixel-pioneers" })), "Mia created the invite pixel-pioneers");
+  assert.equal(auditText(entry("invite_revoke", { label: "KQ7M3N4P", detail: "Theo" })), "Mia revoked the invite KQ7M3N4P made by Theo");
+  assert.equal(auditText(entry("invite_background", { detail: "removed" })), "Mia removed the invite background");
 });
 
 test("missing names fall back to plain words instead of blanks", () => {

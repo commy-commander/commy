@@ -22,6 +22,13 @@ pub const DEFAULT_ACCOUNT_SERVER: &str = match option_env!("COMMY_DEFAULT_ACCOUN
 pub const SCHEME: &str = "commy";
 const CODE_ALPHABET: &str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_LENGTH: usize = 8;
+const MIN_NAME_LEN: usize = 3;
+const MAX_NAME_LEN: usize = 32;
+const RESERVED_NAMES: &[&str] = &[
+    "admin", "commy", "support", "help", "staff", "official", "moderator", "mod", "team", "security", "login",
+    "account", "download", "docs", "privacy", "invite", "invites",
+];
+pub const MAX_INVITE_BACKGROUND_BYTES: usize = 400 * 1024;
 const MAX_LINK_LEN: usize = 2048;
 const PORT_FILE: &str = "link.port";
 const HANDOFF_PREFIX: &str = "commy-link-v1 ";
@@ -123,6 +130,37 @@ pub fn normalize_code(input: &str) -> Option<String> {
     (code.len() == CODE_LENGTH && code.chars().all(|c| CODE_ALPHABET.contains(c))).then_some(code)
 }
 
+fn normalize_name(input: &str) -> Option<String> {
+    let name = input.trim().to_ascii_lowercase();
+    let shape = (MIN_NAME_LEN..=MAX_NAME_LEN).contains(&name.len())
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && !name.contains("--")
+        && !looks_like_code(&name);
+    shape.then_some(name)
+}
+
+fn looks_like_code(name: &str) -> bool {
+    name.len() == CODE_LENGTH && !name.contains('-')
+}
+
+fn normalize_link_code(input: &str) -> Option<String> {
+    normalize_code(input).or_else(|| normalize_name(input))
+}
+
+pub fn custom_name(input: &str) -> Result<String, String> {
+    if looks_like_code(&input.trim().to_ascii_lowercase()) {
+        return Err("Eight characters with no dash looks like a random invite code. Add a dash or pick another length.".into());
+    }
+    let name = normalize_name(input)
+        .ok_or("Custom names are 3 to 32 letters, numbers or single dashes, like pixel-pioneers")?;
+    if RESERVED_NAMES.contains(&name.as_str()) {
+        return Err("That name is reserved. Pick another one.".into());
+    }
+    Ok(name)
+}
+
 fn percent_decode(input: &str) -> Option<String> {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -176,7 +214,7 @@ pub fn parse(input: &str) -> Option<InviteLink> {
         None => None,
         Some(fragment) => Some(valid_key(fragment)?),
     };
-    Some(InviteLink { origin, code: normalize_code(code)?, key })
+    Some(InviteLink { origin, code: normalize_link_code(code)?, key })
 }
 
 pub fn looks_like_link(input: &str) -> bool {
@@ -192,6 +230,7 @@ pub struct ResolvedInvite {
     pub expires_at: Option<String>,
     pub trusted: bool,
     pub account_server_host: String,
+    pub background: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -199,6 +238,13 @@ pub struct ResolvedInvite {
 struct ResolveResponse {
     ticket: String,
     expires_at: Option<String>,
+    #[serde(default)]
+    has_background: bool,
+}
+
+#[derive(Deserialize)]
+struct BackgroundResponse {
+    background: String,
 }
 
 #[derive(Deserialize)]
@@ -286,6 +332,10 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
     let server_expiry = body.expires_at.as_deref().and_then(parse_time);
     let expires_at = effective_expiry(server_expiry, sealed_expiry, Utc::now())?;
     let account = crate::account::effective_server();
+    let background = match (body.has_background, parsed.key.as_deref()) {
+        (true, Some(key)) => fetch_background(app, &parsed, key).await,
+        _ => None,
+    };
     Ok(ResolvedInvite {
         link: parsed.url(),
         host: parsed.host(),
@@ -294,7 +344,26 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
         expires_at: expires_at.map(stamp),
         trusted: parsed.origin == account,
         account_server_host: host_of(&account),
+        background,
     })
+}
+
+async fn fetch_background(app: &App, link: &InviteLink, key: &str) -> Option<String> {
+    let mut url = Url::parse(&format!("{}/api/auth/commy/invites/background", link.origin)).ok()?;
+    url.query_pairs_mut().append_pair("code", &link.code);
+    let body: BackgroundResponse = invite_call(app.http.get(url), &link.origin).await.ok()?;
+    let bytes = open_background(&body.background, key)?;
+    Some(crate::picture_data_url(&bytes))
+}
+
+fn open_background(sealed: &str, key: &str) -> Option<Vec<u8>> {
+    let bytes = SealKey::from_text(key).ok()?.open(Purpose::InviteBackground, sealed).ok()?;
+    (bytes.len() <= MAX_INVITE_BACKGROUND_BYTES && crate::is_jpeg_or_png(&bytes)).then_some(bytes)
+}
+
+fn revoke_hash(revoke_key: &str) -> String {
+    use sha2::Digest;
+    data_encoding::HEXLOWER.encode(&sha2::Sha256::digest(revoke_key.as_bytes()))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -352,19 +421,48 @@ fn open_ticket(stored: &str, key: Option<&str>) -> Result<(String, Option<Sealed
 #[tauri::command]
 pub async fn create_invite_link(
     app: tauri::State<'_, App>,
+    handle: AppHandle,
     server_id: String,
     expires: Option<String>,
+    name: Option<String>,
 ) -> Result<CreatedInvite, String> {
     let expiry = match expires.as_deref() {
         None => Expiry::Week,
         Some(value) => Expiry::parse(value).ok_or("unknown invite expiry")?,
     };
-    create(&app, &server_id, expiry).await
+    let name = name.filter(|n| !n.trim().is_empty()).map(|n| custom_name(&n)).transpose()?;
+    create(&app, &handle, &server_id, expiry, name).await
 }
 
-pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result<CreatedInvite, String> {
+fn signed_in_token(app: &App) -> Option<String> {
+    let state = app.account.lock().unwrap();
+    crate::account::is_signed_in(&state).then(|| state.token.clone()).flatten()
+}
+
+async fn sealed_background(app: &App, server: commy_core::ServerId, key: &SealKey) -> Option<String> {
+    let image = app.servers.lock().unwrap().get(&server)?.invite_background()?.to_string();
+    match crate::server_image_bytes(app, &image).await {
+        Ok(bytes) if bytes.len() <= MAX_INVITE_BACKGROUND_BYTES => Some(key.seal(Purpose::InviteBackground, &bytes)),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::debug!("invite made without its background: {e}");
+            None
+        }
+    }
+}
+
+pub(crate) async fn create(
+    app: &App,
+    handle: &AppHandle,
+    server_id: &str,
+    expiry: Expiry,
+    name: Option<String>,
+) -> Result<CreatedInvite, String> {
     let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
     crate::require_invite_permission(app, id)?;
+    if name.is_some() {
+        crate::require_manage_server(app, id, "pick a custom invite name")?;
+    }
     if expiry == Expiry::Never && !app.servers.lock().unwrap().get(&id).is_some_and(|s| s.server.public) {
         return Err("Only links to a public server can last forever".into());
     }
@@ -375,13 +473,19 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
     let raw = ticket.encode();
     let origin = crate::account::effective_server();
     let cache_key = format!("{origin} {} {raw}", expiry.as_str());
-    if let Some((created, at)) = CREATED.lock().unwrap().get(&cache_key) {
+    let cached = if name.is_some() { None } else { CREATED.lock().unwrap().get(&cache_key).cloned() };
+    let cached = cached.filter(|(created, _)| {
+        let servers = app.servers.lock().unwrap();
+        let tracked = |l: InviteLink| servers.get(&id).is_some_and(|s| s.tracked_invite(&l.origin, &l.code).is_some());
+        parse(&created.url).is_some_and(tracked)
+    });
+    if let Some((created, at)) = cached {
         let fresh = match expiry.length() {
             Some(length) => at.elapsed().as_secs_f64() < length.num_seconds() as f64 * (1.0 - REUSE_MIN_LIFE_LEFT),
             None => created.expires_at.is_none(),
         };
         if fresh {
-            return Ok(created.clone());
+            return Ok(created);
         }
     }
     let now = Utc::now();
@@ -389,39 +493,153 @@ pub(crate) async fn create(app: &App, server_id: &str, expiry: Expiry) -> Result
         Some(length) => SealedExpiry::At(now + length),
         None => SealedExpiry::Never,
     };
-    let key = SealKey::generate();
-    let token = match expiry {
-        Expiry::Never => {
-            let state = app.account.lock().unwrap();
-            crate::account::is_signed_in(&state).then(|| state.token.clone()).flatten()
+    let (key, key_text) = match name {
+        Some(_) => SealKey::generate_short(),
+        None => {
+            let key = SealKey::generate();
+            let text = key.to_text();
+            (key, text)
         }
-        _ => None,
     };
-    let mut request = app
-        .http
-        .post(format!("{origin}/api/auth/commy/invites/create"))
-        .json(&serde_json::json!({
-            "ticket": seal_ticket(&key, &raw, &ticket.server_name, sealed_expiry),
-            "expiresIn": expiry.as_str(),
-        }));
+    let background = sealed_background(app, id, &key).await;
+    let needs_account = expiry == Expiry::Never || name.is_some() || background.is_some();
+    let token = needs_account.then(|| signed_in_token(app)).flatten();
+    if name.is_some() && token.is_none() {
+        return Err("Sign in to pick a custom invite name".into());
+    }
+    let background = background.filter(|_| token.is_some());
+    let revoke_key = SealKey::generate().to_text();
+    let mut body = serde_json::json!({
+        "ticket": seal_ticket(&key, &raw, &ticket.server_name, sealed_expiry),
+        "expiresIn": expiry.as_str(),
+        "revokeHash": revoke_hash(&revoke_key),
+    });
+    if let Some(name) = &name {
+        body["code"] = serde_json::json!(name);
+    }
+    if let Some(background) = &background {
+        body["background"] = serde_json::json!(background);
+    }
+    let mut request = app.http.post(format!("{origin}/api/auth/commy/invites/create")).json(&body);
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
     let body: CreateResponse = invite_call(request, &origin).await?;
-    match parse(&body.url) {
-        Some(link) if link.origin == origin && link.key.is_none() => {
-            let url = InviteLink { key: Some(key.to_text()), ..link }.url();
-            let server_expiry = body.expires_at.as_deref().and_then(parse_time);
-            let sealed = match sealed_expiry {
-                SealedExpiry::At(t) => Some(t),
-                SealedExpiry::Never => None,
-            };
-            let created = CreatedInvite { url, expires_at: earliest(server_expiry, sealed).map(stamp) };
-            CREATED.lock().unwrap().insert(cache_key, (created.clone(), Instant::now()));
-            Ok(created)
-        }
-        _ => Err("The invite server sent an unexpected link".into()),
+    let Some(link) = parse(&body.url).filter(|l| l.origin == origin && l.key.is_none()) else {
+        return Err("The invite server sent an unexpected link".into());
+    };
+    if name.as_ref().is_some_and(|n| *n != link.code) {
+        return Err("Your account server does not support custom invite names yet".into());
     }
+    let code = link.code.clone();
+    let url = InviteLink { key: Some(key_text), ..link }.url();
+    let server_expiry = body.expires_at.as_deref().and_then(parse_time);
+    let sealed = match sealed_expiry {
+        SealedExpiry::At(t) => Some(t),
+        SealedExpiry::Never => None,
+    };
+    let expires_at = earliest(server_expiry, sealed);
+    let created = CreatedInvite { url, expires_at: expires_at.map(stamp) };
+    if name.is_none() {
+        CREATED.lock().unwrap().insert(cache_key, (created.clone(), Instant::now()));
+    }
+    track(app, handle, id, origin, code, expires_at, revoke_key).await;
+    Ok(created)
+}
+
+async fn track(
+    app: &App,
+    handle: &AppHandle,
+    server: commy_core::ServerId,
+    origin: String,
+    code: String,
+    expires_at: Option<DateTime<Utc>>,
+    revoke_key: String,
+) {
+    let Some(creator) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let invite = commy_core::TrackedInvite {
+        origin,
+        code,
+        creator,
+        created_at: Utc::now().timestamp_millis(),
+        expires_at: expires_at.map(|t| t.timestamp_millis()),
+        revoke_key,
+    };
+    let event = commy_core::ServerEvent::InviteTrack { server, invite };
+    if let Err(e) = crate::apply_and_broadcast(app, handle, server, event).await {
+        tracing::warn!("could not list the new invite for the server's admins: {e}");
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InviteView {
+    pub origin: String,
+    pub host: String,
+    pub code: String,
+    pub custom: bool,
+    pub creator: String,
+    pub creator_name: String,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
+    pub can_revoke: bool,
+}
+
+#[tauri::command]
+pub fn list_invites(app: tauri::State<'_, App>, server_id: String) -> Result<Vec<InviteView>, String> {
+    let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id).ok_or("no profile yet")?;
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&id).ok_or("unknown server")?;
+    let manager = state.server.permissions_for(me).allows(commy_core::Permissions::MANAGE_SERVER);
+    let views = state
+        .tracked_invites(Utc::now().timestamp_millis())
+        .into_iter()
+        .filter(|i| manager || i.creator == me)
+        .map(|i| InviteView {
+            origin: i.origin.clone(),
+            host: host_of(&i.origin),
+            code: i.code.clone(),
+            custom: normalize_code(&i.code).is_none(),
+            creator: i.creator.to_string(),
+            creator_name: commy_core::audit::member_name(state, i.creator).unwrap_or_else(|| "Someone".into()),
+            created_at: i.created_at,
+            expires_at: i.expires_at,
+            can_revoke: true,
+        });
+    Ok(views.collect())
+}
+
+#[tauri::command]
+pub async fn revoke_invite(
+    app: tauri::State<'_, App>,
+    handle: AppHandle,
+    server_id: String,
+    origin: String,
+    code: String,
+) -> Result<(), String> {
+    let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id).ok_or("no profile yet")?;
+    let invite = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&id).ok_or("unknown server")?;
+        let invite = state.tracked_invite(&origin, &code).cloned().ok_or("That invite is already gone")?;
+        let manager = state.server.permissions_for(me).allows(commy_core::Permissions::MANAGE_SERVER);
+        if !manager && invite.creator != me {
+            return Err("Only its maker or someone who can manage the server can revoke this invite".into());
+        }
+        invite
+    };
+    let request = app
+        .http
+        .post(format!("{}/api/auth/commy/invites/revoke", invite.origin))
+        .json(&serde_json::json!({ "code": invite.code, "secret": invite.revoke_key }));
+    let res = request.send().await.map_err(|_| format!("Could not reach {}", host_of(&invite.origin)))?;
+    if !res.status().is_success() && res.status() != reqwest::StatusCode::NOT_FOUND {
+        return Err(error_message(res).await);
+    }
+    CREATED.lock().unwrap().retain(|_, (created, _)| parse(&created.url).is_none_or(|l| l.code != invite.code));
+    let event = commy_core::ServerEvent::InviteRevoke { server: id, origin: invite.origin, code: invite.code, creator: invite.creator };
+    crate::apply_and_broadcast(&app, &handle, id, event).await
 }
 
 #[derive(Serialize)]
@@ -698,7 +916,8 @@ mod tests {
             "https://example.org/i/AB23CD45?next=evil",
             "https://user:pw@example.org/i/AB23CD45",
             "https://example.org/i/AB23CD4O",
-            "https://example.org/i/AB23",
+            "https://example.org/i/AB",
+            "https://example.org/i/AB_23",
             "commy://x/example.org/AB23CD45",
             "commy://i/evil.com%2Fpath/AB23CD45",
             "commy://i/a%40evil.com/AB23CD45",
@@ -709,6 +928,30 @@ mod tests {
             assert_eq!(parse(bad), None, "{bad}");
         }
         assert_eq!(parse(&format!("https://example.org/i/{}", "A".repeat(MAX_LINK_LEN))), None);
+    }
+
+    #[test]
+    fn custom_names_parse_with_a_short_key() {
+        let (_, short) = SealKey::generate_short();
+        let l = parse(&format!("https://commy.chat/i/Pixel-Pioneers#{short}")).unwrap();
+        assert_eq!(l, InviteLink { origin: "https://commy.chat".into(), code: "pixel-pioneers".into(), key: Some(short.clone()) });
+        assert_eq!(parse(&l.url()), Some(l));
+        assert_eq!(parse(&format!("commy://i/commy.chat/team42#{short}")).unwrap().code, "team42");
+        for bad in ["https://commy.chat/i/-pixel", "https://commy.chat/i/pixel--pioneers", "https://commy.chat/i/pi", "https://commy.chat/i/pixel_pioneers"] {
+            assert_eq!(parse(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn custom_names_are_checked_before_they_are_claimed() {
+        assert_eq!(custom_name("  Pixel-Pioneers "), Ok("pixel-pioneers".into()));
+        assert_eq!(custom_name("abc"), Ok("abc".into()));
+        assert_eq!(custom_name(&"a".repeat(MAX_NAME_LEN)), Ok("a".repeat(MAX_NAME_LEN)));
+        for bad in ["ab", "", "has space", "-lead", "trail-", "two--dashes", "emoji\u{1f600}", "admin", "Commy", "ab23cd45", "pixelpio"] {
+            assert!(custom_name(bad).is_err(), "{bad}");
+        }
+        assert!(custom_name(&"a".repeat(MAX_NAME_LEN + 1)).is_err());
+        assert_eq!(custom_name("pixel-pi"), Ok("pixel-pi".into()));
     }
 
     #[test]

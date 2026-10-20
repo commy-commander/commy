@@ -57,6 +57,10 @@ impl BotStore {
         self.bot().replica(server)?.state.as_ref().map(f)
     }
 
+    pub fn publish(&self, server: ServerId, payload: WirePayload) {
+        self.send(server, vec![payload], true);
+    }
+
     fn send(&self, server: ServerId, payloads: Vec<WirePayload>, changed: bool) {
         for payload in payloads {
             let _ = self.out.send(Outgoing::Send(server, Box::new(payload)));

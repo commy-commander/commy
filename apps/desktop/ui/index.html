@@ -367,6 +367,7 @@
     </div>
 
     <div class="modal hidden" id="modal-invite-link">
+      <div class="invite-link-hero" id="invite-link-hero" aria-hidden="true"></div>
       <div class="sw-head">
         <div class="server-icon sw-icon" id="invite-link-icon" aria-hidden="true"></div>
         <div class="sw-titles">
@@ -859,6 +860,14 @@
                 <button data-bg="blur" role="radio"><strong>Blur</strong></button>
                 <button data-bg="image" role="radio"><strong>Image</strong></button>
               </div>
+              <div class="field-label" id="cam-avatar-label">Avatar</div>
+              <div class="segmented cam-avatars" id="cam-avatar" role="radiogroup" aria-labelledby="cam-avatar-label">
+                <button data-avatar="off" role="radio" title="No avatar"><strong>Off</strong></button>
+                <button data-avatar="cat" role="radio" title="Cat"><img alt="Cat" /></button>
+                <button data-avatar="bot" role="radio" title="Robot"><img alt="Robot" /></button>
+                <button data-avatar="alien" role="radio" title="Alien"><img alt="Alien" /></button>
+                <button data-avatar="custom" role="radio" title="Your own VRM avatar"><img alt="Your own avatar" /><strong class="cam-avatar-add">+</strong></button>
+              </div>
               <label class="setting-row cam-mirror-row">
                 <span class="setting-title">Mirror my video</span>
                 <input type="checkbox" id="cam-mirror" class="switch" />
@@ -867,6 +876,7 @@
               <div class="cam-actions">
                 <button class="btn-secondary btn-small" id="cam-preview-btn">Test Camera</button>
                 <button class="btn-secondary btn-small" id="cam-backdrop-btn">Choose Image</button>
+                <button class="btn-secondary btn-small" id="cam-avatar-btn">Choose Avatar</button>
               </div>
             </div>
           </div>
@@ -1372,6 +1382,7 @@
         <button class="settings-tab" data-tab="emoticons" id="tab-emoticons">Emoticons</button>
         <button class="settings-tab" data-tab="soundboard" id="tab-soundboard">Soundboard</button>
         <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
+        <button class="settings-tab" data-tab="invites" id="tab-invites">Invites</button>
         <button class="settings-tab" data-tab="reports" id="tab-reports">Reports</button>
         <button class="settings-tab" data-tab="audit" id="tab-audit">Audit Log</button>
         <div class="settings-nav-sep"></div>
@@ -1649,6 +1660,41 @@
           <div id="audit-list" class="audit-list"></div>
         </section>
 
+        <section class="settings-page" data-page="invites">
+          <h1>Invites</h1>
+          <div class="setting-sub expr-intro">Links people can use to join this server. Revoking a link stops it working for anyone who has not used it yet. People who already joined stay in the server.</div>
+          <div id="invite-manage" class="hidden">
+            <h2 class="settings-subhead">Custom invite link</h2>
+            <div class="settings-card invite-custom-card">
+              <div class="invite-custom-row">
+                <label class="invite-custom-field" for="invite-custom-name">
+                  <span class="invite-custom-prefix" id="invite-custom-prefix">/i/</span>
+                  <input id="invite-custom-name" type="text" maxlength="32" autocomplete="off" spellcheck="false" placeholder="pixel-pioneers" />
+                </label>
+                <select id="invite-custom-expiry" class="compact-select" aria-label="Link expires after">
+                  <option value="1d">Lasts 1 day</option>
+                  <option value="7d">Lasts 7 days</option>
+                  <option value="30d" selected>Lasts 30 days</option>
+                  <option value="never" id="invite-custom-never">Never expires</option>
+                </select>
+                <button class="btn-primary btn-small" id="invite-custom-create">Create and Copy</button>
+              </div>
+              <div class="setting-sub invite-custom-note" id="invite-custom-note">Pick a name people can remember. You need to be signed in, and the link still ends in a short key so your account server never learns which server it opens.</div>
+            </div>
+            <h2 class="settings-subhead">Invite background</h2>
+            <div class="settings-card banner-card">
+              <div class="invite-bg-preview empty" id="invite-bg-preview"><span>No background yet</span></div>
+              <div class="banner-actions">
+                <div class="setting-sub">Shown behind the invite when someone opens a link to this server. Landscape images work best (1280 x 720).</div>
+                <button class="btn-secondary btn-small" id="invite-bg-upload">Upload Background</button>
+                <button class="btn-link hidden" id="invite-bg-remove">Remove</button>
+              </div>
+            </div>
+          </div>
+          <h2 class="settings-subhead">Active invites</h2>
+          <div id="invite-list" class="invite-list"></div>
+        </section>
+
         <section class="settings-page" data-page="members">
           <h1>Members</h1>
           <div id="manage-member-list" class="manage-list"></div>
@@ -1807,6 +1853,7 @@
     <button id="avatar-remove" class="danger">Remove Avatar</button>
   </div>
   <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
+  <input type="file" id="vrm-file" accept=".vrm" class="hidden" />
   <div class="emoji-pop hidden" id="emoji-pop">
     <input id="emoji-pop-search" type="text" placeholder="Search emojis" autocomplete="off" />
     <div class="emoji-grid" id="emoji-pop-grid"></div>
@@ -1828,6 +1875,7 @@
   <script src="scripts/notify.js"></script>
   <script src="scripts/pins.js"></script>
   <script src="scripts/audit-log.js"></script>
+  <script src="scripts/invites.js"></script>
   <script src="scripts/automod.js"></script>
   <script src="scripts/search.js"></script>
   <script src="scripts/presence.js"></script>
@@ -1842,6 +1890,8 @@
   <script src="scripts/server-templates.js"></script>
   <script src="scripts/camera-fx.js"></script>
   <script src="scripts/camera-pipeline.js"></script>
+  <script src="scripts/avatar-rig.js"></script>
+  <script src="scripts/camera-avatar.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
   <script src="scripts/entry-list.js"></script>
