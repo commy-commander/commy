@@ -452,6 +452,104 @@ async fn send_message(
     commit_message(&app, &handle, sid, message).await
 }
 
+#[tauri::command]
+async fn send_poll(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    question: String,
+    options: Vec<String>,
+    multi: bool,
+    hours: Option<u32>,
+) -> CmdResult<MessageView> {
+    use commy_core::poll::{MAX_DURATION_HOURS, MAX_OPTIONS, MAX_OPTION_CHARS, MAX_QUESTION_CHARS, MIN_OPTIONS};
+    let sid = server_id.parse().map_err(err_to_string)?;
+    let cid = channel_id.parse().map_err(err_to_string)?;
+    let profile = current_profile(&app)?;
+    let hours = hours.filter(|h| *h > 0);
+    if hours.is_some_and(|h| h > MAX_DURATION_HOURS) {
+        return Err(format!("a poll runs for up to {} days", MAX_DURATION_HOURS / 24));
+    }
+    let closes_at = hours.map(|h| chrono::Utc::now() + chrono::Duration::hours(i64::from(h)));
+    let poll = commy_core::Poll { question, options, multi, closes_at }.tidy().ok_or_else(|| {
+        format!(
+            "a poll needs a question of up to {MAX_QUESTION_CHARS} characters and {MIN_OPTIONS} to {MAX_OPTIONS} answers of up to {MAX_OPTION_CHARS} characters each"
+        )
+    })?;
+    let mut message = Message::new(cid, profile.id, "");
+    message.attachments.push(poll.into_attachment());
+    let _signing = app.signing.read().await;
+    seal_and_sign(&app, sid, &mut message)?;
+    if !signed_fits_one_gossip_frame(&message) {
+        return Err("that poll is too long to send; shorten the question or the answers".into());
+    }
+    commit_message(&app, &handle, sid, message).await
+}
+
+fn poll_target(state: &ServerState, mid: MessageId, me: UserId) -> CmdResult<(ChannelId, Message, commy_core::Poll)> {
+    let message = state.message(mid).ok_or("that message no longer exists")?;
+    require_can_view(state, me, message.channel)?;
+    let poll = message.poll().ok_or("that message is not a poll")?;
+    Ok((message.channel, message.clone(), poll))
+}
+
+#[tauri::command]
+async fn vote_poll(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    message_id: String,
+    choices: Vec<u8>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let mid: MessageId = message_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let (channel, choices) = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        let (channel, _, poll) = poll_target(state, mid, me.id)?;
+        if state.poll_closed(mid, chrono::Utc::now()) {
+            return Err("that poll has closed".into());
+        }
+        let choices = poll.normalize_choices(&choices).ok_or(if poll.multi {
+            "pick answers from the poll"
+        } else {
+            "this poll takes one answer"
+        })?;
+        (channel, choices)
+    };
+    let event = ServerEvent::PollVote { server: sid, channel, message: mid, user: me.id, choices };
+    apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+#[tauri::command]
+async fn close_poll(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    message_id: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let mid: MessageId = message_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let channel = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        let (channel, message, _) = poll_target(state, mid, me.id)?;
+        let moderates = our_permissions(&app, state, me.id).allows(Permissions::MANAGE_MESSAGES);
+        if message.author != me.id && !moderates {
+            return Err("only the poll's author or a moderator can close it".into());
+        }
+        if state.poll_closed(mid, chrono::Utc::now()) {
+            return Err("that poll has already closed".into());
+        }
+        channel
+    };
+    let event = ServerEvent::PollClose { server: sid, channel, message: mid, by: me.id };
+    apply_and_broadcast(&app, &handle, sid, event).await
+}
+
 async fn preview_card(app: &App, sid: ServerId, message: &Message, url: Option<&str>) -> Option<Attachment> {
     let url = url.filter(|u| message.content.contains(u))?;
     let prepared = link_preview::prepared(url)?;
@@ -7079,6 +7177,9 @@ pub fn run() {
             set_channel_access,
             pin_message,
             get_pins,
+            send_poll,
+            vote_poll,
+            close_poll,
             search_messages,
             edit_message,
             delete_message,

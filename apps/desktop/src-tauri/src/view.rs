@@ -673,9 +673,53 @@ pub struct MessageView {
     pub reactions: Vec<ReactionView>,
     pub attachments: Vec<AttachmentView>,
     pub previews: Vec<LinkPreviewView>,
+    pub poll: Option<PollView>,
     pub pending: bool,
     pub pinned: bool,
     pub held: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PollView {
+    pub question: String,
+    pub options: Vec<PollOptionView>,
+    pub multi: bool,
+    pub total: usize,
+    pub closed: bool,
+    pub closes_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PollOptionView {
+    pub text: String,
+    pub votes: usize,
+    pub mine: bool,
+}
+
+impl PollView {
+    fn build(message: &Message, state: &ServerState, viewer: Option<UserId>) -> Option<Self> {
+        let poll = message.poll()?;
+        let tally = state.poll_tally(message.id, chrono::Utc::now())?;
+        let mine = viewer.map(|me| state.poll_choices(message.id, me)).unwrap_or(&[]);
+        let options = poll
+            .options
+            .iter()
+            .enumerate()
+            .map(|(i, text)| PollOptionView {
+                text: text.clone(),
+                votes: tally.counts.get(i).copied().unwrap_or(0),
+                mine: mine.contains(&(i as u8)),
+            })
+            .collect();
+        Some(Self {
+            question: poll.question,
+            options,
+            multi: poll.multi,
+            total: tally.voters,
+            closed: tally.closed,
+            closes_at: poll.closes_at.map(|t| t.to_rfc3339()),
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -798,8 +842,12 @@ impl MessageView {
                 let stored = state.message(id).filter(|m| m.channel == message.channel)?;
                 let original = keys.open(state, stored)?;
                 let mut excerpt = crate::safety::truncate(&original.content, 120);
-                if excerpt.is_empty() && original.files().next().is_some() {
-                    excerpt = "Click to see attachment".to_string();
+                if excerpt.is_empty() {
+                    if let Some(poll) = original.poll() {
+                        excerpt = crate::safety::truncate(&poll.question, 120);
+                    } else if original.files().next().is_some() {
+                        excerpt = "Click to see attachment".to_string();
+                    }
                 }
                 if keys.hold(state, stored).is_some() {
                     excerpt = HELD_EXCERPT.to_string();
@@ -821,7 +869,7 @@ impl MessageView {
                 .collect(),
             attachments: attachments
                 .iter()
-                .filter(|a| !a.is_link_preview())
+                .filter(|a| !a.is_card())
                 .map(|a| AttachmentView {
                     filename: a.filename.clone(),
                     size_bytes: a.size_bytes,
@@ -832,6 +880,7 @@ impl MessageView {
                 })
                 .collect(),
             previews: message.link_previews().take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
+            poll: (!sealed).then(|| PollView::build(message, state, keys.user())).flatten(),
             pending: false,
             pinned: state.server.is_pinned(message.id),
             held: None,

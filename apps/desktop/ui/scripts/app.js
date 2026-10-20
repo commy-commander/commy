@@ -249,6 +249,10 @@ function mockSeed() {
     { id: "g2", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
       content: "full res screenshot of the new map", created_at: new Date(Date.now() - 600e3).toISOString(), edited: false,
       attachments: [{ filename: "new-map.png", size_bytes: 12900000, is_image: true, mime: "image/png", blob: "map@mock", provider: null }] },
+    { id: "p1", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
+      content: "", created_at: new Date(Date.now() - 300e3).toISOString(), edited: false, attachments: [],
+      poll: { question: "Raid night this week?", multi: false, total: 4, closed: false, closes_at: new Date(Date.now() + 3 * 3600e3).toISOString(),
+        options: [{ text: "Friday", votes: 3, mine: true }, { text: "Saturday", votes: 1, mine: false }, { text: "Sunday after lunch", votes: 0, mine: false }] } },
   ];
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
@@ -490,6 +494,35 @@ async function mockInvoke(cmd, args = {}) {
     case "pin_message": {
       mock.pins = (mock.pins || []).filter(p => p.message !== args.messageId);
       if (args.pinned) mock.pins.push({ channel: args.channelId, message: args.messageId, by: "me", at: new Date().toISOString() });
+      return null;
+    }
+    case "send_poll": {
+      const closes_at = args.hours ? new Date(Date.now() + args.hours * 3600e3).toISOString() : null;
+      const msg = {
+        id: crypto.randomUUID(), channel: args.channelId, author_id: "me", author_name: mock.user.username, content: "",
+        created_at: new Date().toISOString(), edited: false, attachments: [], reactions: [],
+        poll: { question: args.question, options: args.options.map(text => ({ text, votes: 0, mine: false })), multi: args.multi, total: 0, closed: false, closes_at },
+      };
+      (mock.messages[args.channelId] ||= []).push(msg);
+      return msg;
+    }
+    case "vote_poll": {
+      const m = Object.values(mock.messages).flat().find(x => x.id === args.messageId);
+      if (!m || !m.poll) throw "that message is not a poll";
+      if (pollIsClosed(m.poll)) throw "that poll has closed";
+      const votedBefore = m.poll.options.some(o => o.mine);
+      m.poll.options = m.poll.options.map((o, i) => {
+        const mine = args.choices.includes(i);
+        return { ...o, mine, votes: o.votes + (mine ? 1 : 0) - (o.mine ? 1 : 0) };
+      });
+      m.poll.total += (args.choices.length > 0 ? 1 : 0) - (votedBefore ? 1 : 0);
+      return null;
+    }
+    case "close_poll": {
+      const m = Object.values(mock.messages).flat().find(x => x.id === args.messageId);
+      if (!m || !m.poll) throw "that message is not a poll";
+      if (m.author_id !== "me" && mock.plainMember) throw "only the poll's author or a moderator can close it";
+      m.poll.closed = true;
       return null;
     }
     case "set_channel_access": {
@@ -1155,6 +1188,7 @@ const ICONS = {
   chevronDown: "M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z",
   roles: "M21.41 11.41l-8.83-8.83A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.83 8.83a2 2 0 0 0 2.82 0l7.17-7.17a2 2 0 0 0 0-2.84zM12.83 20 4 11.17V4h7.17L20 12.83zM6.5 5A1.5 1.5 0 1 0 8 6.5 1.5 1.5 0 0 0 6.5 5z",
   check: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z",
+  poll: "M5 9.2h3V19H5zm5.6-4.2h2.8v14h-2.8zm5.6 8H19v6h-2.8z",
   close: "M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z",
   eye: "M12 5C7 5 2.7 8.1 1 12.5 2.7 16.9 7 20 12 20s9.3-3.1 11-7.5C21.3 8.1 17 5 12 5zm0 12.5a5 5 0 1 1 5-5 5 5 0 0 1-5 5zm0-8a3 3 0 1 0 3 3 3 3 0 0 0-3-3z",
   pin: "M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z",
@@ -3619,6 +3653,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   if (linkPreviewPrefs().show) {
     for (const preview of message.previews || []) body.appendChild(renderLinkPreview(preview));
   }
+  if (message.poll) body.appendChild(renderPoll(message));
   if (message.sealed) {
     const sealed = el("div", "msg-content msg-sealed");
     sealed.appendChild(svgIcon("lock", 14));
@@ -10191,7 +10226,165 @@ function toggleComposerMenu() {
   closeFloating("composer-menu");
   closeGifPicker();
   $("cm-gif").classList.toggle("hidden", !gifSettings().key && !serverHasGifs());
+  $("cm-poll").classList.toggle("hidden", state.view !== "server");
   placePopup(menu, $("attach-btn"), "above");
+}
+
+function openPollModal() {
+  if (state.view !== "server" || !state.currentChannel) return;
+  $("poll-question").value = "";
+  $("poll-rows").replaceChildren();
+  addPollRow("");
+  addPollRow("");
+  $("poll-multi").checked = false;
+  const select = $("poll-duration");
+  select.replaceChildren(...POLL_DURATIONS.map(d => {
+    const option = el("option", null, d.label);
+    option.value = d.hours === null ? "" : String(d.hours);
+    return option;
+  }));
+  select.value = String(DEFAULT_POLL_HOURS);
+  showModal("modal-poll");
+  $("poll-question").focus();
+}
+
+function addPollRow(text) {
+  const rows = $("poll-rows");
+  if (rows.children.length >= MAX_POLL_OPTIONS) return;
+  const row = el("div", "poll-row");
+  const input = el("input");
+  input.type = "text";
+  input.maxLength = MAX_POLL_OPTION_CHARS;
+  input.autocomplete = "off";
+  input.value = text;
+  input.onkeydown = e => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const next = row.nextElementSibling;
+    if (next) next.querySelector("input").focus();
+    else if (rows.children.length < MAX_POLL_OPTIONS) $("poll-add").onclick();
+    else sendPoll();
+  };
+  const remove = el("button", "poll-row-remove");
+  remove.type = "button";
+  remove.title = "Remove this answer";
+  remove.appendChild(svgIcon("close", 16));
+  remove.onclick = () => {
+    row.remove();
+    syncPollRows();
+  };
+  row.append(input, remove);
+  rows.appendChild(row);
+  syncPollRows();
+}
+
+function syncPollRows() {
+  const rows = [...$("poll-rows").children];
+  rows.forEach((row, i) => {
+    row.querySelector("input").placeholder = `Answer ${i + 1}`;
+    row.querySelector("button").disabled = rows.length <= MIN_POLL_OPTIONS;
+  });
+  $("poll-add").disabled = rows.length >= MAX_POLL_OPTIONS;
+}
+
+async function sendPoll() {
+  if (!state.currentServer || !state.currentChannel) return;
+  const draft = { question: $("poll-question").value, options: [...$("poll-rows").querySelectorAll("input")].map(i => i.value) };
+  const problem = pollDraftProblem(draft);
+  if (problem) {
+    toast(problem);
+    return;
+  }
+  const hours = Number($("poll-duration").value) || null;
+  try {
+    await invoke("send_poll", {
+      serverId: state.currentServer.id,
+      channelId: state.currentChannel.id,
+      question: squashPollText(draft.question),
+      options: cleanPollOptions(draft.options),
+      multi: $("poll-multi").checked,
+      hours,
+    });
+    hideModals();
+    await selectChannel(state.currentChannel);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function renderPoll(message) {
+  const poll = message.poll;
+  const now = Date.now();
+  const closed = pollIsClosed(poll, now);
+  const card = el("div", "poll" + (closed ? " closed" : ""));
+  card.appendChild(el("div", "poll-question", poll.question));
+  const hint = pollHint(poll, now);
+  if (hint) card.appendChild(el("div", "poll-hint", hint));
+  const list = el("div", "poll-options");
+  const shares = pollShares(poll);
+  (poll.options || []).forEach((option, i) => {
+    const row = el("button", "poll-option" + (option.mine ? " mine" : "") + (poll.multi ? " multi" : ""));
+    row.type = "button";
+    row.disabled = closed;
+    if (!closed) row.title = option.mine ? "Take your vote back" : "Vote for this";
+    const fill = el("div", "poll-fill");
+    fill.style.width = `${shares[i].percent}%`;
+    const mark = el("span", "poll-mark");
+    mark.appendChild(svgIcon("check", 14));
+    const count = el("span", "poll-count");
+    count.appendChild(el("strong", null, `${shares[i].percent}%`));
+    count.appendChild(document.createTextNode(` · ${shares[i].votes}`));
+    row.append(fill, mark, el("span", "poll-text", option.text), count);
+    row.onclick = e => {
+      e.stopPropagation();
+      votePoll(message, nextPollChoices(poll, i));
+    };
+    list.appendChild(row);
+  });
+  card.appendChild(list);
+  const foot = el("div", "poll-foot");
+  foot.appendChild(el("span", "poll-status", pollFooter(poll, now)));
+  const canManage = Boolean(state.currentServer && state.currentServer.can_manage_messages);
+  if (state.view === "server" && canClosePoll({ poll, own: isOwnMessage(message), canManage, now })) {
+    const close = el("button", "poll-close", "Close poll");
+    close.type = "button";
+    close.onclick = e => {
+      e.stopPropagation();
+      closePoll(message);
+    };
+    foot.appendChild(close);
+  }
+  card.appendChild(foot);
+  return card;
+}
+
+async function refreshChannelInPlace() {
+  if (!state.currentChannel) return;
+  const box = $("messages");
+  const keep = box.scrollTop;
+  await selectChannel(state.currentChannel);
+  box.scrollTop = keep;
+}
+
+async function votePoll(message, choices) {
+  if (!state.currentServer) return;
+  try {
+    await invoke("vote_poll", { serverId: state.currentServer.id, messageId: message.id, choices });
+    await refreshChannelInPlace();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function closePoll(message) {
+  if (!state.currentServer) return;
+  if (!confirm("Close this poll now? Nobody can vote after that.")) return;
+  try {
+    await invoke("close_poll", { serverId: state.currentServer.id, messageId: message.id });
+    await refreshChannelInPlace();
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 async function attachFromMenu(kind) {
@@ -11151,11 +11344,23 @@ function wireEvents() {
   $("cm-file").prepend(svgIcon("uploadFile", 18));
   $("cm-video").prepend(svgIcon("movie", 18));
   $("cm-gif").prepend(svgIcon("gifBox", 18));
+  $("cm-poll").prepend(svgIcon("poll", 18));
   $("cm-file").onclick = () => attachFromMenu("file");
   $("cm-video").onclick = () => attachFromMenu("video");
   $("cm-gif").onclick = () => {
     closeFloating();
     openGifPicker("");
+  };
+  $("cm-poll").onclick = () => {
+    closeFloating();
+    openPollModal();
+  };
+  $("poll-cancel").onclick = hideModals;
+  $("poll-send").onclick = sendPoll;
+  $("poll-add").onclick = () => {
+    addPollRow("");
+    const last = $("poll-rows").lastElementChild;
+    if (last) last.querySelector("input").focus();
   };
   $("share-btn").onclick = toggleShare;
   $("video-close").onclick = closeStageButton;

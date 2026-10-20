@@ -53,6 +53,7 @@ const AUDIT_GROUP_OF = {
   event_delete: "events",
   message_pin: "messages",
   message_unpin: "messages",
+  poll_close: "messages",
   message_delete: "messages",
   invite_create: "invites",
   invite_revoke: "invites",
@@ -142,6 +143,7 @@ function describeAudit(entry) {
     case "event_delete": return ["cancelled the event ", named("an event")];
     case "message_pin": return ["pinned a message in ", channel];
     case "message_unpin": return ["unpinned a message in ", channel];
+    case "poll_close": return ["closed a poll in ", channel];
     case "message_delete": return detail ? ["deleted a message by ", member, " in ", auditStrong(detail)] : ["deleted a message by ", member];
     case "invite_create": return ["created the invite ", named("a link")];
     case "invite_revoke": return detail ? ["revoked the invite ", named("a link"), " made by ", auditStrong(detail)] : ["revoked the invite ", named("a link")];

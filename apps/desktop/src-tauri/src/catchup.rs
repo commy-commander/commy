@@ -1043,6 +1043,7 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         for proof in waited.tombstone_proofs {
             let _ = state.apply(proof.into_event());
         }
+        state.carry_polls(&old);
         learned = state
             .profiles
             .values()

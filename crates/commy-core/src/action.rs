@@ -74,8 +74,9 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::EventRsvp { user, .. }
         | E::DoorbellSet { user, .. }
         | E::BotSet { user, .. }
+        | E::PollVote { user, .. }
         | E::PronounsSet { user, .. } => Some(*user),
-        E::MessagePin { by, .. } | E::MemberTimeout { by, .. } => Some(*by),
+        E::MessagePin { by, .. } | E::MemberTimeout { by, .. } | E::PollClose { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -147,6 +148,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::MemberTimeout { user, .. } => format!("timeout:{user}"),
         E::MemberNickname { user, .. } => format!("nickname:{user}"),
         E::MessagePin { message, .. } => format!("pin:{message}"),
+        E::PollVote { message, user, .. } => format!("vote:{message}:{user}"),
+        E::PollClose { message, .. } => format!("poll:{message}"),
         E::ReactionToggle { message, emoji, user, .. } | E::ReactionSet { message, emoji, user, .. } => {
             format!("reaction:{message}:{emoji}:{user}")
         }
@@ -171,7 +174,9 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 11] = ["emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:", "channel.key:", "channel.grant:", "timeout:"];
+    const OMITTED: [&str; 13] = [
+        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:", "channel.key:", "channel.grant:", "timeout:", "vote:", "poll:",
+    ];
     const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
     SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
 }
@@ -195,6 +200,8 @@ fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
         | E::ReactionSet { channel, .. }
         | E::SoundboardPlay { channel, .. }
         | E::SharedSoundPlay { channel, .. }
+        | E::PollVote { channel, .. }
+        | E::PollClose { channel, .. }
         | E::MessagePin { channel, .. } => Some(*channel),
         _ => None,
     }
@@ -222,6 +229,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
             member && speaks && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD) && sees(event)
         }
         E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin() && sees(event),
+        E::PollVote { .. } => member && speaks && actor(event) == Some(by) && sees(event),
+        E::PollClose { .. } => member && actor(event) == Some(by) && sees(event),
         E::ChannelKeyAdd { channel, .. } | E::ChannelKeyGrant { channel, .. } => {
             member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)
         }
@@ -440,6 +449,30 @@ mod tests {
         assert_eq!(state.apply(transfer(plain)), Ok(false));
         assert!(authorized(&state.server, plain, &ServerEvent::ServerDelete { server: sid }));
         assert!(!authorized(&state.server, owner, &ServerEvent::ServerDelete { server: sid }), "the old owner is a member now");
+    }
+
+    #[test]
+    fn votes_come_from_members_who_see_the_channel_and_are_not_timed_out() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        let message = crate::ids::MessageId::new();
+        let vote = |user| ServerEvent::PollVote { server: sid, channel, message, user, choices: vec![0] };
+        let close = |by| ServerEvent::PollClose { server: sid, channel, message, by };
+        assert!(authorized(&state.server, a, &vote(a)));
+        assert!(authorized(&state.server, a, &close(a)));
+        assert!(!authorized(&state.server, a, &vote(b)), "nobody votes for someone else");
+        assert!(!authorized(&state.server, b, &close(a)));
+        assert!(!authorized(&state.server, UserId::new(), &vote(UserId::new())), "strangers do not vote");
+        let until = Some(chrono::Utc::now() + chrono::Duration::minutes(10));
+        let timeout = ServerEvent::MemberTimeout { server: sid, user: a, by: owner, at: chrono::Utc::now(), until };
+        state.apply(timeout).unwrap();
+        assert!(!authorized(&state.server, a, &vote(a)), "timed out members sit polls out");
+        assert!(authorized(&state.server, a, &close(a)), "but may still close their own poll");
+        let hidden = ChannelId::new();
+        let elsewhere = ServerEvent::PollVote { server: sid, channel: hidden, message, user: b, choices: vec![0] };
+        assert!(!authorized(&state.server, b, &elsewhere), "a channel they cannot see");
     }
 
     #[test]
