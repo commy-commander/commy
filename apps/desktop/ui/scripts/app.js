@@ -1265,7 +1265,19 @@ function railServerButton(server, folderId) {
   return wrap;
 }
 
+function paintRailContext() {
+  const server = state.view === "server" ? state.currentServer : null;
+  const box = $("rail-context");
+  box.classList.toggle("on", Boolean(server));
+  if (!server) return;
+  $("rail-context-name").textContent = server.name;
+  const icon = $("rail-context-icon");
+  paintServerIcon(icon, server);
+  icon.style.background = serverTint(server.id);
+}
+
 function renderServerRail() {
+  paintRailContext();
   const list = $("server-list");
   list.innerHTML = "";
   const dmCount = [...unread.dms.values()].reduce((a, b) => a + b, 0);
@@ -7417,6 +7429,7 @@ function setViewMode(mode) {
   if (dm) paintSidebarBanner();
   $("dm-search").classList.toggle("hidden", !dm);
   $("attach-btn").classList.toggle("hidden", dm);
+  paintRailContext();
   syncAttachAccess();
   $("home-btn").classList.toggle("active", dm);
   $("app").classList.toggle("dm-mode", dm);

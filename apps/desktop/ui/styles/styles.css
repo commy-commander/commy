@@ -124,7 +124,7 @@ body {
   scrollbar-width: none;
 }
 .rail::-webkit-scrollbar { display: none; }
-.rail-spacer { flex: 1; }
+.rail-spacer { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; }
 .rail-brand {
   font-family: var(--font-display);
   font-weight: 700;
@@ -4315,3 +4315,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .upload-roles { display: flex; flex-wrap: wrap; gap: 6px 18px; min-height: 28px; }
 .upload-roles.off { opacity: 0.45; }
 #attach-btn.locked { opacity: 0.4; cursor: not-allowed; }
+.rail-context { display: flex; align-items: center; gap: 10px; height: 34px; min-width: 0; max-width: 320px; visibility: hidden; pointer-events: none; }
+.rail-context.on { visibility: visible; }
+.rail-context-icon { width: 28px; height: 28px; flex: none; border-radius: 9px; font-size: 11px; cursor: default; }
+.rail-context-name { font-family: var(--font-display); font-weight: 600; font-size: 15px; color: var(--header-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
