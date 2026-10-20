@@ -528,6 +528,28 @@ body {
 .day-divider-label { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .day-divider + .msg.first { margin-top: 4px; }
 
+.new-divider {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  margin: 0 8px -2px;
+  flex: none;
+  pointer-events: none;
+}
+.new-divider::before { content: ""; flex: 1; height: 1px; background: var(--accent); }
+.new-divider-label {
+  flex: none;
+  height: 14px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  color: #f2efe6;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
 .composer {
   margin: 0 12px 12px;
   background: var(--bg-raised);

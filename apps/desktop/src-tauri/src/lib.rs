@@ -18,6 +18,7 @@ mod liveness;
 mod outbox;
 mod overlay;
 mod persist;
+mod read_state;
 mod safety;
 mod search;
 mod settle;
@@ -7027,6 +7028,7 @@ pub fn run() {
                                 entry_list::schedule(&handle);
                             });
                         }
+                        tauri::async_runtime::spawn(read_state::run(handle.clone()));
                         tauri::async_runtime::spawn(run_share_heartbeat(handle.clone()));
                         tauri::async_runtime::spawn(liveness::run(handle.clone()));
                         tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
@@ -7156,6 +7158,10 @@ pub fn run() {
             entry_list::entry_list_use_recovery_code,
             entry_list::entry_list_start_over,
             entry_list::answer_entry_key_request,
+            read_state::read_state_load,
+            read_state::read_state_set,
+            read_state::read_state_mark_read,
+            read_state::read_state_sync,
             get_messages,
             send_message,
             attach_file,

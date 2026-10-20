@@ -40,7 +40,10 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   person comes back.
 - **Presence and notifications.** Status, Do Not Disturb with a "back at"
   time, appear offline, notification toasts, and a notification level or a
-  timed mute for each server and each channel.
+  timed mute for each server and each channel. A red "NEW" line marks where
+  you left off in a channel, any message can be marked unread, and read
+  positions follow you between your devices in the same encrypted sync as
+  your server list.
 - **Game overlay.** On Windows, an in-game overlay shows who is talking and
   recent chat, in the screen corner you choose.
 - **Safety tools.** Block and report people, an audit log of server changes,
