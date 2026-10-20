@@ -36,6 +36,8 @@ pub struct VoiceSettings {
     pub output_volume: f32,
     #[serde(default = "default_gain")]
     pub input_gain: f32,
+    #[serde(default = "default_gain")]
+    pub stream_volume: f32,
     #[serde(default = "default_afk_minutes")]
     pub afk_timeout_minutes: u32,
     #[serde(default = "default_true")]
@@ -89,6 +91,14 @@ impl VoiceSettings {
         crate::voice_keys::sensitivity(self.auto_sensitivity, self.sensitivity_db)
     }
 
+    pub fn stream_gain(&self, forced_deaf: bool) -> f32 {
+        if self.deafened || forced_deaf {
+            0.0
+        } else {
+            self.stream_volume
+        }
+    }
+
     pub fn apply_to(&self, processor: &mut VoiceProcessor) {
         processor.set_noise_cancellation(self.noise_cancellation);
         processor.set_echo_cancellation(self.echo_cancellation);
@@ -125,6 +135,7 @@ impl Default for VoiceSettings {
             deafened: false,
             output_volume: 1.0,
             input_gain: 1.0,
+            stream_volume: 1.0,
             afk_timeout_minutes: default_afk_minutes(),
             share_activity: true,
             input_device: None,

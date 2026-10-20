@@ -3,6 +3,7 @@ use rusty_opus::{Application, OpusDecoder, OpusEncoder};
 use crate::{FRAME_SIZE, SAMPLE_RATE};
 
 pub const VOICE_BITRATE: i32 = 32_000;
+pub const STREAM_AUDIO_BITRATE: i32 = 96_000;
 const RFC6716_MAX_PACKET_BYTES: usize = 1275;
 
 pub struct VoiceEncoder {
@@ -17,11 +18,19 @@ impl VoiceEncoder {
     }
 
     pub fn with_bitrate(bitrate: i32) -> Self {
-        let mut encoder = OpusEncoder::new(SAMPLE_RATE as i32, 1, Application::Voip)
+        Self::tuned(Application::Voip, rusty_opus::SignalType::Voice, bitrate)
+    }
+
+    pub fn for_stream_audio() -> Self {
+        Self::tuned(Application::Audio, rusty_opus::SignalType::Music, STREAM_AUDIO_BITRATE)
+    }
+
+    fn tuned(application: Application, signal: rusty_opus::SignalType, bitrate: i32) -> Self {
+        let mut encoder = OpusEncoder::new(SAMPLE_RATE as i32, 1, application)
             .expect("48 kHz mono is a valid Opus configuration");
         encoder.bitrate_bps = bitrate;
         encoder.complexity = 10;
-        encoder.signal_type = Some(rusty_opus::SignalType::Voice);
+        encoder.signal_type = Some(signal);
         Self { encoder, input: vec![0.0; FRAME_SIZE], output: vec![0; RFC6716_MAX_PACKET_BYTES] }
     }
 
@@ -117,6 +126,26 @@ mod tests {
         assert_eq!(last.len(), FRAME_SIZE);
         let ratio = energy(&last) / energy(&tone(49));
         assert!((0.3..3.0).contains(&ratio), "decoded energy ratio {ratio}");
+    }
+
+    #[test]
+    fn stream_audio_spends_more_bits_on_fidelity_and_decodes_with_the_voice_decoder() {
+        let mut voice = VoiceEncoder::new();
+        let mut stream = VoiceEncoder::for_stream_audio();
+        let mut dec = VoiceDecoder::new();
+        let (mut voice_bytes, mut stream_bytes) = (0, 0);
+        let mut last = Vec::new();
+        for f in 0..50 {
+            voice_bytes += voice.encode(&tone(f)).unwrap().len();
+            let packet = stream.encode(&tone(f)).unwrap();
+            stream_bytes += packet.len();
+            last = dec.decode(&packet);
+        }
+        assert!(stream_bytes > voice_bytes, "stream {stream_bytes} bytes, voice {voice_bytes} bytes");
+        assert!(stream_bytes < 50 * RFC6716_MAX_PACKET_BYTES);
+        let ratio = energy(&last) / energy(&tone(49));
+        assert!((0.5..2.0).contains(&ratio), "decoded energy ratio {ratio}");
+        assert!(stream.encode(&[0; 10]).is_none());
     }
 
     #[test]

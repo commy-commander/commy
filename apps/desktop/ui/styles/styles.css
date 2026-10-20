@@ -1843,6 +1843,15 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .stage-btn.danger { background: var(--accent); border-color: transparent; }
 .stage-btn.danger:hover { background: var(--accent-hover); }
 @media (prefers-reduced-motion: reduce) { .stage-btn:hover { transform: none; } }
+.stage-volume { height: 36px; padding: 0 14px 0 10px; gap: 10px; cursor: pointer; margin-right: auto; }
+.stage-volume-icon { display: flex; color: #fff; }
+.stage-volume-icon svg { width: 18px; height: 18px; }
+.stage-volume input[type="range"] {
+  width: 110px;
+  height: 6px;
+  background: linear-gradient(to right, var(--accent) var(--fill, 50%), rgba(242, 239, 230, .25) var(--fill, 50%));
+}
+.stage.self .stage-volume { visibility: hidden; }
 
 .modal.modal-wide { width: 640px; max-width: calc(100vw - 32px); }
 .share-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--bg-active); }
@@ -1936,6 +1945,9 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .segmented button span { font-size: 11px; }
 .segmented button:hover { color: var(--text-normal); }
 .segmented button.active { background: var(--bg-active); color: #fff; }
+
+.share-audio-row { padding: 4px 0; }
+.share-audio-row .setting-title { font-size: 14px; }
 
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .modal-actions button { padding: 10px 20px; }
