@@ -27,6 +27,9 @@ updates:
       cargo-minor:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: libc
+        versions: ["0.2.190", "0.2.191"]
   - package-ecosystem: docker
     directories:
       - /auth
