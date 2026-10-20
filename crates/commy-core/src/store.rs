@@ -4,7 +4,7 @@ use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 use crate::message::{
-    Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES, MAX_RELAYED_REACTIONS, MAX_RELAYED_REACTORS,
+    Attachment, Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES, MAX_RELAYED_REACTIONS, MAX_RELAYED_REACTORS,
 };
 use crate::server::{ChannelKind, Member, Server};
 use crate::user::{Presence, UserProfile};
@@ -1229,7 +1229,7 @@ impl ServerState {
             return Err(StoreError::NotAnnouncer);
         }
         if !held
-            && !message.attachments.is_empty()
+            && message.attachments.iter().any(Attachment::carries_a_file)
             && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::ATTACH_FILES)
         {
             return Err(StoreError::NoUploads);
@@ -2396,6 +2396,32 @@ mod tests {
         state.apply(ServerEvent::RoleUnassign { server: sid, user: plain, role: rid }).unwrap();
         let later = Utc::now() + chrono::Duration::seconds(1);
         assert_eq!(state.apply(edit(&state, &allowed, "Patch day, 6pm", later)), Ok(true));
+    }
+
+    #[test]
+    fn a_link_card_without_a_picture_needs_no_send_files_permission() {
+        let (mut state, channel, _owner) = fixture();
+        let sid = state.server.id;
+        let plain = join(&mut state, "plain");
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.remove(Permissions::ATTACH_FILES);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        let card = |picture: Option<crate::link_preview::PreviewPicture>| {
+            let preview = crate::link_preview::LinkPreview {
+                url: "https://example.org/a".into(),
+                site: String::new(),
+                title: "A page".into(),
+                description: String::new(),
+                image: Some(crate::link_preview::PreviewImage { mime: "image/jpeg".into(), width: 10, height: 10 }),
+            };
+            let mut m = Message::new(channel, plain, "see https://example.org/a");
+            m.attachments.push(preview.into_attachment(picture));
+            crate::test_support::signed(&state, m)
+        };
+        let text_only = card(None);
+        let pictured = card(Some(crate::link_preview::PreviewPicture { blob: "abc".into(), size_bytes: 10, provider: None }));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: text_only }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: pictured }), Err(StoreError::NoUploads));
     }
 
     #[test]

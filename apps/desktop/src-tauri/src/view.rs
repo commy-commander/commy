@@ -493,9 +493,48 @@ pub struct MessageView {
     pub reply_preview: Option<ReplyPreview>,
     pub reactions: Vec<ReactionView>,
     pub attachments: Vec<AttachmentView>,
+    pub previews: Vec<LinkPreviewView>,
     pub pending: bool,
     pub pinned: bool,
     pub held: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LinkPreviewView {
+    pub url: String,
+    pub site: String,
+    pub title: String,
+    pub description: String,
+    pub image: Option<PreviewImageView>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviewImageView {
+    pub blob: String,
+    pub provider: Option<String>,
+    pub mime: String,
+    pub size_bytes: u64,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl LinkPreviewView {
+    fn build(preview: commy_core::LinkPreview, carrier: &commy_core::Attachment) -> Self {
+        Self {
+            image: preview.image.map(|image| PreviewImageView {
+                blob: carrier.blob.clone(),
+                provider: carrier.provider.clone(),
+                mime: image.mime,
+                size_bytes: carrier.size_bytes,
+                width: image.width,
+                height: image.height,
+            }),
+            url: preview.url,
+            site: preview.site,
+            title: preview.title,
+            description: preview.description,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -569,7 +608,7 @@ impl MessageView {
             reply_preview: message.reply_to.and_then(|id| {
                 let original = state.message(id).filter(|m| m.channel == message.channel)?;
                 let mut excerpt = crate::safety::truncate(&original.content, 120);
-                if excerpt.is_empty() && !original.attachments.is_empty() {
+                if excerpt.is_empty() && original.files().next().is_some() {
                     excerpt = "Click to see attachment".to_string();
                 }
                 if state.hold(original).is_some() {
@@ -591,8 +630,7 @@ impl MessageView {
                 })
                 .collect(),
             attachments: message
-                .attachments
-                .iter()
+                .files()
                 .map(|a| AttachmentView {
                     filename: a.filename.clone(),
                     size_bytes: a.size_bytes,
@@ -602,6 +640,7 @@ impl MessageView {
                     provider: a.provider.clone(),
                 })
                 .collect(),
+            previews: message.link_previews().take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
             pending: false,
             pinned: state.server.is_pinned(message.id),
             held: None,
