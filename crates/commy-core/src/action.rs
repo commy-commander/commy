@@ -147,6 +147,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::VoiceModerate { user, .. } => format!("voice_moderate:{user}"),
         E::MemberTimeout { user, .. } => format!("timeout:{user}"),
         E::MemberNickname { user, .. } => format!("nickname:{user}"),
+        E::VoiceMove { user, .. } => format!("voice_move:{user}"),
         E::MessagePin { message, .. } => format!("pin:{message}"),
         E::PollVote { message, user, .. } => format!("vote:{message}:{user}"),
         E::PollClose { message, .. } => format!("poll:{message}"),
@@ -169,7 +170,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
 }
 
 pub fn settles_authority(subject: &str) -> bool {
-    const LIVE: [&str; 7] = ["presence:", "voice:", "share:", "camera:", "reaction:", "rsvp:", "profile:"];
+    const LIVE: [&str; 8] = ["presence:", "voice:", "share:", "camera:", "reaction:", "rsvp:", "profile:", "voice_move:"];
     !LIVE.iter().any(|p| subject.starts_with(p))
 }
 
@@ -192,7 +193,7 @@ fn may_add(perms: Permissions, member: bool, kind: Permissions, taken: bool) -> 
 fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
     use ServerEvent as E;
     match event {
-        E::VoiceState { channel, .. } => *channel,
+        E::VoiceState { channel, .. } | E::VoiceMove { channel, .. } => *channel,
         E::TypingStart { channel, .. }
         | E::ScreenShare { channel, .. }
         | E::CameraState { channel, .. }
@@ -292,6 +293,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
             let others = *user != server.owner && allows(Permissions::MANAGE_NICKNAMES);
             member && (own || others)
         }
+        E::VoiceMove { user, .. } => allows(Permissions::MOVE_MEMBERS) && *user != by && sees(event),
         E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
         E::MemberTimeout { user, .. } => *user != by && actor(event) == Some(by) && allows(Permissions::TIME_OUT_MEMBERS),
         E::ServerDelete { .. } => by == server.owner,
@@ -420,6 +422,7 @@ mod tests {
             ServerEvent::MemberLeave { server: sid, user: admin },
             ServerEvent::VoiceModerate { server: sid, user: plain, muted: true, deafened: false },
             ServerEvent::MemberNickname { server: sid, user: admin, nickname: Some("Ad".into()) },
+            ServerEvent::VoiceMove { server: sid, user: plain, channel: None },
         ];
         for event in &events {
             assert!(authorized(&state.server, owner, event), "{event:?}");

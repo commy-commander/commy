@@ -276,6 +276,11 @@ pub enum ServerEvent {
         message: MessageId,
         by: UserId,
     },
+    VoiceMove {
+        server: ServerId,
+        user: UserId,
+        channel: Option<ChannelId>,
+    },
 }
 
 #[cfg(test)]

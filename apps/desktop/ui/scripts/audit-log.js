@@ -44,6 +44,8 @@ const AUDIT_GROUP_OF = {
   member_timeout: "members",
   member_timeout_clear: "members",
   member_nickname: "members",
+  voice_move: "members",
+  voice_disconnect: "members",
   emoji_add: "expressions",
   emoji_remove: "expressions",
   sound_add: "expressions",
@@ -125,6 +127,8 @@ function describeAudit(entry) {
     case "member_kick": return ["kicked ", member];
     case "member_ban": return ["banned ", member];
     case "member_unban": return ["unbanned ", member];
+    case "voice_move": return ["moved ", member, " to ", auditStrong(detail || "another voice channel")];
+    case "voice_disconnect": return ["disconnected ", member, " from voice"];
     case "voice_moderate": return VOICE_MODERATION_WORDS[detail] ? [`${VOICE_MODERATION_WORDS[detail]} `, member] : ["lifted the server mute on ", member];
     case "member_timeout": return detail ? ["timed out ", member, ` for ${detail}`] : ["timed out ", member];
     case "member_timeout_clear": return ["removed the timeout on ", member];

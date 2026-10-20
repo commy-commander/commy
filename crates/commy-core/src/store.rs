@@ -1306,6 +1306,23 @@ impl ServerState {
                 let Some(member) = self.server.member_mut(user) else { return Ok(false) };
                 Ok(replace(&mut member.timeout, timeout))
             }
+            ServerEvent::VoiceMove { server, user, channel } => {
+                self.same_server(server)?;
+                if user == self.server.owner {
+                    return Ok(false);
+                }
+                let Some(current) = self.voice_states.get(&user).copied() else {
+                    return Ok(false);
+                };
+                match channel {
+                    Some(target) => match self.server.channel(target) {
+                        Some(c) if c.kind == ChannelKind::Voice => Ok(target != current),
+                        Some(_) => Ok(false),
+                        None => Err(StoreError::UnknownChannel),
+                    },
+                    None => Ok(true),
+                }
+            }
             ServerEvent::MemberBan { server, user } => {
                 self.same_server(server)?;
                 if user == self.server.owner || self.server.banned.contains(&user) {
@@ -3399,6 +3416,33 @@ mod tests {
         assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: bad_banner }), Ok(false));
         let long = crate::server::Role { tag: Some("much too long tag".into()), ..everyone };
         assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: long }), Ok(false));
+    }
+
+    #[test]
+    fn voice_moves_apply_only_to_voice_members_headed_somewhere_else() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let other = UserProfile::new("other");
+        let uid = other.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: other }).unwrap();
+        let general = state.server.channels.iter().find(|c| c.kind == ChannelKind::Voice).unwrap().id;
+        let text = state.server.channels.iter().find(|c| c.kind == ChannelKind::Text).unwrap().id;
+        let lobby = crate::server::Channel::new("Lobby", ChannelKind::Voice, 9);
+        let lobby_id = lobby.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: lobby }).unwrap();
+        let move_to = |user, channel| ServerEvent::VoiceMove { server: sid, user, channel };
+        assert_eq!(state.apply(move_to(uid, Some(lobby_id))), Ok(false), "not in voice");
+        let join = ServerEvent::VoiceState { user: uid, channel: Some(general), muted: false, deafened: false, since: None };
+        state.apply(join).unwrap();
+        assert_eq!(state.apply(move_to(uid, Some(lobby_id))), Ok(true));
+        assert_eq!(state.voice_members(general), vec![uid], "the member's own voice state follows later");
+        assert_eq!(state.apply(move_to(uid, Some(general))), Ok(false), "already there");
+        assert_eq!(state.apply(move_to(uid, Some(text))), Ok(false), "not a voice channel");
+        assert_eq!(state.apply(move_to(uid, Some(ChannelId::new()))), Err(StoreError::UnknownChannel));
+        assert_eq!(state.apply(move_to(uid, None)), Ok(true));
+        let owner_join = ServerEvent::VoiceState { user: owner, channel: Some(general), muted: false, deafened: false, since: None };
+        state.apply(owner_join).unwrap();
+        assert_eq!(state.apply(move_to(owner, Some(lobby_id))), Ok(false), "owner is exempt");
     }
 
     #[test]
