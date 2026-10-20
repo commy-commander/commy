@@ -5211,6 +5211,18 @@ h3.md-heading { font-size: 1.1em; }
 .channel:hover .channel-age, .channel.active .channel-age { color: var(--text-muted); }
 .channel .channel-lock + .channel-age { margin-left: 2px; }
 .channel .channel-age + .channel-bell { margin-left: auto; }
+.channel-pin, .dm-pin {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--text-faint);
+}
+.channel-pin svg, .dm-pin svg { width: 14px; height: 14px; }
+.channel .channel-pin + .channel-bell { margin-left: auto; }
+.channel .channel-lock + .channel-pin, .channel .channel-age + .channel-pin { margin-left: 2px; }
+.channel:hover .channel-pin, .channel.active .channel-pin, .dm-thread:hover .dm-pin, .dm-thread.active .dm-pin { color: var(--text-muted); }
+.dm-top .dm-pin { align-self: center; }
 
 .age-gate-wrap {
   flex: 1;

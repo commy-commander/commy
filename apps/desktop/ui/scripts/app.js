@@ -319,6 +319,7 @@ function mockSeed() {
   ];
   mock.readMarks = { [server.channels[1].id]: { id: "g0", at: Date.now() - 1200e3, set: Date.now() - 1100e3 } };
   (mock.voiceClips ||= {})["voice@mock"] = 14;
+  mock.listPins = { dms: ["m1"], channels: [{ server: server.id, channel: server.channels[1].id }] };
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
     { channel: c0, message: "x1", by: "m1", at: new Date(Date.now() - 3000e3).toISOString() },
@@ -1215,6 +1216,18 @@ async function mockInvoke(cmd, args = {}) {
       return mockReadView(touched);
     }
     case "read_state_sync": return mockReadView(Object.keys(mock.readMarks || {}));
+    case "pins_load": return mock.listPins || { dms: [], channels: [] };
+    case "pin_dm": {
+      const pins = mock.listPins || { dms: [], channels: [] };
+      mock.listPins = { ...pins, dms: togglePinned(pins.dms, args.userId, args.pinned) };
+      return mock.listPins;
+    }
+    case "pin_channel": {
+      const pins = mock.listPins || { dms: [], channels: [] };
+      const others = pins.channels.filter(c => !(c.server === args.serverId && c.channel === args.channelId));
+      mock.listPins = { ...pins, channels: args.pinned ? others.concat({ server: args.serverId, channel: args.channelId }) : others };
+      return mock.listPins;
+    }
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
     case "get_autostart": return !!mock.autostart;
@@ -1335,6 +1348,7 @@ const ICONS = {
   close: "M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z",
   eye: "M12 5C7 5 2.7 8.1 1 12.5 2.7 16.9 7 20 12 20s9.3-3.1 11-7.5C21.3 8.1 17 5 12 5zm0 12.5a5 5 0 1 1 5-5 5 5 0 0 1-5 5zm0-8a3 3 0 1 0 3 3 3 3 0 0 0-3-3z",
   pin: "M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z",
+  pinOutline: "M14 4v5c0 1.12.37 2.16 1 3H9c.65-.86 1-1.9 1-3V4h4m3-2H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3V4h1c.55 0 1-.45 1-1s-.45-1-1-1z",
   pinOff: "M3.3 2 2 3.3l5.6 5.6V9c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7h1.17l6.96 6.96 1.3-1.3zM16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.44 0-.8.28-.94.67L16.7 13.3c.66-.78 1.76-1.3 2.3-1.3v-2c-1.66 0-3-1.34-3-3z",
   megaphone: "M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1v4h2v-4h1l5 3V6L8 9H4zm11.5 3c0-1.33-.58-2.53-1.5-3.35v6.69c.92-.81 1.5-2.01 1.5-3.34z",
   uploadFile: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z",
@@ -1895,6 +1909,7 @@ function openChannelMenu(channel, x, y) {
   for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-mute]")) btn.classList.toggle("hidden", mute !== null);
   $("chm-unmute").classList.toggle("hidden", mute === null);
   $("chm-unmute").textContent = mute === null ? "" : muteWords(mute);
+  $("chm-pin").textContent = channelIsPinned(server.id, channel.id) ? "Unpin Channel" : "Pin Channel";
   $("chm-settings").classList.toggle("hidden", !server.can_manage_channels);
   placeMenuAt($("channel-menu"), x, y);
 }
@@ -2157,13 +2172,13 @@ function renderChannels() {
 
   const canCreate = Boolean(server.can_manage_channels);
   const collapsed = collapsedSections();
-  for (const section of channelSections(server, canCreate)) {
+  for (const section of pinnedFirst(channelSections(server, canCreate), server, canCreate)) {
     const isCollapsed = collapsed.has(section.key);
     list.appendChild(sectionHeader(section, isCollapsed, canCreate && !section.fixed));
     for (const channel of section.channels) {
       const active = (state.currentChannel && channel.id === state.currentChannel.id) || channel.id === state.voiceChannelId;
       if (isCollapsed && !active) continue;
-      const row = channel.kind === "voice" ? voiceChannelRow(channel, canCreate) : textChannelRow(channel, canCreate);
+      const row = channel.kind === "voice" ? voiceChannelRow(channel, canCreate, section.pinned) : textChannelRow(channel, canCreate, section.pinned);
       if (canCreate && !section.fixed) {
         row.draggable = true;
         row.addEventListener("dragstart", e => {
@@ -2178,6 +2193,22 @@ function renderChannels() {
   }
   scheduleMuteExpiry(server);
   pushOverlayRoster();
+}
+
+function pinnedFirst(sections, server, canCreate) {
+  const ids = pinnedChannelIds(listPins, server.id);
+  if (!ids.length) return sections;
+  const pinned = [];
+  const kept = [];
+  for (const section of sections) {
+    const split = splitPinned(section.channels, ids, c => c.id);
+    pinned.push(...split.pinned);
+    if (split.pinned.length && !split.rest.length && !canCreate) continue;
+    kept.push({ ...section, channels: split.rest });
+  }
+  if (!pinned.length) return sections;
+  kept.unshift({ key: `${server.id}:pinned`, title: "Pinned", kind: "text", parent: null, fixed: true, pinned: true, channels: pinned });
+  return kept;
 }
 
 let muteExpiryTimer = null;
@@ -2235,12 +2266,13 @@ function channelSensitiveMark(row, channel) {
   row.appendChild(mark);
 }
 
-function textChannelRow(channel, canCreate) {
+function textChannelRow(channel, canCreate, pinned = false) {
   const row = el("div", "channel");
   row.appendChild(channelMark(channel));
   row.appendChild(channelNameNode(channel, "channel-label"));
   channelLockMark(row, channel);
   channelSensitiveMark(row, channel);
+  if (pinned) row.appendChild(pinMark("channel-pin"));
   paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
   if (shownUnread(state.currentServer.id, channel.id)) row.classList.add("unread");
@@ -2257,13 +2289,14 @@ function textChannelRow(channel, canCreate) {
   return row;
 }
 
-function voiceChannelRow(channel, canCreate) {
+function voiceChannelRow(channel, canCreate, pinned = false) {
   const row = el("div", "channel voice-channel");
   const icon = el("span", "channel-icon");
   icon.appendChild(svgIcon("speaker", 18));
   row.appendChild(icon);
   row.appendChild(channelNameNode(channel, "channel-label"));
   channelLockMark(row, channel);
+  if (pinned) row.appendChild(pinMark("channel-pin"));
   paintChannelBand(row, channel);
   const full = voiceFull(channel);
   if (channel.id === state.voiceChannelId) {
@@ -2641,6 +2674,51 @@ async function loadReadState() {
   try {
     applyReadView(await invoke("read_state_load"));
   } catch {}
+}
+
+let listPins = { dms: [], channels: [] };
+
+async function loadPins() {
+  try {
+    listPins = await invoke("pins_load");
+  } catch {}
+}
+
+function dmIsPinned(userId) {
+  return isPinned(listPins.dms, userId);
+}
+
+function channelIsPinned(serverId, channelId) {
+  return isPinned(pinnedChannelIds(listPins, serverId), channelId);
+}
+
+async function setDmPinned(userId, pinned) {
+  try {
+    listPins = await invoke("pin_dm", { userId, pinned });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  if (dmListShown()) renderDmThreads();
+}
+
+async function setChannelPinned(serverId, channelId, pinned) {
+  try {
+    listPins = await invoke("pin_channel", { serverId, channelId, pinned });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  if (state.currentServer && state.currentServer.id === serverId) renderChannels();
+}
+
+function pinMark(cls) {
+  const mark = el("span", cls);
+  mark.title = "Pinned for you";
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", "Pinned");
+  mark.appendChild(svgIcon("pinOutline", 14));
+  return mark;
 }
 
 function markUnreadFrom(message) {
@@ -7854,6 +7932,10 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
   if (!(dm && state.currentDm && state.currentDm.user === member.id)) {
     item("Message", () => messageUser(member.id, member.name));
   }
+  if (dm && (state.dmThreads || []).some(t => t.user === member.id)) {
+    const pinned = dmIsPinned(member.id);
+    item(pinned ? "Unpin" : "Pin", () => setDmPinned(member.id, !pinned));
+  }
   sep();
 
   const voice = state.voice || {};
@@ -7875,7 +7957,7 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
-  const moderates = server.can_mute || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames;
+  const moderates = inServer && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames);
   if (inServer && member.id !== server.owner && moderates) {
     sep();
     if (server.can_mute) {
@@ -10398,7 +10480,16 @@ async function renderDmThreads() {
   } else if (!matches.length) {
     list.appendChild(el("div", "dm-list-empty", "No conversations match."));
   }
-  if (!query && (friends.friends.length || friends.incoming.length)) {
+  const split = splitPinned(shown, listPins.dms, t => t.user);
+  if (split.pinned.length) {
+    list.appendChild(el("div", "channel-group dm-group", "Pinned"));
+    for (const thread of split.pinned) list.appendChild(dmThreadRow(thread, true));
+  }
+  const friendsShown = !query && (friends.friends.length || friends.incoming.length);
+  if (split.pinned.length && !friendsShown && (split.rest.length || requests.length)) {
+    list.appendChild(el("div", "channel-group dm-group", "Direct Messages"));
+  }
+  if (friendsShown) {
     list.appendChild(el("div", "channel-group dm-group", `Friends - ${friends.friends.length}`));
     for (const req of friends.incoming) {
       const row = el("div", "channel dm-thread friend-request");
@@ -10443,7 +10534,7 @@ async function renderDmThreads() {
     }
     list.appendChild(el("div", "channel-group dm-group", "Direct Messages"));
   }
-  const rows = [...shown];
+  const rows = [...split.rest];
   if (requests.length) {
     rows.push({ header: `Message Requests - ${requests.length}` });
     rows.push(...requests.filter(t => t.kind === "request"));
@@ -10455,28 +10546,7 @@ async function renderDmThreads() {
       list.appendChild(el("div", "channel-group dm-group dm-requests-head", thread.header));
       continue;
     }
-    if (thread.kind === "group") {
-      list.appendChild(groupThreadRow(thread));
-      continue;
-    }
-    const row = el("div", "channel dm-thread");
-    if (state.currentDm && thread.user === state.currentDm.user) row.classList.add("active");
-    if (unread.dms.get(thread.user)) row.classList.add("unread");
-    row.appendChild(avatarWithPresence(thread.name, thread.user));
-    const meta = el("div", "dm-meta");
-    const top = el("div", "dm-top");
-    top.appendChild(el("span", "dm-name", thread.name));
-    top.appendChild(el("span", "dm-time", formatShortTime(thread.last_at)));
-    meta.appendChild(top);
-    meta.appendChild(el("div", "dm-preview", thread.kind === "spam" ? "Hidden as possible spam" : plainText(thread.last_message) || "No messages yet"));
-    if (thread.kind !== "inbox") row.classList.add("dm-request");
-    row.appendChild(meta);
-    row.onclick = () => selectDm(thread.user, thread.name);
-    row.oncontextmenu = e => {
-      e.preventDefault();
-      openMemberMenu({ id: thread.user, name: thread.name }, e.clientX, e.clientY, { dm: true });
-    };
-    list.appendChild(row);
+    list.appendChild(dmThreadRow(thread, false));
   }
   if (query) {
     const known = new Set(threads.map(t => t.user));
@@ -10500,13 +10570,36 @@ async function renderDmThreads() {
   return threads;
 }
 
+function dmThreadRow(thread, pinned) {
+  if (thread.kind === "group") return groupThreadRow(thread, pinned);
+  const row = el("div", "channel dm-thread");
+  if (state.currentDm && thread.user === state.currentDm.user) row.classList.add("active");
+  if (unread.dms.get(thread.user)) row.classList.add("unread");
+  row.appendChild(avatarWithPresence(thread.name, thread.user));
+  const meta = el("div", "dm-meta");
+  const top = el("div", "dm-top");
+  top.appendChild(el("span", "dm-name", thread.name));
+  if (pinned) top.appendChild(pinMark("dm-pin"));
+  top.appendChild(el("span", "dm-time", formatShortTime(thread.last_at)));
+  meta.appendChild(top);
+  meta.appendChild(el("div", "dm-preview", thread.kind === "spam" ? "Hidden as possible spam" : plainText(thread.last_message) || "No messages yet"));
+  if (thread.kind !== "inbox") row.classList.add("dm-request");
+  row.appendChild(meta);
+  row.onclick = () => selectDm(thread.user, thread.name);
+  row.oncontextmenu = e => {
+    e.preventDefault();
+    openMemberMenu({ id: thread.user, name: thread.name }, e.clientX, e.clientY, { dm: true });
+  };
+  return row;
+}
+
 function groupAvatar(className = "avatar group-avatar") {
   const node = el("div", className);
   node.appendChild(svgIcon("people", 18));
   return node;
 }
 
-function groupThreadRow(thread) {
+function groupThreadRow(thread, pinned = false) {
   const row = el("div", "channel dm-thread");
   if (isGroupView() && thread.user === state.currentServer.id) row.classList.add("active");
   if (serverUnreadCount(thread.user)) row.classList.add("unread");
@@ -10514,6 +10607,7 @@ function groupThreadRow(thread) {
   const meta = el("div", "dm-meta");
   const top = el("div", "dm-top");
   top.appendChild(el("span", "dm-name", thread.name));
+  if (pinned) top.appendChild(pinMark("dm-pin"));
   top.appendChild(el("span", "dm-time", formatShortTime(thread.last_at)));
   meta.appendChild(top);
   meta.appendChild(el("div", "dm-preview", plainText(thread.last_message) || "No messages yet"));
@@ -10532,6 +10626,8 @@ function openGroupMenu(thread, x, y) {
   menu.replaceChildren(el("div", "ctx-title", thread.name));
   const { item, sep } = contextMenuBuilder(menu);
   item("Open", () => selectServer(thread.user));
+  const pinned = dmIsPinned(thread.user);
+  item(pinned ? "Unpin" : "Pin", () => setDmPinned(thread.user, !pinned));
   item("Add People", async () => {
     if (!isGroupView() || state.currentServer.id !== thread.user) await selectServer(thread.user);
     openGroupModal(thread.user);
@@ -11990,6 +12086,7 @@ function wireEvents() {
       renderUserPanel();
       await refreshServers();
       await loadReadState();
+      await loadPins();
       if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
     } catch (e) {
@@ -12792,6 +12889,12 @@ function wireEvents() {
     const channel = menuChannel;
     closeFloating();
     if (channel) openChannelSettings(channel.id);
+  };
+  $("chm-pin").onclick = () => {
+    const channel = menuChannel;
+    const server = state.currentServer;
+    closeFloating();
+    if (channel && server) setChannelPinned(server.id, channel.id, !channelIsPinned(server.id, channel.id));
   };
   const fromMenu = action => async () => {
     closeFloating();
@@ -14795,6 +14898,7 @@ async function continueBoot() {
   renderUserPanel();
   await refreshServers();
   await loadReadState();
+  await loadPins();
   if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
 }

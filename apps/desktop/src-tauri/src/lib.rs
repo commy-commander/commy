@@ -18,6 +18,7 @@ mod liveness;
 mod outbox;
 mod overlay;
 mod persist;
+mod pins;
 mod read_state;
 mod safety;
 mod search;
@@ -7472,6 +7473,9 @@ pub fn run() {
             read_state::read_state_set,
             read_state::read_state_mark_read,
             read_state::read_state_sync,
+            pins::pins_load,
+            pins::pin_dm,
+            pins::pin_channel,
             get_messages,
             send_message,
             attach_file,
