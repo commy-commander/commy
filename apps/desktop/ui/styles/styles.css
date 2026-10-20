@@ -4309,3 +4309,9 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .search-tip-row { cursor: default; }
 .search-tip-row:hover { background: none; }
 .search-tips-head { margin-top: 10px; }
+
+.upload-access { gap: 10px; margin-bottom: 14px; }
+.upload-seg button { min-height: 48px; justify-content: center; }
+.upload-roles { display: flex; flex-wrap: wrap; gap: 6px 18px; min-height: 28px; }
+.upload-roles.off { opacity: 0.45; }
+#attach-btn.locked { opacity: 0.4; cursor: not-allowed; }

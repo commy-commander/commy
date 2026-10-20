@@ -529,6 +529,11 @@ async fn send_attachment(
         return Err(ATTACHMENT_TOO_LARGE.into());
     }
     let profile = current_profile(app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(app, state, profile.id, Permissions::ATTACH_FILES, "send files or images here")?;
+    }
     let size_bytes = bytes.len() as u64;
 
     let (blob, provider) = {
@@ -3869,6 +3874,54 @@ async fn set_sound_sharing(
 }
 
 #[tauri::command]
+async fn set_upload_access(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    restricted: bool,
+    role_ids: Vec<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let allowed = role_ids
+        .iter()
+        .map(|r| r.parse::<RoleId>())
+        .collect::<Result<Vec<RoleId>, _>>()
+        .map_err(err_to_string)?;
+    let updates: Vec<commy_core::server::Role> = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "change who can send files")?;
+        state
+            .server
+            .roles
+            .iter()
+            .filter_map(|r| {
+                let mut role = r.clone();
+                if r.is_everyone() {
+                    role.permissions.remove(Permissions::ATTACH_FILES);
+                    if !restricted {
+                        role.permissions.insert(Permissions::ATTACH_FILES);
+                    }
+                } else if restricted {
+                    if allowed.contains(&r.id) {
+                        role.permissions.insert(Permissions::ATTACH_FILES);
+                    } else {
+                        role.permissions.remove(Permissions::ATTACH_FILES);
+                    }
+                }
+                (role.permissions != r.permissions).then_some(role)
+            })
+            .collect()
+    };
+    for role in updates {
+        apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await?;
+    }
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_server_public(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -5507,6 +5560,7 @@ pub fn run() {
             set_sound_emoji,
             set_expression_settings,
             set_sound_sharing,
+            set_upload_access,
             list_shareable_sounds,
             play_shared_sound,
             set_server_public,
