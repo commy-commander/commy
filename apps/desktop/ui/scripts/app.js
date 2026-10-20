@@ -332,6 +332,17 @@ function mockEmojiCatalog(query = "", category = null, page = 0) {
   return { results: matches.slice(start, start + 60).map(({ id, title, url, animated }) => ({ id, title, url, animated })), more: matches.length > start + 60, categories };
 }
 
+function mockStickerSearch(query = "") {
+  const names = ["Happy Dance", "Sleepy Cat", "Thumbs Up", "Love You", "Party Time", "Good Morning", "So Sad", "Wow", "High Five", "Bye Bye", "Hugs", "LOL"];
+  const q = String(query || "").toLowerCase().trim();
+  return names
+    .map((title, i) => {
+      const url = mockEmojiFace((i * 53 + 20) % 360, ["M40 84 Q64 108 88 84", "M48 82 Q64 98 80 82"][i % 2], 8);
+      return { id: `mock-${i}`, title, preview: url, url, ratio: 1 };
+    })
+    .filter(s => !q || s.title.toLowerCase().includes(q));
+}
+
 function mockTemplates() {
   return [
     mockTemplateView("fresh", "Start fresh", "A chat channel and a voice room", [[null, ["general", "v:General", "v:AFK"]]]),
@@ -814,6 +825,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "search_emoji_catalog": return mockEmojiCatalog(args.query, args.category, args.page);
     case "fetch_catalog_image": return args.url;
+    case "sticker_search": return mockStickerSearch(args.query);
     case "store_catalog_sticker": {
       const blob = `ggs${Object.keys(mock.expressions || {}).length}@mock`;
       mock.expressions = { ...(mock.expressions || {}), [blob]: `data:image/png;base64,${args.data}` };
@@ -967,7 +979,7 @@ async function mockInvoke(cmd, args = {}) {
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
-    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_media: false });
+    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false });
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
@@ -7648,24 +7660,40 @@ function catalogPickNamed(name) {
 }
 
 const CATALOG_PICKER = {
-  emojis: { slots: CATALOG_PICKER_SLOTS, cls: "catalog-slot", use: (item, slot) => useCatalogEmoji(item, slot) },
-  stickers: { slots: 6, cls: "sticker-tile catalog-sticker", use: (item, slot) => useCatalogSticker(item, slot) },
+  emojis: {
+    label: "emoji.gg", slots: CATALOG_PICKER_SLOTS, cls: "catalog-slot", external: true,
+    search: searchEmojiggPicks, use: (item, slot) => useCatalogEmoji(item, slot),
+  },
+  stickers: {
+    label: "emoji.gg", slots: 6, cls: "sticker-tile catalog-sticker", external: true,
+    search: searchEmojiggPicks, use: (item, slot) => useCatalogSticker(item, slot),
+  },
+  klipy: {
+    label: "KLIPY", slots: 9, cls: "sticker-tile catalog-sticker", external: false,
+    search: async q => (await invoke("sticker_search", { query: q })) || [],
+    use: (item, slot) => useCatalogSticker(item, slot),
+  },
 };
+
+async function searchEmojiggPicks(q) {
+  const page = await invoke("search_emoji_catalog", { query: q, category: null, page: 0 });
+  return (page.results || []).slice(0, CATALOG_PICKER_SLOTS);
+}
 
 function appendCatalogEmojis(grid, q) {
   appendCatalogSection(grid, q, "emojis");
 }
 
 function appendCatalogSection(grid, q, kind) {
-  if (!mayUseOtherServers()) return false;
-  if (!account.server_emojis) {
+  const spec = CATALOG_PICKER[kind];
+  if (spec.external && !mayUseOtherServers()) return false;
+  if (spec.external && !account.server_emojis) {
     if (!q) return false;
     pickerSection(grid, "emoji.gg");
     grid.appendChild(el("div", "picker-empty", "Your account server doesn't offer emoji.gg search yet."));
     return true;
   }
-  const spec = CATALOG_PICKER[kind];
-  pickerSection(grid, "emoji.gg");
+  pickerSection(grid, spec.label);
   const slots = [];
   for (let i = 0; i < spec.slots; i++) {
     const slot = el("button", spec.cls);
@@ -7678,7 +7706,8 @@ function appendCatalogSection(grid, q, kind) {
     if (!slots[0].isConnected) return;
     const results = all.slice(0, spec.slots);
     if (!results.length) {
-      slots[0].replaceWith(el("div", `picker-empty catalog-none ${kind}`, "Nothing on emoji.gg matches that"));
+      const box = kind === "emojis" ? "emojis" : "stickers";
+      slots[0].replaceWith(el("div", `picker-empty catalog-none ${box}`, `Nothing on ${spec.label} matches that`));
       for (const slot of slots.slice(1)) slot.remove();
       return;
     }
@@ -7686,18 +7715,19 @@ function appendCatalogSection(grid, q, kind) {
       const item = results[i];
       if (!item) return;
       slot.disabled = false;
-      slot.title = `${item.title} from emoji.gg`;
+      slot.title = `${item.title} from ${spec.label}`;
       const img = el("img");
       img.loading = "lazy";
       img.alt = item.title;
       img.draggable = false;
-      img.src = viaAccountServer(item.url);
+      img.src = viaAccountServer(item.preview || item.url);
       img.onerror = () => slot.classList.add("missing");
       slot.appendChild(img);
       slot.onclick = () => spec.use(item, slot);
     });
   };
-  const cached = catalogPicker.results.get(q);
+  const key = `${spec.label}:${q}`;
+  const cached = catalogPicker.results.get(key);
   if (cached) {
     fill(cached);
     return true;
@@ -7706,9 +7736,8 @@ function appendCatalogSection(grid, q, kind) {
   clearTimeout(catalogPicker.timer);
   catalogPicker.timer = setTimeout(async () => {
     try {
-      const page = await invoke("search_emoji_catalog", { query: q, category: null, page: 0 });
-      const results = (page.results || []).slice(0, CATALOG_PICKER_SLOTS);
-      catalogPicker.results.set(q, results);
+      const results = await spec.search(q);
+      catalogPicker.results.set(key, results);
       if (seq === catalogPicker.seq) fill(results);
     } catch {
       if (seq === catalogPicker.seq) fill([]);
@@ -7771,7 +7800,7 @@ async function useCatalogEmoji(item, slot) {
 async function prepareEmojiImage(src, { size = 128, maxGif = 256 * 1024 } = {}) {
   const blob = await (await fetch(src)).blob();
   const EMOJI_SIZE_PX = size;
-  if (blob.type === "image/gif" && blob.size <= maxGif) {
+  if ((blob.type === "image/gif" || blob.type === "image/webp") && blob.size <= maxGif) {
     return { data: await blobToBase64(blob), url: src, flattened: false };
   }
   const img = await new Promise((resolve, reject) => {
@@ -12434,7 +12463,7 @@ function renderStickerTab(grid, q) {
   if (!any && !q && !grid.childElementCount) {
     grid.appendChild(el("div", "picker-empty", "No stickers here yet. Servers add them in Server Settings, then Stickers."));
   }
-  appendCatalogSection(grid, q, "stickers");
+  appendCatalogSection(grid, q, account.server_stickers ? "klipy" : "stickers");
 }
 
 function renderEmoticonTab(grid, q) {

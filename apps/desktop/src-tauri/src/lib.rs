@@ -5080,20 +5080,76 @@ async fn search_emoji_catalog(
     Ok(found)
 }
 
+const KLIPY_IMAGES: &str = "https://static.klipy.com/";
+
+fn catalog_source(url: &str) -> Option<&'static str> {
+    let (source, path) = match (url.strip_prefix(EMOJIGG_IMAGES), url.strip_prefix(KLIPY_IMAGES)) {
+        (Some(path), _) if !path.contains('/') => ("emoji.gg", path),
+        (_, Some(path)) => ("KLIPY", path),
+        _ => return None,
+    };
+    if path.is_empty() || path.contains(['?', '#', '\\']) || path.contains("..") {
+        return None;
+    }
+    Some(source)
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    #[test]
+    fn catalog_images_come_from_emoji_gg_or_klipy_only() {
+        assert_eq!(catalog_source("https://cdn3.emoji.gg/emojis/12_cat.png"), Some("emoji.gg"));
+        assert_eq!(catalog_source("https://static.klipy.com/ii/ab12/e8/3a/5LM0jRpL.webp"), Some("KLIPY"));
+        for url in [
+            "https://cdn3.emoji.gg/emojis/a/b.png",
+            "https://cdn3.emoji.gg/emojis/",
+            "https://static.klipy.com/ii/../x.gif",
+            "https://static.klipy.com/a.gif?x=1",
+            "https://static.klipy.com.evil.example/a.gif",
+            "http://static.klipy.com/a.gif",
+            "https://example.com/a.gif",
+        ] {
+            assert_eq!(catalog_source(url), None, "{url}");
+        }
+    }
+}
+
 #[tauri::command]
 async fn fetch_catalog_image(app: tauri::State<'_, App>, url: String) -> CmdResult<String> {
-    let path = url.strip_prefix(EMOJIGG_IMAGES).ok_or("only emoji.gg images can be added")?;
-    if path.is_empty() || path.contains(['/', '?', '#']) || path.contains("..") {
-        return Err("only emoji.gg images can be added".into());
-    }
+    let source = catalog_source(&url).ok_or("only emoji.gg and KLIPY images can be added")?;
     let (_, bytes) = account::fetch_media(&app, &url)
         .await
-        .map_err(|status| format!("emoji.gg could not be reached right now ({status})"))?;
+        .map_err(|status| format!("{source} could not be reached right now ({status})"))?;
     if bytes.len() > MAX_CATALOG_IMAGE_BYTES {
         return Err("that image is too large".into());
     }
-    let mime = expressions::image_mime(&bytes).ok_or("emoji.gg sent something that is not an image")?;
+    let mime = expressions::image_mime(&bytes).ok_or_else(|| format!("{source} sent something that is not an image"))?;
     Ok(data_url(mime, &bytes))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StickerHit {
+    id: String,
+    preview: String,
+    url: String,
+    #[serde(default)]
+    ratio: f64,
+    #[serde(default)]
+    title: String,
+}
+
+#[tauri::command]
+async fn sticker_search(app: tauri::State<'_, App>, query: String) -> CmdResult<Option<Vec<StickerHit>>> {
+    let query = safety::truncate(query.trim(), 100);
+    let hits = account::server_search::<StickerHit>(&app, "stickers", &query).await?;
+    Ok(hits.map(|hits| {
+        hits.into_iter()
+            .filter(|s| catalog_source(&s.url) == Some("KLIPY") && catalog_source(&s.preview) == Some("KLIPY"))
+            .map(|s| StickerHit { id: safety::truncate(&s.id, 120), title: safety::truncate(&s.title, 200), ..s })
+            .collect()
+    }))
 }
 
 #[tauri::command]
@@ -7074,6 +7130,7 @@ pub fn run() {
             set_igdb_credentials,
             search_games,
             gif_search,
+            sticker_search,
             get_overlay_settings,
             overlay_hotkey_problems,
             voice_hotkey_problems,
