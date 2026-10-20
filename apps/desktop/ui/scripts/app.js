@@ -652,6 +652,11 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "search_emoji_catalog": return mockEmojiCatalog(args.query, args.category, args.page);
     case "fetch_catalog_image": return args.url;
+    case "store_catalog_emoji": {
+      const blob = `gg${Object.keys(mock.expressions || {}).length}@mock`;
+      mock.expressions = { ...(mock.expressions || {}), [blob]: `data:image/png;base64,${args.data}` };
+      return `<:${args.name}:${blob}>`;
+    }
     case "add_sound": {
       const s = mock.servers[args.serverId];
       const ref = `mock${Date.now()}@mock`;
@@ -6552,6 +6557,7 @@ function findCustomEmoji(name) {
   const { local, external } = usableCustomEmojis();
   return (local && local.emojis.find(e => e.name === name))
     || external.flatMap(g => g.emojis).find(e => e.name === name)
+    || catalogPickNamed(name)
     || null;
 }
 
@@ -6616,15 +6622,103 @@ function appendExpressionGroups(grid, kind, query, renderItem, { localOnly = fal
   return any;
 }
 
-function appendCustomEmojiSections(grid, query, onPick, localOnly = false, add = false) {
-  const any = appendExpressionGroups(grid, "emojis", query, e => {
+function appendCustomEmojiSections(grid, query, onPick, localOnly = false, add = false, more = null) {
+  appendExpressionGroups(grid, "emojis", query, e => {
     const btn = el("button", "custom");
     btn.title = `:${e.name}:`;
     btn.appendChild(customEmojiImg(e.name, e.image));
     btn.onclick = () => onPick(e);
     return btn;
   }, { localOnly, add });
-  if (any || grid.childElementCount) grid.appendChild(el("div", "emoji-section", "Standard"));
+  if (more) more(grid, query);
+  if (grid.childElementCount) grid.appendChild(el("div", "emoji-section", "Standard"));
+}
+
+const CATALOG_PICKER_SLOTS = 16;
+const catalogPicker = { results: new Map(), timer: null, seq: 0 };
+const catalogPicks = new Map();
+
+function catalogPickNamed(name) {
+  for (const pick of catalogPicks.values()) if (pick.name === name) return pick;
+  return null;
+}
+
+function appendCatalogEmojis(grid, q) {
+  if (!account.server_emojis || !mayUseOtherServers()) return;
+  pickerSection(grid, "emoji.gg");
+  const slots = [];
+  for (let i = 0; i < CATALOG_PICKER_SLOTS; i++) {
+    const slot = el("button", "catalog-slot");
+    slot.type = "button";
+    slot.disabled = true;
+    grid.appendChild(slot);
+    slots.push(slot);
+  }
+  const fill = results => {
+    if (!slots[0].isConnected) return;
+    if (!results.length) {
+      slots[0].replaceWith(el("div", "picker-empty catalog-none", "Nothing on emoji.gg matches that"));
+      for (const slot of slots.slice(1)) slot.remove();
+      return;
+    }
+    slots.forEach((slot, i) => {
+      const item = results[i];
+      if (!item) return;
+      slot.disabled = false;
+      slot.title = `${item.title} from emoji.gg`;
+      const img = el("img");
+      img.loading = "lazy";
+      img.alt = item.title;
+      img.draggable = false;
+      img.src = viaAccountServer(item.url);
+      img.onerror = () => slot.classList.add("missing");
+      slot.appendChild(img);
+      slot.onclick = () => useCatalogEmoji(item, slot);
+    });
+  };
+  const cached = catalogPicker.results.get(q);
+  if (cached) {
+    fill(cached);
+    return;
+  }
+  const seq = ++catalogPicker.seq;
+  clearTimeout(catalogPicker.timer);
+  catalogPicker.timer = setTimeout(async () => {
+    try {
+      const page = await invoke("search_emoji_catalog", { query: q, category: null, page: 0 });
+      const results = (page.results || []).slice(0, CATALOG_PICKER_SLOTS);
+      catalogPicker.results.set(q, results);
+      if (seq === catalogPicker.seq) fill(results);
+    } catch {
+      if (seq === catalogPicker.seq) fill([]);
+    }
+  }, q ? 300 : 0);
+}
+
+async function useCatalogEmoji(item, slot) {
+  if (slot.classList.contains("busy")) return;
+  const known = catalogPicks.get(item.id);
+  if (known) {
+    insertIntoComposer(`:${known.name}: `);
+    return;
+  }
+  slot.classList.add("busy");
+  try {
+    const { local, external } = usableCustomEmojis();
+    const taken = [local, ...external].filter(Boolean).flatMap(g => g.emojis.map(e => e.name))
+      .concat([...catalogPicks.values()].map(p => p.name));
+    const name = freeExpressionName(expressionName(item.title, "emoji"), taken);
+    const src = await invoke("fetch_catalog_image", { url: item.url });
+    const prepared = await prepareEmojiImage(src, CATALOG_SIZES.emojis);
+    const token = parseEmojiToken(await invoke("store_catalog_emoji", { name, data: prepared.data }));
+    if (!token) throw new Error("that emoji could not be saved");
+    catalogPicks.set(item.id, token);
+    insertIntoComposer(`:${token.name}: `);
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    slot.classList.remove("busy");
+  }
 }
 
 async function prepareEmojiImage(src, { size = 128, maxGif = 256 * 1024 } = {}) {
@@ -10460,7 +10554,7 @@ function renderEmojiGrid(query) {
 }
 
 function renderEmojiTab(grid, q) {
-  appendCustomEmojiSections(grid, q, e => insertIntoComposer(`:${e.name}: `), false, true);
+  appendCustomEmojiSections(grid, q, e => insertIntoComposer(`:${e.name}: `), false, true, appendCatalogEmojis);
   const matches = EMOJI_DATA.filter(([, name]) => !q || name.includes(q)).slice(0, 160);
   for (const [emoji, name] of matches) {
     const btn = el("button", null, emoji);

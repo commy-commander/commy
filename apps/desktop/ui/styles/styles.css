@@ -4732,3 +4732,10 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .modal .catalog-pick input[type="text"] { flex: 1; min-width: 0; }
 .catalog-attrib { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
 .catalog-attrib strong { color: var(--text-muted); font-weight: 600; }
+
+.emoji-grid button.catalog-slot { height: 36px; padding: 4px; display: flex; align-items: center; justify-content: center; }
+.emoji-grid button.catalog-slot:disabled { cursor: default; background: none; }
+.emoji-grid button.catalog-slot img { width: 28px; height: 28px; object-fit: contain; display: block; }
+.emoji-grid button.catalog-slot.missing img { visibility: hidden; }
+.emoji-grid button.catalog-slot.busy { opacity: 0.45; cursor: progress; }
+.emoji-grid .catalog-none { height: 72px; padding-top: 0; padding-bottom: 0; display: flex; align-items: center; }
