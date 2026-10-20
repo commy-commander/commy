@@ -3048,6 +3048,15 @@ fn get_custom_icon(app: tauri::State<App>, target: String) -> Option<String> {
 }
 
 #[tauri::command]
+fn set_window_title(handle: tauri::AppHandle, server: Option<String>) {
+    let label = std::env::var("COMMY_INSTANCE_LABEL").ok();
+    let base = instance::window_title(instance::TEST_BUILD, label.as_deref()).unwrap_or_else(|| "Commy".to_string());
+    if let Some(window) = handle.get_webview_window("main") {
+        let _ = window.set_title(&instance::server_window_title(&base, server.as_deref()));
+    }
+}
+
+#[tauri::command]
 async fn set_status_expiry(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -6790,6 +6799,7 @@ pub fn run() {
             list_friends,
             friend_action,
             set_about,
+            set_window_title,
             set_icons,
             choose_custom_icon,
             get_custom_icon,

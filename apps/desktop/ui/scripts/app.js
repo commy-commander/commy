@@ -903,6 +903,7 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "set_about": mock.user.about = args.about; return mock.user;
+    case "set_window_title": return null;
     case "set_icons": mock.voice.app_icon = args.appIcon; mock.voice.tray_icon = args.trayIcon; return mock.voice;
     case "get_custom_icon": return null;
     case "choose_custom_icon": return null;
@@ -1541,34 +1542,17 @@ function plainServer() {
   return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
 }
 
-function paintRailContext() {
+function syncWindowTitle() {
   const server = plainServer();
-  const box = $("rail-context");
-  box.classList.toggle("on", Boolean(server));
-  if (!server) return;
-  $("rail-context-name").textContent = server.name;
-  const icon = $("rail-context-icon");
-  paintServerIcon(icon, server);
-  icon.style.background = serverTint(server.id);
-  requestAnimationFrame(fitRailContext);
-}
-
-function fitRailContext() {
-  const box = $("rail-context");
-  box.style.maxWidth = "";
-  box.classList.remove("crowded");
-  if (!box.classList.contains("on")) return;
-  const rail = $("rail").getBoundingClientRect();
-  const center = rail.left + rail.width / 2;
-  const leftEdge = $("add-server-btn").getBoundingClientRect().right;
-  const rightEdge = document.querySelector(".rail .user-panel").getBoundingClientRect().left;
-  const room = Math.min(center - leftEdge, rightEdge - center) * 2 - 32;
-  box.classList.toggle("crowded", room < 96);
-  if (room >= 96) box.style.maxWidth = `${Math.min(320, Math.floor(room))}px`;
+  const name = server ? server.name : null;
+  if (name === state.windowTitleServer) return;
+  state.windowTitleServer = name;
+  document.title = name ? `${name} - Commy` : "Commy";
+  invoke("set_window_title", { server: name }).catch(() => {});
 }
 
 function renderServerRail() {
-  paintRailContext();
+  syncWindowTitle();
   const list = $("server-list");
   list.innerHTML = "";
   const dmCount = [...unread.dms.values()].reduce((a, b) => a + b, 0)
@@ -8820,7 +8804,7 @@ function setViewMode(mode) {
   $("server-name").classList.toggle("hidden", home);
   if (home) paintSidebarBanner();
   $("dm-search").classList.toggle("hidden", !home);
-  paintRailContext();
+  syncWindowTitle();
   syncAttachAccess();
   $("home-btn").classList.toggle("active", home);
   $("app").classList.toggle("dm-mode", home);
@@ -11504,7 +11488,6 @@ function wireEvents() {
     applyMembersLayout();
   };
   window.addEventListener("resize", applyMembersLayout);
-  window.addEventListener("resize", fitRailContext);
   applyMembersLayout();
   $("dm-profile-btn").onclick = () => {
     state.showDmProfile = !state.showDmProfile;
