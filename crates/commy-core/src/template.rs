@@ -47,6 +47,8 @@ pub struct TemplateRole {
     pub self_assignable: bool,
     #[serde(default)]
     pub tag: Option<String>,
+    #[serde(default)]
+    pub mentionable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +115,7 @@ fn known_permissions() -> Permissions {
         Permissions::ADD_EMOJIS,
         Permissions::ADD_STICKERS,
         Permissions::ADD_EMOTICONS,
+        Permissions::MENTION_EVERYONE,
     ]
     .into_iter()
     .fold(Permissions::NONE, |acc, p| acc | p)
@@ -204,6 +207,7 @@ impl ServerTemplate {
                     hoist: r.hoist,
                     self_assignable: r.self_assignable,
                     tag: portable_tag(r.tag.as_deref()),
+                    mentionable: r.mentionable,
                 })
                 .collect(),
             everyone,
@@ -269,6 +273,7 @@ impl ServerTemplate {
                 hoist: r.hoist,
                 self_assignable: r.self_assignable,
                 tag: portable_tag(r.tag.as_deref()),
+                mentionable: r.mentionable,
             });
         }
         let afk_channel = self
@@ -325,6 +330,7 @@ impl ServerTemplate {
             self_assignable: r.self_assignable,
             tag: r.tag.clone(),
             banner: None,
+            mentionable: r.mentionable,
         }));
         server.rules = self.rules.clone();
         server.afk_channel_id = self.afk_channel.and_then(|i| ids.get(i).copied());
@@ -465,6 +471,7 @@ impl Draft {
             hoist,
             self_assignable: false,
             tag: None,
+            mentionable: false,
         });
     }
 
@@ -610,7 +617,7 @@ mod tests {
     fn exports_leave_out_people_messages_and_images() {
         let mut server = ServerTemplate::builtin(BuiltinTemplate::Community).build("Hub", owner());
         let guest = UserId::new();
-        server.members.push(crate::server::Member { user: guest, nickname: None, roles: vec![], joined_at: chrono::Utc::now() });
+        server.members.push(crate::server::Member { user: guest, nickname: None, roles: vec![], joined_at: chrono::Utc::now(), timeout: None });
         server.banned.push(guest);
         server.icon = Some("icon@node".into());
         server.channels[0].banner = Some("banner@node".into());
@@ -702,6 +709,7 @@ mod tests {
             hoist: true,
             self_assignable: false,
             tag: None,
+            mentionable: false,
         });
         let cleaned = ServerTemplate::decode(&template.encode()).unwrap();
         assert!(!cleaned.everyone.contains(Permissions::ADMINISTRATOR));
@@ -711,7 +719,7 @@ mod tests {
         let server = cleaned.build("Safe", owner());
         let member = UserId::new();
         let mut server = server;
-        server.members.push(crate::server::Member { user: member, nickname: None, roles: vec![], joined_at: chrono::Utc::now() });
+        server.members.push(crate::server::Member { user: member, nickname: None, roles: vec![], joined_at: chrono::Utc::now(), timeout: None });
         assert!(!server.permissions_for(member).contains(Permissions::ADMINISTRATOR));
     }
 

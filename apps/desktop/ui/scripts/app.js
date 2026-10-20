@@ -152,8 +152,8 @@ function mockSeed() {
     ],
   };
   server.roles = [
-    { id: "r1", name: "Raider", color: "9b7bff", position: 2, permissions: [], self_assignable: true, tag: "RAID" },
-    { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages"], self_assignable: false, hoist: true, tag: null },
+    { id: "r1", name: "Raider", color: "9b7bff", position: 2, permissions: [], self_assignable: true, tag: "RAID", mentionable: true },
+    { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages", "mention_everyone"], self_assignable: false, hoist: true, tag: null, mentionable: false },
   ];
   server.game_tags = ["Rust", "Valorant"];
   server.emojis = [{ name: "ferris", image: "ferris@mock" }, { name: "ferris_wave", image: "ferris@mock" }];
@@ -166,6 +166,16 @@ function mockSeed() {
     emojis_shareable: true, stickers_shareable: true, emoticons_shareable: true,
   };
   mock.servers[club.id] = club;
+  const squad = {
+    id: crypto.randomUUID(), group: true, name: "ferris, nova", owner: "me",
+    channels: [ch("chat", "text", null), ch("call", "voice", null)],
+    members: [{ id: "m1", name: "ferris", presence: "online", custom_status: "heads down" }, { id: "m2", name: "nova", presence: "idle", custom_status: null }],
+  };
+  mock.servers[squad.id] = squad;
+  mock.messages[squad.channels[0].id] = [
+    { id: "g1", channel: squad.channels[0].id, author_id: "m2", author_name: "nova", content: "raid night friday?", created_at: new Date(Date.now() - 7200e3).toISOString(), edited: false, attachments: [] },
+    { id: "g2", channel: squad.channels[0].id, author_id: "m1", author_name: "ferris", content: "in. I'll bring the snacks :ferris_wave:", created_at: new Date(Date.now() - 5400e3).toISOString(), edited: false, attachments: [] },
+  ];
   mock.serverImages = { ...(mock.serverImages || {}), "welcome-banner@mock": mockBannerImage() };
   server.channels[0].banner = "welcome-banner@mock";
   server.channels[1].color = "9b7bff";
@@ -351,14 +361,35 @@ async function mockInvoke(cmd, args = {}) {
       if (Object.keys(mock.servers).length === 0) mockSeed();
       return mock.user;
     case "list_servers":
-      return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null, can_invite: !mock.plainMember }));
+      return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null, can_invite: !mock.plainMember, group: Boolean(s.group) }));
+    case "create_group_dm": {
+      const members = Object.values(mock.servers).flatMap(s => s.members).filter(m => args.userIds.includes(m.id));
+      const seen = new Set();
+      const unique = members.filter(m => !seen.has(m.id) && seen.add(m.id));
+      const group = {
+        id: crypto.randomUUID(), group: true, owner: "me",
+        name: unique.map(m => m.name).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())).join(", "),
+        channels: [{ id: crypto.randomUUID(), name: "chat", kind: "text", topic: null, voice_users: [] }, { id: crypto.randomUUID(), name: "call", kind: "voice", topic: null, voice_users: [] }],
+        members: unique.map(m => ({ ...m })),
+      };
+      mock.servers[group.id] = group;
+      return { id: group.id, name: group.name, member_count: group.members.length + 1, icon: null, can_invite: true, group: true };
+    }
+    case "add_group_members": {
+      const group = mock.servers[args.serverId];
+      if (!group || !group.group) throw "that is not a group you are in";
+      const members = Object.values(mock.servers).flatMap(s => s.members).filter(m => args.userIds.includes(m.id));
+      for (const m of members) if (!group.members.some(x => x.id === m.id)) group.members.push({ ...m });
+      group.name = group.members.map(m => m.name).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())).join(", ");
+      return null;
+    }
     case "get_server": {
       const s = mock.servers[args.serverId];
       if (!s) throw "unknown server";
       const members = [...s.members];
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: mock.user.username, presence, custom_status: null, roles: s.myRoles || [] };
+        const me = { id: "me", name: mock.user.username, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
         const vc = s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -384,7 +415,7 @@ async function mockInvoke(cmd, args = {}) {
         add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
         can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
         can_add_emoticons: !mock.plainMember || !(s.add_restricted || {}).emoticons, can_use_external: s.can_use_external !== false,
-        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
@@ -528,6 +559,16 @@ async function mockInvoke(cmd, args = {}) {
             kind: d.kind || "inbox",
           };
         })
+        .concat(Object.values(mock.servers).filter(s => s.group).map(s => {
+          const all = s.channels.filter(c => c.kind === "text").flatMap(c => mock.messages[c.id] || []);
+          const last = all[all.length - 1];
+          return {
+            user: s.id, name: s.name,
+            last_message: last ? `${last.author_id === "me" ? "You" : last.author_name}: ${last.content}` : "",
+            last_at: last ? last.created_at : "",
+            kind: "group",
+          };
+        }))
         .sort((a, b) => b.last_at.localeCompare(a.last_at));
     case "get_dm_messages": return (mock.dms[args.userId] || { messages: [] }).messages;
     case "open_dm": {
@@ -555,6 +596,15 @@ async function mockInvoke(cmd, args = {}) {
       return sent;
     }
     case "attach_dm_file": return null;
+    case "start_dm_call": {
+      const dm = mock.dms[args.userId];
+      if (!dm) throw "no such conversation";
+      return { state: "ringing", user: args.userId, name: dm.name, outgoing: true, seconds: 0, reason: null };
+    }
+    case "answer_dm_call":
+    case "end_dm_call":
+    case "get_dm_call":
+      return null;
     case "edit_dm": {
       const m = (mock.dms[args.userId] || { messages: [] }).messages.find(x => x.id === args.messageId);
       if (!m || !m.outgoing) throw "you can only edit your own messages";
@@ -838,7 +888,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_channel_limit": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).user_limit = args.limit; return null;
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
-      Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag });
+      Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag, mentionable: Boolean(args.mentionable) });
       if (args.permissions) r.permissions = args.permissions;
       return null;
     }
@@ -891,6 +941,16 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "unban_member": { const s = mock.servers[args.serverId]; s.banned = (s.banned || []).filter(b => b[0] !== args.userId); return null; }
+    case "time_out_member": {
+      const m = mock.servers[args.serverId].members.find(x => x.id === args.userId);
+      if (m) m.timeout_until = Date.now() + args.seconds * 1000;
+      return null;
+    }
+    case "clear_timeout": {
+      const m = mock.servers[args.serverId].members.find(x => x.id === args.userId);
+      if (m) m.timeout_until = null;
+      return null;
+    }
     case "set_channel_banner": {
       const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
       const ref = args.data ? `mock${Date.now()}@mock` : null;
@@ -985,7 +1045,7 @@ async function mockInvoke(cmd, args = {}) {
     case "create_role": {
       const roles = mock.servers[args.serverId].roles;
       const id = crypto.randomUUID();
-      roles.push({ id, name: args.name.trim(), color: args.color, position: roles.length + 2, permissions: args.permissions, self_assignable: Boolean(args.selfAssignable), hoist: Boolean(args.hoist), tag: args.tag || null });
+      roles.push({ id, name: args.name.trim(), color: args.color, position: roles.length + 2, permissions: args.permissions, self_assignable: Boolean(args.selfAssignable), hoist: Boolean(args.hoist), tag: args.tag || null, mentionable: Boolean(args.mentionable) });
       return id;
     }
     case "delete_role":
@@ -1016,6 +1076,7 @@ function el(tag, className, text) {
 }
 
 const ICONS = {
+  phone: "M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z",
   speaker: "M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z",
   mic: "M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z",
   micOff: "M19 11h-1.7c0 .7-.2 1.4-.4 2l1.2 1.2c.6-.9.9-2 .9-3.2zm-4 .2V5a3 3 0 0 0-5.9-.8L15 10.1v1.1zM4.3 3 3 4.3l6 6V11a3 3 0 0 0 4.2 2.8l1.6 1.6A5 5 0 0 1 7 11H5a7 7 0 0 0 6 6.9V21h2v-3.1c.9-.1 1.8-.4 2.5-.9l4.2 4.2 1.3-1.3z",
@@ -1395,7 +1456,7 @@ function applyRailDrop(layout, drag, target, zone) {
     if (at < 0) return layout;
     next.splice(zone === "after" ? at + 1 : at, 0, { type: "server", id: drag.id });
   }
-  return normalizeRailLayout(next, state.servers.map(s => s.id));
+  return normalizeRailLayout(next, railServers().map(s => s.id));
 }
 
 let railDrag = null;
@@ -1420,7 +1481,7 @@ function makeRailDropTarget(node, target) {
     const zone = node.dataset.drop;
     delete node.dataset.drop;
     if (!railDrag || !zone) return;
-    const layout = applyRailDrop(normalizeRailLayout(loadRailLayout(), state.servers.map(s => s.id)), railDrag, target, zone);
+    const layout = applyRailDrop(normalizeRailLayout(loadRailLayout(), railServers().map(s => s.id)), railDrag, target, zone);
     saveRailLayout(layout);
     railDrag = null;
     renderServerRail();
@@ -1439,6 +1500,14 @@ function serverUnreadCount(serverId) {
 function countBadge(count) {
   const badge = el("span", "count-badge", count > 99 ? "99+" : String(count));
   return badge;
+}
+
+function railServers() {
+  return state.servers.filter(s => !s.group);
+}
+
+function isGroupServer(serverId) {
+  return state.servers.some(s => s.id === serverId && s.group);
 }
 
 function railServerButton(server, folderId) {
@@ -1469,8 +1538,12 @@ function railServerButton(server, folderId) {
   return wrap;
 }
 
+function plainServer() {
+  return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
+}
+
 function paintRailContext() {
-  const server = state.view === "server" ? state.currentServer : null;
+  const server = plainServer();
   const box = $("rail-context");
   box.classList.toggle("on", Boolean(server));
   if (!server) return;
@@ -1484,7 +1557,8 @@ function renderServerRail() {
   paintRailContext();
   const list = $("server-list");
   list.innerHTML = "";
-  const dmCount = [...unread.dms.values()].reduce((a, b) => a + b, 0);
+  const dmCount = [...unread.dms.values()].reduce((a, b) => a + b, 0)
+    + state.servers.filter(s => s.group).reduce((n, s) => n + serverUnreadCount(s.id), 0);
   $("home-btn").classList.toggle("unread", dmCount > 0);
   $("home-badge")?.remove();
   if (dmCount) {
@@ -1492,8 +1566,8 @@ function renderServerRail() {
     badge.id = "home-badge";
     $("home-btn").appendChild(badge);
   }
-  const byId = new Map(state.servers.map(s => [s.id, s]));
-  const layout = normalizeRailLayout(loadRailLayout(), state.servers.map(s => s.id));
+  const byId = new Map(railServers().map(s => [s.id, s]));
+  const layout = normalizeRailLayout(loadRailLayout(), railServers().map(s => s.id));
   saveRailLayout(layout);
   for (const item of layout) {
     if (item.type === "server") {
@@ -1622,7 +1696,11 @@ function openLeaveServer(serverId) {
   const server = state.servers.find(s => s.id === serverId);
   if (!server) return;
   leavingServerId = serverId;
-  $("leave-server-title").textContent = `Leave '${server.name}'`;
+  $("leave-server-title").textContent = server.group ? "Leave this group?" : `Leave '${server.name}'`;
+  $("leave-server-body").textContent = server.group
+    ? "You stop seeing its messages and calls, and your copy of the conversation is removed from this device."
+    : "Are you sure you want to leave? You will not be able to rejoin unless you are invited again, and your copy of its history is removed from this device.";
+  $("leave-server-go").textContent = server.group ? "Leave Group" : "Leave Server";
   showModal("modal-leave-server");
 }
 
@@ -1669,7 +1747,7 @@ async function leaveServerView(serverId) {
   }
   await refreshServers();
   if (!state.currentServer) {
-    if (state.servers.length) await selectServer(state.servers[0].id);
+    if (railServers().length) await selectServer(railServers()[0].id);
     else await enterDmMode();
   }
 }
@@ -1685,7 +1763,7 @@ async function confirmLeaveServer() {
     if (state.currentServer && state.currentServer.id === serverId) state.currentServer = null;
     await refreshServers();
     if (!state.currentServer) {
-      if (state.servers.length) await selectServer(state.servers[0].id);
+      if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
     }
   } catch (e) {
@@ -1751,8 +1829,12 @@ function renderChannels() {
   list.innerHTML = "";
   if (!state.currentServer) return;
   const server = state.currentServer;
-  $("server-name").textContent = server.name;
   checkVoiceRoster();
+  if (server.group) {
+    renderDmThreads();
+    return;
+  }
+  $("server-name").textContent = server.name;
   paintSidebarBanner();
   renderServerExtras(list, server);
 
@@ -1935,12 +2017,12 @@ function paintServerIcon(node, server) {
 
 function paintSidebarBanner() {
   const header = $("server-name-header");
-  if (state.view === "server" && state.currentServer) {
+  if (plainServer()) {
     $("server-settings-btn").title = canOpenServerSettings(state.currentServer) ? "Server Settings" : "Server Info";
     $("invite-btn").classList.toggle("hidden", !state.currentServer.can_invite);
   }
   const banner = $("sidebar-banner");
-  const server = state.view === "server" ? state.currentServer : null;
+  const server = plainServer();
   const ref = server ? server.banner : null;
   header.classList.toggle("has-banner", Boolean(server));
   header.classList.toggle("plain", Boolean(server) && !ref);
@@ -2134,9 +2216,19 @@ function appFocused() {
   return document.visibilityState === "visible" && document.hasFocus();
 }
 
+function myMentionNames() {
+  return state.user ? [state.user.username, state.user.display_name] : [];
+}
+
 function mentionsMe(content) {
   if (!state.user) return false;
-  return mentionsName(content, [state.user.username, state.user.display_name]);
+  return mentionsName(content, myMentionNames());
+}
+
+function messageMentionsMeIn(serverId, authorId, content) {
+  if (!state.user) return false;
+  const server = state.currentServer && state.currentServer.id === serverId ? state.currentServer : null;
+  return messageMentionsMe({ content, server, authorId, me: { id: state.user.id, names: myMentionNames() } });
 }
 
 function totalUnread() {
@@ -2218,10 +2310,12 @@ function onMessageCreated(msg) {
     unread.channelServer.set(msg.channel, msg.server);
     syncUnreadBadge();
     if (state.currentServer && state.currentServer.id === msg.server) renderChannels();
+    else if (dmListShown() && isGroupServer(msg.server)) renderDmThreads();
   }
   const level = levelForServer(notifyPrefs(), msg.server);
   const announcement = Boolean(msg.announcement);
-  if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned: mentionsMe(msg.content), announcement })) {
+  const mentioned = typeof msg.mentioned === "boolean" ? msg.mentioned : messageMentionsMeIn(msg.server, msg.author, msg.content);
+  if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement })) {
     const notice = messageNotice(msg, plainText);
     invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
     playSound("message");
@@ -2605,7 +2699,7 @@ function placePopup(popup, anchor, prefer = "above") {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "soundboard-pop", "member-menu", "msg-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -3083,6 +3177,7 @@ function renderMembers() {
       if (member.color) nameRow.style.color = `#${member.color}`;
       if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
+      if (timeoutActive(member.timeout_until)) nameRow.appendChild(timeoutBadge(member.timeout_until));
       if (sharers.has(member.id)) {
         const live = el("span", "live-badge", "LIVE");
         live.title = "Watch screen";
@@ -3183,7 +3278,20 @@ function renderMessages(messages) {
   if (state.threadRoot) renderThread();
 }
 
+function buildGroupIntro(server) {
+  const intro = el("div", "channel-intro");
+  const mark = el("div", "channel-intro-mark");
+  mark.appendChild(svgIcon("people", 34));
+  intro.appendChild(mark);
+  intro.appendChild(el("h2", null, server.name));
+  const others = server.members.filter(m => !state.user || m.id !== state.user.id).map(m => m.name);
+  const who = others.length > 1 ? `${others.slice(0, -1).join(", ")} and ${others[others.length - 1]}` : others[0] || "just you so far";
+  intro.appendChild(el("p", null, `This is the start of your group with ${who}. Messages and calls go straight between the people in it.`));
+  return intro;
+}
+
 function buildChannelIntro(channel) {
+  if (isGroupView()) return buildGroupIntro(state.currentServer);
   const intro = el("div", "channel-intro");
   if (channel.banner) {
     const banner = el("div", "channel-intro-banner");
@@ -3277,7 +3385,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   let inlineMark = pending && grouped;
   if (message.content) {
     if (!isBareImageLink(message.content)) {
-      const content = buildMessageContent(message.content);
+      const content = buildMessageContent(message.content, message.author_id);
       if (message.edited) appendAfterText(content, el("span", "edited", " (edited)"));
       if (inlineMark) appendAfterText(content, pendingMark());
       inlineMark = false;
@@ -3947,7 +4055,7 @@ async function sendThreadReply() {
     await invoke("send_message", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
-      content: encodeCustomEmojis(content),
+      content: encodeOutgoing(content),
       replyTo: state.threadRoot,
       previewUrl: await previewUrlFor(content),
     });
@@ -4088,6 +4196,14 @@ function inDmView() {
   return state.view === "dm" && Boolean(state.currentDm);
 }
 
+function isGroupView() {
+  return state.view === "server" && Boolean(state.currentServer && state.currentServer.group);
+}
+
+function dmListShown() {
+  return state.view === "dm" || isGroupView();
+}
+
 function messageActions(message, inThread = false) {
   const bar = el("div", "msg-actions");
   const add = (icon, title, onClick, cls = "") => {
@@ -4117,6 +4233,7 @@ function messageActions(message, inThread = false) {
     add("pencil", "Edit", () => startEditMessage(message.id));
   }
   if (!isOwnMessage(message)) add("eyeOff", "Hide for Me", () => setHidden(message.id, true));
+  if (message.content && !parseStickerToken(message.content)) add("more", "More", e => openMessageMenu(message, e.currentTarget));
   if (state.view === "server" && reportableIn(state.currentServer, message.author_id)) {
     add("flag", "Report Message", () => openReport({
       serverId: state.currentServer.id,
@@ -4145,7 +4262,7 @@ function startEditMessage(id) {
   const content = body.querySelector(".msg-content");
   const editor = el("div", "msg-editor");
   const input = el("textarea");
-  input.value = decodeCustomEmojis(message.content);
+  input.value = decodeRoleMentions(decodeCustomEmojis(message.content), currentRoles());
   input.rows = Math.min(8, input.value.split("\n").length);
   editor.appendChild(input);
   const hint = el("div", "msg-editor-hint");
@@ -4162,7 +4279,7 @@ function startEditMessage(id) {
       openDeleteMessage(message);
       return;
     }
-    if (encodeCustomEmojis(text) === message.content) return finish();
+    if (encodeOutgoing(text) === message.content) return finish();
     try {
       if (inDmView()) {
         await invoke("edit_dm", { userId: state.currentDm.user, messageId: message.id, content: encodeCustomEmojis(text) });
@@ -4173,7 +4290,7 @@ function startEditMessage(id) {
         serverId: state.currentServer.id,
         channelId: state.currentChannel.id,
         messageId: message.id,
-        content: encodeCustomEmojis(text),
+        content: encodeOutgoing(text),
       });
       await selectChannel(state.currentChannel);
     } catch (e) {
@@ -5156,13 +5273,20 @@ function syncRulesGate() {
   const gated = state.view === "server" && Boolean(state.currentServer && state.currentServer.needs_rules);
   $("rules-gate").classList.toggle("hidden", !gated);
   const where = { view: state.view, server: state.currentServer, channel: state.currentChannel };
-  const accessLock = gated ? null : channelAccessLock(where);
-  const lock = gated ? null : accessLock || composerLock(where);
+  const timedOut = gated ? null : timeoutLock(where);
+  const accessLock = gated || timedOut ? null : channelAccessLock(where);
+  const lock = gated ? null : timedOut || accessLock || composerLock(where);
   $("announce-gate").classList.toggle("hidden", !lock);
   if (lock) {
-    $("announce-gate-icon").replaceChildren(svgIcon(accessLock ? "lock" : "megaphone", 22));
+    $("announce-gate-icon").replaceChildren(svgIcon(timedOut ? "clock" : accessLock ? "lock" : "megaphone", 22));
     $("announce-gate-title").textContent = lock.title;
-    $("announce-gate-text").textContent = lock.text;
+    const text = $("announce-gate-text");
+    text.textContent = lock.text;
+    if (timedOut) {
+      const left = el("strong", "timeout-left", timeoutLeftText(timedOut.until));
+      left.dataset.until = String(timedOut.until);
+      text.append(left, document.createTextNode("."));
+    }
   }
   if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || Boolean(lock));
   if (gated && !rulesPrompted.has(state.currentServer.id)) {
@@ -5781,7 +5905,7 @@ function friendButton(person, onDone) {
 function invitableServers(userId) {
   const person = state.people.get(userId);
   const shared = new Set((person ? person.servers : []).map(s => s.id));
-  return state.servers.filter(s => s.can_invite && !shared.has(s.id));
+  return railServers().filter(s => s.can_invite && !shared.has(s.id));
 }
 
 async function openInviteMenu(person, anchor) {
@@ -5946,7 +6070,8 @@ function openMemberCard(member, anchor) {
   const name = $("mc-name");
   name.textContent = member.name;
   name.style.color = member.color ? `#${member.color}` : "";
-  name.parentElement.querySelectorAll(".role-tag, .bot-tag, .mc-pronouns").forEach(n => n.remove());
+  name.parentElement.querySelectorAll(".role-tag, .bot-tag, .mc-pronouns, .timeout-badge").forEach(n => n.remove());
+  if (timeoutActive(member.timeout_until)) name.after(timeoutBadge(member.timeout_until));
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) name.after(botTag());
   if (member.pronouns) name.after(el("span", "mc-pronouns", member.pronouns));
@@ -6001,6 +6126,10 @@ function openMemberCard(member, anchor) {
     action("serverAdd", "Invite", e => openInviteMenu(member, e.currentTarget));
   }
   action("person", "Full Profile", () => openFullProfile(member));
+  if (state.view === "server" && canTimeOut(state.currentServer, member, state.user && state.user.id)) {
+    const active = timeoutActive(currentTimeoutOf(member));
+    action("clock", timeoutActionLabel(member), () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
+  }
   $("mc-composer").classList.toggle("hidden", isMe || member.bot || isBlocked(member.id));
   const input = $("mc-input");
   input.value = "";
@@ -6092,8 +6221,8 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
-  ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "create_invites"]],
-  ["Members", ["kick_members", "ban_members", "mute_members"]],
+  ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "mention_everyone", "create_invites"]],
+  ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members"]],
 ];
 
 function roleForm(server, role, onClose) {
@@ -6266,6 +6395,18 @@ function roleForm(server, role, onClose) {
   separate.append(hoistCheck, el("span", null, "Show members with this role in their own group in the people list"));
   body.appendChild(separate);
 
+  const pingRow = el("label", "rf-mention");
+  const pingText = el("div", "rf-mention-text");
+  pingText.append(
+    el("div", "setting-title", "Allow anyone to mention this role"),
+    el("div", "setting-sub", "Off means only members allowed to mention everyone can notify the people holding it."),
+  );
+  const pingCheck = el("input", "switch");
+  pingCheck.type = "checkbox";
+  pingCheck.checked = role ? Boolean(role.mentionable) : false;
+  pingRow.append(pingText, pingCheck);
+  body.appendChild(pingRow);
+
   const actions = el("div", "form-actions");
   const save = el("button", "btn-primary btn-small", creating ? "Create Role" : "Save Role");
   save.onclick = async () => {
@@ -6286,6 +6427,7 @@ function roleForm(server, role, onClose) {
           tag: tagValue,
           selfAssignable: check.checked,
           hoist: hoistCheck.checked,
+          mentionable: pingCheck.checked,
         });
       } else {
         await invoke("update_role", {
@@ -6297,6 +6439,7 @@ function roleForm(server, role, onClose) {
           hoist: hoistCheck.checked,
           tag: tagValue,
           permissions,
+          mentionable: pingCheck.checked,
         });
       }
       if (bannerChange !== undefined && !(creating && bannerChange === null)) {
@@ -6372,7 +6515,7 @@ function renderStorageSettings() {
   $("keep-default").value = storageSettings.keep;
   const list = $("keep-servers");
   list.replaceChildren();
-  for (const server of state.servers) {
+  for (const server of railServers()) {
     const row = el("div", "keep-row");
     row.appendChild(el("span", "keep-name", server.name));
     const select = keepSelect(storageSettings.servers[server.id] || "", `Default (${KEEP_LABELS[storageSettings.keep]})`);
@@ -6381,7 +6524,7 @@ function renderStorageSettings() {
     row.appendChild(select);
     list.appendChild(row);
   }
-  if (!state.servers.length) list.appendChild(el("div", "manage-empty", "You are not in any servers yet"));
+  if (!railServers().length) list.appendChild(el("div", "manage-empty", "You are not in any servers yet"));
 }
 
 async function setHistoryWindow(serverId, keep) {
@@ -6544,13 +6687,17 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
-  if (inServer && member.id !== server.owner && (server.can_mute || server.can_kick || server.can_ban)) {
+  if (inServer && member.id !== server.owner && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out)) {
     sep();
     if (server.can_mute) {
       const sm = (server.server_muted || []).includes(member.id);
       const sd = (server.server_deafened || []).includes(member.id);
       item("Server Mute", () => moderateVoice(member, !sm, sd), "ctx-check" + (sm ? " checked" : ""));
       item("Server Deafen", () => moderateVoice(member, sm, !sd), "ctx-check" + (sd ? " checked" : ""));
+    }
+    if (canTimeOut(server, member, state.user && state.user.id)) {
+      const active = timeoutActive(currentTimeoutOf(member));
+      item(active ? "Remove timeout" : `Time out ${member.name}`, () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
     }
     if (server.can_kick) {
       item(`Kick ${member.name}`, async () => {
@@ -6630,6 +6777,110 @@ async function setUserVoice(userId, { volume, muted }) {
   }
 }
 
+function currentTimeoutOf(member) {
+  const fresh = currentServerMember(member.id);
+  return fresh ? fresh.timeout_until : member.timeout_until;
+}
+
+function timeoutBadge(untilMs) {
+  const badge = el("span", "timeout-badge");
+  badge.dataset.until = String(untilMs);
+  badge.title = timeoutBadgeTitle(untilMs);
+  badge.setAttribute("aria-label", badge.title);
+  badge.appendChild(svgIcon("clock", 12));
+  return badge;
+}
+
+setInterval(() => {
+  for (const node of document.querySelectorAll(".timeout-badge[data-until]")) {
+    const until = Number(node.dataset.until);
+    if (!timeoutActive(until)) node.remove();
+    else node.title = timeoutBadgeTitle(until);
+  }
+  const left = document.querySelector(".timeout-left[data-until]");
+  if (left) {
+    const until = Number(left.dataset.until);
+    if (timeoutActive(until)) left.textContent = timeoutLeftText(until);
+    else syncRulesGate();
+  }
+}, 1000);
+
+let timeoutTarget = null;
+
+function openTimeoutPicker(member) {
+  const server = state.currentServer;
+  if (!server || !canTimeOut(server, member, state.user && state.user.id)) return;
+  closeFloating();
+  timeoutTarget = { serverId: server.id, member, seconds: TIMEOUT_CHOICES[1].seconds };
+  $("timeout-title").textContent = `Time out ${member.name}`;
+  $("timeout-custom").value = "";
+  renderTimeoutChoices();
+  showModal("modal-timeout");
+}
+
+function renderTimeoutChoices() {
+  const grid = $("timeout-choices");
+  grid.replaceChildren();
+  const raw = $("timeout-custom").value.trim();
+  const custom = customTimeoutSeconds(raw);
+  for (const choice of TIMEOUT_CHOICES) {
+    const picked = !raw && Boolean(timeoutTarget) && timeoutTarget.seconds === choice.seconds;
+    const btn = el("button", "timeout-choice" + (picked ? " active" : ""), choice.label);
+    btn.type = "button";
+    btn.setAttribute("role", "radio");
+    btn.setAttribute("aria-checked", String(picked));
+    btn.onclick = () => {
+      if (!timeoutTarget) return;
+      timeoutTarget.seconds = choice.seconds;
+      $("timeout-custom").value = "";
+      renderTimeoutChoices();
+    };
+    grid.appendChild(btn);
+  }
+  $("timeout-go").disabled = !timeoutTarget || !(custom || (!raw && timeoutTarget.seconds));
+}
+
+async function confirmTimeout() {
+  if (!timeoutTarget) return;
+  const { serverId, member } = timeoutTarget;
+  const raw = $("timeout-custom").value.trim();
+  const seconds = raw ? customTimeoutSeconds(raw) : timeoutTarget.seconds;
+  if (!seconds) return;
+  hideModals();
+  timeoutTarget = null;
+  try {
+    await invoke("time_out_member", { serverId, userId: member.id, seconds });
+    await refreshCurrentServer();
+    toast(timeoutSummary(member.name, seconds));
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function clearMemberTimeout(member) {
+  const server = state.currentServer;
+  if (!server) return;
+  try {
+    await invoke("clear_timeout", { serverId: server.id, userId: member.id });
+    await refreshCurrentServer();
+    toast(`Removed the timeout on ${member.name}`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireTimeoutModal() {
+  $("timeout-cancel").onclick = () => {
+    hideModals();
+    timeoutTarget = null;
+  };
+  $("timeout-go").onclick = confirmTimeout;
+  $("timeout-custom").oninput = renderTimeoutChoices;
+  $("timeout-custom").onkeydown = e => {
+    if (e.key === "Enter" && !$("timeout-go").disabled) confirmTimeout();
+  };
+}
+
 async function moderateVoice(member, muted, deafened) {
   try {
     await invoke("moderate_voice", { serverId: state.currentServer.id, userId: member.id, muted, deafened });
@@ -6664,7 +6915,7 @@ function openReport(target) {
   preview.classList.toggle("hidden", !target.excerpt);
   if (target.excerpt) {
     preview.appendChild(el("div", "msg-author", target.name));
-    preview.appendChild(buildMessageContent(target.excerpt));
+    preview.appendChild(buildMessageContent(target.excerpt, target.userId));
   }
   showModal("modal-report");
 }
@@ -6728,7 +6979,7 @@ async function renderReportSettings(server) {
     card.appendChild(head);
     if (report.excerpt) {
       const quote = el("div", "report-excerpt");
-      quote.appendChild(buildMessageContent(report.excerpt));
+      quote.appendChild(buildMessageContent(report.excerpt, report.reported));
       card.appendChild(quote);
     }
     if (report.note) card.appendChild(el("div", "report-note", report.note));
@@ -6945,8 +7196,17 @@ function decodeCustomEmojis(text) {
   return String(text || "").replace(EMOJI_TOKEN_RE, ":$1:");
 }
 
+function currentRoles() {
+  return (state.currentServer && state.currentServer.roles) || [];
+}
+
 function plainText(text) {
-  return stripMarkdown(decodeCustomEmojis(text).replace(/<:[^>\s]*$/, ""));
+  return stripMarkdown(decodeRoleMentions(decodeCustomEmojis(text), currentRoles()).replace(/<:[^>\s]*$/, ""));
+}
+
+function encodeOutgoing(text) {
+  const members = state.currentServer ? state.currentServer.members.map(m => m.name) : [];
+  return encodeRoleMentions(encodeCustomEmojis(text), currentRoles(), members);
 }
 
 function isEmojiOnly(text) {
@@ -7689,24 +7949,39 @@ async function toggleSoundboardPop() {
   placePopup(pop, $("vp-soundboard"), "below");
 }
 
-function mentionCandidates() {
+const EVERYONE_CANDIDATES = [
+  { id: "everyone", name: "everyone", special: "Notify everyone in this server", rank: 2 },
+  { id: "here", name: "here", special: "Notify everyone online", rank: 2 },
+];
+
+function mentionPeople() {
   if (state.view === "dm" && state.currentDm) {
     const me = state.user ? [{ id: state.user.id, name: state.user.display_name || state.user.username }] : [];
     return [{ id: state.currentDm.user, name: state.currentDm.name }, ...me];
   }
   if (!state.currentServer) return [];
-  const members = state.currentServer.members.map(m => ({ id: m.id, name: m.name, presence: m.presence }));
-  return [
-    ...members,
-    { id: "everyone", name: "everyone", special: "Notify everyone in this server" },
-    { id: "here", name: "here", special: "Notify everyone online" },
-  ];
+  return state.currentServer.members.map(m => ({ id: m.id, name: m.name, presence: m.presence, rank: 0 }));
+}
+
+function mentionNames() {
+  const people = mentionPeople().map(c => c.name);
+  return state.view === "dm" ? people : [...people, ...EVERYONE_MENTIONS];
+}
+
+function mentionCandidates() {
+  const people = mentionPeople();
+  if (state.view === "dm" || !state.currentServer || !state.user) return people;
+  const server = state.currentServer;
+  const roles = mentionableRoles(server, state.user.id)
+    .map(r => ({ id: r.id, name: r.name, color: r.color, role: true, special: `Notify members with ${r.name}`, rank: 1 }));
+  const everyone = memberCanMentionEveryone(server, state.user.id) ? EVERYONE_CANDIDATES : [];
+  return [...people, ...roles, ...everyone];
 }
 
 let mentionRegexCache = { key: "", re: null };
 
 function mentionRegex() {
-  const names = mentionCandidates().map(c => c.name).filter(Boolean);
+  const names = mentionNames().filter(Boolean);
   const key = names.join("\u0000");
   if (mentionRegexCache.key !== key) {
     const escaped = [...new Set(names)]
@@ -7720,20 +7995,61 @@ function mentionRegex() {
   return mentionRegexCache.re;
 }
 
+const renderingMessage = { author: null };
+
+function senderMayMentionEveryone() {
+  return state.view === "server" && memberCanMentionEveryone(state.currentServer, renderingMessage.author);
+}
+
+function roleMentionPill(role, forMe) {
+  const pill = el("span", "mention role" + (forMe ? " me" : ""), `@${role.name}`);
+  if (role.color) {
+    pill.style.setProperty("--role-color", `#${role.color}`);
+    pill.style.setProperty("--role-tint", roleTint(role.color));
+  }
+  return pill;
+}
+
+function roleTint(hex) {
+  const n = parseInt(hex, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, .18)`;
+}
+
+function appendRoleMention(div, roleId) {
+  const server = state.view === "server" ? state.currentServer : null;
+  const role = roleById(server, roleId);
+  if (!role || !roleMentionAllowed(server, renderingMessage.author, role)) {
+    div.appendChild(document.createTextNode(role ? `@${role.name}` : UNKNOWN_ROLE_MENTION));
+    return;
+  }
+  const mine = state.user ? (serverMember(server, state.user.id) || {}).roles || [] : [];
+  div.appendChild(roleMentionPill(role, mine.includes(role.id)));
+}
+
 function appendTextWithMentions(div, text) {
+  for (const part of splitRoleMentions(text)) {
+    if (part.role !== undefined) appendRoleMention(div, part.role);
+    else appendNameMentions(div, part.text);
+  }
+}
+
+function appendNameMentions(div, text) {
   const re = mentionRegex();
   if (!re) {
     div.appendChild(document.createTextNode(text));
     return;
   }
-  const myNames = state.user ? [state.user.username, state.user.display_name].filter(Boolean).map(n => n.toLowerCase()) : [];
+  const myNames = myMentionNames().filter(Boolean).map(n => n.toLowerCase());
+  const everyoneAllowed = senderMayMentionEveryone();
   re.lastIndex = 0;
   let last = 0;
   let m;
   while ((m = re.exec(text))) {
-    if (m.index > last) div.appendChild(document.createTextNode(text.slice(last, m.index)));
     const name = m[1].toLowerCase();
-    const forMe = myNames.includes(name) || name === "everyone" || name === "here";
+    const everyone = isEveryoneMention(name);
+    if (everyone && !everyoneAllowed) continue;
+    if (m.index > last) div.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const forMe = myNames.includes(name) || everyone;
     div.appendChild(el("span", "mention" + (forMe ? " me" : ""), m[0]));
     last = m.index + m[0].length;
   }
@@ -7748,7 +8064,7 @@ function mentionSuggestions(query) {
     .sort((a, b) => {
       const ap = a.name.toLowerCase().startsWith(query) ? 0 : 1;
       const bp = b.name.toLowerCase().startsWith(query) ? 0 : 1;
-      return ap - bp || (a.special ? 1 : 0) - (b.special ? 1 : 0) || a.name.localeCompare(b.name);
+      return ap - bp || (a.rank || 0) - (b.rank || 0) || a.name.localeCompare(b.name);
     })
     .slice(0, SUGGEST_LIMIT)
     .map(c => ({ ...c, kind: "mention" }));
@@ -7772,7 +8088,8 @@ function suggestionsFor(token, input) {
 function suggestHeading(token) {
   if (token.kind === "command") return "Commands";
   if (token.kind === "emoji") return `Emoji matching :${token.query}`;
-  return token.query ? `Members matching @${token.query}` : "Members";
+  const what = state.view === "dm" ? "Members" : "Members and roles";
+  return token.query ? `${what} matching @${token.query}` : what;
 }
 
 function commandHint(item) {
@@ -7794,6 +8111,8 @@ function suggestionRow(item) {
     row.append(el("span", "mention-at", "/"), el("span", "mention-name", `/${item.name}`));
     if (item.args) row.appendChild(el("span", "suggest-args", item.args));
     row.appendChild(el("span", "mention-hint", commandHint(item)));
+  } else if (item.role) {
+    row.append(el("span", "mention-at", "@"), roleMentionPill(item, false), el("span", "mention-hint", item.special));
   } else if (item.special) {
     row.append(el("span", "mention-at", "@"), el("span", "mention-name", `@${item.name}`), el("span", "mention-hint", item.special));
   } else {
@@ -7898,7 +8217,7 @@ function appendAfterText(content, mark) {
   else content.appendChild(mark);
 }
 
-function buildMessageContent(text) {
+function buildMessageContent(text, authorId = null) {
   const div = el("div", "msg-content");
   const sticker = parseStickerToken(text);
   if (sticker) {
@@ -7910,11 +8229,144 @@ function buildMessageContent(text) {
     div.appendChild(inviteCard(text));
     return div;
   }
+  if (isBareMessageLink(text)) {
+    div.appendChild(jumpCard(parseMessageLink(text)));
+    return div;
+  }
+  renderingMessage.author = authorId;
   renderBlocks(div, parseMessage(text));
+  renderingMessage.author = null;
   if (isEmojiOnly(text)) div.classList.add("jumbo");
   const invite = inviteCard(text);
   if (invite) div.appendChild(invite);
+  const linked = parseMessageLink(text);
+  if (linked) div.appendChild(jumpCard(linked));
   return div;
+}
+
+function jumpCard(target) {
+  const card = el("div", "jump-card");
+  card.appendChild(svgIcon("link", 18));
+  const known = state.servers.find(s => s.id === target.server);
+  card.appendChild(el("span", "jump-card-text", known ? `Message in ${known.name}` : "Message in a server you are not in"));
+  const go = el("button", "btn-primary btn-small", "Jump");
+  go.disabled = !known;
+  go.onclick = () => openMessageLink(target);
+  card.appendChild(go);
+  return card;
+}
+
+async function openMessageLink(target) {
+  if (!state.currentServer || state.currentServer.id !== target.server) {
+    if (!state.servers.some(s => s.id === target.server)) {
+      toast("That message is in a server you are not in");
+      return;
+    }
+    await selectServer(target.server);
+  }
+  const channel = state.currentServer && state.currentServer.channels.find(c => c.id === target.channel);
+  if (!channel) {
+    toast("That channel is gone");
+    return;
+  }
+  if (!state.currentChannel || state.currentChannel.id !== channel.id) await selectChannel(channel);
+  await jumpToMessage(target.message);
+}
+
+function copyText(text, done) {
+  navigator.clipboard.writeText(text).then(() => toast(done), () => toast("Could not copy"));
+}
+
+function openMessageMenu(message, anchor) {
+  closeFloating();
+  const menu = $("msg-menu");
+  menu.replaceChildren();
+  const { item } = contextMenuBuilder(menu);
+  if (message.content) item("Copy Text", () => copyText(plainText(message.content), "Text copied"));
+  if (state.view === "server" && state.currentChannel && !state.currentServer.group) {
+    item("Copy Message Link", () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied"));
+  }
+  if (message.content) item("Forward", () => openForward(message));
+  const r = anchor.getBoundingClientRect();
+  placeMenuAt(menu, r.left, r.bottom + 4);
+}
+
+let forwarding = null;
+
+async function openForward(message) {
+  forwarding = message;
+  const preview = $("forward-preview");
+  preview.replaceChildren();
+  preview.appendChild(makeAvatar(message.author_id, message.author_name));
+  const body = el("div", "msg-body");
+  const head = el("div", "msg-head");
+  head.appendChild(el("span", "msg-author", message.author_name));
+  head.appendChild(el("span", "msg-time", formatTime(message.created_at)));
+  body.appendChild(head);
+  body.appendChild(el("div", "msg-content", plainText(message.content)));
+  preview.appendChild(body);
+  $("forward-files-note").classList.toggle("hidden", !(message.attachments || []).some(a => a.filename));
+  $("forward-search").value = "";
+  showModal("modal-forward");
+  $("forward-search").focus();
+  const views = [];
+  for (const summary of state.servers) {
+    try {
+      views.push(await invoke("get_server", { serverId: summary.id }));
+    } catch {
+      continue;
+    }
+  }
+  let dms = [];
+  try {
+    dms = await invoke("list_dm_threads");
+  } catch {}
+  forwarding.targets = { servers: views.map(s => ({ ...s, channels: s.channels.map(c => ({ ...c, name: channelPlainName(c) })) })), dms };
+  renderForwardList();
+}
+
+function renderForwardList() {
+  const list = $("forward-list");
+  list.innerHTML = "";
+  if (!forwarding || !forwarding.targets) {
+    list.appendChild(el("div", "dm-list-empty", "Loading places to send to"));
+    return;
+  }
+  const targets = forwardTargets({ ...forwarding.targets, query: $("forward-search").value });
+  for (const target of targets) {
+    const row = el("button", "person-row forward-row");
+    if (target.kind === "dm") row.appendChild(avatarWithPresence(target.name, target.user));
+    else if (target.kind === "group") row.appendChild(groupAvatar());
+    else row.appendChild(el("span", "server-chip", initials(target.sub)));
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", target.name));
+    meta.appendChild(el("div", "dm-preview", target.sub));
+    row.appendChild(meta);
+    row.onclick = () => sendForward(target);
+    list.appendChild(row);
+  }
+  if (!targets.length) list.appendChild(el("div", "dm-list-empty", "Nowhere matches that name."));
+}
+
+function forwardOrigin() {
+  if (inDmView()) return null;
+  if (isGroupView()) return state.currentServer.name;
+  return state.currentChannel ? `#${channelPlainName(state.currentChannel)}` : null;
+}
+
+async function sendForward(target) {
+  const message = forwarding;
+  if (!message) return;
+  const content = forwardBody({ content: message.content, author: message.author_name, where: forwardOrigin() });
+  try {
+    if (target.kind === "dm") await invoke("send_dm", { userId: target.user, content, replyTo: null });
+    else await invoke("send_message", { serverId: target.server, channelId: target.channel, content, replyTo: null, previewUrl: null });
+    hideModals();
+    forwarding = null;
+    toast(`Forwarded to ${target.name}`);
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function imageSourceFromHtml(html) {
@@ -8222,12 +8674,15 @@ function renderVoicePanel() {
   panel.classList.toggle("hidden", !(state.voiceChannelId && vs));
   if (!state.voiceChannelId || !vs) return;
 
-  $("vp-where").textContent = `${vs.channelName} / ${vs.name}`;
+  const call = vs.call ? state.call : null;
+  $("vp-status-text").textContent = call && call.state !== "active" ? "Calling" : "Voice Connected";
+  $("vp-where").textContent = call ? `Call with ${vs.name}` : `${vs.channelName} / ${vs.name}`;
+  $("vp-camera").classList.toggle("hidden", Boolean(call));
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
     : null;
   const gameBtn = $("vp-game-share");
-  gameBtn.classList.toggle("hidden", !playing);
+  gameBtn.classList.toggle("hidden", !playing || Boolean(call));
   if (playing) {
     gameBtn.replaceChildren(svgIcon("screen", 16), el("span", null, `Share ${playing}`));
     gameBtn.title = `Stream ${playing} to your voice channel at 60 fps`;
@@ -8269,6 +8724,7 @@ function renderVoicePanel() {
 
 async function disconnectVoice() {
   if (!state.voiceServer) return;
+  if (state.voiceServer.call) return endDmCall();
   try {
     await invoke("set_voice_channel", { serverId: state.voiceServer.id, channelId: null });
     state.voiceChannelId = null;
@@ -8382,17 +8838,22 @@ async function markMobileApp() {
 function setViewMode(mode) {
   state.view = mode;
   const dm = mode === "dm";
+  const group = mode === "server" && Boolean(state.currentServer && state.currentServer.group);
+  const home = dm || group;
+  $("dm-call-btn").classList.toggle("hidden", !home);
+  $("group-add-btn").classList.toggle("hidden", !home);
+  $("group-leave-btn").classList.toggle("hidden", !group);
   $("members-btn").classList.toggle("hidden", dm);
   $("member-list").classList.toggle("hidden", dm);
-  $("invite-btn").classList.toggle("hidden", dm);
-  $("server-settings-btn").classList.toggle("hidden", dm);
-  $("server-name").classList.toggle("hidden", dm);
-  if (dm) paintSidebarBanner();
-  $("dm-search").classList.toggle("hidden", !dm);
+  $("invite-btn").classList.toggle("hidden", home);
+  $("server-settings-btn").classList.toggle("hidden", home);
+  $("server-name").classList.toggle("hidden", home);
+  if (home) paintSidebarBanner();
+  $("dm-search").classList.toggle("hidden", !home);
   paintRailContext();
   syncAttachAccess();
-  $("home-btn").classList.toggle("active", dm);
-  $("app").classList.toggle("dm-mode", dm);
+  $("home-btn").classList.toggle("active", home);
+  $("app").classList.toggle("dm-mode", home);
   if (dm) $("cam-grid").classList.add("hidden");
   if (dm) syncAwaitedBar();
   if (!dm) {
@@ -8425,6 +8886,111 @@ async function selectServer(serverId) {
   renderServerRail();
   renderMembers();
   await selectChannel(firstText || null);
+  if (state.currentServer.group) paintGroupHeader();
+}
+
+function groupVoiceChannel(server) {
+  return (server.channels || []).find(c => c.kind === "voice") || null;
+}
+
+function paintGroupHeader() {
+  const server = state.currentServer;
+  const count = server.members.length;
+  $("chat-hash").replaceChildren(svgIcon("people", 22));
+  $("channel-name").textContent = server.name;
+  $("channel-topic").textContent = `${count} ${count === 1 ? "member" : "members"}`;
+  $("message-input").placeholder = `Message ${server.name}`;
+  $("group-add-btn").title = "Add People";
+  $("group-leave-btn").title = "Leave Group";
+  renderCallButton();
+}
+
+function toggleGroupCall() {
+  const channel = groupVoiceChannel(state.currentServer);
+  if (!channel) return;
+  if (channel.user_limit && channel.voice_users.length >= channel.user_limit && state.voiceChannelId !== channel.id) {
+    toast("That call is full");
+    return;
+  }
+  toggleVoice(channel);
+}
+
+let groupModal = { server: null, picked: new Set() };
+
+function openGroupModal(serverId, preselect = []) {
+  groupModal = { server: serverId, picked: new Set(preselect) };
+  $("group-modal-title").textContent = serverId ? "Add People" : "New Group";
+  $("group-modal-sub").textContent = serverId
+    ? "They join this group and see its messages from now on."
+    : "Pick the people for this group. Everyone in it can message, call and add others.";
+  $("group-go").textContent = serverId ? "Add" : "Create Group";
+  $("group-search").value = "";
+  renderGroupList();
+  showModal("modal-group");
+  $("group-search").focus();
+}
+
+function groupMemberIds(serverId) {
+  const server = state.currentServer && state.currentServer.id === serverId ? state.currentServer : null;
+  return new Set(server ? server.members.map(m => m.id) : []);
+}
+
+function renderGroupList() {
+  const list = $("group-list");
+  list.innerHTML = "";
+  const inside = groupMemberIds(groupModal.server);
+  const query = $("group-search").value.trim().toLowerCase();
+  const people = [...state.people.values()]
+    .filter(p => !query || p.name.toLowerCase().includes(query))
+    .sort((a, b) => (a.presence === "offline") - (b.presence === "offline") || a.name.localeCompare(b.name));
+  for (const person of people) {
+    const already = inside.has(person.id);
+    const picked = groupModal.picked.has(person.id);
+    const row = el("button", "person-row" + (picked ? " picked" : "") + (already ? " in-group" : ""));
+    row.appendChild(avatarWithPresence(person.name, person.id));
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", person.name));
+    meta.appendChild(el("div", "dm-preview", already ? "Already in this group" : person.servers.map(s => s.name).join(", ")));
+    row.appendChild(meta);
+    const pick = el("span", "pick");
+    pick.appendChild(svgIcon("check", 14));
+    row.appendChild(pick);
+    row.disabled = already;
+    row.onclick = () => {
+      if (picked) groupModal.picked.delete(person.id);
+      else groupModal.picked.add(person.id);
+      renderGroupList();
+    };
+    list.appendChild(row);
+  }
+  if (!people.length) {
+    list.appendChild(el("div", "dm-list-empty", state.people.size ? "Nobody matches that name." : "Join or create a server first. You can add anyone you share a server with."));
+  }
+  const n = groupModal.picked.size;
+  $("group-go").disabled = n === 0;
+  $("group-go").textContent = groupModal.server ? (n > 1 ? `Add ${n}` : "Add") : "Create Group";
+}
+
+async function confirmGroupModal() {
+  const ids = [...groupModal.picked];
+  if (!ids.length) return;
+  try {
+    if (groupModal.server) {
+      await invoke("add_group_members", { serverId: groupModal.server, userIds: ids });
+      hideModals();
+      await refreshServers();
+      await selectServer(groupModal.server);
+      toast(ids.length === 1 ? "Added to the group" : `Added ${ids.length} people to the group`);
+    } else {
+      const summary = await invoke("create_group_dm", { userIds: ids });
+      hideModals();
+      await refreshServers();
+      await refreshPeople();
+      await selectServer(summary.id);
+    }
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 async function refreshPeople() {
@@ -8474,6 +9040,8 @@ async function enterDmMode() {
   const threads = await renderDmThreads();
   if (state.currentDm) {
     await selectDm(state.currentDm.user, state.currentDm.name);
+  } else if (threads.length && threads[0].kind === "group") {
+    await selectServer(threads[0].user);
   } else if (threads.length) {
     await selectDm(threads[0].user, threads[0].name);
   } else {
@@ -8491,7 +9059,7 @@ function renderDmHome() {
   $("message-input").placeholder = "Pick a conversation to start chatting";
   const box = $("messages");
   box.innerHTML = "";
-  if (!state.servers.length) {
+  if (!railServers().length) {
     box.appendChild(buildWelcomeHome());
     return;
   }
@@ -8534,8 +9102,8 @@ async function renderDmThreads() {
   state.dmThreads = threads;
   const query = $("dm-search").value.trim().toLowerCase();
   const matches = threads.filter(t => !query || t.name.toLowerCase().includes(query));
-  const shown = matches.filter(t => t.kind === "inbox");
-  const requests = matches.filter(t => t.kind !== "inbox");
+  const shown = matches.filter(t => t.kind === "inbox" || t.kind === "group");
+  const requests = matches.filter(t => t.kind !== "inbox" && t.kind !== "group");
 
   const group = el("div", "channel-group dm-group");
   group.appendChild(el("span", null, "Direct Messages"));
@@ -8608,6 +9176,10 @@ async function renderDmThreads() {
       list.appendChild(el("div", "channel-group dm-group dm-requests-head", thread.header));
       continue;
     }
+    if (thread.kind === "group") {
+      list.appendChild(groupThreadRow(thread));
+      continue;
+    }
     const row = el("div", "channel dm-thread");
     if (state.currentDm && thread.user === state.currentDm.user) row.classList.add("active");
     if (unread.dms.get(thread.user)) row.classList.add("unread");
@@ -8649,6 +9221,47 @@ async function renderDmThreads() {
   return threads;
 }
 
+function groupAvatar(className = "avatar group-avatar") {
+  const node = el("div", className);
+  node.appendChild(svgIcon("people", 18));
+  return node;
+}
+
+function groupThreadRow(thread) {
+  const row = el("div", "channel dm-thread");
+  if (isGroupView() && thread.user === state.currentServer.id) row.classList.add("active");
+  if (serverUnreadCount(thread.user)) row.classList.add("unread");
+  row.appendChild(groupAvatar());
+  const meta = el("div", "dm-meta");
+  const top = el("div", "dm-top");
+  top.appendChild(el("span", "dm-name", thread.name));
+  top.appendChild(el("span", "dm-time", formatShortTime(thread.last_at)));
+  meta.appendChild(top);
+  meta.appendChild(el("div", "dm-preview", plainText(thread.last_message) || "No messages yet"));
+  row.appendChild(meta);
+  row.onclick = () => selectServer(thread.user);
+  row.oncontextmenu = e => {
+    e.preventDefault();
+    openGroupMenu(thread, e.clientX, e.clientY);
+  };
+  return row;
+}
+
+function openGroupMenu(thread, x, y) {
+  closeFloating();
+  const menu = $("member-menu");
+  menu.replaceChildren(el("div", "ctx-title", thread.name));
+  const { item, sep } = contextMenuBuilder(menu);
+  item("Open", () => selectServer(thread.user));
+  item("Add People", async () => {
+    if (!isGroupView() || state.currentServer.id !== thread.user) await selectServer(thread.user);
+    openGroupModal(thread.user);
+  });
+  sep();
+  item("Leave Group", () => openLeaveServer(thread.user), "danger");
+  placeMenuAt(menu, x, y);
+}
+
 async function selectDm(userId, name) {
   if (!state.currentDm || state.currentDm.user !== userId) cancelReply();
   state.currentDm = { user: userId, name };
@@ -8659,11 +9272,116 @@ async function selectDm(userId, name) {
   renderDmHeader(userId, name);
   $("message-input").placeholder = `Message @${name}`;
   $("dm-profile-btn").classList.remove("hidden");
+  renderCallButton();
   const threads = await renderDmThreads();
   renderDmRequestBar(threads.find(t => t.user === userId) || null);
   const messages = await invoke("get_dm_messages", { userId });
   renderMessages(messages.map(dmToRenderable));
   renderTypingStrip();
+}
+
+function renderCallButton() {
+  const btn = $("dm-call-btn");
+  if (isGroupView()) {
+    const channel = groupVoiceChannel(state.currentServer);
+    const joined = Boolean(channel) && state.voiceChannelId === channel.id && state.voiceServer && state.voiceServer.id === state.currentServer.id;
+    btn.classList.toggle("hidden", !channel);
+    btn.replaceChildren(svgIcon(joined ? "hangup" : "phone", 20));
+    btn.title = joined ? "Leave Call" : "Start Group Call";
+    btn.classList.toggle("active", joined);
+    return;
+  }
+  const dm = inDmView();
+  btn.classList.toggle("hidden", !dm);
+  if (!dm) return;
+  $("group-add-btn").title = "Start a Group";
+  const talking = state.call && state.call.user === state.currentDm.user;
+  btn.replaceChildren(svgIcon(talking ? "hangup" : "phone", 20));
+  btn.title = talking ? "End Call" : "Start Voice Call";
+  btn.classList.toggle("active", Boolean(talking));
+}
+
+let callRing = null;
+
+function stopCallRing() {
+  if (callRing) clearInterval(callRing);
+  callRing = null;
+}
+
+function callPanel(view) {
+  state.voiceChannelId = view ? "call" : null;
+  state.voiceServer = view ? { id: null, call: view.user, name: view.name, channelName: "Call" } : null;
+  renderVoicePanel();
+  renderCallButton();
+}
+
+async function startDmCall() {
+  if (!inDmView()) return;
+  if (state.call && state.call.user === state.currentDm.user) return endDmCall();
+  try {
+    onDmCall(await invoke("start_dm_call", { userId: state.currentDm.user }));
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function answerDmCall(accept) {
+  try {
+    await invoke("answer_dm_call", { accept });
+    if (!accept) onDmCall({ ...(state.call || {}), state: "ended", reason: "declined" });
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function endDmCall() {
+  try {
+    await invoke("end_dm_call");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function callEndedLine(view) {
+  const name = view.name || "They";
+  switch (view.reason) {
+    case "declined": return `${name} declined the call`;
+    case "unanswered": return `${name} did not answer`;
+    case "missed": return `Missed call from ${name}`;
+    case "failed": return "The call could not connect";
+    default: return "Call ended";
+  }
+}
+
+function onDmCall(view) {
+  const wasActive = state.call && state.call.state === "active";
+  if (view.state === "ended") {
+    state.call = null;
+    stopCallRing();
+    if (!$("modal-call").classList.contains("hidden")) hideModals();
+    clearSpeaking();
+    callPanel(null);
+    toast(callEndedLine(view));
+    if (wasActive) playSound("leave");
+    return;
+  }
+  state.call = view;
+  if (view.state === "ringing" && !view.outgoing) {
+    const avatar = $("call-avatar");
+    avatar.replaceChildren(makeAvatar(view.user, view.name, "avatar avatar-xl"));
+    $("call-name").textContent = view.name;
+    showModal("modal-call");
+    stopCallRing();
+    playSound("dm");
+    callRing = setInterval(() => playSound("dm"), 3000);
+    return;
+  }
+  if (view.state === "active") {
+    stopCallRing();
+    if (!$("modal-call").classList.contains("hidden")) hideModals();
+    if (!wasActive) playSound("join");
+  }
+  callPanel(view);
 }
 
 function renderDmHeader(userId, name) {
@@ -8788,6 +9506,19 @@ function renderNewDmList() {
   const list = $("new-dm-list");
   list.innerHTML = "";
   const query = $("new-dm-search").value.trim().toLowerCase();
+  if (!query && state.people.size) {
+    const row = el("button", "person-row new-group");
+    row.appendChild(groupAvatar());
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", "New Group"));
+    meta.appendChild(el("div", "dm-preview", "A private chat for a few friends"));
+    row.appendChild(meta);
+    row.onclick = () => {
+      hideModals();
+      openGroupModal(null);
+    };
+    list.appendChild(row);
+  }
   const people = [...state.people.values()]
     .filter(p => !query || p.name.toLowerCase().includes(query))
     .sort((a, b) => (a.presence === "offline") - (b.presence === "offline") || a.name.localeCompare(b.name));
@@ -8900,14 +9631,15 @@ async function sendMessage() {
   try {
     const previewUrl = await previewUrlFor(content);
     clearLinkDraft();
+    const outgoing = encodeOutgoing(content);
     await invoke("send_message", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
-      content: encodeCustomEmojis(content),
+      content: outgoing,
       replyTo,
       previewUrl,
     });
-    pushOverlayChat(state.user.id, state.user.display_name || state.user.username, encodeCustomEmojis(content), false);
+    pushOverlayChat(state.user.id, state.user.display_name || state.user.username, outgoing, false);
     await selectChannel(state.currentChannel);
   } catch (e) {
     input.value = content;
@@ -9698,7 +10430,7 @@ function wireEvents() {
       hideModals();
       renderUserPanel();
       await refreshServers();
-      if (state.servers.length) await selectServer(state.servers[0].id);
+      if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
     } catch (e) {
       toast(String(e));
@@ -10503,7 +11235,7 @@ function wireEvents() {
     if (!menuServer) return;
     const layout = removeFromLayout(loadRailLayout(), menuServer.id);
     layout.push({ type: "server", id: menuServer.id });
-    saveRailLayout(normalizeRailLayout(layout, state.servers.map(s => s.id)));
+    saveRailLayout(normalizeRailLayout(layout, railServers().map(s => s.id)));
     renderServerRail();
   };
   $("sm-leave").onclick = () => {
@@ -10656,6 +11388,8 @@ function wireEvents() {
   wireSuggestions($("thread-input"));
 
   $("delete-message-go").onclick = () => pendingDelete && deleteMessage(pendingDelete);
+  $("forward-cancel").onclick = hideModals;
+  $("forward-search").addEventListener("input", renderForwardList);
   $("delete-message-cancel").onclick = hideModals;
   $("message-input").addEventListener("keydown", e => {
     if (e.key !== "ArrowUp" || e.target.value || state.view !== "server") return;
@@ -10755,10 +11489,28 @@ function wireEvents() {
     else closeConnPop();
   });
   $("vp-conn-meta").onclick = () => {
-    if (state.voiceServer && (!state.currentServer || state.currentServer.id !== state.voiceServer.id)) {
+    if (!state.voiceServer) return;
+    if (state.voiceServer.call) return messageUser(state.voiceServer.call, state.voiceServer.name);
+    if (!state.currentServer || state.currentServer.id !== state.voiceServer.id) {
       selectServer(state.voiceServer.id);
     }
   };
+  $("dm-call-btn").onclick = () => (isGroupView() ? toggleGroupCall() : startDmCall());
+  $("group-add-btn").onclick = () => {
+    if (isGroupView()) openGroupModal(state.currentServer.id);
+    else if (inDmView()) openGroupModal(null, [state.currentDm.user]);
+  };
+  $("group-leave-btn").onclick = () => {
+    if (isGroupView()) openLeaveServer(state.currentServer.id);
+  };
+  $("group-cancel").onclick = hideModals;
+  $("group-go").onclick = confirmGroupModal;
+  $("group-search").addEventListener("input", renderGroupList);
+  $("call-accept").onclick = () => answerDmCall(true);
+  $("call-decline").onclick = () => answerDmCall(false);
+  setIcon($("group-add-btn"), "friendAdd");
+  setIcon($("call-accept"), "phone", 26);
+  setIcon($("call-decline"), "hangup", 26);
   $("vp-nc").onclick = async () => {
     try {
       state.voice = await invoke("set_noise_cancellation", { enabled: !state.voice.noise_cancellation });
@@ -10935,6 +11687,10 @@ function wireEvents() {
       document.body.classList.toggle("server-muted", muted || deafened);
       renderChannels();
     });
+    window.__TAURI__.event.listen("timed-out", event => {
+      const { until } = event.payload || {};
+      toast(timeoutActive(until) ? `A moderator timed you out for ${timeoutLeftText(until)}` : "A moderator removed your timeout");
+    });
     window.__TAURI__.event.listen("server-deleted", async event => {
       toast(`${event.payload.name || "A server"} was deleted by its owner`);
       await leaveServerView(event.payload.server);
@@ -11035,6 +11791,8 @@ function wireEvents() {
     window.__TAURI__.event.listen("typing", event => onTyping(event.payload));
     window.__TAURI__.event.listen("messages-caught-up", event => onMessagesCaughtUp(event.payload));
     window.__TAURI__.event.listen("dm-received", event => onDmReceived(event.payload));
+    window.__TAURI__.event.listen("dm-call", event => onDmCall(event.payload));
+    invoke("get_dm_call").then(call => call && onDmCall(call)).catch(() => {});
     window.__TAURI__.event.listen("notification-clicked", event => openNotificationTarget(event.payload));
     window.__TAURI__.event.listen("tray-toggle-mute", () => $("mute-btn").click());
     window.__TAURI__.event.listen("voice-settings-changed", event => {
@@ -11427,6 +12185,7 @@ const PERMISSION_LABELS = [
   ["add_emoticons", "Add Emoticons"],
   ["use_external_emojis", "Use Other Servers' Emojis and Stickers"],
   ["post_announcements", "Post Announcements"],
+  ["mention_everyone", "Mention Everyone and Any Role"],
   ["manage_expressions", "Manage Expressions"],
   ["manage_events", "Manage Events"],
   ["manage_roles", "Manage Roles"],
@@ -11435,6 +12194,7 @@ const PERMISSION_LABELS = [
   ["view_audit_log", "View Audit Log"],
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
+  ["time_out_members", "Time Out Members"],
   ["administrator", "Administrator"],
 ];
 
@@ -12149,6 +12909,7 @@ function renderRoleSettings(server) {
     label.appendChild(name);
     if (role.tag) label.appendChild(roleTagChip(role.tag, role.color));
     if (role.self_assignable) label.appendChild(el("span", "kind pickable", "pickable"));
+    if (role.mentionable) label.appendChild(el("span", "kind", "anyone can mention"));
     if (role.hoist) label.appendChild(el("span", "kind", "own group"));
     const count = role.permissions.length;
     const perms = el("span", "kind", count ? (count === 1 ? "1 permission" : `${count} permissions`) : "no permissions");
@@ -12206,6 +12967,19 @@ function renderMemberSettings(server) {
     top.appendChild(who);
     const isSelf = state.user && member.id === state.user.id;
     const isOwner = member.id === server.owner;
+    if (canTimeOut(server, member, state.user && state.user.id)) {
+      const active = timeoutActive(member.timeout_until);
+      const timeOut = el("button", (active ? "btn-secondary" : "btn-danger") + " btn-small", timeoutActionLabel(member));
+      timeOut.onclick = async () => {
+        if (active) {
+          await clearMemberTimeout(member);
+          openServerSettings();
+        } else {
+          openTimeoutPicker(member);
+        }
+      };
+      top.appendChild(timeOut);
+    }
     if (server.can_kick && !isSelf && !isOwner) {
       const kick = el("button", "btn-danger btn-small", "Kick");
       kick.onclick = async () => {
@@ -12299,6 +13073,7 @@ async function boot() {
   await markMobileApp();
   wireEvents();
   wirePhoneLayout();
+  wireTimeoutModal();
   wireActivityPing();
   if (IS_TAURI) {
     await invoke("ui_ready");
@@ -12331,7 +13106,7 @@ async function continueBoot() {
   hideModals();
   renderUserPanel();
   await refreshServers();
-  if (state.servers.length) await selectServer(state.servers[0].id);
+  if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
 }
 

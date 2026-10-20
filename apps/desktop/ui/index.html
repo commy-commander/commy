@@ -81,7 +81,7 @@
         <div class="vp-streams" id="vp-streams"></div>
         <div class="vp-conn">
           <div class="vp-conn-meta" id="vp-conn-meta" title="Go to voice channel">
-            <div class="vp-status"><span class="vp-signal" id="vp-signal"></span>Voice Connected</div>
+            <div class="vp-status"><span class="vp-signal" id="vp-signal"></span><span id="vp-status-text">Voice Connected</span></div>
             <div class="vp-where" id="vp-where"></div>
           </div>
           <button class="icon-btn vp-hangup" id="vp-disconnect" title="Disconnect"></button>
@@ -123,6 +123,11 @@
           </button>
           <button class="icon-btn hidden" id="members-btn" title="Hide Members" aria-pressed="true">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zM8 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05A4.2 4.2 0 0 1 17 16.5V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+          </button>
+          <button class="icon-btn hidden" id="dm-call-btn" title="Start Voice Call"></button>
+          <button class="icon-btn hidden" id="group-add-btn" title="Add People"></button>
+          <button class="icon-btn hidden" id="group-leave-btn" title="Leave Group">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 13v-2H7V8l-5 4 5 4v-3zm4-10H10a2 2 0 0 0-2 2v3h2V5h10v14H10v-3H8v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/></svg>
           </button>
           <button class="icon-btn hidden" id="dm-profile-btn" title="Hide User Profile">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"/></svg>
@@ -634,6 +639,27 @@
       </div>
     </div>
 
+    <div class="modal call-modal hidden" id="modal-call" role="alertdialog" aria-labelledby="call-name">
+      <div class="call-avatar" id="call-avatar"></div>
+      <h2 id="call-name"></h2>
+      <p class="call-sub">Incoming voice call</p>
+      <div class="call-actions">
+        <button class="call-btn decline" id="call-decline" title="Decline"></button>
+        <button class="call-btn accept" id="call-accept" title="Accept"></button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-forward">
+      <h2>Forward Message</h2>
+      <div class="msg delete-preview" id="forward-preview"></div>
+      <div class="setting-sub hidden" id="forward-files-note">Files and images stay where they are; only the text is forwarded.</div>
+      <input id="forward-search" type="text" autocomplete="off" placeholder="Find a channel or person" />
+      <div class="people-list" id="forward-list"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="forward-cancel">Cancel</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-delete-message">
       <h2>Delete Message</h2>
       <p>Are you sure you want to delete this message? It is removed for everyone.</p>
@@ -643,6 +669,19 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="delete-message-cancel">Cancel</button>
         <button class="btn-danger" id="delete-message-go">Delete</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-timeout">
+      <h2 id="timeout-title">Time out member</h2>
+      <p>They can still read channels and listen in voice, but cannot send messages, react, edit or talk until it ends.</p>
+      <div class="timeout-choices" id="timeout-choices" role="radiogroup" aria-label="How long"></div>
+      <label class="field-label">Custom length in minutes
+        <input id="timeout-custom" type="text" inputmode="numeric" autocomplete="off" placeholder="Up to 40320" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="timeout-cancel">Cancel</button>
+        <button class="btn-danger" id="timeout-go">Time Out</button>
       </div>
     </div>
 
@@ -706,6 +745,17 @@
       <p>Pick someone you share a server with.</p>
       <input id="new-dm-search" type="text" autocomplete="off" placeholder="Type a name" />
       <div class="people-list" id="new-dm-list"></div>
+    </div>
+
+    <div class="modal hidden" id="modal-group">
+      <h2 id="group-modal-title">New Group</h2>
+      <p id="group-modal-sub">Pick the people for this group. Everyone in it can message, call and add others.</p>
+      <input id="group-search" type="text" autocomplete="off" placeholder="Type a name" />
+      <div class="people-list" id="group-list"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="group-cancel">Cancel</button>
+        <button class="btn-primary" id="group-go" disabled>Create Group</button>
+      </div>
     </div>
 
     <div class="modal modal-wide hidden" id="modal-share">
@@ -1892,6 +1942,7 @@
   </div>
 
   <div class="pop-menu ctx-menu hidden" id="member-menu" role="menu"></div>
+  <div class="pop-menu ctx-menu hidden" id="msg-menu" role="menu"></div>
 
   <div class="pop-menu composer-menu hidden" id="composer-menu" role="menu">
     <button id="cm-file" role="menuitem">Upload a File</button>
@@ -1949,12 +2000,14 @@
   <script src="scripts/markdown.js"></script>
   <script src="scripts/voice-input.js"></script>
   <script src="scripts/typing.js"></script>
+  <script src="scripts/message-link.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>
   <script src="scripts/embeds.js"></script>
   <script src="scripts/link-preview.js"></script>
   <script src="scripts/notify.js"></script>
+  <script src="scripts/mentions.js"></script>
   <script src="scripts/pins.js"></script>
   <script src="scripts/channel-access.js"></script>
   <script src="scripts/audit-log.js"></script>
@@ -1964,6 +2017,7 @@
   <script src="scripts/presence.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>
+  <script src="scripts/timeouts.js"></script>
   <script src="scripts/server-colors.js"></script>
   <script src="scripts/starfield.js"></script>
   <script src="scripts/app-icons.js"></script>

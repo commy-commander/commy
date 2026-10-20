@@ -9,7 +9,7 @@ use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 use crate::message::{
     Attachment, Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES, MAX_RELAYED_REACTIONS, MAX_RELAYED_REACTORS,
 };
-use crate::server::{ChannelKind, Member, Server};
+use crate::server::{ChannelKind, Member, Server, Timeout};
 use crate::user::{Presence, UserProfile};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -54,6 +54,8 @@ pub enum StoreError {
     Unsigned,
     #[error("that server already holds as many of those as it can")]
     Limit,
+    #[error("that member is timed out")]
+    TimedOut,
 }
 
 pub const TOMBSTONE_KEEP_DAYS: i64 = 60;
@@ -606,6 +608,7 @@ impl ServerState {
             E::MemberBan { user, .. } | E::MemberUnban { user, .. } | E::MemberLeave { user, .. } => {
                 server.is_member(*user) || server.banned.contains(user) || self.profiles.contains_key(user)
             }
+            E::MemberTimeout { user, .. } => server.is_member(*user),
             E::EventDelete { event, .. } | E::EventRsvp { event, .. } => server.events.iter().any(|e| e.id == *event),
             E::EmojiRemove { name, .. } => server.emojis.iter().any(|e| e.name == *name),
             E::StickerRemove { name, .. } => server.stickers.iter().any(|s| s.name == *name),
@@ -783,6 +786,7 @@ impl ServerState {
                     nickname: None,
                     roles: vec![],
                     joined_at: Utc::now(),
+                    timeout: None,
                 });
                 self.profiles.insert(profile.id, profile);
                 Ok(true)
@@ -1175,6 +1179,21 @@ impl ServerState {
                 let b = set(&mut self.server.server_deafened, deafened);
                 Ok(a || b)
             }
+            ServerEvent::MemberTimeout { server, user, by, at, until } => {
+                self.same_server(server)?;
+                if user == self.server.owner {
+                    return Ok(false);
+                }
+                let timeout = match until {
+                    Some(until) => match Timeout::new(at, until, by) {
+                        Some(timeout) => Some(timeout),
+                        None => return Ok(false),
+                    },
+                    None => None,
+                };
+                let Some(member) = self.server.member_mut(user) else { return Ok(false) };
+                Ok(replace(&mut member.timeout, timeout))
+            }
             ServerEvent::MemberBan { server, user } => {
                 self.same_server(server)?;
                 if user == self.server.owner || self.server.banned.contains(&user) {
@@ -1215,7 +1234,7 @@ impl ServerState {
                     return Ok(false);
                 }
                 let Some(existing) = self.server.roles.iter_mut().find(|r| r.id == role.id) else { return Ok(false) };
-                if existing.is_everyone() && (role.name != existing.name || role.self_assignable) {
+                if existing.is_everyone() && (role.name != existing.name || role.self_assignable || role.mentionable) {
                     return Ok(false);
                 }
                 if *existing == role {
@@ -1448,6 +1467,9 @@ impl ServerState {
             return Err(StoreError::UnknownChannel);
         }
         let held = self.has_message(message.id);
+        if !held && self.server.timed_out_at(message.author, message.created_at) {
+            return Err(StoreError::TimedOut);
+        }
         if !held && !self.server.can_post_in(message.channel, message.author) {
             match self.server.channel(message.channel) {
                 Some(c) if c.is_restricted() => return Err(StoreError::NotAllowed),
@@ -1552,6 +1574,9 @@ impl ServerState {
         }
         if too_far_ahead(edited_at, Utc::now()) {
             return Err(StoreError::TooFarAhead);
+        }
+        if self.server.timed_out_at(author, edited_at) {
+            return Err(StoreError::TimedOut);
         }
         let restricted = self.server.channel(channel).is_some_and(|c| c.is_restricted());
         if restricted && !self.server.can_post_in(channel, author) {
@@ -2288,6 +2313,7 @@ mod tests {
             position: 1,
             hoist: true,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2342,6 +2368,7 @@ mod tests {
             position: 0,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2363,6 +2390,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2631,6 +2659,7 @@ mod tests {
             position: 2,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -2743,6 +2772,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -3165,6 +3195,8 @@ mod tests {
         let everyone = state.server.roles[0].clone();
         let pickable = crate::server::Role { self_assignable: true, ..everyone.clone() };
         assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: pickable }), Ok(false), "everyone is not pickable");
+        let pingable = crate::server::Role { mentionable: true, ..everyone.clone() };
+        assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: pingable }), Ok(false), "everyone is not a mentionable role");
         let tagged = crate::server::Role { tag: Some("GG".into()), ..everyone.clone() };
         assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: tagged }), Ok(true));
         let custom = crate::server::Role { tag: Some("<:gg:ab12@cd34>".into()), banner: Some("ab@cd".into()), ..everyone.clone() };
@@ -4162,7 +4194,7 @@ mod tests {
     }
 
     fn filler_member() -> Member {
-        Member { user: UserId::new(), nickname: None, roles: vec![], joined_at: Utc::now() }
+        Member { user: UserId::new(), nickname: None, roles: vec![], joined_at: Utc::now(), timeout: None }
     }
 
     #[test]
@@ -4216,6 +4248,7 @@ mod tests {
                 position: 1,
                 hoist: false,
                 self_assignable: false,
+                mentionable: false,
                 tag: None,
                 banner: None,
             });
@@ -4228,6 +4261,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -4374,5 +4408,126 @@ mod tests {
         assert!(!state.media_peer_ok(owner, &node, voice, false), "owner is on another node");
         state.apply(ServerEvent::MemberBan { server: sid, user: member }).unwrap();
         assert!(!state.media_peer_ok(member, &node, voice, false));
+    }
+
+    fn timeout(state: &ServerState, user: UserId, by: UserId, at: DateTime<Utc>, secs: i64) -> ServerEvent {
+        let until = (secs > 0).then(|| at + chrono::Duration::seconds(secs));
+        ServerEvent::MemberTimeout { server: state.server.id, user, by, at, until }
+    }
+
+    #[test]
+    fn a_timeout_sits_on_the_member_record_until_it_runs_out() {
+        let (mut state, _, owner) = fixture();
+        let user = join(&mut state, "loud");
+        let now = Utc::now();
+        assert_eq!(state.apply(timeout(&state, user, owner, now, 600)), Ok(true));
+        let held = state.server.member(user).unwrap().timeout.unwrap();
+        assert_eq!((held.since, held.until, held.by), (now, now + chrono::Duration::seconds(600), owner));
+        assert!(state.server.is_timed_out(user, now));
+        assert!(state.server.is_timed_out(user, now + chrono::Duration::seconds(599)));
+        assert!(!state.server.is_timed_out(user, now + chrono::Duration::seconds(600)), "it expires on its own");
+        assert_eq!(held.remaining_secs(now + chrono::Duration::seconds(100)), 500);
+        assert_eq!(held.remaining_secs(now + chrono::Duration::seconds(700)), 0);
+        assert!(state.server.timed_out_at(user, now + chrono::Duration::seconds(10)));
+        assert!(!state.server.timed_out_at(user, now - chrono::Duration::seconds(10)), "before it was set");
+        assert_eq!(state.server.timed_out_members(now), vec![(user, held)]);
+        assert!(state.server.timed_out_members(now + chrono::Duration::hours(1)).is_empty());
+        assert_eq!(state.apply(timeout(&state, user, owner, now, 600)), Ok(false), "a copy changes nothing");
+        assert_eq!(state.apply(timeout(&state, user, owner, now, 0)), Ok(true), "cleared early");
+        assert!(state.server.member(user).unwrap().timeout.is_none());
+        assert_eq!(state.apply(timeout(&state, user, owner, now, 0)), Ok(false));
+        let restored = ServerState::from_snapshot(state.snapshot());
+        assert!(restored.server.member(user).is_some());
+    }
+
+    #[test]
+    fn timeouts_refuse_the_owner_strangers_and_impossible_lengths() {
+        let (mut state, _, owner) = fixture();
+        let user = join(&mut state, "loud");
+        let now = Utc::now();
+        assert_eq!(state.apply(timeout(&state, owner, user, now, 60)), Ok(false));
+        assert_eq!(state.apply(timeout(&state, UserId::new(), owner, now, 60)), Ok(false));
+        assert_eq!(state.apply(timeout(&state, user, owner, now, -5)), Ok(false));
+        let too_long = crate::server::MAX_TIMEOUT_SECS + 1;
+        assert_eq!(state.apply(timeout(&state, user, owner, now, too_long)), Ok(false));
+        assert!(state.server.member(user).unwrap().timeout.is_none());
+        assert_eq!(state.apply(timeout(&state, user, owner, now, crate::server::MAX_TIMEOUT_SECS)), Ok(true));
+        let other = ServerEvent::MemberTimeout { server: ServerId::new(), user, by: owner, at: now, until: None };
+        assert_eq!(state.apply(other), Err(StoreError::WrongServer));
+    }
+
+    #[test]
+    fn messages_edits_and_reactions_from_a_timed_out_member_are_dropped() {
+        let (mut state, channel, owner) = fixture();
+        let user = join(&mut state, "loud");
+        let now = Utc::now();
+        let before = post_at(&state, channel, user, "before", now - chrono::Duration::seconds(5));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: before.clone() }), Ok(true));
+        state.apply(timeout(&state, user, owner, now, 300)).unwrap();
+        let during = post_at(&state, channel, user, "during", now + chrono::Duration::seconds(5));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: during }), Err(StoreError::TimedOut));
+        let edit_at = now + chrono::Duration::seconds(6);
+        assert_eq!(state.apply(edit(&state, &before, "changed", edit_at)), Err(StoreError::TimedOut));
+        assert_eq!(state.message(before.id).unwrap().content, "before");
+        let react = ServerEvent::ReactionSet { channel, message: before.id, emoji: "x".into(), user, active: true };
+        assert!(!crate::action::authorized(&state.server, user, &react));
+        assert!(!crate::action::authorized(&state.server, user, &ServerEvent::TypingStart { channel, user }));
+        let play = ServerEvent::SoundboardPlay { server: state.server.id, channel, user, name: "boop".into() };
+        assert!(!crate::action::authorized(&state.server, user, &play));
+        let listen = ServerEvent::VoiceState { user, channel: Some(state.server.channels[1].id), muted: false, deafened: false, since: None };
+        assert!(crate::action::authorized(&state.server, user, &listen), "they can still join voice to listen");
+        let owners = post_at(&state, channel, owner, "fine", now + chrono::Duration::seconds(5));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: owners }), Ok(true));
+        let after = post_at(&state, channel, user, "after", now + chrono::Duration::seconds(301));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: after }), Ok(true), "the timeout ran out");
+        let late_copy = post_at(&state, channel, user, "late", now + chrono::Duration::seconds(10));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: late_copy }), Err(StoreError::TimedOut), "sent during the timeout, delivered after");
+        assert!(!crate::action::authorized(&state.server, user, &react), "still timed out by the clock");
+        state.apply(timeout(&state, user, owner, now, 0)).unwrap();
+        assert!(crate::action::authorized(&state.server, user, &react), "reacting works again once lifted");
+    }
+
+    #[test]
+    fn only_members_allowed_to_time_out_may_and_never_on_themselves() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let mod_ = join(&mut state, "mod");
+        let user = join(&mut state, "user");
+        let role = Role {
+            id: RoleId::new(),
+            name: "mods".into(),
+            color: None,
+            permissions: Permissions::TIME_OUT_MEMBERS,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+            mentionable: false,
+        };
+        let rid = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: mod_, role: rid }).unwrap();
+        let now = Utc::now();
+        let by = |who: UserId, target: UserId| ServerEvent::MemberTimeout { server: sid, user: target, by: who, at: now, until: Some(now + chrono::Duration::minutes(5)) };
+        assert!(crate::action::authorized(&state.server, owner, &by(owner, user)));
+        assert!(crate::action::authorized(&state.server, mod_, &by(mod_, user)));
+        assert!(!crate::action::authorized(&state.server, user, &by(user, mod_)), "no permission");
+        assert!(!crate::action::authorized(&state.server, mod_, &by(owner, user)), "signed by someone else");
+        assert!(!crate::action::authorized(&state.server, mod_, &by(mod_, mod_)), "not on oneself");
+        let signed = SignedEvent::sign(sid, mod_, 1_000, by(mod_, user), &identity_for(mod_));
+        assert_eq!(state.apply_signed(&signed), Ok(true));
+        assert!(state.server.is_timed_out(user, now));
+        let forged = SignedEvent::sign(sid, user, 2_000, timeout(&state, user, user, now, 0), &identity_for(user));
+        assert_eq!(state.apply_signed(&forged), Err(StoreError::NotAllowed));
+        let lifted = SignedEvent::sign(sid, owner, 3_000, timeout(&state, user, owner, now, 0), &identity_for(owner));
+        assert_eq!(state.apply_signed(&lifted), Ok(true));
+        assert_eq!(state.apply_signed(&signed), Ok(false), "the older timeout loses");
+        assert!(!state.server.is_timed_out(user, now));
+        let kinds: Vec<AuditKind> = state.audit_log().iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, vec![AuditKind::MemberTimeout, AuditKind::MemberTimeoutClear]);
+        assert_eq!(state.audit_log()[0].detail.as_deref(), Some("5 minutes"));
+        assert!(crate::action::relayable(&by(mod_, user)));
+        assert!(crate::action::snapshot_omits("timeout:x"), "joiners learn timeouts from the relayed signed action");
     }
 }

@@ -1847,6 +1847,7 @@ mod tests {
                 position: 1,
                 hoist: false,
                 self_assignable: false,
+                mentionable: false,
                 tag: None,
                 banner: None,
             };
@@ -3667,6 +3668,7 @@ mod tests {
             nickname: None,
             roles: vec![],
             joined_at: Utc::now(),
+            timeout: None,
         });
         assert_eq!(
             check_peer(&state, keyless, &key(keyless)),

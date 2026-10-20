@@ -16,16 +16,37 @@ pub struct ServerSummary {
     pub member_count: usize,
     pub icon: Option<String>,
     pub can_invite: bool,
+    pub group: bool,
+}
+
+pub fn server_name(state: &ServerState, viewer: Option<UserId>) -> String {
+    if !state.server.group || !state.server.name.trim().is_empty() {
+        return state.server.name.clone();
+    }
+    let mut names: Vec<String> = state
+        .server
+        .members
+        .iter()
+        .filter(|m| Some(m.user) != viewer)
+        .map(|m| display_name(state, m.user))
+        .collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    match names.len() {
+        0 => "Just you".to_string(),
+        1..=3 => names.join(", "),
+        n => format!("{}, {} and {} others", names[0], names[1], n - 2),
+    }
 }
 
 impl ServerSummary {
     pub fn from_state(state: &ServerState, viewer: Option<UserId>) -> Self {
         Self {
             id: state.server.id.to_string(),
-            name: state.server.name.clone(),
+            name: server_name(state, viewer),
             member_count: state.server.members.len(),
             icon: state.server.icon.clone(),
             can_invite: viewer.is_some_and(|me| state.server.permissions_for(me).allows(Permissions::CREATE_INVITES)),
+            group: state.server.group,
         }
     }
 }
@@ -81,6 +102,9 @@ pub struct MemberView {
     pub tag_color: Option<String>,
     pub role_banner: Option<String>,
     pub bot: bool,
+    pub can_mention_everyone: bool,
+    pub timeout_until: Option<i64>,
+    pub timeout_by: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,6 +118,7 @@ pub struct RoleView {
     pub hoist: bool,
     pub tag: Option<String>,
     pub banner: Option<String>,
+    pub mentionable: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -155,6 +180,8 @@ pub struct ServerView {
     pub afk_timeout_minutes: Option<u32>,
     pub can_mute: bool,
     pub can_ban: bool,
+    pub can_time_out: bool,
+    pub my_timeout_until: Option<i64>,
     pub emojis: Vec<EmojiView>,
     pub stickers: Vec<EmojiView>,
     pub emoticons: Vec<EmoticonView>,
@@ -162,6 +189,7 @@ pub struct ServerView {
     pub emojis_shareable: bool,
     pub stickers_shareable: bool,
     pub emoticons_shareable: bool,
+    pub group: bool,
     pub add_restricted: AddRestrictions,
     pub can_add_emojis: bool,
     pub can_add_stickers: bool,
@@ -243,6 +271,7 @@ impl ServerView {
             })
             .collect();
 
+        let now = chrono::Utc::now();
         let members = state
             .member_list()
             .into_iter()
@@ -291,6 +320,9 @@ impl ServerView {
                     tag: tag.map(|(t, _)| t),
                     role_banner: state.server.top_role_with(p.id, |r| r.banner.is_some()).and_then(|r| r.banner.clone()),
                     bot: state.is_bot(p.id),
+                    can_mention_everyone: state.server.can_mention_everyone(p.id),
+                    timeout_until: state.server.timeout_of(p.id, now).map(|t| t.until.timestamp_millis()),
+                    timeout_by: state.server.timeout_of(p.id, now).map(|t| t.by.to_string()),
                 }
             })
             .collect();
@@ -310,6 +342,7 @@ impl ServerView {
                 hoist: r.hoist,
                 tag: r.tag.clone(),
                 banner: r.banner.clone(),
+                mentionable: r.mentionable,
             })
             .collect();
         roles.sort_by_key(|r| std::cmp::Reverse(r.position));
@@ -361,7 +394,7 @@ impl ServerView {
 
         Self {
             id: state.server.id.to_string(),
-            name: state.server.name.clone(),
+            name: server_name(state, viewer),
             owner: state.server.owner.to_string(),
             channels,
             members,
@@ -397,6 +430,8 @@ impl ServerView {
             afk_timeout_minutes: state.server.afk_timeout_minutes,
             can_mute: perms.allows(Permissions::MUTE_MEMBERS),
             can_ban: perms.allows(Permissions::BAN_MEMBERS),
+            can_time_out: perms.allows(Permissions::TIME_OUT_MEMBERS),
+            my_timeout_until: viewer.and_then(|v| state.server.timeout_of(v, now)).map(|t| t.until.timestamp_millis()),
             emojis: state
                 .server
                 .emojis
@@ -424,6 +459,7 @@ impl ServerView {
             emojis_shareable: state.server.emojis_shareable,
             stickers_shareable: state.server.stickers_shareable,
             emoticons_shareable: state.server.emoticons_shareable,
+            group: state.server.group,
             add_restricted: AddRestrictions {
                 emojis: everyone_lacks(state, Permissions::ADD_EMOJIS),
                 stickers: everyone_lacks(state, Permissions::ADD_STICKERS),
@@ -466,6 +502,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("kick_members", Permissions::KICK_MEMBERS),
     ("ban_members", Permissions::BAN_MEMBERS),
     ("mute_members", Permissions::MUTE_MEMBERS),
+    ("time_out_members", Permissions::TIME_OUT_MEMBERS),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("add_emojis", Permissions::ADD_EMOJIS),
     ("add_stickers", Permissions::ADD_STICKERS),
@@ -474,6 +511,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_events", Permissions::MANAGE_EVENTS),
     ("create_invites", Permissions::CREATE_INVITES),
     ("view_audit_log", Permissions::VIEW_AUDIT_LOG),
+    ("mention_everyone", Permissions::MENTION_EVERYONE),
     ("administrator", Permissions::ADMINISTRATOR),
 ];
 

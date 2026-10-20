@@ -57,6 +57,8 @@ pub enum AuditKind {
     EmoticonRemove,
     ExpressionSharing,
     ChannelAccess,
+    MemberTimeout,
+    MemberTimeoutClear,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +108,20 @@ fn channel_name(state: &ServerState, channel: crate::ids::ChannelId) -> Option<S
 
 fn role_name(state: &ServerState, role: crate::ids::RoleId) -> Option<String> {
     state.server.roles.iter().find(|r| r.id == role).map(|r| clip(&r.name))
+}
+
+pub fn duration_words(secs: i64) -> String {
+    const UNITS: [(i64, &str, &str); 5] = [
+        (7 * 86_400, "week", "weeks"),
+        (86_400, "day", "days"),
+        (3_600, "hour", "hours"),
+        (60, "minute", "minutes"),
+        (1, "second", "seconds"),
+    ];
+    let secs = secs.max(1);
+    let (size, one, many) = UNITS.iter().copied().find(|(size, _, _)| secs % size == 0 && secs >= *size).unwrap_or(UNITS[4]);
+    let n = secs / size;
+    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 fn voice_detail(muted: bool, deafened: bool) -> &'static str {
@@ -210,6 +226,16 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             let (target, label) = member(user);
             (K::VoiceModerate, target, label, Some(voice_detail(*muted, *deafened).into()))
         }
+        E::MemberTimeout { user, at, until, .. } => {
+            let (target, label) = member(user);
+            match until {
+                Some(until) => {
+                    let length = until.signed_duration_since(*at).num_seconds();
+                    (K::MemberTimeout, target, label, Some(duration_words(length)))
+                }
+                None => (K::MemberTimeoutClear, target, label, None),
+            }
+        }
         E::EmojiAdd { emoji, .. } => (K::EmojiAdd, None, Some(clip(&emoji.name)), None),
         E::EmojiRemove { name, .. } => (K::EmojiRemove, None, Some(clip(name)), None),
         E::SoundAdd { sound, .. } => (K::SoundAdd, None, Some(clip(&sound.name)), None),
@@ -291,6 +317,17 @@ mod tests {
     }
 
     #[test]
+    fn durations_read_in_the_largest_whole_unit() {
+        assert_eq!(duration_words(60), "1 minute");
+        assert_eq!(duration_words(600), "10 minutes");
+        assert_eq!(duration_words(3_600), "1 hour");
+        assert_eq!(duration_words(86_400), "1 day");
+        assert_eq!(duration_words(7 * 86_400), "1 week");
+        assert_eq!(duration_words(90), "90 seconds");
+        assert_eq!(duration_words(0), "1 second");
+    }
+
+    #[test]
     fn the_log_keeps_order_drops_copies_and_forgets_the_oldest() {
         let mut log = Vec::new();
         assert!(record(&mut log, entry(20, 2)));
@@ -353,6 +390,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -380,6 +418,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: true,
+            mentionable: false,
             tag: None,
             banner: None,
         };
@@ -410,6 +449,7 @@ mod tests {
             position: 1,
             hoist: false,
             self_assignable: false,
+            mentionable: false,
             tag: None,
             banner: None,
         };

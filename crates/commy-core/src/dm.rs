@@ -1,10 +1,18 @@
 use crate::identity::{Identity, IdentityKey, Signature};
-use crate::ids::{MessageId, UserId};
+use crate::ids::{ChannelId, MessageId, UserId};
 use crate::message::{Attachment, Reaction};
 use crate::user::UserProfile;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CallSignal {
+    Ring,
+    Accept,
+    Decline,
+    HangUp,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DmAction {
@@ -21,14 +29,25 @@ pub enum DmAction {
         emoji: String,
         active: bool,
     },
+    Call {
+        call: ChannelId,
+        signal: CallSignal,
+    },
+    GroupInvite {
+        ticket: String,
+    },
 }
 
 impl DmAction {
     pub fn target(&self) -> Option<MessageId> {
         match self {
-            DmAction::Post => None,
+            DmAction::Post | DmAction::Call { .. } | DmAction::GroupInvite { .. } => None,
             DmAction::Edit { target } | DmAction::Delete { target } | DmAction::React { target, .. } => Some(*target),
         }
+    }
+
+    pub fn is_stored(&self) -> bool {
+        !matches!(self, DmAction::Call { .. })
     }
 }
 
@@ -154,6 +173,9 @@ impl DmStore {
     }
 
     pub fn apply(&mut self, partner: UserId, mut message: DmMessage) -> bool {
+        if !message.action.is_stored() {
+            return false;
+        }
         let Some(target) = message.action.target() else {
             message.edited_at = None;
             message.reactions.clear();
@@ -208,7 +230,7 @@ impl DmStore {
                     _ => false,
                 }
             }
-            DmAction::Post => false,
+            DmAction::Post | DmAction::Call { .. } | DmAction::GroupInvite { .. } => false,
         };
         if !changed {
             return false;
@@ -470,6 +492,28 @@ mod tests {
         assert!(store.post(them, target).is_none());
         assert_eq!(store.conversation(them).iter().filter(|m| m.action.target() == Some(target)).count(), 1);
         assert!(!store.apply(them, DmMessage::acting(them, me, DmAction::Edit { target }, "gone")));
+    }
+
+    #[test]
+    fn group_invites_are_kept_for_dedup_but_are_not_posts() {
+        let mut store = DmStore::new();
+        let (me, them) = (UserId::new(), UserId::new());
+        let invite = DmMessage::acting(them, me, DmAction::GroupInvite { ticket: "t".into() }, "");
+        assert!(store.apply(them, invite.clone()));
+        assert!(!store.apply(them, invite), "replayed invite");
+        assert_eq!(store.posts(them).count(), 0);
+        assert!(store.partners().is_empty());
+        assert_eq!(store.conversation(them).len(), 1);
+    }
+
+    #[test]
+    fn call_signals_are_never_stored() {
+        let mut store = DmStore::new();
+        let (me, them) = (UserId::new(), UserId::new());
+        let ring = DmAction::Call { call: ChannelId::new(), signal: CallSignal::Ring };
+        assert!(!store.apply(them, DmMessage::acting(them, me, ring, "")));
+        assert!(store.conversation(them).is_empty());
+        assert!(store.partners().is_empty());
     }
 
     #[test]

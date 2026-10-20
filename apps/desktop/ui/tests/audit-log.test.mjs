@@ -27,6 +27,14 @@ test("every kind the core records reads as a sentence and sits in a filter group
   }
 });
 
+test("timeouts read with their length and their lifting", () => {
+  assert.equal(auditText(entry("member_timeout", { label: "Mia", detail: "10 minutes" })), "Mia timed out Mia for 10 minutes");
+  assert.equal(auditText(entry("member_timeout", { label: "Mia" })), "Mia timed out Mia");
+  assert.equal(auditText(entry("member_timeout_clear", { label: "Mia" })), "Mia removed the timeout on Mia");
+  assert.equal(auditGroup("member_timeout"), "members");
+  assert.equal(auditGroup("member_timeout_clear"), "members");
+});
+
 test("sentences name the actor, the target and the change", () => {
   assert.equal(auditText(entry("member_ban", { label: "Theo" })), "Mia banned Theo");
   assert.equal(auditText(entry("channel_rename", { label: "general", detail: "lobby" })), "Mia renamed the channel general to lobby");

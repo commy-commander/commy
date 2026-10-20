@@ -3,6 +3,7 @@ mod app_icon;
 mod browser;
 mod activity;
 mod afk;
+mod calls;
 mod entry_list;
 mod catchup;
 mod channel_lock;
@@ -393,6 +394,10 @@ async fn send_typing(app: tauri::State<'_, App>, server_id: String, channel_id: 
     if !allowed {
         return Err("unknown channel".into());
     }
+    let silenced = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.is_timed_out(me, chrono::Utc::now()));
+    if silenced {
+        return Ok(());
+    }
     broadcast_event(&app, sid, ServerEvent::TypingStart { channel, user: me }).await;
     Ok(())
 }
@@ -487,7 +492,9 @@ async fn set_reaction(
     let me = current_profile(&app)?;
     {
         let servers = app.servers.lock().unwrap();
-        require_can_view(servers.get(&sid).ok_or("unknown server")?, me.id, cid)?;
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_can_view(state, me.id, cid)?;
+        require_not_timed_out(state, me.id)?;
     }
     apply_and_broadcast(
         &app,
@@ -893,6 +900,7 @@ async fn set_voice_channel(
             if full {
                 return Err("that voice channel is full".into());
             }
+            calls::end(&app, &handle, true, "hung_up").await;
             let previous = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != sid);
             if let Some(previous) = previous {
                 leave_voice(&app, &handle, previous, &profile, &voice).await;
@@ -1173,7 +1181,11 @@ async fn run_voice_redialer(handle: tauri::AppHandle) {
         let call = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
         let Some((sid, channel)) = call else { continue };
         let Some(me) = app.profile.lock().unwrap().clone() else { continue };
-        dial_voice_members(&app, &handle, sid, channel, &me);
+        if sid == commy_core::ids::CALL_SERVER {
+            calls::dial_partner(&app, &handle, &me);
+        } else {
+            dial_voice_members(&app, &handle, sid, channel, &me);
+        }
     }
 }
 
@@ -1326,6 +1338,9 @@ fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
             }
         };
         let Some(server) = server else { return false };
+        if server == commy_core::ids::CALL_SERVER {
+            return voice && calls::peer_ok(&app, user, &node_hex, channel);
+        }
         let servers = app.servers.lock().unwrap();
         servers.get(&server).is_some_and(|state| state.media_peer_ok(user, &node_hex, channel, voice))
     })
@@ -1656,15 +1671,122 @@ fn known_profile_field<T>(app: &App, user: UserId, field: impl Fn(&UserProfile) 
     app.servers.lock().unwrap().values().find_map(|s| s.profiles.get(&user).and_then(&field))
 }
 
+async fn join_group(app: &App, handle: &tauri::AppHandle, from: UserId, ticket: &str) {
+    let Ok(ticket) = ServerTicket::decode(ticket) else {
+        tracing::debug!("ignored a group invite from {from} with a bad ticket");
+        return;
+    };
+    if app.servers.lock().unwrap().contains_key(&ticket.server_id) {
+        return;
+    }
+    match join_ticket(app, handle, ticket.clone()).await {
+        Ok(_) => {
+            entry_list::record_join(app, ticket.server_id);
+            entry_list::schedule(handle);
+        }
+        Err(e) => tracing::warn!("could not join a group from {from}: {e}"),
+    }
+}
+
+async fn invite_to_group(app: &App, handle: &tauri::AppHandle, me: &UserProfile, sid: ServerId, user_ids: Vec<String>) -> CmdResult<()> {
+    let ticket = app.vouched_ticket(sid).ok_or("no invite available; you may be offline")?.encode();
+    for raw in user_ids {
+        let (_, user) = dm_partner(app, &raw)?;
+        let already = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.is_current_member(user));
+        if already {
+            continue;
+        }
+        let invite = DmMessage::acting(me.id, user, DmAction::GroupInvite { ticket: ticket.clone() }, "");
+        post_dm(app, handle, me, user, invite).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn create_group_dm(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_ids: Vec<String>) -> CmdResult<ServerSummary> {
+    account::require_account(&app)?;
+    let me = current_profile(&app)?;
+    if user_ids.is_empty() {
+        return Err("pick at least one person".into());
+    }
+    let server_id = ServerId::new();
+    let hosting = async {
+        let mut net = app.net.lock().await;
+        let node = net.as_mut().ok_or("network is not ready yet")?;
+        let ticket = node.host_server(server_id, "", app.own_key_for_tickets()).await.map_err(err_to_string)?;
+        app.invites.lock().unwrap().insert(server_id, ticket.encode());
+        Ok(())
+    };
+    let (state, _, signing) = own_server_state_from(&app, server_id, hosting, commy_core::Server::group).await?;
+    let summary = ServerSummary::from_state(&state, Some(me.id));
+    app.servers.lock().unwrap().insert(server_id, state);
+    drop(signing);
+    app.persist_server(server_id);
+    app.persist_invites();
+    entry_list::record_join(&app, server_id);
+    entry_list::schedule(&handle);
+    let _ = handle.emit("servers-changed", ());
+    invite_to_group(&app, &handle, &me, server_id, user_ids).await?;
+    Ok(summary)
+}
+
+#[tauri::command]
+async fn add_group_members(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_ids: Vec<String>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let group = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.group && s.server.is_current_member(me.id));
+    if !group {
+        return Err("that is not a group you are in".into());
+    }
+    invite_to_group(&app, &handle, &me, sid, user_ids).await
+}
+
+fn group_thread_views(app: &App, me: UserId) -> Vec<DmThreadView> {
+    let servers = app.servers.lock().unwrap();
+    servers
+        .values()
+        .filter(|s| s.server.group)
+        .map(|state| {
+            let last = state
+                .server
+                .sorted_channels()
+                .into_iter()
+                .filter(|c| c.kind == ChannelKind::Text)
+                .flat_map(|c| state.messages(c.id).iter())
+                .max_by_key(|m| m.created_at);
+            DmThreadView {
+                user: state.server.id.to_string(),
+                name: view::server_name(state, Some(me)),
+                last_message: last
+                    .map(|m| {
+                        let who = if m.author == me { "You".to_string() } else { view::display_name(state, m.author) };
+                        let text = if m.content.is_empty() {
+                            m.files().next().map(|a| a.filename.clone()).unwrap_or_default()
+                        } else {
+                            safety::truncate(&m.content, 60)
+                        };
+                        format!("{who}: {text}")
+                    })
+                    .unwrap_or_default(),
+                last_at: last.map(|m| m.created_at.to_rfc3339()).unwrap_or_default(),
+                kind: "group".to_string(),
+            }
+        })
+        .collect()
+}
+
 #[tauri::command]
 fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
     let me = match app.profile.lock().unwrap().as_ref() {
         Some(p) => p.id,
         None => return Vec::new(),
     };
+    let groups = group_thread_views(&app, me);
     let dms = app.dms.lock().unwrap();
     let safety = app.safety.lock().unwrap();
     let mut views = dm_thread_views(&dms, me);
+    views.extend(groups);
+    views.sort_by(|a, b| b.last_at.cmp(&a.last_at));
     views.retain_mut(|view| {
         let Ok(partner) = view.user.parse::<UserId>() else { return true };
         if safety.is_blocked(partner) {
@@ -1694,7 +1816,10 @@ async fn send_signed_dm(
     content: String,
     offline: &str,
 ) -> CmdResult<()> {
-    let mut message = DmMessage::new(me.id, to, content);
+    send_direct_dm(app, me, hex, DmMessage::new(me.id, to, content), offline).await
+}
+
+async fn send_direct_dm(app: &App, me: &UserProfile, hex: &str, mut message: DmMessage, offline: &str) -> CmdResult<()> {
     sign_dm(app, &mut message)?;
     let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
     let send = {
@@ -3606,8 +3731,19 @@ fn require_can_view(state: &ServerState, user: UserId, channel: ChannelId) -> Cm
     }
 }
 
+fn require_not_timed_out(state: &ServerState, user: UserId) -> CmdResult<()> {
+    match state.server.timeout_of(user, chrono::Utc::now()) {
+        Some(timeout) => {
+            let left = commy_core::audit::duration_words(timeout.remaining_secs(chrono::Utc::now()).max(1));
+            Err(format!("you are timed out in this server for another {left}"))
+        }
+        None => Ok(()),
+    }
+}
+
 fn require_can_post(app: &App, state: &ServerState, user: UserId, channel: ChannelId) -> CmdResult<()> {
     require_can_view(state, user, channel)?;
+    require_not_timed_out(state, user)?;
     let restricted = state.server.channel(channel).is_some_and(|c| c.is_restricted());
     if restricted && !state.server.can_post_in(channel, user) {
         return Err("only some roles can send messages in this channel".into());
@@ -3807,6 +3943,7 @@ async fn update_role(
     hoist: Option<bool>,
     tag: Option<String>,
     permissions: Option<Vec<String>>,
+    mentionable: Option<bool>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
@@ -3831,7 +3968,16 @@ async fn update_role(
         let permissions = permissions
             .map(|names| permissions_from_names(&names))
             .unwrap_or(existing.permissions);
-        commy_core::server::Role { name, color, self_assignable, hoist: hoist.unwrap_or(existing.hoist), tag, permissions, ..existing.clone() }
+        commy_core::server::Role {
+            name,
+            color,
+            self_assignable,
+            hoist: hoist.unwrap_or(existing.hoist),
+            tag,
+            permissions,
+            mentionable: mentionable.unwrap_or(existing.mentionable),
+            ..existing.clone()
+        }
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
@@ -4135,6 +4281,49 @@ async fn ban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server
         }
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberBan { server: sid, user }).await
+}
+
+fn timeout_event(sid: ServerId, user: UserId, by: UserId, seconds: Option<u32>) -> CmdResult<ServerEvent> {
+    let at = chrono::Utc::now();
+    let until = match seconds {
+        Some(secs) if i64::from(secs) > commy_core::server::MAX_TIMEOUT_SECS => {
+            return Err("a timeout can last four weeks at most".into());
+        }
+        Some(0) => return Err("choose how long the timeout lasts".into()),
+        Some(secs) => Some(at + chrono::Duration::seconds(i64::from(secs))),
+        None => None,
+    };
+    Ok(ServerEvent::MemberTimeout { server: sid, user, by, at, until })
+}
+
+async fn set_member_timeout(app: &App, handle: &tauri::AppHandle, server_id: String, user_id: String, seconds: Option<u32>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let me = current_profile(app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(app, state, me.id, Permissions::TIME_OUT_MEMBERS, "time out members")?;
+        if user == state.server.owner || user == me.id {
+            return Err("you cannot time out that member".into());
+        }
+        if !state.server.is_member(user) {
+            return Err("that member is no longer in the server".into());
+        }
+    }
+    apply_and_broadcast(app, handle, sid, timeout_event(sid, user, me.id, seconds)?).await?;
+    refresh_forced_voice(app, handle);
+    Ok(())
+}
+
+#[tauri::command]
+async fn time_out_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String, seconds: u32) -> CmdResult<()> {
+    set_member_timeout(&app, &handle, server_id, user_id, Some(seconds)).await
+}
+
+#[tauri::command]
+async fn clear_timeout(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String) -> CmdResult<()> {
+    set_member_timeout(&app, &handle, server_id, user_id, None).await
 }
 
 #[tauri::command]
@@ -4905,6 +5094,7 @@ async fn play_sound_in_voice(app: &App, handle: &tauri::AppHandle, sid: ServerId
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
+        require_not_timed_out(state, me.id)?;
         soundboard_play_view(state, channel, me.id, &name).ok_or("that sound no longer exists")?
     };
     broadcast_event(app, sid, ServerEvent::SoundboardPlay { server: sid, channel, user: me.id, name })
@@ -5573,6 +5763,7 @@ async fn create_role(
     tag: Option<String>,
     self_assignable: Option<bool>,
     hoist: Option<bool>,
+    mentionable: Option<bool>,
 ) -> CmdResult<String> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let name = name.trim().to_string();
@@ -5609,6 +5800,7 @@ async fn create_role(
             self_assignable: self_assignable.unwrap_or(false),
             tag,
             banner: None,
+            mentionable: mentionable.unwrap_or(false),
         }
     };
     let id = role.id.to_string();
@@ -5781,6 +5973,21 @@ fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
         }),
         _ => (false, false),
     };
+    if let Some(sid) = server {
+        let timeouts = {
+            let servers = app.servers.lock().unwrap();
+            servers.get(&sid).map(|s| {
+                s.server
+                    .timed_out_members(chrono::Utc::now())
+                    .into_iter()
+                    .map(|(user, timeout)| (user, timeout.until.timestamp_millis()))
+                    .collect::<std::collections::HashMap<_, _>>()
+            })
+        };
+        if let (Some(session), Some(timeouts)) = (app.voice_session.lock().unwrap().as_mut(), timeouts) {
+            session.set_timeouts(timeouts);
+        }
+    }
     let was = (
         app.forced_mute.swap(muted, std::sync::atomic::Ordering::Relaxed),
         app.forced_deaf.swap(deafened, std::sync::atomic::Ordering::Relaxed),
@@ -5863,7 +6070,15 @@ async fn run_net_loop(
                 if let ServerEvent::ScreenShare { user, active: true, .. } = &event {
                     app.share_seen.lock().unwrap().insert((server, *user), std::time::Instant::now());
                 }
-                let moderation = matches!(event, ServerEvent::VoiceModerate { .. });
+                let moderation = matches!(event, ServerEvent::VoiceModerate { .. } | ServerEvent::MemberTimeout { .. });
+                let my_timeout = match &event {
+                    ServerEvent::MemberTimeout { user, until, .. }
+                        if app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == *user) =>
+                    {
+                        Some(until.map(|t| t.timestamp_millis()))
+                    }
+                    _ => None,
+                };
                 let access = matches!(
                     event,
                     ServerEvent::ChannelAccessSet { .. }
@@ -5929,6 +6144,9 @@ async fn run_net_loop(
                         }
                         if moderation {
                             refresh_forced_voice(&app, &handle);
+                        }
+                        if let Some(until) = my_timeout {
+                            let _ = handle.emit("timed-out", serde_json::json!({ "server": server.to_string(), "until": until }));
                         }
                         if access {
                             leave_unseen_voice(&app, &handle, server).await;
@@ -6056,6 +6274,8 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             return;
         }
         let Some(message) = keys.open(state, message) else { return };
+        let names = app.profile.lock().unwrap().as_ref().map(catchup::mention_names).unwrap_or_default();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
         serde_json::json!({
             "server": sid.to_string(),
             "server_name": state.server.name,
@@ -6064,6 +6284,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "announcement": state.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement),
             "author": message.author.to_string(),
             "author_name": state.profiles.get(&message.author).map(|p| p.visible_name().to_string()).unwrap_or_else(|| "Someone".into()),
+            "mentioned": state.server.mentioned_by(message.author, &message.content, me, &names),
             "content": message.content,
             "has_attachments": message.files().next().is_some(),
         })
@@ -6156,6 +6377,8 @@ async fn run_dm_loop(
             outbox::Received::Reply { to, signal } => {
                 let _ = send_friend_signal(&app, to, signal).await;
             }
+            outbox::Received::Call { from, call, signal } => calls::on_signal(&app, &handle, from, call, signal).await,
+            outbox::Received::GroupInvite { from, ticket } => join_group(&app, &handle, from, &ticket).await,
             outbox::Received::Dropped | outbox::Received::Taken => {}
         }
     }
@@ -6546,6 +6769,8 @@ pub fn run() {
             moderate_voice,
             ban_member,
             unban_member,
+            time_out_member,
+            clear_timeout,
             set_user_voice,
             set_role_banner,
             get_integrations,
@@ -6693,6 +6918,12 @@ pub fn run() {
             set_dm_reaction,
             attach_dm_file,
             attach_dm_bytes,
+            create_group_dm,
+            add_group_members,
+            calls::start_dm_call,
+            calls::answer_dm_call,
+            calls::end_dm_call,
+            calls::get_dm_call,
             rename_server,
             create_channel,
             delete_channel,

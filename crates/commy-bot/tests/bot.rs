@@ -279,6 +279,7 @@ fn private_channels_are_reviewed_through_the_bots_own_key() {
         position: 2,
         hoist: false,
         self_assignable: false,
+        mentionable: false,
         tag: None,
         banner: None,
     };

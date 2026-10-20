@@ -242,6 +242,13 @@ pub enum ServerEvent {
         user: UserId,
         grant: crate::channel_key::SealedKey,
     },
+    MemberTimeout {
+        server: ServerId,
+        user: UserId,
+        by: UserId,
+        at: DateTime<Utc>,
+        until: Option<DateTime<Utc>>,
+    },
 }
 
 #[cfg(test)]
@@ -295,6 +302,8 @@ mod tests {
         let sharing = ServerEvent::ExpressionSharingSet { server, stickers: true, emoticons: false };
         assert_eq!(wire_tag(sharing), 61);
         assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 62);
+        let timeout = ServerEvent::MemberTimeout { server, user, by: user, at: chrono::Utc::now(), until: None };
+        assert_eq!(wire_tag(timeout), 65);
     }
 
     #[test]

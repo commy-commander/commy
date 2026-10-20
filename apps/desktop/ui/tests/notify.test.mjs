@@ -61,7 +61,7 @@ test("mentions match whole names, case-insensitively", () => {
   assert.equal(mentionsName("hey @sam", ["sam", null]), true);
   assert.equal(mentionsName("hey @Sam!", ["sam"]), true);
   assert.equal(mentionsName("hey @samantha", ["sam"]), false);
-  assert.equal(mentionsName("@everyone up", []), true);
+  assert.equal(mentionsName("@everyone up", []), false, "everyone depends on the sender, so it is decided elsewhere");
   assert.equal(mentionsName("", ["sam"]), false);
   assert.equal(mentionsName("a.b @a.b", ["a.b"]), true);
 });
