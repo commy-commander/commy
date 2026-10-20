@@ -40,6 +40,8 @@ pub enum AuditKind {
     MemberBan,
     MemberUnban,
     VoiceModerate,
+    VoiceMove,
+    VoiceDisconnect,
     EmojiAdd,
     EmojiRemove,
     SoundAdd,
@@ -254,6 +256,13 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         }
         E::MemberNickname { user, nickname, .. } => {
             (K::MemberNickname, Some(user.to_string()), account_name(state, *user), nickname.as_deref().map(clip))
+        }
+        E::VoiceMove { user, channel: to, .. } => {
+            let (target, label) = member(user);
+            match to {
+                Some(to) => (K::VoiceMove, target, label, channel_name(state, *to)),
+                None => (K::VoiceDisconnect, target, label, None),
+            }
         }
         E::EmojiAdd { emoji, .. } => (K::EmojiAdd, None, Some(clip(&emoji.name)), None),
         E::EmojiRemove { name, .. } => (K::EmojiRemove, None, Some(clip(name)), None),

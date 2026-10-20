@@ -62,6 +62,7 @@ function mockAuditLog() {
     { at: ago(4), by: "m2", by_name: "nova", kind: "message_delete", target: "m3", label: "sleepy", detail: "welcome" },
     { at: ago(26), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "role_assign", target: "m2", label: "nova", detail: "Moderator" },
     { at: ago(70), by: "m2", by_name: "nova", kind: "voice_moderate", target: "m3", label: "sleepy", detail: "muted" },
+    { at: ago(95), by: "m2", by_name: "nova", kind: "voice_move", target: "m1", label: "ferris", detail: "General" },
     { at: ago(180), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "channel_rename", target: null, label: "chat", detail: "general" },
     { at: ago(600), by: "m1", by_name: "ferris", kind: "emoji_add", target: null, label: "ferris_wave", detail: null },
     { at: ago(900), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "member_nickname", target: "m3", label: "sleepy", detail: "Sleepy Sam" },
@@ -143,6 +144,7 @@ function mockSeed() {
       ch("news", "announcement", "Patch notes and server news"),
       ch("General", "voice"),
       ch("mod-lounge", "text", "For the moderators"),
+      ch("Lounge", "voice"),
     ],
     members: [
       { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
@@ -183,7 +185,7 @@ function mockSeed() {
   server.channels[5].view_roles = ["r2"];
   server.rules = "# Welcome\n1. Be kind to each other\n2. **No spam** or self promotion\n3. Keep it on topic, see https://commy.chat";
   server.needs_rules = true;
-  const general = server.channels[3];
+  const general = server.channels.find(c => c.kind === "voice");
   general.voice_users = ["ferris"];
   general.voice_user_ids = ["m1"];
   general.voice_since = [Math.floor(Date.now() / 1000) - 754];
@@ -420,7 +422,7 @@ async function mockInvoke(cmd, args = {}) {
         add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
         can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
         can_add_emoticons: !mock.plainMember || !(s.add_restricted || {}).emoticons, can_use_external: s.can_use_external !== false,
-        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_manage_nicknames: !mock.plainMember, can_change_nickname: true, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_move: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_manage_nicknames: !mock.plainMember, can_change_nickname: true, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
@@ -999,6 +1001,18 @@ async function mockInvoke(cmd, args = {}) {
       s.server_deafened = (s.server_deafened || []).filter(u => u !== args.userId);
       if (args.muted) s.server_muted.push(args.userId);
       if (args.deafened) s.server_deafened.push(args.userId);
+      return null;
+    }
+    case "move_voice_member": {
+      const s = mock.servers[args.serverId];
+      const from = s.channels.find(c => (c.voice_user_ids || []).includes(args.userId));
+      if (!from) throw new Error("that member is not in voice here");
+      const at = from.voice_user_ids.indexOf(args.userId);
+      const carried = ["voice_users", "voice_user_ids", "voice_since", "voice_muted", "voice_deafened"].map(k => [k, (from[k] || []).splice(at, 1)[0]]);
+      const to = args.channelId ? s.channels.find(c => c.id === args.channelId) : null;
+      if (to) for (const [k, v] of carried) (to[k] ||= []).push(v);
+      const member = s.members.find(x => x.id === args.userId);
+      if (member) member.voice_channel = to ? to.id : null;
       return null;
     }
     case "ban_member": {
@@ -6483,7 +6497,7 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
   ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
-  ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "manage_nicknames", "change_nickname"]],
+  ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
 ];
 
 function roleForm(server, role, onClose) {
@@ -6962,6 +6976,13 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
       const active = timeoutActive(currentTimeoutOf(member));
       item(active ? "Remove timeout" : `Time out ${member.name}`, () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
     }
+    const inVoice = server.can_move ? (server.members.find(m => m.id === member.id) || {}).voice_channel : null;
+    if (inVoice) {
+      for (const channel of server.channels.filter(c => c.kind === "voice" && c.id !== inVoice && c.can_view !== false)) {
+        item(`Move to ${channelPlainName(channel)}`, () => moveVoiceMember(member, channel));
+      }
+      item("Disconnect from Voice", () => moveVoiceMember(member, null), "danger");
+    }
     if (server.can_kick) {
       item(`Kick ${member.name}`, async () => {
         if (!confirm(`Kick ${member.name} from ${server.name}?`)) return;
@@ -7116,6 +7137,16 @@ async function confirmTimeout() {
     await invoke("time_out_member", { serverId, userId: member.id, seconds });
     await refreshCurrentServer();
     toast(timeoutSummary(member.name, seconds));
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function moveVoiceMember(member, channel) {
+  try {
+    await invoke("move_voice_member", { serverId: state.currentServer.id, userId: member.id, channelId: channel ? channel.id : null });
+    await refreshCurrentServer();
+    toast(channel ? `Moved ${member.name} to ${channelPlainName(channel)}` : `Disconnected ${member.name} from voice`);
   } catch (e) {
     toast(String(e));
   }
@@ -12325,6 +12356,23 @@ function wireEvents() {
       renderVoicePanel();
       if (state.currentServer) await refreshCurrentServer();
     });
+    window.__TAURI__.event.listen("voice-moved", async event => {
+      const { server, channel, name } = event.payload;
+      if (!channel) {
+        toast("A moderator disconnected you from voice");
+        state.voiceChannelId = null;
+        state.voiceServer = null;
+        state.sharing = false;
+        clearSpeaking();
+        playSound("leave");
+      } else {
+        toast(`A moderator moved you to ${name || "another channel"}`);
+        state.voiceChannelId = channel;
+        if (state.voiceServer && state.voiceServer.id === server && name) state.voiceServer.channelName = name;
+      }
+      renderVoicePanel();
+      if (state.currentServer && state.currentServer.id === server) await refreshCurrentServer();
+    });
     window.__TAURI__.event.listen("afk-moved", async () => {
       toast("You were moved to AFK for inactivity");
       if (state.currentServer) {
@@ -12758,6 +12806,7 @@ const PERMISSION_LABELS = [
   ["time_out_members", "Time Out Members"],
   ["manage_nicknames", "Manage Nicknames"],
   ["change_nickname", "Change Nickname"],
+  ["move_members", "Move Members"],
   ["administrator", "Administrator"],
 ];
 

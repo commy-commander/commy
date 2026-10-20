@@ -3423,6 +3423,7 @@ mod placeholder_tests {
             Permissions::KICK_MEMBERS,
             Permissions::BAN_MEMBERS,
             Permissions::MUTE_MEMBERS,
+            Permissions::MOVE_MEMBERS,
             Permissions::MANAGE_ROLES,
             Permissions::MANAGE_EXPRESSIONS,
             Permissions::MANAGE_EVENTS,
@@ -4507,6 +4508,45 @@ async fn set_nickname(
         }
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberNickname { server: sid, user, nickname: cleaned }).await
+}
+
+#[tauri::command]
+async fn move_voice_member(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    user_id: String,
+    channel_id: Option<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let channel: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MOVE_MEMBERS, "move members between voice channels")?;
+        if user == state.server.owner || user == me.id {
+            return Err("you cannot move that member".into());
+        }
+        let Some(current) = state.voice_states.get(&user).copied() else {
+            return Err("that member is not in voice here".into());
+        };
+        if let Some(target) = channel {
+            match state.server.channel(target) {
+                Some(c) if c.kind == ChannelKind::Voice => {}
+                _ => return Err("that is not a voice channel".into()),
+            }
+            require_can_view(state, me.id, target)?;
+            if target == current {
+                return Err("they are already in that channel".into());
+            }
+            if voice_channel_full(&app, state, target, user) {
+                return Err("that voice channel is full".into());
+            }
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::VoiceMove { server: sid, user, channel }).await
 }
 
 #[tauri::command]
@@ -6273,6 +6313,29 @@ fn announce_new_owner(app: &App, handle: &tauri::AppHandle, sid: ServerId, user:
     );
 }
 
+async fn follow_voice_move(handle: &tauri::AppHandle, sid: ServerId, channel: Option<ChannelId>) {
+    let app = handle.state::<App>();
+    let in_voice_here = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
+    if !in_voice_here {
+        return;
+    }
+    let name = channel.and_then(|c| {
+        let servers = app.servers.lock().unwrap();
+        servers.get(&sid).and_then(|s| s.server.channel(c)).map(|c| c.name.clone())
+    });
+    if channel.is_some() && name.is_none() {
+        return;
+    }
+    tracing::info!("a moderator moved us to {name:?}");
+    let moved = set_voice_channel(handle.state::<App>(), handle.clone(), sid.to_string(), channel.map(|c| c.to_string())).await;
+    if moved.is_ok() {
+        let _ = handle.emit(
+            "voice-moved",
+            serde_json::json!({ "server": sid.to_string(), "channel": channel.map(|c| c.to_string()), "name": name }),
+        );
+    }
+}
+
 fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
@@ -6403,6 +6466,14 @@ async fn run_net_loop(
                     ServerEvent::OwnerTransfer { user, .. } => Some(*user),
                     _ => None,
                 };
+                let moved_me = match &event {
+                    ServerEvent::VoiceMove { user, channel, .. }
+                        if app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == *user) =>
+                    {
+                        Some(*channel)
+                    }
+                    _ => None,
+                };
                 let voice_update = match &event {
                     ServerEvent::VoiceState { user, channel, .. } => Some((*user, *channel)),
                     _ => None,
@@ -6463,6 +6534,9 @@ async fn run_net_loop(
                         }
                         if let Some(until) = my_timeout {
                             let _ = handle.emit("timed-out", serde_json::json!({ "server": server.to_string(), "until": until }));
+                        }
+                        if let Some(channel) = moved_me {
+                            follow_voice_move(&handle, server, channel).await;
                         }
                         if access {
                             leave_unseen_voice(&app, &handle, server).await;
@@ -7064,6 +7138,7 @@ pub fn run() {
             set_pronouns,
             moderate_voice,
             set_nickname,
+            move_voice_member,
             ban_member,
             unban_member,
             time_out_member,

@@ -16,10 +16,10 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   you own to another member.
 - **Roles and moderation.** Colored roles with fine-grained permissions,
   kick, ban and timeouts, per-server nicknames, server mute and deafen,
-  pinned messages and announcements, and auto moderation that holds messages
-  with blocked words, links, too many mentions or flooding. A moderation bot
-  you run yourself can remove new ones for everyone
-  ([crates/commy-bot](crates/commy-bot/README.md)).
+  moving people between voice channels, pinned messages and announcements,
+  and auto moderation that holds messages with blocked words, links, too many
+  mentions or flooding. A moderation bot you run yourself can remove new ones
+  for everyone ([crates/commy-bot](crates/commy-bot/README.md)).
   Channels can be limited to roles. Messages sent in a private channel are
   encrypted so only those roles and admins can read them.
 - **Rich chat.** Replies, reactions, edits, emoji (including custom server
