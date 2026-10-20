@@ -2336,7 +2336,7 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   font-size: 13px;
   font-weight: 600;
 }
-.cam-stage.live .cam-sky, .cam-stage.live .cam-stage-idle { visibility: hidden; }
+.cam-stage.live .cam-stage-idle { visibility: hidden; }
 .camera-controls { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .camera-controls select { width: 100%; min-width: 0; text-overflow: ellipsis; }
 .camera-controls .segmented button { padding: 7px 6px; }
