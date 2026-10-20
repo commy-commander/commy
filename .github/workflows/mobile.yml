@@ -21,7 +21,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  TAURI_CLI_VERSION: "2.12.3"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   CARGO_PROFILE_DEV_DEBUG: 0
@@ -62,14 +61,15 @@ jobs:
       - name: Generate the Android project
         working-directory: apps/desktop/src-tauri
         run: |
-          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" android init --ci
-          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" icon icons/icon.png
+          npm ci
+          npx tauri android init --ci
+          npx tauri icon icons/icon.png
           node ../mobile/android-manifest.mjs
 
       - name: Build
         working-directory: apps/desktop/src-tauri
         run: |
-          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" android build \
+          npx tauri android build \
             --ci --debug --apk --target aarch64 --target x86_64
 
       - name: Collect the APK
@@ -113,13 +113,14 @@ jobs:
       - name: Generate the Xcode project
         working-directory: apps/desktop/src-tauri
         run: |
-          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" ios init --ci
-          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" icon icons/icon.png
+          npm ci
+          npx tauri ios init --ci
+          npx tauri icon icons/icon.png
 
       - name: Build for the simulator
         working-directory: apps/desktop/src-tauri
         run: |
-          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" ios build \
+          npx tauri ios build \
             --ci --debug --target aarch64-sim
 
       - name: Collect the app

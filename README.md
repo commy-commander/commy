@@ -169,16 +169,18 @@ desktop-only settings. The native projects are generated, not committed:
 ```sh
 cd apps/desktop/src-tauri
 
+npm ci
+
 # Android (needs Android Studio's SDK and NDK, NDK_HOME set)
-cargo tauri android init
-cargo tauri icon icons/icon.png
+npx tauri android init
+npx tauri icon icons/icon.png
 node ../mobile/android-manifest.mjs
-cargo tauri android dev
+npx tauri android dev
 
 # iOS (macOS with Xcode)
-cargo tauri ios init
-cargo tauri icon icons/icon.png
-cargo tauri ios dev
+npx tauri ios init
+npx tauri icon icons/icon.png
+npx tauri ios dev
 ```
 
 The "Mobile builds" workflow builds a debug APK and an iOS simulator app on
