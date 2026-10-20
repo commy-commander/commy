@@ -43,20 +43,43 @@ const mock = {
   voice: { noise_cancellation: true, echo_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
 };
 
-function mockSearch({ serverId, terms, from, mentions, channelId }) {
+function mockSearchMatcher({ terms, from, mentions }, named) {
+  return (authorId, content) => {
+    if (from && authorId !== from) return false;
+    if (mentions && !(named && mentionsName(content, [named.name]))) return false;
+    const text = content.toLowerCase();
+    return terms.every(t => text.includes(t.toLowerCase()));
+  };
+}
+
+function mockPage(hits, offset) {
+  const total = hits.length;
+  const at = total ? Math.min(Math.max(0, offset || 0), Math.floor((total - 1) / 50) * 50) : 0;
+  return { total, offset: at, hits: hits.slice(at, at + 50) };
+}
+
+function mockSearch({ serverId, terms, from, mentions, channelId, offset }) {
   const server = mock.servers[serverId];
-  const named = server.members.find(m => m.id === mentions);
+  const matches = mockSearchMatcher({ terms, from, mentions }, server.members.find(m => m.id === mentions));
   const hits = server.channels
     .filter(c => holdsMessages(c) && (!channelId || c.id === channelId))
     .flatMap(c => (mock.messages[c.id] || []).map(message => ({ channel: c.id, channel_name: c.name, message })))
-    .filter(({ message }) => {
-      const text = message.content.toLowerCase();
-      if (from && message.author_id !== from) return false;
-      if (mentions && !(named && mentionsName(message.content, [named.name]))) return false;
-      return terms.every(t => text.includes(t.toLowerCase()));
-    })
+    .filter(({ message }) => matches(message.author_id, message.content))
     .sort((a, b) => Date.parse(b.message.created_at) - Date.parse(a.message.created_at));
-  return { total: hits.length, hits: hits.slice(0, 50) };
+  return mockPage(hits, offset);
+}
+
+function mockSearchDms({ terms, from, mentions, userId, offset }) {
+  const contact = mock.dms[mentions];
+  const named = contact ? { name: contact.name } : mentions === "me" && mock.user ? { name: mock.user.username } : null;
+  const matches = mockSearchMatcher({ terms, from, mentions }, named);
+  const dms = Object.entries(mock.dms)
+    .filter(([user]) => !userId || user === userId)
+    .flatMap(([user, d]) => d.messages.filter(m => matches(m.from, m.content)).map(message => ({ kind: "dm", user, name: d.name, message })));
+  const groups = userId ? [] : Object.values(mock.servers).filter(s => s.group).flatMap(s => s.channels.filter(holdsMessages).flatMap(c =>
+    (mock.messages[c.id] || []).filter(m => matches(m.author_id, m.content)).map(message => ({ kind: "group", server: s.id, name: s.name, channel: c.id, message }))));
+  const hits = [...dms, ...groups].sort((a, b) => Date.parse(b.message.created_at) - Date.parse(a.message.created_at));
+  return mockPage(hits, offset);
 }
 
 function mockReadView(channelIds) {
@@ -304,6 +327,15 @@ function mockSeed() {
     ],
   };
   mock.reports = [{ id: "r1", server: server.id, channel: null, message: null, reporter: "m1", reporter_name: "ferris", reported: "m2", reported_name: "nova", reason: "spam", note: "Keeps posting invite links in every channel.", excerpt: "join my server https://example.com/invite", created_at: new Date().toISOString() }];
+  const nightNotes = ["build is green", "flaky voice test again", "shipped the overlay fix", "waiting on review"];
+  mock.dms.m3 = {
+    name: "sleepy",
+    messages: Array.from({ length: 64 }, (_, i) => ({
+      id: `dl${i}`, from: i % 3 === 2 ? "me" : "m3", from_name: i % 3 === 2 ? "You" : "sleepy",
+      content: `night log ${i + 1}: ${nightNotes[i % nightNotes.length]}`,
+      created_at: new Date(Date.now() - 3 * 86400e3 - (64 - i) * 5400e3).toISOString(), outgoing: i % 3 === 2,
+    })),
+  };
   mock.dms.m1 = {
     name: "ferris",
     messages: [
@@ -744,6 +776,7 @@ async function mockInvoke(cmd, args = {}) {
       return all.slice(Math.max(0, at - 50), at + 51);
     }
     case "search_messages": return mockSearch(args);
+    case "search_dms": return mockSearchDms(args);
     case "get_pins": return mockPinViews(args.channelId || null);
     case "saved_list": return mockSavedStore();
     case "saved_set": {
@@ -5367,22 +5400,95 @@ async function renderServerPins() {
   }
 }
 
-const searchUi = { token: 0, timer: 0, items: [], index: -1 };
+const searchUi = { token: 0, timer: 0, items: [], index: -1, scope: null, place: null, offset: 0, page: null };
 const SEARCH_DEBOUNCE_MS = 180;
 
 function searchContext() {
   const server = state.currentServer;
-  if (!server) return { members: [], channels: [] };
+  if (server) {
+    return {
+      members: server.members.map(m => ({ id: m.id, name: m.name })),
+      channels: server.channels.filter(holdsMessages).map(c => ({ id: c.id, name: channelPlainName(c) })),
+    };
+  }
+  if (state.view !== "dm") return { members: [], channels: [] };
+  const members = (state.dmThreads || []).filter(t => t.kind !== "group").map(t => ({ id: t.user, name: t.name }));
+  if (state.user) members.unshift({ id: state.user.id, name: state.user.username });
+  return { members, channels: [] };
+}
+
+function searchScopeContext() {
+  const server = state.currentServer;
+  const group = Boolean(server && server.group);
+  const dm = state.view === "dm";
+  const channel = server && state.currentChannel ? state.currentChannel : null;
+  const conversationName = dm ? state.currentDm && state.currentDm.name : group ? server.name : channel && channelPlainName(channel);
   return {
-    members: server.members.map(m => ({ id: m.id, name: m.name })),
-    channels: server.channels.filter(holdsMessages).map(c => ({ id: c.id, name: channelPlainName(c) })),
+    view: state.view,
+    group,
+    conversation: dm ? Boolean(state.currentDm) : Boolean(channel),
+    conversationName: conversationName || "",
+    serverId: server ? server.id : null,
+    channelId: channel ? channel.id : null,
+    dmUser: dm && state.currentDm ? state.currentDm.user : null,
+    active: dm || Boolean(server),
   };
 }
 
+function sameSearchPlace(a, b) {
+  return a.view === b.view && a.serverId === b.serverId && a.dmUser === b.dmUser;
+}
+
+function currentSearchScope(ctx) {
+  const place = searchPlace(ctx);
+  if (searchUi.place !== place) {
+    searchUi.place = place;
+    searchUi.scope = defaultSearchScope(ctx);
+    searchUi.offset = 0;
+  } else {
+    searchUi.scope = pickSearchScope(searchUi.scope, ctx);
+  }
+  return searchUi.scope;
+}
+
 function syncSearchBox() {
-  const visible = state.view === "server" && Boolean(state.currentServer);
-  $("search-box").classList.toggle("hidden", !visible);
-  if (!visible) closeSearchPop();
+  const ctx = searchScopeContext();
+  $("search-box").classList.toggle("hidden", !ctx.active);
+  if (!ctx.active) closeSearchPop();
+  currentSearchScope(ctx);
+}
+
+function renderSearchScope(ctx) {
+  currentSearchScope(ctx);
+  const buttons = searchScopes(ctx).map(scope => {
+    const btn = el("button", "search-scope-btn", scope.label);
+    btn.type = "button";
+    btn.disabled = !scope.enabled;
+    btn.classList.toggle("active", scope.key === searchUi.scope);
+    btn.setAttribute("aria-pressed", scope.key === searchUi.scope ? "true" : "false");
+    btn.addEventListener("mousedown", e => e.preventDefault());
+    btn.onclick = () => setSearchScope(scope.key);
+    return btn;
+  });
+  $("search-scope").replaceChildren(...buttons);
+  return searchUi.scope;
+}
+
+function setSearchScope(key) {
+  if (searchUi.scope === key) return;
+  searchUi.scope = key;
+  searchUi.offset = 0;
+  renderSearchScope(searchScopeContext());
+  if ($("search-input").value.trim()) runSearch(0);
+  else renderSearchHints();
+}
+
+function setSearchPager(page) {
+  searchUi.page = page;
+  $("search-pager").classList.toggle("idle", !page);
+  $("search-page-label").textContent = page && page.total > page.size ? pageLabel(page.total, page.offset) : "";
+  $("search-older").disabled = !page || !page.hasOlder;
+  $("search-newer").disabled = !page || !page.hasNewer;
 }
 
 function resetSearch() {
@@ -5399,8 +5505,10 @@ function closeSearchPop() {
 }
 
 function openSearchPop() {
-  if (!state.currentServer) return;
+  const ctx = searchScopeContext();
+  if (!ctx.active) return;
   closeFloating("search-pop");
+  renderSearchScope(ctx);
   $("search-pop").classList.remove("hidden");
   $("search-box").classList.add("open");
 }
@@ -5442,8 +5550,11 @@ function pickableRow(row, onPick) {
 }
 
 function renderSearchHints() {
-  setSearchHead("Search this server", "Runs on this device, over the history it keeps");
-  const rows = SEARCH_FILTERS.map(filter => {
+  const ctx = searchScopeContext();
+  setSearchHead(searchScopeTitle(searchUi.scope, ctx), "Runs on this device, over the history it keeps");
+  setSearchPager(null);
+  const filters = SEARCH_FILTERS.filter(filter => filter.key !== "in" || searchContext().channels.length);
+  const rows = filters.map(filter => {
     const row = el("button", "mention-row search-filter-row");
     row.type = "button";
     row.append(el("span", "search-filter-key", `${filter.key}:`), el("span", "mention-hint", filter.hint));
@@ -5465,7 +5576,8 @@ function renderSearchHints() {
 }
 
 function renderSearchSuggestions(token, items) {
-  setSearchHead(token.kind === "member" ? "Members" : "Channels", "");
+  setSearchHead(token.kind === "member" ? (state.view === "dm" ? "People" : "Members") : "Channels", "");
+  setSearchPager(null);
   const rows = items.map(item => {
     const row = el("button", "mention-row");
     row.type = "button";
@@ -5506,8 +5618,7 @@ function highlightedExcerpt(message, terms) {
   return node;
 }
 
-function searchResultRow(hit, terms) {
-  const message = hit.message;
+function searchRow(message, terms, label, gated, onPick) {
   const row = el("div", "pin-row search-row");
   row.dataset.id = message.id;
   row.appendChild(makeAvatar(message.author_id, message.author_name, "avatar avatar-sm"));
@@ -5515,53 +5626,101 @@ function searchResultRow(hit, terms) {
   const head = el("div", "pin-head");
   const author = el("span", "pin-author", message.author_name);
   decorateAuthor(author, message.author_id);
-  const channel = state.currentServer.channels.find(c => c.id === hit.channel);
-  head.append(author, el("span", "pin-time", formatTime(message.created_at)), el("span", "pin-channel", `#${channel ? channelPlainName(channel) : hit.channel_name}`));
-  const gated = sensitiveGated({ view: "server", channel, confirmed: sensitiveConfirmed() });
+  head.append(author, el("span", "pin-time", formatTime(message.created_at)), el("span", "pin-channel", label));
   body.append(head, gated ? el("div", "pin-text search-text muted", SENSITIVE_PREVIEW) : highlightedExcerpt(message, terms));
   row.appendChild(body);
-  return pickableRow(row, () => openSearchHit(hit));
+  return pickableRow(row, onPick);
 }
 
-function renderSearchResults(query, results) {
+function searchResultRow(hit, terms) {
+  const channel = state.currentServer ? state.currentServer.channels.find(c => c.id === hit.channel) : null;
+  const gated = sensitiveGated({ view: "server", channel, confirmed: sensitiveConfirmed() });
+  return searchRow(hit.message, terms, `#${channel ? channelPlainName(channel) : hit.channel_name}`, gated, () => openSearchHit(hit));
+}
+
+function dmSearchResultRow(hit, terms, label = dmHitKey(hit).label) {
+  return searchRow(searchHitMessage(hit), terms, label, false, () => openDmSearchHit(hit));
+}
+
+function searchTerms(query) {
+  const terms = [...query.terms];
+  if (query.mentions) terms.push(`@${query.mentions.name}`);
+  return terms;
+}
+
+function renderSearchResults(query, results, scope, ctx) {
   const hits = results.hits.filter(h => !isBlocked(h.message.author_id));
   const total = results.total - (results.hits.length - hits.length);
-  setSearchHead(searchSummary(total, hits.length), query.channel ? `In #${query.channel.name}` : "Newest first, across this server");
+  setSearchHead(pageCount(total), searchScopeLine(scope, query, ctx));
+  setSearchPager(pageWindow(total, results.offset));
   if (!hits.length) {
     setSearchItems([searchNote("No messages found", "Search covers what this device keeps. Older history may have rolled off in Settings > Storage.")]);
     return;
   }
-  const terms = [...query.terms];
-  if (query.mentions) terms.push(`@${query.mentions.name}`);
-  setSearchItems(hits.map(hit => searchResultRow(hit, terms)));
+  setSearchItems(hits.map(hit => searchResultRow(hit, searchTerms(query))));
 }
 
-async function runSearch() {
+function renderDmSearchResults(query, results, scope, ctx) {
+  const hits = results.hits.filter(h => !isBlocked(searchHitMessage(h).author_id));
+  const total = results.total - (results.hits.length - hits.length);
+  setSearchHead(pageCount(total), searchScopeLine(scope, query, ctx));
+  setSearchPager(pageWindow(total, results.offset));
+  if (!hits.length) {
+    setSearchItems([searchNote("No messages found", "Search covers the direct messages and groups this device keeps.")]);
+    return;
+  }
+  const terms = searchTerms(query);
+  const runs = groupHits(hits);
+  if (runs.length < 2) {
+    setSearchItems(hits.map(hit => dmSearchResultRow(hit, terms)));
+    return;
+  }
+  setSearchItems(runs.flatMap(run => [el("div", "mention-head search-run-head", run.label), ...run.hits.map(hit => dmSearchResultRow(hit, terms, ""))]));
+}
+
+async function runSearch(offset = searchUi.offset) {
   clearTimeout(searchUi.timer);
-  if (!state.currentServer) return;
+  const ctx = searchScopeContext();
+  if (!ctx.active) return;
+  const scope = renderSearchScope(ctx);
   const query = parseSearch($("search-input").value, searchContext());
   const token = ++searchUi.token;
   if (query.unknown.length) {
-    setSearchHead("Search this server", "");
-    setSearchItems([searchNote(unknownFilterText(query.unknown), "Pick a name from the list as you type.")]);
+    setSearchHead(searchScopeTitle(scope, ctx), "");
+    setSearchPager(null);
+    const where = ctx.view === "dm" ? "in your direct messages" : "in this server";
+    setSearchItems([searchNote(unknownFilterText(query.unknown, where), "Pick a name from the list as you type.")]);
     return;
   }
   if (searchIsEmpty(query)) return renderSearchHints();
-  const serverId = state.currentServer.id;
+  const request = searchRequest(scope, searchArgs(query), ctx, offset);
   let results;
   try {
-    results = await invoke("search_messages", { serverId, ...searchArgs(query) });
+    results = await invoke(request.command, request.args);
   } catch (e) {
-    if (token === searchUi.token) setSearchItems([searchNote("Search did not finish", String(e))]);
+    if (token === searchUi.token) {
+      setSearchPager(null);
+      setSearchItems([searchNote("Search did not finish", String(e))]);
+    }
     return;
   }
-  if (token !== searchUi.token || !state.currentServer || state.currentServer.id !== serverId) return;
-  renderSearchResults(query, results);
+  if (token !== searchUi.token || !sameSearchPlace(ctx, searchScopeContext())) return;
+  searchUi.offset = results.offset || 0;
+  if (request.command === "search_dms") renderDmSearchResults(query, results, scope, ctx);
+  else renderSearchResults(query, results, scope, ctx);
+}
+
+function turnSearchPage(direction) {
+  const page = searchUi.page;
+  if (!page) return;
+  const next = direction > 0 ? page.olderOffset : page.newerOffset;
+  if (next !== page.offset) runSearch(next);
 }
 
 function onSearchInput() {
   const input = $("search-input");
   $("search-box").classList.toggle("has-text", input.value.length > 0);
+  searchUi.offset = 0;
   openSearchPop();
   const token = searchToken(input.value, input.selectionStart ?? input.value.length);
   const items = searchSuggestions(token, searchContext());
@@ -5592,6 +5751,9 @@ function onSearchKeydown(e) {
       openSearchPop();
       runSearch();
     }
+  } else if ((e.key === "PageDown" || e.key === "PageUp") && searchUi.page) {
+    e.preventDefault();
+    turnSearchPage(e.key === "PageDown" ? 1 : -1);
   } else if (e.key === "Escape") {
     e.preventDefault();
     e.stopPropagation();
@@ -5613,6 +5775,27 @@ async function openSearchHit(hit) {
   await jumpToMessage(hit.message.id);
 }
 
+async function openDmSearchHit(hit) {
+  closeSearchPop();
+  $("search-input").blur();
+  try {
+    if (hit.kind === "group") {
+      await openMessageLink({ server: hit.server, channel: hit.channel, message: hit.message.id });
+      return;
+    }
+    if (state.view !== "dm") {
+      setViewMode("dm");
+      state.currentServer = null;
+      state.currentChannel = null;
+      renderServerRail();
+    }
+    if (!state.currentDm || state.currentDm.user !== hit.user) await selectDm(hit.user, hit.name);
+    await jumpToMessage(hit.message.id);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 function wireSearch() {
   const input = $("search-input");
   $("search-box-icon").appendChild(svgIcon("search", 16));
@@ -5626,6 +5809,10 @@ function wireSearch() {
     input.focus();
     onSearchInput();
   };
+  for (const [id, direction] of [["search-older", 1], ["search-newer", -1]]) {
+    $(id).addEventListener("mousedown", e => e.preventDefault());
+    $(id).onclick = () => turnSearchPage(direction);
+  }
   document.addEventListener("keydown", e => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f" && $("modal-backdrop").classList.contains("hidden")) {
       if ($("search-box").classList.contains("hidden")) return;

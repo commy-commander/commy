@@ -282,7 +282,7 @@ mod tests {
         message.sign(server, &owner_identity);
         state.apply(ServerEvent::MessageCreate { message }).unwrap();
         let query = crate::search::SearchQuery::new(&["plans".to_string()], None, None, None);
-        let found = |me: UserId, keys: &KeyHolder| crate::search::search(&state, &query, Some(me), 10, keys).total;
+        let found = |me: UserId, keys: &KeyHolder| crate::search::search(&state, &query, Some(me), crate::search::Page { offset: 0, limit: 10 }, keys).total;
         assert_eq!(found(owner, &holder), 1);
         assert_eq!(found(outsider, &KeyHolder::as_user(outsider, outsider_identity)), 0);
     }

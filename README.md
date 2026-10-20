@@ -34,7 +34,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   links, polls with a closing time, and a GIF picker when the server operator
   has set up a GIF provider key.
 - **Message search.** Search a server by keyword, phrase, author, mention or
-  channel. Search runs on your device over the history it keeps, and a result
+  channel, or your direct messages and groups, scoped to the conversation you
+  are viewing or all of them. Search runs on your device over the history it
+  keeps, pages through results fifty at a time newest first, and a result
   jumps straight to the message, even weeks back. Save any message to a
   per-device Saved list, or ask for a reminder about it in 20 minutes, an
   hour, three hours, tomorrow morning or at a time you pick; the reminder

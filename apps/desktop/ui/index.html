@@ -141,7 +141,7 @@
           </button>
           <label class="search-box hidden" id="search-box">
             <span class="search-box-icon" id="search-box-icon"></span>
-            <input id="search-input" type="text" placeholder="Search" autocomplete="off" spellcheck="false" aria-label="Search messages in this server" aria-controls="search-pop" />
+            <input id="search-input" type="text" placeholder="Search" autocomplete="off" spellcheck="false" aria-label="Search messages" aria-controls="search-pop" />
             <button class="search-clear" id="search-clear" type="button" title="Clear Search" aria-label="Clear Search"></button>
           </label>
         </div>
@@ -150,8 +150,14 @@
         <header class="search-pop-head">
           <span class="search-pop-title" id="search-pop-title">Search this server</span>
           <span class="search-pop-sub" id="search-pop-sub"></span>
+          <div class="search-scope" id="search-scope" role="group" aria-label="Search scope"></div>
         </header>
         <div class="search-list" id="search-list" role="listbox"></div>
+        <footer class="search-pager idle" id="search-pager">
+          <span class="search-page-label" id="search-page-label" role="status"></span>
+          <button class="search-page-btn" id="search-newer" type="button" disabled>Newer</button>
+          <button class="search-page-btn" id="search-older" type="button" disabled>Older</button>
+        </footer>
       </section>
       <section class="pins-pop hidden" id="pins-pop" role="dialog" aria-label="Pinned Messages">
         <header class="pins-pop-head">
@@ -2488,6 +2494,7 @@
   <script src="scripts/directory.js"></script>
   <script src="scripts/automod.js"></script>
   <script src="scripts/search.js"></script>
+  <script src="scripts/search-paging.js"></script>
   <script src="scripts/switcher.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/activity.js"></script>

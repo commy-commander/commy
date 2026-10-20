@@ -5111,6 +5111,67 @@ h3.md-heading { font-size: 1.1em; }
 .search-filter-row .mention-hint, .search-tip-row .mention-hint { margin-left: 0; }
 .search-hit { background: rgba(255, 77, 77, .24); color: var(--header-primary); border-radius: 3px; }
 .search-empty { margin: auto 0; }
+.search-scope {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 2px;
+  background: var(--input-bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.search-scope-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background var(--t-hover) ease, color var(--t-hover) ease;
+}
+.search-scope-btn:hover { color: var(--text-normal); }
+.search-scope-btn.active { background: var(--bg-active); color: var(--header-primary); }
+.search-scope-btn:disabled { color: var(--text-faint); opacity: .5; cursor: default; }
+.search-scope-btn:disabled:hover { color: var(--text-faint); }
+.search-pager {
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 0 16px;
+  border-top: 1px solid var(--line);
+}
+.search-pager.idle > * { visibility: hidden; }
+.search-page-label { flex: 1; min-width: 0; font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search-page-btn {
+  flex: none;
+  width: 68px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--bg-active);
+  color: var(--header-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--t-hover) ease, color var(--t-hover) ease, opacity var(--t-hover) ease;
+}
+.search-page-btn:hover { background: var(--header-primary); color: var(--bg-darkest); }
+.search-page-btn:disabled { opacity: .35; cursor: default; }
+.search-page-btn:disabled:hover { background: var(--bg-active); color: var(--header-primary); }
+.search-run-head { margin-top: 6px; }
+.search-run-head:first-child { margin-top: 0; }
 
 .history-pill {
   position: sticky;
