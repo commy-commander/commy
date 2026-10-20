@@ -26,6 +26,10 @@ impl KeyHolder {
         Self { me: Some((me, identity)), rings: Mutex::default() }
     }
 
+    pub fn user(&self) -> Option<UserId> {
+        self.me.as_ref().map(|(me, _)| *me)
+    }
+
     fn with_ring<T>(&self, state: &ServerState, channel: ChannelId, use_ring: impl FnOnce(&Keyring) -> T) -> Option<T> {
         let (me, identity) = self.me.as_ref()?;
         let mut rings = self.rings.lock().unwrap();

@@ -263,6 +263,19 @@ pub enum ServerEvent {
         channel: ChannelId,
         seconds: u32,
     },
+    PollVote {
+        server: ServerId,
+        channel: ChannelId,
+        message: MessageId,
+        user: UserId,
+        choices: Vec<u8>,
+    },
+    PollClose {
+        server: ServerId,
+        channel: ChannelId,
+        message: MessageId,
+        by: UserId,
+    },
 }
 
 #[cfg(test)]
@@ -319,6 +332,11 @@ mod tests {
         let timeout = ServerEvent::MemberTimeout { server, user, by: user, at: chrono::Utc::now(), until: None };
         assert_eq!(wire_tag(timeout), 65);
         assert_eq!(wire_tag(ServerEvent::MemberNickname { server, user, nickname: None }), 66);
+        let message = MessageId::new();
+        assert_eq!(wire_tag(ServerEvent::OwnerTransfer { server, user }), 67);
+        assert_eq!(wire_tag(ServerEvent::ChannelSlowMode { server, channel, seconds: 5 }), 68);
+        assert_eq!(wire_tag(ServerEvent::PollVote { server, channel, message, user, choices: vec![0] }), 69);
+        assert_eq!(wire_tag(ServerEvent::PollClose { server, channel, message, by: user }), 70);
     }
 
     #[test]

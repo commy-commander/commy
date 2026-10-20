@@ -454,6 +454,30 @@
       </div>
     </div>
 
+    <div class="modal modal-poll hidden" id="modal-poll">
+      <h2>Create a Poll</h2>
+      <label class="field-label">Question
+        <input id="poll-question" type="text" maxlength="300" placeholder="What should we play next?" autocomplete="off" />
+      </label>
+      <div class="field-label">Answers</div>
+      <div class="poll-rows" id="poll-rows"></div>
+      <button class="poll-add" id="poll-add" type="button">Add an answer</button>
+      <div class="setting-row poll-switch">
+        <div>
+          <div class="setting-title">Allow more than one answer</div>
+          <div class="setting-sub">People pick every answer that fits instead of just one.</div>
+        </div>
+        <input type="checkbox" id="poll-multi" class="switch" aria-label="Allow more than one answer" />
+      </div>
+      <label class="field-label">Duration
+        <select id="poll-duration"></select>
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="poll-cancel">Cancel</button>
+        <button class="btn-primary" id="poll-send">Post Poll</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-leave-server">
       <h2 id="leave-server-title">Leave Server</h2>
       <p id="leave-server-body">Are you sure you want to leave? You will not be able to rejoin unless you are invited again, and your copy of its history is removed from this device.</p>
@@ -2003,6 +2027,7 @@
     <button id="cm-file" role="menuitem">Upload a File</button>
     <button id="cm-video" role="menuitem">Post a Video</button>
     <button id="cm-gif" role="menuitem">GIF</button>
+    <button id="cm-poll" role="menuitem">Create a Poll</button>
   </div>
 
   <div class="pop-menu ctx-menu hidden" id="server-menu" role="menu">
@@ -2087,6 +2112,7 @@
   <script src="scripts/notify.js"></script>
   <script src="scripts/mentions.js"></script>
   <script src="scripts/pins.js"></script>
+  <script src="scripts/polls.js"></script>
   <script src="scripts/channel-access.js"></script>
   <script src="scripts/audit-log.js"></script>
   <script src="scripts/invites.js"></script>

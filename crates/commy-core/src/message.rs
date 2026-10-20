@@ -18,6 +18,14 @@ impl Attachment {
     pub fn is_image(&self) -> bool {
         self.mime_type.starts_with("image/")
     }
+
+    pub fn is_card(&self) -> bool {
+        self.is_link_preview() || self.is_poll()
+    }
+
+    pub fn carries_a_file(&self) -> bool {
+        !self.is_card() || !self.blob.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,7 +136,7 @@ impl Message {
     }
 
     pub fn files(&self) -> impl Iterator<Item = &Attachment> {
-        self.attachments.iter().filter(|a| !a.is_link_preview())
+        self.attachments.iter().filter(|a| !a.is_card())
     }
 
     pub fn link_previews(&self) -> impl Iterator<Item = (crate::link_preview::LinkPreview, &Attachment)> {

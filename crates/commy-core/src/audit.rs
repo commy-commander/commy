@@ -62,6 +62,7 @@ pub enum AuditKind {
     MemberTimeout,
     MemberTimeoutClear,
     MemberNickname,
+    PollClose,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +279,13 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::MessagePin { channel: id, message, pinned, .. } => {
             let kind = if *pinned { K::MessagePin } else { K::MessageUnpin };
             (kind, Some(message.to_string()), channel_name(state, *id), None)
+        }
+        E::PollClose { channel: id, message, by: closer, .. } => {
+            let author = state.message(*message).map(|m| m.author);
+            if author == Some(*closer) {
+                return None;
+            }
+            (K::PollClose, Some(message.to_string()), channel_name(state, *id), None)
         }
         E::InviteTrack { invite, .. } => (K::InviteCreate, Some(invite.creator.to_string()), Some(clip(&invite.code)), None),
         E::InviteRevoke { code, creator, .. } => {
