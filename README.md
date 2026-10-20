@@ -42,7 +42,8 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   along with the picture; viewers set their own stream volume.
 - **Direct messages.** Private conversations between two people, delivered
   straight to their devices, with offline messages that arrive when the other
-  person comes back.
+  person comes back. Pin the conversations you use most, and the channels too,
+  so they stay at the top of the list on that device.
 - **Presence and notifications.** Status, Do Not Disturb with a "back at"
   time, appear offline, notification toasts, and a notification level or a
   timed mute for each server and each channel. A red "NEW" line marks where
