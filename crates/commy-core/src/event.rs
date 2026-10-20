@@ -187,6 +187,9 @@ pub enum ServerEvent {
         user: UserId,
         pronouns: Option<String>,
     },
+    ServerDelete {
+        server: ServerId,
+    },
     StickerAdd {
         server: ServerId,
         sticker: crate::server::Sticker,
@@ -254,8 +257,9 @@ mod tests {
         let play = ServerEvent::SharedSoundPlay { server, channel, user, name: "n".into(), blob: "b".into(), volume: 1.0 };
         assert_eq!(wire_tag(play), 51);
         assert_eq!(wire_tag(ServerEvent::PronounsSet { server, user, pronouns: None }), 52);
+        assert_eq!(wire_tag(ServerEvent::ServerDelete { server }), 53);
         let sharing = ServerEvent::ExpressionSharingSet { server, stickers: true, emoticons: false };
-        assert_eq!(wire_tag(sharing), 57);
+        assert_eq!(wire_tag(sharing), 58);
     }
 
     #[test]

@@ -73,7 +73,7 @@ impl Fresh {
             channel: message.channel,
             author: message.author,
             content: message.content.clone(),
-            has_attachments: !message.attachments.is_empty(),
+            has_attachments: message.files().next().is_some(),
             at: message.created_at.timestamp(),
             mentioned: mentions(&message.content, names),
         }

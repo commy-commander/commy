@@ -127,6 +127,17 @@ impl Message {
         }
     }
 
+    pub fn files(&self) -> impl Iterator<Item = &Attachment> {
+        self.attachments.iter().filter(|a| !a.is_link_preview())
+    }
+
+    pub fn link_previews(&self) -> impl Iterator<Item = (crate::link_preview::LinkPreview, &Attachment)> {
+        self.attachments
+            .iter()
+            .filter_map(|a| a.link_preview().map(|p| (p, a)))
+            .filter(|(p, _)| self.content.contains(&p.url))
+    }
+
     pub fn sign(&mut self, server: ServerId, identity: &Identity) {
         self.sig = Some(identity.sign(&self.signing_bytes(server)));
     }

@@ -124,6 +124,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::StickerRemove { name, .. } => format!("sticker:{name}"),
         E::EmoticonAdd { emoticon, .. } => format!("emoticon:{}", emoticon.name),
         E::EmoticonRemove { name, .. } => format!("emoticon:{name}"),
+        E::ServerDelete { .. } => "deleted".into(),
         E::EmojiAdd { emoji, .. } => format!("emoji:{}", emoji.name),
         E::EmojiRemove { name, .. } => format!("emoji:{name}"),
         E::SoundAdd { sound, .. } => format!("sound:{}", sound.name),
@@ -161,7 +162,7 @@ pub fn settles_authority(subject: &str) -> bool {
 
 pub fn snapshot_omits(subject: &str) -> bool {
     const OMITTED: [&str; 7] = ["emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:"];
-    subject == "rules" || subject == "automod" || OMITTED.iter().any(|p| subject.starts_with(p))
+    subject == "rules" || subject == "automod" || subject == "deleted" || OMITTED.iter().any(|p| subject.starts_with(p))
 }
 
 pub fn relayable(event: &ServerEvent) -> bool {
@@ -248,6 +249,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         }
         E::VoiceModerate { .. } => allows(Permissions::MUTE_MEMBERS) || allows(Permissions::DEAFEN_MEMBERS),
         E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
+        E::ServerDelete { .. } => by == server.owner,
     }
 }
 
@@ -711,6 +713,32 @@ mod tests {
         state.apply(ServerEvent::RoleAssign { server: sid, user: member, role: rid }).unwrap();
         assert_eq!(state.apply_signed(&by(member, 5_000, sticker("late"))), Ok(true));
         assert!(snapshot_omits("sticker:late") && snapshot_omits("emoticon:shrug"));
+    }
+
+    #[test]
+    fn only_the_owner_deletes_a_server_and_members_relay_it() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let admin = join(&mut state, "admin");
+        let admin_role = role(Permissions::ADMINISTRATOR, false);
+        let rid = admin_role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: admin_role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: admin, role: rid }).unwrap();
+        let delete = ServerEvent::ServerDelete { server: sid };
+        assert!(authorized(&state.server, owner, &delete));
+        assert!(!authorized(&state.server, admin, &delete), "not even an administrator");
+        assert!(relayable(&delete));
+        assert!(snapshot_omits(&subject(&delete).unwrap()));
+        let by_admin = SignedEvent::sign(sid, admin, 1_000, delete.clone(), &identity_for(admin));
+        assert_eq!(state.apply_signed(&by_admin), Err(StoreError::NotAllowed));
+        assert!(!state.is_deleted());
+        let real = SignedEvent::sign(sid, owner, 1_000, delete, &identity_for(owner));
+        assert_eq!(state.apply_signed(&real), Ok(true));
+        assert!(state.is_deleted());
+        assert_eq!(state.signed_actions(), vec![&real]);
+        let rename = SignedEvent::sign(sid, owner, 2_000, ServerEvent::ServerRename { server: sid, name: "after".into() }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&rename), Ok(false), "a deleted server takes no more changes");
+        assert!(crate::store::ServerState::from_snapshot(state.snapshot()).is_deleted());
     }
 
     #[test]

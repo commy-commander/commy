@@ -1,10 +1,11 @@
-use crate::action::{self, SignedEvent};
+use crate::action::{self, Action, SignedEvent};
+use crate::audit::{AuditEntry, AuditKind};
 use crate::automod::{AutoMod, Hold};
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 use crate::message::{
-    Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES, MAX_RELAYED_REACTIONS, MAX_RELAYED_REACTORS,
+    Attachment, Message, Reaction, TombstoneProof, MAX_MESSAGE_BYTES, MAX_RELAYED_REACTIONS, MAX_RELAYED_REACTORS,
 };
 use crate::server::{ChannelKind, Member, Server};
 use crate::user::{Presence, UserProfile};
@@ -103,6 +104,8 @@ pub struct ServerState {
     reaction_marks: HashMap<MessageId, Vec<ReactionMark>>,
     automod: AutoMod,
     bots: BTreeSet<UserId>,
+    audit: Vec<AuditEntry>,
+    deleted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +139,10 @@ pub struct Snapshot {
     pub automod: AutoMod,
     #[serde(default)]
     pub bots: Vec<UserId>,
+    #[serde(default)]
+    pub audit: Vec<AuditEntry>,
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 impl ServerState {
@@ -165,6 +172,8 @@ impl ServerState {
             reaction_marks: HashMap::new(),
             automod: AutoMod::default(),
             bots: BTreeSet::new(),
+            audit: Vec::new(),
+            deleted: false,
         }
     }
 
@@ -197,6 +206,8 @@ impl ServerState {
                 .collect(),
             automod: self.automod.clone(),
             bots: self.bots.iter().copied().collect(),
+            audit: self.audit.clone(),
+            deleted: self.deleted,
         }
     }
 
@@ -239,6 +250,8 @@ impl ServerState {
         state.action_floor = snapshot.action_floor;
         state.automod = snapshot.automod;
         state.bots = snapshot.bots.into_iter().filter(|user| state.server.is_member(*user)).collect();
+        state.audit = crate::audit::tidy(snapshot.audit);
+        state.deleted = snapshot.deleted;
         for signed in snapshot.signed_actions {
             if let Some(subject) = action::subject(&signed.event) {
                 if state.action_times.get(&subject) == Some(&signed.action.at) {
@@ -508,7 +521,12 @@ impl ServerState {
     }
 
     fn apply_noted(&mut self, signed: &SignedEvent) -> Result<bool, StoreError> {
+        let Action { by, at, sig } = signed.action;
+        let entry = crate::audit::entry_for(self, by, at, sig, &signed.event);
         let applied = self.apply(signed.event.clone())?;
+        if let Some(entry) = entry.filter(|_| applied) {
+            crate::audit::record(&mut self.audit, entry);
+        }
         if applied || self.target_known(&signed.event) {
             self.note_action(action::subject(&signed.event), signed.action.at);
             self.keep_signed(signed);
@@ -618,6 +636,14 @@ impl ServerState {
         self.signed_actions.contains_key(subject)
     }
 
+    pub fn audit_log(&self) -> &[AuditEntry] {
+        &self.audit
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.deleted
+    }
+
     fn same_server(&self, server: ServerId) -> Result<(), StoreError> {
         if server != self.server.id {
             return Err(StoreError::WrongServer);
@@ -626,6 +652,9 @@ impl ServerState {
     }
 
     pub fn apply(&mut self, event: ServerEvent) -> Result<bool, StoreError> {
+        if self.deleted {
+            return Ok(false);
+        }
         match event {
             ServerEvent::MessageCreate { message } => self.create_message(message),
             ServerEvent::MessageEdit {
@@ -882,6 +911,11 @@ impl ServerState {
             ServerEvent::SoundSharingSet { server, shareable } => {
                 self.same_server(server)?;
                 Ok(replace(&mut self.server.sounds_shareable, shareable))
+            }
+            ServerEvent::ServerDelete { server } => {
+                self.same_server(server)?;
+                self.deleted = true;
+                Ok(true)
             }
             ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } => Ok(false),
             ServerEvent::StickerAdd { server, sticker } => {
@@ -1277,7 +1311,7 @@ impl ServerState {
             return Err(StoreError::NotAnnouncer);
         }
         if !held
-            && !message.attachments.is_empty()
+            && message.attachments.iter().any(Attachment::carries_a_file)
             && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::ATTACH_FILES)
         {
             return Err(StoreError::NoUploads);
@@ -1404,6 +1438,9 @@ impl ServerState {
                 return Err(StoreError::WrongChannel);
             }
 
+            if author != proof.by {
+                self.note_moderator_delete(&proof, author);
+            }
             if let Some(list) = self.messages.get_mut(&channel) {
                 list.remove(pos);
             }
@@ -1417,6 +1454,19 @@ impl ServerState {
             .get(&proof.message)
             .is_some_and(|list| list.iter().any(|s| s.proof.by == proof.by && s.proof.channel == proof.channel));
         self.store_unapplied(proof, kept)
+    }
+
+    fn note_moderator_delete(&mut self, proof: &TombstoneProof, author: UserId) {
+        let entry = AuditEntry {
+            at: proof.at.timestamp_millis(),
+            by: proof.by,
+            kind: AuditKind::MessageDelete,
+            target: Some(author.to_string()),
+            label: crate::audit::member_name(self, author),
+            detail: self.server.channel(proof.channel).map(|c| c.name.clone()),
+            sig: proof.sig,
+        };
+        crate::audit::record(&mut self.audit, entry);
     }
 
     fn store_unapplied(&mut self, proof: TombstoneProof, kept: bool) -> Result<bool, StoreError> {
@@ -2479,6 +2529,32 @@ mod tests {
         assert_eq!(state.apply(share.clone()), Ok(true));
         assert_eq!(state.apply(share), Ok(false));
         assert!(state.server.stickers_shareable && !state.server.emoticons_shareable);
+    }
+
+    #[test]
+    fn a_link_card_without_a_picture_needs_no_send_files_permission() {
+        let (mut state, channel, _owner) = fixture();
+        let sid = state.server.id;
+        let plain = join(&mut state, "plain");
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.remove(Permissions::ATTACH_FILES);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        let card = |picture: Option<crate::link_preview::PreviewPicture>| {
+            let preview = crate::link_preview::LinkPreview {
+                url: "https://example.org/a".into(),
+                site: String::new(),
+                title: "A page".into(),
+                description: String::new(),
+                image: Some(crate::link_preview::PreviewImage { mime: "image/jpeg".into(), width: 10, height: 10 }),
+            };
+            let mut m = Message::new(channel, plain, "see https://example.org/a");
+            m.attachments.push(preview.into_attachment(picture));
+            crate::test_support::signed(&state, m)
+        };
+        let text_only = card(None);
+        let pictured = card(Some(crate::link_preview::PreviewPicture { blob: "abc".into(), size_bytes: 10, provider: None }));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: text_only }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: pictured }), Err(StoreError::NoUploads));
     }
 
     #[test]
