@@ -165,6 +165,23 @@ pub enum ServerEvent {
         server: ServerId,
         rules: crate::automod::AutoMod,
     },
+    BotSet {
+        server: ServerId,
+        user: UserId,
+        bot: bool,
+    },
+    SoundSharingSet {
+        server: ServerId,
+        shareable: bool,
+    },
+    SharedSoundPlay {
+        server: ServerId,
+        channel: ChannelId,
+        user: UserId,
+        name: String,
+        blob: String,
+        volume: f32,
+    },
     ChannelAccessSet {
         server: ServerId,
         channel: ChannelId,
@@ -223,7 +240,11 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::ChannelKindSet { server, channel, kind }), 47);
         let rules = crate::automod::AutoMod::default();
         assert_eq!(wire_tag(ServerEvent::AutoModSet { server, rules }), 48);
-        assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 49);
+        assert_eq!(wire_tag(ServerEvent::BotSet { server, user, bot: true }), 49);
+        assert_eq!(wire_tag(ServerEvent::SoundSharingSet { server, shareable: true }), 50);
+        let play = ServerEvent::SharedSoundPlay { server, channel, user, name: "n".into(), blob: "b".into(), volume: 1.0 };
+        assert_eq!(wire_tag(play), 51);
+        assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 52);
     }
 
     #[test]

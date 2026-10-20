@@ -69,9 +69,11 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::ReactionToggle { user, .. }
         | E::ReactionSet { user, .. }
         | E::SoundboardPlay { user, .. }
+        | E::SharedSoundPlay { user, .. }
         | E::RulesAccept { user, .. }
         | E::EventRsvp { user, .. }
-        | E::DoorbellSet { user, .. } => Some(*user),
+        | E::DoorbellSet { user, .. }
+        | E::BotSet { user, .. } => Some(*user),
         E::MessagePin { by, .. } => Some(*by),
         _ => None,
     }
@@ -114,8 +116,10 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::GameTagsSet { .. } => "game_tags".into(),
         E::RulesSet { .. } => "rules".into(),
         E::AutoModSet { .. } => "automod".into(),
+        E::BotSet { user, .. } => format!("bot:{user}"),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
         E::ExpressionSettings { .. } => "expressions".into(),
+        E::SoundSharingSet { .. } => "sound_sharing".into(),
         E::EmojiAdd { emoji, .. } => format!("emoji:{}", emoji.name),
         E::EmojiRemove { name, .. } => format!("emoji:{name}"),
         E::SoundAdd { sound, .. } => format!("sound:{}", sound.name),
@@ -140,7 +144,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         | E::MessageDelete { .. }
         | E::DoorbellSet { .. }
         | E::TypingStart { .. }
-        | E::SoundboardPlay { .. } => return None,
+        | E::SoundboardPlay { .. }
+        | E::SharedSoundPlay { .. } => return None,
     };
     Some(s)
 }
@@ -151,7 +156,7 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 6] = ["emoji:", "sound:", "event:", "pin:", "channel.key:", "channel.grant:"];
+    const OMITTED: [&str; 7] = ["emoji:", "sound:", "event:", "pin:", "bot:", "channel.key:", "channel.grant:"];
     subject == "rules" || subject == "automod" || OMITTED.iter().any(|p| subject.starts_with(p))
 }
 
@@ -169,6 +174,7 @@ fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
         | E::ReactionToggle { channel, .. }
         | E::ReactionSet { channel, .. }
         | E::SoundboardPlay { channel, .. }
+        | E::SharedSoundPlay { channel, .. }
         | E::MessagePin { channel, .. } => Some(*channel),
         _ => None,
     }
@@ -185,6 +191,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::MemberJoin { .. } => actor(event) == Some(by),
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
         E::ProfileUpdate { .. } => actor(event) == Some(by),
+        E::BotSet { .. } => member && actor(event) == Some(by),
         E::PresenceUpdate { .. } | E::RulesAccept { .. } | E::EventRsvp { .. } => member && actor(event) == Some(by),
         E::VoiceState { .. }
         | E::TypingStart { .. }
@@ -192,7 +199,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::CameraState { .. }
         | E::ReactionToggle { .. }
         | E::ReactionSet { .. } => member && actor(event) == Some(by) && sees(event),
-        E::SoundboardPlay { .. } => {
+        E::SoundboardPlay { .. } | E::SharedSoundPlay { .. } => {
             member && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD) && sees(event)
         }
         E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin() && sees(event),
@@ -216,7 +223,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::AutoModSet { .. }
         | E::AfkChannelSet { .. }
         | E::AfkTimeoutSet { .. }
-        | E::ExpressionSettings { .. } => allows(Permissions::MANAGE_SERVER),
+        | E::ExpressionSettings { .. }
+        | E::SoundSharingSet { .. } => allows(Permissions::MANAGE_SERVER),
         E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => {
             allows(Permissions::MANAGE_ROLES)
@@ -527,6 +535,23 @@ mod tests {
         other_key.identity = Some(Identity::generate().public());
         let swap = SignedEvent::sign(sid, keyed, 1, ServerEvent::ProfileUpdate { profile: other_key }, &identity_for(keyed));
         assert_eq!(state.apply_signed(&swap), Err(StoreError::IdentityMismatch));
+    }
+
+    #[test]
+    fn sound_sharing_is_the_managers_call_and_shared_plays_need_a_member() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "user");
+        let share = ServerEvent::SoundSharingSet { server: sid, shareable: true };
+        assert!(authorized(&state.server, owner, &share));
+        assert!(!authorized(&state.server, user, &share));
+        assert_eq!(state.apply(share), Ok(true));
+        assert!(state.server.sounds_shareable);
+        let play = ServerEvent::SharedSoundPlay { server: sid, channel, user, name: "boop".into(), blob: "b".into(), volume: 1.0 };
+        assert!(authorized(&state.server, user, &play));
+        assert!(!may_go_unsigned(&play));
+        let stranger = ServerEvent::SharedSoundPlay { server: sid, channel, user: UserId::new(), name: "boop".into(), blob: "b".into(), volume: 1.0 };
+        assert!(!authorized(&state.server, user, &stranger), "a play names its own player");
     }
 
     #[test]

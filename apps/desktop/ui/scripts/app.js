@@ -29,6 +29,7 @@ const state = {
   speaking: new Set(),
   dmThreads: [],
   showDmProfile: true,
+  historyAnchor: null,
 };
 
 const mock = {
@@ -38,6 +39,22 @@ const mock = {
   dms: {},
   voice: { noise_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10 },
 };
+
+function mockSearch({ serverId, terms, from, mentions, channelId }) {
+  const server = mock.servers[serverId];
+  const named = server.members.find(m => m.id === mentions);
+  const hits = server.channels
+    .filter(c => holdsMessages(c) && (!channelId || c.id === channelId))
+    .flatMap(c => (mock.messages[c.id] || []).map(message => ({ channel: c.id, channel_name: c.name, message })))
+    .filter(({ message }) => {
+      const text = message.content.toLowerCase();
+      if (from && message.author_id !== from) return false;
+      if (mentions && !(named && mentionsName(message.content, [named.name]))) return false;
+      return terms.every(t => text.includes(t.toLowerCase()));
+    })
+    .sort((a, b) => Date.parse(b.message.created_at) - Date.parse(a.message.created_at));
+  return { total: hits.length, hits: hits.slice(0, 50) };
+}
 
 function mockCrabImage() {
   const c = document.createElement("canvas");
@@ -101,13 +118,14 @@ function mockSeed() {
     members: [
       { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
-      { id: "m2", name: "nova", presence: "idle", custom_status: null },
+      { id: "m2", name: "nova", presence: "idle", custom_status: null, roles: ["r2"] },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
+      { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
     ],
   };
   server.roles = [
     { id: "r1", name: "Raider", color: "9b7bff", position: 2, permissions: [], self_assignable: true, tag: "RAID" },
-    { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages"], self_assignable: false, tag: null },
+    { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages"], self_assignable: false, hoist: true, tag: null },
   ];
   server.game_tags = ["Rust", "Valorant"];
   server.emojis = [{ name: "ferris", image: "ferris@mock" }, { name: "ferris_wave", image: "ferris@mock" }];
@@ -161,6 +179,8 @@ function mockSeed() {
       content: "https://commy.chat/i/kq7m3n4p#" + "q".repeat(43), created_at: new Date(Date.now() - 60e3).toISOString(), edited: false, attachments: [] },
     { id: "x5", channel: c0, author_id: "m3", author_name: "sleepy",
       content: "free gifts for everyone who clicks", created_at: new Date(Date.now() - 30e3).toISOString(), edited: false, attachments: [], held: "blocked word" },
+    { id: "x6", channel: c0, author_id: "m4", author_name: "Tidy",
+      content: "Removed a message from sleepy: blocked word", created_at: new Date(Date.now() - 20e3).toISOString(), edited: false, attachments: [] },
   ];
   server.automod = { blocked_terms: ["free gifts", "scam*"], block_links: false, max_mentions: 5, burst: { messages: 5, seconds: 10 }, exempt_roles: ["r2"] };
   mock.messages[server.channels[1].id] = [
@@ -286,8 +306,8 @@ async function mockInvoke(cmd, args = {}) {
           })
           .filter(c => c.can_view || !mock.plainMember),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
-        emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, public: !!s.public,
-        can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true,
+        emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
+        can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
@@ -334,7 +354,14 @@ async function mockInvoke(cmd, args = {}) {
       return { server_name: "Pixel Pioneers", host, trusted: host === "commy.chat", account_server_host: "commy.chat",
         expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock" };
     }
-    case "get_messages": return (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+    case "get_messages": {
+      const all = (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+      if (!args.around) return all.slice(-100);
+      const at = all.findIndex(m => m.id === args.around);
+      if (at === -1) throw "that message is no longer on this device";
+      return all.slice(Math.max(0, at - 50), at + 51);
+    }
+    case "search_messages": return mockSearch(args);
     case "get_pins": return mockPinViews(args.channelId || null);
     case "pin_message": {
       mock.pins = (mock.pins || []).filter(p => p.message !== args.messageId);
@@ -558,6 +585,21 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "fetch_expression": return (mock.expressions || {})[args.blob] || null;
     case "pick_sound": return null;
+    case "set_upload_access": {
+      const srv = mock.servers[args.serverId];
+      srv.uploads_restricted = args.restricted;
+      for (const r of srv.roles || []) {
+        const has = (r.permissions || []).includes("attach_files");
+        const want = args.restricted && args.roleIds.includes(r.id);
+        if (args.restricted && want !== has) r.permissions = want ? [...(r.permissions || []), "attach_files"] : r.permissions.filter(x => x !== "attach_files");
+      }
+      return null;
+    }
+    case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
+    case "list_shareable_sounds":
+      return Object.values(mock.servers).filter(s => s.sounds_shareable)
+        .flatMap(s => (s.sounds || []).map(x => ({ server: s.id, server_name: s.name, name: x.name, blob: x.blob, volume: x.volume ?? 1, emoji: x.emoji || null })));
+    case "play_shared_sound": return null;
     case "list_shareable_emojis":
       return Object.values(mock.servers).filter(s => s.emojis_shareable)
         .flatMap(s => (s.emojis || []).map(e => ({ server: s.id, server_name: s.name, name: e.name, image: e.image })));
@@ -618,7 +660,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_channel_limit": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).user_limit = args.limit; return null;
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
-      Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, tag: args.tag });
+      Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag });
       if (args.permissions) r.permissions = args.permissions;
       return null;
     }
@@ -724,6 +766,8 @@ async function mockInvoke(cmd, args = {}) {
     case "set_unread": mock.unread = args.count; return null;
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
+    case "get_autostart": return !!mock.autostart;
+    case "set_autostart": mock.autostart = args.enabled; return mock.autostart;
     case "stop_camera": mock.cameraOn = false; return null;
     case "push_camera_frame": return 1;
     case "watch_camera": return null;
@@ -759,7 +803,7 @@ async function mockInvoke(cmd, args = {}) {
     case "create_role": {
       const roles = mock.servers[args.serverId].roles;
       const id = crypto.randomUUID();
-      roles.push({ id, name: args.name.trim(), color: args.color, position: roles.length + 2, permissions: args.permissions, self_assignable: Boolean(args.selfAssignable), tag: args.tag || null });
+      roles.push({ id, name: args.name.trim(), color: args.color, position: roles.length + 2, permissions: args.permissions, self_assignable: Boolean(args.selfAssignable), hoist: Boolean(args.hoist), tag: args.tag || null });
       return id;
     }
     case "delete_role":
@@ -843,6 +887,7 @@ const ICONS = {
   people: "M16.5 13c-1.2 0-3.07.34-4.5 1-1.43-.67-3.3-1-4.5-1C5.33 13 1 14.08 1 16.25V19h22v-2.75c0-2.17-4.33-3.25-6.5-3.25zm-4 4.5h-10v-1.25c0-.54 2.56-1.75 5-1.75s5 1.21 5 1.75v1.25zm9 0H14v-1.25c0-.46-.2-.86-.52-1.22.88-.3 1.96-.53 3.02-.53 2.44 0 5 1.21 5 1.75v1.25zM7.5 12c1.93 0 3.5-1.57 3.5-3.5S9.43 5 7.5 5 4 6.57 4 8.5 5.57 12 7.5 12zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 5.5c1.93 0 3.5-1.57 3.5-3.5S18.43 5 16.5 5 13 6.57 13 8.5s1.57 3.5 3.5 3.5zm0-5.5c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z",
   gamepad: "M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H3V8h18v8zM6 15h2v-2h2v-2H8V9H6v2H4v2h2v2zm8.5-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4-3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
   paste: "M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z",
+  search: "M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z",
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
 };
 
@@ -1515,7 +1560,10 @@ function textChannelRow(channel, canCreate) {
   paintChannelBand(row, channel);
   if (state.currentChannel && channel.id === state.currentChannel.id) row.classList.add("active");
   if (unread.channels.get(channel.id)) row.classList.add("unread");
-  row.onclick = () => selectChannel(channel);
+  row.onclick = () => {
+    state.historyAnchor = null;
+    selectChannel(channel);
+  };
   if (canCreate) row.appendChild(channelGear(channel));
   return row;
 }
@@ -1649,7 +1697,7 @@ function paintSidebarBanner() {
   header.classList.toggle("has-banner", Boolean(server));
   header.classList.toggle("plain", Boolean(server) && !ref);
   banner.style.backgroundImage = "";
-  header.style.setProperty("--slot", server ? starfield(server.id, serverColors(server.id).glow).css : "");
+  header.style.setProperty("--slot", server ? starfield(server.id).css : "");
   if (!ref) return;
   loadServerImage(ref).then(url => {
     if (url && state.currentServer && state.currentServer.banner === ref) {
@@ -2201,6 +2249,7 @@ function closeFloating(except) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
+  if (except !== "search-pop") closeSearchPop();
 }
 
 let emojiPopPick = null;
@@ -2654,14 +2703,13 @@ function renderMembers() {
   rememberAvatars(state.currentServer.members);
   renderCamGrid();
 
-  const online = state.currentServer.members.filter(m => m.presence !== "offline" && m.presence !== "invisible");
-  const offline = state.currentServer.members.filter(m => m.presence === "offline" || m.presence === "invisible");
-
   const sharers = new Set((state.currentServer.screen_shares || []).map(s => s.user));
 
-  const group = (title, members, dim) => {
+  const group = (title, members, dim, color) => {
     if (!members.length) return;
-    list.appendChild(el("div", "member-group", `${title} - ${members.length}`));
+    const heading = el("div", "member-group", `${title} - ${members.length}`);
+    if (color) heading.style.color = `#${color}`;
+    list.appendChild(heading);
     for (const member of members) {
       const row = el("div", "member" + (dim ? " offline" : ""));
       row.dataset.user = member.id;
@@ -2673,6 +2721,7 @@ function renderMembers() {
       const meta = el("div");
       const nameRow = el("div", "member-name", member.name);
       if (member.color) nameRow.style.color = `#${member.color}`;
+      if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
       if (sharers.has(member.id)) {
         const live = el("span", "live-badge", "LIVE");
@@ -2718,8 +2767,7 @@ function renderMembers() {
       list.appendChild(row);
     }
   };
-  group("Online", online, false);
-  group("Offline", offline, true);
+  for (const g of groupMembers(state.currentServer.members, state.currentServer.roles)) group(g.title, g.members, !!g.dim, g.color);
 }
 
 function renderMessages(messages) {
@@ -2767,6 +2815,9 @@ function renderMessages(messages) {
     box.appendChild(buildMessageRow(message, grouped, { replies: replyCounts.get(message.id) || 0 }));
     lastAuthor = message.held ? null : message.author_id;
     lastTime = time;
+  }
+  if (state.view === "server" && state.historyAnchor && state.currentChannel && state.historyAnchor.channel === state.currentChannel.id) {
+    box.appendChild(historyPill());
   }
   box.scrollTop = sameView && !atBottom ? prevScroll : box.scrollHeight;
   if (state.threadRoot) renderThread();
@@ -3107,6 +3158,273 @@ async function renderServerPins() {
   }
 }
 
+const searchUi = { token: 0, timer: 0, items: [], index: -1 };
+const SEARCH_DEBOUNCE_MS = 180;
+
+function searchContext() {
+  const server = state.currentServer;
+  if (!server) return { members: [], channels: [] };
+  return {
+    members: server.members.map(m => ({ id: m.id, name: m.name })),
+    channels: server.channels.filter(holdsMessages).map(c => ({ id: c.id, name: channelPlainName(c) })),
+  };
+}
+
+function syncSearchBox() {
+  const visible = state.view === "server" && Boolean(state.currentServer);
+  $("search-box").classList.toggle("hidden", !visible);
+  if (!visible) closeSearchPop();
+}
+
+function resetSearch() {
+  clearTimeout(searchUi.timer);
+  searchUi.token++;
+  $("search-input").value = "";
+  $("search-box").classList.remove("has-text");
+  closeSearchPop();
+}
+
+function closeSearchPop() {
+  $("search-pop").classList.add("hidden");
+  $("search-box").classList.remove("open");
+}
+
+function openSearchPop() {
+  if (!state.currentServer) return;
+  closeFloating("search-pop");
+  $("search-pop").classList.remove("hidden");
+  $("search-box").classList.add("open");
+}
+
+function focusSearch() {
+  if ($("search-box").classList.contains("hidden")) return;
+  const input = $("search-input");
+  input.focus();
+  input.select();
+}
+
+function setSearchHead(title, sub) {
+  $("search-pop-title").textContent = title;
+  $("search-pop-sub").textContent = sub || "";
+}
+
+function setSearchItems(rows) {
+  const list = $("search-list");
+  list.replaceChildren(...rows);
+  searchUi.items = rows.filter(r => r.dataset.pick === "1");
+  searchUi.index = -1;
+  list.scrollTop = 0;
+}
+
+function moveSearchSelection(step) {
+  const items = searchUi.items;
+  if (!items.length) return;
+  searchUi.index = (searchUi.index + step + items.length) % items.length;
+  items.forEach((row, i) => row.classList.toggle("active", i === searchUi.index));
+  items[searchUi.index].scrollIntoView({ block: "nearest" });
+}
+
+function pickableRow(row, onPick) {
+  row.dataset.pick = "1";
+  row.setAttribute("role", "option");
+  row.addEventListener("mousedown", e => e.preventDefault());
+  row.onclick = onPick;
+  return row;
+}
+
+function renderSearchHints() {
+  setSearchHead("Search this server", "Runs on this device, over the history it keeps");
+  const rows = SEARCH_FILTERS.map(filter => {
+    const row = el("button", "mention-row search-filter-row");
+    row.type = "button";
+    row.append(el("span", "search-filter-key", `${filter.key}:`), el("span", "mention-hint", filter.hint));
+    return pickableRow(row, () => {
+      const input = $("search-input");
+      const next = applySearchFilter(input.value, filter.key);
+      input.value = next.text;
+      input.focus();
+      input.setSelectionRange(next.caret, next.caret);
+      onSearchInput();
+    });
+  });
+  const tips = [["\"exact words\"", "words in this order"], ["@name", "same as mentions:"]].map(([key, hint]) => {
+    const row = el("div", "mention-row search-tip-row");
+    row.append(el("span", "search-filter-key", key), el("span", "mention-hint", hint));
+    return row;
+  });
+  setSearchItems([el("div", "mention-head", "Filters"), ...rows, el("div", "mention-head search-tips-head", "Also works"), ...tips]);
+}
+
+function renderSearchSuggestions(token, items) {
+  setSearchHead(token.kind === "member" ? "Members" : "Channels", "");
+  const rows = items.map(item => {
+    const row = el("button", "mention-row");
+    row.type = "button";
+    if (token.kind === "member") row.append(makeAvatar(item.id, item.name, "avatar avatar-sm"), el("span", "mention-name", item.name));
+    else row.append(el("span", "mention-at", "#"), el("span", "mention-name", item.name));
+    return pickableRow(row, () => {
+      const input = $("search-input");
+      const next = applySearchSuggestion(input.value, token, item);
+      input.value = next.text;
+      input.focus();
+      input.setSelectionRange(next.caret, next.caret);
+      onSearchInput();
+    });
+  });
+  setSearchItems(rows);
+  if (rows.length) moveSearchSelection(1);
+}
+
+function searchNote(title, text) {
+  const empty = el("div", "pins-empty search-empty");
+  const mark = el("div", "pins-empty-mark");
+  mark.appendChild(svgIcon("search", 26));
+  empty.append(mark, el("strong", null, title));
+  if (text) empty.appendChild(el("span", null, text));
+  return empty;
+}
+
+function highlightedExcerpt(message, terms) {
+  const text = searchExcerpt(pinExcerpt(message, plainText), terms);
+  const node = el("div", "pin-text search-text");
+  if (!text) {
+    node.classList.add("muted");
+    return node;
+  }
+  for (const part of highlightParts(text, terms)) {
+    node.appendChild(part.hit ? el("mark", "search-hit", part.text) : document.createTextNode(part.text));
+  }
+  return node;
+}
+
+function searchResultRow(hit, terms) {
+  const message = hit.message;
+  const row = el("div", "pin-row search-row");
+  row.dataset.id = message.id;
+  row.appendChild(makeAvatar(message.author_id, message.author_name, "avatar avatar-sm"));
+  const body = el("div", "pin-body");
+  const head = el("div", "pin-head");
+  const author = el("span", "pin-author", message.author_name);
+  decorateAuthor(author, message.author_id);
+  const channel = state.currentServer.channels.find(c => c.id === hit.channel);
+  head.append(author, el("span", "pin-time", formatTime(message.created_at)), el("span", "pin-channel", `#${channel ? channelPlainName(channel) : hit.channel_name}`));
+  body.append(head, highlightedExcerpt(message, terms));
+  row.appendChild(body);
+  return pickableRow(row, () => openSearchHit(hit));
+}
+
+function renderSearchResults(query, results) {
+  const hits = results.hits.filter(h => !isBlocked(h.message.author_id));
+  const total = results.total - (results.hits.length - hits.length);
+  setSearchHead(searchSummary(total, hits.length), query.channel ? `In #${query.channel.name}` : "Newest first, across this server");
+  if (!hits.length) {
+    setSearchItems([searchNote("No messages found", "Search covers what this device keeps. Older history may have rolled off in Settings > Storage.")]);
+    return;
+  }
+  const terms = [...query.terms];
+  if (query.mentions) terms.push(`@${query.mentions.name}`);
+  setSearchItems(hits.map(hit => searchResultRow(hit, terms)));
+}
+
+async function runSearch() {
+  clearTimeout(searchUi.timer);
+  if (!state.currentServer) return;
+  const query = parseSearch($("search-input").value, searchContext());
+  const token = ++searchUi.token;
+  if (query.unknown.length) {
+    setSearchHead("Search this server", "");
+    setSearchItems([searchNote(unknownFilterText(query.unknown), "Pick a name from the list as you type.")]);
+    return;
+  }
+  if (searchIsEmpty(query)) return renderSearchHints();
+  const serverId = state.currentServer.id;
+  let results;
+  try {
+    results = await invoke("search_messages", { serverId, ...searchArgs(query) });
+  } catch (e) {
+    if (token === searchUi.token) setSearchItems([searchNote("Search did not finish", String(e))]);
+    return;
+  }
+  if (token !== searchUi.token || !state.currentServer || state.currentServer.id !== serverId) return;
+  renderSearchResults(query, results);
+}
+
+function onSearchInput() {
+  const input = $("search-input");
+  $("search-box").classList.toggle("has-text", input.value.length > 0);
+  openSearchPop();
+  const token = searchToken(input.value, input.selectionStart ?? input.value.length);
+  const items = searchSuggestions(token, searchContext());
+  clearTimeout(searchUi.timer);
+  if (token && items.length) {
+    searchUi.token++;
+    renderSearchSuggestions(token, items);
+    return;
+  }
+  if (!input.value.trim()) {
+    searchUi.token++;
+    renderSearchHints();
+    return;
+  }
+  searchUi.timer = setTimeout(runSearch, SEARCH_DEBOUNCE_MS);
+}
+
+function onSearchKeydown(e) {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if ($("search-pop").classList.contains("hidden")) onSearchInput();
+    moveSearchSelection(e.key === "ArrowDown" ? 1 : -1);
+  } else if (e.key === "Enter" || (e.key === "Tab" && searchUi.index >= 0 && searchUi.items[searchUi.index].classList.contains("mention-row"))) {
+    e.preventDefault();
+    const picked = searchUi.items[searchUi.index];
+    if (picked) picked.click();
+    else {
+      openSearchPop();
+      runSearch();
+    }
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!$("search-pop").classList.contains("hidden")) closeSearchPop();
+    else e.target.blur();
+  }
+}
+
+async function openSearchHit(hit) {
+  closeSearchPop();
+  $("search-input").blur();
+  if (!state.currentServer) return;
+  const channel = state.currentServer.channels.find(c => c.id === hit.channel);
+  if (!channel) {
+    toast("That channel is gone");
+    return;
+  }
+  if (!state.currentChannel || state.currentChannel.id !== channel.id) await selectChannel(channel);
+  await jumpToMessage(hit.message.id);
+}
+
+function wireSearch() {
+  const input = $("search-input");
+  $("search-box-icon").appendChild(svgIcon("search", 16));
+  setIcon($("search-clear"), "close", 14);
+  input.addEventListener("input", onSearchInput);
+  input.addEventListener("focus", onSearchInput);
+  input.addEventListener("keydown", onSearchKeydown);
+  $("search-clear").addEventListener("mousedown", e => e.preventDefault());
+  $("search-clear").onclick = () => {
+    input.value = "";
+    input.focus();
+    onSearchInput();
+  };
+  document.addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f" && $("modal-backdrop").classList.contains("hidden")) {
+      if ($("search-box").classList.contains("hidden")) return;
+      e.preventDefault();
+      focusSearch();
+    }
+  });
+}
+
 function replyReference(message) {
   const ref = el("div", "reply-ref");
   const preview = message.reply_preview;
@@ -3121,10 +3439,62 @@ function replyReference(message) {
   return ref;
 }
 
-function jumpToMessage(id) {
-  const row = $("messages").querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+function messageRow(id) {
+  return $("messages").querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+}
+
+async function fetchChannelMessages(channel) {
+  const anchored = state.historyAnchor && state.historyAnchor.channel === channel.id ? state.historyAnchor.message : null;
+  if (!anchored) state.historyAnchor = null;
+  const args = { serverId: state.currentServer.id, channelId: channel.id };
+  if (!anchored) return invoke("get_messages", args);
+  try {
+    return await invoke("get_messages", { ...args, around: anchored });
+  } catch {
+    state.historyAnchor = null;
+    return invoke("get_messages", args);
+  }
+}
+
+async function showMessageInHistory(id) {
+  const channel = state.currentChannel;
+  if (state.view !== "server" || !channel || !state.currentServer) return null;
+  if (state.historyAnchor) {
+    state.historyAnchor = null;
+    $("messages").dataset.view = "";
+    renderMessages(await fetchChannelMessages(channel));
+    const row = messageRow(id);
+    if (row) return row;
+  }
+  state.historyAnchor = { channel: channel.id, message: id };
+  const messages = await fetchChannelMessages(channel);
+  if (state.currentChannel !== channel) return null;
+  renderMessages(messages);
+  return messageRow(id);
+}
+
+function historyPill() {
+  const pill = el("div", "history-pill");
+  pill.setAttribute("role", "status");
+  pill.appendChild(el("span", null, "Viewing older messages"));
+  const back = el("button", "btn-primary btn-small", "Jump to present");
+  back.onclick = jumpToPresent;
+  pill.appendChild(back);
+  return pill;
+}
+
+async function jumpToPresent() {
+  state.historyAnchor = null;
+  if (state.view !== "server" || !state.currentChannel) return;
+  $("messages").dataset.view = "";
+  renderMessages(await fetchChannelMessages(state.currentChannel));
+}
+
+async function jumpToMessage(id) {
+  let row = messageRow(id);
+  if (!row) row = await showMessageInHistory(id).catch(() => null);
   if (!row) {
-    toast("That message is not loaded");
+    toast("That message is no longer on this device");
     return;
   }
   row.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -4732,6 +5102,12 @@ function soundEmojiNode(value) {
   return el("span", "sound-emoji", value);
 }
 
+function botTag() {
+  const chip = el("span", "bot-tag", "BOT");
+  chip.title = "Bot: runs on its own, not a person";
+  return chip;
+}
+
 function roleTagChip(tag, color) {
   const custom = parseEmojiToken(tag);
   if (custom) {
@@ -4988,8 +5364,9 @@ function openMemberCard(member, anchor) {
   const name = $("mc-name");
   name.textContent = member.name;
   name.style.color = member.color ? `#${member.color}` : "";
-  name.parentElement.querySelector(".role-tag")?.remove();
+  name.parentElement.querySelectorAll(".role-tag, .bot-tag").forEach(n => n.remove());
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
+  if (member.bot) name.after(botTag());
   const status = $("mc-status");
   status.replaceChildren();
   const line = subLine(member);
@@ -5036,14 +5413,12 @@ function openMemberCard(member, anchor) {
     actions.appendChild(btn);
     return btn;
   };
-  if (!isMe) {
+  if (!isMe && !member.bot) {
     actions.appendChild(friendButton(member, () => openMemberCard(member, anchor)));
     action("serverAdd", "Invite", e => openInviteMenu(member, e.currentTarget));
   }
   action("person", "Full Profile", () => openFullProfile(member));
-  if (!isMe) {
-  }
-  $("mc-composer").classList.toggle("hidden", isMe || isBlocked(member.id));
+  $("mc-composer").classList.toggle("hidden", isMe || member.bot || isBlocked(member.id));
   const input = $("mc-input");
   input.value = "";
   input.placeholder = `Message @${member.name}`;
@@ -5061,6 +5436,7 @@ function decorateAuthor(node, authorId) {
   if (!member) return;
   if (member.color) node.style.color = `#${member.color}`;
   if (member.tag) node.after(roleTagChip(member.tag, member.tag_color));
+  if (member.bot) node.after(botTag());
 }
 
 function openChooseRoles() {
@@ -5133,7 +5509,7 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events"]],
-  ["Chat", ["manage_messages", "pin_messages", "post_announcements", "create_invites"]],
+  ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members"]],
 ];
 
@@ -5300,6 +5676,13 @@ function roleForm(server, role, onClose) {
   pick.append(check, el("span", null, "Members can pick this role themselves (Choose Roles)"));
   body.appendChild(pick);
 
+  const separate = el("label", "role-self");
+  const hoistCheck = el("input");
+  hoistCheck.type = "checkbox";
+  hoistCheck.checked = role ? !!role.hoist : false;
+  separate.append(hoistCheck, el("span", null, "Show members with this role in their own group in the people list"));
+  body.appendChild(separate);
+
   const actions = el("div", "form-actions");
   const save = el("button", "btn-primary btn-small", creating ? "Create Role" : "Save Role");
   save.onclick = async () => {
@@ -5319,6 +5702,7 @@ function roleForm(server, role, onClose) {
           permissions,
           tag: tagValue,
           selfAssignable: check.checked,
+          hoist: hoistCheck.checked,
         });
       } else {
         await invoke("update_role", {
@@ -5327,6 +5711,7 @@ function roleForm(server, role, onClose) {
           name: name.value,
           color,
           selfAssignable: check.checked,
+          hoist: hoistCheck.checked,
           tag: tagValue,
           permissions,
         });
@@ -6365,6 +6750,9 @@ function renderSoundboardSettings(server) {
   $("sound-open-toggle").checked = Boolean(server.soundboard_open);
   $("sound-open-toggle").disabled = !server.can_manage_server;
   $("sound-open-row").classList.toggle("readonly", !server.can_manage_server);
+  $("sound-share-toggle").checked = Boolean(server.sounds_shareable);
+  $("sound-share-toggle").disabled = !server.can_manage_server;
+  $("sound-share-row").classList.toggle("readonly", !server.can_manage_server);
   $("sound-upload").classList.toggle("hidden", !server.can_upload_sounds);
   $("sound-upload").disabled = sounds.length >= MAX_SOUNDS;
   $("sound-count").textContent = `${sounds.length} of ${MAX_SOUNDS} sounds`;
@@ -6376,29 +6764,53 @@ function renderSoundboardSettings(server) {
   builtins.replaceChildren(...DEFAULT_SOUNDS.map(s => soundRow(server, { name: s.label, blob: `default:${s.id}`, volume: 1 }, false)));
 }
 
-async function uploadSound() {
-  const server = state.currentServer;
-  if (!server) return;
+async function pickValidSound() {
   let picked;
   try {
     picked = await pickSoundFile();
   } catch (e) {
     toast(String(e));
-    return;
+    return null;
   }
-  if (!picked) return;
+  if (!picked) return null;
   const [stem, dataUrl] = picked;
   let seconds;
   try {
     seconds = await audioDuration(dataUrl);
   } catch {
     toast("Could not read that sound file");
-    return;
+    return null;
   }
   if (seconds > MAX_SOUND_SECONDS + 0.2) {
     toast(`That clip is ${seconds.toFixed(1)} seconds; sounds can be up to ${MAX_SOUND_SECONDS}`);
+    return null;
+  }
+  return [stem, dataUrl];
+}
+
+async function uploadSoundFromFlyout(server) {
+  const picked = await pickValidSound();
+  if (!picked) return;
+  const [stem, dataUrl] = picked;
+  const name = freeExpressionName(expressionName(stem, "sound"), (server.sounds || []).map(s => s.name));
+  try {
+    await invoke("add_sound", { serverId: server.id, name, data: dataUrl.split(",")[1], volume: 1, emoji: null });
+    await refreshExpressions();
+    toast(`Added ${name} to the soundboard`);
+  } catch (e) {
+    toast(String(e));
     return;
   }
+  $("soundboard-pop").classList.add("hidden");
+  toggleSoundboardPop();
+}
+
+async function uploadSound() {
+  const server = state.currentServer;
+  if (!server) return;
+  const picked = await pickValidSound();
+  if (!picked) return;
+  const [stem, dataUrl] = picked;
   const play = el("button", "icon-btn sound-preview");
   play.title = "Preview";
   play.appendChild(svgIcon("play", 18));
@@ -6448,7 +6860,9 @@ async function toggleSoundboardPop() {
   }
   const grid = $("sb-grid");
   grid.replaceChildren();
-  $("sb-server").textContent = "";
+  const canAdd = server.can_upload_sounds && (server.sounds || []).length < MAX_SOUNDS;
+  $("sb-add").classList.toggle("hidden", !canAdd);
+  $("sb-add").onclick = () => uploadSoundFromFlyout(server);
   const addButton = (name, label, emoji) => {
     const btn = el("button", "sb-sound");
     btn.appendChild(emoji ? soundEmojiNode(emoji) : svgIcon("soundboard", 14));
@@ -6475,6 +6889,33 @@ async function toggleSoundboardPop() {
     grid.appendChild(el("div", "sb-empty", server.can_upload_sounds
       ? "No server sounds yet. Add some in Server Settings under Soundboard."
       : "This server has no sounds of its own yet."));
+  }
+  let others = [];
+  try {
+    others = (await invoke("list_shareable_sounds")).filter(s => s.server !== server.id);
+  } catch {}
+  let lastServer = null;
+  for (const sound of others) {
+    if (sound.server !== lastServer) {
+      grid.appendChild(el("div", "sb-section", sound.server_name));
+      lastServer = sound.server;
+    }
+    const btn = el("button", "sb-sound");
+    btn.appendChild(sound.emoji ? soundEmojiNode(sound.emoji) : svgIcon("soundboard", 14));
+    btn.appendChild(el("span", null, sound.name));
+    btn.title = `Play ${sound.name} from ${sound.server_name} for everyone in the channel`;
+    btn.disabled = !server.can_use_soundboard;
+    btn.onclick = async () => {
+      const now = Date.now();
+      if (now < soundboardCooldown) return;
+      soundboardCooldown = now + 1500;
+      try {
+        await invoke("play_shared_sound", { serverId: server.id, sourceServerId: sound.server, name: sound.name });
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    grid.appendChild(btn);
   }
   $("sb-muted").classList.toggle("hidden", soundboardPrefs().enabled);
   pop.classList.remove("hidden");
@@ -7077,6 +7518,7 @@ function setViewMode(mode) {
   if (dm) paintSidebarBanner();
   $("dm-search").classList.toggle("hidden", !dm);
   $("attach-btn").classList.toggle("hidden", dm);
+  syncAttachAccess();
   $("home-btn").classList.toggle("active", dm);
   $("app").classList.toggle("dm-mode", dm);
   if (dm) $("cam-grid").classList.add("hidden");
@@ -7091,16 +7533,20 @@ function setViewMode(mode) {
   if (dm) $("share-btn").classList.add("hidden");
   else renderShareButton();
   syncPinButton();
+  syncSearchBox();
   syncRulesGate();
 }
 
 async function selectServer(serverId) {
+  const previous = state.currentServer && state.currentServer.id;
   try {
     state.currentServer = await invoke("get_server", { serverId });
   } catch (e) {
     toast(String(e));
     return;
   }
+  if (previous !== serverId) resetSearch();
+  state.historyAnchor = null;
   setViewMode("server");
   state.currentDm = null;
   const firstText = state.currentServer.channels.find(c => c.kind === "text" && c.can_view !== false);
@@ -7382,7 +7828,7 @@ function renderDmProfile(userId, name) {
 }
 
 function bannerColor(userId) {
-  return starfield(userId, hueGlow(tintHue(userId))).css;
+  return starfield(userId).css;
 }
 
 function roleGradient(hex) {
@@ -7418,6 +7864,43 @@ function buildDmIntro() {
     intro.appendChild(el("div", "dm-intro-mutual", `${n} mutual server${n === 1 ? "" : "s"}`));
   }
   return intro;
+}
+
+function renderInvitePeople() {
+  const list = $("invite-people");
+  list.innerHTML = "";
+  const server = state.currentServer;
+  if (!server) return;
+  const query = $("invite-friend-search").value;
+  const people = inviteCandidates(state.people, friends.friends.map(f => f.id), server.members.map(m => m.id), query).slice(0, 40);
+  for (const person of people) {
+    const row = el("div", "person-row invite-person");
+    row.appendChild(avatarWithPresence(person.name, person.id));
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", person.name));
+    meta.appendChild(el("div", "dm-preview", person.friend ? "Friend" : person.servers.map(s => s.name).join(", ")));
+    row.appendChild(meta);
+    const sent = state.invitedNow.has(person.id);
+    const btn = el("button", sent ? "btn-secondary btn-small" : "btn-primary btn-small", sent ? "Sent" : "Invite");
+    btn.disabled = sent;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        await invoke("open_dm", { userId: person.id });
+        const sentDm = await invoke("send_dm", { userId: person.id, content: `Come join me in ${server.name}! ${$("invite-text").value}` });
+        state.invitedNow.add(person.id);
+        btn.className = "btn-secondary btn-small";
+        btn.textContent = "Sent";
+        dmSentToast(sentDm, person.name, `Invited ${person.name} to ${server.name}`);
+      } catch (e) {
+        btn.disabled = false;
+        toast(String(e));
+      }
+    };
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+  if (!people.length) list.appendChild(el("div", "dm-list-empty", query.trim() ? "Nobody matches that name." : "Everyone you know is already here."));
 }
 
 function openNewDm() {
@@ -7509,11 +7992,7 @@ async function selectChannel(channel) {
   $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
   syncPinButton();
   if (!channel) return renderMessages([]);
-  const messages = await invoke("get_messages", {
-    serverId: state.currentServer.id,
-    channelId: channel.id,
-  });
-  renderMessages(messages);
+  renderMessages(await fetchChannelMessages(channel));
 }
 
 async function sendMessage() {
@@ -7530,6 +8009,7 @@ async function sendMessage() {
   input.value = "";
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
   $("messages").dataset.view = "";
+  state.historyAnchor = null;
   cancelReply();
   try {
     await invoke("send_message", {
@@ -7695,6 +8175,10 @@ function openGifPicker(query = "", target = null) {
 
 function toggleComposerMenu() {
   const menu = $("composer-menu");
+  if (state.view === "server" && !canAttachHere()) {
+    toast("You can't send files or images in this server");
+    return;
+  }
   if (!menu.classList.contains("hidden")) {
     menu.classList.add("hidden");
     return;
@@ -8076,6 +8560,10 @@ async function uploadFileObject(file) {
     toast("Open a server channel to share files");
     return;
   }
+  if (!canAttachHere()) {
+    toast("You can't send files or images in this server");
+    return;
+  }
   if (file.size > 512 * 1024 * 1024) {
     toast("File is too large (512 MB max)");
     return;
@@ -8277,11 +8765,18 @@ function wireEvents() {
       const invite = await invoke("get_invite", { serverId: state.currentServer.id });
       $("invite-text").value = invite;
       resetInviteDialog();
+      $("invite-friend-search").value = "";
+      state.invitedNow = new Set();
+      renderInvitePeople();
       showModal("modal-invite");
+      await refreshPeople();
+      renderInvitePeople();
     } catch (e) {
       toast(String(e));
     }
   };
+
+  $("invite-friend-search").addEventListener("input", renderInvitePeople);
 
   $("invite-copy").onclick = async () => {
     await navigator.clipboard.writeText($("invite-text").value);
@@ -8365,6 +8860,17 @@ function wireEvents() {
     }
   };
   $("emoji-share-toggle").addEventListener("change", saveExpressionSettings);
+  $("sound-share-toggle").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_sound_sharing", { serverId: server.id, shareable: e.target.checked });
+      await refreshExpressions();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  });
   $("server-public-toggle").addEventListener("change", async e => {
     const server = state.currentServer;
     if (!server) return;
@@ -8767,9 +9273,9 @@ function wireEvents() {
   };
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "composer-menu"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
-    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #attach-btn")) return;
+    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
   });
@@ -8988,6 +9494,14 @@ function wireEvents() {
       toast(String(err));
     }
   });
+  $("autostart-toggle").addEventListener("change", async e => {
+    try {
+      e.target.checked = await invoke("set_autostart", { enabled: e.target.checked });
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(String(err));
+    }
+  });
   $("auto-update-toggle").addEventListener("change", async e => {
     try {
       state.voice = await invoke("set_auto_update", { enabled: e.target.checked });
@@ -9026,7 +9540,6 @@ function wireEvents() {
   $("cam-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
   onCameraFxChange(renderCameraFx);
   renderCameraFx();
-  paintCameraSky($("cam-sky"));
   $("camera-device").addEventListener("change", async e => {
     try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch {}
     if (previewPipe) {
@@ -9100,6 +9613,7 @@ function wireEvents() {
     }
   };
   $("pins-btn").onclick = togglePinsPanel;
+  wireSearch();
   $("pins-all").onclick = openServerPins;
   $("pins-modal-close").onclick = hideModals;
   $("announce-gate-icon").appendChild(svgIcon("megaphone", 22));
@@ -9447,6 +9961,7 @@ const PERMISSION_LABELS = [
   ["manage_channels", "Manage Channels"],
   ["manage_messages", "Manage Messages"],
   ["pin_messages", "Pin Messages"],
+  ["attach_files", "Send Files and Images"],
   ["post_announcements", "Post Announcements"],
   ["manage_expressions", "Manage Expressions"],
   ["manage_events", "Manage Events"],
@@ -9479,6 +9994,7 @@ function openUserSettings(tab) {
   });
   $("notify-level").value = notifyPrefs().level;
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
+  invoke("get_autostart").then(on => { $("autostart-toggle").checked = on; }).catch(() => {});
   $("output-vol").value = Math.round((state.voice.output_volume ?? 1) * 100);
   $("input-gain").value = Math.round((state.voice.input_gain ?? 1) * 100);
   $("output-vol-label").textContent = `${$("output-vol").value}%`;
@@ -9756,7 +10272,67 @@ function openServerSettings(tab) {
   openSettingsLayer("server-settings", current);
 }
 
+function renderUploadAccess(server) {
+  const box = $("upload-access");
+  box.innerHTML = "";
+  const restricted = Boolean(server.uploads_restricted);
+  const save = async (nextRestricted, ids) => {
+    try {
+      await invoke("set_upload_access", { serverId: server.id, restricted: nextRestricted, roleIds: ids });
+      await refreshCurrentServer();
+      openServerSettings();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  };
+  const allowedIds = () => server.roles.filter(r => (r.permissions || []).includes("attach_files")).map(r => r.id);
+  box.appendChild(el("div", "setting-title", "Who can send files and images"));
+  box.appendChild(el("div", "setting-sub", "Applies to attachments, pasted images and dropped files in every channel. Text, links and GIFs are not affected. The owner and anyone with Administrator can always send them."));
+  const seg = el("div", "segmented upload-seg");
+  for (const [label, hint, value] of [["Anyone", "Every member", false], ["Only selected roles", "Pick the roles below", true]]) {
+    const b = el("button", value === restricted ? "active" : "");
+    b.type = "button";
+    b.disabled = !server.can_manage_roles;
+    b.append(el("strong", null, label), el("span", null, hint));
+    b.onclick = () => {
+      if (value !== restricted) save(value, allowedIds());
+    };
+    seg.appendChild(b);
+  }
+  box.appendChild(seg);
+  const picks = el("div", "upload-roles" + (restricted ? "" : " off"));
+  if (!server.roles.length) picks.appendChild(el("div", "setting-sub", "Create a role first, then pick it here."));
+  for (const role of server.roles) {
+    const row = el("label", "role-self");
+    const check = el("input");
+    check.type = "checkbox";
+    check.checked = restricted && (role.permissions || []).includes("attach_files");
+    check.disabled = !restricted || !server.can_manage_roles;
+    check.onchange = () => {
+      const ids = new Set(allowedIds());
+      if (check.checked) ids.add(role.id);
+      else ids.delete(role.id);
+      save(true, [...ids]);
+    };
+    row.append(check, el("span", null, role.name));
+    picks.appendChild(row);
+  }
+  box.appendChild(picks);
+}
+
+function canAttachHere() {
+  return !state.currentServer || state.currentServer.can_attach_files !== false;
+}
+
+function syncAttachAccess() {
+  const locked = state.view === "server" && !canAttachHere();
+  $("attach-btn").classList.toggle("locked", locked);
+  $("attach-btn").title = locked ? "You can't send files or images in this server" : "Attach";
+}
+
 function renderRoleSettings(server) {
+  renderUploadAccess(server);
   const list = $("manage-role-list");
   list.innerHTML = "";
   for (const role of server.roles) {
@@ -9790,6 +10366,7 @@ function renderRoleSettings(server) {
     label.appendChild(name);
     if (role.tag) label.appendChild(roleTagChip(role.tag, role.color));
     if (role.self_assignable) label.appendChild(el("span", "kind pickable", "pickable"));
+    if (role.hoist) label.appendChild(el("span", "kind", "own group"));
     const count = role.permissions.length;
     const perms = el("span", "kind", count ? (count === 1 ? "1 permission" : `${count} permissions`) : "no permissions");
     if (count) perms.title = role.permissions.map(p => (PERMISSION_LABELS.find(([v]) => v === p) || [p, p])[1]).join(", ");
@@ -9903,6 +10480,7 @@ async function refreshCurrentServer() {
   renderChannels();
   syncRulesGate();
   syncAwaitedBar();
+  syncAttachAccess();
   renderEvents();
   if (keepChannel) {
     const still = state.currentServer.channels.find(c => c.id === keepChannel.id);
@@ -9913,11 +10491,7 @@ async function refreshCurrentServer() {
       if (still.kind !== keepChannel.kind) {
         $("chat-hash").replaceChildren(still.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
       }
-      const messages = await invoke("get_messages", {
-        serverId: state.currentServer.id,
-        channelId: still.id,
-      });
-      renderMessages(messages);
+      renderMessages(await fetchChannelMessages(still));
       return;
     }
   }

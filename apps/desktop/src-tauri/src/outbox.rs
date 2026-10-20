@@ -44,6 +44,7 @@ pub fn is_transient(event: &ServerEvent) -> bool {
             | ServerEvent::ScreenShare { .. }
             | ServerEvent::CameraState { .. }
             | ServerEvent::SoundboardPlay { .. }
+            | ServerEvent::SharedSoundPlay { .. }
             | ServerEvent::VoiceModerate { .. }
     )
 }

@@ -44,6 +44,8 @@ pub enum StoreError {
     PinLimit,
     #[error("only members allowed to post announcements can write in that channel")]
     NotAnnouncer,
+    #[error("members without the send files permission cannot attach files here")]
+    NoUploads,
     #[error("the signer may not do that here")]
     NotAllowed,
     #[error("unsigned event from a member whose key is known")]
@@ -102,6 +104,7 @@ pub struct ServerState {
     reaction_marks: HashMap<MessageId, Vec<ReactionMark>>,
     channel_keys: HashMap<ChannelId, ChannelKeys>,
     automod: AutoMod,
+    bots: BTreeSet<UserId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +138,8 @@ pub struct Snapshot {
     pub channel_keys: Vec<(ChannelId, ChannelKeys)>,
     #[serde(default)]
     pub automod: AutoMod,
+    #[serde(default)]
+    pub bots: Vec<UserId>,
 }
 
 impl ServerState {
@@ -164,6 +169,7 @@ impl ServerState {
             reaction_marks: HashMap::new(),
             channel_keys: HashMap::new(),
             automod: AutoMod::default(),
+            bots: BTreeSet::new(),
         }
     }
 
@@ -196,6 +202,7 @@ impl ServerState {
                 .collect(),
             channel_keys: self.channel_keys.iter().map(|(c, k)| (*c, k.clone())).collect(),
             automod: self.automod.clone(),
+            bots: self.bots.iter().copied().collect(),
         }
     }
 
@@ -242,6 +249,7 @@ impl ServerState {
         state.action_times = snapshot.action_times.into_iter().collect();
         state.action_floor = snapshot.action_floor;
         state.automod = snapshot.automod;
+        state.bots = snapshot.bots.into_iter().filter(|user| state.server.is_member(*user)).collect();
         for signed in snapshot.signed_actions {
             if let Some(subject) = action::subject(&signed.event) {
                 if state.action_times.get(&subject) == Some(&signed.action.at) {
@@ -445,6 +453,14 @@ impl ServerState {
 
     pub fn automod(&self) -> &AutoMod {
         &self.automod
+    }
+
+    pub fn is_bot(&self, user: UserId) -> bool {
+        self.bots.contains(&user)
+    }
+
+    pub fn bots(&self) -> impl Iterator<Item = UserId> + '_ {
+        self.bots.iter().copied()
     }
 
     pub fn hold(&self, message: &Message) -> Option<Hold> {
@@ -711,6 +727,7 @@ impl ServerState {
                 self.voice_states.remove(&user);
                 self.voice_since.remove(&user);
                 self.voice_flags.remove(&user);
+                self.bots.remove(&user);
                 Ok(self.server.members.len() != before)
             }
             ServerEvent::PresenceUpdate { user, presence } => {
@@ -879,7 +896,11 @@ impl ServerState {
                 self.same_server(server)?;
                 Ok(replace(&mut self.server.public, public))
             }
-            ServerEvent::SoundboardPlay { .. } => Ok(false),
+            ServerEvent::SoundSharingSet { server, shareable } => {
+                self.same_server(server)?;
+                Ok(replace(&mut self.server.sounds_shareable, shareable))
+            }
+            ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } => Ok(false),
             ServerEvent::GameTagsSet { server, tags, meta } => {
                 self.same_server(server)?;
                 let Some(tags) = crate::server::clean_game_tags(&tags) else { return Ok(false) };
@@ -901,6 +922,13 @@ impl ServerState {
                     return Ok(false);
                 }
                 Ok(replace(&mut self.automod, rules))
+            }
+            ServerEvent::BotSet { server, user, bot } => {
+                self.same_server(server)?;
+                if !bot {
+                    return Ok(self.bots.remove(&user));
+                }
+                Ok(self.server.is_member(user) && self.bots.insert(user))
             }
             ServerEvent::RulesAccept { server, user } => {
                 self.same_server(server)?;
@@ -1012,6 +1040,7 @@ impl ServerState {
                 self.voice_since.remove(&user);
                 self.voice_flags.remove(&user);
                 self.screen_shares.remove(&user);
+                self.bots.remove(&user);
                 Ok(true)
             }
             ServerEvent::AfkTimeoutSet { server, minutes } => {
@@ -1276,6 +1305,12 @@ impl ServerState {
                 Some(c) if c.kind == ChannelKind::Announcement => return Err(StoreError::NotAnnouncer),
                 _ => {}
             }
+        }
+        if !held
+            && !message.attachments.is_empty()
+            && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::ATTACH_FILES)
+        {
+            return Err(StoreError::NoUploads);
         }
         if !held {
             if let Some(changed) = self.bind_proofs(&message) {
@@ -2447,6 +2482,52 @@ mod tests {
     }
 
     #[test]
+    fn attachments_need_the_send_files_permission() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let plain = join(&mut state, "plain");
+        let with_file = |state: &ServerState, author| {
+            let mut m = Message::new(channel, author, "look");
+            m.attachments.push(crate::message::Attachment {
+                blob: "abc".into(),
+                filename: "cat.png".into(),
+                size_bytes: 10,
+                mime_type: "image/png".into(),
+                provider: None,
+            });
+            crate::test_support::signed(state, m)
+        };
+        let first = with_file(&state, plain);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first.clone() }), Ok(true));
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.remove(Permissions::ATTACH_FILES);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        let blocked = with_file(&state, plain);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: blocked }), Err(StoreError::NoUploads));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first }), Ok(false), "held messages stay");
+        let text = post(&state, channel, plain, "words are fine");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: text }), Ok(true));
+        let owners = with_file(&state, owner);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: owners }), Ok(true));
+        let role = Role {
+            id: RoleId::new(),
+            name: "artists".into(),
+            color: None,
+            permissions: Permissions::ATTACH_FILES,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+        };
+        let rid = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: plain, role: rid }).unwrap();
+        let allowed = with_file(&state, plain);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: allowed }), Ok(true));
+    }
+
+    #[test]
     fn text_channels_switch_to_announcements_and_back() {
         let (mut state, channel, _) = fixture();
         let sid = state.server.id;
@@ -2754,6 +2835,31 @@ mod tests {
         let off = crate::SignedEvent::sign(sid, owner, 3_000, ServerEvent::AutoModSet { server: sid, rules: Default::default() }, &identity_for(owner));
         assert_eq!(state.apply_signed(&off), Ok(true));
         assert_eq!(state.hold(&message), None);
+    }
+
+    #[test]
+    fn members_mark_only_themselves_as_bots() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let bot = join(&mut state, "bot");
+        let declare = |by, at, user, bot| crate::SignedEvent::sign(sid, by, at, ServerEvent::BotSet { server: sid, user, bot }, &identity_for(by));
+        assert_eq!(state.apply_signed(&declare(owner, 1_000, bot, true)), Err(StoreError::NotAllowed), "nobody else can label a member");
+        assert_eq!(state.apply_unsigned(ServerEvent::BotSet { server: sid, user: bot, bot: true }), Err(StoreError::Unsigned));
+        let own = declare(bot, 2_000, bot, true);
+        assert_eq!(state.apply_signed(&own), Ok(true));
+        assert!(state.is_bot(bot) && !state.is_bot(owner));
+        assert_eq!(state.apply_signed(&own), Ok(false), "redelivery");
+        assert!(state.signed_actions().contains(&&own), "relayed to members who missed it");
+        let restored = reload(&state);
+        assert!(restored.is_bot(bot));
+        let mut older_build = serde_json::to_value(state.snapshot()).unwrap();
+        older_build.as_object_mut().unwrap().remove("bots");
+        let without: crate::Snapshot = serde_json::from_value(older_build).unwrap();
+        assert_eq!(ServerState::from_snapshot(without).bots().count(), 0, "snapshots from before bot badges load");
+        assert!(crate::action::snapshot_omits("bot:x"), "owner snapshots do not carry the badge, so its action stays fresh");
+        state.apply(ServerEvent::MemberLeave { server: sid, user: bot }).unwrap();
+        assert!(!state.is_bot(bot));
+        assert_eq!(state.apply(ServerEvent::BotSet { server: sid, user: bot, bot: true }), Ok(false), "only members");
     }
 
     #[test]

@@ -15,6 +15,7 @@ mod outbox;
 mod overlay;
 mod persist;
 mod safety;
+mod search;
 mod settle;
 mod state;
 mod storage;
@@ -289,9 +290,11 @@ fn get_messages(
     app: tauri::State<App>,
     server_id: String,
     channel_id: String,
+    around: Option<String>,
 ) -> CmdResult<Vec<MessageView>> {
     let sid = server_id.parse().map_err(err_to_string)?;
     let cid = channel_id.parse().map_err(err_to_string)?;
+    let around: Option<MessageId> = around.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let pending = app.outbox.lock().unwrap().pending_ids(sid);
     let keys = channel_lock::KeyHolder::of(&app);
     let me = current_profile(&app)?.id;
@@ -300,7 +303,32 @@ fn get_messages(
     if !state.server.can_view(cid, me) {
         return Ok(Vec::new());
     }
+    if let Some(id) = around {
+        return view::message_views_around(state, cid, id, &pending, Some(me), &keys)
+            .ok_or_else(|| "that message is no longer on this device".to_string());
+    }
     Ok(view::message_views(state, cid, 100, &pending, Some(me), &keys))
+}
+
+#[tauri::command]
+fn search_messages(
+    app: tauri::State<App>,
+    server_id: String,
+    terms: Vec<String>,
+    from: Option<String>,
+    mentions: Option<String>,
+    channel_id: Option<String>,
+) -> CmdResult<search::SearchResults> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let from: Option<UserId> = from.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let mentions: Option<UserId> = mentions.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let channel: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let query = search::SearchQuery::new(&terms, from, mentions, channel);
+    let keys = channel_lock::KeyHolder::of(&app);
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    Ok(search::search(state, &query, me, search::MAX_HITS, &keys))
 }
 
 async fn commit_message(
@@ -524,6 +552,11 @@ async fn send_attachment(
         return Err(ATTACHMENT_TOO_LARGE.into());
     }
     let profile = current_profile(app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(app, state, profile.id, Permissions::ATTACH_FILES, "send files or images here")?;
+    }
     let size_bytes = bytes.len() as u64;
 
     let (blob, provider) = {
@@ -2124,6 +2157,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             soundboard_open: state.server.soundboard_open,
         });
     }
+    if state.server.sounds_shareable && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::SoundSharingSet { server: sid, shareable: true });
+    }
     if state.server.public && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::PublicSet { server: sid, public: true });
     }
@@ -3235,6 +3271,7 @@ async fn update_role(
     name: String,
     color: Option<String>,
     self_assignable: bool,
+    hoist: Option<bool>,
     tag: Option<String>,
     permissions: Option<Vec<String>>,
 ) -> CmdResult<()> {
@@ -3261,7 +3298,7 @@ async fn update_role(
         let permissions = permissions
             .map(|names| permissions_from_names(&names))
             .unwrap_or(existing.permissions);
-        commy_core::server::Role { name, color, self_assignable, tag, permissions, ..existing.clone() }
+        commy_core::server::Role { name, color, self_assignable, hoist: hoist.unwrap_or(existing.hoist), tag, permissions, ..existing.clone() }
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
 }
@@ -3924,6 +3961,69 @@ async fn set_expression_settings(
 }
 
 #[tauri::command]
+async fn set_sound_sharing(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    shareable: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change sound sharing")?;
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundSharingSet { server: sid, shareable }).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_upload_access(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    restricted: bool,
+    role_ids: Vec<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let allowed = role_ids
+        .iter()
+        .map(|r| r.parse::<RoleId>())
+        .collect::<Result<Vec<RoleId>, _>>()
+        .map_err(err_to_string)?;
+    let updates: Vec<commy_core::server::Role> = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "change who can send files")?;
+        state
+            .server
+            .roles
+            .iter()
+            .filter_map(|r| {
+                let mut role = r.clone();
+                if r.is_everyone() {
+                    role.permissions.remove(Permissions::ATTACH_FILES);
+                    if !restricted {
+                        role.permissions.insert(Permissions::ATTACH_FILES);
+                    }
+                } else if restricted {
+                    if allowed.contains(&r.id) {
+                        role.permissions.insert(Permissions::ATTACH_FILES);
+                    } else {
+                        role.permissions.remove(Permissions::ATTACH_FILES);
+                    }
+                }
+                (role.permissions != r.permissions).then_some(role)
+            })
+            .collect()
+    };
+    for role in updates {
+        apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await?;
+    }
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_server_public(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -4001,6 +4101,104 @@ async fn play_sound_in_voice(app: &App, handle: &tauri::AppHandle, sid: ServerId
     .await;
     let _ = handle.emit("soundboard-play", view);
     Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+struct SharedSoundView {
+    server: String,
+    server_name: String,
+    name: String,
+    blob: String,
+    volume: f32,
+    emoji: Option<String>,
+}
+
+#[tauri::command]
+fn list_shareable_sounds(app: tauri::State<'_, App>) -> Vec<SharedSoundView> {
+    let servers = app.servers.lock().unwrap();
+    let mut out: Vec<SharedSoundView> = servers
+        .values()
+        .filter(|s| s.server.sounds_shareable)
+        .flat_map(|s| {
+            s.server.soundboard.iter().map(|sound| SharedSoundView {
+                server: s.server.id.to_string(),
+                server_name: s.server.name.clone(),
+                name: sound.name.clone(),
+                blob: sound.blob.clone(),
+                volume: sound.volume,
+                emoji: sound.emoji.clone(),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.server_name.cmp(&b.server_name).then(a.name.cmp(&b.name)));
+    out
+}
+
+fn shared_sound_view(sid: ServerId, channel: ChannelId, user: UserId, name: &str, blob: &str, volume: f32) -> Option<SoundboardPlayView> {
+    commy_core::server::ImageRef::parse(blob)?;
+    Some(SoundboardPlayView {
+        server: sid.to_string(),
+        channel: channel.to_string(),
+        user: user.to_string(),
+        name: name.to_string(),
+        blob: blob.to_string(),
+        volume: volume.clamp(0.0, 2.0),
+    })
+}
+
+#[tauri::command]
+async fn play_shared_sound(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    source_server_id: String,
+    name: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let source: ServerId = source_server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let (channel, in_server) = {
+        let session = app.voice_session.lock().unwrap();
+        let s = session.as_ref().ok_or("join a voice channel first")?;
+        (s.channel, s.server == sid)
+    };
+    if !in_server {
+        return Err("join a voice channel in this server first".into());
+    }
+    let (blob, volume) = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
+        let from = servers.get(&source).ok_or("unknown server")?;
+        if !from.server.sounds_shareable {
+            return Err("that server does not share its sounds".into());
+        }
+        let sound = from.server.soundboard.iter().find(|s| s.name == name).ok_or("that sound no longer exists")?;
+        (sound.blob.clone(), sound.volume)
+    };
+    let view = shared_sound_view(sid, channel, me.id, &name, &blob, volume).ok_or("that sound cannot be played")?;
+    broadcast_event(&app, sid, ServerEvent::SharedSoundPlay { server: sid, channel, user: me.id, name, blob, volume }).await;
+    let _ = handle.emit("soundboard-play", view);
+    Ok(())
+}
+
+fn on_remote_shared_sound(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, user: UserId, name: &str, blob: &str, volume: f32) {
+    let mine = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+    if mine != Some((sid, channel)) {
+        return;
+    }
+    let allowed = {
+        let servers = app.servers.lock().unwrap();
+        servers.get(&sid).is_some_and(|state| {
+            state.voice_states.get(&user) == Some(&channel) && state.server.permissions_for(user).allows(Permissions::USE_SOUNDBOARD)
+        })
+    };
+    if !allowed {
+        return;
+    }
+    if let Some(view) = shared_sound_view(sid, channel, user, name, blob, volume) {
+        let _ = handle.emit("soundboard-play", view);
+    }
 }
 
 fn on_remote_soundboard(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, user: UserId, name: &str) {
@@ -4531,6 +4729,7 @@ async fn create_role(
     permissions: Vec<String>,
     tag: Option<String>,
     self_assignable: Option<bool>,
+    hoist: Option<bool>,
 ) -> CmdResult<String> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let name = name.trim().to_string();
@@ -4563,7 +4762,7 @@ async fn create_role(
             color,
             permissions: permissions_from_names(&permissions),
             position,
-            hoist: false,
+            hoist: hoist.unwrap_or(false),
             self_assignable: self_assignable.unwrap_or(false),
             tag,
             banner: None,
@@ -4798,6 +4997,12 @@ async fn run_net_loop(
                     }
                     continue;
                 }
+                if let ServerEvent::SharedSoundPlay { channel, user, name, blob, volume, .. } = &event {
+                    if remote_action_ok(&app, server, &event, action) {
+                        on_remote_shared_sound(&app, &handle, server, *channel, *user, name, blob, *volume);
+                    }
+                    continue;
+                }
                 if matches!(event, ServerEvent::DoorbellSet { .. }) {
                     doorbell::on_announce(&app, server, &event);
                     continue;
@@ -5018,6 +5223,24 @@ fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
 }
 
 #[tauri::command]
+fn get_autostart(handle: tauri::AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    handle.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+fn set_autostart(handle: tauri::AppHandle, enabled: bool) -> CmdResult<bool> {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = handle.autolaunch();
+    if enabled {
+        launcher.enable().map_err(|e| e.to_string())?;
+    } else {
+        launcher.disable().map_err(|e| e.to_string())?;
+    }
+    Ok(launcher.is_enabled().unwrap_or(enabled))
+}
+
+#[tauri::command]
 fn set_auto_update(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bool) -> VoiceSettings {
     let settings = app.update_voice(|voice| voice.auto_update = enabled);
     if enabled {
@@ -5129,6 +5352,10 @@ pub fn run() {
         })
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|handle, shortcut, event| {
@@ -5169,8 +5396,15 @@ pub fn run() {
             }
             updater::init(&handle);
             updater::start(&handle);
-            if let Err(e) = tray::build(&handle) {
-                tracing::warn!("tray icon unavailable: {e}");
+            match tray::build(&handle) {
+                Ok(()) => {
+                    if std::env::args().any(|arg| arg == "--minimized") {
+                        if let Some(window) = tauri_app.get_webview_window("main") {
+                            let _ = window.hide();
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("tray icon unavailable: {e}"),
             }
             let toast_icon = tauri_app.path().app_data_dir().ok().and_then(|dir| {
                 std::fs::create_dir_all(&dir).ok()?;
@@ -5446,6 +5680,10 @@ pub fn run() {
             remove_sound,
             set_sound_emoji,
             set_expression_settings,
+            set_sound_sharing,
+            set_upload_access,
+            list_shareable_sounds,
+            play_shared_sound,
             set_server_public,
             play_soundboard,
             stream_deck::get_stream_deck,
@@ -5497,6 +5735,7 @@ pub fn run() {
             set_channel_access,
             pin_message,
             get_pins,
+            search_messages,
             edit_message,
             delete_message,
             list_audio_devices,
@@ -5509,6 +5748,8 @@ pub fn run() {
             notify,
             set_unread,
             set_close_to_tray,
+            get_autostart,
+            set_autostart,
             set_auto_update,
             get_update_status,
             check_for_updates,

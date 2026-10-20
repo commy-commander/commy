@@ -21,6 +21,10 @@ pub const RECENT_SESSION: Duration = Duration::from_secs(60);
 
 pub const PERIODIC_INTERVAL: Duration = Duration::from_secs(600);
 
+pub const SWEEP_INTERVAL: Duration = Duration::from_secs(600);
+pub const STARTUP_SWEEP_DELAY: Duration = Duration::from_secs(3);
+pub const MAX_SWEEP_PEERS: usize = 16;
+
 pub const SAVE_DELAY: Duration = Duration::from_secs(2);
 
 pub const HOLD_CAP: usize = 1000;
@@ -38,6 +42,7 @@ pub type Held = (Instant, UserId, ServerEvent);
 pub struct Catchup {
     running: HashSet<SessionKey>,
     completed: HashMap<SessionKey, Instant>,
+    swept: HashMap<ServerId, Instant>,
     held: HashMap<ServerId, VecDeque<(Held, usize)>>,
     held_actions: HashMap<ServerId, VecDeque<(Instant, SignedEvent)>>,
     fresh: HashMap<ServerId, HashMap<ChannelId, FreshChannel>>,
@@ -83,8 +88,13 @@ pub struct FreshChannel {
 }
 
 pub fn mentions(content: &str, names: &[&str]) -> bool {
+    let everyone: Vec<&str> = names.iter().copied().chain(["everyone", "here"]).collect();
+    names_mentioned(content, &everyone)
+}
+
+pub fn names_mentioned(content: &str, names: &[&str]) -> bool {
     let lower = content.to_lowercase();
-    let targets = names.iter().map(|n| n.to_lowercase()).chain(["everyone".into(), "here".into()]);
+    let targets = names.iter().map(|n| n.to_lowercase());
     for name in targets.filter(|n| !n.is_empty()) {
         let mut from = 0;
         let needle = format!("@{name}");
@@ -121,6 +131,18 @@ impl Catchup {
         self.completed
             .get(&key)
             .is_some_and(|at| now.saturating_duration_since(*at) < RECENT_SESSION)
+    }
+
+    pub fn sweep_due(&mut self, server: ServerId, now: Instant) -> bool {
+        if self.swept.get(&server).is_some_and(|at| now.saturating_duration_since(*at) < SWEEP_INTERVAL) {
+            return false;
+        }
+        self.swept.insert(server, now);
+        true
+    }
+
+    pub fn needs_session(&self, key: SessionKey, now: Instant) -> bool {
+        !self.running.contains(&key) && !self.completed_recently(key, now)
     }
 
     pub fn hold(&mut self, server: ServerId, signer: UserId, event: ServerEvent, now: Instant) {
@@ -505,6 +527,56 @@ pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChann
     })
 }
 
+pub fn sweep_targets(state: &ServerState, me: Option<UserId>, ours: [u8; 32]) -> Vec<[u8; 32]> {
+    let mut found: Vec<(bool, [u8; 32])> = state
+        .profiles
+        .values()
+        .filter(|p| Some(p.id) != me && state.server.is_current_member(p.id))
+        .filter_map(|p| {
+            let node: [u8; 32] = data_encoding::HEXLOWER.decode(p.node.as_ref()?.as_bytes()).ok()?.try_into().ok()?;
+            Some((p.presence == commy_core::Presence::Offline, node))
+        })
+        .filter(|(_, node)| *node != ours)
+        .collect();
+    found.sort();
+    let mut seen = HashSet::new();
+    found
+        .into_iter()
+        .map(|(_, node)| node)
+        .filter(|node| seen.insert(*node))
+        .take(MAX_SWEEP_PEERS)
+        .collect()
+}
+
+pub fn sweep_all<A: AppAccess>(access: &A) {
+    let servers: Vec<ServerId> = access.app().servers.lock().unwrap().keys().copied().collect();
+    for server in servers {
+        sweep(access, server, true);
+    }
+}
+
+fn sweep<A: AppAccess>(access: &A, server: ServerId, always: bool) {
+    let app = access.app();
+    let Some(ours) = our_node(app) else { return };
+    let now = Instant::now();
+    if !app.catchup.lock().unwrap().sweep_due(server, now) && !always {
+        return;
+    }
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let targets = {
+        let servers = app.servers.lock().unwrap();
+        let Some(state) = servers.get(&server) else { return };
+        sweep_targets(state, me, ours)
+    };
+    let targets: Vec<[u8; 32]> = {
+        let catchup = app.catchup.lock().unwrap();
+        targets.into_iter().filter(|peer| catchup.needs_session((server, *peer), now)).collect()
+    };
+    for peer in targets {
+        access.catch_up(server, peer);
+    }
+}
+
 fn pick(neighbors: &[[u8; 32]], seed: u64) -> Option<[u8; 32]> {
     (!neighbors.is_empty()).then(|| neighbors[(seed % neighbors.len() as u64) as usize])
 }
@@ -551,12 +623,13 @@ pub struct TestHandle {
     pub app: Arc<App>,
     events: Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
     pub saves_scheduled: Arc<std::sync::atomic::AtomicUsize>,
+    pub catch_ups: Arc<std::sync::Mutex<Vec<SessionKey>>>,
 }
 
 #[cfg(test)]
 impl TestHandle {
     pub fn new(app: Arc<App>) -> Self {
-        Self { app, events: Default::default(), saves_scheduled: Default::default() }
+        Self { app, events: Default::default(), saves_scheduled: Default::default(), catch_ups: Default::default() }
     }
 
     pub fn take_events(&self) -> Vec<(String, serde_json::Value)> {
@@ -583,7 +656,9 @@ impl AppAccess for TestHandle {
         });
     }
 
-    fn catch_up(&self, _server: ServerId, _peer: [u8; 32]) {}
+    fn catch_up(&self, server: ServerId, peer: [u8; 32]) {
+        self.catch_ups.lock().unwrap().push((server, peer));
+    }
 }
 
 pub struct AppStore<A>(pub A);
@@ -779,6 +854,9 @@ pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<
     }
     crate::doorbell::settle(access, server);
     flush(access, server, outbox_changed);
+    if report.is_some() {
+        sweep(access, server, false);
+    }
 }
 
 fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
@@ -946,6 +1024,9 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
             let profile = state.profiles.get(&profile.id).cloned().unwrap_or_else(|| profile.clone());
             let _ = state.apply(ServerEvent::MemberJoin { server, profile });
         }
+        for user in old.bots() {
+            let _ = state.apply(ServerEvent::BotSet { server, user, bot: true });
+        }
         if let Some(me) = me {
             let key = me.identity;
             let entry = state.profiles.entry(me.id).or_insert_with(|| me.clone());
@@ -1051,6 +1132,8 @@ pub fn every_neighbor(neighbors: Vec<(ServerId, Vec<[u8; 32]>)>) -> Vec<SessionK
 }
 
 pub async fn run_periodic(handle: tauri::AppHandle) {
+    tokio::time::sleep(STARTUP_SWEEP_DELAY).await;
+    sweep_all(&handle);
     loop {
         tokio::time::sleep(PERIODIC_INTERVAL).await;
         handle.state::<App>().catchup.lock().unwrap().expire_held(Instant::now());
@@ -1746,6 +1829,78 @@ mod tests {
         assert!(handle.take_events().is_empty(), "nothing to redraw");
         assert_eq!(store.reaction_changes(sid, friend.id()), vec![change("👍", true)]);
         assert!(store.reaction_changes(sid, owner.id()).is_empty());
+    }
+
+    #[test]
+    fn a_finished_session_catches_up_with_every_other_member() {
+        let node = |n: u8| [n; 32];
+        let hex = |n: u8| data_encoding::HEXLOWER.encode(&node(n));
+        let owner = Member::new("owner");
+        let (mut state, _) = server(&owner);
+        let mut members = Vec::new();
+        for (name, n, presence) in [
+            ("away", 2, commy_core::Presence::Offline),
+            ("first", 3, commy_core::Presence::Online),
+            ("second", 4, commy_core::Presence::Idle),
+            ("banned", 5, commy_core::Presence::Online),
+        ] {
+            let mut member = Member::new(name);
+            member.profile.node = Some(hex(n));
+            member.profile.presence = presence;
+            join(&mut state, &member);
+            members.push(member);
+        }
+        let mut nodeless = Member::new("nodeless");
+        nodeless.profile.node = Some("not hex".into());
+        join(&mut state, &nodeless);
+        state.server.banned.push(members[3].id());
+        let sid = state.server.id;
+        let app = app_with(&owner, state);
+        *app.node_hex.lock().unwrap() = Some(hex(1));
+        let handle = TestHandle::new(app.clone());
+
+        after_session(&handle, sid, None);
+        assert!(handle.catch_ups.lock().unwrap().is_empty(), "only a finished session sweeps");
+
+        app.catchup.lock().unwrap().record_completed((sid, node(3)), Instant::now());
+        after_session(&handle, sid, Some(&SessionReport::default()));
+        assert_eq!(std::mem::take(&mut *handle.catch_ups.lock().unwrap()), vec![(sid, node(4)), (sid, node(2))]);
+
+        after_session(&handle, sid, Some(&SessionReport::default()));
+        assert!(handle.catch_ups.lock().unwrap().is_empty(), "one sweep per interval");
+
+        let later = Instant::now() + SWEEP_INTERVAL;
+        assert!(app.catchup.lock().unwrap().sweep_due(sid, later));
+    }
+
+    #[test]
+    fn launching_catches_up_with_every_member_of_every_server() {
+        let hex = |n: u8| data_encoding::HEXLOWER.encode(&[n; 32]);
+        let owner = Member::new("owner");
+        let app = Arc::new(App::default());
+        *app.profile.lock().unwrap() = Some(owner.profile.clone());
+        *app.node_hex.lock().unwrap() = Some(hex(1));
+        let mut expected = Vec::new();
+        for n in [2, 3] {
+            let (mut state, _) = server(&owner);
+            let mut friend = Member::new("friend");
+            friend.profile.node = Some(hex(n));
+            join(&mut state, &friend);
+            expected.push((state.server.id, [n; 32]));
+            app.servers.lock().unwrap().insert(state.server.id, state);
+        }
+        let handle = TestHandle::new(app);
+
+        expected.sort();
+        for _ in 0..2 {
+            sweep_all(&handle);
+            let mut asked = std::mem::take(&mut *handle.catch_ups.lock().unwrap());
+            asked.sort();
+            assert_eq!(asked, expected, "every launch sweeps");
+        }
+
+        after_session(&handle, expected[0].0, Some(&SessionReport::default()));
+        assert!(handle.catch_ups.lock().unwrap().is_empty(), "the launch sweep counts");
     }
 
     #[test]

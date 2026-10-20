@@ -1,6 +1,6 @@
 use crate::state::App;
 use commy_core::channel_key::{self, KeyTask, Keyring};
-use commy_core::{Attachment, ChannelId, Identity, Message, ServerEvent, ServerId, ServerState, UserId};
+use commy_core::{Attachment, ChannelId, Identity, Message, Permissions, ServerEvent, ServerId, ServerState, UserId};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -37,7 +37,12 @@ impl KeyHolder {
         if !channel_key::is_sealed(&message.content) {
             return Some(message.clone());
         }
-        self.with_ring(state, message.channel, |ring| channel_key::read_message(state.server.id, message, ring))?
+        let mut opened =
+            self.with_ring(state, message.channel, |ring| channel_key::read_message(state.server.id, message, ring))??;
+        if !state.server.permissions_for(opened.author).allows(Permissions::ATTACH_FILES) {
+            opened.attachments.clear();
+        }
+        Some(opened)
     }
 
     pub fn hold(&self, state: &ServerState, message: &Message) -> Option<commy_core::Hold> {
@@ -205,7 +210,7 @@ pub async fn run(handle: tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commy_core::{Permissions, Role, RoleId, Server, UserProfile};
+    use commy_core::{Role, RoleId, Server, UserProfile};
 
     fn member(state: &mut ServerState, name: &str) -> (UserId, Identity) {
         let identity = Identity::generate();
@@ -252,7 +257,7 @@ mod tests {
         for event in holder.key_events(&state, channel) {
             state.apply(event).unwrap();
         }
-        let holder = KeyHolder::as_user(owner, owner_identity);
+        let holder = KeyHolder::as_user(owner, owner_identity.clone());
         assert!(holder.key_ready(&state, channel));
         assert!(holder.channels_with_work(&state).is_empty());
 
@@ -262,7 +267,14 @@ mod tests {
         assert_eq!(holder.open(&state, &message).unwrap().content, "secret plans");
         let edited = holder.seal_edit(&state, &message, "new plans".into()).unwrap();
         assert!(channel_key::is_sealed(&edited));
-        assert!(KeyHolder::as_user(outsider, outsider_identity).open(&state, &message).is_none());
+        assert!(KeyHolder::as_user(outsider, outsider_identity.clone()).open(&state, &message).is_none());
         assert!(KeyHolder::default().open(&state, &message).is_none());
+
+        message.sign(server, &owner_identity);
+        state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        let query = crate::search::SearchQuery::new(&["plans".to_string()], None, None, None);
+        let found = |me: UserId, keys: &KeyHolder| crate::search::search(&state, &query, Some(me), 10, keys).total;
+        assert_eq!(found(owner, &holder), 1);
+        assert_eq!(found(outsider, &KeyHolder::as_user(outsider, outsider_identity)), 0);
     }
 }

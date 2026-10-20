@@ -119,8 +119,20 @@
           <button class="icon-btn hidden" id="dm-profile-btn" title="Hide User Profile">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"/></svg>
           </button>
+          <label class="search-box hidden" id="search-box">
+            <span class="search-box-icon" id="search-box-icon"></span>
+            <input id="search-input" type="text" placeholder="Search" autocomplete="off" spellcheck="false" aria-label="Search messages in this server" aria-controls="search-pop" />
+            <button class="search-clear" id="search-clear" type="button" title="Clear Search" aria-label="Clear Search"></button>
+          </label>
         </div>
       </header>
+      <section class="search-pop hidden" id="search-pop" role="dialog" aria-label="Search Results">
+        <header class="search-pop-head">
+          <span class="search-pop-title" id="search-pop-title">Search this server</span>
+          <span class="search-pop-sub" id="search-pop-sub"></span>
+        </header>
+        <div class="search-list" id="search-list" role="listbox"></div>
+      </section>
       <section class="pins-pop hidden" id="pins-pop" role="dialog" aria-label="Pinned Messages">
         <header class="pins-pop-head">
           <span class="pins-pop-title">Pinned Messages</span>
@@ -326,6 +338,8 @@
           <button data-expires="never" role="radio" id="invite-expiry-never"><strong>Never</strong></button>
         </div>
       </div>
+      <input id="invite-friend-search" type="text" autocomplete="off" placeholder="Search friends to invite" aria-label="Search friends to invite" />
+      <div class="people-list invite-people" id="invite-people"></div>
       <textarea id="invite-text" class="invite-field" readonly rows="3" aria-label="Invite"></textarea>
       <div class="setting-sub invite-expiry-note" id="invite-expiry-note"></div>
       <div class="invite-actions">
@@ -767,7 +781,6 @@
           <h2 class="settings-subhead">Camera</h2>
           <div class="settings-card camera-card">
             <div class="cam-stage" id="cam-stage">
-              <canvas class="cam-sky" id="cam-sky" aria-hidden="true"></canvas>
               <div class="cam-stage-idle" id="cam-stage-idle">Your camera is off</div>
             </div>
             <div class="camera-controls">
@@ -778,7 +791,6 @@
               <div class="segmented cam-bg" id="cam-bg" role="radiogroup" aria-labelledby="cam-bg-label">
                 <button data-bg="off" role="radio"><strong>Off</strong></button>
                 <button data-bg="blur" role="radio"><strong>Blur</strong></button>
-                <button data-bg="stars" role="radio"><strong>Stars</strong></button>
               </div>
               <label class="setting-row cam-mirror-row">
                 <span class="setting-title">Mirror my video</span>
@@ -875,6 +887,13 @@
               <div class="setting-sub">Closing the window keeps Commy running in the system tray so calls and messages keep working. Quit from the tray icon.</div>
             </div>
             <input type="checkbox" id="close-to-tray-toggle" class="switch" />
+          </label>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Start with my computer</div>
+              <div class="setting-sub">Commy opens quietly in the system tray when you sign in to your computer, so friends can reach you right away.</div>
+            </div>
+            <input type="checkbox" id="autostart-toggle" class="switch" />
           </label>
           <div class="settings-card setting-row">
             <div>
@@ -1382,6 +1401,7 @@
             <button class="btn-primary btn-small" id="new-role-open">New Role</button>
           </div>
           <div class="hidden" id="new-role-card"></div>
+          <div class="settings-card upload-access" id="upload-access"></div>
           <div id="manage-role-list" class="role-cards"></div>
         </section>
 
@@ -1411,6 +1431,13 @@
               <div class="setting-sub">Off: only roles with Manage Expressions can add sounds.</div>
             </div>
             <input type="checkbox" id="sound-open-toggle" class="switch" />
+          </label>
+          <label class="settings-card setting-row" id="sound-share-row">
+            <div>
+              <div class="setting-title">Share these sounds with your members' other servers</div>
+              <div class="setting-sub">On: members can play this server's sounds from the soundboard in any voice channel they join, in any of their servers. Only the sound plays; nothing else about this server is shown.</div>
+            </div>
+            <input type="checkbox" id="sound-share-toggle" class="switch" />
           </label>
           <div class="expr-toolbar">
             <button class="btn-primary btn-small" id="sound-upload">Upload Sound</button>
@@ -1643,7 +1670,7 @@
   </div>
 
   <div class="soundboard-pop hidden" id="soundboard-pop">
-    <div class="sb-head"><span>Soundboard</span><span class="sb-server" id="sb-server"></span></div>
+    <div class="sb-head"><span>Soundboard</span><button class="btn-secondary btn-small sb-add hidden" id="sb-add">Add sound</button></div>
     <div class="sb-muted hidden" id="sb-muted">You muted soundboard clips in Settings, so you will not hear them.</div>
     <div class="sb-grid" id="sb-grid"></div>
   </div>
@@ -1657,6 +1684,7 @@
   <script src="scripts/pins.js"></script>
   <script src="scripts/channel-access.js"></script>
   <script src="scripts/automod.js"></script>
+  <script src="scripts/search.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>

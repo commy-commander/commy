@@ -1,3 +1,4 @@
+use crate::channel_lock::KeyHolder;
 use commy_core::server::Rsvp;
 use commy_core::{
     AutoMod, ChannelId, ChannelKind, DmMessage, DmStore, Hold, Message, MessageId, Permissions, Presence, ServerState,
@@ -78,6 +79,7 @@ pub struct MemberView {
     pub tag: Option<String>,
     pub tag_color: Option<String>,
     pub role_banner: Option<String>,
+    pub bot: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,6 +90,7 @@ pub struct RoleView {
     pub position: u32,
     pub permissions: Vec<String>,
     pub self_assignable: bool,
+    pub hoist: bool,
     pub tag: Option<String>,
     pub banner: Option<String>,
 }
@@ -153,6 +156,9 @@ pub struct ServerView {
     pub sounds: Vec<SoundView>,
     pub emojis_shareable: bool,
     pub soundboard_open: bool,
+    pub sounds_shareable: bool,
+    pub uploads_restricted: bool,
+    pub can_attach_files: bool,
     pub public: bool,
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
@@ -175,7 +181,7 @@ pub struct SoundView {
 }
 
 impl ServerView {
-    pub fn for_viewer(state: &ServerState, viewer: Option<UserId>, keys: &crate::channel_lock::KeyHolder) -> Self {
+    pub fn for_viewer(state: &ServerState, viewer: Option<UserId>, keys: &KeyHolder) -> Self {
         let manages_channels = viewer.is_some_and(|v| state.server.permissions_for(v).allows(Permissions::MANAGE_CHANNELS));
         let sees = |c: ChannelId| viewer.is_some_and(|v| state.server.can_view(c, v));
         let channels = state
@@ -258,6 +264,7 @@ impl ServerView {
                     tag_color: tag.as_ref().and_then(|(_, c)| c.clone()),
                     tag: tag.map(|(t, _)| t),
                     role_banner: state.server.top_role_with(p.id, |r| r.banner.is_some()).and_then(|r| r.banner.clone()),
+                    bot: state.is_bot(p.id),
                 }
             })
             .collect();
@@ -274,6 +281,7 @@ impl ServerView {
                 position: r.position,
                 permissions: permission_names(r.permissions),
                 self_assignable: r.self_assignable,
+                hoist: r.hoist,
                 tag: r.tag.clone(),
                 banner: r.banner.clone(),
             })
@@ -374,6 +382,14 @@ impl ServerView {
                 .collect(),
             emojis_shareable: state.server.emojis_shareable,
             soundboard_open: state.server.soundboard_open,
+            sounds_shareable: state.server.sounds_shareable,
+            uploads_restricted: state
+                .server
+                .roles
+                .iter()
+                .find(|r| r.position == EVERYONE_ROLE_POSITION)
+                .is_some_and(|r| !r.permissions.contains(Permissions::ATTACH_FILES)),
+            can_attach_files: perms.allows(Permissions::ATTACH_FILES),
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS)
@@ -389,6 +405,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_channels", Permissions::MANAGE_CHANNELS),
     ("manage_messages", Permissions::MANAGE_MESSAGES),
     ("pin_messages", Permissions::PIN_MESSAGES),
+    ("attach_files", Permissions::ATTACH_FILES),
     ("post_announcements", Permissions::POST_ANNOUNCEMENTS),
     ("manage_roles", Permissions::MANAGE_ROLES),
     ("kick_members", Permissions::KICK_MEMBERS),
@@ -512,7 +529,7 @@ pub fn pin_views(
     state: &ServerState,
     channel: Option<ChannelId>,
     viewer: UserId,
-    keys: &crate::channel_lock::KeyHolder,
+    keys: &KeyHolder,
 ) -> Vec<PinView> {
     let mut pins: Vec<&commy_core::server::Pin> = state
         .server
@@ -561,7 +578,7 @@ pub struct AttachmentView {
 }
 
 impl MessageView {
-    pub fn build(message: &Message, state: &ServerState, keys: &crate::channel_lock::KeyHolder) -> Self {
+    pub fn build(message: &Message, state: &ServerState, keys: &KeyHolder) -> Self {
         let opened = keys.open(state, message);
         let sealed = opened.is_none();
         let message = opened.as_ref().unwrap_or(message);
@@ -618,7 +635,7 @@ impl MessageView {
         }
     }
 
-    fn with_hold(mut self, hold: Option<Hold>) -> Self {
+    pub fn with_hold(mut self, hold: Option<Hold>) -> Self {
         self.held = hold.map(|h| h.describe().to_string());
         self
     }
@@ -637,18 +654,53 @@ pub fn message_views(
     limit: usize,
     pending: &HashSet<MessageId>,
     viewer: Option<UserId>,
-    keys: &crate::channel_lock::KeyHolder,
+    keys: &KeyHolder,
 ) -> Vec<MessageView> {
+    visible_views(state, state.page(channel, None, limit), pending, viewer, keys)
+}
+
+pub fn sees_message<'a>(state: &'a ServerState, viewer: Option<UserId>, keys: &'a KeyHolder) -> impl Fn(&Message) -> bool + 'a {
     let reviews_held = viewer.is_some_and(|v| commy_core::automod::moderates(&state.server, v));
-    state
-        .page(channel, None, limit)
+    move |m| reviews_held || Some(m.author) == viewer || keys.hold(state, m).is_none()
+}
+
+pub fn held_view(state: &ServerState, message: &Message, keys: &KeyHolder) -> MessageView {
+    MessageView::build(message, state, keys).with_hold(keys.hold(state, message))
+}
+
+fn visible_views(
+    state: &ServerState,
+    messages: &[Message],
+    pending: &HashSet<MessageId>,
+    viewer: Option<UserId>,
+    keys: &KeyHolder,
+) -> Vec<MessageView> {
+    let sees = sees_message(state, viewer, keys);
+    messages
         .iter()
-        .filter_map(|m| {
-            let hold = keys.hold(state, m);
-            let hidden = hold.is_some() && !reviews_held && Some(m.author) != viewer;
-            (!hidden).then(|| MessageView::build(m, state, keys).with_pending(pending.contains(&m.id)).with_hold(hold))
-        })
+        .filter(|m| sees(m))
+        .map(|m| held_view(state, m, keys).with_pending(pending.contains(&m.id)))
         .collect()
+}
+
+pub const AROUND_EACH_SIDE: usize = 50;
+
+pub fn message_views_around(
+    state: &ServerState,
+    channel: ChannelId,
+    around: MessageId,
+    pending: &HashSet<MessageId>,
+    viewer: Option<UserId>,
+    keys: &KeyHolder,
+) -> Option<Vec<MessageView>> {
+    let all = state.messages(channel);
+    let at = all.iter().position(|m| m.id == around)?;
+    if !sees_message(state, viewer, keys)(&all[at]) {
+        return None;
+    }
+    let start = at.saturating_sub(AROUND_EACH_SIDE);
+    let end = (at + AROUND_EACH_SIDE + 1).min(all.len());
+    Some(visible_views(state, &all[start..end], pending, viewer, keys))
 }
 
 pub fn display_name(state: &ServerState, user: commy_core::UserId) -> String {
@@ -690,7 +742,7 @@ mod tests {
             state.apply(ServerEvent::MessageCreate { message }).unwrap();
         }
         let pending = HashSet::from([ids[1]]);
-        let keys = crate::channel_lock::KeyHolder::default();
+        let keys = KeyHolder::default();
         let views = message_views(&state, channel, 100, &pending, Some(owner.id), &keys);
         let flags: Vec<(&str, bool)> = views.iter().map(|v| (v.content.as_str(), v.pending)).collect();
         assert_eq!(flags, vec![("sent", false), ("waiting", true)]);
@@ -730,7 +782,7 @@ mod tests {
         let rules = AutoMod { blocked_terms: vec!["gold".into()], ..AutoMod::default() };
         state.apply(ServerEvent::AutoModSet { server: sid, rules }).unwrap();
         let seen = |viewer| {
-            message_views(&state, channel, 100, &HashSet::new(), Some(viewer), &crate::channel_lock::KeyHolder::default())
+            message_views(&state, channel, 100, &HashSet::new(), Some(viewer), &KeyHolder::default())
                 .into_iter()
                 .map(|v| (v.content, v.held))
                 .collect::<Vec<_>>()
@@ -739,8 +791,57 @@ mod tests {
         assert_eq!(seen(owner.id), all);
         assert_eq!(seen(author), all);
         assert_eq!(seen(reader), vec![("fine".to_string(), None)]);
-        let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader), &crate::channel_lock::KeyHolder::default()).remove(0);
+        let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader), &KeyHolder::default()).remove(0);
         assert_eq!(reply.reply_preview.unwrap().excerpt, HELD_EXCERPT);
+        let around = |viewer| message_views_around(&state, channel, bad, &HashSet::new(), Some(viewer), &KeyHolder::default()).map(|v| v.len());
+        assert_eq!(around(owner.id), Some(2));
+        assert_eq!(around(reader), None);
+    }
+
+    #[test]
+    fn a_window_around_an_old_message_holds_it_and_its_neighbours() {
+        let identity = Identity::generate();
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(identity.public());
+        let server = Server::new("s", owner.id);
+        let channel = server.channels[0].id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let mut ids = Vec::new();
+        for i in 0..300 {
+            let mut message = Message::new(channel, owner.id, format!("m{i}"));
+            message.created_at = chrono::Utc::now() - chrono::Duration::minutes(300 - i);
+            message.sign(state.server.id, &identity);
+            ids.push(message.id);
+            state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        }
+        let none = HashSet::new();
+        let middle = message_views_around(&state, channel, ids[120], &none, Some(owner.id), &KeyHolder::default()).unwrap();
+        assert_eq!(middle.len(), 2 * AROUND_EACH_SIDE + 1);
+        assert_eq!((middle[0].content.as_str(), middle[AROUND_EACH_SIDE].content.as_str()), ("m70", "m120"));
+        let first = message_views_around(&state, channel, ids[3], &none, Some(owner.id), &KeyHolder::default()).unwrap();
+        assert_eq!((first[0].content.as_str(), first.len()), ("m0", 3 + AROUND_EACH_SIDE + 1));
+        let last = message_views_around(&state, channel, ids[299], &none, Some(owner.id), &KeyHolder::default()).unwrap();
+        assert_eq!(last.last().unwrap().content, "m299");
+        assert!(message_views_around(&state, channel, MessageId::for_author(owner.id), &none, Some(owner.id), &KeyHolder::default()).is_none());
+    }
+
+    #[test]
+    fn members_who_declare_themselves_bots_carry_the_badge() {
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(Identity::generate().public());
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let bot = UserProfile::new("helper");
+        let bot_id = bot.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: bot }).unwrap();
+        state.apply(ServerEvent::BotSet { server: sid, user: bot_id, bot: true }).unwrap();
+        let view = ServerView::for_viewer(&state, Some(owner.id), &KeyHolder::default());
+        let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
+        assert!(badge(bot_id));
+        assert!(!badge(owner.id));
     }
 
     #[test]

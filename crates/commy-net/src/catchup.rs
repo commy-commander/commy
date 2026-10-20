@@ -1383,6 +1383,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_member_back_from_away_takes_each_peers_own_reaction_changes() {
+        let (mut state, channel, owner) = fixture();
+        let first = join(&mut state, "first");
+        let second = join(&mut state, "second");
+        let back = join(&mut state, "back");
+        let a = MemStore::new(state.clone(), first);
+        let b = MemStore::new(state.clone(), second);
+        let c = MemStore::new(state.clone(), back);
+        let o = MemStore::new(state, owner);
+        let held = o.post(channel, "held by all");
+        for store in [&a, &b, &c] {
+            store.add(&held);
+        }
+        let react = |store: &MemStore, emoji: &str, active: bool| {
+            let user = store.me;
+            let event = ServerEvent::ReactionSet { channel, message: held.id, emoji: emoji.into(), user, active };
+            store.with(|s| s.apply(event).unwrap());
+        };
+        react(&a, "❤", true);
+        react(&b, "👍", true);
+        for (x, y) in [(&a, &b), (&a, &c), (&b, &c)] {
+            ok_session(x, y).await;
+        }
+        assert_eq!(reactors(&c, held.id, "❤"), vec![a.me]);
+
+        react(&a, "❤", false);
+        react(&b, "🎉", true);
+        let (from_a, _) = ok_session(&c, &a).await;
+        assert_eq!(from_a.reactions, 1);
+        assert!(reactors(&c, held.id, "❤").is_empty());
+        assert!(reactors(&c, held.id, "🎉").is_empty(), "only the second peer can vouch for its own change");
+
+        let (from_b, _) = ok_session(&c, &b).await;
+        assert_eq!(from_b.reactions, 1);
+        assert!(reactors(&c, held.id, "❤").is_empty());
+        assert_eq!(reactors(&c, held.id, "👍"), vec![b.me]);
+        assert_eq!(reactors(&c, held.id, "🎉"), vec![b.me]);
+    }
+
+    #[tokio::test]
     async fn empty_replicas_finish_cleanly() {
         let (a, b, _) = pair();
         let (ra, rb) = ok_session(&a, &b).await;

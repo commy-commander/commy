@@ -16,11 +16,16 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Roles and moderation.** Colored roles with fine-grained permissions,
   kick and ban, server mute and deafen, pinned messages and announcements,
   and auto moderation that holds messages with blocked words, links, too many
-  mentions or flooding. Channels can be limited to roles. Messages sent in a
-  private channel are encrypted so only those roles and admins can read them.
+  mentions or flooding. A moderation bot you run yourself can remove new
+  ones for everyone ([crates/commy-bot](crates/commy-bot/README.md)).
+  Channels can be limited to roles. Messages sent in a private channel are
+  encrypted so only those roles and admins can read them.
 - **Rich chat.** Replies, reactions, edits, emoji (including custom server
   emoji), images and files shown inline, clickable links, and a GIF picker when the server
   operator has set up a GIF provider key.
+- **Message search.** Search a server by keyword, phrase, author, mention or
+  channel. Search runs on your device over the history it keeps, and a result
+  jumps straight to the message, even weeks back.
 - **Voice.** Opus voice with a one-click noise cancellation toggle, per-person
   volume, shared mute and deafen, and a soundboard with per-server clips.
 - **Screen and game streaming.** Share a whole monitor or a single window with
@@ -83,6 +88,7 @@ crates/commy-audio      Voice processing: noise cancellation, mute gate,
                         voice activity detection, Opus codec
 crates/commy-media      Device I/O: microphone, playback mixing with jitter
                         buffers, screen and window capture
+crates/commy-bot        Headless member that enforces auto moderation
 auth                    Account server: Better Auth, Postgres, Redis
 deploy                  Self-hosting stack and deploy pipeline
 ```
@@ -133,7 +139,7 @@ Then:
 git clone https://github.com/commy-commander/commy.git
 cd commy
 
-# Run the Rust tests (core, net, audio, media)
+# Run the Rust tests (core, net, audio, media, bot)
 cargo test --workspace
 
 # Run the desktop app
