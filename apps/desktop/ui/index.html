@@ -116,6 +116,7 @@
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>
             <span class="pin-count hidden" id="pins-count"></span>
           </button>
+          <button class="icon-btn hidden" id="threads-btn" title="Threads" aria-haspopup="dialog"></button>
           <button class="icon-btn hidden" id="members-btn" title="Hide Members" aria-pressed="true">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zM8 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05A4.2 4.2 0 0 1 17 16.5V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
           </button>
@@ -147,6 +148,13 @@
           <button class="btn-link" id="pins-all">All pins in this server</button>
         </header>
         <div class="pins-list" id="pins-list"></div>
+      </section>
+      <section class="pins-pop threads-pop hidden" id="threads-pop" role="dialog" aria-label="Threads">
+        <header class="pins-pop-head">
+          <span class="pins-pop-title">Threads</span>
+          <span class="threads-pop-sub" id="threads-pop-sub"></span>
+        </header>
+        <div class="pins-list threads-list" id="threads-list"></div>
       </section>
       <div class="stage hidden" id="video-pane">
         <div class="stage-view" id="stage-view">
@@ -290,7 +298,14 @@
     <aside class="thread-panel hidden" id="thread-panel">
       <header class="thread-head">
         <span class="thread-head-icon" id="thread-head-icon"></span>
-        <span class="thread-title" id="thread-title">Thread</span>
+        <div class="thread-head-text">
+          <button class="thread-title" id="thread-title" type="button" disabled>Thread</button>
+          <input class="thread-title-input hidden" id="thread-title-input" type="text" maxlength="100" autocomplete="off" spellcheck="false" aria-label="Thread name" />
+          <span class="thread-status" id="thread-status"></span>
+        </div>
+        <button class="icon-btn hidden" id="thread-rename" title="Rename Thread"></button>
+        <button class="icon-btn hidden" id="thread-archive" title="Archive Thread" aria-pressed="false"></button>
+        <button class="icon-btn hidden" id="thread-lock" title="Lock Thread" aria-pressed="false"></button>
         <button class="icon-btn" id="thread-close" title="Close Thread"></button>
       </header>
       <div class="thread-messages" id="thread-messages"></div>
@@ -2252,6 +2267,7 @@
   <script src="scripts/onboarding.js"></script>
   <script src="scripts/message-link.js"></script>
   <script src="scripts/slow-mode.js"></script>
+  <script src="scripts/threads.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>

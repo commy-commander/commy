@@ -67,6 +67,9 @@ pub enum AuditKind {
     PollClose,
     ChannelSensitive,
     Onboarding,
+    ThreadRename,
+    ThreadArchive,
+    ThreadLock,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,6 +306,17 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             }
             (K::PollClose, Some(message.to_string()), channel_name(state, *id), None)
         }
+        E::ThreadSet { channel: id, root, name, archived, locked, .. } => {
+            let current = state.thread_of(*id, *root);
+            let (target, label) = (Some(root.to_string()), channel_name(state, *id));
+            if *locked != current.is_some_and(|t| t.locked) {
+                (K::ThreadLock, target, label, on_off(*locked))
+            } else if *archived != current.is_some_and(|t| t.archived) {
+                (K::ThreadArchive, target, label, on_off(*archived))
+            } else {
+                (K::ThreadRename, target, label, name.as_deref().map(clip))
+            }
+        }
         E::InviteTrack { invite, .. } => (K::InviteCreate, Some(invite.creator.to_string()), Some(clip(&invite.code)), None),
         E::InviteRevoke { code, creator, .. } => {
             let (target, made_by) = member(creator);
@@ -417,6 +431,35 @@ mod tests {
         assert!(log.iter().all(|e| e.by == owner));
         let restored = ServerState::from_snapshot(state.snapshot());
         assert_eq!(restored.audit_log(), log, "kept across restarts");
+    }
+
+    #[test]
+    fn thread_changes_are_logged_as_a_name_an_archive_or_a_lock() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let sign = |at, event| SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        let root = crate::test_support::post(&state, channel, owner, "first");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: root.clone() }), Ok(true));
+        let set = |name: &str, archived, locked| ServerEvent::ThreadSet {
+            server: sid,
+            channel,
+            root: root.id,
+            name: Some(name.into()),
+            archived,
+            locked,
+            by: owner,
+        };
+        assert_eq!(state.apply_signed(&sign(1_000, set("plans", false, false))), Ok(true));
+        assert_eq!(state.apply_signed(&sign(2_000, set("plans", false, true))), Ok(true));
+        assert_eq!(state.apply_signed(&sign(3_000, set("plans", true, true))), Ok(true));
+        assert_eq!(state.apply_signed(&sign(4_000, set("plans", true, true))), Ok(false), "unchanged");
+        let log = state.audit_log();
+        let kinds: Vec<AuditKind> = log.iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, vec![AuditKind::ThreadRename, AuditKind::ThreadLock, AuditKind::ThreadArchive]);
+        assert_eq!(log[0].detail.as_deref(), Some("plans"));
+        assert_eq!(log[1].detail.as_deref(), Some("on"));
+        assert_eq!(log[0].target, Some(root.id.to_string()));
+        assert!(log.iter().all(|e| e.label.as_deref() == Some(state.server.channel(channel).unwrap().name.as_str())));
     }
 
     #[test]

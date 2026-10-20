@@ -290,6 +290,15 @@ pub enum ServerEvent {
         server: ServerId,
         onboarding: Option<crate::onboarding::Onboarding>,
     },
+    ThreadSet {
+        server: ServerId,
+        channel: ChannelId,
+        root: MessageId,
+        name: Option<String>,
+        archived: bool,
+        locked: bool,
+        by: UserId,
+    },
 }
 
 #[cfg(test)]
@@ -353,6 +362,9 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::PollClose { server, channel, message, by: user }), 70);
         assert_eq!(wire_tag(ServerEvent::ChannelSensitiveSet { server, channel, sensitive: true }), 72);
         assert_eq!(wire_tag(ServerEvent::OnboardingSet { server, onboarding: None }), 73);
+        let root = crate::ids::MessageId::new();
+        let thread = ServerEvent::ThreadSet { server, channel, root, name: None, archived: false, locked: false, by: user };
+        assert_eq!(wire_tag(thread), 74);
     }
 
     #[test]
