@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use commy_core::identity::{self, Identity};
 use commy_core::{ServerId, ServerState, Snapshot, UserProfile};
+use crate::webhook::{Webhook, MAX_WEBHOOKS};
 use commy_net::ServerTicket;
 use data_encoding::HEXLOWER;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,9 @@ use std::path::{Path, PathBuf};
 pub const NODE_FILE: &str = "node.key";
 pub const PROFILE_FILE: &str = "profile.json";
 pub const SERVERS_DIR: &str = "servers";
+pub const TOKEN_FILE: &str = "bridge.token";
+pub const WEBHOOKS_FILE: &str = "webhooks.json";
+pub const WEBHOOK_URLS_DIR: &str = "webhooks";
 pub const MAX_NAME_CHARS: usize = 32;
 
 #[derive(Serialize, Deserialize)]
@@ -112,6 +116,62 @@ impl DataDir {
         let dir = self.root.join(SERVERS_DIR);
         let bytes = serde_json::to_vec(&saved)?;
         write_atomically(&dir, &dir.join(server_file(ticket.server_id)), &bytes)
+    }
+
+    pub fn bridge_token(&self, reset: bool) -> Result<String> {
+        let path = self.root.join(TOKEN_FILE);
+        if !reset {
+            match std::fs::read_to_string(&path) {
+                Ok(text) if !text.trim().is_empty() => return Ok(text.trim().to_string()),
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).context("could not read bridge.token"),
+            }
+        }
+        let token = HEXLOWER.encode(&rand::random::<[u8; 32]>());
+        write_atomically(&self.root, &path, token.as_bytes())?;
+        Ok(token)
+    }
+
+    pub fn webhooks(&self) -> Result<Vec<Webhook>> {
+        match std::fs::read(self.root.join(WEBHOOKS_FILE)) {
+            Ok(bytes) => serde_json::from_slice(&bytes).context("webhooks.json is damaged"),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e).context("could not read webhooks.json"),
+        }
+    }
+
+    pub fn add_webhook(&self, hook: Webhook) -> Result<Webhook> {
+        let mut hooks = self.webhooks()?;
+        if hooks.len() >= MAX_WEBHOOKS {
+            bail!("this bot already has {MAX_WEBHOOKS} webhooks; remove one first");
+        }
+        hooks.push(hook.clone());
+        self.save_webhooks(&hooks)?;
+        let url = format!("http://127.0.0.1:{}{}\n", crate::webhook::DEFAULT_PORT, hook.path());
+        write_atomically(&self.root.join(WEBHOOK_URLS_DIR), &self.webhook_url_file(&hook.id), url.as_bytes())?;
+        Ok(hook)
+    }
+
+    pub fn webhook_url_file(&self, id: &str) -> PathBuf {
+        self.root.join(WEBHOOK_URLS_DIR).join(format!("{}.url", id.trim()))
+    }
+
+    pub fn remove_webhook(&self, id: &str) -> Result<bool> {
+        let mut hooks = self.webhooks()?;
+        let before = hooks.len();
+        hooks.retain(|h| h.id != id.trim());
+        if hooks.len() == before {
+            return Ok(false);
+        }
+        self.save_webhooks(&hooks)?;
+        let _ = std::fs::remove_file(self.webhook_url_file(id));
+        Ok(true)
+    }
+
+    fn save_webhooks(&self, hooks: &[Webhook]) -> Result<()> {
+        let bytes = serde_json::to_vec_pretty(hooks)?;
+        write_atomically(&self.root, &self.root.join(WEBHOOKS_FILE), &bytes)
     }
 
     pub fn has_server(&self, server: ServerId) -> bool {

@@ -56,6 +56,34 @@ function mockSearch({ serverId, terms, from, mentions, channelId }) {
   return { total: hits.length, hits: hits.slice(0, 50) };
 }
 
+function mockAuditLog() {
+  const ago = minutes => Date.now() - minutes * 60e3;
+  return [
+    { at: ago(4), by: "m2", by_name: "nova", kind: "message_delete", target: "m3", label: "sleepy", detail: "welcome" },
+    { at: ago(26), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "role_assign", target: "m2", label: "nova", detail: "Moderator" },
+    { at: ago(70), by: "m2", by_name: "nova", kind: "voice_moderate", target: "m3", label: "sleepy", detail: "muted" },
+    { at: ago(180), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "channel_rename", target: null, label: "chat", detail: "general" },
+    { at: ago(600), by: "m1", by_name: "ferris", kind: "emoji_add", target: null, label: "ferris_wave", detail: null },
+    { at: ago(1500), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "member_ban", target: "m9", label: "spam_bot", detail: null },
+    { at: ago(3000), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "channel_create", target: null, label: "news", detail: "announcement" },
+    { at: ago(4000), by: "me", by_name: mock.user ? mock.user.username : "you", kind: "auto_mod", target: null, label: null, detail: null },
+  ];
+}
+
+function mockInvites() {
+  if (!mock.invites) {
+    const me = mock.user ? mock.user.username : "you";
+    const at = minutes => Date.now() + minutes * 60e3;
+    mock.invites = [
+      { origin: "https://commy.chat", host: "commy.chat", code: "pixel-pioneers", custom: true, creator: "me", creator_name: me, created_at: at(-2900), expires_at: null, can_revoke: true },
+      { origin: "https://commy.chat", host: "commy.chat", code: "KQ7M3N4P", custom: false, creator: "me", creator_name: me, created_at: at(-60), expires_at: at(6 * 1440 + 23 * 60), can_revoke: true },
+      { origin: "https://commy.chat", host: "commy.chat", code: "T4WZ8RHD", custom: false, creator: "m2", creator_name: "nova", created_at: at(-15), expires_at: at(45), can_revoke: true },
+    ];
+  }
+  mock.invites = mock.invites.filter(i => i.expires_at == null || i.expires_at > Date.now());
+  return mock.invites;
+}
+
 function mockCrabImage() {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
@@ -171,6 +199,9 @@ function mockSeed() {
       content: "Welcome to Commy, a private P2P chat app.", created_at: new Date(Date.now() - 3600e3).toISOString(), edited: false, attachments: [] },
     { id: "x2", channel: c0, author_id: "m2", author_name: "nova",
       content: "No central servers, no paywall. Everything peer to peer.", created_at: new Date(Date.now() - 1800e3).toISOString(), edited: false, attachments: [] },
+    { id: "x2b", channel: c0, author_id: "m1", author_name: "ferris",
+      content: "## Patch notes\n**Bold**, *italic*, __underline__, ~~struck~~, `inline code`, ||a spoiler|| and a [masked link](https://commy.chat).\n> Quoted from the changelog\n- noise gate tuned\n- overlay fixed\n```rust\nfn main() {\n    println!(\"hello\"); // 42\n}\n```\nShipped <t:1760900000:R>.",
+      created_at: new Date(Date.now() - 1500e3).toISOString(), edited: true, attachments: [] },
     { id: "x3", channel: c0, author_id: "me", author_name: mock.user ? mock.user.username : "you",
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
     { id: "x4", channel: c0, author_id: "m2", author_name: "nova",
@@ -299,7 +330,7 @@ async function mockInvoke(cmd, args = {}) {
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
-        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_ban: !mock.plainMember, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
@@ -332,9 +363,23 @@ async function mockInvoke(cmd, args = {}) {
     case "create_invite_link": {
       const hours = { "1h": 1, "1d": 24, "7d": 168, "30d": 720 }[args.expires || "7d"];
       if (!hours && !mock.servers[args.serverId]?.public) throw "Only links to a public server can last forever";
-      return { url: "https://commy.chat/i/KQ7M3N4P#" + "q".repeat(43),
-        expires_at: hours ? new Date(Date.now() + hours * 3600e3).toISOString() : null };
+      const name = args.name ? checkInviteName(args.name) : null;
+      if (name?.error) throw name.error;
+      if (name && mockInvites().some(i => i.code === name.name && i.creator !== "me")) throw "That name is taken. Pick another one.";
+      const code = name ? name.name : "KQ7M3N4P";
+      const expiresAt = hours ? Date.now() + hours * 3600e3 : null;
+      mock.invites = mockInvites().filter(i => i.code !== code).concat({ origin: "https://commy.chat", host: "commy.chat", code, custom: Boolean(name),
+        creator: "me", creator_name: mock.user ? mock.user.username : "you", created_at: Date.now(), expires_at: expiresAt, can_revoke: true });
+      return { url: `https://commy.chat/i/${code}#` + "q".repeat(name ? 22 : 43),
+        expires_at: expiresAt ? new Date(expiresAt).toISOString() : null };
     }
+    case "list_invites": return mockInvites().map(i => ({ ...i }));
+    case "revoke_invite": {
+      if (!mockInvites().some(i => i.origin === args.origin && i.code === args.code)) throw "That invite is already gone";
+      mock.invites = mock.invites.filter(i => !(i.origin === args.origin && i.code === args.code));
+      return null;
+    }
+    case "account_server_info": return { origin: "https://commy.chat", host: "commy.chat", is_default: true };
     case "set_server_public": {
       const s = mock.servers[args.serverId];
       if (s) s.public = args.public;
@@ -342,8 +387,10 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "resolve_invite_link": {
       const host = /commy:\/\/i\/([^/]+)\//.exec(args.link)?.[1] || new URL(args.link).host;
+      const background = Object.values(mock.servers).map(s => s.invite_background).find(Boolean);
       return { server_name: "Pixel Pioneers", host, trusted: host === "commy.chat", account_server_host: "commy.chat",
-        expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock" };
+        expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock",
+        background: background ? mock.serverImages?.[background] || null : null };
     }
     case "get_messages": {
       const all = (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
@@ -496,6 +543,13 @@ async function mockInvoke(cmd, args = {}) {
     case "leave_server":
       delete mock.servers[args.serverId];
       return null;
+    case "delete_server": {
+      const s = mock.servers[args.serverId];
+      if (!s || args.confirmName.trim() !== s.name.trim()) throw "type the server name exactly as it is shown to delete it";
+      delete mock.servers[args.serverId];
+      return null;
+    }
+    case "audit_log": return mockAuditLog();
     case "start_mic_test":
     case "stop_mic_test":
       return null;
@@ -518,7 +572,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_server_image": {
       const ref = args.data ? `mock${Date.now()}@mock` : null;
       if (ref) mock.serverImages = { ...(mock.serverImages || {}), [ref]: `data:image/jpeg;base64,${args.data}` };
-      mock.servers[args.serverId][args.which] = ref;
+      mock.servers[args.serverId][args.which === "invite" ? "invite_background" : args.which] = ref;
       return null;
     }
     case "add_emoji": {
@@ -936,6 +990,7 @@ function selectSettingsTab(id, tab) {
   }
   layer.querySelector(".settings-content").scrollTop = 0;
   layer.dataset.tab = tab;
+  if (tab === "voice") prepareAvatarStage();
 }
 
 function openSettingsLayerId() {
@@ -1431,6 +1486,54 @@ function openLeaveServer(serverId) {
   showModal("modal-leave-server");
 }
 
+let deletingServerId = null;
+
+function openDeleteServer(server) {
+  deletingServerId = server.id;
+  $("delete-server-title").textContent = `Delete '${server.name}'`;
+  const input = $("delete-server-input");
+  input.value = "";
+  input.placeholder = server.name;
+  $("delete-server-go").disabled = true;
+  input.oninput = () => {
+    $("delete-server-go").disabled = input.value.trim() !== server.name.trim();
+  };
+  showModal("modal-delete-server");
+  input.focus();
+}
+
+async function confirmDeleteServer() {
+  const serverId = deletingServerId;
+  if (!serverId) return;
+  try {
+    await invoke("delete_server", { serverId, confirmName: $("delete-server-input").value });
+    deletingServerId = null;
+    hideModals();
+    await leaveServerView(serverId);
+    toast("Server deleted");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function leaveServerView(serverId) {
+  markServerRead(serverId);
+  if (state.currentServer && state.currentServer.id === serverId) {
+    await closeSettingsLayers();
+    state.currentServer = null;
+  }
+  if (state.voiceServer && state.voiceServer.id === serverId) {
+    state.voiceChannelId = null;
+    state.voiceServer = null;
+    state.sharing = false;
+  }
+  await refreshServers();
+  if (!state.currentServer) {
+    if (state.servers.length) await selectServer(state.servers[0].id);
+    else await enterDmMode();
+  }
+}
+
 async function confirmLeaveServer() {
   const serverId = leavingServerId;
   if (!serverId) return;
@@ -1722,7 +1825,7 @@ function chooseImage(title, input) {
   });
 }
 
-function cropImageFile(file, width, height) {
+function cropImageFile(file, width, height, quality = 0.88) {
   return new Promise((resolve, reject) => {
     const url = typeof file === "string" ? file : URL.createObjectURL(file);
     const img = new Image();
@@ -1737,7 +1840,7 @@ function cropImageFile(file, width, height) {
       ctx.imageSmoothingQuality = "high";
       ctx.drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, 0, 0, width, height);
       URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL("image/jpeg", 0.88).split(",")[1]);
+      resolve(canvas.toDataURL("image/jpeg", quality).split(",")[1]);
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -1751,7 +1854,7 @@ async function setServerImage(which, data) {
   if (!state.currentServer) return;
   try {
     await invoke("set_server_image", { serverId: state.currentServer.id, which, data: data ?? null });
-    toast(data ? (which === "icon" ? "Server avatar updated" : "Banner updated") : "Removed");
+    toast(data ? ({ icon: "Server avatar updated", invite: "Invite background updated" }[which] || "Banner updated") : "Removed");
     await refreshServers();
     await refreshCurrentServer();
     openServerSettings();
@@ -2168,6 +2271,11 @@ function stopCameraPreview() {
 
 const CAMERA_FX_NOTES = {
   idle: "Effects run on this device. People in the call see what this preview shows.",
+  "avatar-loading": "Getting your avatar ready. People in the call never see your camera picture.",
+  "avatar-ready": "Your avatar follows your face on this device. People see it, never your camera.",
+  "avatar-still": "Face tracking is not available here, so your avatar holds still.",
+  "avatar-missing": "Choose a VRM avatar file to use your own. People see a plain background until then.",
+  "avatar-failed": "Avatars are not available here, so your picture is blurred. Pick Off under Avatar.",
   loading: "Getting background effects ready. Your picture stays blurred until then.",
   ready: "Effects run on this device. People in the call see what this preview shows.",
   failed: "Effects are not available here, so your whole picture is blurred. Pick Off to send it clear.",
@@ -2180,11 +2288,57 @@ function renderCameraFx(status = cameraFxStatus()) {
     button.classList.toggle("active", on);
     button.setAttribute("aria-checked", String(on));
   }
+  renderAvatarPicker();
   $("cam-mirror").checked = mirror;
   document.body.dataset.camMirror = mirror ? "on" : "off";
   const note = $("cam-fx-note");
   note.textContent = CAMERA_FX_NOTES[status];
-  note.classList.toggle("warn", status === "failed");
+  note.classList.toggle("warn", status === "failed" || status === "avatar-failed");
+}
+
+function renderAvatarPicker() {
+  const { avatar } = cameraFx.settings;
+  for (const button of $("cam-avatar").querySelectorAll("button")) {
+    const on = button.dataset.avatar === avatar;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-checked", String(on));
+    const img = button.querySelector("img");
+    const src = cameraAvatar.thumbnails[button.dataset.avatar];
+    if (img && src && img.getAttribute("src") !== src) img.src = src;
+    if (img && !src) img.removeAttribute("src");
+  }
+}
+
+function pickAvatarBytes() {
+  if (IS_TAURI) return invoke("pick_avatar_model");
+  const input = $("vrm-file");
+  return new Promise(resolve => {
+    input.value = "";
+    input.onchange = () => resolve(input.files && input.files[0] ? input.files[0].arrayBuffer() : null);
+    input.click();
+  });
+}
+
+async function chooseCameraAvatar() {
+  try {
+    const bytes = await pickAvatarBytes();
+    if (!bytes || !bytes.byteLength) return;
+    await setCustomAvatar(bytes);
+    updateCameraFx({ avatar: "custom" });
+  } catch (e) {
+    toast(e && e.message ? e.message : String(e));
+  }
+}
+
+async function pickCameraAvatar(kind) {
+  if (kind === "custom") {
+    await prepareAvatarStage();
+    if (!cameraAvatar.stage || !cameraAvatar.stage.hasCustom()) {
+      chooseCameraAvatar();
+      return;
+    }
+  }
+  updateCameraFx({ avatar: kind });
 }
 
 async function chooseCameraBackdrop() {
@@ -2847,8 +3001,8 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   if (message.content) {
     if (!isBareImageLink(message.content)) {
       const content = buildMessageContent(message.content);
-      if (message.edited) content.appendChild(el("span", "edited", " (edited)"));
-      if (inlineMark) content.appendChild(pendingMark());
+      if (message.edited) appendAfterText(content, el("span", "edited", " (edited)"));
+      if (inlineMark) appendAfterText(content, pendingMark());
       inlineMark = false;
       body.appendChild(content);
     }
@@ -3504,6 +3658,7 @@ async function sendThreadReply() {
   const content = input.value.trim();
   if (!content || !state.threadRoot || !state.currentChannel) return;
   input.value = "";
+  fitComposer(input);
   try {
     await invoke("send_message", {
       serverId: state.currentServer.id,
@@ -3515,6 +3670,7 @@ async function sendThreadReply() {
     await selectChannel(state.currentChannel);
   } catch (e) {
     input.value = content;
+    fitComposer(input);
     toast(String(e));
   }
 }
@@ -4114,49 +4270,126 @@ async function toggleAudioPop(which, anchor) {
 
 function renderMarkdown(text) {
   const root = el("div", "md");
-  let list = null;
-  for (const raw of String(text || "").split("\n")) {
-    const line = raw.trimEnd();
-    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
-    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
-    const numbered = /^\s*(\d+)[.)]\s+(.*)$/.exec(line);
-    if (bullet || numbered) {
-      const tag = bullet ? "ul" : "ol";
-      if (!list || list.tagName.toLowerCase() !== tag) {
-        list = el(tag);
-        if (numbered) list.start = Number(numbered[1]);
-        root.appendChild(list);
-      }
-      const li = el("li");
-      appendInlineMarkdown(li, bullet ? bullet[1] : numbered[2]);
-      list.appendChild(li);
-      continue;
-    }
-    list = null;
-    if (!line.trim()) continue;
-    const node = el(heading ? `h${heading[1].length + 2}` : "p");
-    appendInlineMarkdown(node, heading ? heading[2] : line);
-    root.appendChild(node);
-  }
+  renderBlocks(root, parseMessage(text));
   return root;
 }
 
-function appendInlineMarkdown(node, text) {
-  const re = /\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`|(https?:\/\/[^\s<>"']+)/g;
-  let last = 0;
-  let m;
-  while ((m = re.exec(text))) {
-    if (m.index > last) node.appendChild(document.createTextNode(text.slice(last, m.index)));
-    if (m[1]) node.appendChild(el("strong", null, m[1]));
-    else if (m[2]) node.appendChild(el("em", null, m[2]));
-    else if (m[3]) node.appendChild(el("code", null, m[3]));
-    else {
-      const url = m[4];
-      node.appendChild(wireExternalLink(el("a", null, url), url));
-    }
-    last = m.index + m[0].length;
+function renderBlocks(parent, blocks) {
+  for (const block of blocks) {
+    const node = renderBlock(block);
+    if (block.gapAfter) node.classList.add("gap-after");
+    parent.appendChild(node);
   }
-  if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
+}
+
+function renderBlock(block) {
+  if (block.type === "codeblock") return renderCodeBlock(block);
+  if (block.type === "heading") return renderInlineInto(el(`h${block.level}`, "md-heading"), block.children);
+  if (block.type === "quote") {
+    const quote = el("blockquote", "md-quote");
+    renderBlocks(quote, block.children);
+    return quote;
+  }
+  if (block.type === "list") {
+    const list = el(block.ordered ? "ol" : "ul", "md-list");
+    if (block.ordered && block.start !== 1) list.start = block.start;
+    for (const item of block.items) list.appendChild(renderInlineInto(el("li"), item));
+    return list;
+  }
+  return renderInlineInto(el("div", "md-para"), block.children);
+}
+
+function renderCodeBlock(block) {
+  const pre = el("pre", "md-code");
+  if (block.lang) pre.appendChild(el("span", "md-code-lang", block.lang));
+  const code = el("code");
+  for (const token of highlightCode(block.code, block.lang)) {
+    code.appendChild(token.kind === "plain" ? document.createTextNode(token.text) : el("span", `tok-${token.kind}`, token.text));
+  }
+  pre.appendChild(code);
+  return pre;
+}
+
+function renderInlineInto(parent, nodes) {
+  for (const node of nodes) parent.appendChild(renderInlineNode(node));
+  return parent;
+}
+
+const INLINE_TAGS = { strong: "strong", em: "em", underline: "u", strike: "s" };
+
+function renderInlineNode(node) {
+  if (node.type === "text") {
+    const span = document.createDocumentFragment();
+    appendMessageText(span, node.text);
+    return span;
+  }
+  if (node.type === "br") return el("br");
+  if (node.type === "code") return el("code", "md-inline-code", node.text);
+  if (node.type === "spoiler") return renderSpoiler(node);
+  if (node.type === "link") {
+    const a = wireExternalLink(el("a", "md-link"), node.url);
+    a.title = node.url;
+    return renderInlineInto(a, node.children);
+  }
+  if (node.type === "time") return renderTimestamp(node);
+  return renderInlineInto(el(INLINE_TAGS[node.type] || "span"), node.children);
+}
+
+function renderSpoiler(node) {
+  const span = el("span", "spoiler");
+  span.setAttribute("role", "button");
+  span.title = "Click to reveal";
+  renderInlineInto(span, node.children);
+  span.addEventListener("click", e => {
+    if (span.classList.contains("revealed")) return;
+    e.stopPropagation();
+    span.classList.add("revealed");
+    span.title = "";
+  });
+  return span;
+}
+
+const TIMESTAMP_FORMATS = {
+  t: { hour: "2-digit", minute: "2-digit" },
+  T: { hour: "2-digit", minute: "2-digit", second: "2-digit" },
+  d: { year: "numeric", month: "2-digit", day: "2-digit" },
+  D: { year: "numeric", month: "long", day: "numeric" },
+  f: { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" },
+  F: { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" },
+};
+
+function relativeTimestamp(date) {
+  const seconds = Math.round((date.getTime() - Date.now()) / 1000);
+  const units = [["year", 31536000], ["month", 2592000], ["week", 604800], ["day", 86400], ["hour", 3600], ["minute", 60]];
+  const rtf = new Intl.RelativeTimeFormat([], { numeric: "auto" });
+  for (const [unit, size] of units) {
+    if (Math.abs(seconds) >= size) return rtf.format(Math.round(seconds / size), unit);
+  }
+  return rtf.format(seconds, "second");
+}
+
+function renderTimestamp(node) {
+  const date = new Date(node.unix * 1000);
+  const time = el("time", "md-time");
+  time.dateTime = date.toISOString();
+  time.textContent = node.style === "R" ? relativeTimestamp(date) : date.toLocaleString([], TIMESTAMP_FORMATS[node.style] || TIMESTAMP_FORMATS.f);
+  time.title = date.toLocaleString([], TIMESTAMP_FORMATS.F);
+  return time;
+}
+
+function appendMessageText(parent, text) {
+  const urlRe = /https?:\/\/[^\s<>"']+/g;
+  let last = 0;
+  let match;
+  while ((match = urlRe.exec(text))) {
+    if (match.index > last) appendRichText(parent, text.slice(last, match.index));
+    const url = match[0];
+    const a = wireExternalLink(el("a", null, url), url);
+    a.title = `Open ${url}`;
+    parent.appendChild(a);
+    last = match.index + url.length;
+  }
+  if (last < text.length) appendRichText(parent, text.slice(last));
 }
 
 function mediaProxyOn() {
@@ -5434,7 +5667,7 @@ async function removeRoleBanner(server, role) {
 const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff", "c05ccf", "ff6fa8", "99aab5"];
 
 const PERMISSION_GROUPS = [
-  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events"]],
+  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
   ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members"]],
 ];
@@ -6285,7 +6518,7 @@ function decodeCustomEmojis(text) {
 }
 
 function plainText(text) {
-  return decodeCustomEmojis(text).replace(/<:[^>\s]*$/, "");
+  return stripMarkdown(decodeCustomEmojis(text).replace(/<:[^>\s]*$/, ""));
 }
 
 function isEmojiOnly(text) {
@@ -7048,28 +7281,19 @@ function wireSuggestions(input, { commands = false } = {}) {
   }, { capture: true });
 }
 
+function appendAfterText(content, mark) {
+  const last = content.lastElementChild;
+  if (last && last.classList.contains("md-para")) last.appendChild(mark);
+  else content.appendChild(mark);
+}
+
 function buildMessageContent(text) {
   const div = el("div", "msg-content");
   if (looksLikeInviteLink(text)) {
     div.appendChild(inviteCard(text));
     return div;
   }
-  const urlRe = /https?:\/\/[^\s<>"']+/g;
-  let last = 0;
-  let match;
-  while ((match = urlRe.exec(text))) {
-    if (match.index > last) {
-      appendRichText(div, text.slice(last, match.index));
-    }
-    const url = match[0];
-    const a = wireExternalLink(el("a", null, url), url);
-    a.title = `Open ${url}`;
-    div.appendChild(a);
-    last = match.index + url.length;
-  }
-  if (last < text.length) {
-    appendRichText(div, text.slice(last));
-  }
+  renderBlocks(div, parseMessage(text));
   if (isEmojiOnly(text)) div.classList.add("jumbo");
   const invite = inviteCard(text);
   if (invite) div.appendChild(invite);
@@ -7992,11 +8216,13 @@ async function sendDm() {
   const content = input.value.trim();
   if (!content || !state.currentDm) return;
   input.value = "";
+  fitComposer(input);
   try {
     await invoke("send_dm", { userId: state.currentDm.user, content: encodeCustomEmojis(content) });
     await selectDm(state.currentDm.user, state.currentDm.name);
   } catch (e) {
     input.value = content;
+    fitComposer(input);
     toast(String(e));
   }
 }
@@ -8022,6 +8248,7 @@ async function sendMessage() {
   const gif = input.value.trim().match(/^\/gif(?:\s+(.*))?$/i);
   if (gif) {
     input.value = "";
+  fitComposer(input);
     openGifPicker(gif[1] || "");
     return;
   }
@@ -8029,6 +8256,7 @@ async function sendMessage() {
   const content = input.value.trim();
   if (!content || !state.currentServer || !state.currentChannel) return;
   input.value = "";
+  fitComposer(input);
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
   $("messages").dataset.view = "";
   state.historyAnchor = null;
@@ -8047,6 +8275,7 @@ async function sendMessage() {
     await selectChannel(state.currentChannel);
   } catch (e) {
     input.value = content;
+    fitComposer(input);
     toast(String(e));
   }
 }
@@ -9436,9 +9665,14 @@ function wireEvents() {
   $("thread-head-icon").appendChild(svgIcon("thread", 20));
   $("thread-close").onclick = closeThread;
   $("thread-input").addEventListener("keydown", e => {
-    if (e.key === "Enter") sendThreadReply();
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendThreadReply();
+    }
     if (e.key === "Escape") closeThread();
   });
+  wireComposerFormatting($("message-input"));
+  wireComposerFormatting($("thread-input"));
   $("message-input").addEventListener("keydown", e => {
     if (e.key === "Escape" && state.replyingTo) cancelReply();
   });
@@ -9583,6 +9817,14 @@ function wireEvents() {
   };
   $("leave-server-go").onclick = confirmLeaveServer;
   $("leave-server-cancel").onclick = hideModals;
+  $("delete-server-go").onclick = confirmDeleteServer;
+  $("delete-server-cancel").onclick = hideModals;
+  $("delete-server-input").addEventListener("keydown", e => {
+    if (e.key === "Enter" && !$("delete-server-go").disabled) confirmDeleteServer();
+  });
+  $("server-delete-open").onclick = () => state.currentServer && openDeleteServer(state.currentServer);
+  $("audit-group").onchange = paintAuditLog;
+  $("audit-actor").onchange = paintAuditLog;
   $("fm-ungroup").onclick = () => {
     closeFloating();
     if (!menuFolder) return;
@@ -9627,6 +9869,13 @@ function wireEvents() {
   $("banner-upload").onclick = () => uploadServerImage("banner");
   $("overview-icon-remove").onclick = () => setServerImage("icon", null);
   $("banner-remove").onclick = () => setServerImage("banner", null);
+  $("invite-bg-upload").onclick = uploadInviteBackground;
+  $("invite-bg-remove").onclick = () => setServerImage("invite", null);
+  $("invite-custom-name").addEventListener("input", paintInviteNameCheck);
+  $("invite-custom-name").addEventListener("keydown", e => {
+    if (e.key === "Enter") createCustomInvite();
+  });
+  $("invite-custom-create").onclick = createCustomInvite;
 
   $("notify-level").addEventListener("change", e => {
     const prefs = notifyPrefs();
@@ -9687,6 +9936,10 @@ function wireEvents() {
     };
   }
   $("cam-backdrop-btn").onclick = chooseCameraBackdrop;
+  for (const button of $("cam-avatar").querySelectorAll("button")) {
+    button.onclick = () => pickCameraAvatar(button.dataset.avatar);
+  }
+  $("cam-avatar-btn").onclick = chooseCameraAvatar;
   $("cam-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
   onCameraFxChange(renderCameraFx);
   renderCameraFx();
@@ -9981,6 +10234,10 @@ function wireEvents() {
       document.body.classList.toggle("server-muted", muted || deafened);
       renderChannels();
     });
+    window.__TAURI__.event.listen("server-deleted", async event => {
+      toast(`${event.payload.name || "A server"} was deleted by its owner`);
+      await leaveServerView(event.payload.server);
+    });
     window.__TAURI__.event.listen("banned", async event => {
       toast(`You were banned from ${event.payload.name || "a server"}`);
       if (state.voiceServer && state.voiceServer.id === event.payload.server) {
@@ -10111,6 +10368,24 @@ function insertIntoComposer(text) {
   input.focus();
   const next = pos + text.length;
   input.setSelectionRange(next, next);
+  fitComposer(input);
+}
+
+function fitComposer(input) {
+  input.rows = composerRows(input.value);
+}
+
+function wireComposerFormatting(input) {
+  input.addEventListener("input", () => fitComposer(input));
+  input.addEventListener("keydown", e => {
+    const marker = formatShortcut(e);
+    if (!marker) return;
+    e.preventDefault();
+    const wrapped = toggleWrap(input.value, input.selectionStart, input.selectionEnd, marker);
+    input.value = wrapped.value;
+    input.setSelectionRange(wrapped.start, wrapped.end);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 const PERMISSION_LABELS = [
@@ -10125,6 +10400,7 @@ const PERMISSION_LABELS = [
   ["manage_roles", "Manage Roles"],
   ["kick_members", "Kick Members"],
   ["create_invites", "Create Invites"],
+  ["view_audit_log", "View Audit Log"],
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
   ["administrator", "Administrator"],
@@ -10452,9 +10728,16 @@ function openServerSettings(tab) {
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
   if (isOwner) renderReportSettings(server);
+  $("server-delete-section").classList.toggle("hidden", !isOwner);
+  $("tab-audit").classList.toggle("hidden", !server.can_view_audit_log);
+  if (server.can_view_audit_log) renderAuditLog(server);
   $("tab-emoji").classList.toggle("hidden", !canEmoji);
   $("tab-soundboard").classList.toggle("hidden", !canSounds);
+  const canInvites = Boolean(server.can_invite || server.can_manage_server);
+  $("tab-invites").classList.toggle("hidden", !canInvites);
+  if (canInvites) renderInvitesPage(server);
   const allowed = {
+    invites: canInvites,
     overview: true,
     channels: server.can_manage_channels,
     roles: server.can_manage_roles,
@@ -10464,6 +10747,7 @@ function openServerSettings(tab) {
     rules: server.can_manage_server,
     automod: server.can_manage_server,
     members: canMembers,
+    audit: server.can_view_audit_log,
   };
   renderEmojiSettings(server);
   renderSoundboardSettings(server);
@@ -10493,6 +10777,215 @@ function openServerSettings(tab) {
   renderRoleSettings(server);
   renderMemberSettings(server);
   openSettingsLayer("server-settings", current);
+}
+
+const auditView = { serverId: null, entries: [] };
+
+async function renderAuditLog(server) {
+  try {
+    const entries = await invoke("audit_log", { serverId: server.id });
+    if (!state.currentServer || state.currentServer.id !== server.id) return;
+    const fresh = auditView.serverId !== server.id;
+    Object.assign(auditView, { serverId: server.id, entries });
+    fillAuditFilters(fresh);
+    paintAuditLog();
+  } catch (e) {
+    auditView.entries = [];
+    $("audit-list").replaceChildren(el("div", "manage-empty", String(e)));
+  }
+}
+
+function fillAuditFilters(reset) {
+  const group = $("audit-group");
+  const actor = $("audit-actor");
+  const keepGroup = reset ? "all" : group.value || "all";
+  const keepActor = reset ? "" : actor.value;
+  group.replaceChildren(...AUDIT_FILTERS.map(([id, label]) => new Option(label, id)));
+  group.value = keepGroup;
+  const actors = auditActors(auditView.entries);
+  actor.replaceChildren(new Option("Everyone", ""), ...actors.map(a => new Option(a.name, a.id)));
+  actor.value = actors.some(a => a.id === keepActor) ? keepActor : "";
+}
+
+function auditRow(entry) {
+  const row = el("div", "audit-row");
+  row.appendChild(makeAvatar(entry.by, entry.by_name, "avatar avatar-sm"));
+  const text = el("div", "audit-text");
+  for (const part of auditParts(entry)) text.appendChild(part.strong ? el("strong", null, part.text) : document.createTextNode(part.text));
+  text.title = auditText(entry);
+  row.appendChild(text);
+  const when = new Date(entry.at);
+  const time = el("time", "audit-time", formatTime(when.toISOString()));
+  time.dateTime = when.toISOString();
+  time.title = when.toLocaleString();
+  row.appendChild(time);
+  return row;
+}
+
+function paintAuditLog() {
+  const list = $("audit-list");
+  const shown = filterAudit(auditView.entries, { group: $("audit-group").value || "all", by: $("audit-actor").value });
+  if (!shown.length) {
+    const empty = auditView.entries.length ? "Nothing matches these filters." : "No changes yet. Settings, channel, role and member changes show up here.";
+    list.replaceChildren(el("div", "manage-empty", empty));
+    return;
+  }
+  list.replaceChildren(...shown.map(auditRow));
+}
+
+const INVITE_BACKGROUND_MAX = 400 * 1024;
+const invitesView = { serverId: null, invites: [], clock: null, accountHost: null };
+
+async function renderInvitesPage(server) {
+  const manage = Boolean(server.can_manage_server);
+  $("invite-manage").classList.toggle("hidden", !manage);
+  if (manage) {
+    paintInviteBackground(server);
+    const never = $("invite-custom-never");
+    never.disabled = !server.public;
+    never.textContent = server.public ? "Never expires" : "Never expires (public servers only)";
+    if (!server.public && $("invite-custom-expiry").value === "never") $("invite-custom-expiry").value = "30d";
+    if (invitesView.serverId !== server.id) $("invite-custom-name").value = "";
+    paintInviteNameCheck();
+    if (!invitesView.accountHost) {
+      invoke("account_server_info").then(info => {
+        invitesView.accountHost = info.host;
+        $("invite-custom-prefix").textContent = `${info.host}/i/`;
+      }).catch(() => {});
+    } else {
+      $("invite-custom-prefix").textContent = `${invitesView.accountHost}/i/`;
+    }
+  }
+  try {
+    const invites = await invoke("list_invites", { serverId: server.id });
+    if (!state.currentServer || state.currentServer.id !== server.id) return;
+    Object.assign(invitesView, { serverId: server.id, invites: sortInvites(invites) });
+  } catch (e) {
+    invitesView.invites = [];
+    $("invite-list").replaceChildren(el("div", "manage-empty", String(e)));
+    return;
+  }
+  paintInviteList();
+  startInviteClock();
+}
+
+function paintInviteBackground(server) {
+  const preview = $("invite-bg-preview");
+  const ref = server.invite_background || null;
+  preview.style.backgroundImage = "";
+  preview.classList.toggle("empty", !ref);
+  $("invite-bg-remove").classList.toggle("hidden", !ref);
+  if (ref) {
+    loadServerImage(ref).then(url => {
+      if (url && state.currentServer?.invite_background === ref) preview.style.backgroundImage = `url("${url}")`;
+    });
+  }
+}
+
+async function uploadInviteBackground() {
+  try {
+    const src = await chooseImage("Choose an invite background", $("server-image-file"));
+    if (!src) return;
+    let data = null;
+    for (const quality of [0.86, 0.76, 0.66, 0.56, 0.46]) {
+      data = await cropImageFile(src, 1280, 720, quality);
+      if (data.length * 3 / 4 <= INVITE_BACKGROUND_MAX) break;
+      data = null;
+    }
+    if (!data) throw "That image is too detailed to fit. Try a simpler one.";
+    await setServerImage("invite", data);
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
+function paintInviteNameCheck() {
+  const { name, error } = checkInviteName($("invite-custom-name").value);
+  const note = $("invite-custom-note");
+  note.classList.toggle("error", Boolean(error));
+  note.textContent = error || "Pick a name people can remember. You need to be signed in, and the link still ends in a short key so your account server never learns which server it opens.";
+  $("invite-custom-create").disabled = !name || Boolean(error);
+}
+
+async function createCustomInvite() {
+  const server = state.currentServer;
+  const { name, error } = checkInviteName($("invite-custom-name").value);
+  if (!server || !name || error) return;
+  const button = $("invite-custom-create");
+  button.disabled = true;
+  try {
+    const invite = await invoke("create_invite_link", { serverId: server.id, expires: $("invite-custom-expiry").value, name });
+    await navigator.clipboard.writeText(invite.url).catch(() => {});
+    toast("Custom invite link copied");
+    $("invite-custom-name").value = "";
+    await renderInvitesPage(server);
+  } catch (e) {
+    toast(String(e));
+  } finally {
+    paintInviteNameCheck();
+  }
+}
+
+function inviteRow(invite) {
+  const row = el("div", "invite-row");
+  row.appendChild(makeAvatar(invite.creator, invite.creator_name, "avatar avatar-sm"));
+  const text = el("div", "invite-row-text");
+  const label = el("div", "invite-row-link", inviteLabel(invite));
+  label.title = inviteLabel(invite);
+  text.appendChild(label);
+  const made = new Date(invite.created_at);
+  text.appendChild(el("div", "invite-row-meta", `${invite.custom ? "Custom link" : "Invite"} by ${invite.creator_name} on ${made.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`));
+  row.appendChild(text);
+  const left = el("span", "invite-row-left", inviteTimeLeft(invite.expires_at));
+  left.dataset.expires = invite.expires_at == null ? "" : String(invite.expires_at);
+  if (invite.expires_at != null) left.title = `Expires ${new Date(invite.expires_at).toLocaleString()}`;
+  row.appendChild(left);
+  const revoke = el("button", "btn-secondary btn-small danger-text invite-row-revoke", "Revoke");
+  revoke.disabled = !invite.can_revoke;
+  revoke.onclick = () => revokeInvite(invite, revoke);
+  row.appendChild(revoke);
+  return row;
+}
+
+function paintInviteList() {
+  const shown = invitesView.invites.filter(i => i.expires_at == null || i.expires_at > Date.now());
+  if (!shown.length) {
+    $("invite-list").replaceChildren(el("div", "manage-empty", "No active invites. Links made with Invite People show up here until they expire."));
+    return;
+  }
+  $("invite-list").replaceChildren(...shown.map(inviteRow));
+}
+
+function startInviteClock() {
+  if (invitesView.clock) return;
+  invitesView.clock = setInterval(() => {
+    if ($("server-settings").classList.contains("hidden")) {
+      clearInterval(invitesView.clock);
+      invitesView.clock = null;
+      return;
+    }
+    let expired = false;
+    for (const node of $("invite-list").querySelectorAll(".invite-row-left")) {
+      const at = node.dataset.expires ? Number(node.dataset.expires) : null;
+      node.textContent = inviteTimeLeft(at);
+      if (at != null && at <= Date.now()) expired = true;
+    }
+    if (expired) paintInviteList();
+  }, 15e3);
+}
+
+async function revokeInvite(invite, button) {
+  const server = state.currentServer;
+  if (!server) return;
+  button.disabled = true;
+  try {
+    await invoke("revoke_invite", { serverId: server.id, origin: invite.origin, code: invite.code });
+    toast("Invite revoked");
+    await renderInvitesPage(server);
+  } catch (e) {
+    toast(String(e));
+    button.disabled = false;
+  }
 }
 
 function renderUploadAccess(server) {

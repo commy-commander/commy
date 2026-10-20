@@ -1,5 +1,6 @@
 const CAMERA_BACKGROUNDS = ["off", "blur", "image"];
-const CAMERA_FX_DEFAULTS = { background: "off", mirror: true };
+const CAMERA_AVATARS = ["off", "cat", "bot", "alien", "custom"];
+const CAMERA_FX_DEFAULTS = { background: "off", mirror: true, avatar: "off" };
 const MASK_EDGE_LOW = 0.3;
 const MASK_EDGE_HIGH = 0.7;
 const MASK_KEEP = 0.4;
@@ -12,11 +13,17 @@ function parseCameraFx(raw) {
   return {
     background: CAMERA_BACKGROUNDS.includes(value.background) ? value.background : CAMERA_FX_DEFAULTS.background,
     mirror: typeof value.mirror === "boolean" ? value.mirror : CAMERA_FX_DEFAULTS.mirror,
+    avatar: CAMERA_AVATARS.includes(value.avatar) ? value.avatar : CAMERA_FX_DEFAULTS.avatar,
   };
 }
 
 function cameraFxNeedsSegmenter(settings) {
-  return parseCameraFx(settings).background !== "off";
+  const fx = parseCameraFx(settings);
+  return fx.avatar === "off" && fx.background !== "off";
+}
+
+function cameraFxShowsAvatar(settings) {
+  return parseCameraFx(settings).avatar !== "off";
 }
 
 function edgeStep(confidence) {
@@ -70,8 +77,10 @@ function cameraFrameSize(width, height, maxWidth) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CAMERA_BACKGROUNDS,
+    CAMERA_AVATARS,
     parseCameraFx,
     cameraFxNeedsSegmenter,
+    cameraFxShowsAvatar,
     edgeStep,
     writeMaskAlpha,
     maskMemory,

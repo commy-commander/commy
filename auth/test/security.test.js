@@ -32,7 +32,7 @@ beforeEach(() => {
     deviceCode: [],
     linkedDevice: [],
     deviceRequest: [],
-    invite: [],
+    invite: [], inviteBackground: [],
     doorbellRing: [],
     twoFactor: [],
     passkey: [],

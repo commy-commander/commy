@@ -29,7 +29,7 @@ beforeEach(() => {
     deviceCode: [],
     linkedDevice: [],
     deviceRequest: [],
-    invite: [],
+    invite: [], inviteBackground: [],
     doorbellRing: [],
   });
   options.rateLimit = { enabled: false };

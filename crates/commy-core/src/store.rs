@@ -1,4 +1,6 @@
-use crate::action::{self, SignedEvent};
+use crate::action::{self, Action, SignedEvent};
+use crate::audit::{AuditEntry, AuditKind};
+use crate::invites::TrackedInvite;
 use crate::automod::{AutoMod, Hold};
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
@@ -10,7 +12,7 @@ use crate::server::{ChannelKind, Member, Server};
 use crate::user::{Presence, UserProfile};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -103,6 +105,10 @@ pub struct ServerState {
     reaction_marks: HashMap<MessageId, Vec<ReactionMark>>,
     automod: AutoMod,
     bots: BTreeSet<UserId>,
+    audit: Vec<AuditEntry>,
+    deleted: bool,
+    invites: BTreeMap<String, TrackedInvite>,
+    invite_background: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +142,14 @@ pub struct Snapshot {
     pub automod: AutoMod,
     #[serde(default)]
     pub bots: Vec<UserId>,
+    #[serde(default)]
+    pub audit: Vec<AuditEntry>,
+    #[serde(default)]
+    pub deleted: bool,
+    #[serde(default)]
+    pub invites: Vec<TrackedInvite>,
+    #[serde(default)]
+    pub invite_background: Option<String>,
 }
 
 impl ServerState {
@@ -165,6 +179,10 @@ impl ServerState {
             reaction_marks: HashMap::new(),
             automod: AutoMod::default(),
             bots: BTreeSet::new(),
+            audit: Vec::new(),
+            deleted: false,
+            invites: BTreeMap::new(),
+            invite_background: None,
         }
     }
 
@@ -197,6 +215,10 @@ impl ServerState {
                 .collect(),
             automod: self.automod.clone(),
             bots: self.bots.iter().copied().collect(),
+            audit: self.audit.clone(),
+            deleted: self.deleted,
+            invites: self.invites.values().cloned().collect(),
+            invite_background: self.invite_background.clone(),
         }
     }
 
@@ -239,6 +261,10 @@ impl ServerState {
         state.action_floor = snapshot.action_floor;
         state.automod = snapshot.automod;
         state.bots = snapshot.bots.into_iter().filter(|user| state.server.is_member(*user)).collect();
+        state.audit = crate::audit::tidy(snapshot.audit);
+        state.deleted = snapshot.deleted;
+        state.invites = snapshot.invites.into_iter().filter(TrackedInvite::valid).map(|i| (i.id(), i)).collect();
+        state.invite_background = snapshot.invite_background;
         for signed in snapshot.signed_actions {
             if let Some(subject) = action::subject(&signed.event) {
                 if state.action_times.get(&subject) == Some(&signed.action.at) {
@@ -279,7 +305,30 @@ impl ServerState {
         if pruned {
             *unapplied = None;
         }
+        self.prune_invites(now.timestamp_millis());
         removed
+    }
+
+    fn prune_invites(&mut self, now_ms: i64) {
+        let expired: Vec<String> = self.invites.values().filter(|i| !i.live(now_ms)).map(TrackedInvite::id).collect();
+        for id in expired {
+            self.invites.remove(&id);
+            self.signed_actions.remove(&format!("invite:{id}"));
+        }
+    }
+
+    pub fn tracked_invites(&self, now_ms: i64) -> Vec<&TrackedInvite> {
+        let mut live: Vec<&TrackedInvite> = self.invites.values().filter(|i| i.live(now_ms)).collect();
+        live.sort_by_key(|i| std::cmp::Reverse(i.created_at));
+        live
+    }
+
+    pub fn tracked_invite(&self, origin: &str, code: &str) -> Option<&TrackedInvite> {
+        self.invites.get(&crate::invites::invite_id(origin, code))
+    }
+
+    pub fn invite_background(&self) -> Option<&str> {
+        self.invite_background.as_deref()
     }
 
     pub fn roll_off(&mut self, floor: Option<DateTime<Utc>>) -> usize {
@@ -508,7 +557,12 @@ impl ServerState {
     }
 
     fn apply_noted(&mut self, signed: &SignedEvent) -> Result<bool, StoreError> {
+        let Action { by, at, sig } = signed.action;
+        let entry = crate::audit::entry_for(self, by, at, sig, &signed.event);
         let applied = self.apply(signed.event.clone())?;
+        if let Some(entry) = entry.filter(|_| applied) {
+            crate::audit::record(&mut self.audit, entry);
+        }
         if applied || self.target_known(&signed.event) {
             self.note_action(action::subject(&signed.event), signed.action.at);
             self.keep_signed(signed);
@@ -616,6 +670,14 @@ impl ServerState {
         self.signed_actions.contains_key(subject)
     }
 
+    pub fn audit_log(&self) -> &[AuditEntry] {
+        &self.audit
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.deleted
+    }
+
     fn same_server(&self, server: ServerId) -> Result<(), StoreError> {
         if server != self.server.id {
             return Err(StoreError::WrongServer);
@@ -624,6 +686,9 @@ impl ServerState {
     }
 
     pub fn apply(&mut self, event: ServerEvent) -> Result<bool, StoreError> {
+        if self.deleted {
+            return Ok(false);
+        }
         match event {
             ServerEvent::MessageCreate { message } => self.create_message(message),
             ServerEvent::MessageEdit {
@@ -880,6 +945,42 @@ impl ServerState {
             ServerEvent::SoundSharingSet { server, shareable } => {
                 self.same_server(server)?;
                 Ok(replace(&mut self.server.sounds_shareable, shareable))
+            }
+            ServerEvent::ServerDelete { server } => {
+                self.same_server(server)?;
+                self.deleted = true;
+                Ok(true)
+            }
+            ServerEvent::InviteTrack { server, invite } => {
+                self.same_server(server)?;
+                let now = Utc::now().timestamp_millis();
+                if !invite.valid() || !invite.live(now) || self.invites.contains_key(&invite.id()) {
+                    return Ok(false);
+                }
+                if self.invites.len() >= crate::invites::MAX_TRACKED_INVITES {
+                    self.prune_invites(now);
+                }
+                if self.invites.len() >= crate::invites::MAX_TRACKED_INVITES {
+                    return Err(StoreError::Limit);
+                }
+                self.invites.insert(invite.id(), invite);
+                Ok(true)
+            }
+            ServerEvent::InviteRevoke { server, origin, code, creator } => {
+                self.same_server(server)?;
+                let id = crate::invites::invite_id(&origin, &code);
+                if self.invites.get(&id).is_none_or(|i| i.creator != creator) {
+                    return Ok(false);
+                }
+                self.invites.remove(&id);
+                Ok(true)
+            }
+            ServerEvent::InviteBackgroundSet { server, background } => {
+                self.same_server(server)?;
+                if background.as_deref().is_some_and(|b| crate::server::ImageRef::parse(b).is_none()) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.invite_background, background))
             }
             ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } => Ok(false),
             ServerEvent::GameTagsSet { server, tags, meta } => {
@@ -1367,6 +1468,9 @@ impl ServerState {
                 return Err(StoreError::WrongChannel);
             }
 
+            if author != proof.by {
+                self.note_moderator_delete(&proof, author);
+            }
             if let Some(list) = self.messages.get_mut(&channel) {
                 list.remove(pos);
             }
@@ -1380,6 +1484,19 @@ impl ServerState {
             .get(&proof.message)
             .is_some_and(|list| list.iter().any(|s| s.proof.by == proof.by && s.proof.channel == proof.channel));
         self.store_unapplied(proof, kept)
+    }
+
+    fn note_moderator_delete(&mut self, proof: &TombstoneProof, author: UserId) {
+        let entry = AuditEntry {
+            at: proof.at.timestamp_millis(),
+            by: proof.by,
+            kind: AuditKind::MessageDelete,
+            target: Some(author.to_string()),
+            label: crate::audit::member_name(self, author),
+            detail: self.server.channel(proof.channel).map(|c| c.name.clone()),
+            sig: proof.sig,
+        };
+        crate::audit::record(&mut self.audit, entry);
     }
 
     fn store_unapplied(&mut self, proof: TombstoneProof, kept: bool) -> Result<bool, StoreError> {

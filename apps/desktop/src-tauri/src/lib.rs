@@ -5,6 +5,7 @@ mod activity;
 mod afk;
 mod entry_list;
 mod catchup;
+mod deleted;
 mod doorbell;
 mod expressions;
 mod media_engine;
@@ -205,6 +206,9 @@ async fn join_server(
 
 pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, ticket: ServerTicket) -> CmdResult<ServerSummary> {
     current_profile(app)?;
+    if app.deleted.lock().unwrap().contains(ticket.server_id) {
+        return Err("This server was deleted by its owner".into());
+    }
 
     let joining = async {
         let reached_peer = {
@@ -648,6 +652,15 @@ async fn get_attachment_video(
 
 fn data_url(mime: &str, bytes: &[u8]) -> String {
     format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+const MAX_PICKED_AVATAR_BYTES: u64 = 64 * 1024 * 1024;
+
+#[tauri::command]
+async fn pick_avatar_model(handle: tauri::AppHandle) -> CmdResult<tauri::ipc::Response> {
+    let filter = picker::Filter { label: "VRM avatars", extensions: &["vrm"] };
+    let picked = picker::pick_file(&handle, "Choose an avatar", Some(filter), MAX_PICKED_AVATAR_BYTES, "that avatar is larger than 64 MB").await?;
+    Ok(tauri::ipc::Response::new(picked.map(|p| p.bytes).unwrap_or_default()))
 }
 
 const MAX_PICKED_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
@@ -1106,6 +1119,7 @@ fn servers_using_image(app: &App, image: &str) -> Vec<ServerId> {
                 || server.soundboard.iter().any(|s| s.blob == image)
                 || server.icon.as_deref() == Some(image)
                 || server.banner.as_deref() == Some(image)
+                || state.invite_background() == Some(image)
         })
         .map(|state| state.server.id)
         .collect()
@@ -1959,6 +1973,11 @@ fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
 pub(crate) fn require_invite_permission(app: &App, sid: ServerId) -> CmdResult<()> {
     let me = current_profile(app)?;
     manage_check(app, sid, me.id, Permissions::CREATE_INVITES, "invite people")
+}
+
+pub(crate) fn require_manage_server(app: &App, sid: ServerId, action: &str) -> CmdResult<()> {
+    let me = current_profile(app)?;
+    manage_check(app, sid, me.id, Permissions::MANAGE_SERVER, action)
 }
 
 fn require_permission(
@@ -3033,16 +3052,24 @@ async fn set_server_image(
         require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "change the server's images")?;
         (state.server.icon.clone(), state.server.banner.clone())
     };
-    let image = match data {
+    let bytes = data
+        .map(|b64| decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "server images must be a JPEG or PNG under 1 MB"))
+        .transpose()?;
+    if which == "invite" && bytes.as_ref().is_some_and(|b| b.len() > invite_link::MAX_INVITE_BACKGROUND_BYTES) {
+        return Err("invite backgrounds must be under 400 KB".into());
+    }
+    let image = match bytes {
         None => None,
-        Some(b64) => {
-            let bytes = decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "server images must be a JPEG or PNG under 1 MB")?;
-            Some(store_shared_blob(&app, bytes).await?)
-        }
+        Some(bytes) => Some(store_shared_blob(&app, bytes).await?),
     };
     let (icon, banner) = match which.as_str() {
         "icon" => (image, banner),
         "banner" => (icon, image),
+        "invite" => {
+            apply_and_broadcast(&app, &handle, sid, ServerEvent::InviteBackgroundSet { server: sid, background: image }).await?;
+            let _ = handle.emit("servers-changed", ());
+            return Ok(());
+        }
         _ => return Err("unknown server image".into()),
     };
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ServerImages { server: sid, icon, banner }).await?;
@@ -3052,24 +3079,29 @@ async fn set_server_image(
 
 #[tauri::command]
 async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdResult<String> {
-    let image = commy_core::server::ImageRef::parse(&image).ok_or("bad image reference")?;
-    let path = server_image_path(&app, &image.blob);
-    let cached = path.as_ref().and_then(|p| std::fs::read(p).ok());
-    let bytes = match cached {
-        Some(bytes) => bytes,
-        None => {
-            let bytes = fetch_shared_image(&app, &image, MAX_SERVER_IMAGE_BYTES as u64).await?;
-            if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
-                return Err("server image is not a valid picture".into());
-            }
-            if let Some(path) = &path {
-                let _ = write_blob_cache(path, &bytes);
-            }
-            bytes
-        }
-    };
+    let bytes = server_image_bytes(&app, &image).await?;
+    Ok(picture_data_url(&bytes))
+}
+
+pub(crate) fn picture_data_url(bytes: &[u8]) -> String {
     let mime = if bytes.starts_with(&[0x89, b'P']) { "image/png" } else { "image/jpeg" };
-    Ok(data_url(mime, &bytes))
+    data_url(mime, bytes)
+}
+
+pub(crate) async fn server_image_bytes(app: &App, image: &str) -> CmdResult<Vec<u8>> {
+    let image = commy_core::server::ImageRef::parse(image).ok_or("bad image reference")?;
+    let path = server_image_path(app, &image.blob);
+    if let Some(bytes) = path.as_ref().and_then(|p| std::fs::read(p).ok()) {
+        return Ok(bytes);
+    }
+    let bytes = fetch_shared_image(app, &image, MAX_SERVER_IMAGE_BYTES as u64).await?;
+    if bytes.len() > MAX_SERVER_IMAGE_BYTES || !is_jpeg_or_png(&bytes) {
+        return Err("server image is not a valid picture".into());
+    }
+    if let Some(path) = &path {
+        let _ = write_blob_cache(path, &bytes);
+    }
+    Ok(bytes)
 }
 
 fn manage_check(app: &App, sid: ServerId, user: UserId, needed: Permissions, action: &str) -> CmdResult<()> {
@@ -3617,8 +3649,7 @@ async fn unban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberUnban { server: sid, user }).await
 }
 
-async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
-    let name = forget_server_locally(app, sid).map(|s| s.server.name);
+fn end_voice_in(app: &App, sid: ServerId) {
     let in_voice_there = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
     if in_voice_there {
         let testing = pause_mic_test(app);
@@ -3627,9 +3658,93 @@ async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
         app.own_preview.lock().unwrap().take();
         *app.screen_share.lock().unwrap() = None;
     }
+}
+
+async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
+    let name = forget_server_locally(app, sid).map(|s| s.server.name);
+    end_voice_in(app, sid);
     leave_server_topic(app, sid).await;
     let _ = handle.emit("banned", serde_json::json!({ "server": sid.to_string(), "name": name }));
     let _ = handle.emit("servers-changed", ());
+}
+
+fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: SignedEvent, owned: bool) -> String {
+    let ticket = (!owned).then(|| app.invites.lock().unwrap().get(&sid).cloned()).flatten();
+    let name = forget_server_locally(app, sid).map(|s| s.server.name).unwrap_or_default();
+    end_voice_in(app, sid);
+    let kept = deleted::DeletedServer { name: name.clone(), notice, ticket };
+    app.deleted.lock().unwrap().insert(sid, kept);
+    app.persist_deleted();
+    entry_list::record_leave(app, sid);
+    entry_list::schedule(handle);
+    let _ = handle.emit("servers-changed", ());
+    name
+}
+
+fn on_server_deleted(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: SignedEvent) {
+    let name = retire_deleted_server(app, handle, sid, notice, false);
+    let _ = handle.emit("server-deleted", serde_json::json!({ "server": sid.to_string(), "name": name }));
+}
+
+#[tauri::command]
+async fn delete_server(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    confirm_name: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let notice = {
+        let mut servers = app.servers.lock().unwrap();
+        let state = servers.get_mut(&sid).ok_or("unknown server")?;
+        if state.server.owner != me.id {
+            return Err("only the owner can delete this server".into());
+        }
+        if confirm_name.trim() != state.server.name.trim() {
+            return Err("type the server name exactly as it is shown to delete it".into());
+        }
+        let notice = app
+            .sign_event(sid, ServerEvent::ServerDelete { server: sid })
+            .ok_or("your account key is still being confirmed; try again in a moment")?;
+        state.apply_own(&notice).map_err(err_to_string)?;
+        notice
+    };
+    broadcast(&app, sid, WirePayload::Signed(notice.clone())).await;
+    retire_deleted_server(&app, &handle, sid, notice, true);
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct AuditEntryView {
+    at: i64,
+    by: String,
+    by_name: String,
+    kind: commy_core::AuditKind,
+    target: Option<String>,
+    label: Option<String>,
+    detail: Option<String>,
+}
+
+#[tauri::command]
+fn audit_log(app: tauri::State<App>, server_id: String) -> CmdResult<Vec<AuditEntryView>> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    if !our_permissions(&app, state, me.id).can_view_audit_log() {
+        return Err("you do not have permission to view the audit log".into());
+    }
+    let entries = state.audit_log().iter().rev().map(|entry| AuditEntryView {
+        at: entry.at,
+        by: entry.by.to_string(),
+        by_name: commy_core::audit::member_name(state, entry.by).unwrap_or_else(|| "Someone".into()),
+        kind: entry.kind,
+        target: entry.target.clone(),
+        label: entry.label.clone(),
+        detail: entry.detail.clone(),
+    });
+    Ok(entries.collect())
 }
 
 fn effective_volume(voice: &VoiceSettings, user: &str) -> f32 {
@@ -4355,7 +4470,7 @@ async fn set_profile_banner(
     Ok(profile)
 }
 
-fn is_jpeg_or_png(bytes: &[u8]) -> bool {
+pub(crate) fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0xd8, 0xff]) || bytes.starts_with(&[0x89, b'P', b'N', b'G'])
 }
 
@@ -5015,6 +5130,9 @@ async fn run_net_loop(
                     ServerEvent::VoiceState { user, channel, .. } => Some((*user, *channel)),
                     _ => None,
                 };
+                let deletion = deleted::is_notice(&event)
+                    .then(|| action.map(|action| SignedEvent { action, event: event.clone() }))
+                    .flatten();
                 let holdable = catchup::holdable(&event);
                 let kept = (holdable || action.is_some()).then(|| event.clone());
                 let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
@@ -5050,6 +5168,10 @@ async fn run_net_loop(
                     Ok(true) => {
                         if banned_me {
                             on_banned(&app, &handle, server).await;
+                            continue;
+                        }
+                        if let Some(notice) = deletion {
+                            on_server_deleted(&app, &handle, server, notice);
                             continue;
                         }
                         app.persist_server(server);
@@ -5091,6 +5213,11 @@ async fn run_net_loop(
             }
             NetEvent::VoiceDial { .. } => {}
             NetEvent::NeighborUp { server, peer } => {
+                let notice = app.deleted.lock().unwrap().notice(server);
+                if let Some(notice) = notice {
+                    broadcast(&app, server, WirePayload::Signed(notice)).await;
+                    continue;
+                }
                 let me = app.profile.lock().unwrap().clone();
                 let Some(me) = me else { continue };
                 let my_id = me.id;
@@ -5468,6 +5595,7 @@ pub fn run() {
                         servers.insert(state.server.id, state);
                     }
                 }
+                *app.deleted.lock().unwrap() = deleted::DeletedServers::load(&dir, chrono::Utc::now().timestamp_millis());
                 let mut awaiting = persist::load_awaiting(&dir);
                 {
                     let servers = app.servers.lock().unwrap();
@@ -5557,6 +5685,17 @@ pub fn run() {
                             }
                         }
                         app.persist_invites();
+                        let retired = app.deleted.lock().unwrap().to_rejoin();
+                        for (id, gone) in retired {
+                            let rejoined = match gone.ticket.as_deref().map(ServerTicket::decode) {
+                                Some(Ok(ticket)) => node.rejoin_server(&ticket).await,
+                                Some(Err(e)) => Err(e.into()),
+                                None => node.host_server(id, &gone.name, app.own_key_for_tickets()).await.map(|_| ()),
+                            };
+                            if let Err(e) = rejoined {
+                                tracing::debug!("could not stay on a deleted server to pass on its deletion: {e}");
+                            }
+                        }
 
                         let afk_channels: Vec<(ServerId, ServerEvent)> = {
                             let mut servers = app.servers.lock().unwrap();
@@ -5716,6 +5855,8 @@ pub fn run() {
             get_invite,
             invite_link::resolve_invite_link,
             invite_link::create_invite_link,
+            invite_link::list_invites,
+            invite_link::revoke_invite,
             invite_link::account_server_info,
             invite_link::take_pending_invite_link,
             entry_list::entry_list_status,
@@ -5767,6 +5908,7 @@ pub fn run() {
             fetch_server_image,
             set_reaction,
             pick_image,
+            pick_avatar_model,
             share_source_preview,
             own_share_frame,
             set_volumes,
@@ -5782,6 +5924,8 @@ pub fn run() {
             delete_channel,
             kick_member,
             leave_server,
+            delete_server,
+            audit_log,
             update_profile,
             start_mic_test,
             stop_mic_test,

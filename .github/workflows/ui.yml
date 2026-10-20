@@ -6,6 +6,7 @@ on:
     paths: &ui-paths
       - "apps/desktop/ui/**"
       - "apps/desktop/src-tauri/src/expressions.rs"
+      - "crates/commy-bot/clients/**"
       - ".github/workflows/ui.yml"
   pull_request:
     paths: *ui-paths
@@ -31,3 +32,5 @@ jobs:
         run: for f in apps/desktop/ui/scripts/*.js; do node --check "$f"; done
       - name: node --test
         run: node --test "apps/desktop/ui/tests/**/*.test.mjs"
+      - name: Bot client tests
+        run: node --test "crates/commy-bot/clients/node/*.test.mjs"

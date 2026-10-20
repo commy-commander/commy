@@ -36,7 +36,7 @@ before(async () => {
   process.on("uncaughtException", recordUnhandled);
   const options = buildAuthOptions(loadConfig(ENV), { pool: null, send: async () => {} });
   options.database = memoryAdapter({
-    user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], doorbellRing: [],
+    user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [],
   });
   options.rateLimit = { enabled: false };
   server = await listen(toNodeHandler(betterAuth(options)));
