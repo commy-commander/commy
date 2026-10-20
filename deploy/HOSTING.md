@@ -340,6 +340,10 @@ never reach this stack. The auth database holds:
 - invite links: the code, the sealed invite (unreadable without the link),
   creator account if the app was signed in, expiry, a hash of its revoke
   secret, and the sealed invite background if the server set one
+- server directory listings: the invite code, server name, description,
+  category, a rounded member count, and the account that listed it. A listing
+  also carries its invite link's key so anyone browsing can join, which means
+  the operator can open that one invite too
 - each account's sealed server list (`vaultItem`): bytes sealed with a key
   only that account's devices hold, plus a version and the last change time.
   The operator can see its size, not which servers are in it

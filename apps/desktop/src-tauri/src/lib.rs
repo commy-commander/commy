@@ -7,6 +7,7 @@ mod entry_list;
 mod catchup;
 mod channel_lock;
 mod deleted;
+mod directory;
 mod doorbell;
 mod expressions;
 mod media_engine;
@@ -4556,6 +4557,38 @@ async fn pin_message(
 }
 
 #[tauri::command]
+async fn set_thread(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    root_id: String,
+    name: Option<String>,
+    archived: bool,
+    locked: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let root: MessageId = root_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let name = name.as_deref().and_then(commy_core::server::clean_thread_name);
+    if name.as_deref().is_some_and(|n| !commy_core::server::valid_thread_name(n)) {
+        return Err(format!("thread names can be at most {} characters", commy_core::server::MAX_THREAD_NAME_CHARS));
+    }
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_can_view(state, me.id, cid)?;
+        let author = message_author(state, cid, root)?;
+        if author != me.id && !our_permissions(&app, state, me.id).allows(Permissions::MANAGE_MESSAGES) {
+            return Err("only the person who started a thread or a moderator can change it".into());
+        }
+    }
+    let event = ServerEvent::ThreadSet { server: sid, channel: cid, root, name, archived, locked, by: me.id };
+    apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+#[tauri::command]
 fn get_pins(app: tauri::State<App>, server_id: String, channel_id: Option<String>) -> CmdResult<Vec<view::PinView>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
@@ -7170,6 +7203,7 @@ pub fn run() {
                 if let Some(storage) = persist::load_storage(&dir) {
                     *app.storage.lock().unwrap() = storage;
                 }
+                *app.listings.lock().unwrap() = directory::load(&dir);
                 match persist::load_safety(&dir) {
                     Some(safety) => *app.safety.lock().unwrap() = safety,
                     None => {
@@ -7427,6 +7461,7 @@ pub fn run() {
             create_category,
             set_channel_limit,
             set_channel_slow_mode,
+            set_thread,
             update_role,
             set_own_role,
             get_safety,
@@ -7483,6 +7518,10 @@ pub fn run() {
             invite_link::revoke_invite,
             invite_link::account_server_info,
             invite_link::take_pending_invite_link,
+            directory::publish_listing,
+            directory::unlist_server,
+            directory::server_listing,
+            directory::browse_directory,
             entry_list::entry_list_status,
             entry_list::entry_list_sync,
             entry_list::entry_list_recovery_code,

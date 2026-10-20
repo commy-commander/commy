@@ -165,6 +165,7 @@ pub struct App {
     pub profile: Mutex<Option<UserProfile>>,
     pub servers: Mutex<HashMap<ServerId, ServerState>>,
     pub invites: Mutex<HashMap<ServerId, String>>,
+    pub listings: Mutex<HashMap<ServerId, crate::directory::Listing>>,
     pub voice: Mutex<VoiceSettings>,
     pub processor: std::sync::Arc<Mutex<VoiceProcessor>>,
     pub net: tokio::sync::Mutex<Option<CommyNode>>,
@@ -218,6 +219,7 @@ impl Default for App {
             profile: Mutex::new(None),
             servers: Mutex::new(HashMap::new()),
             invites: Mutex::new(HashMap::new()),
+            listings: Mutex::new(HashMap::new()),
             voice: Mutex::new(VoiceSettings::default()),
             processor: std::sync::Arc::new(Mutex::new(VoiceProcessor::new())),
             net: tokio::sync::Mutex::new(None),
@@ -387,6 +389,11 @@ impl App {
     pub fn persist_invites(&self) {
         let Some(dir) = self.data_dir() else { return };
         let _ = crate::persist::save_invites(dir, &self.invites.lock().unwrap());
+    }
+
+    pub fn persist_listings(&self) {
+        let Some(dir) = self.data_dir() else { return };
+        warn_unsaved("directory listings", crate::persist::save_listings(dir, &self.listings.lock().unwrap()));
     }
 
     pub fn announced(&self, profile: UserProfile) -> UserProfile {

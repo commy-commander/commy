@@ -2,6 +2,7 @@ use crate::ids::{ChannelId, MessageId, RoleId, ServerId, UserId};
 use crate::permissions::Permissions;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,10 +37,41 @@ pub struct Channel {
     pub slow_mode: u32,
     #[serde(default)]
     pub sensitive: bool,
+    #[serde(default)]
+    pub threads: BTreeMap<MessageId, Thread>,
 }
 
 pub const MAX_ACCESS_ROLES: usize = 16;
 pub const MAX_SLOW_MODE: u32 = 21_600;
+pub const MAX_THREAD_NAME_CHARS: usize = 100;
+pub const MAX_THREADS_PER_CHANNEL: usize = 500;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Thread {
+    pub name: Option<String>,
+    pub archived: bool,
+    pub locked: bool,
+    pub by: UserId,
+}
+
+impl Thread {
+    pub fn is_plain(&self) -> bool {
+        self.name.is_none() && !self.archived && !self.locked
+    }
+
+    pub fn same_settings(&self, other: &Thread) -> bool {
+        self.name == other.name && self.archived == other.archived && self.locked == other.locked
+    }
+}
+
+pub fn clean_thread_name(name: &str) -> Option<String> {
+    let name = name.chars().filter(|c| !c.is_control()).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
+    (!name.is_empty()).then_some(name)
+}
+
+pub fn valid_thread_name(name: &str) -> bool {
+    clean_thread_name(name).as_deref() == Some(name) && name.chars().count() <= MAX_THREAD_NAME_CHARS
+}
 
 impl Channel {
     pub fn new(name: impl Into<String>, kind: ChannelKind, position: u32) -> Self {
@@ -58,6 +90,7 @@ impl Channel {
             send_roles: Vec::new(),
             slow_mode: 0,
             sensitive: false,
+            threads: BTreeMap::new(),
         }
     }
 

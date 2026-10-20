@@ -49,6 +49,12 @@ test("sentences name the actor, the target and the change", () => {
   assert.equal(auditText(entry("channel_limit", { label: "Duo", detail: "0" })), "Mia removed the people limit in Duo");
   assert.equal(auditText(entry("channel_slow_mode", { label: "general", detail: "30" })), "Mia set slow mode to 30 seconds in general");
   assert.equal(auditText(entry("channel_slow_mode", { label: "general", detail: "0" })), "Mia turned off slow mode in general");
+  assert.equal(auditText(entry("thread_rename", { label: "general", detail: "Raid night" })), "Mia named a thread in general Raid night");
+  assert.equal(auditText(entry("thread_rename", { label: "general" })), "Mia cleared a thread's name in general");
+  assert.equal(auditText(entry("thread_archive", { label: "general", detail: "on" })), "Mia archived a thread in general");
+  assert.equal(auditText(entry("thread_archive", { label: "general", detail: "off" })), "Mia reopened a thread in general");
+  assert.equal(auditText(entry("thread_lock", { label: "general", detail: "on" })), "Mia locked a thread in general");
+  assert.equal(auditText(entry("thread_lock", { label: "general", detail: "off" })), "Mia unlocked a thread in general");
   assert.equal(auditText(entry("sticker_add", { label: "party" })), "Mia added the sticker party");
   assert.equal(auditText(entry("emoticon_remove", { label: "shrug" })), "Mia removed the emoticon :shrug");
   assert.equal(auditText(entry("expression_sharing", { detail: "stickers and emoticons" })), "Mia let members use this server's stickers and emoticons in other servers and DMs");

@@ -76,7 +76,7 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::BotSet { user, .. }
         | E::PollVote { user, .. }
         | E::PronounsSet { user, .. } => Some(*user),
-        E::MessagePin { by, .. } | E::MemberTimeout { by, .. } | E::PollClose { by, .. } => Some(*by),
+        E::MessagePin { by, .. } | E::MemberTimeout { by, .. } | E::PollClose { by, .. } | E::ThreadSet { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -105,6 +105,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ChannelLayout { channel, .. } => format!("channel.layout:{channel}"),
         E::ChannelLimit { channel, .. } => format!("channel.limit:{channel}"),
         E::ChannelSlowMode { channel, .. } => format!("channel.slow_mode:{channel}"),
+        E::ThreadSet { channel, root, .. } => format!("thread:{channel}:{root}"),
         E::ChannelBanner { channel, .. } => format!("channel.banner:{channel}"),
         E::ChannelColor { channel, .. } => format!("channel.color:{channel}"),
         E::ChannelKindSet { channel, .. } => format!("channel.kind:{channel}"),
@@ -205,9 +206,15 @@ fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
         | E::SharedSoundPlay { channel, .. }
         | E::PollVote { channel, .. }
         | E::PollClose { channel, .. }
-        | E::MessagePin { channel, .. } => Some(*channel),
+        | E::MessagePin { channel, .. }
+        | E::ThreadSet { channel, .. } => Some(*channel),
         _ => None,
     }
+}
+
+fn replies_into_locked_thread(server: &Server, message: &crate::message::Message) -> bool {
+    let Some(parent) = message.reply_to else { return false };
+    server.channel(message.channel).and_then(|c| c.threads.get(&parent)).is_some_and(|t| t.locked)
 }
 
 pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
@@ -218,7 +225,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
     let sees = |event: &ServerEvent| channel_of(event).is_none_or(|channel| server.can_view(channel, by));
     let speaks = !server.is_timed_out(by, chrono::Utc::now());
     match event {
-        E::MessageCreate { .. } | E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
+        E::MessageCreate { message } => allows(Permissions::MANAGE_MESSAGES) || !replies_into_locked_thread(server, message),
+        E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
         E::MemberJoin { .. } => actor(event) == Some(by),
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
         E::ProfileUpdate { .. } => actor(event) == Some(by),
@@ -234,6 +242,9 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin() && sees(event),
         E::PollVote { .. } => member && speaks && actor(event) == Some(by) && sees(event),
         E::PollClose { .. } => member && actor(event) == Some(by) && sees(event),
+        E::ThreadSet { root, .. } => {
+            member && actor(event) == Some(by) && sees(event) && (root.is_bound_to(by) || allows(Permissions::MANAGE_MESSAGES))
+        }
         E::ChannelKeyAdd { channel, .. } | E::ChannelKeyGrant { channel, .. } => {
             member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)
         }

@@ -58,6 +58,9 @@ const AUDIT_GROUP_OF = {
   message_unpin: "messages",
   poll_close: "messages",
   message_delete: "messages",
+  thread_rename: "messages",
+  thread_archive: "messages",
+  thread_lock: "messages",
   invite_create: "invites",
   invite_revoke: "invites",
   invite_background: "invites",
@@ -153,6 +156,9 @@ function describeAudit(entry) {
     case "message_unpin": return ["unpinned a message in ", channel];
     case "poll_close": return ["closed a poll in ", channel];
     case "message_delete": return detail ? ["deleted a message by ", member, " in ", auditStrong(detail)] : ["deleted a message by ", member];
+    case "thread_rename": return detail ? ["named a thread in ", channel, " ", auditStrong(detail)] : ["cleared a thread's name in ", channel];
+    case "thread_archive": return [detail === "on" ? "archived a thread in " : "reopened a thread in ", channel];
+    case "thread_lock": return [detail === "on" ? "locked a thread in " : "unlocked a thread in ", channel];
     case "invite_create": return ["created the invite ", named("a link")];
     case "invite_revoke": return detail ? ["revoked the invite ", named("a link"), " made by ", auditStrong(detail)] : ["revoked the invite ", named("a link")];
     case "invite_background": return [detail === "removed" ? "removed the invite background" : "changed the invite background"];

@@ -2,6 +2,8 @@
 
 const IS_TAURI = Boolean(window.__TAURI__);
 const invoke = IS_TAURI ? window.__TAURI__.core.invoke : mockInvoke;
+const discoverState = { open: false, q: "", category: null, cursor: null, entries: [], busy: false, request: 0 };
+const discoveryState = { listing: null, dirty: false };
 
 window.addEventListener("error", e => {
   try { toast(`UI error: ${e.message}`); } catch (_) {}
@@ -257,6 +259,20 @@ function mockSeed() {
   server.members[0].tag_color = "9b7bff";
   server.members[0].color = "9b7bff";
   mock.servers[server.id] = server;
+  mock.directory = [
+    { code: "KQ7M3N4P", key: "q".repeat(43), name: "Rust Hangout", category: "tech", members: 250, description: "Borrow checker support group, weekly code reviews and a friendly place to ask the questions you were afraid to ask. Beginners welcome, lifetimes optional." },
+    { code: "pixel-club", key: "Zx9-_".repeat(4) + "aA", name: "Pixel Club", category: "art", members: 100, description: "Pixel art, palettes and tiny animations. Share your work in progress and get kind, concrete feedback." },
+    { code: "SYNTH2V4W", key: "s".repeat(43), name: "Synth Lounge", category: "music", members: 500, description: "Modular jams every Friday night, patch notes, gear talk and the occasional live set over voice." },
+    { code: "RAIDN8GHT", key: "r".repeat(43), name: "Raid Night", category: "gaming", members: 1000, description: "Co-op raids, weekend tournaments and a soundboard that is honestly out of control." },
+    { code: "STARGAZ3R", key: "t".repeat(43), name: "Stargazers", category: "science", members: 50, description: "Backyard astronomy, telescope builds and clear-sky alerts for the northern hemisphere." },
+    { code: "LERNLAT1N", key: "l".repeat(43), name: "Lingua Franca", category: "languages", members: 25, description: "Practice Spanish, Portuguese and Italian with patient speakers. Voice tables every evening." },
+    { code: "STUDYHALL", key: "u".repeat(43), name: "Study Hall", category: "education", members: 100, description: "Quiet focus rooms, exam countdowns and shared notes for university students." },
+    { code: "SUNDAYRUN", key: "n".repeat(43), name: "Sunday Runners", category: "sports", members: 25, description: "Long runs, race day plans and far too many photos of shoes." },
+    { code: "COZYCRN3R", key: "c".repeat(43), name: "Cozy Corner", category: "friends", members: 10, description: "" },
+    { code: "BOARDGAM3", key: "b".repeat(43), name: "Board Game Night", category: "gaming", members: 50, description: "Tabletop over video, from quick card games to six-hour campaigns. New players always get a seat." },
+    { code: "FILMCLUB2", key: "f".repeat(43), name: "Midnight Film Club", category: "other", members: 25, description: "One film a week, watched together with the soundtrack on voice, then argued about for days." },
+    { code: "MAKERSPCE", key: "m".repeat(43), name: "Makerspace", category: "tech", members: 10, description: "3D printing, soldering irons and home automation that mostly works." },
+  ];
   mock.dms.m2 = {
     name: "nova",
     kind: "request",
@@ -321,6 +337,25 @@ function mockSeed() {
   mock.readMarks = { [server.channels[1].id]: { id: "g0", at: Date.now() - 1200e3, set: Date.now() - 1100e3 } };
   (mock.voiceClips ||= {})["voice@mock"] = 14;
   mock.listPins = { dms: ["m1"], channels: [{ server: server.id, channel: server.channels[1].id }] };
+  const g = server.channels[1].id;
+  const ref = (author_id, author_name, excerpt) => ({ author_id, author_name, excerpt });
+  mock.messages[g].push(
+    { id: "g7", channel: g, author_id: "m1", author_name: "ferris", content: "party time :ferris_wave:", created_at: new Date(Date.now() - 1100e3).toISOString(), edited: false, attachments: [],
+      reply_to: "g0", reply_preview: ref("m2", "nova", "Sticker") },
+    { id: "g3", channel: g, author_id: "m2", author_name: "nova", content: "that flick at the end :ferris:", created_at: new Date(Date.now() - 800e3).toISOString(), edited: false, attachments: [],
+      reply_to: "g1", reply_preview: ref("m1", "ferris", "clutch round from last night") },
+    { id: "g4", channel: g, author_id: "m1", author_name: "ferris", content: "pure luck, honestly", created_at: new Date(Date.now() - 700e3).toISOString(), edited: false, attachments: [],
+      reply_to: "g3", reply_preview: ref("m2", "nova", "that flick at the end :ferris:") },
+    { id: "g5", channel: g, author_id: "m3", author_name: "sleepy", content: "the water shader looks off on the east side", created_at: new Date(Date.now() - 500e3).toISOString(), edited: false, attachments: [],
+      reply_to: "g2", reply_preview: ref("m2", "nova", "full res screenshot of the new map") },
+    { id: "g6", channel: g, author_id: "m2", author_name: "nova", content: "known issue, the fix lands with the next patch", created_at: new Date(Date.now() - 400e3).toISOString(), edited: false, attachments: [],
+      reply_to: "g5", reply_preview: ref("m3", "sleepy", "the water shader looks off on the east side") },
+  );
+  server.channels[1].threads = [
+    { root: "g2", name: "Map feedback", archived: false, locked: false, by: "m2" },
+    { root: "g1", name: "Clip of the week", archived: false, locked: true, by: "m2" },
+    { root: "g0", name: null, archived: true, locked: false, by: "m2" },
+  ];
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
     { channel: c0, message: "x1", by: "m1", at: new Date(Date.now() - 3000e3).toISOString() },
@@ -488,7 +523,7 @@ async function mockInvoke(cmd, args = {}) {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
             const sees = admits(c.view_roles);
             const sendable = admits(c.send_roles);
-            return { parent: null, position: i, user_limit: 0, slow_mode: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], ...c, can_view: sees, can_send: sees && sendable, key_ready: sees };
+            return { parent: null, position: i, user_limit: 0, slow_mode: 0, threads: [], pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], ...c, can_view: sees, can_send: sees && sendable, key_ready: sees };
           })
           .filter(c => c.can_view || !mock.plainMember),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
@@ -554,6 +589,38 @@ async function mockInvoke(cmd, args = {}) {
       if (s) s.public = args.public;
       return null;
     }
+    case "browse_directory": {
+      const words = normalizeDirectorySearch(args.q).split(" ").filter(Boolean);
+      const rows = (mock.directory || [])
+        .filter(l => !args.category || l.category === args.category)
+        .filter(l => words.every(w => `${l.name} ${l.description}`.toLowerCase().includes(w)))
+        .sort((a, b) => b.members - a.members || a.name.localeCompare(b.name));
+      const start = Number(args.cursor) || 0;
+      const page = rows.slice(start, start + 24);
+      return { host: "commy.chat", next_cursor: start + 24 < rows.length ? String(start + 24) : null,
+        entries: page.map(l => ({ code: l.code, name: l.name, description: l.description, category: l.category, members: l.members, link: `https://commy.chat/i/${l.code}#${l.key}` })) };
+    }
+    case "publish_listing": {
+      const s = mock.servers[args.serverId];
+      if (!s) throw "unknown server";
+      if (!s.public) throw "Make the server public before listing it in Discover";
+      const existing = (mock.listings || {})[args.serverId];
+      const code = existing ? existing.code : "KQ7M3N4P";
+      const listing = { origin: "https://commy.chat", code, link: `https://commy.chat/i/${code}#${"q".repeat(43)}`, category: args.category,
+        description: args.description, members: memberBucket(s.members.length), listed_at: Date.now() };
+      mock.listings = { ...(mock.listings || {}), [args.serverId]: listing };
+      mock.directory = (mock.directory || []).filter(l => l.code !== code)
+        .concat({ code, key: "q".repeat(43), name: s.name, category: listing.category, members: listing.members, description: listing.description });
+      return listing;
+    }
+    case "unlist_server": {
+      const listing = (mock.listings || {})[args.serverId];
+      if (!listing) throw "This server was not listed from this device";
+      delete mock.listings[args.serverId];
+      mock.directory = (mock.directory || []).filter(l => l.code !== listing.code);
+      return null;
+    }
+    case "server_listing": return (mock.listings || {})[args.serverId] || null;
     case "resolve_invite_link": {
       const host = /commy:\/\/i\/([^/]+)\//.exec(args.link)?.[1] || new URL(args.link).host;
       const background = Object.values(mock.servers).map(s => s.invite_background).find(Boolean);
@@ -615,6 +682,16 @@ async function mockInvoke(cmd, args = {}) {
       c.kind = args.kind;
       return null;
     }
+    case "set_thread": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      const root = (mock.messages[args.channelId] || []).find(m => m.id === args.rootId);
+      if (!root) throw "that message no longer exists";
+      if (mock.plainMember && root.author_id !== "me") throw "only the person who started a thread or a moderator can change it";
+      const name = (args.name || "").replace(/\s+/g, " ").trim() || null;
+      c.threads = (c.threads || []).filter(t => t.root !== args.rootId);
+      if (name || args.archived || args.locked) c.threads.push({ root: args.rootId, name, archived: Boolean(args.archived), locked: Boolean(args.locked), by: "me" });
+      return null;
+    }
     case "send_message": {
       const chan = Object.values(mock.servers).flatMap(s => s.channels).find(c => c.id === args.channelId);
       if (chan && chan.kind === "announcement" && mock.plainMember) throw "only members allowed to post announcements can write in this channel";
@@ -623,6 +700,15 @@ async function mockInvoke(cmd, args = {}) {
         const last = mine.length ? Date.parse(mine[mine.length - 1].created_at) : 0;
         const left = Math.ceil((last + chan.slow_mode * 1000 - Date.now()) / 1000);
         if (left > 0) throw `slow mode is on here: you can send again in ${left}s`;
+      }
+      if (chan && args.replyTo) {
+        const all = mock.messages[args.channelId] || [];
+        const byId = new Map(all.map(m => [m.id, m]));
+        const parent = byId.get(args.replyTo);
+        const root = parent ? threadRootOf(parent, byId) : args.replyTo;
+        const thread = (chan.threads || []).find(t => t.root === root);
+        if (thread && thread.locked && mock.plainMember) throw "that thread is locked";
+        if (thread) thread.archived = false;
       }
       const msg = {
         id: crypto.randomUUID(), channel: args.channelId, author_id: "me",
@@ -1334,6 +1420,8 @@ const ICONS = {
   trash: "M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z",
   eyeOff: "M12 7a5 5 0 0 1 5 5 4.9 4.9 0 0 1-.36 1.83l2.92 2.92A11.8 11.8 0 0 0 22.99 12 11.83 11.83 0 0 0 11.99 4.5a11.6 11.6 0 0 0-4 .7l2.17 2.16A4.9 4.9 0 0 1 12 7zM2 4.27l2.28 2.28.46.46A11.8 11.8 0 0 0 1 12a11.82 11.82 0 0 0 15.4 6.66l.43.42L19.73 22 21 20.73 3.27 3zM7.53 9.8l1.55 1.55A2.8 2.8 0 0 0 9 12a3 3 0 0 0 3 3 2.8 2.8 0 0 0 .65-.08l1.55 1.55A5 5 0 0 1 7 12a4.9 4.9 0 0 1 .53-2.2zm4.31-.78 3.15 3.15.02-.16a3 3 0 0 0-3-3z",
   thread: "M4 4h16v12H5.17L4 17.17zm0-2a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm2 4h12v2H6zm0 4h9v2H6z",
+  lock: "M7 8h1V6a4 4 0 0 1 8 0v2h1a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2zm3 0h4V6a2 2 0 0 0-4 0zm-3 2v9h10v-9zm5 2.5a1.5 1.5 0 0 1 1.5 1.5 1.5 1.5 0 0 1-1.5 1.5 1.5 1.5 0 0 1-1.5-1.5 1.5 1.5 0 0 1 1.5-1.5z",
+  archive: "M3 4h18v4H3zm2 2v2h14V6zM4 8h16v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zm2 2v10h12V10zm3 2v2h6v-2z",
   reply: "M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z",
   smilePlus: "M20 4V2h-2v2h-2v2h2v2h2V6h2V4zM12 20a8 8 0 0 1 0-16 7.9 7.9 0 0 1 2 .26V2.2A10 10 0 1 0 21.8 10h-2.06A7.9 7.9 0 0 1 20 12a8 8 0 0 1-8 8zm-3.5-9A1.5 1.5 0 1 0 7 9.5 1.5 1.5 0 0 0 8.5 11zm7 0A1.5 1.5 0 1 0 14 9.5 1.5 1.5 0 0 0 15.5 11zm-8 3a5 5 0 0 0 9 0z",
   play: "M8 5v14l11-7z",
@@ -3325,6 +3413,7 @@ function closeFloating(except) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
+  if (except !== "threads-pop") closeThreadsPanel();
   if (except !== "search-pop") closeSearchPop();
 }
 
@@ -3972,6 +4061,7 @@ function renderMessages(messages) {
   box.innerHTML = "";
   if (state.view === "dm" && state.currentDm) box.appendChild(buildDmIntro());
   else if (state.currentChannel) box.appendChild(buildChannelIntro(state.currentChannel));
+  syncThreadsButton(messages);
   if (!messages.length) return;
   state.renderedMessages = messages;
   const replyCounts = state.view === "dm" ? new Map() : threadReplyCounts(messages);
@@ -4917,27 +5007,6 @@ async function jumpToMessage(id) {
   row.classList.add("flash");
 }
 
-function threadRootOf(message, byId) {
-  let current = message;
-  const seen = new Set();
-  while (current.reply_to && byId.has(current.reply_to) && !seen.has(current.id)) {
-    seen.add(current.id);
-    current = byId.get(current.reply_to);
-  }
-  return current.id;
-}
-
-function threadReplyCounts(messages) {
-  const byId = new Map(messages.map(m => [m.id, m]));
-  const counts = new Map();
-  for (const m of messages) {
-    if (!m.reply_to) continue;
-    const root = threadRootOf(m, byId);
-    if (root !== m.id) counts.set(root, (counts.get(root) || 0) + 1);
-  }
-  return counts;
-}
-
 function startReply(message) {
   state.replyingTo = message;
   $("reply-bar-name").textContent = message.author_name;
@@ -4950,18 +5019,207 @@ function cancelReply() {
   $("reply-bar").classList.add("hidden");
 }
 
+let threadRenaming = null;
+let threadsArchivedOpen = false;
+
+function currentThreads() {
+  return (state.view === "server" && state.currentChannel && state.currentChannel.threads) || [];
+}
+
+function threadMetaOf(rootId) {
+  return currentThreads().find(t => t.root === rootId) || null;
+}
+
+function canManageMessagesHere() {
+  return Boolean(state.currentServer && state.currentServer.can_manage_messages);
+}
+
+function canManageCurrentThread(root) {
+  return canManageThread(root, { userId: state.user && state.user.id, canManageMessages: canManageMessagesHere() });
+}
+
 function openThread(rootId) {
   state.threadRoot = rootId;
   $("app").classList.add("thread-open");
   $("thread-panel").classList.remove("hidden");
   renderThread();
-  $("thread-input").focus();
+  if (!$("thread-input").disabled) $("thread-input").focus();
 }
 
 function closeThread() {
   state.threadRoot = null;
+  cancelThreadRename();
   $("app").classList.remove("thread-open");
   $("thread-panel").classList.add("hidden");
+}
+
+function renderThreadHead(root, replies) {
+  const meta = root ? threadMetaOf(root.id) : null;
+  const manages = canManageCurrentThread(root);
+  const renaming = Boolean(root) && threadRenaming === root.id && manages;
+  if (!renaming) threadRenaming = null;
+  const title = $("thread-title");
+  title.textContent = root ? threadName(root, meta, plainText) : "Thread";
+  title.disabled = !manages;
+  title.title = manages ? "Rename Thread" : "";
+  title.classList.toggle("hidden", renaming);
+  $("thread-title-input").classList.toggle("hidden", !renaming);
+  $("thread-status").textContent = root ? threadStatusLine({ meta, replies }) : "";
+  for (const id of ["thread-rename", "thread-archive", "thread-lock"]) $(id).classList.toggle("hidden", !manages);
+  const flag = (id, on, onTitle, offTitle) => {
+    const btn = $(id);
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", String(on));
+    btn.title = on ? onTitle : offTitle;
+  };
+  flag("thread-archive", Boolean(meta && meta.archived), "Unarchive Thread", "Archive Thread");
+  flag("thread-lock", Boolean(meta && meta.locked), "Unlock Thread", "Lock Thread");
+  const composer = threadComposerState({ meta, canManageMessages: canManageMessagesHere() });
+  const input = $("thread-input");
+  input.disabled = composer.disabled;
+  input.placeholder = composer.placeholder;
+  input.closest(".composer").classList.toggle("locked", composer.disabled);
+}
+
+function startThreadRename() {
+  const root = (state.renderedMessages || []).find(m => m.id === state.threadRoot);
+  if (!root || !canManageCurrentThread(root)) return;
+  threadRenaming = root.id;
+  const meta = threadMetaOf(root.id);
+  const input = $("thread-title-input");
+  input.value = meta && meta.name ? meta.name : "";
+  input.placeholder = threadName(root, null, plainText);
+  $("thread-title").classList.add("hidden");
+  input.classList.remove("hidden");
+  input.focus();
+  input.select();
+}
+
+function cancelThreadRename() {
+  threadRenaming = null;
+  $("thread-title-input").classList.add("hidden");
+  $("thread-title").classList.remove("hidden");
+}
+
+async function commitThreadRename() {
+  const rootId = threadRenaming;
+  if (!rootId) return;
+  const { name, error } = cleanThreadName($("thread-title-input").value);
+  cancelThreadRename();
+  if (error) return toast(error);
+  const meta = threadMetaOf(rootId);
+  if ((meta ? meta.name : null) === name) return;
+  await setThread(rootId, { name, archived: Boolean(meta && meta.archived), locked: Boolean(meta && meta.locked) });
+}
+
+async function setThread(rootId, { name, archived, locked }) {
+  if (!state.currentServer || !state.currentChannel) return;
+  try {
+    await invoke("set_thread", { serverId: state.currentServer.id, channelId: state.currentChannel.id, rootId, name, archived, locked });
+    await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function toggleThreadFlag(flag) {
+  const rootId = state.threadRoot;
+  if (!rootId) return;
+  const meta = threadMetaOf(rootId) || { name: null, archived: false, locked: false };
+  await setThread(rootId, {
+    name: meta.name,
+    archived: flag === "archived" ? !meta.archived : meta.archived,
+    locked: flag === "locked" ? !meta.locked : meta.locked,
+  });
+}
+
+function syncThreadsButton(messages = state.renderedMessages || []) {
+  const btn = $("threads-btn");
+  const channel = state.view === "server" ? state.currentChannel : null;
+  const { active } = buildThreadList(channel ? messages : [], currentThreads(), { plain: plainText });
+  const { visible, title } = threadsButtonState({ view: state.view, channel, count: active.length });
+  btn.classList.toggle("hidden", !visible);
+  btn.title = title;
+  if (!visible) return closeThreadsPanel();
+  if (!$("threads-pop").classList.contains("hidden")) renderThreadsPanel();
+}
+
+function closeThreadsPanel() {
+  $("threads-pop").classList.add("hidden");
+  $("threads-btn").classList.remove("active");
+}
+
+function toggleThreadsPanel() {
+  const pop = $("threads-pop");
+  if (!pop.classList.contains("hidden")) return closeThreadsPanel();
+  closeFloating();
+  pop.classList.remove("hidden");
+  $("threads-btn").classList.add("active");
+  renderThreadsPanel();
+}
+
+function renderThreadsPanel() {
+  const list = $("threads-list");
+  list.innerHTML = "";
+  if (!state.currentChannel) return;
+  const { active, archived } = buildThreadList(state.renderedMessages || [], currentThreads(), { plain: plainText });
+  const where = `#${channelPlainName(state.currentChannel)}`;
+  $("threads-pop-sub").textContent = active.length ? `${active.length} active in ${where}` : `None active in ${where}`;
+  if (!active.length && !archived.length) {
+    list.appendChild(threadsEmptyState());
+    return;
+  }
+  for (const thread of active) list.appendChild(threadRow(thread));
+  if (!archived.length) return;
+  const toggle = el("button", "threads-archived-toggle");
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", String(threadsArchivedOpen));
+  toggle.appendChild(svgIcon(threadsArchivedOpen ? "chevronDown" : "chevronRight", 16));
+  toggle.appendChild(el("span", null, `Archived (${archived.length})`));
+  toggle.onclick = () => {
+    threadsArchivedOpen = !threadsArchivedOpen;
+    renderThreadsPanel();
+  };
+  list.appendChild(toggle);
+  if (threadsArchivedOpen) for (const thread of archived) list.appendChild(threadRow(thread));
+}
+
+function threadsEmptyState() {
+  const empty = el("div", "pins-empty");
+  const mark = el("div", "pins-empty-mark");
+  mark.appendChild(svgIcon("thread", 26));
+  empty.appendChild(mark);
+  empty.appendChild(el("strong", null, "No threads yet"));
+  empty.appendChild(el("span", null, "Hover a message and choose Open Thread to start one."));
+  return empty;
+}
+
+function threadRow(thread) {
+  const row = el("div", "thread-row" + (thread.archived ? " archived" : ""));
+  row.dataset.id = thread.id;
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
+  const tile = el("span", "thread-row-icon");
+  tile.appendChild(svgIcon(thread.locked ? "lock" : "thread", 16));
+  row.appendChild(tile);
+  const body = el("div", "thread-row-body");
+  body.appendChild(el("div", "thread-row-name", thread.name));
+  const meta = [`${thread.replies} ${thread.replies === 1 ? "reply" : "replies"}`];
+  if (thread.locked) meta.push("Locked");
+  meta.push(formatShortTime(new Date(thread.lastAt).toISOString()));
+  body.appendChild(el("div", "thread-row-meta", meta.join(" · ")));
+  row.appendChild(body);
+  const open = () => {
+    closeThreadsPanel();
+    openThread(thread.id);
+  };
+  row.onclick = open;
+  row.onkeydown = e => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    open();
+  };
+  return row;
 }
 
 function renderThread() {
@@ -4970,13 +5228,12 @@ function renderThread() {
   const root = byId.get(state.threadRoot);
   const box = $("thread-messages");
   box.innerHTML = "";
+  const items = root ? messages.filter(m => m.id === root.id || (m.reply_to && threadRootOf(m, byId) === root.id)) : [];
+  renderThreadHead(root, Math.max(0, items.length - 1));
   if (!root) {
     box.appendChild(el("div", "manage-empty", "This thread's first message is no longer loaded."));
     return;
   }
-  const excerpt = plainText(root.content || "Attachment").slice(0, 60);
-  $("thread-title").textContent = excerpt;
-  const items = messages.filter(m => m.id === root.id || (m.reply_to && threadRootOf(m, byId) === root.id));
   items.forEach((m, i) => {
     const row = buildMessageRow(m, false, { inThread: true });
     if (i === 0) row.classList.add("thread-root");
@@ -5003,7 +5260,7 @@ async function sendThreadReply() {
       replyTo: state.threadRoot,
       previewUrl: await previewUrlFor(content),
     });
-    await selectChannel(state.currentChannel);
+    await refreshCurrentServer();
   } catch (e) {
     input.value = content;
     fitComposer(input);
@@ -10432,6 +10689,7 @@ function applyMembersLayout() {
 }
 
 function setViewMode(mode) {
+  closeDiscover();
   state.view = mode;
   const dm = mode === "dm";
   const group = mode === "server" && Boolean(state.currentServer && state.currentServer.group);
@@ -10677,7 +10935,7 @@ function renderDmHome() {
 function buildWelcomeHome() {
   const home = el("div", "empty-state welcome-home");
   const mark = el("img", "welcome-mark");
-  mark.src = "images/commy_v2.png";
+  mark.src = "images/commy_v3_noback.png";
   mark.alt = "";
   mark.draggable = false;
   home.appendChild(mark);
@@ -12338,6 +12596,7 @@ function wireEvents() {
   });
 
   $("add-server-btn").onclick = () => showModal("modal-add-server");
+  wireDiscover();
   $("create-server-open").onclick = () => openCreateServer();
   $("create-server-back").onclick = () => showModal("modal-add-server");
   $("template-code-input").addEventListener("input", readTemplateCode);
@@ -12566,6 +12825,7 @@ function wireEvents() {
     try {
       await invoke("set_server_public", { serverId: server.id, public: e.target.checked });
       server.public = e.target.checked;
+      paintDiscoverySettings(server);
     } catch (err) {
       toast(String(err));
       e.target.checked = Boolean(server.public);
@@ -12999,9 +13259,9 @@ function wireEvents() {
   };
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
-    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #attach-btn, #search-box")) return;
+    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #threads-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
   });
@@ -13015,6 +13275,28 @@ function wireEvents() {
   setIcon($("thread-close"), "close", 20);
   $("thread-head-icon").appendChild(svgIcon("thread", 20));
   $("thread-close").onclick = closeThread;
+  setIcon($("threads-btn"), "thread", 20);
+  $("threads-btn").onclick = toggleThreadsPanel;
+  setIcon($("thread-rename"), "pencil", 18);
+  setIcon($("thread-archive"), "archive", 18);
+  setIcon($("thread-lock"), "lock", 18);
+  $("thread-rename").onclick = startThreadRename;
+  $("thread-title").onclick = startThreadRename;
+  $("thread-archive").onclick = () => toggleThreadFlag("archived");
+  $("thread-lock").onclick = () => toggleThreadFlag("locked");
+  $("thread-title-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitThreadRename();
+    }
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      cancelThreadRename();
+    }
+  });
+  $("thread-title-input").addEventListener("blur", () => {
+    if (threadRenaming) commitThreadRename();
+  });
   $("thread-input").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -14254,8 +14536,8 @@ async function renderIconPickers() {
         const img = el("img");
         img.alt = "";
         img.draggable = false;
-        img.src = choice.custom ? iconState.custom[target] : "images/commy_v2.png";
-        if (choice.filter) img.style.filter = choice.filter;
+        img.src = choice.custom ? iconState.custom[target] : choice.image;
+        if (choice.tile) art.style.background = choice.tile;
         art.appendChild(img);
       }
       tile.append(art, el("span", "icon-label", choice.label));
@@ -14535,6 +14817,8 @@ function openServerSettings(tab) {
   $("server-public-toggle").checked = Boolean(server.public);
   $("server-public-toggle").disabled = !server.can_manage_server;
   $("server-public-row").classList.toggle("readonly", !server.can_manage_server);
+  discoveryState.dirty = false;
+  paintDiscoverySettings(server);
   $("server-template-section").classList.toggle("hidden", !server.can_manage_server);
   const afkSelect = $("afk-channel-select");
   fillVoiceChannelSelect(afkSelect, "No AFK channel", server, server.afk_channel || "");
@@ -15258,3 +15542,206 @@ function renderAccountSettings() {
 }
 
 boot().catch(e => toast(String(e)));
+
+function closeDiscover() {
+  if (!discoverState.open) return;
+  discoverState.open = false;
+  $("discover").classList.add("hidden");
+  const button = $("discover-btn");
+  button.classList.remove("active");
+  button.setAttribute("aria-pressed", "false");
+}
+
+async function openDiscover() {
+  if (discoverState.open) return;
+  discoverState.open = true;
+  $("discover").classList.remove("hidden");
+  const button = $("discover-btn");
+  button.classList.add("active");
+  button.setAttribute("aria-pressed", "true");
+  renderDiscoverChips();
+  if (!discoverState.entries.length) await loadDiscover(true);
+  $("discover-search").focus();
+}
+
+function renderDiscoverChips() {
+  const box = $("discover-chips");
+  box.innerHTML = "";
+  const chips = [{ id: null, label: "All" }, ...DIRECTORY_CATEGORIES];
+  for (const chip of chips) {
+    const button = el("button", "discover-chip", chip.label);
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(discoverState.category === chip.id));
+    button.onclick = () => {
+      if (discoverState.category === chip.id) return;
+      discoverState.category = chip.id;
+      renderDiscoverChips();
+      loadDiscover(true);
+    };
+    box.appendChild(button);
+  }
+}
+
+async function loadDiscover(reset) {
+  if (discoverState.busy) return;
+  discoverState.busy = true;
+  const more = $("discover-more");
+  more.disabled = true;
+  const request = ++discoverState.request;
+  try {
+    const page = await invoke("browse_directory", {
+      q: normalizeDirectorySearch(discoverState.q) || null,
+      category: discoverState.category,
+      cursor: reset ? null : discoverState.cursor,
+    });
+    if (request !== discoverState.request) return;
+    discoverState.entries = reset ? page.entries : discoverState.entries.concat(page.entries);
+    discoverState.cursor = page.next_cursor || null;
+    if (page.host) $("discover-sub").textContent = `Public servers listed by the people who run them, through ${page.host}.`;
+    renderDiscoverCards();
+  } catch (e) {
+    if (reset) discoverState.entries = [];
+    discoverState.cursor = null;
+    renderDiscoverCards(String(e));
+  } finally {
+    discoverState.busy = false;
+    more.disabled = false;
+  }
+}
+
+function renderDiscoverCards(error) {
+  const grid = $("discover-grid");
+  grid.innerHTML = "";
+  for (const entry of discoverState.entries) grid.appendChild(discoverCard(entry));
+  const empty = $("discover-empty");
+  const none = !discoverState.entries.length;
+  empty.classList.toggle("hidden", !none);
+  if (none) {
+    $("discover-empty-art").replaceChildren(svgIcon("search", 48));
+    $("discover-empty-title").textContent = error ? "Could not load Discover" : "No servers found";
+    $("discover-empty-text").textContent = error || "Try another word or category, or list your own public server from Server Settings.";
+  }
+  $("discover-more").classList.toggle("hidden", !discoverState.cursor);
+}
+
+function discoverCard(entry) {
+  const card = el("div", "discover-card");
+  card.appendChild(el("div", "discover-card-name", entry.name));
+  const meta = el("div", "discover-card-meta");
+  meta.appendChild(el("span", null, directoryCategoryLabel(entry.category)));
+  meta.appendChild(el("span", "discover-dot"));
+  meta.appendChild(el("span", null, memberBucketLabel(entry.members)));
+  card.appendChild(meta);
+  card.appendChild(el("div", "discover-card-text", directoryExcerpt(entry.description, 300)));
+  const foot = el("div", "discover-card-foot");
+  const join = el("button", "btn-primary btn-small", "Join");
+  join.onclick = () => openInviteLink(entry.link);
+  foot.appendChild(join);
+  card.appendChild(foot);
+  return card;
+}
+
+function fillDiscoveryCategories() {
+  const select = $("discovery-category");
+  if (select.options.length) return;
+  for (const category of DIRECTORY_CATEGORIES) {
+    const option = document.createElement("option");
+    option.value = category.id;
+    option.textContent = category.label;
+    select.appendChild(option);
+  }
+}
+
+function paintDiscoveryCounter() {
+  const counter = directoryDescriptionCounter($("discovery-description").value);
+  $("discovery-count").textContent = counter.text;
+  $("discovery-count").classList.toggle("over", counter.over);
+}
+
+async function paintDiscoverySettings(server) {
+  fillDiscoveryCategories();
+  let listing = null;
+  try {
+    listing = await invoke("server_listing", { serverId: server.id });
+  } catch {
+    listing = null;
+  }
+  if (!state.currentServer || state.currentServer.id !== server.id) return;
+  discoveryState.listing = listing;
+  const view = discoverySettingsState({ server, listing });
+  $("discovery-card").classList.toggle("readonly", !view.enabled);
+  $("discovery-hint").textContent = view.hint;
+  const description = $("discovery-description");
+  const category = $("discovery-category");
+  description.disabled = !view.enabled;
+  category.disabled = !view.enabled;
+  if (listing) {
+    description.value = listing.description || "";
+    category.value = listing.category;
+  } else if (!discoveryState.dirty) {
+    description.value = "";
+    category.value = "other";
+  }
+  paintDiscoveryCounter();
+  $("discovery-list").classList.toggle("hidden", view.listed);
+  $("discovery-list").disabled = !view.enabled;
+  $("discovery-update").classList.toggle("hidden", !view.listed);
+  $("discovery-update").disabled = !view.enabled;
+  $("discovery-unlist").classList.toggle("hidden", !view.listed);
+  $("discovery-unlist").disabled = !view.enabled;
+}
+
+async function saveDiscoveryListing() {
+  const server = state.currentServer;
+  if (!server) return;
+  const counter = directoryDescriptionCounter($("discovery-description").value);
+  if (counter.over) return toast(`Keep the description under ${DIRECTORY_DESCRIPTION_MAX} characters`);
+  const buttons = [$("discovery-list"), $("discovery-update")];
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    await invoke("publish_listing", { serverId: server.id, description: $("discovery-description").value, category: $("discovery-category").value });
+    discoveryState.dirty = false;
+    discoverState.entries = [];
+    toast(discoveryState.listing ? "Listing updated" : "Listed in Discover");
+    await paintDiscoverySettings(server);
+  } catch (e) {
+    toast(String(e));
+    buttons.forEach(b => { b.disabled = false; });
+  }
+}
+
+async function removeDiscoveryListing() {
+  const server = state.currentServer;
+  if (!server) return;
+  $("discovery-unlist").disabled = true;
+  try {
+    await invoke("unlist_server", { serverId: server.id });
+    discoveryState.dirty = false;
+    discoverState.entries = [];
+    toast("Removed from Discover");
+    await paintDiscoverySettings(server);
+  } catch (e) {
+    toast(String(e));
+    $("discovery-unlist").disabled = false;
+  }
+}
+
+function wireDiscover() {
+  $("discover-btn").onclick = openDiscover;
+  $("discover-search-icon").replaceChildren(svgIcon("search", 16));
+  let timer = null;
+  $("discover-search").addEventListener("input", e => {
+    discoverState.q = e.target.value;
+    clearTimeout(timer);
+    timer = setTimeout(() => loadDiscover(true), 250);
+  });
+  $("discover-more").onclick = () => loadDiscover(false);
+  $("discovery-description").addEventListener("input", () => {
+    discoveryState.dirty = true;
+    paintDiscoveryCounter();
+  });
+  $("discovery-category").addEventListener("change", () => { discoveryState.dirty = true; });
+  $("discovery-list").onclick = saveDiscoveryListing;
+  $("discovery-update").onclick = saveDiscoveryListing;
+  $("discovery-unlist").onclick = removeDiscoveryListing;
+}
