@@ -106,6 +106,9 @@ fn known_permissions() -> Permissions {
         Permissions::MANAGE_EVENTS,
         Permissions::PIN_MESSAGES,
         Permissions::POST_ANNOUNCEMENTS,
+        Permissions::ADD_EMOJIS,
+        Permissions::ADD_STICKERS,
+        Permissions::ADD_EMOTICONS,
     ]
     .into_iter()
     .fold(Permissions::NONE, |acc, p| acc | p)

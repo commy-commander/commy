@@ -3,6 +3,38 @@ import * as z from "zod";
 import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
 
 const KLIPY_API = "https://api.klipy.com/api/v1";
+const EMOJIGG_API = "https://emoji.gg/api/";
+const EMOJIGG_TTL_MS = 6 * 60 * 60 * 1000;
+const EMOJIGG_RETRY_MS = 5 * 60 * 1000;
+const EMOJIGG_TIMEOUT_MS = 30_000;
+const EMOJIGG_PAGE = 60;
+const EMOJIGG_MAX_PAGE = 20;
+const EMOJIGG_CATEGORIES = [
+  [22, "Reactions"],
+  [15, "Cute"],
+  [3, "Meme"],
+  [10, "Gaming"],
+  [8, "Animated"],
+  [17, "Animals"],
+  [4, "Anime"],
+  [6, "Blobs"],
+  [13, "Pepe"],
+  [7, "Thinking"],
+  [20, "Hearts"],
+  [21, "Pixel Art"],
+  [23, "Aesthetic"],
+  [2, "TV / Movie"],
+  [1, "Original Style"],
+  [18, "Recolors"],
+  [11, "Letters"],
+  [16, "Utility"],
+  [19, "Flags"],
+  [14, "Logos"],
+  [5, "Celebrity"],
+  [12, "Other"],
+];
+const EMOJIGG_HIDDEN_CATEGORY = 9;
+const EMOJIGG_HIDDEN_WORDS = /(nsfw|porn|hentai|nude|naked|boob|titty|titties|penis|dick|cock|pussy|vagina|sex|cum|horny|lewd|nipple|thong|swastika|nazi|hitler|kkk|nigg|fag|retard)/i;
 const TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token";
 const IGDB_GAMES_URL = "https://api.igdb.com/v4/games";
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -21,6 +53,7 @@ const MEDIA_HOSTS = [
   { host: "static.klipy.com", path: /^\/[A-Za-z0-9._~\-\/]{1,400}$/, query: 200 },
   { host: "images.igdb.com", path: /^\/igdb\/image\/upload\/t_[a-z0-9_]{1,40}\/[A-Za-z0-9]{1,32}\.(jpg|png|webp)$/, query: 0 },
   { host: /^(?:media[0-9]?|i)\.giphy\.com$/, path: /^\/(?:media\/[A-Za-z0-9._=\-]{1,500}\/)?[A-Za-z0-9_\-]{1,80}\.(?:gif|webp)$/, query: 300 },
+  { host: "cdn3.emoji.gg", path: /^\/emojis\/[A-Za-z0-9_\-]{1,160}\.(?:png|gif)$/, query: 0 },
 ];
 
 export function mediaHost(hostname) {
@@ -79,6 +112,54 @@ export function klipyResults(body) {
       };
     })
     .filter((g) => g.preview && g.url);
+}
+
+export function emojiggCatalog(body) {
+  if (!Array.isArray(body)) return [];
+  return body
+    .map((item) => {
+      const url = mediaUrl(item?.image);
+      const title = String(item?.title ?? "").trim().slice(0, 64);
+      return {
+        id: Number(item?.id),
+        title,
+        url: url?.hostname === "cdn3.emoji.gg" ? url.href : null,
+        animated: Boolean(url?.pathname.endsWith(".gif")),
+        category: Number(item?.category),
+        faves: Number(item?.faves) || 0,
+      };
+    })
+    .filter((e) => Number.isInteger(e.id) && e.title && e.url)
+    .filter((e) => e.category !== EMOJIGG_HIDDEN_CATEGORY && !EMOJIGG_HIDDEN_WORDS.test(e.title))
+    .sort((a, b) => b.faves - a.faves || b.id - a.id);
+}
+
+function searchWords(text) {
+  return String(text)
+    .toLowerCase()
+    .replace(/^[0-9]+[_-]/, "")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+export function emojiggSearch(catalog, { q = "", category = null, page = 0 } = {}) {
+  const words = searchWords(q);
+  const start = Math.max(0, Math.min(EMOJIGG_MAX_PAGE, Math.trunc(Number(page) || 0))) * EMOJIGG_PAGE;
+  const matches = catalog.filter((e) => {
+    if (category && e.category !== category) return false;
+    if (!words.length) return true;
+    const title = e.title.toLowerCase();
+    return words.every((w) => title.includes(w));
+  });
+  return {
+    results: matches.slice(start, start + EMOJIGG_PAGE).map(({ id, title, url, animated }) => ({ id, title, url, animated })),
+    more: matches.length > start + EMOJIGG_PAGE,
+  };
+}
+
+export function emojiggCategory(value) {
+  const id = Number(value);
+  return EMOJIGG_CATEGORIES.some(([known]) => known === id) ? id : null;
 }
 
 const IMAGE_ID = /^[A-Za-z0-9]{1,32}$/;
@@ -171,6 +252,30 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
   const imageCache = createImageCache();
   let igdbToken = null;
   let igdbQueue = Promise.resolve();
+  let emojigg = { items: [], fresh: 0, loading: null };
+
+  async function loadEmojigg() {
+    const res = await doFetch(EMOJIGG_API, { redirect: "error", signal: AbortSignal.timeout(EMOJIGG_TIMEOUT_MS) });
+    if (!res.ok) throw new Error(`emoji.gg answered ${res.status}`);
+    const items = emojiggCatalog(await res.json());
+    if (!items.length) throw new Error("emoji.gg sent no emojis");
+    return items;
+  }
+
+  async function emojiggItems() {
+    if (emojigg.fresh > Date.now()) return emojigg.items;
+    emojigg.loading ??= loadEmojigg()
+      .then((items) => {
+        emojigg = { items, fresh: Date.now() + EMOJIGG_TTL_MS, loading: null };
+      })
+      .catch((err) => {
+        console.warn(`[auth] emoji.gg catalog failed: ${err.message}`);
+        emojigg = { ...emojigg, fresh: emojigg.items.length ? Date.now() + EMOJIGG_RETRY_MS : 0, loading: null };
+      });
+    await emojigg.loading;
+    if (!emojigg.items.length) throw new Error("no catalog yet");
+    return emojigg.items;
+  }
 
   async function twitchToken() {
     if (igdbToken && igdbToken.expires > Date.now()) return igdbToken.value;
@@ -232,7 +337,7 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
         async (ctx) => {
           await requireSession(ctx);
           const url = mediaUrl(ctx.query.u);
-          if (!url) throw new APIError("BAD_REQUEST", { message: "Only GIFs and game covers load through this server" });
+          if (!url) throw new APIError("BAD_REQUEST", { message: "Only GIFs, emojis and game covers load through this server" });
           const cached = imageCache.get(url.href);
           if (cached) return imageResponse(cached.type, cached.body);
           let image;
@@ -277,6 +382,33 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
           const results = klipyResults(body);
           gifCache.set(key, results);
           return ctx.json({ results, provider: "klipy" });
+        },
+      ),
+
+      searchCommyEmojis: createAuthEndpoint(
+        "/commy/emojis/search",
+        {
+          method: "GET",
+          query: z.object({ q: z.string().optional(), category: z.string().optional(), page: z.string().optional() }),
+        },
+        async (ctx) => {
+          await requireSession(ctx);
+          let items;
+          try {
+            items = await emojiggItems();
+          } catch {
+            throw new APIError("BAD_GATEWAY", { message: "emoji.gg is not answering right now" });
+          }
+          const found = emojiggSearch(items, {
+            q: cleanQuery(ctx.query?.q),
+            category: emojiggCategory(ctx.query?.category),
+            page: ctx.query?.page,
+          });
+          return ctx.json({
+            ...found,
+            categories: EMOJIGG_CATEGORIES.map(([id, name]) => ({ id, name })),
+            provider: "emoji.gg",
+          });
         },
       ),
 

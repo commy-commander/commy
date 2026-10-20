@@ -198,6 +198,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/commy/invites/resolve": { window: 60, max: 60 },
         "/commy/gifs/search": { window: 60, max: 60 },
         "/commy/games/search": { window: 60, max: 60 },
+        "/commy/emojis/search": { window: 60, max: 60 },
         "/commy/doorbell/ring": { window: 60, max: 300 },
         "/commy/doorbell/take": { window: 60, max: 600 },
       },

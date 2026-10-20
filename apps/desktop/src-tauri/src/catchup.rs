@@ -999,6 +999,12 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
         for emoji in old.server.emojis.iter().cloned() {
             let _ = state.apply(ServerEvent::EmojiAdd { server, emoji });
         }
+        for sticker in old.server.stickers.iter().cloned() {
+            let _ = state.apply(ServerEvent::StickerAdd { server, sticker });
+        }
+        for emoticon in old.server.emoticons.iter().cloned() {
+            let _ = state.apply(ServerEvent::EmoticonAdd { server, emoticon });
+        }
         for sound in old.server.soundboard.iter().cloned() {
             let _ = state.apply(ServerEvent::SoundAdd { server, sound });
         }
