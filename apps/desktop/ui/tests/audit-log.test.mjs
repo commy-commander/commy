@@ -39,6 +39,7 @@ test("sentences name the actor, the target and the change", () => {
   assert.equal(auditText(entry("member_ban", { label: "Theo" })), "Mia banned Theo");
   assert.equal(auditText(entry("channel_rename", { label: "general", detail: "lobby" })), "Mia renamed the channel general to lobby");
   assert.equal(auditText(entry("server_rename", { label: "Old", detail: "New" })), "Mia renamed the server from Old to New");
+  assert.equal(auditText(entry("owner_transfer", { label: "Theo" })), "Mia handed the server to Theo");
   assert.equal(auditText(entry("role_assign", { label: "Sam", detail: "mods" })), "Mia gave Sam the mods role");
   assert.equal(auditText(entry("role_unassign", { label: "Sam", detail: "mods" })), "Mia took the mods role from Sam");
   assert.equal(auditText(entry("channel_create", { label: "hangout", detail: "voice" })), "Mia created the voice channel hangout");

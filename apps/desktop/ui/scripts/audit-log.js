@@ -12,6 +12,7 @@ const AUDIT_FILTERS = [
 
 const AUDIT_GROUP_OF = {
   server_rename: "server",
+  owner_transfer: "server",
   server_images: "server",
   server_public: "server",
   game_tags: "server",
@@ -92,6 +93,7 @@ function describeAudit(entry) {
   const named = fallback => auditStrong(label || fallback);
   const count = Number(detail);
   switch (entry.kind) {
+    case "owner_transfer": return ["handed the server to ", member];
     case "server_rename": return label ? ["renamed the server from ", auditStrong(label), " to ", auditStrong(detail || "")] : ["renamed the server to ", auditStrong(detail || "")];
     case "server_images": return [`changed the server ${detail || "images"}`];
     case "server_public": return [detail === "on" ? "made the server public" : "made the server private"];

@@ -976,6 +976,14 @@ impl ServerState {
                 self.deleted = true;
                 Ok(true)
             }
+            ServerEvent::OwnerTransfer { server, user } => {
+                self.same_server(server)?;
+                if user == self.server.owner || !self.server.is_member(user) {
+                    return Ok(false);
+                }
+                self.server.owner = user;
+                Ok(true)
+            }
             ServerEvent::InviteTrack { server, invite } => {
                 self.same_server(server)?;
                 let now = Utc::now().timestamp_millis();

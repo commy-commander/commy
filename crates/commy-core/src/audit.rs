@@ -11,6 +11,7 @@ const MAX_DETAIL_CHARS: usize = 120;
 #[serde(rename_all = "snake_case")]
 pub enum AuditKind {
     ServerRename,
+    OwnerTransfer,
     ServerImages,
     ServerPublic,
     GameTags,
@@ -148,6 +149,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
     let channel = |id: &crate::ids::ChannelId| (Some(id.to_string()), channel_name(state, *id));
     Some(match event {
         E::ServerRename { name, .. } => (K::ServerRename, None, Some(clip(&server.name)), Some(clip(name))),
+        E::OwnerTransfer { user, .. } => {
+            let (target, label) = member(user);
+            (K::OwnerTransfer, target, label, None)
+        }
         E::ServerImages { icon, banner, .. } => {
             let changed = [("icon", *icon != server.icon), ("banner", *banner != server.banner)];
             let names: Vec<&str> = changed.iter().filter(|(_, c)| *c).map(|(n, _)| *n).collect();

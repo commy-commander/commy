@@ -460,6 +460,21 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-transfer-owner">
+      <h2>Transfer Ownership</h2>
+      <p>The new owner gets every permission, including deleting the server. You stay as a member with the roles you have now. This cannot be undone by you.</p>
+      <label class="field-label">New owner
+        <select id="transfer-owner-pick" class="compact-select"></select>
+      </label>
+      <label class="field-label">Type the server name to confirm
+        <input id="transfer-owner-input" type="text" maxlength="100" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="transfer-owner-cancel">Cancel</button>
+        <button class="btn-danger" id="transfer-owner-go" disabled>Transfer Ownership</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-delete-server">
       <h2 id="delete-server-title">Delete Server</h2>
       <p>Every member is told the server was deleted and it leaves their list. Members who are offline find out the next time they connect. Your copy of its messages, channels and roles is removed from this device. This cannot be undone.</p>
@@ -1613,6 +1628,13 @@
           </div>
           <div id="server-delete-section" class="hidden">
             <h2 class="settings-subhead danger-head">Danger Zone</h2>
+            <div class="danger-zone">
+              <div>
+                <div class="setting-title">Hand this server to someone else</div>
+                <div class="setting-sub">They become the owner with every permission, and you stay as a member with your roles. Only the new owner can hand it back.</div>
+              </div>
+              <button class="btn-secondary btn-small" id="server-transfer-open">Transfer Ownership</button>
+            </div>
             <div class="danger-zone">
               <div>
                 <div class="setting-title">Delete this server</div>
