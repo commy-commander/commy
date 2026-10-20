@@ -134,6 +134,7 @@ pub struct ServerView {
     pub can_invite: bool,
     pub can_pin: bool,
     pub can_post_announcements: bool,
+    pub can_view_audit_log: bool,
     pub game_tags: Vec<String>,
     pub game_tag_meta: Vec<commy_core::server::GameTagMeta>,
     pub rules: Option<String>,
@@ -336,6 +337,7 @@ impl ServerView {
             can_invite: perms.allows(Permissions::CREATE_INVITES),
             can_pin: perms.can_pin(),
             can_post_announcements: perms.can_announce(),
+            can_view_audit_log: perms.can_view_audit_log(),
             game_tags: state.server.game_tags.clone(),
             game_tag_meta: state.server.game_tag_meta.clone(),
             rules: state.server.rules.clone(),
@@ -398,6 +400,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("manage_events", Permissions::MANAGE_EVENTS),
     ("create_invites", Permissions::CREATE_INVITES),
+    ("view_audit_log", Permissions::VIEW_AUDIT_LOG),
     ("administrator", Permissions::ADMINISTRATOR),
 ];
 

@@ -182,6 +182,9 @@ pub enum ServerEvent {
         blob: String,
         volume: f32,
     },
+    ServerDelete {
+        server: ServerId,
+    },
 }
 
 #[cfg(test)]
@@ -227,6 +230,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::SoundSharingSet { server, shareable: true }), 50);
         let play = ServerEvent::SharedSoundPlay { server, channel, user, name: "n".into(), blob: "b".into(), volume: 1.0 };
         assert_eq!(wire_tag(play), 51);
+        assert_eq!(wire_tag(ServerEvent::ServerDelete { server }), 52);
     }
 
     #[test]

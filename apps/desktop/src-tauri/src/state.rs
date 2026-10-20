@@ -133,6 +133,7 @@ pub struct App {
     pub rest: Mutex<crate::wake::Rest>,
     pub liveness: Mutex<crate::liveness::Liveness>,
     pub awaiting_snapshot: Mutex<HashSet<ServerId>>,
+    pub deleted: Mutex<crate::deleted::DeletedServers>,
     pub key_hold: Mutex<Option<Instant>>,
     pub signing: tokio::sync::RwLock<()>,
 }
@@ -189,6 +190,7 @@ impl Default for App {
             rest: Mutex::new(crate::wake::Rest::default()),
             liveness: Mutex::new(crate::liveness::Liveness::default()),
             awaiting_snapshot: Mutex::new(HashSet::new()),
+            deleted: Mutex::new(crate::deleted::DeletedServers::default()),
             key_hold: Mutex::new(None),
             signing: tokio::sync::RwLock::new(()),
         }
@@ -415,6 +417,11 @@ impl App {
         let Some(dir) = self.data_dir() else { return };
         let storage = self.storage.lock().unwrap().clone();
         warn_unsaved("storage settings", crate::persist::save_storage(dir, &storage));
+    }
+
+    pub fn persist_deleted(&self) {
+        let Some(dir) = self.data_dir() else { return };
+        self.deleted.lock().unwrap().save(dir);
     }
 
     pub fn persist_outbox(&self) {

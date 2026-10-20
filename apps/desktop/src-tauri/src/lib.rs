@@ -3,6 +3,7 @@ mod activity;
 mod afk;
 mod entry_list;
 mod catchup;
+mod deleted;
 mod doorbell;
 mod expressions;
 mod media_engine;
@@ -196,6 +197,9 @@ async fn join_server(
 
 pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, ticket: ServerTicket) -> CmdResult<ServerSummary> {
     current_profile(app)?;
+    if app.deleted.lock().unwrap().contains(ticket.server_id) {
+        return Err("This server was deleted by its owner".into());
+    }
 
     let joining = async {
         let reached_peer = {
@@ -3511,8 +3515,7 @@ async fn unban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberUnban { server: sid, user }).await
 }
 
-async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
-    let name = forget_server_locally(app, sid).map(|s| s.server.name);
+fn end_voice_in(app: &App, sid: ServerId) {
     let in_voice_there = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
     if in_voice_there {
         let testing = pause_mic_test(app);
@@ -3521,9 +3524,93 @@ async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
         app.own_preview.lock().unwrap().take();
         *app.screen_share.lock().unwrap() = None;
     }
+}
+
+async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
+    let name = forget_server_locally(app, sid).map(|s| s.server.name);
+    end_voice_in(app, sid);
     leave_server_topic(app, sid).await;
     let _ = handle.emit("banned", serde_json::json!({ "server": sid.to_string(), "name": name }));
     let _ = handle.emit("servers-changed", ());
+}
+
+fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: SignedEvent, owned: bool) -> String {
+    let ticket = (!owned).then(|| app.invites.lock().unwrap().get(&sid).cloned()).flatten();
+    let name = forget_server_locally(app, sid).map(|s| s.server.name).unwrap_or_default();
+    end_voice_in(app, sid);
+    let kept = deleted::DeletedServer { name: name.clone(), notice, ticket };
+    app.deleted.lock().unwrap().insert(sid, kept);
+    app.persist_deleted();
+    entry_list::record_leave(app, sid);
+    entry_list::schedule(handle);
+    let _ = handle.emit("servers-changed", ());
+    name
+}
+
+fn on_server_deleted(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: SignedEvent) {
+    let name = retire_deleted_server(app, handle, sid, notice, false);
+    let _ = handle.emit("server-deleted", serde_json::json!({ "server": sid.to_string(), "name": name }));
+}
+
+#[tauri::command]
+async fn delete_server(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    confirm_name: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let notice = {
+        let mut servers = app.servers.lock().unwrap();
+        let state = servers.get_mut(&sid).ok_or("unknown server")?;
+        if state.server.owner != me.id {
+            return Err("only the owner can delete this server".into());
+        }
+        if confirm_name.trim() != state.server.name.trim() {
+            return Err("type the server name exactly as it is shown to delete it".into());
+        }
+        let notice = app
+            .sign_event(sid, ServerEvent::ServerDelete { server: sid })
+            .ok_or("your account key is still being confirmed; try again in a moment")?;
+        state.apply_own(&notice).map_err(err_to_string)?;
+        notice
+    };
+    broadcast(&app, sid, WirePayload::Signed(notice.clone())).await;
+    retire_deleted_server(&app, &handle, sid, notice, true);
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct AuditEntryView {
+    at: i64,
+    by: String,
+    by_name: String,
+    kind: commy_core::AuditKind,
+    target: Option<String>,
+    label: Option<String>,
+    detail: Option<String>,
+}
+
+#[tauri::command]
+fn audit_log(app: tauri::State<App>, server_id: String) -> CmdResult<Vec<AuditEntryView>> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    if !our_permissions(&app, state, me.id).can_view_audit_log() {
+        return Err("you do not have permission to view the audit log".into());
+    }
+    let entries = state.audit_log().iter().rev().map(|entry| AuditEntryView {
+        at: entry.at,
+        by: entry.by.to_string(),
+        by_name: commy_core::audit::member_name(state, entry.by).unwrap_or_else(|| "Someone".into()),
+        kind: entry.kind,
+        target: entry.target.clone(),
+        label: entry.label.clone(),
+        detail: entry.detail.clone(),
+    });
+    Ok(entries.collect())
 }
 
 fn effective_volume(voice: &VoiceSettings, user: &str) -> f32 {
@@ -4915,6 +5002,9 @@ async fn run_net_loop(
                     ServerEvent::VoiceState { user, channel, .. } => Some((*user, *channel)),
                     _ => None,
                 };
+                let deletion = deleted::is_notice(&event)
+                    .then(|| action.map(|action| SignedEvent { action, event: event.clone() }))
+                    .flatten();
                 let holdable = catchup::holdable(&event);
                 let kept = (holdable || action.is_some()).then(|| event.clone());
                 let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
@@ -4950,6 +5040,10 @@ async fn run_net_loop(
                     Ok(true) => {
                         if banned_me {
                             on_banned(&app, &handle, server).await;
+                            continue;
+                        }
+                        if let Some(notice) = deletion {
+                            on_server_deleted(&app, &handle, server, notice);
                             continue;
                         }
                         app.persist_server(server);
@@ -4991,6 +5085,11 @@ async fn run_net_loop(
             }
             NetEvent::VoiceDial { .. } => {}
             NetEvent::NeighborUp { server, peer } => {
+                let notice = app.deleted.lock().unwrap().notice(server);
+                if let Some(notice) = notice {
+                    broadcast(&app, server, WirePayload::Signed(notice)).await;
+                    continue;
+                }
                 let me = app.profile.lock().unwrap().clone();
                 let Some(me) = me else { continue };
                 let my_id = me.id;
@@ -5343,6 +5442,7 @@ pub fn run() {
                         servers.insert(state.server.id, state);
                     }
                 }
+                *app.deleted.lock().unwrap() = deleted::DeletedServers::load(&dir, chrono::Utc::now().timestamp_millis());
                 let mut awaiting = persist::load_awaiting(&dir);
                 {
                     let servers = app.servers.lock().unwrap();
@@ -5432,6 +5532,17 @@ pub fn run() {
                             }
                         }
                         app.persist_invites();
+                        let retired = app.deleted.lock().unwrap().to_rejoin();
+                        for (id, gone) in retired {
+                            let rejoined = match gone.ticket.as_deref().map(ServerTicket::decode) {
+                                Some(Ok(ticket)) => node.rejoin_server(&ticket).await,
+                                Some(Err(e)) => Err(e.into()),
+                                None => node.host_server(id, &gone.name, app.own_key_for_tickets()).await.map(|_| ()),
+                            };
+                            if let Err(e) = rejoined {
+                                tracing::debug!("could not stay on a deleted server to pass on its deletion: {e}");
+                            }
+                        }
 
                         let afk_channels: Vec<(ServerId, ServerEvent)> = {
                             let mut servers = app.servers.lock().unwrap();
@@ -5651,6 +5762,8 @@ pub fn run() {
             delete_channel,
             kick_member,
             leave_server,
+            delete_server,
+            audit_log,
             update_profile,
             start_mic_test,
             stop_mic_test,
