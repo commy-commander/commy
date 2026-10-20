@@ -916,6 +916,7 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "set_about": mock.user.about = args.about; return mock.user;
+    case "set_window_title": return null;
     case "set_icons": mock.voice.app_icon = args.appIcon; mock.voice.tray_icon = args.trayIcon; return mock.voice;
     case "get_custom_icon": return null;
     case "choose_custom_icon": return null;
@@ -1578,19 +1579,17 @@ function plainServer() {
   return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
 }
 
-function paintRailContext() {
+function syncWindowTitle() {
   const server = plainServer();
-  const box = $("rail-context");
-  box.classList.toggle("on", Boolean(server));
-  if (!server) return;
-  $("rail-context-name").textContent = server.name;
-  const icon = $("rail-context-icon");
-  paintServerIcon(icon, server);
-  icon.style.background = serverTint(server.id);
+  const name = server ? server.name : null;
+  if (name === state.windowTitleServer) return;
+  state.windowTitleServer = name;
+  document.title = name ? `${name} - Commy` : "Commy";
+  invoke("set_window_title", { server: name }).catch(() => {});
 }
 
 function renderServerRail() {
-  paintRailContext();
+  syncWindowTitle();
   const list = $("server-list");
   list.innerHTML = "";
   const dmCount = [...unread.dms.values()].reduce((a, b) => a + b, 0)
@@ -9076,7 +9075,7 @@ function setViewMode(mode) {
   $("server-name").classList.toggle("hidden", home);
   if (home) paintSidebarBanner();
   $("dm-search").classList.toggle("hidden", !home);
-  paintRailContext();
+  syncWindowTitle();
   syncAttachAccess();
   $("home-btn").classList.toggle("active", home);
   $("app").classList.toggle("dm-mode", home);

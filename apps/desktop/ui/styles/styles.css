@@ -124,7 +124,7 @@ body {
   scrollbar-width: none;
 }
 .rail::-webkit-scrollbar { display: none; }
-.rail-spacer { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; }
+.rail-spacer { flex: 1; }
 .rail-brand {
   font-family: var(--font-display);
   font-weight: 700;
@@ -4761,10 +4761,6 @@ h3.md-heading { font-size: 1.1em; }
 .icon-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .icon-label { font-size: 12px; font-weight: 600; text-align: center; line-height: 1.15; }
 .icon-replace { align-self: center; }
-.rail-context { display: flex; align-items: center; gap: 10px; height: 34px; min-width: 0; max-width: 320px; visibility: hidden; pointer-events: none; }
-.rail-context.on { visibility: visible; }
-.rail-context-icon { width: 28px; height: 28px; flex: none; border-radius: 9px; font-size: 11px; cursor: default; }
-.rail-context-name { font-family: var(--font-display); font-weight: 600; font-size: 15px; color: var(--header-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 .invite-custom-card { display: flex; flex-direction: column; gap: 10px; }
 .invite-custom-row { display: flex; align-items: center; gap: 10px; }
