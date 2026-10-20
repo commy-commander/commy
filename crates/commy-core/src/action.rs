@@ -75,7 +75,7 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::DoorbellSet { user, .. }
         | E::BotSet { user, .. }
         | E::PronounsSet { user, .. } => Some(*user),
-        E::MessagePin { by, .. } => Some(*by),
+        E::MessagePin { by, .. } | E::MemberTimeout { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -142,6 +142,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::RoleDelete { role, .. } => format!("role:{role}"),
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => format!("role:{role}:{user}"),
         E::VoiceModerate { user, .. } => format!("voice_moderate:{user}"),
+        E::MemberTimeout { user, .. } => format!("timeout:{user}"),
         E::MessagePin { message, .. } => format!("pin:{message}"),
         E::ReactionToggle { message, emoji, user, .. } | E::ReactionSet { message, emoji, user, .. } => {
             format!("reaction:{message}:{emoji}:{user}")
@@ -167,7 +168,7 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 10] = ["emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:", "channel.key:", "channel.grant:"];
+    const OMITTED: [&str; 11] = ["emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:", "channel.key:", "channel.grant:", "timeout:"];
     const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
     SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
 }
@@ -202,6 +203,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
     let allows = |p: Permissions| perms.allows(p);
     let member = server.is_member(by);
     let sees = |event: &ServerEvent| channel_of(event).is_none_or(|channel| server.can_view(channel, by));
+    let speaks = !server.is_timed_out(by, chrono::Utc::now());
     match event {
         E::MessageCreate { .. } | E::MessageEdit { .. } | E::MessageDelete { .. } | E::DoorbellSet { .. } => true,
         E::MemberJoin { .. } => actor(event) == Some(by),
@@ -209,14 +211,12 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::ProfileUpdate { .. } => actor(event) == Some(by),
         E::BotSet { .. } | E::PronounsSet { .. } => member && actor(event) == Some(by),
         E::PresenceUpdate { .. } | E::RulesAccept { .. } | E::EventRsvp { .. } => member && actor(event) == Some(by),
-        E::VoiceState { .. }
-        | E::TypingStart { .. }
-        | E::ScreenShare { .. }
-        | E::CameraState { .. }
-        | E::ReactionToggle { .. }
-        | E::ReactionSet { .. } => member && actor(event) == Some(by) && sees(event),
+        E::VoiceState { .. } | E::ScreenShare { .. } | E::CameraState { .. } => member && actor(event) == Some(by) && sees(event),
+        E::TypingStart { .. } | E::ReactionToggle { .. } | E::ReactionSet { .. } => {
+            member && speaks && actor(event) == Some(by) && sees(event)
+        }
         E::SoundboardPlay { .. } | E::SharedSoundPlay { .. } => {
-            member && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD) && sees(event)
+            member && speaks && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD) && sees(event)
         }
         E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin() && sees(event),
         E::ChannelKeyAdd { channel, .. } | E::ChannelKeyGrant { channel, .. } => {
@@ -275,6 +275,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         }
         E::VoiceModerate { .. } => allows(Permissions::MUTE_MEMBERS) || allows(Permissions::DEAFEN_MEMBERS),
         E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
+        E::MemberTimeout { user, .. } => *user != by && actor(event) == Some(by) && allows(Permissions::TIME_OUT_MEMBERS),
         E::ServerDelete { .. } => by == server.owner,
         E::InviteTrack { invite, .. } => member && invite.creator == by && allows(Permissions::CREATE_INVITES),
         E::InviteRevoke { creator, .. } => allows(Permissions::MANAGE_SERVER) || (member && *creator == by),

@@ -617,7 +617,7 @@ mod tests {
     fn exports_leave_out_people_messages_and_images() {
         let mut server = ServerTemplate::builtin(BuiltinTemplate::Community).build("Hub", owner());
         let guest = UserId::new();
-        server.members.push(crate::server::Member { user: guest, nickname: None, roles: vec![], joined_at: chrono::Utc::now() });
+        server.members.push(crate::server::Member { user: guest, nickname: None, roles: vec![], joined_at: chrono::Utc::now(), timeout: None });
         server.banned.push(guest);
         server.icon = Some("icon@node".into());
         server.channels[0].banner = Some("banner@node".into());
@@ -719,7 +719,7 @@ mod tests {
         let server = cleaned.build("Safe", owner());
         let member = UserId::new();
         let mut server = server;
-        server.members.push(crate::server::Member { user: member, nickname: None, roles: vec![], joined_at: chrono::Utc::now() });
+        server.members.push(crate::server::Member { user: member, nickname: None, roles: vec![], joined_at: chrono::Utc::now(), timeout: None });
         assert!(!server.permissions_for(member).contains(Permissions::ADMINISTRATOR));
     }
 
