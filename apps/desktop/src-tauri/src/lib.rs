@@ -6829,6 +6829,7 @@ pub fn run() {
                             .map(|d| persist::load_invites(d))
                             .unwrap_or_default();
                         catchup::mark_joined_placeholders(&app, &stored_invites, node.node_id_bytes());
+                        catchup::release_own_servers(&app, &stored_invites);
                         let awaiting = app.awaiting_snapshot.lock().unwrap().clone();
                         let to_restore: Vec<(ServerId, String, bool)> = {
                             let servers = app.servers.lock().unwrap();

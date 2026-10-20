@@ -1094,6 +1094,31 @@ pub fn mark_joined_placeholders(app: &App, invites: &HashMap<ServerId, String>, 
     }
 }
 
+pub fn settled_own_server(state: &ServerState, me: UserId, invite: Option<&str>) -> bool {
+    let named_owner = invite
+        .and_then(|raw| commy_net::ServerTicket::decode(raw).ok())
+        .and_then(|ticket| ticket.owner)
+        .is_some_and(|(owner, _)| owner == me);
+    let heard_others = state.server.channels.iter().any(|c| state.messages(c.id).iter().any(|m| m.author != me));
+    state.server.owner == me && named_owner && heard_others
+}
+
+pub fn release_own_servers(app: &App, invites: &HashMap<ServerId, String>) {
+    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let awaiting = app.awaiting_snapshot.lock().unwrap().clone();
+    let settled: Vec<ServerId> = {
+        let servers = app.servers.lock().unwrap();
+        awaiting
+            .into_iter()
+            .filter(|id| servers.get(id).is_some_and(|state| settled_own_server(state, me, invites.get(id).map(String::as_str))))
+            .collect()
+    };
+    for server in settled {
+        tracing::warn!("{server} is ours and already has history; it no longer waits for a snapshot");
+        app.set_awaiting_snapshot(server, false);
+    }
+}
+
 pub fn every_neighbor(neighbors: Vec<(ServerId, Vec<[u8; 32]>)>) -> Vec<SessionKey> {
     neighbors
         .into_iter()
@@ -2466,6 +2491,42 @@ mod tests {
         let mut theirs = ServerState::new(Server::new("s", owner.id()));
         theirs.profiles.insert(me.id(), me.profile.clone());
         assert!(!joined_placeholder(&theirs, me.id(), Some(&[inviter]), ours));
+    }
+
+    #[test]
+    fn an_owner_with_history_stops_waiting_for_a_snapshot_nobody_else_can_sign() {
+        let me = Member::new("owner");
+        let friend = Member::new("friend");
+        let (mut real, channel) = server(&me);
+        join(&mut real, &friend);
+        let sid = real.server.id;
+        let mut hello = Message::new(channel, friend.id(), "hi");
+        hello.sign(sid, &friend.identity);
+        real.apply(ServerEvent::MessageCreate { message: hello }).unwrap();
+        let invite = |owner: &Member| {
+            let mut ticket = commy_net::ServerTicket::new(sid, "s", [7; 32], vec![]);
+            ticket.owner = Some((owner.id(), owner.identity.public()));
+            HashMap::from([(sid, ticket.encode())])
+        };
+
+        let app = app_with(&me, real.clone());
+        app.set_awaiting_snapshot(sid, true);
+        release_own_servers(&app, &HashMap::new());
+        assert!(app.awaits_snapshot(sid));
+        release_own_servers(&app, &invite(&friend));
+        assert!(app.awaits_snapshot(sid));
+        release_own_servers(&app, &invite(&me));
+        assert!(!app.awaits_snapshot(sid));
+
+        let mut ours = placeholder(&me, sid);
+        let own_channel = ours.server.channels[0].id;
+        let mut note = Message::new(own_channel, me.id(), "only me so far");
+        note.sign(sid, &me.identity);
+        ours.apply(ServerEvent::MessageCreate { message: note }).unwrap();
+        let app = app_with(&me, ours);
+        app.set_awaiting_snapshot(sid, true);
+        release_own_servers(&app, &invite(&me));
+        assert!(app.awaits_snapshot(sid));
     }
 
     #[tokio::test]

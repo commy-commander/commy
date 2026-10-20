@@ -16,6 +16,13 @@ test("leaves other responses alone", () => {
   assert.equal(fixUpgradeHead("HTTP/1.1 101 x\r\nupgrade: y"), "HTTP/1.1 101 x\r\nupgrade: y");
 });
 
+test("keeps the websocket subprotocol browsers need", () => {
+  const browser = "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nsec-websocket-protocol: iroh-relay-v1\r\n\r\n";
+  assert.match(fixUpgradeHead(browser), /\r\nsec-websocket-protocol: iroh-relay-v1\r\n/);
+  const head = requestHead("GET", "/relay", ["Upgrade", "websocket", "Sec-WebSocket-Protocol", "iroh-relay-v1"]);
+  assert.match(head, /\r\nSec-WebSocket-Protocol: iroh-relay-v1\r\n/);
+});
+
 test("rebuilds request heads and drops unsafe header names and newlines", () => {
   const head = requestHead("GET", "/relay", ["Host", "relay.example", "Upgrade", "iroh derp http", "Bad Name", "x", "X-Evil", "a\r\nInjected: 1"]);
   assert.equal(head, "GET /relay HTTP/1.1\r\nHost: relay.example\r\nUpgrade: iroh derp http\r\nX-Evil: aInjected: 1\r\n\r\n");

@@ -103,7 +103,7 @@ services:
     <<: *hardened
     mem_limit: ${RELAY_MEM_LIMIT:-512m}
     build: ./relay
-    image: ${RELAY_IMAGE:-commy-relay:local}
+    image: ${RELAY_IMAGE:-commy-relay:iroh-relay-1.3.0}
     restart: unless-stopped
     ports:
       - "${STUN_PORT:-3478}:3478/udp"

@@ -9,6 +9,9 @@ on:
       - "crates/commy-core/**"
       - "crates/commy-net/**"
       - "crates/commy-view/**"
+      - "deploy/relay/**"
+      - "deploy/relay-tools/**"
+      - "deploy/docker-compose.yml"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/web.yml"
@@ -53,6 +56,9 @@ jobs:
 
       - name: node --test
         run: node --test "apps/web/tests/**/*.test.mjs"
+
+      - name: Relay tools
+        run: node --test "deploy/relay-tools/test/*.test.mjs"
 
       - name: Install wasm-bindgen
         run: |
