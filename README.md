@@ -11,7 +11,8 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 
 - **Servers and channels.** Create a server from scratch or a starter
   template, add text and voice channels, group servers into folders, and
-  invite people with a link. Mark a channel age-restricted and it asks
+  invite people with a link. A Ctrl+K quick switcher jumps to any channel,
+  conversation or server by name. Mark a channel age-restricted and it asks
   people to confirm they are 18 or older before showing anything. Copy any
   server's channels, roles and rules as a template code so others can start
   from the same layout, and hand a server you own to another member.

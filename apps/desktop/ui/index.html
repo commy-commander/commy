@@ -289,6 +289,23 @@
     </aside>
   </div>
 
+  <div class="switcher-backdrop hidden" id="switcher-backdrop">
+    <div class="switcher" id="switcher" role="dialog" aria-label="Quick Switcher">
+      <label class="switcher-field">
+        <span class="switcher-icon" id="switcher-icon"></span>
+        <input id="switcher-input" type="text" placeholder="Jump to a channel, person or server" autocomplete="off" spellcheck="false" aria-label="Quick switcher" aria-controls="switcher-list" />
+        <kbd class="switcher-chip" data-shortcut="K">Ctrl+K</kbd>
+      </label>
+      <div class="switcher-list" id="switcher-list" role="listbox" aria-label="Matches"></div>
+      <footer class="switcher-foot">
+        <span><b>&uarr;&darr;</b> move</span>
+        <span><b>Enter</b> open</span>
+        <span><b>Esc</b> close</span>
+        <span class="switcher-foot-tip"><b>#</b> channels &middot; <b>@</b> people &middot; <b>*</b> servers</span>
+      </footer>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="modal-backdrop">
     <div class="modal modal-signin hidden" id="modal-signin">
       <img class="signin-logo" src="images/commy_v2.png" alt="" />
@@ -1455,6 +1472,23 @@
             </div>
             <input type="checkbox" id="compact-toggle" class="switch" />
           </label>
+          <h2 class="settings-subhead">Keyboard Shortcuts</h2>
+          <div class="settings-card shortcut-card">
+            <div class="shortcut-row">
+              <div>
+                <div class="setting-title">Quick Switcher</div>
+                <div class="setting-sub">Jump to any channel, conversation or server.</div>
+              </div>
+              <kbd class="shortcut-key" data-shortcut="K">Ctrl+K</kbd>
+            </div>
+            <div class="shortcut-row">
+              <div>
+                <div class="setting-title">Search This Server</div>
+                <div class="setting-sub">Find messages by keyword, author or channel.</div>
+              </div>
+              <kbd class="shortcut-key" data-shortcut="F">Ctrl+F</kbd>
+            </div>
+          </div>
           <h2 class="settings-subhead">App Icon</h2>
           <div class="settings-card icon-card">
             <div class="setting-sub">Shown in your taskbar or dock while Commy is running.</div>
@@ -2179,6 +2213,7 @@
   <script src="scripts/invites.js"></script>
   <script src="scripts/automod.js"></script>
   <script src="scripts/search.js"></script>
+  <script src="scripts/switcher.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>
