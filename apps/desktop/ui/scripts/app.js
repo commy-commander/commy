@@ -660,6 +660,9 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "set_about": mock.user.about = args.about; return mock.user;
+    case "set_icons": mock.voice.app_icon = args.appIcon; mock.voice.tray_icon = args.trayIcon; return mock.voice;
+    case "get_custom_icon": return null;
+    case "choose_custom_icon": return null;
     case "set_pronouns": mock.voice.pronouns = (args.pronouns || "").trim() || null; return mock.voice;
     case "set_server_afk_timeout": mock.servers[args.serverId].afk_timeout_minutes = args.minutes; return null;
     case "voice_stats":
@@ -9889,8 +9892,73 @@ const PERMISSION_LABELS = [
   ["administrator", "Administrator"],
 ];
 
+const iconState = { custom: { app: null, tray: null } };
+
+async function renderIconPickers() {
+  for (const target of ["app", "tray"]) {
+    try {
+      iconState.custom[target] = await invoke("get_custom_icon", { target });
+    } catch {
+      iconState.custom[target] = null;
+    }
+    const grid = $(`${target}-icon-grid`);
+    const current = (target === "app" ? state.voice.app_icon : state.voice.tray_icon) || (target === "app" ? "classic" : "app");
+    grid.replaceChildren();
+    for (const choice of appIconChoices(target, Boolean(iconState.custom[target]))) {
+      const tile = el("button", "icon-tile" + (choice.id === current ? " active" : ""));
+      tile.type = "button";
+      tile.setAttribute("role", "radio");
+      tile.setAttribute("aria-checked", String(choice.id === current));
+      const art = el("span", "icon-art");
+      if (choice.id === "app") {
+        art.appendChild(svgIcon("check", 18));
+      } else if (choice.custom && !iconState.custom[target]) {
+        art.appendChild(svgIcon("plus", 18));
+      } else {
+        const img = el("img");
+        img.alt = "";
+        img.draggable = false;
+        img.src = choice.custom ? iconState.custom[target] : "images/commy_v2.png";
+        if (choice.filter) img.style.filter = choice.filter;
+        art.appendChild(img);
+      }
+      tile.append(art, el("span", "icon-label", choice.label));
+      tile.onclick = () => (choice.custom && !iconState.custom[target] ? pickCustomIcon(target) : saveIconChoice(target, choice.id));
+      grid.appendChild(tile);
+    }
+    if (iconState.custom[target]) {
+      const replace = el("button", "btn-secondary btn-small icon-replace", "Choose another image");
+      replace.type = "button";
+      replace.onclick = () => pickCustomIcon(target);
+      grid.appendChild(replace);
+    }
+  }
+}
+
+async function saveIconChoice(target, id) {
+  const next = { app_icon: state.voice.app_icon || "classic", tray_icon: state.voice.tray_icon || "app" };
+  next[`${target}_icon`] = id;
+  try {
+    state.voice = await invoke("set_icons", { appIcon: next.app_icon, trayIcon: next.tray_icon });
+  } catch (err) {
+    toast(String(err));
+  }
+  renderIconPickers();
+}
+
+async function pickCustomIcon(target) {
+  try {
+    const settings = await invoke("choose_custom_icon", { target });
+    if (settings) state.voice = settings;
+  } catch (err) {
+    toast(String(err));
+  }
+  renderIconPickers();
+}
+
 function openUserSettings(tab) {
   if (!state.user) return;
+  renderIconPickers();
   $("nc-toggle").checked = state.voice.noise_cancellation;
   $("afk-timeout").value = String(state.voice.afk_timeout_minutes ?? 10);
   $("share-activity-toggle").checked = state.voice.share_activity !== false;
