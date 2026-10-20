@@ -4938,3 +4938,16 @@ h3.md-heading { font-size: 1.1em; }
 .emoji-grid button.catalog-slot.missing img { visibility: hidden; }
 .emoji-grid button.catalog-slot.busy { opacity: 0.45; cursor: progress; }
 .emoji-grid .catalog-none { height: 72px; padding-top: 0; padding-bottom: 0; display: flex; align-items: center; }
+
+.call-modal { width: 320px; text-align: center; align-items: center; display: flex; flex-direction: column; gap: 6px; }
+.call-avatar { margin: 6px auto 10px; }
+.call-avatar .avatar-xl { width: 96px; height: 96px; font-size: 36px; }
+.call-modal h2 { margin: 0; }
+.call-sub { color: var(--text-muted); margin: 0 0 12px; }
+.call-actions { display: flex; gap: 28px; justify-content: center; padding-bottom: 4px; }
+.call-btn { width: 56px; height: 56px; border-radius: 50%; border: 0; display: grid; place-items: center; cursor: pointer; color: #fff; transition: filter var(--t-hover) ease, transform var(--t-press) var(--ease-out); }
+.call-btn.accept { background: #2f9e5f; }
+.call-btn.decline { background: var(--red); }
+.call-btn:hover { filter: brightness(1.1); }
+.call-btn:active { transform: scale(.95); }
+#dm-call-btn.active { color: var(--red); }

@@ -81,7 +81,7 @@
         <div class="vp-streams" id="vp-streams"></div>
         <div class="vp-conn">
           <div class="vp-conn-meta" id="vp-conn-meta" title="Go to voice channel">
-            <div class="vp-status"><span class="vp-signal" id="vp-signal"></span>Voice Connected</div>
+            <div class="vp-status"><span class="vp-signal" id="vp-signal"></span><span id="vp-status-text">Voice Connected</span></div>
             <div class="vp-where" id="vp-where"></div>
           </div>
           <button class="icon-btn vp-hangup" id="vp-disconnect" title="Disconnect"></button>
@@ -121,6 +121,7 @@
           <button class="icon-btn hidden" id="members-btn" title="Hide Members" aria-pressed="true">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zM8 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05A4.2 4.2 0 0 1 17 16.5V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
           </button>
+          <button class="icon-btn hidden" id="dm-call-btn" title="Start Voice Call"></button>
           <button class="icon-btn hidden" id="dm-profile-btn" title="Hide User Profile">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"/></svg>
           </button>
@@ -628,6 +629,16 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="rename-folder-cancel">Cancel</button>
         <button class="btn-primary" id="rename-folder-save">Save</button>
+      </div>
+    </div>
+
+    <div class="modal call-modal hidden" id="modal-call" role="alertdialog" aria-labelledby="call-name">
+      <div class="call-avatar" id="call-avatar"></div>
+      <h2 id="call-name"></h2>
+      <p class="call-sub">Incoming voice call</p>
+      <div class="call-actions">
+        <button class="call-btn decline" id="call-decline" title="Decline"></button>
+        <button class="call-btn accept" id="call-accept" title="Accept"></button>
       </div>
     </div>
 

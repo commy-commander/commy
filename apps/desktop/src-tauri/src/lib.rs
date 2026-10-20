@@ -2,6 +2,7 @@ mod account;
 mod app_icon;
 mod activity;
 mod afk;
+mod calls;
 mod entry_list;
 mod catchup;
 mod channel_lock;
@@ -921,6 +922,7 @@ async fn set_voice_channel(
             if full {
                 return Err("that voice channel is full".into());
             }
+            calls::end(&app, &handle, true, "hung_up").await;
             let previous = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != sid);
             if let Some(previous) = previous {
                 leave_voice(&app, &handle, previous, &profile, &voice).await;
@@ -1201,7 +1203,11 @@ async fn run_voice_redialer(handle: tauri::AppHandle) {
         let call = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
         let Some((sid, channel)) = call else { continue };
         let Some(me) = app.profile.lock().unwrap().clone() else { continue };
-        dial_voice_members(&app, &handle, sid, channel, &me);
+        if sid == commy_core::ids::CALL_SERVER {
+            calls::dial_partner(&app, &handle, &me);
+        } else {
+            dial_voice_members(&app, &handle, sid, channel, &me);
+        }
     }
 }
 
@@ -1354,6 +1360,9 @@ fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
             }
         };
         let Some(server) = server else { return false };
+        if server == commy_core::ids::CALL_SERVER {
+            return voice && calls::peer_ok(&app, user, &node_hex, channel);
+        }
         let servers = app.servers.lock().unwrap();
         servers.get(&server).is_some_and(|state| state.media_peer_ok(user, &node_hex, channel, voice))
     })
@@ -1722,7 +1731,10 @@ async fn send_signed_dm(
     content: String,
     offline: &str,
 ) -> CmdResult<()> {
-    let mut message = DmMessage::new(me.id, to, content);
+    send_direct_dm(app, me, hex, DmMessage::new(me.id, to, content), offline).await
+}
+
+async fn send_direct_dm(app: &App, me: &UserProfile, hex: &str, mut message: DmMessage, offline: &str) -> CmdResult<()> {
     sign_dm(app, &mut message)?;
     let envelope = DmEnvelope { message, sender: me.as_seen_by_others() };
     let send = {
@@ -6184,6 +6196,7 @@ async fn run_dm_loop(
             outbox::Received::Reply { to, signal } => {
                 let _ = send_friend_signal(&app, to, signal).await;
             }
+            outbox::Received::Call { from, call, signal } => calls::on_signal(&app, &handle, from, call, signal).await,
             outbox::Received::Dropped | outbox::Received::Taken => {}
         }
     }
@@ -6711,6 +6724,10 @@ pub fn run() {
             set_dm_reaction,
             attach_dm_file,
             attach_dm_bytes,
+            calls::start_dm_call,
+            calls::answer_dm_call,
+            calls::end_dm_call,
+            calls::get_dm_call,
             rename_server,
             create_channel,
             delete_channel,
