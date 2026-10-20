@@ -66,6 +66,7 @@ pub enum AuditKind {
     MemberNickname,
     PollClose,
     ChannelSensitive,
+    Onboarding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +167,7 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::PublicSet { public, .. } => (K::ServerPublic, None, None, on_off(*public)),
         E::GameTagsSet { tags, .. } => (K::GameTags, None, None, Some(clip(&tags.join(", ")))),
         E::RulesSet { rules, .. } => (K::Rules, None, None, set_or_removed(rules.is_some())),
+        E::OnboardingSet { onboarding, .. } => (K::Onboarding, None, None, set_or_removed(onboarding.is_some())),
         E::AutoModSet { .. } => (K::AutoMod, None, None, None),
         E::AfkChannelSet { channel: afk, .. } => {
             let (target, label) = afk.as_ref().map(channel).unwrap_or((None, None));

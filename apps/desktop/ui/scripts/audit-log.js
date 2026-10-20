@@ -17,6 +17,7 @@ const AUDIT_GROUP_OF = {
   server_public: "server",
   game_tags: "server",
   rules: "server",
+  onboarding: "server",
   auto_mod: "server",
   afk_channel: "server",
   afk_timeout: "server",
@@ -104,6 +105,7 @@ function describeAudit(entry) {
     case "server_public": return [detail === "on" ? "made the server public" : "made the server private"];
     case "game_tags": return detail ? ["set the server's games to ", auditStrong(detail)] : ["cleared the server's games"];
     case "rules": return [detail === "removed" ? "removed the server rules" : "updated the server rules"];
+    case "onboarding": return [detail === "removed" ? "removed the onboarding questions" : "updated the onboarding questions"];
     case "auto_mod": return ["changed the auto moderation rules"];
     case "afk_channel": return label ? ["set the AFK channel to ", channel] : ["turned off the AFK channel"];
     case "afk_timeout": return detail ? [`set the server AFK timer to ${auditCount(count, "minute", "minutes")}`] : ["turned off the server AFK timer"];

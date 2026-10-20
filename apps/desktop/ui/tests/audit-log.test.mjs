@@ -60,6 +60,9 @@ test("sentences name the actor, the target and the change", () => {
   assert.equal(auditGroup("member_nickname"), "members");
   assert.equal(auditText(entry("voice_move", { label: "Sam", detail: "Lounge" })), "Mia moved Sam to Lounge");
   assert.equal(auditText(entry("voice_disconnect", { label: "Sam" })), "Mia disconnected Sam from voice");
+  assert.equal(auditText(entry("onboarding", { detail: "set" })), "Mia updated the onboarding questions");
+  assert.equal(auditText(entry("onboarding", { detail: "removed" })), "Mia removed the onboarding questions");
+  assert.equal(auditGroup("onboarding"), "server");
   assert.equal(auditText(entry("message_delete", { label: "Nova", detail: "general" })), "Mia deleted a message by Nova in general");
   assert.equal(auditText(entry("channel_access", { label: "mods", detail: "private" })), "Mia made mods private");
   assert.equal(auditText(entry("channel_access", { label: "news", detail: "send" })), "Mia limited who can send in news");

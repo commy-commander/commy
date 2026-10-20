@@ -1159,6 +1159,13 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.automod, rules))
             }
+            ServerEvent::OnboardingSet { server, onboarding } => {
+                self.same_server(server)?;
+                if onboarding.as_ref().is_some_and(|o| !o.valid()) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.server.onboarding, onboarding))
+            }
             ServerEvent::BotSet { server, user, bot } => {
                 self.same_server(server)?;
                 if !bot {
@@ -3296,6 +3303,40 @@ mod tests {
         assert_eq!(state.apply(ServerEvent::RulesAccept { server: sid, user: owner }), Ok(true));
         assert_eq!(state.apply(ServerEvent::RulesAccept { server: sid, user: owner }), Ok(false));
         assert_eq!(state.apply(ServerEvent::RulesAccept { server: sid, user: UserId::new() }), Ok(false), "non-members");
+    }
+
+    #[test]
+    fn onboarding_questions_are_kept_when_tidy_and_survive_a_restart() {
+        use crate::onboarding::{Answer, Onboarding, Question};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let role = RoleId::new();
+        let tidy = Onboarding {
+            questions: vec![Question {
+                title: "Pick one".into(),
+                description: String::new(),
+                multiple: false,
+                answers: vec![Answer { label: "A".into(), roles: vec![role] }, Answer { label: "B".into(), roles: vec![] }],
+            }],
+        };
+        let signed = crate::SignedEvent::sign(sid, owner, 1_000, ServerEvent::OnboardingSet { server: sid, onboarding: Some(tidy.clone()) }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&signed), Ok(true));
+        assert_eq!(state.server.onboarding, Some(tidy.clone()));
+        assert_eq!(state.audit_log().last().map(|e| e.kind), Some(crate::AuditKind::Onboarding));
+        let restored = ServerState::from_snapshot(state.snapshot());
+        assert_eq!(restored.server.onboarding, Some(tidy.clone()));
+        assert_eq!(state.apply(ServerEvent::OnboardingSet { server: sid, onboarding: Some(tidy.clone()) }), Ok(false), "same again");
+        let untidy = Onboarding { questions: vec![Question { title: "  spaced ".into(), ..tidy.questions[0].clone() }] };
+        assert_eq!(state.apply(ServerEvent::OnboardingSet { server: sid, onboarding: Some(untidy) }), Ok(false));
+        assert_eq!(state.apply(ServerEvent::OnboardingSet { server: sid, onboarding: Some(Onboarding::default()) }), Ok(false), "no questions means none");
+        assert_eq!(state.server.onboarding, Some(tidy));
+        let member = join(&mut state, "member");
+        let by_member = crate::SignedEvent::sign(sid, member, 2_000, ServerEvent::OnboardingSet { server: sid, onboarding: None }, &identity_for(member));
+        assert_eq!(state.apply_signed(&by_member), Err(StoreError::NotAllowed));
+        let off = crate::SignedEvent::sign(sid, owner, 3_000, ServerEvent::OnboardingSet { server: sid, onboarding: None }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&off), Ok(true));
+        assert_eq!(state.server.onboarding, None);
+        assert_eq!(state.apply(ServerEvent::OnboardingSet { server: ServerId::new(), onboarding: None }), Err(StoreError::WrongServer));
     }
 
     #[test]

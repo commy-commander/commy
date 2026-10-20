@@ -727,6 +727,36 @@ mod tests {
     }
 
     #[test]
+    fn the_largest_onboarding_questions_fit_one_signed_frame() {
+        use commy_core::onboarding::{Answer, Onboarding, Question, MAX_ANSWERS, MAX_QUESTIONS, MAX_ROLES_PER_ANSWER, MAX_ROLE_REFS, MAX_TEXT_BYTES};
+        let sid = ServerId::new();
+        let answers_in_all = MAX_QUESTIONS * MAX_ANSWERS;
+        let label_bytes = MAX_TEXT_BYTES / answers_in_all - 1;
+        let mut refs_left = MAX_ROLE_REFS;
+        let questions = (0..MAX_QUESTIONS)
+            .map(|i| Question {
+                title: format!("q{i}"),
+                description: String::new(),
+                multiple: true,
+                answers: (0..MAX_ANSWERS)
+                    .map(|j| {
+                        let roles = (0..MAX_ROLES_PER_ANSWER.min(refs_left)).map(|_| commy_core::RoleId::new()).collect::<Vec<_>>();
+                        refs_left -= roles.len();
+                        Answer { label: format!("{j:0>label_bytes$}"), roles }
+                    })
+                    .collect(),
+            })
+            .collect();
+        let mut onboarding = Onboarding { questions };
+        let title_room = MAX_TEXT_BYTES.saturating_sub(onboarding.text_bytes());
+        onboarding.questions[0].title.push_str(&"t".repeat(title_room.min(70)));
+        assert_eq!(onboarding.role_refs(), MAX_ROLE_REFS);
+        assert_eq!(onboarding.text_bytes(), MAX_TEXT_BYTES);
+        assert!(onboarding.valid());
+        assert!(signed_size(sid, &ServerEvent::OnboardingSet { server: sid, onboarding: Some(onboarding) }) <= MAX_GOSSIP_BYTES);
+    }
+
+    #[test]
     fn the_largest_auto_moderation_rules_fit_one_signed_frame() {
         use commy_core::automod::{AutoMod, Burst, MAX_BLOCKED_TERMS, MAX_EXEMPT_ROLES, MAX_TERMS_BYTES};
         let sid = ServerId::new();

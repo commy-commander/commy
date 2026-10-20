@@ -170,7 +170,21 @@ function mockSeed() {
   server.roles = [
     { id: "r1", name: "Raider", color: "9b7bff", position: 2, permissions: [], self_assignable: true, tag: "RAID", mentionable: true },
     { id: "r2", name: "Moderator", color: "3ba55c", position: 3, permissions: ["manage_messages", "mention_everyone"], self_assignable: false, hoist: true, tag: null, mentionable: false },
+    { id: "r3", name: "Event Pings", color: "4d9bff", position: 1, permissions: [], self_assignable: false, hoist: false, tag: null, mentionable: true },
   ];
+  server.onboarding = {
+    questions: [
+      { title: "What brings you here?", description: "Pick everything that fits. The channels for each open up for you.", multiple: true, answers: [
+        { label: "Raiding and game nights", roles: ["r1"] },
+        { label: "Rust help and code review", roles: [] },
+        { label: "Just hanging out", roles: [] },
+      ] },
+      { title: "How often do you want pings?", description: "", multiple: false, answers: [
+        { label: "Every event and announcement", roles: ["r3"] },
+        { label: "Only when someone mentions me", roles: [] },
+      ] },
+    ],
+  };
   server.game_tags = ["Rust", "Valorant"];
   server.emojis = [{ name: "ferris", image: "ferris@mock" }, { name: "ferris_wave", image: "ferris@mock" }];
   server.stickers = [{ name: "ferris_hype", image: "ferris@mock" }, { name: "party", image: "party@mock" }];
@@ -438,7 +452,7 @@ async function mockInvoke(cmd, args = {}) {
       }
       return {
         ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
-        game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true,
+        game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true, onboarding: s.onboarding || null,
         channels: s.channels
           .map((c, i) => {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
@@ -953,6 +967,13 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "accept_rules": mock.servers[args.serverId].needs_rules = false; return null;
+    case "set_onboarding": mock.servers[args.serverId].onboarding = args.onboarding; return null;
+    case "answer_onboarding": {
+      const s = mock.servers[args.serverId];
+      s.myRoles = (s.myRoles || []).filter(id => !args.revoke.includes(id));
+      for (const id of args.grant) if (!s.myRoles.includes(id)) s.myRoles.push(id);
+      return null;
+    }
     case "save_event": {
       const s = mock.servers[args.serverId];
       s.events = (s.events || []).filter(e => e.id !== args.eventId);
@@ -1845,12 +1866,14 @@ function openServerMenu(server, x, y, folderId) {
   $("sm-ungroup").classList.toggle("hidden", !menuFolderOf);
   $("sm-rules").classList.add("hidden");
   $("sm-roles").classList.add("hidden");
+  $("sm-onboarding").classList.add("hidden");
   $("sm-settings").textContent = "Server Settings";
   $("sm-invite").classList.add("hidden");
   invoke("get_server", { serverId: server.id }).then(full => {
     $("sm-invite").classList.toggle("hidden", !full.can_invite);
     $("sm-rules").classList.toggle("hidden", !full.rules);
     $("sm-roles").classList.toggle("hidden", !selfAssignableRoles(full).length);
+    $("sm-onboarding").classList.toggle("hidden", !full.onboarding);
     $("sm-settings").textContent = canOpenServerSettings(full) ? "Server Settings" : "Server Info";
   }).catch(() => {});
   placeMenuAt($("server-menu"), x, y);
@@ -5741,7 +5764,8 @@ async function acceptRules() {
     await invoke("accept_rules", { serverId: server.id });
     await refreshCurrentServer();
     rolePromptPending.delete(state.currentServer.id);
-    if (selfAssignableRoles(state.currentServer).length) openServerWelcome("roles");
+    if (state.currentServer.onboarding) openOnboarding("join");
+    else if (selfAssignableRoles(state.currentServer).length) openServerWelcome("roles");
     else {
       hideModals();
       toast("Thanks! You can chat now");
@@ -5756,7 +5780,8 @@ function openServerWelcome(step) {
   if (!server) return;
   closeFloating();
   const hasRoles = selfAssignableRoles(server).length > 0;
-  const twoSteps = Boolean(server.rules) && hasRoles;
+  const twoSteps = Boolean(server.rules) && (hasRoles || Boolean(server.onboarding));
+  $("sw-steps").lastElementChild.textContent = server.onboarding ? "Questions" : "Roles";
   paintServerIcon($("sw-icon"), server);
   $("sw-title").textContent = step === "rules" ? `Welcome to ${server.name}` : `You are in, ${state.user ? state.user.username : "friend"}`;
   $("sw-sub").textContent = step === "rules"
@@ -5790,10 +5815,11 @@ async function enterJoinedServer(summary) {
 function maybePromptRoles() {
   const server = state.currentServer;
   if (!server || !rolePromptPending.has(server.id) || server.needs_rules) return;
-  if (!selfAssignableRoles(server).length) return;
+  if (!server.onboarding && !selfAssignableRoles(server).length) return;
   if (!$("modal-backdrop").classList.contains("hidden")) return;
   rolePromptPending.delete(server.id);
-  openServerWelcome("roles");
+  if (server.onboarding) openOnboarding("join");
+  else openServerWelcome("roles");
 }
 
 function syncRulesGate() {
@@ -5846,6 +5872,299 @@ async function syncAwaitedBar() {
   if (seq !== awaitedSeq) return;
   $("awaited-text").textContent = text || "";
   $("awaited-bar").classList.toggle("hidden", !text);
+}
+
+const onboardingFlow = { mode: "join", onboarding: null, picks: [], pages: [], page: 0 };
+
+function myHeldRoles(server) {
+  const me = state.user && (server.members || []).find(m => m.id === state.user.id);
+  return me ? me.roles || [] : [];
+}
+
+function roleDots(server, roleIds) {
+  const wrap = el("span", "ob-answer-roles");
+  const names = [];
+  for (const id of roleIds || []) {
+    const role = (server.roles || []).find(r => r.id === id);
+    if (!role) continue;
+    const dot = el("span", "role-dot");
+    if (role.color) dot.style.background = `#${role.color}`;
+    wrap.appendChild(dot);
+    names.push(role.name);
+  }
+  if (names.length) wrap.title = `Gives you ${names.join(", ")}`;
+  return wrap;
+}
+
+function openOnboarding(mode, draft) {
+  const server = state.currentServer;
+  const onboarding = mode === "preview" ? draft : server && server.onboarding;
+  if (!server || !onboarding || !onboarding.questions.length) return;
+  closeFloating();
+  Object.assign(onboardingFlow, {
+    mode,
+    onboarding,
+    picks: inferPicks(onboarding, myHeldRoles(server)),
+    pages: onboardingPages(onboarding.questions.length),
+    page: 0,
+  });
+  paintServerIcon($("ob-icon"), server);
+  const who = state.user ? state.user.username : "friend";
+  const copy = {
+    join: [`Welcome in, ${who}`, `${server.name} uses your answers to hand out roles and open the right channels.`],
+    change: ["Your answers", "Change what you picked when you joined. Your roles update right away."],
+    preview: ["Welcome in, friend", "This is what new members see after the rules. Nothing picked here is saved."],
+  }[mode];
+  $("ob-title").textContent = copy[0];
+  $("ob-sub").textContent = copy[1];
+  $("ob-preview-badge").classList.toggle("hidden", mode !== "preview");
+  $("ob-later").textContent = { join: "Later", change: "Cancel", preview: "Close" }[mode];
+  renderOnboardingPage();
+  showModal("modal-onboarding");
+  $("ob-next").focus();
+}
+
+function renderOnboardingPage() {
+  const server = state.currentServer;
+  const { onboarding, pages, page, picks } = onboardingFlow;
+  const steps = $("ob-steps");
+  steps.replaceChildren();
+  steps.classList.toggle("hidden", pages.length < 2);
+  pages.forEach((_, i) => {
+    const dot = el("span", "sw-step", String(i + 1));
+    dot.classList.toggle("active", i === page);
+    dot.classList.toggle("done", i < page);
+    steps.appendChild(dot);
+  });
+  const list = $("ob-questions");
+  list.replaceChildren();
+  for (const qi of pages[page] || []) {
+    const question = onboarding.questions[qi];
+    const block = el("div", "ob-question");
+    block.appendChild(el("div", "ob-question-title", question.title));
+    if (question.description) block.appendChild(el("div", "ob-question-sub", question.description));
+    const answers = el("div", "ob-answers");
+    question.answers.forEach((answer, ai) => {
+      const row = el("button", "ob-answer" + (question.multiple ? " multiple" : ""));
+      row.type = "button";
+      row.classList.toggle("picked", (picks[qi] || []).includes(ai));
+      row.appendChild(el("span", "ob-check")).appendChild(svgIcon("check", 14));
+      row.appendChild(el("span", "ob-answer-label", answer.label));
+      row.appendChild(roleDots(server, answer.roles));
+      row.onclick = () => {
+        picks[qi] = togglePick(question, picks[qi], ai);
+        for (const [i, node] of [...answers.children].entries()) node.classList.toggle("picked", picks[qi].includes(i));
+      };
+      answers.appendChild(row);
+    });
+    block.appendChild(answers);
+    list.appendChild(block);
+  }
+  list.scrollTop = 0;
+  $("ob-back").classList.toggle("hidden", page === 0);
+  $("ob-next").textContent = page >= pages.length - 1 ? "Done" : "Next";
+}
+
+function turnOnboardingPage(delta) {
+  const next = onboardingFlow.page + delta;
+  if (next < 0 || next >= onboardingFlow.pages.length) return;
+  onboardingFlow.page = next;
+  renderOnboardingPage();
+}
+
+async function advanceOnboarding() {
+  if (onboardingFlow.page < onboardingFlow.pages.length - 1) return turnOnboardingPage(1);
+  const server = state.currentServer;
+  if (!server) return hideModals();
+  if (onboardingFlow.mode === "preview") {
+    hideModals();
+    toast("Preview only, nothing was saved");
+    return;
+  }
+  const { grant, revoke } = answerDiff(onboardingFlow.onboarding, onboardingFlow.picks, myHeldRoles(server));
+  if (!grant.length && !revoke.length) {
+    hideModals();
+    toast(onboardingFlow.mode === "join" ? "You are all set" : "Your answers are unchanged");
+    return;
+  }
+  try {
+    await invoke("answer_onboarding", { serverId: server.id, grant, revoke });
+    await refreshCurrentServer();
+    hideModals();
+    toast(onboardingFlow.mode === "join" ? "You are all set" : "Answers saved");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+let onboardingDraft = { questions: [] };
+let onboardingDraftSource = null;
+
+function renderOnboardingSettings(server) {
+  const source = JSON.stringify(server.onboarding || null);
+  if (source !== onboardingDraftSource) {
+    onboardingDraftSource = source;
+    onboardingDraft = server.onboarding ? structuredClone(server.onboarding) : { questions: [] };
+  }
+  $("ob-remove").classList.toggle("hidden", !server.onboarding);
+  paintOnboardingEditor(server);
+}
+
+function syncOnboardingCount() {
+  const usage = onboardingUsage(onboardingDraft);
+  const count = $("ob-count");
+  count.textContent = `${usage.bytes} / ${ONBOARDING_LIMITS.textBytes}`;
+  count.classList.toggle("over", usage.bytes > ONBOARDING_LIMITS.textBytes);
+}
+
+function onboardingTextField(value, placeholder, maxLength, onInput) {
+  const input = el("input");
+  input.type = "text";
+  input.value = value || "";
+  input.placeholder = placeholder;
+  input.maxLength = maxLength;
+  input.oninput = () => {
+    onInput(input.value);
+    syncOnboardingCount();
+  };
+  return input;
+}
+
+function iconButton(icon, title, onClick) {
+  const btn = el("button", "ob-icon-btn");
+  btn.type = "button";
+  btn.title = title;
+  btn.appendChild(svgIcon(icon, 16));
+  btn.onclick = onClick;
+  return btn;
+}
+
+function paintOnboardingAnswer(server, question, answer, index, repaint) {
+  const row = el("div", "ob-answer-row");
+  row.appendChild(onboardingTextField(answer.label, `Answer ${index + 1}`, ONBOARDING_LIMITS.answerChars, v => { answer.label = v; }));
+  row.appendChild(iconButton("close", "Remove answer", () => {
+    question.answers.splice(index, 1);
+    repaint();
+  }));
+  const chips = el("div", "ob-role-chips");
+  const eligible = onboardingRoles(server.roles);
+  answer.roles = (answer.roles || []).filter(id => eligible.some(r => r.id === id));
+  for (const id of answer.roles) {
+    const role = eligible.find(r => r.id === id);
+    const chip = el("span", "ob-role-chip");
+    const dot = el("span", "role-dot");
+    if (role.color) dot.style.background = `#${role.color}`;
+    chip.append(dot, document.createTextNode(role.name));
+    const x = el("button", "game-chip-x");
+    x.type = "button";
+    x.title = `Stop giving ${role.name}`;
+    x.appendChild(svgIcon("close", 12));
+    x.onclick = () => {
+      answer.roles = answer.roles.filter(r => r !== id);
+      repaint();
+    };
+    chip.appendChild(x);
+    chips.appendChild(chip);
+  }
+  const left = eligible.filter(r => !answer.roles.includes(r.id));
+  if (left.length && answer.roles.length < ONBOARDING_LIMITS.rolesPerAnswer) {
+    const select = el("select", "compact-select");
+    select.title = "Give a role to members who pick this";
+    fillOptions(select, [{ value: "", label: answer.roles.length ? "Add another role" : "Gives no role" }, ...left.map(r => ({ value: r.id, label: r.name }))], "");
+    select.onchange = () => {
+      if (!select.value) return;
+      answer.roles.push(select.value);
+      repaint();
+    };
+    chips.appendChild(select);
+  } else if (!eligible.length) {
+    chips.appendChild(el("span", "setting-sub", "Create a role under Roles to hand it out here"));
+  }
+  row.appendChild(chips);
+  return row;
+}
+
+function paintOnboardingQuestion(server, question, index, repaint) {
+  const card = el("div", "settings-card ob-card");
+  const head = el("div", "ob-card-head");
+  head.appendChild(el("div", "setting-title", `Question ${index + 1}`));
+  const type = el("select", "compact-select");
+  fillOptions(type, [{ value: "single", label: "Pick one" }, { value: "multiple", label: "Pick any" }], question.multiple ? "multiple" : "single");
+  type.onchange = () => { question.multiple = type.value === "multiple"; };
+  head.appendChild(type);
+  head.appendChild(iconButton("trash", "Remove question", () => {
+    onboardingDraft.questions.splice(index, 1);
+    repaint();
+  }));
+  card.appendChild(head);
+  const title = el("div", "ob-field");
+  title.appendChild(onboardingTextField(question.title, "What do you want to ask?", ONBOARDING_LIMITS.titleChars, v => { question.title = v; }));
+  card.appendChild(title);
+  const sub = el("div", "ob-field");
+  sub.appendChild(onboardingTextField(question.description, "Optional one-line description", ONBOARDING_LIMITS.descriptionChars, v => { question.description = v; }));
+  card.appendChild(sub);
+  const rows = el("div", "ob-answer-rows");
+  question.answers.forEach((answer, ai) => rows.appendChild(paintOnboardingAnswer(server, question, answer, ai, repaint)));
+  card.appendChild(rows);
+  if (question.answers.length < ONBOARDING_LIMITS.answers) {
+    const add = el("button", "btn-secondary btn-small ob-add-answer", "Add Answer");
+    add.type = "button";
+    add.onclick = () => {
+      question.answers.push({ label: "", roles: [] });
+      repaint();
+    };
+    card.appendChild(add);
+  }
+  return card;
+}
+
+function paintOnboardingEditor(server) {
+  const editor = $("ob-editor");
+  editor.replaceChildren();
+  const repaint = () => paintOnboardingEditor(server);
+  onboardingDraft.questions.forEach((q, i) => editor.appendChild(paintOnboardingQuestion(server, q, i, repaint)));
+  if (!onboardingDraft.questions.length) {
+    editor.appendChild(el("div", "manage-empty", "No questions yet. Add one to ask new members something when they join."));
+  }
+  $("ob-add-question").classList.toggle("hidden", onboardingDraft.questions.length >= ONBOARDING_LIMITS.questions);
+  syncOnboardingCount();
+}
+
+function addOnboardingQuestion() {
+  if (!state.currentServer || onboardingDraft.questions.length >= ONBOARDING_LIMITS.questions) return;
+  onboardingDraft.questions.push({ title: "", description: "", multiple: false, answers: [{ label: "", roles: [] }, { label: "", roles: [] }] });
+  paintOnboardingEditor(state.currentServer);
+  const inputs = $("ob-editor").querySelectorAll(".ob-card input");
+  const first = inputs[inputs.length - 2 - onboardingDraft.questions[onboardingDraft.questions.length - 1].answers.length];
+  if (first) first.focus();
+}
+
+function tidyOnboardingDraft(server) {
+  return tidyOnboarding(onboardingDraft, onboardingRoles(server.roles).map(r => r.id));
+}
+
+async function saveOnboarding(remove) {
+  const server = state.currentServer;
+  if (!server) return;
+  const problems = remove ? [] : onboardingProblems(onboardingDraft);
+  if (problems.length) return toast(problems[0]);
+  try {
+    await invoke("set_onboarding", { serverId: server.id, onboarding: remove ? null : tidyOnboardingDraft(server) });
+    await refreshCurrentServer();
+    onboardingDraftSource = null;
+    renderOnboardingSettings(state.currentServer);
+    toast(remove ? "Onboarding questions removed" : "Onboarding saved");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function previewOnboarding() {
+  const server = state.currentServer;
+  if (!server) return;
+  const problems = onboardingProblems(onboardingDraft);
+  if (problems.length) return toast(problems[0]);
+  openOnboarding("preview", tidyOnboardingDraft(server));
 }
 
 function renderRulesSettings(server) {
@@ -12052,6 +12371,7 @@ function wireEvents() {
   $("sm-pins").onclick = fromMenu(openServerPins);
   $("sm-rules").onclick = fromMenu(openRules);
   $("sm-roles").onclick = fromMenu(openChooseRoles);
+  $("sm-onboarding").onclick = fromMenu(() => openOnboarding("change"));
   $("game-tag-input").addEventListener("keydown", e => {
     if (e.key === "Escape") closeGameSearch();
     if (e.key !== "Enter") return;
@@ -12083,6 +12403,14 @@ function wireEvents() {
   $("rules-accept").onclick = acceptRules;
   $("rules-gate-open").onclick = () => openServerWelcome("rules");
   $("sw-later").onclick = hideModals;
+  $("ob-later").onclick = hideModals;
+  $("ob-back").onclick = () => turnOnboardingPage(-1);
+  $("ob-next").onclick = advanceOnboarding;
+  $("ob-add-question").onclick = addOnboardingQuestion;
+  $("ob-save").onclick = () => saveOnboarding(false);
+  $("ob-remove").onclick = () => saveOnboarding(true);
+  $("ob-preview").onclick = previewOnboarding;
+  $("si-answers").onclick = () => openOnboarding("change");
   $("events-close").replaceChildren(svgIcon("close", 18));
   $("events-close").onclick = closeEvents;
   $("event-create").onclick = () => openEventEditor(null);
@@ -13261,6 +13589,7 @@ function openServerInfo(server) {
     roles.appendChild(chip);
   }
   $("si-roles-wrap").classList.toggle("hidden", !held.length);
+  $("si-answers").classList.toggle("hidden", !server.onboarding);
   showModal("modal-server-info");
 }
 
@@ -13437,6 +13766,8 @@ function openServerSettings(tab) {
   const canSounds = manages || server.can_upload_sounds;
   $("tab-rules").classList.toggle("hidden", !server.can_manage_server);
   renderRulesSettings(server);
+  $("tab-onboarding").classList.toggle("hidden", !server.can_manage_server);
+  if (server.can_manage_server) renderOnboardingSettings(server);
   $("tab-automod").classList.toggle("hidden", !server.can_manage_server);
   if (server.can_manage_server) renderAutomodSettings(server);
   renderGameTagEditor(server);
@@ -13464,6 +13795,7 @@ function openServerSettings(tab) {
     soundboard: canSounds,
     reports: isOwner,
     rules: server.can_manage_server,
+    onboarding: server.can_manage_server,
     automod: server.can_manage_server,
     members: canMembers,
     audit: server.can_view_audit_log,
