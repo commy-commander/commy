@@ -4,7 +4,18 @@ import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { buildAuthOptions } from "../src/auth.js";
 import { discoveryDocument, featureSummary, loadConfig } from "../src/config.js";
-import { apicalypseString, cleanQuery, customerId, igdbResults, klipyResults, mediaHost, mediaUrl } from "../src/media.js";
+import {
+  apicalypseString,
+  cleanQuery,
+  customerId,
+  emojiggCatalog,
+  emojiggCategory,
+  emojiggSearch,
+  igdbResults,
+  klipyResults,
+  mediaHost,
+  mediaUrl,
+} from "../src/media.js";
 
 const ORIGIN = "http://localhost:3001";
 const ENV = { BETTER_AUTH_SECRET: "test-secret-".repeat(4), DATABASE_URL: "postgres://unused", BETTER_AUTH_URL: ORIGIN };
@@ -32,6 +43,7 @@ function fakeFetch(log) {
     const u = String(url);
     log.push({ url: u, init });
     if (u.startsWith("https://api.klipy.com/")) return Response.json(klipyBody);
+    if (u === "https://emoji.gg/api/") return Response.json(emojiggBody);
     if (u.startsWith("https://id.twitch.tv/")) return Response.json({ access_token: "twitch-token", expires_in: 3600 });
     if (u.startsWith("https://api.igdb.com/")) {
       return Response.json([{ id: 72, name: "Portal 2", cover: { image_id: "co1rs4" }, first_release_date: 1303171200 }]);
@@ -47,6 +59,15 @@ function fakeFetch(log) {
 }
 
 const GIF_BYTES = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
+
+const emojiggBody = [
+  { id: 3, title: "party_blob", image: "https://cdn3.emoji.gg/emojis/3_party_blob.gif", category: 6, faves: 9 },
+  { id: 2, title: "cat_wave", image: "https://cdn3.emoji.gg/emojis/2_cat_wave.png", category: 17, faves: 40 },
+  { id: 4, title: "spicy", image: "https://cdn3.emoji.gg/emojis/4_spicy.png", category: 9, faves: 99 },
+  { id: 5, title: "elsewhere", image: "https://evil.example/emojis/5.png", category: 17, faves: 1 },
+  { id: 6, title: "", image: "https://cdn3.emoji.gg/emojis/6.png", category: 17 },
+  { id: 7, title: "lewd_cat", image: "https://cdn3.emoji.gg/emojis/7_lewd_cat.png", category: 17 },
+];
 
 function makeAuth(extraEnv = {}) {
   const log = [];
@@ -86,6 +107,48 @@ test("KLIPY results keep https renditions only", () => {
   assert.deepEqual(klipyResults({ data: "nope" }), []);
 });
 
+test("the emoji.gg catalog keeps safe, named, CDN-hosted emojis, most loved first", () => {
+  const catalog = emojiggCatalog(emojiggBody);
+  assert.deepEqual(
+    catalog.map((e) => [e.id, e.title, e.animated]),
+    [
+      [2, "cat_wave", false],
+      [3, "party_blob", true],
+    ],
+  );
+  assert.deepEqual(emojiggCatalog({ nope: true }), []);
+});
+
+test("emoji.gg search matches every word, filters by category and pages", () => {
+  const catalog = emojiggCatalog(emojiggBody);
+  assert.deepEqual(emojiggSearch(catalog, { q: "Cat Wave" }).results.map((e) => e.id), [2]);
+  assert.deepEqual(emojiggSearch(catalog, { q: "cat party" }).results, []);
+  assert.deepEqual(emojiggSearch(catalog, { category: 6 }).results.map((e) => e.id), [3]);
+  assert.deepEqual(emojiggSearch(catalog, { page: 1 }), { results: [], more: false });
+  const many = Array.from({ length: 70 }, (_, i) => ({ id: i, title: `e${i}`, url: "https://cdn3.emoji.gg/emojis/x.png", animated: false, category: 1 }));
+  const first = emojiggSearch(many, {});
+  assert.equal(first.results.length, 60);
+  assert.equal(first.more, true);
+  assert.equal(emojiggSearch(many, { page: "1" }).results.length, 10);
+  assert.equal(emojiggCategory("6"), 6);
+  assert.equal(emojiggCategory("9"), null, "the adult category cannot be asked for");
+  assert.equal(emojiggCategory("x"), null);
+});
+
+test("emoji search needs a session and loads the catalog once", async () => {
+  const { call, signUp, log } = makeAuth();
+  assert.equal((await call("GET", "/commy/emojis/search", { query: { q: "cat" } })).status, 401);
+  assert.equal(log.length, 0);
+  const cookie = await signUp("emojis@example.test");
+  const r = await call("GET", "/commy/emojis/search", { cookie, query: { q: "cat" } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.deepEqual(r.json.results, [{ id: 2, title: "cat_wave", url: "https://cdn3.emoji.gg/emojis/2_cat_wave.png", animated: false }]);
+  assert.ok(r.json.categories.some((c) => c.name === "Reactions"));
+  assert.ok(!r.json.categories.some((c) => c.id === 9));
+  await call("GET", "/commy/emojis/search", { cookie, query: { category: "6" } });
+  assert.equal(log.filter((l) => l.url === "https://emoji.gg/api/").length, 1);
+});
+
 test("IGDB results drop unsafe cover ids and unnamed games", () => {
   const results = igdbResults([
     { id: 7, name: " Celeste ", cover: { image_id: "co3byy" }, first_release_date: 1516665600 },
@@ -115,9 +178,9 @@ test("customer ids are stable and do not reveal the account id", () => {
 
 test("discovery advertises only the searches with keys", () => {
   const none = discoveryDocument(loadConfig(ENV));
-  assert.deepEqual(none.features, { gifs: false, games: false, media: true, vault: true, doorbell: true, twoFactor: true, changeEmail: false });
+  assert.deepEqual(none.features, { gifs: false, games: false, emojis: true, media: true, vault: true, doorbell: true, twoFactor: true, changeEmail: false });
   const both = discoveryDocument(loadConfig({ ...ENV, KLIPY_API_KEY: KLIPY_KEY, TWITCH_CLIENT_ID: "id", TWITCH_CLIENT_SECRET: "s" }));
-  assert.deepEqual(both.features, { gifs: true, games: true, media: true, vault: true, doorbell: true, twoFactor: true, changeEmail: false });
+  assert.deepEqual(both.features, { gifs: true, games: true, emojis: true, media: true, vault: true, doorbell: true, twoFactor: true, changeEmail: false });
   assert.equal(both.endpoints.gifSearch, `${ORIGIN}/api/auth/commy/gifs/search`);
   assert.equal(both.endpoints.gameSearch, `${ORIGIN}/api/auth/commy/games/search`);
   assert.ok(!JSON.stringify(both).includes(KLIPY_KEY), "the key never appears in discovery");
@@ -198,6 +261,10 @@ test("only GIF and cover image URLs are accepted for loading", () => {
   assert.ok(mediaUrl("https://media.giphy.com/media/3o7aD2saalBwwftBIY/giphy-downsized-medium.gif"));
   assert.ok(mediaUrl("https://media0.giphy.com/media/3o7aD2saalBwwftBIY/giphy.webp"));
   assert.ok(mediaUrl("https://i.giphy.com/3o7aD2saalBwwftBIY.gif"));
+  assert.ok(mediaUrl("https://cdn3.emoji.gg/emojis/4384_falco_stare.png"));
+  assert.ok(mediaUrl("https://cdn3.emoji.gg/emojis/9025-party-blob.gif"));
+  assert.equal(mediaUrl("https://cdn3.emoji.gg/stickers/790374-smile.png"), null);
+  assert.equal(mediaUrl("https://cdn3.emoji.gg/emojis/x.png?size=1"), null);
   for (const bad of [
     "https://media10.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif",
     "https://api.giphy.com/v1/gifs/search",

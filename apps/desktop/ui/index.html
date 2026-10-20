@@ -170,6 +170,11 @@
       <div class="cam-grid hidden" id="cam-grid"></div>
       <div class="messages" id="messages"></div>
       <div class="emoji-picker hidden" id="emoji-picker">
+        <div class="picker-tabs" id="picker-tabs" role="tablist">
+          <button type="button" role="tab" data-kind="emojis" class="active">Emoji</button>
+          <button type="button" role="tab" data-kind="stickers">Stickers</button>
+          <button type="button" role="tab" data-kind="emoticons">Emoticons</button>
+        </div>
         <input id="emoji-search" type="text" placeholder="Search emojis" autocomplete="off" />
         <div class="emoji-grid" id="emoji-grid"></div>
       </div>
@@ -401,6 +406,39 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="stream-deck-deny">Don't allow</button>
         <button class="btn-primary" id="stream-deck-allow">Allow</button>
+      </div>
+    </div>
+
+    <div class="modal modal-catalog hidden" id="modal-catalog">
+      <div class="catalog-head">
+        <h2 id="catalog-title">Add from emoji.gg</h2>
+        <button class="icon-btn" id="catalog-close" title="Close"></button>
+      </div>
+      <input id="catalog-search" type="text" autocomplete="off" placeholder="Search emoji.gg" />
+      <div class="catalog-chips" id="catalog-chips"></div>
+      <div class="catalog-grid" id="catalog-grid"></div>
+      <div class="catalog-pick" id="catalog-pick">
+        <div class="catalog-pick-preview" id="catalog-pick-preview"></div>
+        <input id="catalog-name" type="text" maxlength="32" autocomplete="off" placeholder="Pick an image to name it" disabled />
+        <button class="btn-secondary btn-small" id="catalog-upload">Upload Image</button>
+        <button class="btn-primary btn-small" id="catalog-add" disabled>Add</button>
+      </div>
+      <div class="catalog-attrib">Images from <strong>emoji.gg</strong>, loaded through your account server.</div>
+    </div>
+
+    <div class="modal hidden" id="modal-emoticon">
+      <h2>Add an emoticon</h2>
+      <p>Type or paste a text face, or start from one of these.</p>
+      <div class="emoticon-ideas" id="emoticon-ideas"></div>
+      <label class="field-label">Emoticon
+        <input id="emoticon-text" type="text" maxlength="64" placeholder="(╯°□°)╯︵ ┻━┻" autocomplete="off" />
+      </label>
+      <label class="field-label">Name
+        <input id="emoticon-name" type="text" maxlength="32" placeholder="table_flip" autocomplete="off" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="emoticon-cancel">Cancel</button>
+        <button class="btn-primary" id="emoticon-save">Add</button>
       </div>
     </div>
 
@@ -1340,6 +1378,8 @@
         <button class="settings-tab" data-tab="rules" id="tab-rules">Rules</button>
         <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
         <button class="settings-tab" data-tab="emoji" id="tab-emoji">Emoji</button>
+        <button class="settings-tab" data-tab="stickers" id="tab-stickers">Stickers</button>
+        <button class="settings-tab" data-tab="emoticons" id="tab-emoticons">Emoticons</button>
         <button class="settings-tab" data-tab="soundboard" id="tab-soundboard">Soundboard</button>
         <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
         <button class="settings-tab" data-tab="invites" id="tab-invites">Invites</button>
@@ -1476,11 +1516,50 @@
             </div>
             <input type="checkbox" id="emoji-share-toggle" class="switch" />
           </label>
+          <div class="settings-card upload-access" id="emoji-access"></div>
           <div class="expr-toolbar">
-            <button class="btn-primary btn-small" id="emoji-upload">Upload Emoji</button>
+            <button class="btn-primary btn-small" id="emoji-browse">Browse emoji.gg</button>
+            <button class="btn-secondary btn-small" id="emoji-upload">Upload Emoji</button>
             <span class="expr-count" id="emoji-count"></span>
           </div>
           <div id="emoji-list" class="expr-list"></div>
+        </section>
+
+        <section class="settings-page" data-page="stickers">
+          <h1>Stickers</h1>
+          <div class="setting-sub expr-intro">Big images members send as a message of their own. Up to 30 per server. PNG, GIF, JPEG or WebP, resized to 320 px. Animated GIFs must be under 512 KB.</div>
+          <label class="settings-card setting-row" id="sticker-share-row">
+            <div>
+              <div class="setting-title">Allow use in other servers and DMs</div>
+              <div class="setting-sub">Members can send this server's stickers anywhere in Commy. They show up under the server's name in the sticker menu.</div>
+            </div>
+            <input type="checkbox" id="sticker-share-toggle" class="switch" />
+          </label>
+          <div class="settings-card upload-access" id="sticker-access"></div>
+          <div class="expr-toolbar">
+            <button class="btn-primary btn-small" id="sticker-browse">Browse emoji.gg</button>
+            <button class="btn-secondary btn-small" id="sticker-upload">Upload Sticker</button>
+            <span class="expr-count" id="sticker-count"></span>
+          </div>
+          <div id="sticker-list" class="expr-list sticker-list"></div>
+        </section>
+
+        <section class="settings-page" data-page="emoticons">
+          <h1>Emoticons</h1>
+          <div class="setting-sub expr-intro">Text faces like <code>¯\_(ツ)_/¯</code> saved under a name. Type <code>:name</code> in chat or pick them from the Emoticons tab. Up to 50 per server, one line of up to 64 characters each.</div>
+          <label class="settings-card setting-row" id="emoticon-share-row">
+            <div>
+              <div class="setting-title">Allow use in other servers and DMs</div>
+              <div class="setting-sub">Members see this server's emoticons in the Emoticons tab wherever they chat.</div>
+            </div>
+            <input type="checkbox" id="emoticon-share-toggle" class="switch" />
+          </label>
+          <div class="settings-card upload-access" id="emoticon-access"></div>
+          <div class="expr-toolbar">
+            <button class="btn-primary btn-small" id="emoticon-add">Add Emoticon</button>
+            <span class="expr-count" id="emoticon-count"></span>
+          </div>
+          <div id="emoticon-list" class="expr-list"></div>
         </section>
 
         <section class="settings-page" data-page="soundboard">
@@ -1790,6 +1869,7 @@
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
   <script src="scripts/emoji.js"></script>
+  <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>
   <script src="scripts/embeds.js"></script>
   <script src="scripts/link-preview.js"></script>

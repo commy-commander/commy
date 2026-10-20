@@ -34,6 +34,8 @@ pub struct ServerFeatures {
     #[serde(default)]
     pub games: bool,
     #[serde(default)]
+    pub emojis: bool,
+    #[serde(default)]
     pub media: bool,
     #[serde(default)]
     pub vault: bool,
@@ -62,6 +64,7 @@ impl AccountState {
                 (None, _) => true,
                 (Some(f), "gifs") => f.gifs,
                 (Some(f), "games") => f.games,
+                (Some(f), "emojis") => f.emojis,
                 _ => false,
             }
     }
@@ -207,13 +210,22 @@ struct SearchResponse<T> {
 }
 
 pub async fn server_search<T: serde::de::DeserializeOwned>(app: &App, kind: &str, query: &str) -> Result<Option<Vec<T>>, String> {
+    let found: Option<SearchResponse<T>> = server_search_with(app, kind, &[("q", query)]).await?;
+    Ok(found.map(|body| body.results))
+}
+
+pub async fn server_search_with<T: serde::de::DeserializeOwned>(
+    app: &App,
+    kind: &str,
+    query: &[(&str, &str)],
+) -> Result<Option<T>, String> {
     let credentials = app.account.lock().unwrap().credentials(kind);
     let Some((server, token)) = credentials else { return Ok(None) };
     let host = host_of(&server);
     let res = app
         .http
         .get(format!("{server}/api/auth/commy/{kind}/search"))
-        .query(&[("q", query)])
+        .query(query)
         .bearer_auth(token)
         .timeout(Duration::from_secs(15))
         .send()
@@ -226,8 +238,8 @@ pub async fn server_search<T: serde::de::DeserializeOwned>(app: &App, kind: &str
         429 => return Err("Too many searches, try again in a minute".into()),
         _ => return Err(format!("{host} could not search right now")),
     }
-    let body: SearchResponse<T> = res.json().await.map_err(|_| format!("{host} sent an unexpected reply"))?;
-    Ok(Some(body.results))
+    let body: T = res.json().await.map_err(|_| format!("{host} sent an unexpected reply"))?;
+    Ok(Some(body))
 }
 
 const MAX_MEDIA_BYTES: usize = 15 * 1024 * 1024;
@@ -252,19 +264,26 @@ pub async fn media_image(app: &App, request_uri: &str) -> tauri::http::Response<
     let Some(target) = media_target(request_uri) else {
         return media_response(400, "text/plain", Vec::new());
     };
+    match fetch_media(app, &target).await {
+        Ok((content_type, body)) => media_response(200, &content_type, body),
+        Err(status) => media_response(status, "text/plain", Vec::new()),
+    }
+}
+
+pub async fn fetch_media(app: &App, target: &str) -> Result<(String, Vec<u8>), u16> {
     let credentials = app.account.lock().unwrap().credentials("media");
-    let Some((server, token)) = credentials else { return media_response(404, "text/plain", Vec::new()) };
+    let Some((server, token)) = credentials else { return Err(404) };
     let res = app
         .http
         .get(format!("{server}/api/auth/commy/media"))
-        .query(&[("u", target.as_str())])
+        .query(&[("u", target)])
         .bearer_auth(token)
         .timeout(Duration::from_secs(20))
         .send()
-        .await;
-    let Ok(res) = res else { return media_response(502, "text/plain", Vec::new()) };
+        .await
+        .map_err(|_| 502u16)?;
     if !res.status().is_success() {
-        return media_response(res.status().as_u16(), "text/plain", Vec::new());
+        return Err(res.status().as_u16());
     }
     let content_type = res
         .headers()
@@ -273,11 +292,11 @@ pub async fn media_image(app: &App, request_uri: &str) -> tauri::http::Response<
         .unwrap_or("")
         .to_string();
     if !content_type.starts_with("image/") || res.content_length().unwrap_or(0) as usize > MAX_MEDIA_BYTES {
-        return media_response(502, "text/plain", Vec::new());
+        return Err(502);
     }
     match res.bytes().await {
-        Ok(body) if body.len() <= MAX_MEDIA_BYTES => media_response(200, &content_type, body.to_vec()),
-        _ => media_response(502, "text/plain", Vec::new()),
+        Ok(body) if body.len() <= MAX_MEDIA_BYTES => Ok((content_type, body.to_vec())),
+        _ => Err(502),
     }
 }
 
@@ -294,6 +313,7 @@ pub struct AccountView {
     pending_code: Option<String>,
     server_gifs: bool,
     server_games: bool,
+    server_emojis: bool,
     server_media: bool,
 }
 
@@ -314,6 +334,7 @@ fn view(app: &App) -> AccountView {
         pending_code,
         server_gifs: state.server_offers("gifs"),
         server_games: state.server_offers("games"),
+        server_emojis: state.server_offers("emojis"),
         server_media: state.server_offers("media"),
     }
 }
@@ -709,8 +730,9 @@ mod tests {
         };
         assert!(state.server_offers("gifs") && state.server_offers("games"));
         assert!(!state.server_offers("media"));
-        state.features = Some(ServerFeatures { gifs: true, games: false, media: true, vault: false });
+        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false });
         assert!(state.server_offers("gifs"));
+        assert!(state.server_offers("emojis"));
         assert!(!state.server_offers("games"));
         assert!(state.server_offers("media"));
         state.token = None;
@@ -729,7 +751,7 @@ mod tests {
         let mut with = base;
         with["features"] = serde_json::json!({ "gifs": true, "games": false });
         let new: Discovery = serde_json::from_value(with).unwrap();
-        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, media: false, vault: false }));
+        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false }));
     }
 
     #[test]

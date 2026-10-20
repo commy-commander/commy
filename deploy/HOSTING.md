@@ -105,11 +105,18 @@ worth extracting ships in the app. The GIF files and game covers load through
 the server as well (`/api/auth/commy/media`), so apps talk only to their
 account server and KLIPY and IGDB never see your users' addresses. That route
 needs a signed in app and fetches only from `static.klipy.com`,
-`images.igdb.com` and the GIPHY image hosts (`media*.giphy.com`,
-`i.giphy.com`), so it is not an open proxy; it holds up to 64 MB of recent
-images in memory. Budget for the image traffic: a chat GIF is usually 1 to 3 MB. The discovery document lists what is set up
+`images.igdb.com`, the GIPHY image hosts (`media*.giphy.com`,
+`i.giphy.com`) and emoji.gg's emoji images (`cdn3.emoji.gg/emojis/`), so it
+is not an open proxy; it holds up to 64 MB of recent images in memory. Budget
+for the image traffic: a chat GIF is usually 1 to 3 MB. The discovery document lists what is set up
 under `features`, and the app hides a search your server does not offer
 (GIF button, game suggestions) unless the user adds a key of their own.
+
+Emoji search (`/api/auth/commy/emojis/search`, used when adding server emojis
+and stickers) needs no key. The server downloads emoji.gg's public catalog
+(about 2 MB) on the first search, keeps it in memory for six hours, leaves out
+the adult category and searches it locally, so emoji.gg sees only your
+server, never your users.
 
 1. **Twitch app** (sign-in and game search). Sign in at
    https://dev.twitch.tv/console/apps (Twitch asks you to turn on two-factor
