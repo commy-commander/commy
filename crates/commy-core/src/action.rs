@@ -128,6 +128,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::EmoticonAdd { emoticon, .. } => format!("emoticon:{}", emoticon.name),
         E::EmoticonRemove { name, .. } => format!("emoticon:{name}"),
         E::ServerDelete { .. } => "deleted".into(),
+        E::OwnerTransfer { .. } => "owner".into(),
         E::InviteTrack { invite, .. } => format!("invite:{}", invite.id()),
         E::InviteRevoke { origin, code, .. } => format!("invite:{}", crate::invites::invite_id(origin, code)),
         E::InviteBackgroundSet { .. } => "invite_background".into(),
@@ -283,6 +284,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
         E::MemberTimeout { user, .. } => *user != by && actor(event) == Some(by) && allows(Permissions::TIME_OUT_MEMBERS),
         E::ServerDelete { .. } => by == server.owner,
+        E::OwnerTransfer { user, .. } => by == server.owner && *user != by && server.is_member(*user),
         E::InviteTrack { invite, .. } => member && invite.creator == by && allows(Permissions::CREATE_INVITES),
         E::InviteRevoke { creator, .. } => allows(Permissions::MANAGE_SERVER) || (member && *creator == by),
         E::InviteBackgroundSet { .. } => allows(Permissions::MANAGE_SERVER),
@@ -414,6 +416,28 @@ mod tests {
             assert!(!authorized(&state.server, plain, event), "{event:?}");
             assert!(!authorized(&state.server, UserId::new(), event), "stranger {event:?}");
         }
+    }
+
+    #[test]
+    fn only_the_owner_hands_the_server_over_and_only_to_a_member() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let admin = join(&mut state, "admin");
+        let plain = join(&mut state, "plain");
+        let admin_role = role(Permissions::ADMINISTRATOR, false);
+        let rid = admin_role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: admin_role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: admin, role: rid }).unwrap();
+        let transfer = |user| ServerEvent::OwnerTransfer { server: sid, user };
+        assert!(authorized(&state.server, owner, &transfer(plain)));
+        assert!(!authorized(&state.server, admin, &transfer(admin)), "administrators cannot take the server");
+        assert!(!authorized(&state.server, owner, &transfer(owner)));
+        assert!(!authorized(&state.server, owner, &transfer(UserId::new())), "only to a member");
+        assert_eq!(state.apply(transfer(plain)), Ok(true));
+        assert_eq!(state.server.owner, plain);
+        assert_eq!(state.apply(transfer(plain)), Ok(false));
+        assert!(authorized(&state.server, plain, &ServerEvent::ServerDelete { server: sid }));
+        assert!(!authorized(&state.server, owner, &ServerEvent::ServerDelete { server: sid }), "the old owner is a member now");
     }
 
     #[test]

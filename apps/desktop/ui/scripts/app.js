@@ -694,6 +694,13 @@ async function mockInvoke(cmd, args = {}) {
     case "leave_server":
       delete mock.servers[args.serverId];
       return null;
+    case "transfer_ownership": {
+      const s = mock.servers[args.serverId];
+      if (!s || args.confirmName.trim() !== s.name.trim()) throw "type the server name exactly as it is shown to hand it over";
+      if (!s.members.some(m => m.id === args.userId)) throw "pick another member of this server";
+      s.owner = args.userId;
+      return null;
+    }
     case "delete_server": {
       const s = mock.servers[args.serverId];
       if (!s || args.confirmName.trim() !== s.name.trim()) throw "type the server name exactly as it is shown to delete it";
@@ -1719,6 +1726,47 @@ function openLeaveServer(serverId) {
 }
 
 let deletingServerId = null;
+
+function openTransferOwner(server) {
+  const pick = $("transfer-owner-pick");
+  pick.replaceChildren();
+  const others = server.members.filter(m => !(state.user && m.id === state.user.id) && m.id !== server.owner && !m.bot);
+  for (const member of others) {
+    const option = el("option", null, member.name);
+    option.value = member.id;
+    pick.appendChild(option);
+  }
+  if (!others.length) {
+    toast("There is nobody else here to hand the server to");
+    return;
+  }
+  const input = $("transfer-owner-input");
+  input.value = "";
+  input.placeholder = server.name;
+  const go = $("transfer-owner-go");
+  go.disabled = true;
+  input.oninput = () => {
+    go.disabled = input.value.trim() !== server.name.trim();
+  };
+  showModal("modal-transfer-owner");
+  input.focus();
+}
+
+async function confirmTransferOwner() {
+  const server = state.currentServer;
+  if (!server) return;
+  const pick = $("transfer-owner-pick");
+  const name = pick.selectedOptions[0] ? pick.selectedOptions[0].textContent : "them";
+  try {
+    await invoke("transfer_ownership", { serverId: server.id, userId: pick.value, confirmName: $("transfer-owner-input").value });
+    hideModals();
+    await refreshCurrentServer();
+    if (!$("server-settings").classList.contains("hidden")) openServerSettings("overview");
+    toast(`${name} now owns ${server.name}`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
 
 function openDeleteServer(server) {
   deletingServerId = server.id;
@@ -11271,6 +11319,12 @@ function wireEvents() {
     if (e.key === "Enter" && !$("delete-server-go").disabled) confirmDeleteServer();
   });
   $("server-delete-open").onclick = () => state.currentServer && openDeleteServer(state.currentServer);
+  $("server-transfer-open").onclick = () => state.currentServer && openTransferOwner(state.currentServer);
+  $("transfer-owner-cancel").onclick = hideModals;
+  $("transfer-owner-go").onclick = confirmTransferOwner;
+  $("transfer-owner-input").onkeydown = e => {
+    if (e.key === "Enter" && !$("transfer-owner-go").disabled) confirmTransferOwner();
+  };
   $("audit-group").onchange = paintAuditLog;
   $("audit-actor").onchange = paintAuditLog;
   $("fm-ungroup").onclick = () => {
@@ -11705,6 +11759,10 @@ function wireEvents() {
     window.__TAURI__.event.listen("timed-out", event => {
       const { until } = event.payload || {};
       toast(timeoutActive(until) ? `A moderator timed you out for ${timeoutLeftText(until)}` : "A moderator removed your timeout");
+    });
+    window.__TAURI__.event.listen("owner-changed", event => {
+      const { name, who, mine } = event.payload;
+      toast(mine ? `You now own ${name || "a server"}` : `${who || "Someone else"} now owns ${name || "a server"}`);
     });
     window.__TAURI__.event.listen("server-deleted", async event => {
       toast(`${event.payload.name || "A server"} was deleted by its owner`);

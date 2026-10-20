@@ -4444,6 +4444,33 @@ fn on_server_deleted(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice
 }
 
 #[tauri::command]
+async fn transfer_ownership(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    user_id: String,
+    confirm_name: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        if state.server.owner != me.id {
+            return Err("only the owner can hand over this server".into());
+        }
+        if user == me.id || !state.server.is_member(user) {
+            return Err("pick another member of this server".into());
+        }
+        if confirm_name.trim() != state.server.name.trim() {
+            return Err("type the server name exactly as it is shown to hand it over".into());
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::OwnerTransfer { server: sid, user }).await
+}
+
+#[tauri::command]
 async fn delete_server(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -6049,6 +6076,19 @@ fn apply_voice_gates(app: &App) {
     }
 }
 
+fn announce_new_owner(app: &App, handle: &tauri::AppHandle, sid: ServerId, user: UserId) {
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let (name, who) = {
+        let servers = app.servers.lock().unwrap();
+        let Some(state) = servers.get(&sid) else { return };
+        (state.server.name.clone(), view::display_name(state, user))
+    };
+    let _ = handle.emit(
+        "owner-changed",
+        serde_json::json!({ "server": sid.to_string(), "name": name, "user": user.to_string(), "who": who, "mine": me == Some(user) }),
+    );
+}
+
 fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
@@ -6175,6 +6215,10 @@ async fn run_net_loop(
                     ServerEvent::MemberBan { user, .. } => app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == *user),
                     _ => false,
                 };
+                let new_owner = match &event {
+                    ServerEvent::OwnerTransfer { user, .. } => Some(*user),
+                    _ => None,
+                };
                 let voice_update = match &event {
                     ServerEvent::VoiceState { user, channel, .. } => Some((*user, *channel)),
                     _ => None,
@@ -6224,6 +6268,9 @@ async fn run_net_loop(
                             continue;
                         }
                         app.persist_server(server);
+                        if let Some(user) = new_owner {
+                            announce_new_owner(&app, &handle, server, user);
+                        }
                         if let Some(event) = &new_emoji {
                             prefetch_emoji(&handle, event);
                         }
@@ -6993,6 +7040,7 @@ pub fn run() {
             kick_member,
             leave_server,
             delete_server,
+            transfer_ownership,
             audit_log,
             update_profile,
             start_mic_test,

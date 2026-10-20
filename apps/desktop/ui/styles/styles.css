@@ -2332,7 +2332,8 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   border-radius: var(--radius);
   padding: 16px;
 }
-.danger-zone .btn-danger { flex-shrink: 0; }
+.danger-zone .btn-danger, .danger-zone .btn-secondary { flex-shrink: 0; }
+.danger-zone + .danger-zone { margin-top: 12px; }
 
 .danger-callout {
   display: flex;

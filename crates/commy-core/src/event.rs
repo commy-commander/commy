@@ -254,6 +254,10 @@ pub enum ServerEvent {
         user: UserId,
         nickname: Option<String>,
     },
+    OwnerTransfer {
+        server: ServerId,
+        user: UserId,
+    },
 }
 
 #[cfg(test)]
