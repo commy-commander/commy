@@ -40,6 +40,7 @@ pub struct DirectoryPage {
     pub entries: Vec<DirectoryEntry>,
     pub next_cursor: Option<String>,
     pub host: String,
+    pub available: bool,
 }
 
 #[derive(Deserialize)]
@@ -188,6 +189,7 @@ pub async fn publish_listing(
     }
     let token = signed_in_token(&app)?;
     let origin = crate::account::effective_server();
+    require_directory(&app, &origin).await?;
     let link = permanent_link(&app, &handle, &server_id, sid, &origin).await?;
     let body = serde_json::json!({
         "code": link.code,
@@ -261,8 +263,34 @@ pub async fn browse_directory(
             pairs.append_pair("cursor", cursor);
         }
     }
-    let reply: ListResponse = invite_link::account_call(app.http.get(url), &origin).await?;
-    Ok(DirectoryPage { entries: entries_from(&origin, reply.listings), next_cursor: reply.next_cursor, host: host_of(&origin) })
+    let host = host_of(&origin);
+    Ok(match fetch_list(&app, url, &origin).await? {
+        Some(reply) => DirectoryPage { entries: entries_from(&origin, reply.listings), next_cursor: reply.next_cursor, host, available: true },
+        None => DirectoryPage { entries: Vec::new(), next_cursor: None, host, available: false },
+    })
+}
+
+async fn fetch_list(app: &App, url: Url, origin: &str) -> Result<Option<ListResponse>, String> {
+    let res = app.http.get(url).send().await.map_err(|_| format!("Could not reach {}", host_of(origin)))?;
+    if directory_missing(res.status()) {
+        return Ok(None);
+    }
+    if !res.status().is_success() {
+        return Err(invite_link::error_message(res).await);
+    }
+    Ok(res.json::<ListResponse>().await.ok())
+}
+
+async fn require_directory(app: &App, origin: &str) -> Result<(), String> {
+    let url = Url::parse(&format!("{origin}/api/auth/commy/directory/list")).map_err(|e| e.to_string())?;
+    match fetch_list(app, url, origin).await? {
+        Some(_) => Ok(()),
+        None => Err(format!("{} does not list public servers yet", host_of(origin))),
+    }
+}
+
+fn directory_missing(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::METHOD_NOT_ALLOWED || status.is_redirection()
 }
 
 pub fn load(dir: &std::path::Path) -> HashMap<ServerId, Listing> {
@@ -304,6 +332,18 @@ mod tests {
         assert_eq!(listing_name("  Rust   Hangout "), "Rust Hangout");
         assert_eq!(listing_name("   "), "Server");
         assert_eq!(listing_name(&"n".repeat(100)).chars().count(), NAME_MAX);
+    }
+
+    #[test]
+    fn account_servers_without_a_directory_read_as_unavailable() {
+        use reqwest::StatusCode;
+        assert!(directory_missing(StatusCode::NOT_FOUND));
+        assert!(directory_missing(StatusCode::METHOD_NOT_ALLOWED));
+        assert!(directory_missing(StatusCode::FOUND));
+        assert!(directory_missing(StatusCode::TEMPORARY_REDIRECT));
+        assert!(!directory_missing(StatusCode::OK));
+        assert!(!directory_missing(StatusCode::BAD_REQUEST));
+        assert!(!directory_missing(StatusCode::INTERNAL_SERVER_ERROR));
     }
 
     #[test]

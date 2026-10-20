@@ -7,7 +7,7 @@ import { join } from "node:path";
 const require = createRequire(import.meta.url);
 const {
   DIRECTORY_CATEGORIES, DIRECTORY_BUCKETS, DIRECTORY_DESCRIPTION_MAX, directoryCategoryLabel, memberBucket, memberBucketLabel,
-  normalizeDirectorySearch, directoryExcerpt, directoryDescriptionCounter, discoverySettingsState,
+  normalizeDirectorySearch, directoryExcerpt, directoryDescriptionCounter, discoverySettingsState, discoverEmptyView,
 } = require("../scripts/directory.js");
 
 const repo = join(import.meta.dirname, "..", "..", "..", "..");
@@ -78,4 +78,20 @@ test("the settings section is only live for managers of a public server", () => 
   const listed = discoverySettingsState({ server: manager, listing: { code: "KQ7M3N4P" } });
   assert.equal(listed.listed, true);
   assert.match(listed.hint, /Listed in Discover/);
+});
+
+test("the Discover screen always lands on a clear state instead of a blank panel", () => {
+  assert.equal(discoverEmptyView({ loading: true }).title, "Looking for servers");
+  const missing = discoverEmptyView({ unavailable: true, host: "commy.chat" });
+  assert.equal(missing.title, "Discover is not available yet");
+  assert.match(missing.text, /commy\.chat/);
+  assert.equal(missing.retry, true);
+  const failed = discoverEmptyView({ error: "Could not reach commy.chat" });
+  assert.equal(failed.title, "Could not load Discover");
+  assert.equal(failed.text, "Could not reach commy.chat");
+  assert.equal(failed.retry, true);
+  assert.equal(discoverEmptyView({ filtered: true }).title, "No servers found");
+  assert.equal(discoverEmptyView({}).title, "No public servers yet");
+  assert.equal(discoverEmptyView({}).retry, false);
+  assert.match(discoverEmptyView({ unavailable: true }).text, /^Your account server does not/);
 });
