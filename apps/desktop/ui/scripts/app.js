@@ -199,6 +199,9 @@ function mockSeed() {
       content: "Welcome to Commy, a private P2P chat app.", created_at: new Date(Date.now() - 3600e3).toISOString(), edited: false, attachments: [] },
     { id: "x2", channel: c0, author_id: "m2", author_name: "nova",
       content: "No central servers, no paywall. Everything peer to peer.", created_at: new Date(Date.now() - 1800e3).toISOString(), edited: false, attachments: [] },
+    { id: "x2b", channel: c0, author_id: "m1", author_name: "ferris",
+      content: "## Patch notes\n**Bold**, *italic*, __underline__, ~~struck~~, `inline code`, ||a spoiler|| and a [masked link](https://commy.chat).\n> Quoted from the changelog\n- noise gate tuned\n- overlay fixed\n```rust\nfn main() {\n    println!(\"hello\"); // 42\n}\n```\nShipped <t:1760900000:R>.",
+      created_at: new Date(Date.now() - 1500e3).toISOString(), edited: true, attachments: [] },
     { id: "x3", channel: c0, author_id: "me", author_name: mock.user ? mock.user.username : "you",
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
     { id: "x4", channel: c0, author_id: "m2", author_name: "nova",
@@ -2996,8 +2999,8 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   if (message.content) {
     if (!isBareImageLink(message.content)) {
       const content = buildMessageContent(message.content);
-      if (message.edited) content.appendChild(el("span", "edited", " (edited)"));
-      if (inlineMark) content.appendChild(pendingMark());
+      if (message.edited) appendAfterText(content, el("span", "edited", " (edited)"));
+      if (inlineMark) appendAfterText(content, pendingMark());
       inlineMark = false;
       body.appendChild(content);
     }
@@ -3653,6 +3656,7 @@ async function sendThreadReply() {
   const content = input.value.trim();
   if (!content || !state.threadRoot || !state.currentChannel) return;
   input.value = "";
+  fitComposer(input);
   try {
     await invoke("send_message", {
       serverId: state.currentServer.id,
@@ -3664,6 +3668,7 @@ async function sendThreadReply() {
     await selectChannel(state.currentChannel);
   } catch (e) {
     input.value = content;
+    fitComposer(input);
     toast(String(e));
   }
 }
@@ -4263,49 +4268,126 @@ async function toggleAudioPop(which, anchor) {
 
 function renderMarkdown(text) {
   const root = el("div", "md");
-  let list = null;
-  for (const raw of String(text || "").split("\n")) {
-    const line = raw.trimEnd();
-    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
-    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
-    const numbered = /^\s*(\d+)[.)]\s+(.*)$/.exec(line);
-    if (bullet || numbered) {
-      const tag = bullet ? "ul" : "ol";
-      if (!list || list.tagName.toLowerCase() !== tag) {
-        list = el(tag);
-        if (numbered) list.start = Number(numbered[1]);
-        root.appendChild(list);
-      }
-      const li = el("li");
-      appendInlineMarkdown(li, bullet ? bullet[1] : numbered[2]);
-      list.appendChild(li);
-      continue;
-    }
-    list = null;
-    if (!line.trim()) continue;
-    const node = el(heading ? `h${heading[1].length + 2}` : "p");
-    appendInlineMarkdown(node, heading ? heading[2] : line);
-    root.appendChild(node);
-  }
+  renderBlocks(root, parseMessage(text));
   return root;
 }
 
-function appendInlineMarkdown(node, text) {
-  const re = /\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`|(https?:\/\/[^\s<>"']+)/g;
-  let last = 0;
-  let m;
-  while ((m = re.exec(text))) {
-    if (m.index > last) node.appendChild(document.createTextNode(text.slice(last, m.index)));
-    if (m[1]) node.appendChild(el("strong", null, m[1]));
-    else if (m[2]) node.appendChild(el("em", null, m[2]));
-    else if (m[3]) node.appendChild(el("code", null, m[3]));
-    else {
-      const url = m[4];
-      node.appendChild(wireExternalLink(el("a", null, url), url));
-    }
-    last = m.index + m[0].length;
+function renderBlocks(parent, blocks) {
+  for (const block of blocks) {
+    const node = renderBlock(block);
+    if (block.gapAfter) node.classList.add("gap-after");
+    parent.appendChild(node);
   }
-  if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
+}
+
+function renderBlock(block) {
+  if (block.type === "codeblock") return renderCodeBlock(block);
+  if (block.type === "heading") return renderInlineInto(el(`h${block.level}`, "md-heading"), block.children);
+  if (block.type === "quote") {
+    const quote = el("blockquote", "md-quote");
+    renderBlocks(quote, block.children);
+    return quote;
+  }
+  if (block.type === "list") {
+    const list = el(block.ordered ? "ol" : "ul", "md-list");
+    if (block.ordered && block.start !== 1) list.start = block.start;
+    for (const item of block.items) list.appendChild(renderInlineInto(el("li"), item));
+    return list;
+  }
+  return renderInlineInto(el("div", "md-para"), block.children);
+}
+
+function renderCodeBlock(block) {
+  const pre = el("pre", "md-code");
+  if (block.lang) pre.appendChild(el("span", "md-code-lang", block.lang));
+  const code = el("code");
+  for (const token of highlightCode(block.code, block.lang)) {
+    code.appendChild(token.kind === "plain" ? document.createTextNode(token.text) : el("span", `tok-${token.kind}`, token.text));
+  }
+  pre.appendChild(code);
+  return pre;
+}
+
+function renderInlineInto(parent, nodes) {
+  for (const node of nodes) parent.appendChild(renderInlineNode(node));
+  return parent;
+}
+
+const INLINE_TAGS = { strong: "strong", em: "em", underline: "u", strike: "s" };
+
+function renderInlineNode(node) {
+  if (node.type === "text") {
+    const span = document.createDocumentFragment();
+    appendMessageText(span, node.text);
+    return span;
+  }
+  if (node.type === "br") return el("br");
+  if (node.type === "code") return el("code", "md-inline-code", node.text);
+  if (node.type === "spoiler") return renderSpoiler(node);
+  if (node.type === "link") {
+    const a = wireExternalLink(el("a", "md-link"), node.url);
+    a.title = node.url;
+    return renderInlineInto(a, node.children);
+  }
+  if (node.type === "time") return renderTimestamp(node);
+  return renderInlineInto(el(INLINE_TAGS[node.type] || "span"), node.children);
+}
+
+function renderSpoiler(node) {
+  const span = el("span", "spoiler");
+  span.setAttribute("role", "button");
+  span.title = "Click to reveal";
+  renderInlineInto(span, node.children);
+  span.addEventListener("click", e => {
+    if (span.classList.contains("revealed")) return;
+    e.stopPropagation();
+    span.classList.add("revealed");
+    span.title = "";
+  });
+  return span;
+}
+
+const TIMESTAMP_FORMATS = {
+  t: { hour: "2-digit", minute: "2-digit" },
+  T: { hour: "2-digit", minute: "2-digit", second: "2-digit" },
+  d: { year: "numeric", month: "2-digit", day: "2-digit" },
+  D: { year: "numeric", month: "long", day: "numeric" },
+  f: { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" },
+  F: { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" },
+};
+
+function relativeTimestamp(date) {
+  const seconds = Math.round((date.getTime() - Date.now()) / 1000);
+  const units = [["year", 31536000], ["month", 2592000], ["week", 604800], ["day", 86400], ["hour", 3600], ["minute", 60]];
+  const rtf = new Intl.RelativeTimeFormat([], { numeric: "auto" });
+  for (const [unit, size] of units) {
+    if (Math.abs(seconds) >= size) return rtf.format(Math.round(seconds / size), unit);
+  }
+  return rtf.format(seconds, "second");
+}
+
+function renderTimestamp(node) {
+  const date = new Date(node.unix * 1000);
+  const time = el("time", "md-time");
+  time.dateTime = date.toISOString();
+  time.textContent = node.style === "R" ? relativeTimestamp(date) : date.toLocaleString([], TIMESTAMP_FORMATS[node.style] || TIMESTAMP_FORMATS.f);
+  time.title = date.toLocaleString([], TIMESTAMP_FORMATS.F);
+  return time;
+}
+
+function appendMessageText(parent, text) {
+  const urlRe = /https?:\/\/[^\s<>"']+/g;
+  let last = 0;
+  let match;
+  while ((match = urlRe.exec(text))) {
+    if (match.index > last) appendRichText(parent, text.slice(last, match.index));
+    const url = match[0];
+    const a = wireExternalLink(el("a", null, url), url);
+    a.title = `Open ${url}`;
+    parent.appendChild(a);
+    last = match.index + url.length;
+  }
+  if (last < text.length) appendRichText(parent, text.slice(last));
 }
 
 function mediaProxyOn() {
@@ -6434,7 +6516,7 @@ function decodeCustomEmojis(text) {
 }
 
 function plainText(text) {
-  return decodeCustomEmojis(text).replace(/<:[^>\s]*$/, "");
+  return stripMarkdown(decodeCustomEmojis(text).replace(/<:[^>\s]*$/, ""));
 }
 
 function isEmojiOnly(text) {
@@ -7197,28 +7279,19 @@ function wireSuggestions(input, { commands = false } = {}) {
   }, { capture: true });
 }
 
+function appendAfterText(content, mark) {
+  const last = content.lastElementChild;
+  if (last && last.classList.contains("md-para")) last.appendChild(mark);
+  else content.appendChild(mark);
+}
+
 function buildMessageContent(text) {
   const div = el("div", "msg-content");
   if (looksLikeInviteLink(text)) {
     div.appendChild(inviteCard(text));
     return div;
   }
-  const urlRe = /https?:\/\/[^\s<>"']+/g;
-  let last = 0;
-  let match;
-  while ((match = urlRe.exec(text))) {
-    if (match.index > last) {
-      appendRichText(div, text.slice(last, match.index));
-    }
-    const url = match[0];
-    const a = wireExternalLink(el("a", null, url), url);
-    a.title = `Open ${url}`;
-    div.appendChild(a);
-    last = match.index + url.length;
-  }
-  if (last < text.length) {
-    appendRichText(div, text.slice(last));
-  }
+  renderBlocks(div, parseMessage(text));
   if (isEmojiOnly(text)) div.classList.add("jumbo");
   const invite = inviteCard(text);
   if (invite) div.appendChild(invite);
@@ -8106,11 +8179,13 @@ async function sendDm() {
   const content = input.value.trim();
   if (!content || !state.currentDm) return;
   input.value = "";
+  fitComposer(input);
   try {
     await invoke("send_dm", { userId: state.currentDm.user, content: encodeCustomEmojis(content) });
     await selectDm(state.currentDm.user, state.currentDm.name);
   } catch (e) {
     input.value = content;
+    fitComposer(input);
     toast(String(e));
   }
 }
@@ -8136,6 +8211,7 @@ async function sendMessage() {
   const gif = input.value.trim().match(/^\/gif(?:\s+(.*))?$/i);
   if (gif) {
     input.value = "";
+  fitComposer(input);
     openGifPicker(gif[1] || "");
     return;
   }
@@ -8143,6 +8219,7 @@ async function sendMessage() {
   const content = input.value.trim();
   if (!content || !state.currentServer || !state.currentChannel) return;
   input.value = "";
+  fitComposer(input);
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
   $("messages").dataset.view = "";
   state.historyAnchor = null;
@@ -8161,6 +8238,7 @@ async function sendMessage() {
     await selectChannel(state.currentChannel);
   } catch (e) {
     input.value = content;
+    fitComposer(input);
     toast(String(e));
   }
 }
@@ -9539,9 +9617,14 @@ function wireEvents() {
   $("thread-head-icon").appendChild(svgIcon("thread", 20));
   $("thread-close").onclick = closeThread;
   $("thread-input").addEventListener("keydown", e => {
-    if (e.key === "Enter") sendThreadReply();
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendThreadReply();
+    }
     if (e.key === "Escape") closeThread();
   });
+  wireComposerFormatting($("message-input"));
+  wireComposerFormatting($("thread-input"));
   $("message-input").addEventListener("keydown", e => {
     if (e.key === "Escape" && state.replyingTo) cancelReply();
   });
@@ -10230,6 +10313,24 @@ function insertIntoComposer(text) {
   input.focus();
   const next = pos + text.length;
   input.setSelectionRange(next, next);
+  fitComposer(input);
+}
+
+function fitComposer(input) {
+  input.rows = composerRows(input.value);
+}
+
+function wireComposerFormatting(input) {
+  input.addEventListener("input", () => fitComposer(input));
+  input.addEventListener("keydown", e => {
+    const marker = formatShortcut(e);
+    if (!marker) return;
+    e.preventDefault();
+    const wrapped = toggleWrap(input.value, input.selectionStart, input.selectionEnd, marker);
+    input.value = wrapped.value;
+    input.setSelectionRange(wrapped.start, wrapped.end);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 const PERMISSION_LABELS = [
