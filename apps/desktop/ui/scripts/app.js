@@ -1788,6 +1788,90 @@ function saveAppearance(prefs) {
   try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(prefs)); } catch {}
 }
 
+const OS_REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+const OS_DARK_QUERY = "(prefers-color-scheme: dark)";
+
+function osPrefers(query) {
+  return typeof matchMedia === "function" && matchMedia(query).matches;
+}
+
+function loadAccessibility() {
+  let raw = null;
+  try { raw = localStorage.getItem(ACCESSIBILITY_KEY); } catch {}
+  return readAccessibility(raw, availableLanguages().map(l => l.code));
+}
+
+function applyTranslations(root) {
+  for (const node of root.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
+  for (const node of root.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
+}
+
+function renderAccessibilitySettings(prefs, resolved) {
+  $("reduced-motion-toggle").checked = resolved.reducedMotion;
+  $("reduced-motion-hint").classList.toggle("hidden", !resolved.followsOsMotion);
+  $("saturation").value = resolved.saturation;
+  $("saturation-label").textContent = `${resolved.saturation}%`;
+  $("high-contrast-toggle").checked = resolved.highContrast;
+  $("theme-select").value = prefs.theme;
+  const languages = $("language-select");
+  languages.replaceChildren(...availableLanguages().map(l => new Option(l.label, l.code)));
+  languages.value = prefs.language;
+}
+
+function applyAccessibility(prefs) {
+  const resolved = resolveAccessibility(prefs, { reducedMotion: osPrefers(OS_REDUCED_MOTION_QUERY), dark: osPrefers(OS_DARK_QUERY) });
+  const html = document.documentElement;
+  for (const [name, value] of Object.entries(accessibilityAttributes(resolved))) {
+    if (value === null) html.removeAttribute(name);
+    else html.setAttribute(name, value);
+  }
+  html.style.setProperty("--saturation", saturationCss(resolved));
+  html.lang = setLanguage(resolved.language);
+  applyTranslations(document);
+  renderAccessibilitySettings(prefs, resolved);
+  return resolved;
+}
+
+function saveAccessibility(prefs) {
+  try { localStorage.setItem(ACCESSIBILITY_KEY, writeAccessibility(prefs)); } catch {}
+  applyAccessibility(prefs);
+}
+
+function wireAccessibility() {
+  const prefs = loadAccessibility();
+  applyAccessibility(prefs);
+  if (typeof matchMedia === "function") {
+    for (const query of [OS_REDUCED_MOTION_QUERY, OS_DARK_QUERY]) {
+      matchMedia(query).addEventListener("change", () => applyAccessibility(prefs));
+    }
+  }
+  $("reduced-motion-toggle").addEventListener("change", e => {
+    prefs.reducedMotion = e.target.checked;
+    saveAccessibility(prefs);
+  });
+  $("saturation").addEventListener("input", e => {
+    prefs.saturation = Number(e.target.value);
+    saveAccessibility(prefs);
+  });
+  $("high-contrast-toggle").addEventListener("change", e => {
+    prefs.highContrast = e.target.checked;
+    saveAccessibility(prefs);
+  });
+  $("theme-select").addEventListener("change", e => {
+    prefs.theme = e.target.value;
+    saveAccessibility(prefs);
+  });
+  $("language-select").addEventListener("change", e => {
+    prefs.language = e.target.value;
+    saveAccessibility(prefs);
+  });
+}
+
+function paintRole(node, color) {
+  node.style.color = color ? `#${color}` : "";
+  node.classList.toggle("role-ink", Boolean(color));
+}
+
 function toast(message, { avatar = null, onClick = null } = {}) {
   const node = $("toast");
   node.replaceChildren(...(avatar ? [avatar] : []), el("span", "toast-text", message));
@@ -4385,7 +4469,7 @@ function renderMembers() {
   const group = (title, members, dim, color) => {
     if (!members.length) return;
     const heading = el("div", "member-group", `${title} - ${members.length}`);
-    if (color) heading.style.color = `#${color}`;
+    paintRole(heading, color);
     list.appendChild(heading);
     for (const member of members) {
       const row = el("div", "member" + (dim ? " offline" : ""));
@@ -4397,7 +4481,7 @@ function renderMembers() {
       row.appendChild(avatar);
       const meta = el("div");
       const nameRow = el("div", "member-name", member.name);
-      if (member.color) nameRow.style.color = `#${member.color}`;
+      paintRole(nameRow, member.color);
       if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
       if (timeoutActive(member.timeout_until)) nameRow.appendChild(timeoutBadge(member.timeout_until));
@@ -6514,7 +6598,8 @@ function onUpdateStatus(status) {
   updateStatus = status;
   const ready = status && status.phase === "ready";
   $("settings-btn").classList.toggle("update-ready", !!ready);
-  $("settings-btn").title = ready ? "Settings (update ready)" : "Settings";
+  $("settings-btn").dataset.i18nTitle = ready ? "nav.settings.updateReady" : "nav.settings";
+  $("settings-btn").title = t($("settings-btn").dataset.i18nTitle);
   if (ready && !wasReady && openSettingsLayerId() !== "user-settings") {
     toast(`Commy ${status.version} is ready. Restart from Settings > Updates.`);
   }
@@ -8372,7 +8457,7 @@ function roleTagChip(tag, color) {
   if (isEmojiTag(tag)) return el("span", "role-tag emoji", tag);
   const chip = el("span", "role-tag", tag);
   if (color) {
-    chip.style.color = `#${color}`;
+    paintRole(chip, color);
     chip.style.borderColor = `#${color}66`;
   }
   return chip;
@@ -8565,7 +8650,7 @@ async function openFullProfile(member) {
   paintAvatar(av, person.id, person.name);
   av.appendChild(el("span", "presence-dot " + (person.presence || "offline")));
   $("fp-name").textContent = person.name;
-  $("fp-name").style.color = person.color ? `#${person.color}` : "";
+  paintRole($("fp-name"), person.color);
   $("fp-name").parentElement.querySelector(".role-tag")?.remove();
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = [person.username ? `@${person.username}` : "", person.pronouns || ""].filter(Boolean).join(" \u00b7 ");
@@ -8671,7 +8756,7 @@ function openMemberCard(member, anchor) {
   av.appendChild(el("span", "presence-dot " + (member.presence || "offline")));
   const name = $("mc-name");
   name.textContent = member.name;
-  name.style.color = member.color ? `#${member.color}` : "";
+  paintRole(name, member.color);
   name.parentElement.querySelectorAll(".role-tag, .bot-tag, .mc-pronouns, .timeout-badge").forEach(n => n.remove());
   if (timeoutActive(member.timeout_until)) name.after(timeoutBadge(member.timeout_until));
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
@@ -8758,7 +8843,7 @@ function openMemberCard(member, anchor) {
 function decorateAuthor(node, authorId) {
   const member = state.view === "server" && currentServerMember(authorId);
   if (!member) return;
-  if (member.color) node.style.color = `#${member.color}`;
+  paintRole(node, member.color);
   if (member.tag) node.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) node.after(botTag());
 }
@@ -8786,7 +8871,7 @@ function renderRolePicker(server, list) {
     if (role.color) dot.style.background = `#${role.color}`;
     row.appendChild(dot);
     const name = el("span", "role-pick-name", role.name);
-    if (role.color) name.style.color = `#${role.color}`;
+    paintRole(name, role.color);
     row.appendChild(name);
     if (role.tag) row.appendChild(roleTagChip(role.tag, role.color));
     row.appendChild(el("span", "role-pick-check")).appendChild(svgIcon("check", 16));
@@ -16499,7 +16584,7 @@ function renderRoleSettings(server) {
     if (role.color) dot.style.background = `#${role.color}`;
     label.appendChild(dot);
     const name = el("span", "role-card-name", role.name);
-    if (role.color) name.style.color = `#${role.color}`;
+    paintRole(name, role.color);
     label.appendChild(name);
     if (role.tag) label.appendChild(roleTagChip(role.tag, role.color));
     if (role.self_assignable) label.appendChild(el("span", "kind pickable", "pickable"));
@@ -16555,7 +16640,7 @@ function renderMemberSettings(server) {
     const who = el("span", "manage-row-label");
     who.appendChild(makeAvatar(member.id, member.name, "avatar avatar-sm"));
     const name = el("span", null, member.name);
-    if (member.color) name.style.color = `#${member.color}`;
+    paintRole(name, member.color);
     who.appendChild(name);
     if (member.id === server.owner) who.appendChild(el("span", "kind", "owner"));
     top.appendChild(who);
@@ -16666,6 +16751,7 @@ function wireActivityPing() {
 }
 
 async function boot() {
+  wireAccessibility();
   wireEvents();
   wireSaved();
   wireTimeoutModal();
@@ -16720,13 +16806,11 @@ async function loadAccount() {
 
 let signInUrl = null;
 
-const SERVER_NOTE_DEFAULT = "Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.";
-const SERVER_NOTE_WARNING = "Only add a server you know and trust. It handles your sign-in and sees your email and display name.";
-
 function syncServerNote() {
   const custom = $("signin-server-select").value !== "default";
   const note = $("signin-server-note");
-  note.textContent = custom ? SERVER_NOTE_WARNING : SERVER_NOTE_DEFAULT;
+  note.dataset.i18n = custom ? "signin.server.warning" : "signin.server.note";
+  note.textContent = t(note.dataset.i18n);
   note.classList.toggle("warn", custom);
 }
 
@@ -16737,7 +16821,10 @@ function showSignIn() {
   const select = $("signin-server-select");
   const custom = !account.is_default_server;
   const defaultHost = account.default_server_host || "commy.chat";
-  select.options[0].text = defaultHost === "commy.chat" ? "commy.chat (free Commy service)" : `${defaultHost} (test server)`;
+  const first = select.options[0];
+  if (defaultHost === "commy.chat") first.dataset.i18n = "signin.server.default";
+  else delete first.dataset.i18n;
+  first.text = defaultHost === "commy.chat" ? t("signin.server.default") : t("signin.server.test", { host: defaultHost });
   if (custom && ![...select.options].some(o => o.value === account.server)) {
     select.insertBefore(new Option(account.server_host, account.server), select.options[1]);
   }

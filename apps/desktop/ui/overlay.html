@@ -8,7 +8,10 @@
     @font-face { font-family: "Space Grotesk"; font-weight: 300 700; src: url("fonts/space-grotesk-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
     @font-face { font-family: "Space Grotesk"; font-weight: 300 700; src: url("fonts/space-grotesk-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
     :root { --opacity: .92; --accent: #ff4d4d; --ink: #f2efe6; --text: #e2e0da; --display: "Space Grotesk", "Figtree", "Segoe UI", sans-serif;
-      --panel: rgba(18, 22, 48, .92); --edge: rgba(242, 239, 230, .08); --raised: #1f2438; }
+      --panel: rgba(18, 22, 48, .92); --edge: rgba(242, 239, 230, .08); --raised: #1f2438; --saturation: 100%; }
+    html[data-theme="light"] { --ink: #17140f; --text: #2a2721; --panel: rgba(244, 241, 234, .94); --edge: rgba(23, 20, 16, .12); --raised: #e4e0d5; }
+    html[data-reduced-motion] .member, html[data-reduced-motion] .line { animation: none; transition: none; }
+    html[data-saturation] .line b, html[data-saturation] .notice::before { filter: saturate(var(--saturation)); }
     html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
     body {
       font-family: "Figtree", "Segoe UI", system-ui, sans-serif;
@@ -104,6 +107,7 @@
   <div class="stack" id="members"></div>
   <div class="stack" id="chat"></div>
   <script src="scripts/tint.js"></script>
+  <script src="scripts/accessibility.js"></script>
   <script src="scripts/overlay-view.js"></script>
   <script src="scripts/overlay.js"></script>
 </body>

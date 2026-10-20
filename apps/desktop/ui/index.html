@@ -10,21 +10,21 @@
 <body>
   <div id="app" class="app">
     <nav class="rail" id="rail">
-      <button class="rail-btn rail-home" id="home-btn" title="Direct Messages">
+      <button class="rail-btn rail-home" id="home-btn" title="Direct Messages" data-i18n-title="nav.dms">
         <img src="images/commy_v3_noback.png" alt="" width="38" height="38" draggable="false" />
         <span class="rail-brand">Commy</span>
       </button>
       <div class="rail-divider"></div>
       <div id="server-list" class="server-list"></div>
-      <button class="rail-btn rail-add" id="add-server-btn" title="Add a Server">
+      <button class="rail-btn rail-add" id="add-server-btn" title="Add a Server" data-i18n-title="nav.addServer">
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
       </button>
-      <button class="rail-btn rail-add rail-discover" id="discover-btn" title="Discover Servers" aria-pressed="false">
+      <button class="rail-btn rail-add rail-discover" id="discover-btn" title="Discover Servers" data-i18n-title="nav.discover" aria-pressed="false">
         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 10.9c-.61 0-1.1.49-1.1 1.1s.49 1.1 1.1 1.1c.61 0 1.1-.49 1.1-1.1s-.49-1.1-1.1-1.1zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm2.19 12.19L6 18l3.81-8.19L18 6l-3.81 8.19zM12 20c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
       </button>
       <div class="rail-spacer"></div>
       <footer class="user-panel">
-      <button class="user-chip" id="user-chip" title="Set status">
+      <button class="user-chip" id="user-chip" title="Set status" data-i18n-title="nav.status">
         <span class="avatar" id="me-avatar">?</span>
         <span class="user-meta">
           <span class="user-name" id="me-name">Not set</span>
@@ -32,7 +32,7 @@
         </span>
       </button>
       <div class="user-actions">
-        <button class="icon-btn" id="settings-btn" title="Settings">
+        <button class="icon-btn" id="settings-btn" title="Settings" data-i18n-title="nav.settings">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19.4 13a7.9 7.9 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.9 7.9 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.9 7.9 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.9 7.9 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.9 7.9 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.9 7.9 0 0 0 1.7-1l2.4 1 2-3.4zM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5z"/></svg>
         </button>
       </div>
@@ -387,33 +387,33 @@
   <div class="modal-backdrop hidden" id="modal-backdrop">
     <div class="modal modal-signin hidden" id="modal-signin">
       <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
-      <h2>Sign in to Commy</h2>
-      <p>A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
+      <h2 data-i18n="signin.title">Sign in to Commy</h2>
+      <p data-i18n="signin.intro">A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
       <div class="signin-start" id="signin-start">
-        <button class="btn-primary signin-go" id="signin-go">Sign in with your browser</button>
-        <div class="signin-note">Your browser opens to sign in or create an account. Come back here once you approve.</div>
+        <button class="btn-primary signin-go" id="signin-go" data-i18n="signin.go">Sign in with your browser</button>
+        <div class="signin-note" data-i18n="signin.note">Your browser opens to sign in or create an account. Come back here once you approve.</div>
       </div>
       <div class="signin-wait hidden" id="signin-wait">
-        <div class="signin-label">Check that your browser shows this code, then approve it</div>
+        <div class="signin-label" data-i18n="signin.code">Check that your browser shows this code, then approve it</div>
         <div class="signin-code" id="signin-code"></div>
-        <div class="signin-status"><span class="signin-spinner"></span>Waiting for approval</div>
+        <div class="signin-status"><span class="signin-spinner"></span><span data-i18n="signin.waiting">Waiting for approval</span></div>
         <div class="signin-links">
-          <button class="btn-link" id="signin-reopen">Open the page again</button>
-          <button class="btn-link" id="signin-cancel">Cancel</button>
+          <button class="btn-link" id="signin-reopen" data-i18n="signin.reopen">Open the page again</button>
+          <button class="btn-link" id="signin-cancel" data-i18n="signin.cancel">Cancel</button>
         </div>
       </div>
       <div class="signin-error hidden" id="signin-error"></div>
-      <label class="signin-server">Account server
+      <label class="signin-server"><span data-i18n="signin.server">Account server</span>
         <select id="signin-server-select" class="compact-select">
-          <option value="default">commy.chat (free Commy service)</option>
-          <option value="custom">A self-hosted server...</option>
+          <option value="default" data-i18n="signin.server.default">commy.chat (free Commy service)</option>
+          <option value="custom" data-i18n="signin.server.custom">A self-hosted server...</option>
         </select>
       </label>
       <div class="signin-server-edit hidden" id="signin-server-edit">
         <input id="signin-server-input" type="text" autocomplete="off" spellcheck="false" placeholder="chat.example.com" />
-        <button class="btn-secondary btn-small" id="signin-server-save">Use</button>
+        <button class="btn-secondary btn-small" id="signin-server-save" data-i18n="signin.server.use">Use</button>
       </div>
-      <div class="signin-server-note" id="signin-server-note">Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.</div>
+      <div class="signin-server-note" id="signin-server-note" data-i18n="signin.server.note">Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.</div>
     </div>
 
     <div class="modal hidden" id="modal-username">
@@ -1027,25 +1027,26 @@
   <div class="settings-layer hidden" id="user-settings" role="dialog" aria-label="User Settings">
     <nav class="settings-nav">
       <div class="settings-nav-inner">
-        <div class="settings-nav-group">User Settings</div>
-        <button class="settings-tab" data-tab="account">Profile</button>
-        <button class="settings-tab" data-tab="commy-account">Commy Account</button>
-        <button class="settings-tab" data-tab="privacy">Privacy &amp; Safety</button>
-        <div class="settings-nav-group">Voice &amp; Video</div>
-        <button class="settings-tab" data-tab="voice">Voice &amp; Camera</button>
-        <button class="settings-tab" data-tab="overlay">Game Overlay</button>
-        <div class="settings-nav-group">App Settings</div>
-        <button class="settings-tab" data-tab="appearance">Appearance</button>
-        <button class="settings-tab" data-tab="notifications">Notifications</button>
-        <button class="settings-tab" data-tab="integrations">Integrations</button>
-        <button class="settings-tab" data-tab="storage">Storage</button>
-        <button class="settings-tab" data-tab="updates">Updates</button>
+        <div class="settings-nav-group" data-i18n="settings.group.user">User Settings</div>
+        <button class="settings-tab" data-tab="account" data-i18n="settings.tab.profile">Profile</button>
+        <button class="settings-tab" data-tab="commy-account" data-i18n="settings.tab.account">Commy Account</button>
+        <button class="settings-tab" data-tab="privacy" data-i18n="settings.tab.privacy">Privacy &amp; Safety</button>
+        <div class="settings-nav-group" data-i18n="settings.group.voice">Voice &amp; Video</div>
+        <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">Voice &amp; Camera</button>
+        <button class="settings-tab" data-tab="overlay" data-i18n="settings.tab.overlay">Game Overlay</button>
+        <div class="settings-nav-group" data-i18n="settings.group.app">App Settings</div>
+        <button class="settings-tab" data-tab="appearance" data-i18n="settings.tab.appearance">Appearance</button>
+        <button class="settings-tab" data-tab="accessibility" data-i18n="settings.tab.accessibility">Accessibility</button>
+        <button class="settings-tab" data-tab="notifications" data-i18n="settings.tab.notifications">Notifications</button>
+        <button class="settings-tab" data-tab="integrations" data-i18n="settings.tab.integrations">Integrations</button>
+        <button class="settings-tab" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
+        <button class="settings-tab" data-tab="updates" data-i18n="settings.tab.updates">Updates</button>
       </div>
     </nav>
     <div class="settings-content">
       <div class="settings-content-inner">
         <section class="settings-page" data-page="account">
-          <h1>Profile</h1>
+          <h1 data-i18n="settings.tab.profile">Profile</h1>
           <div class="profile-card">
             <div class="profile-banner" id="account-banner">
               <div class="role-banner-tools">
@@ -1096,7 +1097,7 @@
         </section>
 
         <section class="settings-page" data-page="commy-account">
-          <h1>Commy Account</h1>
+          <h1 data-i18n="settings.tab.account">Commy Account</h1>
           <div class="settings-card account-card">
             <div class="account-line">
               <div>
@@ -1136,7 +1137,7 @@
         </section>
 
         <section class="settings-page" data-page="voice">
-          <h1>Voice &amp; Camera</h1>
+          <h1 data-i18n="settings.tab.voice">Voice &amp; Camera</h1>
           <div class="settings-card device-grid">
             <label class="field-label">Input Device
               <select id="input-device"><option value="">Default</option></select>
@@ -1285,7 +1286,7 @@
 
 
         <section class="settings-page" data-page="storage">
-          <h1>Storage</h1>
+          <h1 data-i18n="settings.tab.storage">Storage</h1>
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">Keep server messages for</div>
@@ -1308,7 +1309,7 @@
         </section>
 
         <section class="settings-page" data-page="notifications">
-          <h1>Notifications</h1>
+          <h1 data-i18n="settings.tab.notifications">Notifications</h1>
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">Desktop notifications</div>
@@ -1401,7 +1402,7 @@
         </section>
 
         <section class="settings-page" data-page="integrations">
-          <h1>Integrations</h1>
+          <h1 data-i18n="settings.tab.integrations">Integrations</h1>
           <div class="settings-card integration-card" id="gif-card">
             <div class="integration-head">
               <div class="integration-logo integration-logo-deck">
@@ -1475,7 +1476,7 @@
         </section>
 
         <section class="settings-page" data-page="overlay">
-          <h1>Game Overlay</h1>
+          <h1 data-i18n="settings.tab.overlay">Game Overlay</h1>
           <label class="settings-card setting-row">
             <div>
               <div class="setting-title">Enable in-game overlay</div>
@@ -1538,7 +1539,7 @@
         </section>
 
         <section class="settings-page" data-page="privacy">
-          <h1>Privacy &amp; Safety</h1>
+          <h1 data-i18n="settings.tab.privacy">Privacy &amp; Safety</h1>
           <h2 class="settings-subhead">Direct Messages</h2>
           <div class="settings-card">
             <div class="setting-row">
@@ -1615,7 +1616,7 @@
         </section>
 
         <section class="settings-page" data-page="updates">
-          <h1>Updates</h1>
+          <h1 data-i18n="settings.tab.updates">Updates</h1>
           <div class="settings-card setting-row update-card">
             <div>
               <div class="setting-title" id="update-version">Commy</div>
@@ -1633,7 +1634,7 @@
         </section>
 
         <section class="settings-page" data-page="appearance">
-          <h1>Appearance</h1>
+          <h1 data-i18n="settings.tab.appearance">Appearance</h1>
           <div class="appearance-preview">
             <div class="msg first">
               <div class="avatar">C</div>
@@ -1645,48 +1646,91 @@
           </div>
           <div class="settings-card">
             <div class="slider-row">
-              <div class="setting-title">Chat Font Size <span id="chat-size-label">16px</span></div>
+              <div class="setting-title"><span data-i18n="appearance.chatSize">Chat Font Size</span> <span id="chat-size-label">16px</span></div>
               <input type="range" id="chat-size" min="12" max="20" step="1" value="16" />
             </div>
           </div>
           <label class="settings-card setting-row">
             <div>
-              <div class="setting-title">Compact Mode</div>
-              <div class="setting-sub">Tighter spacing between messages.</div>
+              <div class="setting-title" data-i18n="appearance.compact">Compact Mode</div>
+              <div class="setting-sub" data-i18n="appearance.compact.sub">Tighter spacing between messages.</div>
             </div>
             <input type="checkbox" id="compact-toggle" class="switch" />
           </label>
-          <h2 class="settings-subhead">Keyboard Shortcuts</h2>
+          <h2 class="settings-subhead" data-i18n="appearance.shortcuts">Keyboard Shortcuts</h2>
           <div class="settings-card shortcut-card">
             <div class="shortcut-row">
               <div>
-                <div class="setting-title">Quick Switcher</div>
-                <div class="setting-sub">Jump to any channel, conversation or server.</div>
+                <div class="setting-title" data-i18n="appearance.switcher">Quick Switcher</div>
+                <div class="setting-sub" data-i18n="appearance.switcher.sub">Jump to any channel, conversation or server.</div>
               </div>
               <kbd class="shortcut-key" data-shortcut="K">Ctrl+K</kbd>
             </div>
             <div class="shortcut-row">
               <div>
-                <div class="setting-title">Search This Server</div>
-                <div class="setting-sub">Find messages by keyword, author or channel.</div>
+                <div class="setting-title" data-i18n="appearance.search">Search This Server</div>
+                <div class="setting-sub" data-i18n="appearance.search.sub">Find messages by keyword, author or channel.</div>
               </div>
               <kbd class="shortcut-key" data-shortcut="F">Ctrl+F</kbd>
             </div>
           </div>
-          <h2 class="settings-subhead">App Icon</h2>
+          <h2 class="settings-subhead" data-i18n="appearance.appIcon">App Icon</h2>
           <div class="settings-card icon-card">
-            <div class="setting-sub">Shown in your taskbar or dock while Commy is running.</div>
+            <div class="setting-sub" data-i18n="appearance.appIcon.sub">Shown in your taskbar or dock while Commy is running.</div>
             <div class="icon-grid" id="app-icon-grid" role="radiogroup" aria-label="App icon"></div>
           </div>
-          <h2 class="settings-subhead">Tray Icon</h2>
+          <h2 class="settings-subhead" data-i18n="appearance.trayIcon">Tray Icon</h2>
           <div class="settings-card icon-card">
-            <div class="setting-sub">Shown in the system tray, with your unread count on it.</div>
+            <div class="setting-sub" data-i18n="appearance.trayIcon.sub">Shown in the system tray, with your unread count on it.</div>
             <div class="icon-grid" id="tray-icon-grid" role="radiogroup" aria-label="Tray icon"></div>
+          </div>
+        </section>
+        <section class="settings-page" data-page="accessibility">
+          <h1 data-i18n="settings.tab.accessibility">Accessibility</h1>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.reducedMotion">Reduced motion</div>
+              <div class="setting-sub" data-i18n="accessibility.reducedMotion.sub">Turns off the app's own animations and transitions. Follows your system setting until you change it here.</div>
+              <div class="setting-hint" id="reduced-motion-hint" data-i18n="accessibility.reducedMotion.system">Following your system</div>
+            </div>
+            <input type="checkbox" id="reduced-motion-toggle" class="switch" />
+          </label>
+          <div class="settings-card">
+            <div class="slider-row">
+              <div class="setting-title"><span data-i18n="accessibility.saturation">Colour saturation</span> <span id="saturation-label">100%</span></div>
+              <div class="setting-sub" data-i18n="accessibility.saturation.sub">Tones down role colours, mentions and status colours. Pictures and avatars stay as they are.</div>
+              <input type="range" id="saturation" min="0" max="100" step="5" value="100" />
+            </div>
+          </div>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.highContrast">High contrast</div>
+              <div class="setting-sub" data-i18n="accessibility.highContrast.sub">Stronger text and visible edges on cards, rows and inputs.</div>
+            </div>
+            <input type="checkbox" id="high-contrast-toggle" class="switch" />
+          </label>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.theme">Theme</div>
+              <div class="setting-sub" data-i18n="accessibility.theme.sub">Dark, light, or whatever your system uses.</div>
+            </div>
+            <select id="theme-select" class="compact-select">
+              <option value="dark" data-i18n="accessibility.theme.dark">Dark</option>
+              <option value="light" data-i18n="accessibility.theme.light">Light</option>
+              <option value="system" data-i18n="accessibility.theme.system">Follow system</option>
+            </select>
+          </div>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.language">Language</div>
+              <div class="setting-sub" data-i18n="accessibility.language.sub">Settings, navigation and sign-in are translated so far; the rest of the app stays in English for now.</div>
+            </div>
+            <select id="language-select" class="compact-select"></select>
           </div>
         </section>
       </div>
       <div class="settings-close-wrap">
-        <button class="settings-close" id="settings-close" title="Close">
+        <button class="settings-close" id="settings-close" title="Close" data-i18n-title="settings.close">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z"/></svg>
         </button>
         <span class="settings-close-key">ESC</span>
@@ -2456,6 +2500,10 @@
   <script src="scripts/app-icons.js"></script>
   <script src="scripts/layout.js"></script>
   <script src="scripts/tint.js"></script>
+  <script src="scripts/i18n.js"></script>
+  <script src="scripts/locales/en.js"></script>
+  <script src="scripts/locales/es.js"></script>
+  <script src="scripts/accessibility.js"></script>
   <script src="scripts/updates.js"></script>
   <script src="scripts/server-templates.js"></script>
   <script src="scripts/camera-fx.js"></script>

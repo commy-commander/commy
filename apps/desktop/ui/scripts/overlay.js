@@ -122,7 +122,28 @@ function addChatLine(line) {
   }, OVERLAY_CHAT_MS);
 }
 
+function osPrefers(query) {
+  return typeof matchMedia === "function" && matchMedia(query).matches;
+}
+
+function applyOverlayAccessibility() {
+  let raw = null;
+  try { raw = localStorage.getItem(ACCESSIBILITY_KEY); } catch {}
+  const prefs = readAccessibility(raw);
+  const resolved = resolveAccessibility(prefs, { reducedMotion: osPrefers("(prefers-reduced-motion: reduce)"), dark: osPrefers("(prefers-color-scheme: dark)") });
+  const html = document.documentElement;
+  for (const [name, value] of Object.entries(accessibilityAttributes(resolved))) {
+    if (value === null) html.removeAttribute(name);
+    else html.setAttribute(name, value);
+  }
+  html.style.setProperty("--saturation", saturationCss(resolved));
+}
+
 async function start() {
+  applyOverlayAccessibility();
+  window.addEventListener("storage", e => {
+    if (e.key === ACCESSIBILITY_KEY) applyOverlayAccessibility();
+  });
   if (!tauri) return;
   await tauri.event.listen("overlay-config", e => applyConfig(e.payload));
   await tauri.event.listen("overlay-roster", e => renderRoster(e.payload));
