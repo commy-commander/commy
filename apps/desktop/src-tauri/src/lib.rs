@@ -7,6 +7,7 @@ mod entry_list;
 mod catchup;
 mod channel_lock;
 mod deleted;
+mod directory;
 mod doorbell;
 mod expressions;
 mod media_engine;
@@ -7169,6 +7170,7 @@ pub fn run() {
                 if let Some(storage) = persist::load_storage(&dir) {
                     *app.storage.lock().unwrap() = storage;
                 }
+                *app.listings.lock().unwrap() = directory::load(&dir);
                 match persist::load_safety(&dir) {
                     Some(safety) => *app.safety.lock().unwrap() = safety,
                     None => {
@@ -7478,6 +7480,10 @@ pub fn run() {
             invite_link::revoke_invite,
             invite_link::account_server_info,
             invite_link::take_pending_invite_link,
+            directory::publish_listing,
+            directory::unlist_server,
+            directory::server_listing,
+            directory::browse_directory,
             entry_list::entry_list_status,
             entry_list::entry_list_sync,
             entry_list::entry_list_recovery_code,
