@@ -320,7 +320,7 @@ impl ServerState {
         state.closed_polls = snapshot.closed_polls.into_iter().filter(|id| state.index.contains_key(id)).collect();
         for signed in snapshot.signed_actions {
             if let Some(subject) = action::subject(&signed.event) {
-                if state.action_times.get(&subject) == Some(&signed.action.at) {
+                if state.action_times.get(&subject) == Some(&signed.action.at) && state.still_verifies(&signed) {
                     state.signed_actions.insert(subject, signed);
                 }
             }
@@ -770,9 +770,22 @@ impl ServerState {
             None => {
                 !action::settles_authority(subject)
                     || action::snapshot_omits(subject)
+                    || self.missing_from_trimmed_snapshot(subject)
                     || at + MAX_ACTION_FLOOR_MS >= self.action_floor
             }
         }
+    }
+
+    fn missing_from_trimmed_snapshot(&self, subject: &str) -> bool {
+        match subject {
+            "images" => self.server.icon.is_none() && self.server.banner.is_none(),
+            "game_tags" => self.server.game_tags.is_empty(),
+            _ => false,
+        }
+    }
+
+    fn still_verifies(&self, signed: &SignedEvent) -> bool {
+        self.signer_key(signed).is_some_and(|key| signed.verify(self.server.id, &key))
     }
 
     fn signer_key(&self, signed: &SignedEvent) -> Option<IdentityKey> {

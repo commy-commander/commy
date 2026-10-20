@@ -1031,6 +1031,20 @@ mod tests {
     }
 
     #[test]
+    fn held_changes_that_no_longer_verify_are_not_kept_to_relay() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let add = SignedEvent::sign(sid, owner, 1_000, emoji(sid, "wave"), &identity_for(owner));
+        assert_eq!(state.apply_signed(&add), Ok(true));
+        let mut snapshot = state.snapshot();
+        let ServerEvent::EmojiAdd { emoji, .. } = &mut snapshot.signed_actions[0].event else { panic!("not the emoji") };
+        emoji.blob = format!("{}@{}", "c".repeat(52), "0".repeat(64));
+        let restored = crate::store::ServerState::from_snapshot(snapshot);
+        assert!(restored.signed_actions().is_empty(), "its author signed other bytes than an older build stored");
+        assert_eq!(restored.server.emojis.len(), 1);
+    }
+
+    #[test]
     fn a_relayed_change_counts_as_its_author_made_it() {
         let (mut author, _, owner) = fixture();
         let sid = author.server.id;
@@ -1058,6 +1072,32 @@ mod tests {
         assert_eq!(state.apply_signed(&rename), Ok(false), "what the snapshot carries stays as it said");
         assert!(snapshot_omits("rules") && snapshot_omits("pin:x") && !snapshot_omits("rules_accept:x"));
         assert!(snapshot_omits("automod"));
+    }
+
+    #[test]
+    fn images_and_game_tags_a_big_snapshot_dropped_still_arrive_from_long_ago() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let now = chrono::Utc::now().timestamp_millis();
+        state.set_action_floor(now);
+        let old = now - 10 * crate::store::MAX_ACTION_FLOOR_MS;
+        let image = |c: &str| Some(format!("{}@{}", c.repeat(52), "0".repeat(64)));
+        let images = |at, icon: Option<String>| {
+            SignedEvent::sign(sid, owner, at, ServerEvent::ServerImages { server: sid, icon, banner: image("e") }, &identity_for(owner))
+        };
+        assert_eq!(state.apply_signed(&images(old, image("d"))), Ok(true));
+        assert!(state.server.icon.is_some() && state.server.banner.is_some());
+        let tags = SignedEvent::sign(sid, owner, old, ServerEvent::GameTagsSet { server: sid, tags: vec!["Chess".into()], meta: vec![] }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&tags), Ok(true));
+        assert_eq!(state.server.game_tags, vec!["Chess"]);
+
+        let (mut carried, _, owner) = fixture();
+        let sid = carried.server.id;
+        carried.server.icon = image("f");
+        carried.set_action_floor(now);
+        let stale = SignedEvent::sign(sid, owner, old, ServerEvent::ServerImages { server: sid, icon: image("d"), banner: None }, &identity_for(owner));
+        assert_eq!(carried.apply_signed(&stale), Ok(false), "a snapshot that carried them stays as it said");
+        assert_eq!(carried.server.icon, image("f"));
     }
 
     #[test]
