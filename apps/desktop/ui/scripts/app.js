@@ -199,6 +199,13 @@ function mockSeed() {
     messages: [
       { id: "d1", from: "m1", from_name: "ferris", content: "hey, did the voice fix land?",
         created_at: new Date(Date.now() - 26 * 3600e3).toISOString(), outgoing: false },
+      { id: "d0", from: "me", from_name: "You", content: "yes, it is in **0.1.2**. try the new mic test",
+        created_at: new Date(Date.now() - 25 * 3600e3).toISOString(), outgoing: true, edited: true,
+        reply_to: "d1", reply_preview: { author_id: "m1", author_name: "ferris", excerpt: "hey, did the voice fix land?" },
+        reactions: [{ emoji: "🎉", count: 1, users: ["m1"] }] },
+      { id: "d4", from: "m1", from_name: "ferris", content: "",
+        created_at: new Date(Date.now() - 900e3).toISOString(), outgoing: false,
+        attachments: [{ filename: "voice-fix-notes.txt", size_bytes: 2048, is_image: false, mime: "text/plain", blob: "mocknotes", provider: null }] },
       { id: "d2", from: "m1", from_name: "ferris", content: "screen share looked great btw",
         created_at: new Date(Date.now() - 600e3).toISOString(), outgoing: false },
     ],
@@ -528,16 +535,50 @@ async function mockInvoke(cmd, args = {}) {
       mock.dms[args.userId] ||= { name: member ? member.name : "Unknown User", messages: [] };
       return { user: args.userId, name: mock.dms[args.userId].name, last_message: "", last_at: "", kind: "inbox" };
     }
-    case "send_dm": {
+    case "send_dm":
+    case "attach_dm_bytes": {
       const dm = mock.dms[args.userId];
       if (!dm) throw "no such conversation";
       const partner = Object.values(mock.servers).flatMap(s => s.members).find(m => m.id === args.userId);
+      const original = args.replyTo ? dm.messages.find(m => m.id === args.replyTo) : null;
       const sent = {
-        id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: args.content,
+        id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: args.content || "",
         created_at: new Date().toISOString(), outgoing: true, pending: !partner || partner.presence === "offline",
+        reply_to: original ? original.id : null,
+        reply_preview: original ? { author_id: original.from, author_name: original.from_name, excerpt: original.content.slice(0, 120) } : null,
+        reactions: [],
+        attachments: cmd === "attach_dm_bytes"
+          ? [{ filename: args.filename, size_bytes: Math.round(args.data.length * 3 / 4), is_image: /\.(png|jpe?g|gif|webp)$/i.test(args.filename), mime: "application/octet-stream", blob: "mock" + Date.now(), provider: null }]
+          : [],
       };
       dm.messages.push(sent);
       return sent;
+    }
+    case "attach_dm_file": return null;
+    case "edit_dm": {
+      const m = (mock.dms[args.userId] || { messages: [] }).messages.find(x => x.id === args.messageId);
+      if (!m || !m.outgoing) throw "you can only edit your own messages";
+      m.content = args.content;
+      m.edited = true;
+      return null;
+    }
+    case "delete_dm": {
+      const dm = mock.dms[args.userId];
+      if (!dm) throw "no such conversation";
+      dm.messages = dm.messages.filter(m => m.id !== args.messageId || !m.outgoing);
+      return null;
+    }
+    case "set_dm_reaction": {
+      const m = (mock.dms[args.userId] || { messages: [] }).messages.find(x => x.id === args.messageId);
+      if (!m) throw "that message no longer exists";
+      m.reactions = m.reactions || [];
+      let r = m.reactions.find(x => x.emoji === args.emoji);
+      if (args.active) {
+        if (!r) m.reactions.push(r = { emoji: args.emoji, count: 0, users: [] });
+        if (!r.users.includes("me")) r.users.push("me");
+      } else if (r) r.users = r.users.filter(u => u !== "me");
+      m.reactions = m.reactions.map(x => ({ ...x, count: x.users.length })).filter(x => x.count);
+      return null;
     }
     case "update_profile":
       Object.assign(mock.user, {
@@ -3098,7 +3139,7 @@ function renderMessages(messages) {
   else if (state.currentChannel) box.appendChild(buildChannelIntro(state.currentChannel));
   if (!messages.length) return;
   state.renderedMessages = messages;
-  const replyCounts = threadReplyCounts(messages);
+  const replyCounts = state.view === "dm" ? new Map() : threadReplyCounts(messages);
   let lastAuthor = null;
   let lastTime = 0;
   let lastDay = null;
@@ -3916,7 +3957,7 @@ async function sendThreadReply() {
 
 function reactionPills(message) {
   const reactions = message.reactions || [];
-  if (!reactions.length || state.view !== "server") return null;
+  if (!reactions.length || !(state.view === "server" || inDmView())) return null;
   const wrap = el("div", "reactions");
   for (const r of reactions) {
     const mine = Boolean(state.user && r.users.includes(state.user.id));
@@ -3954,11 +3995,24 @@ function currentServerMember(id) {
 }
 
 function avatarNameFor(userId) {
+  if (inDmView() && userId === state.currentDm.user) return state.currentDm.name;
   const member = currentServerMember(userId);
   return member ? member.name : "Someone";
 }
 
 async function setReaction(message, emoji, active) {
+  if (inDmView()) {
+    try {
+      await invoke("set_dm_reaction", { userId: state.currentDm.user, messageId: message.id, emoji, active });
+      const box = $("messages");
+      const keep = box.scrollTop;
+      await selectDm(state.currentDm.user, state.currentDm.name);
+      box.scrollTop = keep;
+    } catch (e) {
+      toast(String(e));
+    }
+    return;
+  }
   if (!state.currentServer || !state.currentChannel) return;
   try {
     await invoke("set_reaction", {
@@ -4021,8 +4075,13 @@ function isOwnMessage(message) {
 }
 
 function canDeleteMessage(message) {
+  if (state.view === "dm") return Boolean(state.currentDm) && isOwnMessage(message);
   if (state.view !== "server" || !state.currentServer) return false;
   return isOwnMessage(message) || Boolean(state.currentServer.can_manage_messages);
+}
+
+function inDmView() {
+  return state.view === "dm" && Boolean(state.currentDm);
 }
 
 function messageActions(message, inThread = false) {
@@ -4037,20 +4096,20 @@ function messageActions(message, inThread = false) {
     };
     bar.appendChild(btn);
   };
-  if (state.view === "server") {
+  if (state.view === "server" || inDmView()) {
     add("smilePlus", "Add Reaction", e => openEmojiPop(e.currentTarget, emoji => setReaction(message, emoji, true), { custom: true }));
     if (inThread) {
       add("reply", "Reply", () => $("thread-input").focus());
     } else {
       add("reply", "Reply", () => startReply(message));
-      add("thread", "Open Thread", () => openThread(message.id));
+      if (state.view === "server") add("thread", "Open Thread", () => openThread(message.id));
     }
   }
   if (state.view === "server" && canPinIn(state.currentServer, state.currentChannel)) {
     if (message.pinned) add("pinOff", "Unpin", () => setPinned(message, false));
     else add("pin", "Pin", () => setPinned(message, true));
   }
-  if (state.view === "server" && isOwnMessage(message) && message.content && !parseStickerToken(message.content)) {
+  if ((state.view === "server" || inDmView()) && isOwnMessage(message) && message.content && !parseStickerToken(message.content)) {
     add("pencil", "Edit", () => startEditMessage(message.id));
   }
   if (!isOwnMessage(message)) add("eyeOff", "Hide for Me", () => setHidden(message.id, true));
@@ -4101,6 +4160,11 @@ function startEditMessage(id) {
     }
     if (encodeCustomEmojis(text) === message.content) return finish();
     try {
+      if (inDmView()) {
+        await invoke("edit_dm", { userId: state.currentDm.user, messageId: message.id, content: encodeCustomEmojis(text) });
+        await selectDm(state.currentDm.user, state.currentDm.name);
+        return;
+      }
       await invoke("edit_message", {
         serverId: state.currentServer.id,
         channelId: state.currentChannel.id,
@@ -4147,6 +4211,12 @@ function openDeleteMessage(message) {
 
 async function deleteMessage(message) {
   try {
+    if (inDmView()) {
+      await invoke("delete_dm", { userId: state.currentDm.user, messageId: message.id });
+      hideModals();
+      await selectDm(state.currentDm.user, state.currentDm.name);
+      return;
+    }
     await invoke("delete_message", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
@@ -8273,7 +8343,6 @@ function setViewMode(mode) {
   $("server-name").classList.toggle("hidden", dm);
   if (dm) paintSidebarBanner();
   $("dm-search").classList.toggle("hidden", !dm);
-  $("attach-btn").classList.toggle("hidden", dm);
   paintRailContext();
   syncAttachAccess();
   $("home-btn").classList.toggle("active", dm);
@@ -8535,6 +8604,7 @@ async function renderDmThreads() {
 }
 
 async function selectDm(userId, name) {
+  if (!state.currentDm || state.currentDm.user !== userId) cancelReply();
   state.currentDm = { user: userId, name };
   clearDmUnread(userId);
   if (state.view !== "dm") setViewMode("dm");
@@ -8702,8 +8772,11 @@ function dmToRenderable(m) {
     author_name: m.from_name,
     content: m.content,
     created_at: m.created_at,
-    edited: false,
-    attachments: [],
+    edited: Boolean(m.edited),
+    reply_to: m.reply_to || null,
+    reply_preview: m.reply_preview || null,
+    reactions: m.reactions || [],
+    attachments: m.attachments || [],
     pending: Boolean(m.pending),
   };
 }
@@ -8729,8 +8802,10 @@ async function sendDm() {
   if (!content || !state.currentDm) return;
   input.value = "";
   fitComposer(input);
+  const replyTo = state.replyingTo ? state.replyingTo.id : null;
+  cancelReply();
   try {
-    await invoke("send_dm", { userId: state.currentDm.user, content: encodeCustomEmojis(content) });
+    await invoke("send_dm", { userId: state.currentDm.user, content: encodeCustomEmojis(content), replyTo });
     await selectDm(state.currentDm.user, state.currentDm.name);
   } catch (e) {
     input.value = content;
@@ -9060,6 +9135,15 @@ function toggleComposerMenu() {
 
 async function attachFromMenu(kind) {
   closeFloating();
+  if (inDmView()) {
+    try {
+      const sent = await invoke("attach_dm_file", { userId: state.currentDm.user, kind });
+      if (sent) await selectDm(state.currentDm.user, state.currentDm.name);
+    } catch (e) {
+      toast(String(e));
+    }
+    return;
+  }
   if (!state.currentServer || !state.currentChannel) return;
   try {
     const sent = await invoke("attach_file", {
@@ -9425,11 +9509,12 @@ function toggleStageFullscreen() {
 }
 
 async function uploadFileObject(file) {
-  if (state.view !== "server" || !state.currentServer || !state.currentChannel) {
-    toast("Open a server channel to share files");
+  const dm = inDmView();
+  if (!dm && (state.view !== "server" || !state.currentServer || !state.currentChannel)) {
+    toast("Open a channel or conversation to share files");
     return;
   }
-  if (!canAttachHere()) {
+  if (!dm && !canAttachHere()) {
     toast("You can't send files or images in this server");
     return;
   }
@@ -9448,6 +9533,11 @@ async function uploadFileObject(file) {
     ? file.name
     : `pasted-${Date.now()}.png`;
   try {
+    if (dm) {
+      await invoke("attach_dm_bytes", { userId: state.currentDm.user, filename: name, data: btoa(binary) });
+      await selectDm(state.currentDm.user, state.currentDm.name);
+      return;
+    }
     await invoke("attach_bytes", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,

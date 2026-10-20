@@ -513,22 +513,72 @@ pub struct DmMessageView {
     pub created_at: String,
     pub outgoing: bool,
     pub pending: bool,
+    pub edited: bool,
+    pub reply_to: Option<String>,
+    pub reply_preview: Option<ReplyPreview>,
+    pub reactions: Vec<ReactionView>,
+    pub attachments: Vec<AttachmentView>,
+}
+
+fn dm_author_name(msg_from: UserId, me: UserId, dms: &DmStore) -> String {
+    if msg_from == me {
+        "You".to_string()
+    } else {
+        name_or_unknown(dms.contacts.get(&msg_from))
+    }
+}
+
+pub fn dm_excerpt(msg: &DmMessage) -> String {
+    let excerpt = crate::safety::truncate(&msg.content, 120);
+    if excerpt.is_empty() {
+        if let Some(file) = msg.attachments.first() {
+            return file.filename.clone();
+        }
+    }
+    excerpt
 }
 
 pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore, pending: bool) -> DmMessageView {
-    let from_name = if msg.from == me {
-        "You".to_string()
-    } else {
-        name_or_unknown(dms.contacts.get(&msg.from))
-    };
+    let partner = if msg.from == me { msg.to } else { msg.from };
     DmMessageView {
         id: msg.id.to_string(),
         from: msg.from.to_string(),
-        from_name,
+        from_name: dm_author_name(msg.from, me, dms),
         content: msg.content.clone(),
         created_at: msg.created_at.to_rfc3339(),
         outgoing: msg.from == me,
         pending,
+        edited: msg.edited_at.is_some(),
+        reply_to: msg.reply_to.map(|id| id.to_string()),
+        reply_preview: msg.reply_to.and_then(|id| {
+            let original = dms.post(partner, id)?;
+            Some(ReplyPreview {
+                author_id: original.from.to_string(),
+                author_name: dm_author_name(original.from, me, dms),
+                excerpt: dm_excerpt(original),
+            })
+        }),
+        reactions: msg
+            .reactions
+            .iter()
+            .map(|r| ReactionView {
+                emoji: r.emoji.clone(),
+                count: r.users.len(),
+                users: r.users.iter().map(|u| u.to_string()).collect(),
+            })
+            .collect(),
+        attachments: msg
+            .attachments
+            .iter()
+            .map(|a| AttachmentView {
+                filename: a.filename.clone(),
+                size_bytes: a.size_bytes,
+                is_image: a.is_image(),
+                mime: a.mime_type.clone(),
+                blob: a.blob.clone(),
+                provider: a.provider.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -536,15 +586,14 @@ pub fn dm_thread_views(dms: &DmStore, me: UserId) -> Vec<DmThreadView> {
     dms.partners()
         .into_iter()
         .map(|partner| {
-            let convo = dms.conversation(partner);
-            let last = convo.last();
+            let last = dms.last_post(partner);
             DmThreadView {
                 user: partner.to_string(),
                 name: name_or_unknown(dms.contacts.get(&partner)),
                 last_message: last
                     .map(|m| {
                         let prefix = if m.from == me { "You: " } else { "" };
-                        format!("{prefix}{}", crate::safety::truncate(&m.content, 60))
+                        format!("{prefix}{}", crate::safety::truncate(&dm_excerpt(m), 60))
                     })
                     .unwrap_or_default(),
                 last_at: last

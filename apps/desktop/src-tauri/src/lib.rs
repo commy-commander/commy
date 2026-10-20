@@ -42,7 +42,7 @@ use view::{
 use base64::Engine as _;
 use commy_core::SignedEvent;
 use commy_core::{
-    Attachment, Channel, ChannelId, ChannelKind, DmMessage, Identity, Message, MessageId, Permissions,
+    Attachment, Channel, ChannelId, ChannelKind, DmAction, DmMessage, Identity, Message, MessageId, Permissions,
     Presence, RoleId, ServerEvent, ServerId, ServerState, Signature, StoreError, TombstoneProof, UserId,
     UserProfile, MAX_MESSAGE_BYTES,
 };
@@ -2011,8 +2011,7 @@ fn get_dm_messages(app: tauri::State<App>, user_id: String) -> CmdResult<Vec<DmM
     let pending = app.outbox.lock().unwrap().pending_dms(partner);
     let dms = app.dms.lock().unwrap();
     Ok(dms
-        .conversation(partner)
-        .iter()
+        .posts(partner)
         .map(|m| dm_message_view(m, me, &dms, pending.contains(&m.id)))
         .collect())
 }
@@ -2045,43 +2044,45 @@ fn open_dm(app: tauri::State<App>, user_id: String) -> CmdResult<DmThreadView> {
     })
 }
 
-#[tauri::command]
-async fn send_dm(
-    app: tauri::State<'_, App>,
-    handle: tauri::AppHandle,
-    user_id: String,
-    content: String,
-) -> CmdResult<DmMessageView> {
-    let content = clean_message(&content)?;
+fn dm_partner(app: &App, user_id: &str) -> CmdResult<(UserProfile, UserId)> {
     let partner: UserId = user_id.parse().map_err(err_to_string)?;
-    let content = carry_expressions(&app, content, &std::collections::HashSet::new()).await;
-    let _signing = app.signing.read().await;
-    let me = current_profile(&app)?;
+    let me = current_profile(app)?;
     if partner == me.id {
         return Err("you cannot message yourself".into());
     }
     if app.safety.lock().unwrap().is_blocked(partner) {
         return Err("you blocked this person; unblock them to send a message".into());
     }
+    Ok((me, partner))
+}
 
-    let mut message = DmMessage::new(me.id, partner, content);
-    sign_dm(&app, &mut message)?;
+async fn post_dm(
+    app: &App,
+    handle: &tauri::AppHandle,
+    me: &UserProfile,
+    partner: UserId,
+    mut message: DmMessage,
+) -> CmdResult<Option<DmMessageView>> {
+    let _signing = app.signing.read().await;
+    sign_dm(app, &mut message)?;
+    if !app.dms.lock().unwrap().apply(partner, message.clone()) {
+        return Err(if message.is_post() { "message not sent" } else { "nothing to change" }.into());
+    }
     let envelope = DmEnvelope {
         message: message.clone(),
         sender: me.as_seen_by_others(),
     };
     let waiting = app.outbox.lock().unwrap().has_dms(partner);
-    let delivered = !waiting && outbox::try_send_dm(&app, partner, &envelope).await;
+    let delivered = !waiting && outbox::try_send_dm(app, partner, &envelope).await;
 
     let view = {
-        let mut dms = app.dms.lock().unwrap();
-        dms.insert(partner, message.clone());
-        dm_message_view(&message, me.id, &dms, !delivered)
+        let dms = app.dms.lock().unwrap();
+        message.is_post().then(|| dm_message_view(&message, me.id, &dms, !delivered))
     };
     if !delivered {
-        outbox::queue_dm(&app, partner, message.id);
+        outbox::queue_dm(app, partner, message.id);
         if waiting {
-            outbox::wake_dm(&app, partner);
+            outbox::wake_dm(app, partner);
         }
     }
     if app.safety.lock().unwrap().accepted.insert(partner) {
@@ -2090,6 +2091,166 @@ async fn send_dm(
     app.persist_dms();
     let _ = handle.emit("dm-changed", partner.to_string());
     Ok(view)
+}
+
+#[tauri::command]
+async fn send_dm(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    user_id: String,
+    content: String,
+    reply_to: Option<String>,
+) -> CmdResult<DmMessageView> {
+    let content = clean_message(&content)?;
+    let (me, partner) = dm_partner(&app, &user_id)?;
+    let content = carry_expressions(&app, content, &std::collections::HashSet::new()).await;
+    let mut message = DmMessage::new(me.id, partner, content);
+    if let Some(raw) = reply_to {
+        let target: MessageId = raw.parse().map_err(err_to_string)?;
+        if app.dms.lock().unwrap().post(partner, target).is_none() {
+            return Err("the message you replied to no longer exists".into());
+        }
+        message.reply_to = Some(target);
+    }
+    let view = post_dm(&app, &handle, &me, partner, message).await?;
+    view.ok_or_else(|| "message not sent".to_string())
+}
+
+#[tauri::command]
+async fn edit_dm(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    user_id: String,
+    message_id: String,
+    content: String,
+) -> CmdResult<()> {
+    let content = clean_message(&content)?;
+    let (me, partner) = dm_partner(&app, &user_id)?;
+    let target: MessageId = message_id.parse().map_err(err_to_string)?;
+    {
+        let dms = app.dms.lock().unwrap();
+        let original = dms.post(partner, target).ok_or("that message no longer exists")?;
+        if original.from != me.id {
+            return Err("you can only edit your own messages".into());
+        }
+    }
+    let content = carry_expressions(&app, content, &std::collections::HashSet::new()).await;
+    let message = DmMessage::acting(me.id, partner, DmAction::Edit { target }, content);
+    post_dm(&app, &handle, &me, partner, message).await.map(|_| ())
+}
+
+#[tauri::command]
+async fn delete_dm(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    user_id: String,
+    message_id: String,
+) -> CmdResult<()> {
+    let (me, partner) = dm_partner(&app, &user_id)?;
+    let target: MessageId = message_id.parse().map_err(err_to_string)?;
+    {
+        let dms = app.dms.lock().unwrap();
+        let original = dms.post(partner, target).ok_or("that message no longer exists")?;
+        if original.from != me.id {
+            return Err("you can only delete your own messages".into());
+        }
+    }
+    let message = DmMessage::acting(me.id, partner, DmAction::Delete { target }, "");
+    post_dm(&app, &handle, &me, partner, message).await.map(|_| ())
+}
+
+#[tauri::command]
+async fn set_dm_reaction(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    user_id: String,
+    message_id: String,
+    emoji: String,
+    active: bool,
+) -> CmdResult<()> {
+    let emoji = emoji.trim().to_string();
+    if !commy_core::server::valid_reaction(&emoji) {
+        return Err("reactions must be a single emoji".into());
+    }
+    let (me, partner) = dm_partner(&app, &user_id)?;
+    let target: MessageId = message_id.parse().map_err(err_to_string)?;
+    let message = DmMessage::acting(me.id, partner, DmAction::React { target, emoji, active }, "");
+    post_dm(&app, &handle, &me, partner, message).await.map(|_| ())
+}
+
+async fn send_dm_attachment(
+    app: &App,
+    handle: &tauri::AppHandle,
+    user_id: &str,
+    filename: String,
+    bytes: Vec<u8>,
+) -> CmdResult<DmMessageView> {
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+        return Err(ATTACHMENT_TOO_LARGE.into());
+    }
+    let (me, partner) = dm_partner(app, user_id)?;
+    let size_bytes = bytes.len() as u64;
+    let (blob, provider) = {
+        let net = app.net.lock().await;
+        let node = net.as_ref().ok_or("network is not ready yet")?;
+        let hash = node.add_blob(bytes).await.map_err(err_to_string)?;
+        (hash, Some(node.node_id_hex()))
+    };
+    let mime_type = mime_guess::from_path(&filename)
+        .first_raw()
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let mut message = DmMessage::new(me.id, partner, String::new());
+    message.attachments.push(Attachment { blob, filename, size_bytes, mime_type, provider });
+    let view = post_dm(app, handle, &me, partner, message).await?;
+    view.ok_or_else(|| "file not sent".to_string())
+}
+
+#[tauri::command]
+async fn attach_dm_file(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    user_id: String,
+    kind: Option<String>,
+) -> CmdResult<Option<DmMessageView>> {
+    dm_partner(&app, &user_id)?;
+    let dialog = match kind.as_deref() {
+        Some("video") => rfd::AsyncFileDialog::new()
+            .set_title("Send a video")
+            .add_filter("Videos", INLINE_VIDEO_EXTENSIONS),
+        _ => rfd::AsyncFileDialog::new().set_title("Send a file"),
+    };
+    let Some(picked) = dialog.pick_file().await else {
+        return Ok(None);
+    };
+    let path = picked.path().to_path_buf();
+    let filename = picked.file_name();
+    if tokio::fs::metadata(&path).await.map_err(err_to_string)?.len() > MAX_ATTACHMENT_BYTES {
+        return Err(ATTACHMENT_TOO_LARGE.into());
+    }
+    let bytes = tokio::fs::read(&path).await.map_err(err_to_string)?;
+    send_dm_attachment(&app, &handle, &user_id, filename, bytes).await.map(Some)
+}
+
+#[tauri::command]
+async fn attach_dm_bytes(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    user_id: String,
+    filename: String,
+    data: String,
+) -> CmdResult<DmMessageView> {
+    let filename = filename.trim().to_string();
+    if filename.is_empty() || filename.len() > 255 {
+        return Err("bad filename".into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|_| "bad file data".to_string())?;
+    if bytes.is_empty() {
+        return Err("empty file".into());
+    }
+    send_dm_attachment(&app, &handle, &user_id, filename, bytes).await
 }
 
 fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
@@ -6545,6 +6706,11 @@ pub fn run() {
             get_dm_messages,
             open_dm,
             send_dm,
+            edit_dm,
+            delete_dm,
+            set_dm_reaction,
+            attach_dm_file,
+            attach_dm_bytes,
             rename_server,
             create_channel,
             delete_channel,
