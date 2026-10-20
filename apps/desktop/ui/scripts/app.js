@@ -166,6 +166,16 @@ function mockSeed() {
     emojis_shareable: true, stickers_shareable: true, emoticons_shareable: true,
   };
   mock.servers[club.id] = club;
+  const squad = {
+    id: crypto.randomUUID(), group: true, name: "ferris, nova", owner: "me",
+    channels: [ch("chat", "text", null), ch("call", "voice", null)],
+    members: [{ id: "m1", name: "ferris", presence: "online", custom_status: "heads down" }, { id: "m2", name: "nova", presence: "idle", custom_status: null }],
+  };
+  mock.servers[squad.id] = squad;
+  mock.messages[squad.channels[0].id] = [
+    { id: "g1", channel: squad.channels[0].id, author_id: "m2", author_name: "nova", content: "raid night friday?", created_at: new Date(Date.now() - 7200e3).toISOString(), edited: false, attachments: [] },
+    { id: "g2", channel: squad.channels[0].id, author_id: "m1", author_name: "ferris", content: "in. I'll bring the snacks :ferris_wave:", created_at: new Date(Date.now() - 5400e3).toISOString(), edited: false, attachments: [] },
+  ];
   mock.serverImages = { ...(mock.serverImages || {}), "welcome-banner@mock": mockBannerImage() };
   server.channels[0].banner = "welcome-banner@mock";
   server.channels[1].color = "9b7bff";
@@ -351,7 +361,28 @@ async function mockInvoke(cmd, args = {}) {
       if (Object.keys(mock.servers).length === 0) mockSeed();
       return mock.user;
     case "list_servers":
-      return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null, can_invite: !mock.plainMember }));
+      return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null, can_invite: !mock.plainMember, group: Boolean(s.group) }));
+    case "create_group_dm": {
+      const members = Object.values(mock.servers).flatMap(s => s.members).filter(m => args.userIds.includes(m.id));
+      const seen = new Set();
+      const unique = members.filter(m => !seen.has(m.id) && seen.add(m.id));
+      const group = {
+        id: crypto.randomUUID(), group: true, owner: "me",
+        name: unique.map(m => m.name).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())).join(", "),
+        channels: [{ id: crypto.randomUUID(), name: "chat", kind: "text", topic: null, voice_users: [] }, { id: crypto.randomUUID(), name: "call", kind: "voice", topic: null, voice_users: [] }],
+        members: unique.map(m => ({ ...m })),
+      };
+      mock.servers[group.id] = group;
+      return { id: group.id, name: group.name, member_count: group.members.length + 1, icon: null, can_invite: true, group: true };
+    }
+    case "add_group_members": {
+      const group = mock.servers[args.serverId];
+      if (!group || !group.group) throw "that is not a group you are in";
+      const members = Object.values(mock.servers).flatMap(s => s.members).filter(m => args.userIds.includes(m.id));
+      for (const m of members) if (!group.members.some(x => x.id === m.id)) group.members.push({ ...m });
+      group.name = group.members.map(m => m.name).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())).join(", ");
+      return null;
+    }
     case "get_server": {
       const s = mock.servers[args.serverId];
       if (!s) throw "unknown server";
@@ -528,6 +559,16 @@ async function mockInvoke(cmd, args = {}) {
             kind: d.kind || "inbox",
           };
         })
+        .concat(Object.values(mock.servers).filter(s => s.group).map(s => {
+          const all = s.channels.filter(c => c.kind === "text").flatMap(c => mock.messages[c.id] || []);
+          const last = all[all.length - 1];
+          return {
+            user: s.id, name: s.name,
+            last_message: last ? `${last.author_id === "me" ? "You" : last.author_name}: ${last.content}` : "",
+            last_at: last ? last.created_at : "",
+            kind: "group",
+          };
+        }))
         .sort((a, b) => b.last_at.localeCompare(a.last_at));
     case "get_dm_messages": return (mock.dms[args.userId] || { messages: [] }).messages;
     case "open_dm": {
@@ -1403,7 +1444,7 @@ function applyRailDrop(layout, drag, target, zone) {
     if (at < 0) return layout;
     next.splice(zone === "after" ? at + 1 : at, 0, { type: "server", id: drag.id });
   }
-  return normalizeRailLayout(next, state.servers.map(s => s.id));
+  return normalizeRailLayout(next, railServers().map(s => s.id));
 }
 
 let railDrag = null;
@@ -1428,7 +1469,7 @@ function makeRailDropTarget(node, target) {
     const zone = node.dataset.drop;
     delete node.dataset.drop;
     if (!railDrag || !zone) return;
-    const layout = applyRailDrop(normalizeRailLayout(loadRailLayout(), state.servers.map(s => s.id)), railDrag, target, zone);
+    const layout = applyRailDrop(normalizeRailLayout(loadRailLayout(), railServers().map(s => s.id)), railDrag, target, zone);
     saveRailLayout(layout);
     railDrag = null;
     renderServerRail();
@@ -1447,6 +1488,14 @@ function serverUnreadCount(serverId) {
 function countBadge(count) {
   const badge = el("span", "count-badge", count > 99 ? "99+" : String(count));
   return badge;
+}
+
+function railServers() {
+  return state.servers.filter(s => !s.group);
+}
+
+function isGroupServer(serverId) {
+  return state.servers.some(s => s.id === serverId && s.group);
 }
 
 function railServerButton(server, folderId) {
@@ -1477,8 +1526,12 @@ function railServerButton(server, folderId) {
   return wrap;
 }
 
+function plainServer() {
+  return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
+}
+
 function paintRailContext() {
-  const server = state.view === "server" ? state.currentServer : null;
+  const server = plainServer();
   const box = $("rail-context");
   box.classList.toggle("on", Boolean(server));
   if (!server) return;
@@ -1492,7 +1545,8 @@ function renderServerRail() {
   paintRailContext();
   const list = $("server-list");
   list.innerHTML = "";
-  const dmCount = [...unread.dms.values()].reduce((a, b) => a + b, 0);
+  const dmCount = [...unread.dms.values()].reduce((a, b) => a + b, 0)
+    + state.servers.filter(s => s.group).reduce((n, s) => n + serverUnreadCount(s.id), 0);
   $("home-btn").classList.toggle("unread", dmCount > 0);
   $("home-badge")?.remove();
   if (dmCount) {
@@ -1500,8 +1554,8 @@ function renderServerRail() {
     badge.id = "home-badge";
     $("home-btn").appendChild(badge);
   }
-  const byId = new Map(state.servers.map(s => [s.id, s]));
-  const layout = normalizeRailLayout(loadRailLayout(), state.servers.map(s => s.id));
+  const byId = new Map(railServers().map(s => [s.id, s]));
+  const layout = normalizeRailLayout(loadRailLayout(), railServers().map(s => s.id));
   saveRailLayout(layout);
   for (const item of layout) {
     if (item.type === "server") {
@@ -1630,7 +1684,11 @@ function openLeaveServer(serverId) {
   const server = state.servers.find(s => s.id === serverId);
   if (!server) return;
   leavingServerId = serverId;
-  $("leave-server-title").textContent = `Leave '${server.name}'`;
+  $("leave-server-title").textContent = server.group ? "Leave this group?" : `Leave '${server.name}'`;
+  $("leave-server-body").textContent = server.group
+    ? "You stop seeing its messages and calls, and your copy of the conversation is removed from this device."
+    : "Are you sure you want to leave? You will not be able to rejoin unless you are invited again, and your copy of its history is removed from this device.";
+  $("leave-server-go").textContent = server.group ? "Leave Group" : "Leave Server";
   showModal("modal-leave-server");
 }
 
@@ -1677,7 +1735,7 @@ async function leaveServerView(serverId) {
   }
   await refreshServers();
   if (!state.currentServer) {
-    if (state.servers.length) await selectServer(state.servers[0].id);
+    if (railServers().length) await selectServer(railServers()[0].id);
     else await enterDmMode();
   }
 }
@@ -1693,7 +1751,7 @@ async function confirmLeaveServer() {
     if (state.currentServer && state.currentServer.id === serverId) state.currentServer = null;
     await refreshServers();
     if (!state.currentServer) {
-      if (state.servers.length) await selectServer(state.servers[0].id);
+      if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
     }
   } catch (e) {
@@ -1759,8 +1817,12 @@ function renderChannels() {
   list.innerHTML = "";
   if (!state.currentServer) return;
   const server = state.currentServer;
-  $("server-name").textContent = server.name;
   checkVoiceRoster();
+  if (server.group) {
+    renderDmThreads();
+    return;
+  }
+  $("server-name").textContent = server.name;
   paintSidebarBanner();
   renderServerExtras(list, server);
 
@@ -1943,12 +2005,12 @@ function paintServerIcon(node, server) {
 
 function paintSidebarBanner() {
   const header = $("server-name-header");
-  if (state.view === "server" && state.currentServer) {
+  if (plainServer()) {
     $("server-settings-btn").title = canOpenServerSettings(state.currentServer) ? "Server Settings" : "Server Info";
     $("invite-btn").classList.toggle("hidden", !state.currentServer.can_invite);
   }
   const banner = $("sidebar-banner");
-  const server = state.view === "server" ? state.currentServer : null;
+  const server = plainServer();
   const ref = server ? server.banner : null;
   header.classList.toggle("has-banner", Boolean(server));
   header.classList.toggle("plain", Boolean(server) && !ref);
@@ -2226,6 +2288,7 @@ function onMessageCreated(msg) {
     unread.channelServer.set(msg.channel, msg.server);
     syncUnreadBadge();
     if (state.currentServer && state.currentServer.id === msg.server) renderChannels();
+    else if (dmListShown() && isGroupServer(msg.server)) renderDmThreads();
   }
   const level = levelForServer(notifyPrefs(), msg.server);
   const announcement = Boolean(msg.announcement);
@@ -3190,7 +3253,20 @@ function renderMessages(messages) {
   if (state.threadRoot) renderThread();
 }
 
+function buildGroupIntro(server) {
+  const intro = el("div", "channel-intro");
+  const mark = el("div", "channel-intro-mark");
+  mark.appendChild(svgIcon("people", 34));
+  intro.appendChild(mark);
+  intro.appendChild(el("h2", null, server.name));
+  const others = server.members.filter(m => !state.user || m.id !== state.user.id).map(m => m.name);
+  const who = others.length > 1 ? `${others.slice(0, -1).join(", ")} and ${others[others.length - 1]}` : others[0] || "just you so far";
+  intro.appendChild(el("p", null, `This is the start of your group with ${who}. Messages and calls go straight between the people in it.`));
+  return intro;
+}
+
 function buildChannelIntro(channel) {
+  if (isGroupView()) return buildGroupIntro(state.currentServer);
   const intro = el("div", "channel-intro");
   if (channel.banner) {
     const banner = el("div", "channel-intro-banner");
@@ -4092,6 +4168,14 @@ function canDeleteMessage(message) {
 
 function inDmView() {
   return state.view === "dm" && Boolean(state.currentDm);
+}
+
+function isGroupView() {
+  return state.view === "server" && Boolean(state.currentServer && state.currentServer.group);
+}
+
+function dmListShown() {
+  return state.view === "dm" || isGroupView();
 }
 
 function messageActions(message, inThread = false) {
@@ -5787,7 +5871,7 @@ function friendButton(person, onDone) {
 function invitableServers(userId) {
   const person = state.people.get(userId);
   const shared = new Set((person ? person.servers : []).map(s => s.id));
-  return state.servers.filter(s => s.can_invite && !shared.has(s.id));
+  return railServers().filter(s => s.can_invite && !shared.has(s.id));
 }
 
 async function openInviteMenu(person, anchor) {
@@ -6378,7 +6462,7 @@ function renderStorageSettings() {
   $("keep-default").value = storageSettings.keep;
   const list = $("keep-servers");
   list.replaceChildren();
-  for (const server of state.servers) {
+  for (const server of railServers()) {
     const row = el("div", "keep-row");
     row.appendChild(el("span", "keep-name", server.name));
     const select = keepSelect(storageSettings.servers[server.id] || "", `Default (${KEEP_LABELS[storageSettings.keep]})`);
@@ -6387,7 +6471,7 @@ function renderStorageSettings() {
     row.appendChild(select);
     list.appendChild(row);
   }
-  if (!state.servers.length) list.appendChild(el("div", "manage-empty", "You are not in any servers yet"));
+  if (!railServers().length) list.appendChild(el("div", "manage-empty", "You are not in any servers yet"));
 }
 
 async function setHistoryWindow(serverId, keep) {
@@ -8350,18 +8434,22 @@ function applyMembersLayout() {
 function setViewMode(mode) {
   state.view = mode;
   const dm = mode === "dm";
-  $("dm-call-btn").classList.toggle("hidden", !dm);
+  const group = mode === "server" && Boolean(state.currentServer && state.currentServer.group);
+  const home = dm || group;
+  $("dm-call-btn").classList.toggle("hidden", !home);
+  $("group-add-btn").classList.toggle("hidden", !home);
+  $("group-leave-btn").classList.toggle("hidden", !group);
   $("members-btn").classList.toggle("hidden", dm);
   $("member-list").classList.toggle("hidden", dm);
-  $("invite-btn").classList.toggle("hidden", dm);
-  $("server-settings-btn").classList.toggle("hidden", dm);
-  $("server-name").classList.toggle("hidden", dm);
-  if (dm) paintSidebarBanner();
-  $("dm-search").classList.toggle("hidden", !dm);
+  $("invite-btn").classList.toggle("hidden", home);
+  $("server-settings-btn").classList.toggle("hidden", home);
+  $("server-name").classList.toggle("hidden", home);
+  if (home) paintSidebarBanner();
+  $("dm-search").classList.toggle("hidden", !home);
   paintRailContext();
   syncAttachAccess();
-  $("home-btn").classList.toggle("active", dm);
-  $("app").classList.toggle("dm-mode", dm);
+  $("home-btn").classList.toggle("active", home);
+  $("app").classList.toggle("dm-mode", home);
   if (dm) $("cam-grid").classList.add("hidden");
   if (dm) syncAwaitedBar();
   if (!dm) {
@@ -8394,6 +8482,111 @@ async function selectServer(serverId) {
   renderServerRail();
   renderMembers();
   await selectChannel(firstText || null);
+  if (state.currentServer.group) paintGroupHeader();
+}
+
+function groupVoiceChannel(server) {
+  return (server.channels || []).find(c => c.kind === "voice") || null;
+}
+
+function paintGroupHeader() {
+  const server = state.currentServer;
+  const count = server.members.length;
+  $("chat-hash").replaceChildren(svgIcon("people", 22));
+  $("channel-name").textContent = server.name;
+  $("channel-topic").textContent = `${count} ${count === 1 ? "member" : "members"}`;
+  $("message-input").placeholder = `Message ${server.name}`;
+  $("group-add-btn").title = "Add People";
+  $("group-leave-btn").title = "Leave Group";
+  renderCallButton();
+}
+
+function toggleGroupCall() {
+  const channel = groupVoiceChannel(state.currentServer);
+  if (!channel) return;
+  if (channel.user_limit && channel.voice_users.length >= channel.user_limit && state.voiceChannelId !== channel.id) {
+    toast("That call is full");
+    return;
+  }
+  toggleVoice(channel);
+}
+
+let groupModal = { server: null, picked: new Set() };
+
+function openGroupModal(serverId, preselect = []) {
+  groupModal = { server: serverId, picked: new Set(preselect) };
+  $("group-modal-title").textContent = serverId ? "Add People" : "New Group";
+  $("group-modal-sub").textContent = serverId
+    ? "They join this group and see its messages from now on."
+    : "Pick the people for this group. Everyone in it can message, call and add others.";
+  $("group-go").textContent = serverId ? "Add" : "Create Group";
+  $("group-search").value = "";
+  renderGroupList();
+  showModal("modal-group");
+  $("group-search").focus();
+}
+
+function groupMemberIds(serverId) {
+  const server = state.currentServer && state.currentServer.id === serverId ? state.currentServer : null;
+  return new Set(server ? server.members.map(m => m.id) : []);
+}
+
+function renderGroupList() {
+  const list = $("group-list");
+  list.innerHTML = "";
+  const inside = groupMemberIds(groupModal.server);
+  const query = $("group-search").value.trim().toLowerCase();
+  const people = [...state.people.values()]
+    .filter(p => !query || p.name.toLowerCase().includes(query))
+    .sort((a, b) => (a.presence === "offline") - (b.presence === "offline") || a.name.localeCompare(b.name));
+  for (const person of people) {
+    const already = inside.has(person.id);
+    const picked = groupModal.picked.has(person.id);
+    const row = el("button", "person-row" + (picked ? " picked" : "") + (already ? " in-group" : ""));
+    row.appendChild(avatarWithPresence(person.name, person.id));
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", person.name));
+    meta.appendChild(el("div", "dm-preview", already ? "Already in this group" : person.servers.map(s => s.name).join(", ")));
+    row.appendChild(meta);
+    const pick = el("span", "pick");
+    pick.appendChild(svgIcon("check", 14));
+    row.appendChild(pick);
+    row.disabled = already;
+    row.onclick = () => {
+      if (picked) groupModal.picked.delete(person.id);
+      else groupModal.picked.add(person.id);
+      renderGroupList();
+    };
+    list.appendChild(row);
+  }
+  if (!people.length) {
+    list.appendChild(el("div", "dm-list-empty", state.people.size ? "Nobody matches that name." : "Join or create a server first. You can add anyone you share a server with."));
+  }
+  const n = groupModal.picked.size;
+  $("group-go").disabled = n === 0;
+  $("group-go").textContent = groupModal.server ? (n > 1 ? `Add ${n}` : "Add") : "Create Group";
+}
+
+async function confirmGroupModal() {
+  const ids = [...groupModal.picked];
+  if (!ids.length) return;
+  try {
+    if (groupModal.server) {
+      await invoke("add_group_members", { serverId: groupModal.server, userIds: ids });
+      hideModals();
+      await refreshServers();
+      await selectServer(groupModal.server);
+      toast(ids.length === 1 ? "Added to the group" : `Added ${ids.length} people to the group`);
+    } else {
+      const summary = await invoke("create_group_dm", { userIds: ids });
+      hideModals();
+      await refreshServers();
+      await refreshPeople();
+      await selectServer(summary.id);
+    }
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 async function refreshPeople() {
@@ -8443,6 +8636,8 @@ async function enterDmMode() {
   const threads = await renderDmThreads();
   if (state.currentDm) {
     await selectDm(state.currentDm.user, state.currentDm.name);
+  } else if (threads.length && threads[0].kind === "group") {
+    await selectServer(threads[0].user);
   } else if (threads.length) {
     await selectDm(threads[0].user, threads[0].name);
   } else {
@@ -8460,7 +8655,7 @@ function renderDmHome() {
   $("message-input").placeholder = "Pick a conversation to start chatting";
   const box = $("messages");
   box.innerHTML = "";
-  if (!state.servers.length) {
+  if (!railServers().length) {
     box.appendChild(buildWelcomeHome());
     return;
   }
@@ -8503,8 +8698,8 @@ async function renderDmThreads() {
   state.dmThreads = threads;
   const query = $("dm-search").value.trim().toLowerCase();
   const matches = threads.filter(t => !query || t.name.toLowerCase().includes(query));
-  const shown = matches.filter(t => t.kind === "inbox");
-  const requests = matches.filter(t => t.kind !== "inbox");
+  const shown = matches.filter(t => t.kind === "inbox" || t.kind === "group");
+  const requests = matches.filter(t => t.kind !== "inbox" && t.kind !== "group");
 
   const group = el("div", "channel-group dm-group");
   group.appendChild(el("span", null, "Direct Messages"));
@@ -8577,6 +8772,10 @@ async function renderDmThreads() {
       list.appendChild(el("div", "channel-group dm-group dm-requests-head", thread.header));
       continue;
     }
+    if (thread.kind === "group") {
+      list.appendChild(groupThreadRow(thread));
+      continue;
+    }
     const row = el("div", "channel dm-thread");
     if (state.currentDm && thread.user === state.currentDm.user) row.classList.add("active");
     if (unread.dms.get(thread.user)) row.classList.add("unread");
@@ -8618,6 +8817,47 @@ async function renderDmThreads() {
   return threads;
 }
 
+function groupAvatar(className = "avatar group-avatar") {
+  const node = el("div", className);
+  node.appendChild(svgIcon("people", 18));
+  return node;
+}
+
+function groupThreadRow(thread) {
+  const row = el("div", "channel dm-thread");
+  if (isGroupView() && thread.user === state.currentServer.id) row.classList.add("active");
+  if (serverUnreadCount(thread.user)) row.classList.add("unread");
+  row.appendChild(groupAvatar());
+  const meta = el("div", "dm-meta");
+  const top = el("div", "dm-top");
+  top.appendChild(el("span", "dm-name", thread.name));
+  top.appendChild(el("span", "dm-time", formatShortTime(thread.last_at)));
+  meta.appendChild(top);
+  meta.appendChild(el("div", "dm-preview", plainText(thread.last_message) || "No messages yet"));
+  row.appendChild(meta);
+  row.onclick = () => selectServer(thread.user);
+  row.oncontextmenu = e => {
+    e.preventDefault();
+    openGroupMenu(thread, e.clientX, e.clientY);
+  };
+  return row;
+}
+
+function openGroupMenu(thread, x, y) {
+  closeFloating();
+  const menu = $("member-menu");
+  menu.replaceChildren(el("div", "ctx-title", thread.name));
+  const { item, sep } = contextMenuBuilder(menu);
+  item("Open", () => selectServer(thread.user));
+  item("Add People", async () => {
+    if (!isGroupView() || state.currentServer.id !== thread.user) await selectServer(thread.user);
+    openGroupModal(thread.user);
+  });
+  sep();
+  item("Leave Group", () => openLeaveServer(thread.user), "danger");
+  placeMenuAt(menu, x, y);
+}
+
 async function selectDm(userId, name) {
   if (!state.currentDm || state.currentDm.user !== userId) cancelReply();
   state.currentDm = { user: userId, name };
@@ -8638,9 +8878,19 @@ async function selectDm(userId, name) {
 
 function renderCallButton() {
   const btn = $("dm-call-btn");
+  if (isGroupView()) {
+    const channel = groupVoiceChannel(state.currentServer);
+    const joined = Boolean(channel) && state.voiceChannelId === channel.id && state.voiceServer && state.voiceServer.id === state.currentServer.id;
+    btn.classList.toggle("hidden", !channel);
+    btn.replaceChildren(svgIcon(joined ? "hangup" : "phone", 20));
+    btn.title = joined ? "Leave Call" : "Start Group Call";
+    btn.classList.toggle("active", joined);
+    return;
+  }
   const dm = inDmView();
   btn.classList.toggle("hidden", !dm);
   if (!dm) return;
+  $("group-add-btn").title = "Start a Group";
   const talking = state.call && state.call.user === state.currentDm.user;
   btn.replaceChildren(svgIcon(talking ? "hangup" : "phone", 20));
   btn.title = talking ? "End Call" : "Start Voice Call";
@@ -8852,6 +9102,19 @@ function renderNewDmList() {
   const list = $("new-dm-list");
   list.innerHTML = "";
   const query = $("new-dm-search").value.trim().toLowerCase();
+  if (!query && state.people.size) {
+    const row = el("button", "person-row new-group");
+    row.appendChild(groupAvatar());
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", "New Group"));
+    meta.appendChild(el("div", "dm-preview", "A private chat for a few friends"));
+    row.appendChild(meta);
+    row.onclick = () => {
+      hideModals();
+      openGroupModal(null);
+    };
+    list.appendChild(row);
+  }
   const people = [...state.people.values()]
     .filter(p => !query || p.name.toLowerCase().includes(query))
     .sort((a, b) => (a.presence === "offline") - (b.presence === "offline") || a.name.localeCompare(b.name));
@@ -9750,7 +10013,7 @@ function wireEvents() {
       hideModals();
       renderUserPanel();
       await refreshServers();
-      if (state.servers.length) await selectServer(state.servers[0].id);
+      if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
     } catch (e) {
       toast(String(e));
@@ -10555,7 +10818,7 @@ function wireEvents() {
     if (!menuServer) return;
     const layout = removeFromLayout(loadRailLayout(), menuServer.id);
     layout.push({ type: "server", id: menuServer.id });
-    saveRailLayout(normalizeRailLayout(layout, state.servers.map(s => s.id)));
+    saveRailLayout(normalizeRailLayout(layout, railServers().map(s => s.id)));
     renderServerRail();
   };
   $("sm-leave").onclick = () => {
@@ -10813,9 +11076,20 @@ function wireEvents() {
       selectServer(state.voiceServer.id);
     }
   };
-  $("dm-call-btn").onclick = startDmCall;
+  $("dm-call-btn").onclick = () => (isGroupView() ? toggleGroupCall() : startDmCall());
+  $("group-add-btn").onclick = () => {
+    if (isGroupView()) openGroupModal(state.currentServer.id);
+    else if (inDmView()) openGroupModal(null, [state.currentDm.user]);
+  };
+  $("group-leave-btn").onclick = () => {
+    if (isGroupView()) openLeaveServer(state.currentServer.id);
+  };
+  $("group-cancel").onclick = hideModals;
+  $("group-go").onclick = confirmGroupModal;
+  $("group-search").addEventListener("input", renderGroupList);
   $("call-accept").onclick = () => answerDmCall(true);
   $("call-decline").onclick = () => answerDmCall(false);
+  setIcon($("group-add-btn"), "friendAdd");
   setIcon($("call-accept"), "phone", 26);
   setIcon($("call-decline"), "hangup", 26);
   $("vp-nc").onclick = async () => {
@@ -12383,7 +12657,7 @@ async function continueBoot() {
   hideModals();
   renderUserPanel();
   await refreshServers();
-  if (state.servers.length) await selectServer(state.servers[0].id);
+  if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
 }
 

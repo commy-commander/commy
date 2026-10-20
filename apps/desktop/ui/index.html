@@ -122,6 +122,10 @@
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zM8 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05A4.2 4.2 0 0 1 17 16.5V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
           </button>
           <button class="icon-btn hidden" id="dm-call-btn" title="Start Voice Call"></button>
+          <button class="icon-btn hidden" id="group-add-btn" title="Add People"></button>
+          <button class="icon-btn hidden" id="group-leave-btn" title="Leave Group">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 13v-2H7V8l-5 4 5 4v-3zm4-10H10a2 2 0 0 0-2 2v3h2V5h10v14H10v-3H8v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/></svg>
+          </button>
           <button class="icon-btn hidden" id="dm-profile-btn" title="Hide User Profile">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"/></svg>
           </button>
@@ -714,6 +718,17 @@
       <p>Pick someone you share a server with.</p>
       <input id="new-dm-search" type="text" autocomplete="off" placeholder="Type a name" />
       <div class="people-list" id="new-dm-list"></div>
+    </div>
+
+    <div class="modal hidden" id="modal-group">
+      <h2 id="group-modal-title">New Group</h2>
+      <p id="group-modal-sub">Pick the people for this group. Everyone in it can message, call and add others.</p>
+      <input id="group-search" type="text" autocomplete="off" placeholder="Type a name" />
+      <div class="people-list" id="group-list"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="group-cancel">Cancel</button>
+        <button class="btn-primary" id="group-go" disabled>Create Group</button>
+      </div>
     </div>
 
     <div class="modal modal-wide hidden" id="modal-share">

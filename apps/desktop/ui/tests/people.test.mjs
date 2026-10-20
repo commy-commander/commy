@@ -32,3 +32,14 @@ test("an empty server list means no one in common", () => {
   assert.equal(indexPeople([], "a").size, 0);
   assert.deepEqual(mutualServers(new Map(), "b"), []);
 });
+
+test("a group conversation lists its people but is never a mutual server", () => {
+  const servers = [
+    { id: "s1", name: "One", members: [member("a", "me"), member("b", "pal")] },
+    { id: "g1", name: "pal, other", group: true, members: [member("a", "me"), member("b", "pal"), member("c", "other")] },
+  ];
+  const people = indexPeople(servers, "a");
+  assert.deepEqual(mutualServers(people, "b").map(s => s.id), ["s1"]);
+  assert.equal(people.has("c"), true);
+  assert.deepEqual(mutualServers(people, "c"), []);
+});

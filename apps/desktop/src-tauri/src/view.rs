@@ -383,7 +383,7 @@ impl ServerView {
 
         Self {
             id: state.server.id.to_string(),
-            name: state.server.name.clone(),
+            name: server_name(state, viewer),
             owner: state.server.owner.to_string(),
             channels,
             members,
