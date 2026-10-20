@@ -4951,3 +4951,13 @@ h3.md-heading { font-size: 1.1em; }
 .call-btn:hover { filter: brightness(1.1); }
 .call-btn:active { transform: scale(.95); }
 #dm-call-btn.active { color: var(--red); }
+.group-avatar { display: grid; place-items: center; background: var(--bg-active); color: var(--text-muted); }
+.group-avatar svg { width: 18px; height: 18px; }
+.dm-thread.active .group-avatar, .dm-thread:hover .group-avatar { color: var(--text-normal); }
+.person-row .pick { width: 18px; height: 18px; border-radius: 5px; border: 2px solid var(--text-muted); display: grid; place-items: center; color: transparent; flex-shrink: 0; margin-left: auto; }
+.person-row .pick svg { width: 14px; height: 14px; }
+.person-row.picked .pick { background: var(--accent); border-color: var(--accent); color: #fff; }
+.person-row.in-group { opacity: .5; cursor: default; }
+.person-row.in-group:hover { background: none; }
+.person-row.new-group { color: var(--text-normal); }
+.person-row.new-group .group-avatar { width: 32px; height: 32px; }

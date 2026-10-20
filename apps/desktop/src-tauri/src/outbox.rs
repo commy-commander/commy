@@ -310,6 +310,7 @@ pub enum Received {
     Report { from: UserId, content: String },
     Reply { to: UserId, signal: FriendSignal },
     Call { from: UserId, call: ChannelId, signal: CallSignal },
+    GroupInvite { from: UserId, ticket: String },
 }
 
 pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
@@ -343,7 +344,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         return reply.map_or(Received::Taken, |signal| Received::Reply { to: partner, signal });
     }
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return Received::Dropped };
-    if let DmAction::Call { call, signal } = message.action {
+    if matches!(message.action, DmAction::Call { .. } | DmAction::GroupInvite { .. }) {
         let known = {
             let safety = app.safety.lock().unwrap();
             let dms = app.dms.lock().unwrap();
@@ -353,11 +354,21 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
                     || app.servers.lock().unwrap().values().any(|s| s.server.is_member(partner)))
         };
         if !known {
-            tracing::debug!("dropped a call signal from {partner}, who we do not talk to");
+            tracing::debug!("dropped a call or group invite from {partner}, who we do not talk to");
             return Received::Dropped;
         }
         app.dms.lock().unwrap().remember_contact(sender);
-        return Received::Call { from: partner, call, signal };
+        return match message.action.clone() {
+            DmAction::Call { call, signal } => Received::Call { from: partner, call, signal },
+            DmAction::GroupInvite { ticket } => {
+                if !app.dms.lock().unwrap().apply(partner, message) {
+                    return Received::Dropped;
+                }
+                app.persist_dms();
+                Received::GroupInvite { from: partner, ticket }
+            }
+            _ => Received::Dropped,
+        };
     }
     if !message.is_post() {
         let applied = {
