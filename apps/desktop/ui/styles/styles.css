@@ -2427,6 +2427,11 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   box-shadow: 0 0 0 1px var(--bg-darkest);
 }
 .delete-preview:hover { background: var(--bg-dark); }
+.forward-row .server-chip { width: 32px; height: 32px; }
+.forward-row .dm-preview { color: var(--text-muted); }
+.jump-card { display: flex; align-items: center; gap: 10px; margin-top: 6px; padding: 8px 10px; border-radius: 10px; background: var(--bg-raised); border: 1px solid var(--line); max-width: 420px; }
+.jump-card svg { width: 18px; height: 18px; color: var(--text-muted); flex-shrink: 0; }
+.jump-card-text { flex: 1; min-width: 0; color: var(--text-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .delete-preview .avatar { width: 40px; height: 40px; }
 .device-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .device-grid select { width: 100%; min-width: 0; text-overflow: ellipsis; }
