@@ -1363,6 +1363,14 @@
               <input type="checkbox" id="link-preview-show-toggle" class="switch" />
             </label>
           </div>
+          <h2 class="settings-subhead">Age-restricted Channels</h2>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Reset age-restricted confirmations</div>
+              <div class="setting-sub">Every age-restricted channel asks again before it shows anything on this device.</div>
+            </div>
+            <button class="btn-secondary btn-small" type="button" id="sensitive-reset">Reset</button>
+          </div>
           <h2 class="settings-subhead">Blocked Users</h2>
           <div class="settings-card">
             <div class="setting-sub">Blocked people cannot send you direct messages, and their messages in servers are collapsed for you. They are not told.</div>
@@ -1495,6 +1503,13 @@
               <div class="setting-sub">Only members allowed to post announcements can write here. Everyone can read and react, and new posts notify members who only want @mentions.</div>
             </div>
             <input type="checkbox" id="channel-edit-announce" class="switch" />
+          </div>
+          <div class="settings-card setting-row" id="channel-sensitive-row">
+            <div>
+              <div class="setting-title">Age-restricted</div>
+              <div class="setting-sub">People are asked to confirm they are 18 or older before this channel shows anything.</div>
+            </div>
+            <input type="checkbox" id="channel-edit-sensitive" class="switch" />
           </div>
           <div class="settings-card setting-row">
             <div>
@@ -2114,6 +2129,7 @@
   <script src="scripts/polls.js"></script>
   <script src="scripts/read-state.js"></script>
   <script src="scripts/channel-access.js"></script>
+  <script src="scripts/sensitive.js"></script>
   <script src="scripts/audit-log.js"></script>
   <script src="scripts/invites.js"></script>
   <script src="scripts/automod.js"></script>

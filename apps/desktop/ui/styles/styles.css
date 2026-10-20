@@ -5191,3 +5191,95 @@ h3.md-heading { font-size: 1.1em; }
 .emoji-grid button.catalog-sticker.missing img { visibility: hidden; }
 .emoji-grid button.catalog-sticker.busy { opacity: 0.45; cursor: progress; }
 .emoji-grid .catalog-none.stickers { height: 120px; }
+
+.channel-age {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 16px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  line-height: 1;
+  color: var(--text-faint);
+}
+.channel:hover .channel-age, .channel.active .channel-age { color: var(--text-muted); }
+.channel .channel-lock + .channel-age { margin-left: 2px; }
+.channel .channel-age + .channel-bell { margin-left: auto; }
+
+.age-gate-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+.age-gate {
+  width: 100%;
+  max-width: 420px;
+  padding: 32px 28px 28px;
+  border-radius: var(--radius-lg);
+  background: #151929;
+  border: 1px solid #1f2438;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.age-gate-icon {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  margin-bottom: 14px;
+}
+.age-gate-channel {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.age-gate h2 {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  color: var(--header-primary);
+  margin-bottom: 8px;
+}
+.age-gate p {
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: rgba(242, 239, 230, .8);
+  margin-bottom: 22px;
+}
+.age-gate-actions { display: flex; gap: 10px; }
+.age-gate-btn {
+  width: 140px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.age-gate-btn.btn-primary { background: var(--accent); color: var(--accent-ink); }
+.age-gate-btn.btn-primary:hover { background: var(--accent-hover); }

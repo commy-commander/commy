@@ -682,6 +682,7 @@ impl ServerState {
             | E::ChannelColor { channel, .. }
             | E::ChannelKindSet { channel, .. }
             | E::ChannelAccessSet { channel, .. }
+            | E::ChannelSensitiveSet { channel, .. }
             | E::ChannelKeyAdd { channel, .. }
             | E::ChannelKeyGrant { channel, .. } => server.channel(*channel).is_some(),
             E::RoleUpdate { role, .. } => server.roles.iter().any(|r| r.id == role.id),
@@ -1389,6 +1390,16 @@ impl ServerState {
                     return Err(StoreError::UnknownChannel);
                 };
                 Ok(replace(&mut target.color, color))
+            }
+            ServerEvent::ChannelSensitiveSet { server, channel, sensitive } => {
+                self.same_server(server)?;
+                let Some(target) = self.server.channel_mut(channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                if !matches!(target.kind, ChannelKind::Text | ChannelKind::Announcement) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut target.sensitive, sensitive))
             }
             ServerEvent::MessagePin { server, channel, message, by, at, pinned } => {
                 self.same_server(server)?;
@@ -2712,6 +2723,24 @@ mod tests {
             state.apply(ServerEvent::ChannelColor { server: sid, channel: ChannelId::new(), color: None }),
             Err(StoreError::UnknownChannel)
         );
+    }
+
+    #[test]
+    fn channel_sensitive_sets_and_clears_on_text_channels_only() {
+        let (mut state, channel, _) = fixture();
+        let sid = state.server.id;
+        let set = |channel, sensitive| ServerEvent::ChannelSensitiveSet { server: sid, channel, sensitive };
+        assert_eq!(state.apply(set(channel, true)), Ok(true));
+        assert!(state.server.channel(channel).unwrap().sensitive);
+        assert_eq!(state.apply(set(channel, true)), Ok(false));
+        assert_eq!(state.apply(set(channel, false)), Ok(true));
+        assert!(!state.server.channel(channel).unwrap().sensitive);
+        let voice = Channel::new("Voice", ChannelKind::Voice, 9);
+        let voice_id = voice.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: voice }).unwrap();
+        assert_eq!(state.apply(set(voice_id, true)), Ok(false));
+        assert!(!state.server.channel(voice_id).unwrap().sensitive);
+        assert_eq!(state.apply(set(ChannelId::new(), true)), Err(StoreError::UnknownChannel));
     }
 
     fn pin_event(state: &ServerState, channel: ChannelId, message: MessageId, by: UserId, pinned: bool) -> ServerEvent {

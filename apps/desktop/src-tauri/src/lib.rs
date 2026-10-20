@@ -2689,6 +2689,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
             if channel.kind == ChannelKind::Announcement {
                 events.push(ServerEvent::ChannelKindSet { server: sid, channel: channel.id, kind: channel.kind });
             }
+            if channel.sensitive {
+                events.push(ServerEvent::ChannelSensitiveSet { server: sid, channel: channel.id, sensitive: true });
+            }
             if channel.is_restricted() {
                 events.push(ServerEvent::ChannelAccessSet {
                     server: sid,
@@ -4297,6 +4300,29 @@ async fn set_channel_kind(
         }
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelKindSet { server: sid, channel: cid, kind }).await
+}
+
+#[tauri::command]
+async fn set_channel_sensitive(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    sensitive: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
+        let channel = state.server.channel(cid).ok_or("unknown channel")?;
+        if !matches!(channel.kind, ChannelKind::Text | ChannelKind::Announcement) {
+            return Err("only text channels can be age-restricted".into());
+        }
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelSensitiveSet { server: sid, channel: cid, sensitive }).await
 }
 
 #[tauri::command]
@@ -6732,6 +6758,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "channel": message.channel.to_string(),
             "channel_name": state.server.channel(message.channel).map(|c| c.name.clone()).unwrap_or_default(),
             "announcement": state.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement),
+            "sensitive": state.server.channel(message.channel).is_some_and(|c| c.sensitive),
             "author": message.author.to_string(),
             "author_name": view::known_name_of(state, message.author).unwrap_or_else(|| "Someone".into()),
             "mentioned": state.server.mentioned_by(message.author, &message.content, me, &names),
@@ -7314,6 +7341,7 @@ pub fn run() {
             set_channel_banner,
             set_channel_color,
             set_channel_kind,
+            set_channel_sensitive,
             set_channel_access,
             pin_message,
             get_pins,

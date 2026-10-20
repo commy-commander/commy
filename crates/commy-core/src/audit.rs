@@ -65,6 +65,7 @@ pub enum AuditKind {
     MemberTimeoutClear,
     MemberNickname,
     PollClose,
+    ChannelSensitive,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,6 +220,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             let (target, label) = channel(id);
             let detail = if !view.is_empty() { "private" } else if !send.is_empty() { "send" } else { "open" };
             (K::ChannelAccess, target, label, Some(detail.into()))
+        }
+        E::ChannelSensitiveSet { channel: id, sensitive, .. } => {
+            let (target, label) = channel(id);
+            (K::ChannelSensitive, target, label, Some(if *sensitive { "on" } else { "off" }.into()))
         }
         E::RoleCreate { role, .. } => (K::RoleCreate, Some(role.id.to_string()), Some(clip(&role.name)), None),
         E::RoleUpdate { role, .. } => (K::RoleUpdate, Some(role.id.to_string()), Some(clip(&role.name)), None),
@@ -518,6 +523,24 @@ mod tests {
         assert_eq!(log[0].detail.as_deref(), Some("Sammy"));
         assert_eq!(log[1].label.as_deref(), Some("sam"), "the account name, not the nickname being cleared");
         assert_eq!(log[1].detail, None);
+    }
+
+    #[test]
+    fn age_restricting_a_channel_is_logged_with_its_direction() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let sign = |at, sensitive| {
+            SignedEvent::sign(sid, owner, at, ServerEvent::ChannelSensitiveSet { server: sid, channel, sensitive }, &identity_for(owner))
+        };
+        state.apply_signed(&sign(1_000, true)).unwrap();
+        state.apply_signed(&sign(2_000, true)).unwrap();
+        state.apply_signed(&sign(3_000, false)).unwrap();
+        let log = state.audit_log();
+        assert_eq!(log.len(), 2, "a repeat changes nothing");
+        assert_eq!(log[0].kind, AuditKind::ChannelSensitive);
+        assert_eq!(log[0].target.as_deref(), Some(channel.to_string().as_str()));
+        assert_eq!(log[0].detail.as_deref(), Some("on"));
+        assert_eq!(log[1].detail.as_deref(), Some("off"));
     }
 
     #[test]
