@@ -1326,7 +1326,17 @@ input[type="range"]::-webkit-slider-thumb {
   box-shadow: 0 4px 16px rgba(0,0,0,.5);
   z-index: 200;
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(520px, calc(100vw - 48px));
 }
+
+.toast-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast.toast-click { cursor: pointer; border: 1px solid transparent; }
+.toast.toast-click:hover { background: var(--bg-dark); border-color: var(--bg-mid); }
+.toast-avatar { width: 24px; height: 24px; font-size: 10px; position: relative; }
+.toast-avatar .presence-dot { width: 8px; height: 8px; border-width: 2px; border-color: var(--bg-darkest); right: -3px; bottom: -3px; }
 
 .hidden { display: none !important; }
 

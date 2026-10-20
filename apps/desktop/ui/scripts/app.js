@@ -1060,15 +1060,26 @@ async function mockInvoke(cmd, args = {}) {
       if (args.permissions) r.permissions = args.permissions;
       return null;
     }
-    case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] };
+    case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] };
     case "friend_action": {
-      const f = mock.friends || (mock.friends = { friends: [{ id: "m1", name: "ferris" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] });
+      const f = mock.friends || (mock.friends = { friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] });
       const name = (Object.values(mock.servers)[0].members.find(m => m.id === args.userId) || { name: "Someone" }).name;
       f.incoming = f.incoming.filter(x => x.id !== args.userId);
       if (args.action === "accept") f.friends.push({ id: args.userId, name });
       if (args.action === "request") f.outgoing.push({ id: args.userId, name });
       if (args.action === "remove") { f.friends = f.friends.filter(x => x.id !== args.userId); f.outgoing = f.outgoing.filter(x => x.id !== args.userId); }
       return null;
+    }
+    case "mock_presence": {
+      const touched = [];
+      for (const s of Object.values(mock.servers)) {
+        for (const m of s.members) {
+          if (m.id !== args.userId) continue;
+          m.presence = args.presence;
+          touched.push(s.id);
+        }
+      }
+      return touched;
     }
     case "set_about": mock.user.about = args.about; return mock.user;
     case "set_window_title": return null;
@@ -1455,12 +1466,17 @@ function saveAppearance(prefs) {
   try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(prefs)); } catch {}
 }
 
-function toast(message) {
+function toast(message, { avatar = null, onClick = null } = {}) {
   const node = $("toast");
-  node.textContent = message;
+  node.replaceChildren(...(avatar ? [avatar] : []), el("span", "toast-text", message));
+  node.classList.toggle("toast-click", Boolean(onClick));
+  node.onclick = onClick ? () => {
+    node.classList.add("hidden");
+    onClick();
+  } : null;
   node.classList.remove("hidden");
   clearTimeout(node._timer);
-  node._timer = setTimeout(() => node.classList.add("hidden"), 3000);
+  node._timer = setTimeout(() => node.classList.add("hidden"), onClick ? 6000 : 3000);
 }
 
 function showModal(id) {
@@ -2601,6 +2617,58 @@ function notifyPrefs() {
 
 function saveNotifyPrefs(prefs) {
   try { localStorage.setItem(NOTIFY_KEY, JSON.stringify(prefs)); } catch {}
+}
+
+let friendOnline = createFriendOnlineTracker();
+const friendPresenceViews = new Map();
+
+function noteFriendPresence(view) {
+  if (!view || !view.id) return;
+  friendPresenceViews.set(view.id, (view.members || []).map(m => ({ id: m.id, presence: m.presence })));
+}
+
+function showFriendOnline(friend) {
+  const avatar = makeAvatar(friend.id, friend.name, "avatar toast-avatar");
+  avatar.appendChild(el("span", "presence-dot online"));
+  toast(`${friend.name} is now online`, { avatar, onClick: () => messageUser(friend.id, friend.name) });
+  if (!appFocused()) invoke("notify", friendOnlineNotice(friend)).catch(() => {});
+}
+
+function announceFriendsOnline() {
+  if (!state.user) return;
+  const due = sweepFriendPresence(friendOnline, {
+    friends: friends.friends,
+    presenceOf: id => mergedPresence(friendPresenceViews.values(), id),
+    prefs: notifyPrefs(),
+    myPresence: state.user.presence,
+    nowSecs: nowSecs(),
+  });
+  for (const friend of due) showFriendOnline(friend);
+}
+
+async function primeFriendPresence() {
+  friendOnline = createFriendOnlineTracker();
+  friendPresenceViews.clear();
+  await refreshPeople();
+  announceFriendsOnline();
+}
+
+async function trackFriendPresence(serverId) {
+  if (!state.user || !friendOnline.swept || !friends.friends.length) return;
+  if (state.currentServer && state.currentServer.id === serverId) noteFriendPresence(state.currentServer);
+  else if (state.view !== "dm") {
+    try {
+      noteFriendPresence(await invoke("get_server", { serverId }));
+    } catch {
+      return;
+    }
+  }
+  announceFriendsOnline();
+}
+
+function toggleFriendOnlinePick(userId) {
+  const prefs = notifyPrefs();
+  saveNotifyPrefs(withFriendOnlinePick(prefs, userId, !wantsFriendOnline(prefs, userId)));
 }
 
 const unread = { channels: new Map(), channelServer: new Map(), dms: new Map(), mentions: new Set() };
@@ -7299,6 +7367,10 @@ function openProfileMenu(person, x, y) {
     };
     menu.appendChild(btn);
   };
+  if (friendState(person.id) === "friend") {
+    const wants = wantsFriendOnline(notifyPrefs(), person.id);
+    item("Notify when online", "signal", () => toggleFriendOnlinePick(person.id), "ctx-check" + (wants ? " checked" : ""));
+  }
   const blocked = isBlocked(person.id);
   item(blocked ? "Unblock" : "Block", "block", () => {
     if (blocked) setBlocked(person.id, person.name, false);
@@ -7935,6 +8007,11 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
   if (dm && (state.dmThreads || []).some(t => t.user === member.id)) {
     const pinned = dmIsPinned(member.id);
     item(pinned ? "Unpin" : "Pin", () => setDmPinned(member.id, !pinned));
+  }
+  if (friendState(member.id) === "friend") {
+    const wants = wantsFriendOnline(notifyPrefs(), member.id);
+    const ping = item("Notify when online", () => toggleFriendOnlinePick(member.id), "ctx-check" + (wants ? " checked" : ""));
+    ping.title = "A toast when they come online";
   }
   sep();
 
@@ -10174,6 +10251,9 @@ function renderUserPanel() {
 
 async function refreshServers() {
   state.servers = await invoke("list_servers");
+  for (const id of [...friendPresenceViews.keys()]) {
+    if (!state.servers.some(s => s.id === id)) friendPresenceViews.delete(id);
+  }
   loadShareableEmojis();
   renderServerRail();
 }
@@ -10364,6 +10444,8 @@ async function refreshPeople() {
     }
   }
   for (const server of views) rememberAvatars(server.members);
+  friendPresenceViews.clear();
+  for (const server of views) noteFriendPresence(server);
   state.people = indexPeople(views, state.user ? state.user.id : null);
 }
 
@@ -13050,6 +13132,11 @@ function wireEvents() {
     prefs.level = e.target.value;
     saveNotifyPrefs(prefs);
   });
+  $("friend-online-toggle").addEventListener("change", e => {
+    const prefs = notifyPrefs();
+    prefs.friendOnline = e.target.checked;
+    saveNotifyPrefs(prefs);
+  });
   $("close-to-tray-toggle").addEventListener("change", async e => {
     try {
       state.voice = await invoke("set_close_to_tray", { enabled: e.target.checked });
@@ -13413,6 +13500,7 @@ function wireEvents() {
         await renderDmThreads();
         if (state.currentDm) renderDmHeader(state.currentDm.user, state.currentDm.name);
       }
+      await trackFriendPresence(serverId);
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
@@ -14069,6 +14157,7 @@ function openUserSettings(tab) {
     $("gif-provider").dispatchEvent(new Event("change"));
   });
   $("notify-level").value = notifyPrefs().level;
+  $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
   invoke("get_autostart").then(on => { $("autostart-toggle").checked = on; }).catch(() => {});
   $("output-vol").value = Math.round((state.voice.output_volume ?? 1) * 100);
@@ -14901,6 +14990,7 @@ async function continueBoot() {
   await loadPins();
   if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
+  await primeFriendPresence();
 }
 
 let account = { signed_in: false, server_host: "" };
