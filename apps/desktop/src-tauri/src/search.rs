@@ -103,7 +103,7 @@ fn searchable_text(message: &Message) -> String {
 }
 
 fn holds_messages(kind: ChannelKind) -> bool {
-    matches!(kind, ChannelKind::Text | ChannelKind::Announcement)
+    kind.holds_messages()
 }
 
 pub fn search(state: &ServerState, query: &SearchQuery, viewer: Option<UserId>, limit: usize, keys: &KeyHolder) -> SearchResults {

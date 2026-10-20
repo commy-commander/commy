@@ -76,6 +76,8 @@ pub struct ChannelView {
     pub threads: Vec<ThreadView>,
     pub voice_status: Option<String>,
     pub can_set_voice_status: bool,
+    pub tags: Vec<ForumTagView>,
+    pub posts: Vec<ForumPostView>,
     pub can_view: bool,
     pub can_send: bool,
     pub key_ready: bool,
@@ -99,6 +101,77 @@ impl ThreadView {
             .map(|(root, t)| ThreadView { root: root.to_string(), name: t.name.clone(), archived: t.archived, locked: t.locked, by: t.by.to_string() })
             .collect()
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ForumTagView {
+    pub id: String,
+    pub name: String,
+    pub emoji: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ForumPostView {
+    pub message: String,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub author: String,
+    pub author_name: String,
+    pub replies: usize,
+    pub created_at: i64,
+    pub last_activity: i64,
+    pub excerpt: String,
+}
+
+const POST_EXCERPT_CHARS: usize = 240;
+
+fn forum_posts(state: &ServerState, channel: &commy_core::Channel, keys: &KeyHolder) -> Vec<ForumPostView> {
+    let messages = state.messages(channel.id);
+    let by_id: std::collections::HashMap<MessageId, &Message> = messages.iter().map(|m| (m.id, m)).collect();
+    let root_of = |m: &Message| {
+        let mut current = m;
+        let mut seen = HashSet::new();
+        while let Some(parent) = current.reply_to.and_then(|p| by_id.get(&p)) {
+            if !seen.insert(current.id) {
+                break;
+            }
+            current = parent;
+        }
+        current.id
+    };
+    let mut stats: std::collections::HashMap<MessageId, (usize, i64)> = std::collections::HashMap::new();
+    for m in messages.iter().filter(|m| m.reply_to.is_some()) {
+        let root = root_of(m);
+        if root == m.id {
+            continue;
+        }
+        let entry = stats.entry(root).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 = entry.1.max(m.created_at.timestamp_millis());
+    }
+    let mut posts: Vec<ForumPostView> = channel
+        .posts
+        .iter()
+        .filter_map(|(id, post)| {
+            let root = by_id.get(id)?;
+            let created_at = root.created_at.timestamp_millis();
+            let (replies, last_reply) = stats.get(id).copied().unwrap_or((0, 0));
+            let excerpt = keys.open(state, root).map(|m| crate::safety::truncate(&m.content, POST_EXCERPT_CHARS)).unwrap_or_default();
+            Some(ForumPostView {
+                message: id.to_string(),
+                title: post.title.clone(),
+                tags: post.tags.iter().map(|t| t.to_string()).collect(),
+                author: post.author.to_string(),
+                author_name: display_name(state, post.author),
+                replies,
+                created_at,
+                last_activity: created_at.max(last_reply),
+                excerpt,
+            })
+        })
+        .collect();
+    posts.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+    posts
 }
 
 #[derive(Debug, Serialize)]
@@ -324,6 +397,8 @@ impl ServerView {
                     threads: if can_view { ThreadView::list(c, state) } else { Vec::new() },
                     voice_status: c.voice_status.clone().filter(|_| c.kind == ChannelKind::Voice),
                     can_set_voice_status: can_view && c.kind == ChannelKind::Voice && sets_voice_status(c.id),
+                    tags: c.tags.iter().map(|t| ForumTagView { id: t.id.to_string(), name: t.name.clone(), emoji: t.emoji.clone() }).collect(),
+                    posts: if can_view && c.is_forum() { forum_posts(state, c, keys) } else { Vec::new() },
                     can_view,
                     can_send: can_view && viewer.is_some_and(|v| state.server.can_post_in(c.id, v)),
                     key_ready: can_view && keys.key_ready(state, c.id),

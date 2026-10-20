@@ -2955,7 +2955,7 @@ async fn update_channel(
         state.server.channel(cid).ok_or("unknown channel")?.kind
     };
     let name = check_channel_name(match kind {
-        ChannelKind::Text | ChannelKind::Announcement => text_channel_name(&name),
+        kind if kind.holds_messages() => text_channel_name(&name),
         _ => name.trim().to_string(),
     })?;
     let retention_days = retention_days.filter(|d| *d > 0).map(|d| d.min(MAX_RETENTION_DAYS));
@@ -3107,7 +3107,8 @@ async fn create_channel(
         "text" => ChannelKind::Text,
         "voice" => ChannelKind::Voice,
         "announcement" => ChannelKind::Announcement,
-        _ => return Err("channel kind must be text, voice or announcement".into()),
+        "forum" => ChannelKind::Forum,
+        _ => return Err("channel kind must be text, voice, announcement or forum".into()),
     };
     let me = current_profile(&app)?;
     let channel = {
@@ -4406,6 +4407,119 @@ fn refresh_priority_speakers(app: &App) {
     }
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct ForumTagInput {
+    pub id: Option<String>,
+    pub name: String,
+    pub emoji: Option<String>,
+}
+
+fn forum_channel(state: &ServerState, channel: ChannelId) -> CmdResult<&Channel> {
+    let found = state.server.channel(channel).ok_or("unknown channel")?;
+    if !found.is_forum() {
+        return Err("that is not a forum channel".into());
+    }
+    Ok(found)
+}
+
+fn parse_tag_picks(raw: Vec<String>) -> CmdResult<Vec<commy_core::TagId>> {
+    raw.iter().map(|t| t.parse::<commy_core::TagId>().map_err(|_| "that tag no longer exists".to_string())).collect()
+}
+
+#[tauri::command]
+async fn set_forum_tags(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, channel_id: String, tags: Vec<ForumTagInput>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        forum_channel(state, cid)?;
+    }
+    let tags: Vec<commy_core::ForumTag> = tags
+        .into_iter()
+        .map(|t| commy_core::ForumTag {
+            id: t.id.and_then(|id| id.parse().ok()).unwrap_or_else(commy_core::TagId::new),
+            name: t.name,
+            emoji: t.emoji,
+        })
+        .collect();
+    let limits = format!(
+        "a forum can have up to {} tags of {} characters each",
+        commy_core::server::MAX_FORUM_TAGS,
+        commy_core::server::MAX_FORUM_TAG_CHARS
+    );
+    let tags = commy_core::server::clean_forum_tags(&tags).ok_or(limits)?;
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ForumTagsSet { server: sid, channel: cid, tags, by: me.id }).await
+}
+
+#[tauri::command]
+async fn post_forum(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    title: String,
+    content: String,
+    tags: Vec<String>,
+) -> CmdResult<MessageView> {
+    let title = commy_core::server::clean_post_title(&title)
+        .ok_or(format!("a post title is 1 to {} characters", commy_core::server::MAX_POST_TITLE_CHARS))?;
+    let content = clean_message(&content)?;
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let tags = parse_tag_picks(tags)?;
+    let profile = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        forum_channel(state, cid)?;
+        require_can_post(&app, state, profile.id, cid)?;
+    }
+    let content = expressions_for_server(&app, sid, profile.id, content).await?;
+    let mut message = Message::new(cid, profile.id, content);
+    let _signing = app.signing.read().await;
+    seal_and_sign(&app, sid, &mut message)?;
+    if !signed_fits_one_gossip_frame(&message) {
+        return Err("that post is too long to send; try splitting it up".into());
+    }
+    let root = message.id;
+    let view = commit_message(&app, &handle, sid, message).await?;
+    let post = ServerEvent::ForumPost { server: sid, channel: cid, message: root, title, tags, by: profile.id };
+    apply_and_broadcast(&app, &handle, sid, post).await?;
+    Ok(view)
+}
+
+#[tauri::command]
+async fn edit_forum_post(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    message_id: String,
+    title: String,
+    tags: Vec<String>,
+) -> CmdResult<()> {
+    let title = commy_core::server::clean_post_title(&title)
+        .ok_or(format!("a post title is 1 to {} characters", commy_core::server::MAX_POST_TITLE_CHARS))?;
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let mid: MessageId = message_id.parse().map_err(err_to_string)?;
+    let tags = parse_tag_picks(tags)?;
+    let me = current_profile(&app)?;
+    {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        let post = forum_channel(state, cid)?.posts.get(&mid).ok_or("that post no longer exists")?;
+        if post.author != me.id && !our_permissions(&app, state, me.id).allows(Permissions::MANAGE_MESSAGES) {
+            return Err("you can only change your own posts".into());
+        }
+    }
+    let post = ServerEvent::ForumPost { server: sid, channel: cid, message: mid, title, tags, by: me.id };
+    apply_and_broadcast(&app, &handle, sid, post).await
+}
+
 fn voice_channel_full(app: &App, state: &ServerState, channel: ChannelId, user: UserId) -> bool {
     let Some(c) = state.server.channel(channel) else { return false };
     if c.user_limit == 0 || our_permissions(app, state, user).allows(Permissions::MANAGE_CHANNELS) {
@@ -4590,8 +4704,8 @@ async fn set_channel_sensitive(
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
         let channel = state.server.channel(cid).ok_or("unknown channel")?;
-        if !matches!(channel.kind, ChannelKind::Text | ChannelKind::Announcement) {
-            return Err("only text channels can be age-restricted".into());
+        if !channel.kind.holds_messages() {
+            return Err("only text and forum channels can be age-restricted".into());
         }
     }
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelSensitiveSet { server: sid, channel: cid, sensitive }).await
@@ -7594,6 +7708,9 @@ pub fn run() {
             set_channel_limit,
             set_channel_slow_mode,
             set_thread,
+            set_forum_tags,
+            post_forum,
+            edit_forum_post,
             update_role,
             set_own_role,
             get_safety,

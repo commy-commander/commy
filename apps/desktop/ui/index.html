@@ -224,6 +224,19 @@
           </div>
         </div>
       </section>
+      <section class="forum hidden" id="forum-view" aria-label="Forum posts">
+        <div class="forum-toolbar">
+          <div class="forum-tags" id="forum-tags" role="tablist" aria-label="Filter posts by tag"></div>
+          <div class="forum-tools">
+            <div class="forum-modes" role="group" aria-label="Layout">
+              <button class="forum-mode active" id="forum-mode-list" type="button" title="List" aria-pressed="true"></button>
+              <button class="forum-mode" id="forum-mode-gallery" type="button" title="Gallery" aria-pressed="false"></button>
+            </div>
+            <button class="btn-primary btn-small forum-new" id="forum-new" type="button">New post</button>
+          </div>
+        </div>
+        <div class="forum-posts list" id="forum-posts"></div>
+      </section>
       <div class="emoji-picker hidden" id="emoji-picker">
         <div class="picker-tabs" id="picker-tabs" role="tablist">
           <button type="button" role="tab" data-kind="emojis" class="active">Emoji</button>
@@ -899,6 +912,11 @@
           <span class="kind-text"><strong>Announcement</strong><span>Only members allowed to post announcements write here; everyone reads</span></span>
           <span class="kind-radio"></span>
         </button>
+        <button class="kind-option" data-kind="forum">
+          <span class="kind-icon" id="create-forum-icon"></span>
+          <span class="kind-text"><strong>Forum</strong><span>Posts with a title and tags; replies gather under each post</span></span>
+          <span class="kind-radio"></span>
+        </button>
         <button class="kind-option" data-kind="category">
           <span class="kind-icon" id="create-category-icon"></span>
           <span class="kind-text"><strong>Category</strong><span>A collapsible section that groups channels</span></span>
@@ -917,6 +935,22 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="create-channel-cancel">Cancel</button>
         <button class="btn-primary" id="create-channel-save" disabled>Create Channel</button>
+      </div>
+    </div>
+
+    <div class="modal modal-forum-post hidden" id="modal-forum-post" role="dialog" aria-labelledby="forum-post-heading">
+      <h2 id="forum-post-heading">New post</h2>
+      <label class="field-label">Title
+        <input id="forum-post-title" type="text" maxlength="100" placeholder="What is this post about?" autocomplete="off" />
+      </label>
+      <label class="field-label" id="forum-post-body-label">Post
+        <textarea id="forum-post-body" rows="6" maxlength="4000" placeholder="Write the first message of the post"></textarea>
+      </label>
+      <div class="field-label forum-tags-label">Tags <span class="forum-post-tags-left" id="forum-post-tags-left"></span></div>
+      <div class="access-chips forum-pick-tags" id="forum-post-tags"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="forum-post-cancel" type="button">Cancel</button>
+        <button class="btn-primary" id="forum-post-save" type="button" disabled>Post</button>
       </div>
     </div>
 
@@ -1700,6 +1734,18 @@
             </div>
             <select id="channel-slow" class="compact-select"></select>
           </div>
+          <div class="settings-card hidden" id="channel-forum-card">
+            <div class="setting-title">Post Tags</div>
+            <div class="setting-sub">Members pick up to five of these when they post. Removing a tag takes it off every post.</div>
+            <div class="forum-tag-rows" id="channel-forum-tags"></div>
+            <div class="forum-tag-add">
+              <button type="button" class="forum-tag-emoji" id="channel-forum-emoji" title="Pick an emoji">
+                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 17.5c2.3 0 4.3-1.4 5.1-3.5H6.9c.8 2.1 2.8 3.5 5.1 3.5z"/></svg>
+              </button>
+              <input id="channel-forum-name" type="text" maxlength="20" placeholder="New tag" autocomplete="off" />
+              <button type="button" class="btn-secondary btn-small" id="channel-forum-add" disabled>Add</button>
+            </div>
+          </div>
           <div class="settings-card setting-row hidden" id="channel-limit-row">
             <div>
               <div class="setting-title">User Limit <span id="channel-limit-label">No limit</span></div>
@@ -2327,6 +2373,7 @@
   <script src="scripts/slow-mode.js"></script>
   <script src="scripts/threads.js"></script>
   <script src="scripts/voice-status.js"></script>
+  <script src="scripts/forum.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>

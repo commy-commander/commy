@@ -1,5 +1,5 @@
 use crate::identity::Signature;
-use crate::ids::{ChannelId, MessageId, RoleId, ServerId, UserId};
+use crate::ids::{ChannelId, MessageId, RoleId, ServerId, TagId, UserId};
 use crate::message::Message;
 use crate::server::Channel;
 use crate::user::{Presence, UserProfile};
@@ -305,6 +305,20 @@ pub enum ServerEvent {
         text: String,
         by: UserId,
     },
+    ForumTagsSet {
+        server: ServerId,
+        channel: ChannelId,
+        tags: Vec<crate::server::ForumTag>,
+        by: UserId,
+    },
+    ForumPost {
+        server: ServerId,
+        channel: ChannelId,
+        message: MessageId,
+        title: String,
+        tags: Vec<TagId>,
+        by: UserId,
+    },
 }
 
 #[cfg(test)]
@@ -372,6 +386,9 @@ mod tests {
         let thread = ServerEvent::ThreadSet { server, channel, root, name: None, archived: false, locked: false, by: user };
         assert_eq!(wire_tag(thread), 74);
         assert_eq!(wire_tag(ServerEvent::VoiceStatusSet { server, channel, text: "t".into(), by: user }), 75);
+        assert_eq!(wire_tag(ServerEvent::ForumTagsSet { server, channel, tags: vec![], by: user }), 76);
+        let post = ServerEvent::ForumPost { server, channel, message: MessageId::new(), title: "t".into(), tags: vec![], by: user };
+        assert_eq!(wire_tag(post), 77);
     }
 
     #[test]

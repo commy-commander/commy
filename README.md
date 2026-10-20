@@ -10,9 +10,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 ## What you can do
 
 - **Servers and channels.** Create a server from scratch or a starter
-  template, add text and voice channels, group servers into folders, and
-  invite people with a link, and list a public server in Discover so others
-  can find it. A Ctrl+K quick switcher jumps to any channel, conversation or
+  template, add text and voice channels, forum channels for posts with tags,
+  group servers into folders, and invite people with a link, and list a
+  public server in Discover so others can find it. A Ctrl+K quick switcher jumps to any channel, conversation or
   server by name. Mark a channel age-restricted and it asks people to confirm
   they are 18 or older before showing anything. Copy any server's channels,
   roles and rules as a template code so others can start from the same
