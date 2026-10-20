@@ -1182,6 +1182,13 @@
           </div>
           <label class="settings-card setting-row">
             <div>
+              <div class="setting-title">Friend comes online</div>
+              <div class="setting-sub">A small toast when a friend goes from offline to online, at most once every ten minutes for each friend. Right-click a friend to turn it on for just that person, or off for just that person when this is on. Nothing while you are Do Not Disturb or appearing offline.</div>
+            </div>
+            <input type="checkbox" id="friend-online-toggle" class="switch" />
+          </label>
+          <label class="settings-card setting-row">
+            <div>
               <div class="setting-title">Close to tray</div>
               <div class="setting-sub">Closing the window keeps Commy running in the system tray so calls and messages keep working. Quit from the tray icon.</div>
             </div>
@@ -2207,6 +2214,7 @@
   <script src="scripts/voice-message.js"></script>
   <script src="scripts/link-preview.js"></script>
   <script src="scripts/notify.js"></script>
+  <script src="scripts/friend-online.js"></script>
   <script src="scripts/mentions.js"></script>
   <script src="scripts/pins.js"></script>
   <script src="scripts/pins-order.js"></script>
