@@ -521,6 +521,15 @@ pub fn topic_for(server_id: ServerId) -> [u8; 32] {
     topic
 }
 
+#[cfg(any(wasm_browser, test))]
+pub(crate) fn reachable_from_browser(mut addr: EndpointAddr, relays: &[RelayUrl]) -> EndpointAddr {
+    addr.addrs.retain(|a| matches!(a, iroh::TransportAddr::Relay(url) if relays.contains(url)));
+    if addr.addrs.is_empty() {
+        addr.addrs.extend(relays.iter().cloned().map(iroh::TransportAddr::Relay));
+    }
+    addr
+}
+
 pub(crate) fn addr_via_relays(node: EndpointId, relays: &[RelayUrl]) -> EndpointAddr {
     EndpointAddr::from_parts(node, relays.iter().cloned().map(iroh::TransportAddr::Relay))
 }
@@ -845,6 +854,8 @@ impl CommyNode {
     }
 
     fn learn(&self, addr: EndpointAddr) {
+        #[cfg(wasm_browser)]
+        let addr = reachable_from_browser(addr, &self.relays);
         if addr.id != self.router.endpoint().id() {
             self.lookup.add_endpoint_info(addr);
         }
@@ -1136,6 +1147,20 @@ pub(crate) fn parse_node_hex(hex: &str) -> Result<EndpointId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browsers_keep_only_commy_relay_addresses() {
+        let id = iroh::SecretKey::from_bytes(&[3; 32]).public();
+        let ours: RelayUrl = "https://relay.commy.chat:8443".parse().unwrap();
+        let theirs: RelayUrl = "https://usw1-1.relay.n0.iroh.link".parse().unwrap();
+        let direct = iroh::TransportAddr::Ip("192.0.2.1:4433".parse().unwrap());
+        let mixed = EndpointAddr::from_parts(id, [iroh::TransportAddr::Relay(theirs.clone()), iroh::TransportAddr::Relay(ours.clone()), direct.clone()]);
+        let kept = reachable_from_browser(mixed, std::slice::from_ref(&ours));
+        assert_eq!(kept.addrs.into_iter().collect::<Vec<_>>(), vec![iroh::TransportAddr::Relay(ours.clone())]);
+        let foreign = EndpointAddr::from_parts(id, [iroh::TransportAddr::Relay(theirs), direct]);
+        let kept = reachable_from_browser(foreign, std::slice::from_ref(&ours));
+        assert_eq!(kept.addrs.into_iter().collect::<Vec<_>>(), vec![iroh::TransportAddr::Relay(ours)]);
+    }
 
     #[test]
     fn node_hex_roundtrip() {
