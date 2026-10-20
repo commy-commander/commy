@@ -28,6 +28,7 @@ const AUDIT_GROUP_OF = {
   channel_retention: "channels",
   channel_move: "channels",
   channel_limit: "channels",
+  channel_slow_mode: "channels",
   channel_banner: "channels",
   channel_color: "channels",
   channel_kind: "channels",
@@ -110,6 +111,7 @@ function describeAudit(entry) {
     case "channel_retention": return detail ? ["set messages in ", channel, ` to disappear after ${auditCount(count, "day", "days")}`] : ["turned off disappearing messages in ", channel];
     case "channel_move": return ["moved the channel ", channel];
     case "channel_limit": return count > 0 ? [`set a limit of ${auditCount(count, "person", "people")} in `, channel] : ["removed the people limit in ", channel];
+    case "channel_slow_mode": return count > 0 ? [`set slow mode to ${auditCount(count, "second", "seconds")} in `, channel] : ["turned off slow mode in ", channel];
     case "channel_banner": return [detail === "removed" ? "removed the banner of " : "changed the banner of ", channel];
     case "channel_color": return [detail ? "changed the color of " : "removed the color of ", channel];
     case "channel_kind": return ["turned ", channel, ` into a ${CHANNEL_KIND_WORDS[detail] || "channel"}`];

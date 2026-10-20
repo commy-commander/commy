@@ -258,6 +258,11 @@ pub enum ServerEvent {
         server: ServerId,
         user: UserId,
     },
+    ChannelSlowMode {
+        server: ServerId,
+        channel: ChannelId,
+        seconds: u32,
+    },
 }
 
 #[cfg(test)]

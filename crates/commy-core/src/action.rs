@@ -103,6 +103,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ChannelUpdate { channel, .. } => format!("channel.name:{channel}"),
         E::ChannelLayout { channel, .. } => format!("channel.layout:{channel}"),
         E::ChannelLimit { channel, .. } => format!("channel.limit:{channel}"),
+        E::ChannelSlowMode { channel, .. } => format!("channel.slow_mode:{channel}"),
         E::ChannelBanner { channel, .. } => format!("channel.banner:{channel}"),
         E::ChannelColor { channel, .. } => format!("channel.color:{channel}"),
         E::ChannelKindSet { channel, .. } => format!("channel.kind:{channel}"),
@@ -229,6 +230,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::ChannelUpdate { .. }
         | E::ChannelLayout { .. }
         | E::ChannelLimit { .. }
+        | E::ChannelSlowMode { .. }
         | E::ChannelBanner { .. }
         | E::ChannelColor { .. }
         | E::ChannelKindSet { .. }

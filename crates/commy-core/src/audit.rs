@@ -27,6 +27,7 @@ pub enum AuditKind {
     ChannelRetention,
     ChannelMove,
     ChannelLimit,
+    ChannelSlowMode,
     ChannelBanner,
     ChannelColor,
     ChannelKind,
@@ -193,6 +194,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::ChannelLimit { channel: id, user_limit, .. } => {
             let (target, label) = channel(id);
             (K::ChannelLimit, target, label, Some(user_limit.to_string()))
+        }
+        E::ChannelSlowMode { channel: id, seconds, .. } => {
+            let (target, label) = channel(id);
+            (K::ChannelSlowMode, target, label, Some(seconds.to_string()))
         }
         E::ChannelBanner { channel: id, banner, .. } => {
             let (target, label) = channel(id);

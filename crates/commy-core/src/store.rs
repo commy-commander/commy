@@ -595,6 +595,7 @@ impl ServerState {
             | E::ChannelUpdate { channel, .. }
             | E::ChannelLayout { channel, .. }
             | E::ChannelLimit { channel, .. }
+            | E::ChannelSlowMode { channel, .. }
             | E::ChannelBanner { channel, .. }
             | E::ChannelColor { channel, .. }
             | E::ChannelKindSet { channel, .. }
@@ -1180,6 +1181,14 @@ impl ServerState {
                 }
                 Ok(replace(&mut target.user_limit, user_limit))
             }
+            ServerEvent::ChannelSlowMode { server, channel, seconds } => {
+                self.same_server(server)?;
+                let Some(target) = self.server.channel_mut(channel) else { return Ok(false) };
+                if !matches!(target.kind, crate::server::ChannelKind::Text | crate::server::ChannelKind::Announcement) || seconds > crate::server::MAX_SLOW_MODE {
+                    return Ok(false);
+                }
+                Ok(replace(&mut target.slow_mode, seconds))
+            }
             ServerEvent::VoiceModerate { server, user, muted, deafened } => {
                 self.same_server(server)?;
                 if user == self.server.owner {
@@ -1467,6 +1476,20 @@ impl ServerState {
         }
     }
 
+    pub fn slow_mode_wait(&self, channel: ChannelId, author: UserId, at: DateTime<Utc>) -> Option<i64> {
+        let seconds = self.server.channel(channel).map(|c| c.slow_mode).unwrap_or(0);
+        if seconds == 0 || self.server.permissions_for(author).bypasses_slow_mode() {
+            return None;
+        }
+        let last = self.messages(channel).iter().filter(|m| m.author == author && m.created_at < at).map(|m| m.created_at).max()?;
+        let wait = i64::from(seconds) - (at - last).num_seconds();
+        (wait > 0).then_some(wait)
+    }
+
+    fn slow_mode_blocks(&self, message: &Message) -> bool {
+        self.slow_mode_wait(message.channel, message.author, message.created_at).is_some()
+    }
+
     fn create_message(&mut self, mut message: Message) -> Result<bool, StoreError> {
         if !message.id.is_bound_to(message.author) {
             return Err(StoreError::UnboundMessageId);
@@ -1506,6 +1529,9 @@ impl ServerState {
             if let Some(changed) = self.bind_proofs(&message) {
                 return Ok(changed);
             }
+        }
+        if !held && self.slow_mode_blocks(&message) {
+            return Ok(false);
         }
         if self.deleted_messages.contains(&message.id) {
             return Ok(false);
@@ -3231,6 +3257,35 @@ mod tests {
         assert_eq!(state.apply(limit(voice, 4)), Ok(true));
         assert_eq!(state.apply(limit(voice, 500)), Ok(false));
         assert_eq!(state.apply(limit(text, 4)), Ok(false), "text channels have no limit");
+    }
+
+    #[test]
+    fn slow_mode_holds_members_to_the_interval_but_not_moderators() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels.iter().find(|c| c.kind == ChannelKind::Voice).unwrap().id;
+        let slow = |channel, n| ServerEvent::ChannelSlowMode { server: sid, channel, seconds: n };
+        assert_eq!(state.apply(slow(voice, 5)), Ok(false), "voice channels have no slow mode");
+        assert_eq!(state.apply(slow(channel, 100_000)), Ok(false), "capped");
+        assert_eq!(state.apply(slow(channel, 30)), Ok(true));
+        assert_eq!(state.apply(slow(channel, 30)), Ok(false), "unchanged");
+        let member = join(&mut state, "chatty");
+        let t0 = Utc::now() - chrono::Duration::seconds(120);
+        let first = post_at(&state, channel, member, "one", t0);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first }), Ok(true));
+        assert_eq!(state.slow_mode_wait(channel, member, t0 + chrono::Duration::seconds(10)), Some(20));
+        let quick = post_at(&state, channel, member, "two", t0 + chrono::Duration::seconds(10));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: quick }), Ok(false), "too soon");
+        let later = post_at(&state, channel, member, "three", t0 + chrono::Duration::seconds(31));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: later }), Ok(true));
+        assert_eq!(state.messages(channel).len(), 2);
+        let a = post_at(&state, channel, owner, "mod one", t0);
+        let b = post_at(&state, channel, owner, "mod two", t0 + chrono::Duration::seconds(1));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: a }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: b }), Ok(true), "owners bypass");
+        assert_eq!(state.slow_mode_wait(channel, owner, Utc::now()), None);
+        assert_eq!(state.apply(slow(channel, 0)), Ok(true));
+        assert_eq!(state.slow_mode_wait(channel, member, Utc::now()), None);
     }
 
     #[test]

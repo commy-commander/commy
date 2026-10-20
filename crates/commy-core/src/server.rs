@@ -32,9 +32,12 @@ pub struct Channel {
     pub view_roles: Vec<RoleId>,
     #[serde(default)]
     pub send_roles: Vec<RoleId>,
+    #[serde(default)]
+    pub slow_mode: u32,
 }
 
 pub const MAX_ACCESS_ROLES: usize = 16;
+pub const MAX_SLOW_MODE: u32 = 21_600;
 
 impl Channel {
     pub fn new(name: impl Into<String>, kind: ChannelKind, position: u32) -> Self {
@@ -51,6 +54,7 @@ impl Channel {
             color: None,
             view_roles: Vec::new(),
             send_roles: Vec::new(),
+            slow_mode: 0,
         }
     }
 
