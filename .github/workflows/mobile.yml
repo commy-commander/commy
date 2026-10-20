@@ -100,7 +100,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
-          targets: aarch64-apple-ios,x86_64-apple-ios
+          targets: aarch64-apple-ios-sim,x86_64-apple-ios
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -123,7 +123,7 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: |
           npx tauri ios build \
-            --ci --debug --target x86_64
+            --ci --debug --target aarch64-sim
 
       - name: Collect the app
         run: |
