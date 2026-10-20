@@ -27,6 +27,7 @@ mod toast;
 mod tray;
 mod updater;
 mod view;
+mod voice_keys;
 mod wake;
 
 use media_engine::{should_dial, CameraSession, MicTest, ScreenShareSession, ScreenWatch, VoiceSession};
@@ -2980,29 +2981,177 @@ mod status_expiry_tests {
     }
 }
 
-fn register_overlay_hotkeys(handle: &tauri::AppHandle, settings: &overlay::OverlaySettings) {
+fn register_hotkeys(handle: &tauri::AppHandle, voice: &VoiceSettings) {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let shortcuts = handle.global_shortcut();
     let _ = shortcuts.unregister_all();
     let mut taken = Vec::new();
-    if settings.enabled {
-        for key in [&settings.toggle_hotkey, &settings.chat_hotkey] {
-            if let Err(e) = shortcuts.register(key.as_str()) {
-                tracing::warn!("could not register hotkey {key}: {e}");
-                taken.push(key.clone());
-            }
+    let overlay = &voice.overlay;
+    let mut wanted: Vec<&str> = Vec::new();
+    if overlay.enabled {
+        wanted.extend([overlay.toggle_hotkey.as_str(), overlay.chat_hotkey.as_str()]);
+    }
+    let keys = voice.voice_keys();
+    wanted.extend(keys.registered());
+    for key in wanted {
+        if let Err(e) = shortcuts.register(key) {
+            tracing::warn!("could not register hotkey {key}: {e}");
+            taken.push(key.to_string());
         }
     }
     *handle.state::<App>().overlay_hotkeys_taken.lock().unwrap() = taken;
 }
 
+fn taken_hotkeys(app: &App, keys: &[&str]) -> Vec<String> {
+    let taken = app.overlay_hotkeys_taken.lock().unwrap();
+    keys.iter().filter(|k| taken.iter().any(|t| t.eq_ignore_ascii_case(k))).map(|k| k.to_string()).collect()
+}
+
 #[tauri::command]
 fn overlay_hotkey_problems(app: tauri::State<'_, App>) -> Vec<String> {
-    app.overlay_hotkeys_taken.lock().unwrap().clone()
+    let overlay = app.voice.lock().unwrap().overlay.clone();
+    taken_hotkeys(&app, &[&overlay.toggle_hotkey, &overlay.chat_hotkey])
+}
+
+#[tauri::command]
+fn voice_hotkey_problems(app: tauri::State<'_, App>) -> Vec<String> {
+    let keys = app.voice.lock().unwrap().voice_keys();
+    taken_hotkeys(&app, &keys.registered())
 }
 
 fn hotkey_id(key: &str) -> Option<u32> {
     key.parse::<tauri_plugin_global_shortcut::Shortcut>().ok().map(|s| s.id())
+}
+
+fn on_hotkey(handle: &tauri::AppHandle, id: u32, pressed: bool) {
+    let app = handle.state::<App>();
+    let voice = app.voice.lock().unwrap().clone();
+    let keys = voice.voice_keys();
+    if keys.talk.as_deref().and_then(hotkey_id) == Some(id) {
+        set_talk_key(handle, pressed, voice.talk_release_ms);
+    } else if !pressed {
+    } else if keys.mute.as_deref().and_then(hotkey_id) == Some(id) {
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            let app = handle.state::<App>();
+            let muted = !app.voice.lock().unwrap().muted;
+            match set_muted(app, handle.clone(), muted).await {
+                Ok(snapshot) => emit_voice_settings(&handle, &snapshot),
+                Err(e) => tracing::warn!("mute hotkey: {e}"),
+            }
+        });
+    } else if keys.deafen.as_deref().and_then(hotkey_id) == Some(id) {
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            let app = handle.state::<App>();
+            let deafened = !app.voice.lock().unwrap().deafened;
+            match set_deafened(app, handle.clone(), deafened).await {
+                Ok(snapshot) => emit_voice_settings(&handle, &snapshot),
+                Err(e) => tracing::warn!("deafen hotkey: {e}"),
+            }
+        });
+    } else {
+        on_overlay_hotkey(handle, id);
+    }
+}
+
+fn emit_voice_settings(handle: &tauri::AppHandle, voice: &VoiceSettings) {
+    let _ = handle.emit("voice-settings-changed", voice);
+}
+
+fn set_talk_key(handle: &tauri::AppHandle, pressed: bool, release_ms: u32) {
+    let app = handle.state::<App>();
+    let press = app.talk_press.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    if pressed {
+        app.processor.lock().unwrap().set_talk_key_down(true);
+        let _ = handle.emit("talk-key", true);
+        return;
+    }
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(release_ms as u64)).await;
+        let app = handle.state::<App>();
+        if app.talk_press.load(std::sync::atomic::Ordering::SeqCst) != press {
+            return;
+        }
+        app.processor.lock().unwrap().set_talk_key_down(false);
+        let _ = handle.emit("talk-key", false);
+    });
+}
+
+#[tauri::command]
+fn set_input_mode(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    mode: String,
+    talk_key: String,
+    release_ms: u32,
+) -> CmdResult<VoiceSettings> {
+    let mode = voice_keys::InputMode::parse(&mode).ok_or("unknown input mode")?;
+    let talk_key = talk_key.trim().to_string();
+    if !overlay::valid_hotkey(&talk_key) {
+        return Err(format!("{talk_key} is not a key Commy can use for push to talk"));
+    }
+    let snapshot = app.update_voice(|voice| {
+        voice.input_mode = mode;
+        voice.talk_key = talk_key;
+        voice.talk_release_ms = voice_keys::clamp_release_ms(release_ms);
+    });
+    if let Some(clash) = voice_keys::clashing(&all_hotkeys(&snapshot)) {
+        return Err(format!("{clash} is already used by another Commy hotkey"));
+    }
+    let _ = app.talk_press.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    app.processor.lock().unwrap().set_push_to_talk(mode == voice_keys::InputMode::PushToTalk);
+    register_hotkeys(&handle, &snapshot);
+    Ok(snapshot)
+}
+
+fn all_hotkeys(voice: &VoiceSettings) -> Vec<String> {
+    let mut keys: Vec<String> = voice.voice_keys().registered().into_iter().map(str::to_string).collect();
+    if voice.overlay.enabled {
+        keys.extend([voice.overlay.toggle_hotkey.clone(), voice.overlay.chat_hotkey.clone()]);
+    }
+    keys
+}
+
+#[tauri::command]
+fn set_voice_hotkeys(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    mute: String,
+    deafen: String,
+) -> CmdResult<VoiceSettings> {
+    let mute = voice_keys::validate_optional_hotkey(&mute, "mute")?;
+    let deafen = voice_keys::validate_optional_hotkey(&deafen, "deafen")?;
+    let snapshot = app.update_voice(|voice| {
+        voice.mute_hotkey = mute;
+        voice.deafen_hotkey = deafen;
+    });
+    if let Some(clash) = voice_keys::clashing(&all_hotkeys(&snapshot)) {
+        return Err(format!("{clash} is already used by another Commy hotkey"));
+    }
+    register_hotkeys(&handle, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn set_sensitivity(app: tauri::State<'_, App>, auto: bool, threshold_db: f32) -> VoiceSettings {
+    let snapshot = app.update_voice(|voice| {
+        voice.auto_sensitivity = auto;
+        voice.sensitivity_db = voice_keys::clamp_sensitivity_db(threshold_db);
+    });
+    app.processor.lock().unwrap().set_sensitivity(snapshot.sensitivity());
+    snapshot
+}
+
+#[tauri::command]
+fn mic_level(app: tauri::State<'_, App>) -> f32 {
+    let listening = app.mic_test.lock().unwrap().is_some() || app.voice_session.lock().unwrap().is_some();
+    if listening {
+        app.processor.lock().unwrap().last_level_db()
+    } else {
+        commy_audio::SILENCE_DB
+    }
 }
 
 fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
@@ -3040,11 +3189,14 @@ async fn set_overlay_settings(
     if settings.toggle_hotkey.eq_ignore_ascii_case(&settings.chat_hotkey) {
         return Err("the two overlay hotkeys must be different".into());
     }
-    app.update_voice(|voice| voice.overlay = settings.clone());
+    let voice = app.update_voice(|voice| voice.overlay = settings.clone());
+    if let Some(clash) = voice_keys::clashing(&all_hotkeys(&voice)) {
+        return Err(format!("{clash} is already used by another Commy hotkey"));
+    }
     if settings.enabled {
         app.overlay_visible.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    register_overlay_hotkeys(&handle, &settings);
+    register_hotkeys(&handle, &voice);
     overlay::apply(&handle, &settings, app.overlay_visible.load(std::sync::atomic::Ordering::Relaxed));
     Ok(settings)
 }
@@ -5503,9 +5655,8 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|handle, shortcut, event| {
-                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        on_overlay_hotkey(handle, shortcut.id());
-                    }
+                    let pressed = event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed;
+                    on_hotkey(handle, shortcut.id(), pressed);
                 })
                 .build(),
         )
@@ -5533,9 +5684,9 @@ pub fn run() {
                 let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    let settings = handle.state::<App>().voice.lock().unwrap().overlay.clone();
-                    register_overlay_hotkeys(&handle, &settings);
-                    overlay::apply(&handle, &settings, true);
+                    let voice = handle.state::<App>().voice.lock().unwrap().clone();
+                    register_hotkeys(&handle, &voice);
+                    overlay::apply(&handle, &voice.overlay, true);
                 });
             }
             updater::init(&handle);
@@ -5594,11 +5745,7 @@ pub fn run() {
                     }
                 }
                 if let Some(voice) = persist::load_voice(&dir) {
-                    let mut processor = app.processor.lock().unwrap();
-                    processor.set_noise_cancellation(voice.noise_cancellation);
-                    processor.set_muted(voice.muted);
-                    processor.set_input_gain(voice.input_gain);
-                    drop(processor);
+                    voice.apply_to(&mut app.processor.lock().unwrap());
                     let (app_choice, tray_choice) = (voice.app_icon.clone(), voice.tray_icon.clone());
                     *app.voice.lock().unwrap() = voice;
                     app_icon::apply(&handle, Some(dir.as_path()), &app_choice, &tray_choice);
@@ -5814,6 +5961,11 @@ pub fn run() {
             gif_search,
             get_overlay_settings,
             overlay_hotkey_problems,
+            voice_hotkey_problems,
+            set_input_mode,
+            set_voice_hotkeys,
+            set_sensitivity,
+            mic_level,
             set_overlay_settings,
             set_game_tags,
             set_rules,
