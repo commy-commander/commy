@@ -2,7 +2,7 @@ use crate::ids::UserId;
 use crate::permissions::Permissions;
 use crate::server::{
     parse_emoji_token, valid_hex_color, valid_role_tag, valid_rules, Channel, ChannelKind, Role, Server,
-    MAX_USER_LIMIT, SERVER_AFK_MINUTES,
+    MAX_ACCESS_ROLES, MAX_USER_LIMIT, SERVER_AFK_MINUTES,
 };
 use crate::store::{MAX_CHANNELS, MAX_ROLES};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -29,6 +29,10 @@ pub struct TemplateChannel {
     pub user_limit: u32,
     #[serde(default)]
     pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub view_roles: Vec<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub send_roles: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +151,14 @@ fn portable_tag(tag: Option<&str>) -> Option<String> {
         .map(String::from)
 }
 
+fn role_picks(picks: &[usize], roles: usize) -> Vec<usize> {
+    let mut picks: Vec<usize> = picks.iter().copied().filter(|i| *i < roles).collect();
+    picks.sort_unstable();
+    picks.dedup();
+    picks.truncate(MAX_ACCESS_ROLES);
+    picks
+}
+
 fn clean_template_name(name: &str) -> String {
     name.trim().chars().filter(|c| !c.is_control()).take(MAX_TEMPLATE_NAME_CHARS).collect()
 }
@@ -156,6 +168,11 @@ impl ServerTemplate {
         let mut ordered: Vec<&Channel> = server.channels.iter().collect();
         ordered.sort_by_key(|c| c.position);
         let index_of = |id| ordered.iter().position(|c| c.id == id);
+        let mut roles: Vec<&Role> = server.roles.iter().filter(|r| !r.is_everyone()).collect();
+        roles.sort_by_key(|r| r.position);
+        let role_indexes = |ids: &[crate::ids::RoleId]| -> Vec<usize> {
+            ids.iter().filter_map(|id| roles.iter().position(|r| r.id == *id)).collect()
+        };
         let channels = ordered
             .iter()
             .map(|c| TemplateChannel {
@@ -165,10 +182,10 @@ impl ServerTemplate {
                 retention_days: c.retention_days,
                 user_limit: c.user_limit,
                 color: c.color.clone(),
+                view_roles: role_indexes(&c.view_roles),
+                send_roles: role_indexes(&c.send_roles),
             })
             .collect();
-        let mut roles: Vec<&Role> = server.roles.iter().filter(|r| !r.is_everyone()).collect();
-        roles.sort_by_key(|r| r.position);
         let everyone = server
             .roles
             .iter()
@@ -222,6 +239,8 @@ impl ServerTemplate {
                     .map(|d| d.min(MAX_RETENTION_DAYS)),
                 user_limit: if c.kind == ChannelKind::Voice { c.user_limit.min(MAX_USER_LIMIT) } else { 0 },
                 color: clean_color(c.color.as_deref()),
+                view_roles: if c.kind == ChannelKind::Category { vec![] } else { role_picks(&c.view_roles, self.roles.len()) },
+                send_roles: if is_text_like(c.kind) { role_picks(&c.send_roles, self.roles.len()) } else { vec![] },
             });
         }
         if !channels.iter().any(|c| c.kind != ChannelKind::Category) {
@@ -232,6 +251,8 @@ impl ServerTemplate {
                 retention_days: None,
                 user_limit: 0,
                 color: None,
+                view_roles: vec![],
+                send_roles: vec![],
             });
         }
         let mut roles = Vec::with_capacity(self.roles.len());
@@ -288,8 +309,14 @@ impl ServerTemplate {
         if let Some(everyone) = server.roles.iter_mut().find(|r| r.is_everyone()) {
             everyone.permissions = self.everyone;
         }
+        let role_ids: Vec<crate::ids::RoleId> = self.roles.iter().map(|_| crate::ids::RoleId::new()).collect();
+        let picked = |picks: &[usize]| picks.iter().filter_map(|i| role_ids.get(*i).copied()).collect::<Vec<_>>();
+        for (channel, t) in server.channels.iter_mut().zip(&self.channels) {
+            channel.view_roles = picked(&t.view_roles);
+            channel.send_roles = picked(&t.send_roles);
+        }
         server.roles.extend(self.roles.iter().enumerate().map(|(i, r)| Role {
-            id: crate::ids::RoleId::new(),
+            id: role_ids[i],
             name: r.name.clone(),
             color: r.color.clone(),
             permissions: r.permissions,
@@ -394,12 +421,19 @@ impl Draft {
             retention_days: None,
             user_limit: 0,
             color: None,
+            view_roles: vec![],
+            send_roles: vec![],
         });
         self.channels.len() - 1
     }
 
     fn category(&mut self, name: &str) -> usize {
         self.add(name, ChannelKind::Category, None)
+    }
+
+    fn lock_to_last_role(&mut self, channel: usize) {
+        let role = self.roles.len() - 1;
+        self.channels[channel].view_roles = vec![role];
     }
 
     fn text(&mut self, category: Option<usize>, names: &[&str]) {
@@ -505,8 +539,9 @@ impl ServerTemplate {
                 d.text(None, &["introductions", "general", "off-topic", "media", "help"]);
                 d.voice(None, &["Lounge", "Events", "AFK"]);
                 let staff = d.category("Staff");
-                d.text(Some(staff), &["mod-chat"]);
+                let mod_chat = d.add("mod-chat", ChannelKind::Text, Some(staff));
                 d.role("Moderator", "3ddc97", true, moderator_permissions());
+                d.lock_to_last_role(mod_chat);
                 d.role("Event Host", "ff9f43", true, Permissions::MANAGE_EVENTS | Permissions::POST_ANNOUNCEMENTS);
                 d.self_role("Events Ping", "5b8cff");
                 d.rules = Some(COMMUNITY_RULES.into());
@@ -592,6 +627,43 @@ mod tests {
         assert_eq!(rebuilt.roles[2].tag.as_deref(), Some("HOST"));
         assert!(!code.contains(&guest.to_string()));
         assert_eq!(rebuilt.rules.as_deref(), Some(COMMUNITY_RULES));
+    }
+
+    #[test]
+    fn channel_access_roles_survive_a_template_but_keys_do_not() {
+        let mut server = ServerTemplate::builtin(BuiltinTemplate::Community).build("Hub", owner());
+        let host = server.roles.iter().find(|r| r.name == "Event Host").unwrap().id;
+        let moderator = server.roles.iter().find(|r| r.name == "Moderator").unwrap().id;
+        let mod_chat = server.channels.iter().find(|c| c.name == "mod-chat").unwrap();
+        assert_eq!(mod_chat.view_roles, vec![moderator]);
+        let news = server.channels.iter_mut().find(|c| c.name == "announcements").unwrap();
+        news.send_roles = vec![host, moderator];
+        let code = ServerTemplate::from_server(&server).unwrap().encode();
+        assert!(!code.contains(&moderator.to_string()));
+        let rebuilt = ServerTemplate::decode(&code).unwrap().build("Hub 2", owner());
+        let role_named = |name: &str| rebuilt.roles.iter().find(|r| r.name == name).unwrap().id;
+        let channel_named = |name: &str| rebuilt.channels.iter().find(|c| c.name == name).unwrap();
+        assert_eq!(channel_named("mod-chat").view_roles, vec![role_named("Moderator")]);
+        let mut send = channel_named("announcements").send_roles.clone();
+        send.sort();
+        let mut want = vec![role_named("Event Host"), role_named("Moderator")];
+        want.sort();
+        assert_eq!(send, want);
+        assert!(rebuilt.channels.iter().filter(|c| c.name != "mod-chat").all(|c| c.view_roles.is_empty()));
+        assert!(rebuilt.roles.iter().all(|r| r.id != moderator && r.id != host));
+    }
+
+    #[test]
+    fn junk_access_picks_are_cleaned() {
+        let mut template = ServerTemplate::builtin(BuiltinTemplate::Study);
+        let voice = template.channels.iter().position(|c| c.kind == ChannelKind::Voice).unwrap();
+        template.channels[0].view_roles = vec![0, 0, 7];
+        template.channels[0].send_roles = vec![9];
+        template.channels[voice].send_roles = vec![0];
+        let cleaned = template.cleaned().unwrap();
+        assert_eq!(cleaned.channels[0].view_roles, vec![0]);
+        assert!(cleaned.channels[0].send_roles.is_empty());
+        assert!(cleaned.channels[voice].send_roles.is_empty());
     }
 
     #[test]
@@ -690,6 +762,8 @@ mod tests {
             retention_days: None,
             user_limit: 0,
             color: None,
+            view_roles: vec![],
+            send_roles: vec![],
         }];
         template.afk_channel = None;
         let cleaned = template.cleaned().unwrap();

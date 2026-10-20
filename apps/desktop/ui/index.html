@@ -1329,6 +1329,7 @@
       <div class="settings-nav-inner">
         <div class="settings-nav-group" id="channel-settings-title">Channel</div>
         <button class="settings-tab" data-tab="overview">Overview</button>
+        <button class="settings-tab" data-tab="permissions" id="channel-tab-permissions">Permissions</button>
         <div class="settings-nav-sep"></div>
         <button class="settings-tab danger" id="channel-delete-nav">Delete Channel</button>
       </div>
@@ -1412,6 +1413,25 @@
               <div class="setting-sub">Removes the channel and all of its messages for everyone. This cannot be undone.</div>
             </div>
             <button class="btn-danger btn-small" id="channel-delete-btn">Delete Channel</button>
+          </div>
+        </section>
+        <section class="settings-page" data-page="permissions">
+          <h1>Permissions</h1>
+          <div class="settings-card">
+            <div class="setting-title" id="channel-view-title">Who can see this channel</div>
+            <div class="setting-sub">Pick roles to make this channel private. Only they, Administrators and the owner can read what is sent from then on, sealed with a key only they hold. Messages sent before stay with everyone who already has them.</div>
+            <div class="access-chips" id="channel-view-roles"></div>
+          </div>
+          <div class="settings-card" id="channel-send-card">
+            <div class="setting-title">Who can send messages</div>
+            <div class="setting-sub">Everyone who can see the channel can still read and react.</div>
+            <div class="access-chips" id="channel-send-roles"></div>
+          </div>
+          <div class="access-note" id="channel-access-note"></div>
+          <div class="save-bar hidden" id="channel-access-save-bar">
+            <span>You have unsaved changes</span>
+            <button class="btn-link" id="channel-access-reset">Reset</button>
+            <button class="btn-primary btn-small" id="channel-access-save">Save Changes</button>
           </div>
         </section>
       </div>
@@ -1933,6 +1953,7 @@
   <script src="scripts/link-preview.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/pins.js"></script>
+  <script src="scripts/channel-access.js"></script>
   <script src="scripts/audit-log.js"></script>
   <script src="scripts/invites.js"></script>
   <script src="scripts/automod.js"></script>

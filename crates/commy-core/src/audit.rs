@@ -56,6 +56,7 @@ pub enum AuditKind {
     EmoticonAdd,
     EmoticonRemove,
     ExpressionSharing,
+    ChannelAccess,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +180,11 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             let (target, label) = channel(id);
             let kind = serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(str::to_string));
             (K::ChannelKind, target, label, kind)
+        }
+        E::ChannelAccessSet { channel: id, view, send, .. } => {
+            let (target, label) = channel(id);
+            let detail = if !view.is_empty() { "private" } else if !send.is_empty() { "send" } else { "open" };
+            (K::ChannelAccess, target, label, Some(detail.into()))
         }
         E::RoleCreate { role, .. } => (K::RoleCreate, Some(role.id.to_string()), Some(clip(&role.name)), None),
         E::RoleUpdate { role, .. } => (K::RoleUpdate, Some(role.id.to_string()), Some(clip(&role.name)), None),
@@ -332,6 +338,33 @@ mod tests {
         assert!(log.iter().all(|e| e.by == owner));
         let restored = ServerState::from_snapshot(state.snapshot());
         assert_eq!(restored.audit_log(), log, "kept across restarts");
+    }
+
+    #[test]
+    fn locking_a_channel_to_roles_is_logged() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let sign = |at, event| SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        let crew = Role {
+            id: crate::ids::RoleId::new(),
+            name: "crew".into(),
+            color: None,
+            permissions: Permissions::NONE,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            tag: None,
+            banner: None,
+        };
+        let role = crew.id;
+        assert_eq!(state.apply_signed(&sign(1_000, ServerEvent::RoleCreate { server: sid, role: crew })), Ok(true));
+        let lock = ServerEvent::ChannelAccessSet { server: sid, channel, view: vec![role], send: vec![] };
+        assert_eq!(state.apply_signed(&sign(2_000, lock)), Ok(true));
+        let open = ServerEvent::ChannelAccessSet { server: sid, channel, view: vec![], send: vec![role] };
+        assert_eq!(state.apply_signed(&sign(3_000, open)), Ok(true));
+        let access: Vec<Option<&str>> =
+            state.audit_log().iter().filter(|e| e.kind == AuditKind::ChannelAccess).map(|e| e.detail.as_deref()).collect();
+        assert_eq!(access, vec![Some("private"), Some("send")]);
     }
 
     #[test]

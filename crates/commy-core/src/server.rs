@@ -28,7 +28,13 @@ pub struct Channel {
     pub banner: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
+    #[serde(default)]
+    pub view_roles: Vec<RoleId>,
+    #[serde(default)]
+    pub send_roles: Vec<RoleId>,
 }
+
+pub const MAX_ACCESS_ROLES: usize = 16;
 
 impl Channel {
     pub fn new(name: impl Into<String>, kind: ChannelKind, position: u32) -> Self {
@@ -43,7 +49,17 @@ impl Channel {
             user_limit: 0,
             banner: None,
             color: None,
+            view_roles: Vec::new(),
+            send_roles: Vec::new(),
         }
+    }
+
+    pub fn is_private(&self) -> bool {
+        !self.view_roles.is_empty()
+    }
+
+    pub fn is_restricted(&self) -> bool {
+        self.is_private() || !self.send_roles.is_empty()
     }
 }
 
@@ -288,10 +304,36 @@ impl Server {
 
     pub fn can_post_in(&self, channel: ChannelId, user: UserId) -> bool {
         let perms = self.permissions_for(user);
-        match self.channel(channel).map(|c| c.kind) {
-            Some(ChannelKind::Announcement) => perms.can_announce(),
+        let Some(found) = self.channel(channel) else {
+            return perms.allows(Permissions::SEND_MESSAGES);
+        };
+        let allowed = match found.kind {
+            ChannelKind::Announcement => perms.can_announce(),
             _ => perms.allows(Permissions::SEND_MESSAGES),
+        };
+        allowed && self.admits(user, &found.view_roles) && self.admits(user, &found.send_roles)
+    }
+
+    pub fn can_view(&self, channel: ChannelId, user: UserId) -> bool {
+        self.channel(channel).is_some_and(|c| self.admits(user, &c.view_roles))
+    }
+
+    fn admits(&self, user: UserId, roles: &[RoleId]) -> bool {
+        if roles.is_empty() {
+            return true;
         }
+        if self.permissions_for(user).contains(Permissions::ADMINISTRATOR) {
+            return true;
+        }
+        self.member(user).is_some_and(|m| m.roles.iter().any(|r| roles.contains(r)))
+    }
+
+    pub fn readers_of(&self, channel: ChannelId) -> Vec<UserId> {
+        self.members
+            .iter()
+            .map(|m| m.user)
+            .filter(|u| !self.banned.contains(u) && self.can_view(channel, *u))
+            .collect()
     }
 
     pub fn is_pinned(&self, message: MessageId) -> bool {

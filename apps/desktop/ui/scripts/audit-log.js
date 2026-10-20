@@ -57,6 +57,7 @@ const AUDIT_GROUP_OF = {
   emoticon_add: "expressions",
   emoticon_remove: "expressions",
   expression_sharing: "expressions",
+  channel_access: "channels",
 };
 
 const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", announcement: "announcement channel", category: "category" };
@@ -107,6 +108,7 @@ function describeAudit(entry) {
     case "channel_banner": return [detail === "removed" ? "removed the banner of " : "changed the banner of ", channel];
     case "channel_color": return [detail ? "changed the color of " : "removed the color of ", channel];
     case "channel_kind": return ["turned ", channel, ` into a ${CHANNEL_KIND_WORDS[detail] || "channel"}`];
+    case "channel_access": return detail === "private" ? ["made ", channel, " private"] : detail === "send" ? ["limited who can send in ", channel] : ["opened ", channel, " to everyone"];
     case "role_create": return ["created the role ", role];
     case "role_update": return ["updated the role ", role];
     case "role_delete": return label ? ["deleted the role ", role] : ["deleted a role"];

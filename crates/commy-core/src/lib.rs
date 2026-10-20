@@ -2,6 +2,7 @@ pub mod action;
 pub mod audit;
 pub mod automod;
 pub mod catchup;
+pub mod channel_key;
 pub mod dm;
 pub mod doorbell;
 pub mod event;

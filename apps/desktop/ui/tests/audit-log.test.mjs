@@ -45,6 +45,9 @@ test("sentences name the actor, the target and the change", () => {
   assert.equal(auditText(entry("voice_moderate", { label: "Sam", detail: "muted" })), "Mia server-muted Sam");
   assert.equal(auditText(entry("voice_moderate", { label: "Sam", detail: "cleared" })), "Mia lifted the server mute on Sam");
   assert.equal(auditText(entry("message_delete", { label: "Nova", detail: "general" })), "Mia deleted a message by Nova in general");
+  assert.equal(auditText(entry("channel_access", { label: "mods", detail: "private" })), "Mia made mods private");
+  assert.equal(auditText(entry("channel_access", { label: "news", detail: "send" })), "Mia limited who can send in news");
+  assert.equal(auditText(entry("channel_access", { label: "news", detail: "open" })), "Mia opened news to everyone");
   assert.equal(auditText(entry("emoji_add", { label: "wave" })), "Mia added the emoji :wave:");
   assert.equal(auditText(entry("server_public", { detail: "off" })), "Mia made the server private");
   assert.equal(auditText(entry("afk_timeout", { detail: "15" })), "Mia set the server AFK timer to 15 minutes");

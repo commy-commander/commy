@@ -4467,6 +4467,52 @@ h3.md-heading { font-size: 1.1em; }
   .channel-scroll { padding: 8px; }
 }
 
+.channel-lock {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--text-faint);
+}
+.channel.unreadable .channel-label { opacity: .55; }
+
+.msg-sealed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+.msg-sealed svg { flex-shrink: 0; }
+
+.access-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.access-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 15px;
+  border: 1px solid var(--bg-active);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.access-chip .role-dot { width: 10px; height: 10px; }
+.access-chip:hover { background: var(--bg-hover); color: var(--text-normal); }
+.access-chip.picked {
+  border-color: var(--accent);
+  background: rgba(255, 77, 77, .12);
+  color: var(--text-normal);
+}
+.access-note {
+  min-height: 20px;
+  margin: 4px 2px 12px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
 .modal.modal-template { width: min(580px, calc(100vw - 32px)); }
 .template-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .template-tile {

@@ -364,6 +364,7 @@ pub struct Unread {
     names: Vec<String>,
     blocked: HashSet<UserId>,
     silent: bool,
+    keys: crate::channel_lock::KeyHolder,
 }
 
 impl Unread {
@@ -378,12 +379,16 @@ impl Unread {
                 .collect(),
             blocked: app.safety.lock().unwrap().blocked.iter().copied().collect(),
             silent: app.awaits_snapshot(server),
+            keys: crate::channel_lock::KeyHolder::of(app),
         }
     }
 
-    fn fresh(&self, message: &Message) -> Fresh {
+    fn fresh(&self, state: &ServerState, message: &Message) -> Fresh {
         let names: Vec<&str> = self.names.iter().map(String::as_str).collect();
-        Fresh::of(message, &names)
+        match self.keys.open(state, message) {
+            Some(opened) => Fresh::of(&opened, &names),
+            None => Fresh::of(&Message { content: String::new(), ..message.clone() }, &names),
+        }
     }
 
     fn counts(&self, state: &ServerState, message: &Message) -> bool {
@@ -391,6 +396,7 @@ impl Unread {
             || Some(message.author) == self.me
             || self.blocked.contains(&message.author)
             || state.has_message(message.id)
+            || self.me.is_none_or(|me| !state.server.can_view(message.channel, me))
         {
             return false;
         }
@@ -411,7 +417,7 @@ pub fn apply_page(
     let new: HashMap<MessageId, Fresh> = messages
         .iter()
         .filter(|m| unread.counts(state, m))
-        .map(|m| (m.id, unread.fresh(m)))
+        .map(|m| (m.id, unread.fresh(state, m)))
         .collect();
     let (report, held) = apply_items(state, messages, tombstones);
     let held = held.into_iter().filter_map(|event| Some((item_signer(&event)?, event))).collect();
@@ -447,7 +453,7 @@ pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<Held>) -
     let mut out = Retried::default();
     for (at, _, event) in events {
         let new_message = match &event {
-            ServerEvent::MessageCreate { message } if unread.counts(state, message) => Some((message.id, unread.fresh(message))),
+            ServerEvent::MessageCreate { message } if unread.counts(state, message) => Some((message.id, unread.fresh(state, message))),
             _ => None,
         };
         match state.apply(event.clone()) {

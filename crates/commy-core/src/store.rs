@@ -2,6 +2,7 @@ use crate::action::{self, Action, SignedEvent};
 use crate::audit::{AuditEntry, AuditKind};
 use crate::invites::TrackedInvite;
 use crate::automod::{AutoMod, Hold};
+use crate::channel_key::ChannelKeys;
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
@@ -103,6 +104,7 @@ pub struct ServerState {
     signed_actions: HashMap<String, SignedEvent>,
     local_floor: Option<DateTime<Utc>>,
     reaction_marks: HashMap<MessageId, Vec<ReactionMark>>,
+    channel_keys: HashMap<ChannelId, ChannelKeys>,
     automod: AutoMod,
     bots: BTreeSet<UserId>,
     audit: Vec<AuditEntry>,
@@ -138,6 +140,8 @@ pub struct Snapshot {
     pub signed_actions: Vec<SignedEvent>,
     #[serde(default)]
     pub reaction_marks: Vec<(MessageId, ReactionMark)>,
+    #[serde(default)]
+    pub channel_keys: Vec<(ChannelId, ChannelKeys)>,
     #[serde(default)]
     pub automod: AutoMod,
     #[serde(default)]
@@ -177,6 +181,7 @@ impl ServerState {
             signed_actions: HashMap::new(),
             local_floor: None,
             reaction_marks: HashMap::new(),
+            channel_keys: HashMap::new(),
             automod: AutoMod::default(),
             bots: BTreeSet::new(),
             audit: Vec::new(),
@@ -213,6 +218,7 @@ impl ServerState {
                 .filter(|(id, _)| self.index.contains_key(id))
                 .flat_map(|(id, marks)| marks.iter().map(|m| (*id, m.clone())))
                 .collect(),
+            channel_keys: self.channel_keys.iter().map(|(c, k)| (*c, k.clone())).collect(),
             automod: self.automod.clone(),
             bots: self.bots.iter().copied().collect(),
             audit: self.audit.clone(),
@@ -257,6 +263,11 @@ impl ServerState {
                 state.mark_reaction(id, mark.user, &mark.emoji, mark.at, mark.active);
             }
         }
+        state.channel_keys = snapshot
+            .channel_keys
+            .into_iter()
+            .filter(|(channel, _)| state.server.channel(*channel).is_some())
+            .collect();
         state.action_times = snapshot.action_times.into_iter().collect();
         state.action_floor = snapshot.action_floor;
         state.automod = snapshot.automod;
@@ -379,6 +390,10 @@ impl ServerState {
 
     pub fn retention_cutoff(&self, channel: ChannelId, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         self.server.channel(channel).and_then(|c| retention_cutoff(c, now))
+    }
+
+    pub fn channel_keys(&self, channel: ChannelId) -> Option<&ChannelKeys> {
+        self.channel_keys.get(&channel)
     }
 
     pub fn identity_of(&self, user: UserId) -> Option<IdentityKey> {
@@ -580,7 +595,10 @@ impl ServerState {
             | E::ChannelLimit { channel, .. }
             | E::ChannelBanner { channel, .. }
             | E::ChannelColor { channel, .. }
-            | E::ChannelKindSet { channel, .. } => server.channel(*channel).is_some(),
+            | E::ChannelKindSet { channel, .. }
+            | E::ChannelAccessSet { channel, .. }
+            | E::ChannelKeyAdd { channel, .. }
+            | E::ChannelKeyGrant { channel, .. } => server.channel(*channel).is_some(),
             E::RoleUpdate { role, .. } => server.roles.iter().any(|r| r.id == role.id),
             E::RoleDelete { role, .. } | E::RoleAssign { role, .. } | E::RoleUnassign { role, .. } => {
                 server.roles.iter().any(|r| r.id == *role)
@@ -810,6 +828,7 @@ impl ServerState {
                 let before = self.server.channels.len();
                 self.server.channels.retain(|c| c.id != channel);
                 self.server.pins.retain(|p| p.channel != channel);
+                self.channel_keys.remove(&channel);
                 for m in self.messages.remove(&channel).into_iter().flatten() {
                     self.index.remove(&m.id);
                 }
@@ -1266,6 +1285,46 @@ impl ServerState {
                 }
                 Ok(replace(&mut target.kind, kind))
             }
+            ServerEvent::ChannelAccessSet { server, channel, view, send } => {
+                self.same_server(server)?;
+                let known: Vec<_> = self.server.roles.iter().map(|r| r.id).collect();
+                let clean = |mut roles: Vec<crate::ids::RoleId>| {
+                    roles.retain(|r| known.contains(r));
+                    roles.sort();
+                    roles.dedup();
+                    roles
+                };
+                let (view, send) = (clean(view), clean(send));
+                if view.len() > crate::server::MAX_ACCESS_ROLES || send.len() > crate::server::MAX_ACCESS_ROLES {
+                    return Ok(false);
+                }
+                let Some(target) = self.server.channel_mut(channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                if target.kind == ChannelKind::Category {
+                    return Ok(false);
+                }
+                let a = replace(&mut target.view_roles, view);
+                let b = replace(&mut target.send_roles, send);
+                if a {
+                    self.drop_unseen_live();
+                }
+                Ok(a | b)
+            }
+            ServerEvent::ChannelKeyAdd { server, channel, key } => {
+                self.same_server(server)?;
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                Ok(self.channel_keys.entry(channel).or_default().add_key(key))
+            }
+            ServerEvent::ChannelKeyGrant { server, channel, user, grant } => {
+                self.same_server(server)?;
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                self.channel_keys.entry(channel).or_default().set_grant(user, grant, MAX_PROFILES).ok_or(StoreError::Limit)
+            }
             ServerEvent::ServerImages { server, icon, banner } => {
                 self.same_server(server)?;
                 let clean = |v: Option<String>| v.filter(|r| crate::server::ImageRef::parse(r).is_some());
@@ -1323,6 +1382,7 @@ impl ServerState {
                 for member in &mut self.server.members {
                     member.roles.retain(|r| *r != role);
                 }
+                self.drop_unseen_live();
                 Ok(self.server.roles.len() != before)
             }
             ServerEvent::RoleAssign { server, user, role } => {
@@ -1346,9 +1406,26 @@ impl ServerState {
                 };
                 let before = member.roles.len();
                 member.roles.retain(|r| *r != role);
-                Ok(member.roles.len() != before)
+                let changed = member.roles.len() != before;
+                if changed {
+                    self.drop_unseen_live();
+                }
+                Ok(changed)
             }
             ServerEvent::TypingStart { .. } => Ok(true),
+        }
+    }
+
+    fn drop_unseen_live(&mut self) {
+        let server = &self.server;
+        self.screen_shares.retain(|u, c| server.can_view(*c, *u));
+        self.cameras.retain(|u, c| server.can_view(*c, *u));
+        let gone: Vec<UserId> =
+            self.voice_states.iter().filter(|(u, c)| !server.can_view(**c, **u)).map(|(u, _)| *u).collect();
+        for user in gone {
+            self.voice_states.remove(&user);
+            self.voice_since.remove(&user);
+            self.voice_flags.remove(&user);
         }
     }
 
@@ -1371,11 +1448,12 @@ impl ServerState {
             return Err(StoreError::UnknownChannel);
         }
         let held = self.has_message(message.id);
-        if !held
-            && self.server.channel(message.channel).is_some_and(|c| c.kind == ChannelKind::Announcement)
-            && !self.server.can_post_in(message.channel, message.author)
-        {
-            return Err(StoreError::NotAnnouncer);
+        if !held && !self.server.can_post_in(message.channel, message.author) {
+            match self.server.channel(message.channel) {
+                Some(c) if c.is_restricted() => return Err(StoreError::NotAllowed),
+                Some(c) if c.kind == ChannelKind::Announcement => return Err(StoreError::NotAnnouncer),
+                _ => {}
+            }
         }
         if !held
             && message.attachments.iter().any(Attachment::carries_a_file)
@@ -1475,6 +1553,11 @@ impl ServerState {
         if too_far_ahead(edited_at, Utc::now()) {
             return Err(StoreError::TooFarAhead);
         }
+        let restricted = self.server.channel(channel).is_some_and(|c| c.is_restricted());
+        if restricted && !self.server.can_post_in(channel, author) {
+            return Err(StoreError::NotAllowed);
+        }
+        let msg = self.find_message_mut(channel, id)?;
         if !supersedes(msg, Some(edited_at), &sig) {
             return Ok(false);
         }
@@ -1637,7 +1720,7 @@ impl ServerState {
             .get(&user)
             .and_then(|p| p.node.as_deref())
             .is_some_and(|node| node.eq_ignore_ascii_case(node_hex));
-        node_ok && (!voice || self.voice_states.get(&user) == Some(&channel))
+        node_ok && self.server.can_view(channel, user) && (!voice || self.voice_states.get(&user) == Some(&channel))
     }
 
     fn pin_identity(&self, profile: &mut UserProfile) -> Result<(), StoreError> {

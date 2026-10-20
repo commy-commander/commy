@@ -225,6 +225,23 @@ pub enum ServerEvent {
         stickers: bool,
         emoticons: bool,
     },
+    ChannelAccessSet {
+        server: ServerId,
+        channel: ChannelId,
+        view: Vec<RoleId>,
+        send: Vec<RoleId>,
+    },
+    ChannelKeyAdd {
+        server: ServerId,
+        channel: ChannelId,
+        key: crate::channel_key::KeyRecord,
+    },
+    ChannelKeyGrant {
+        server: ServerId,
+        channel: ChannelId,
+        user: UserId,
+        grant: crate::channel_key::SealedKey,
+    },
 }
 
 #[cfg(test)]
@@ -277,6 +294,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::InviteBackgroundSet { server, background: None }), 56);
         let sharing = ServerEvent::ExpressionSharingSet { server, stickers: true, emoticons: false };
         assert_eq!(wire_tag(sharing), 61);
+        assert_eq!(wire_tag(ServerEvent::ChannelAccessSet { server, channel, view: vec![], send: vec![] }), 62);
     }
 
     #[test]

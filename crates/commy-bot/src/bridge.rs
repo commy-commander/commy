@@ -277,8 +277,10 @@ pub fn answer(store: &BotStore, request: Request) -> Value {
             .replica(server)
             .and_then(|r| r.state.as_ref())
             .map(|state| {
-                let ctx = Ctx { server, state, me: bot.profile().id, now: Utc::now() };
-                json!({"message": message_json(&ctx, message)})
+                let me = bot.profile().id;
+                let ctx = Ctx { server, state, me, now: Utc::now() };
+                let opened = bot.readable(state, message).unwrap_or_else(|| message.clone());
+                json!({"message": message_json(&ctx, &opened)})
             })
             .unwrap_or(Value::Null),
         _ => Value::Null,

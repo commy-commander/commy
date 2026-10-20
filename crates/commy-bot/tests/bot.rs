@@ -2,7 +2,7 @@ use chrono::{Duration, Utc};
 use commy_bot::storage::{ticket_in, DataDir};
 use commy_bot::{BotStore, Outgoing, Policy};
 use commy_core::test_support::{fixture, identity_for, post, post_at};
-use commy_core::{Permissions, ServerEvent, SignedEvent, UserId};
+use commy_core::{Message, Permissions, Role, RoleId, ServerEvent, SignedEvent, UserId};
 use commy_net::catchup::CatchupStore;
 use commy_net::WirePayload;
 use std::sync::{Arc, Mutex};
@@ -261,4 +261,59 @@ fn blocked_messages_in_the_first_snapshot_are_removed_if_written_after_the_bot_j
     world.deliver(out);
     assert!(!world.owner_state.has_message(spam.id));
     assert!(world.owner_state.has_message(before.id));
+}
+
+#[test]
+fn private_channels_are_reviewed_through_the_bots_own_key() {
+    use commy_core::channel_key::{self, KeyTask, Keyring};
+    let mut world = World::joined(Policy { log_channel: Some("#general".into()), ban_after: None });
+    world.block("gold");
+    world.promote(Permissions::MANAGE_MESSAGES | Permissions::SEND_MESSAGES);
+    let sid = world.sid();
+    let (channel, member) = (world.channel, world.member);
+    let role = Role {
+        id: RoleId::new(),
+        name: "crew".into(),
+        color: None,
+        permissions: Permissions::NONE,
+        position: 2,
+        hoist: false,
+        self_assignable: false,
+        tag: None,
+        banner: None,
+    };
+    let crew = role.id;
+    world.by_owner(ServerEvent::RoleCreate { server: sid, role });
+    for user in [member, world.bot_id] {
+        world.by_owner(ServerEvent::RoleAssign { server: sid, user, role: crew });
+    }
+    world.by_owner(ServerEvent::ChannelAccessSet { server: sid, channel, view: vec![crew], send: vec![] });
+
+    let mut ring = Keyring::unlock(&world.owner_state, channel, world.owner, &identity_for(world.owner));
+    let Some(KeyTask::Rotate { links }) = channel_key::key_task(&world.owner_state, channel, world.owner, &ring) else {
+        panic!("a fresh private channel needs its first key");
+    };
+    let record = ring.rotate(sid, channel, &links, Utc::now().timestamp_millis());
+    let key = record.id;
+    world.by_owner(ServerEvent::ChannelKeyAdd { server: sid, channel, key: record });
+    let readers = world.owner_state.server.readers_of(channel);
+    assert!(readers.contains(&world.bot_id) && readers.contains(&member));
+    for grant in ring.grant_events(&world.owner_state, channel, key, &readers) {
+        world.by_owner(grant);
+    }
+
+    let member_ring = Keyring::unlock(&world.owner_state, channel, member, &identity_for(member));
+    let (key, secret) = member_ring.sending_key(&world.owner_state, channel).expect("the member holds the key");
+    let mut spam = Message::new(channel, member, "sealed gold inside");
+    channel_key::seal_message(sid, &mut spam, key, secret);
+    spam.sign(sid, &identity_for(member));
+    let out = world.posted(spam.clone());
+    assert_eq!(deletes(&out), vec![spam.id]);
+    let written = notes(&out);
+    assert_eq!(written.len(), 1);
+    assert!(channel_key::is_sealed(&written[0]), "the note in a private channel is sealed too");
+    world.deliver(out);
+    let note = world.owner_state.messages(channel).last().unwrap().clone();
+    let opened = channel_key::read_message(sid, &note, &member_ring).expect("readers open the note");
+    assert_eq!(opened.content, "Removed a message from member: blocked word");
 }
