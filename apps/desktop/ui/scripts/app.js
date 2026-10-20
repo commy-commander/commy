@@ -12739,6 +12739,11 @@ async function refreshServers() {
   renderServerRail();
 }
 
+async function refreshServersIfChanged() {
+  const servers = await invoke("list_servers");
+  if (JSON.stringify(servers) !== JSON.stringify(state.servers)) await refreshServers();
+}
+
 function readMembersPref() {
   try {
     return localStorage.getItem("commy.members.collapsed");
@@ -16055,6 +16060,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("server-event", async event => {
       const serverId = event.payload;
       loadShareableEmojis();
+      await refreshServersIfChanged();
       if (state.currentServer && serverId === state.currentServer.id) {
         await refreshCurrentServer();
       }
