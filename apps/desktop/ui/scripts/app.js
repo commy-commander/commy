@@ -336,6 +336,8 @@ function mockSeed() {
     { id: "g3", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
       content: "", created_at: new Date(Date.now() - 300e3).toISOString(), edited: false,
       attachments: [{ filename: VOICE_MESSAGE_FILENAME, size_bytes: 61440, is_image: false, mime: VOICE_MESSAGE_MIME, blob: "voice@mock", provider: null }] },
+    { id: "g8", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
+      content: "raid starts in five, grab your potions", created_at: new Date(Date.now() - 240e3).toISOString(), edited: false, attachments: [], tts: true },
   ];
   mock.messages[server.channels[1].id].push(
     { id: "vi1", channel: server.channels[1].id, author_id: "m2", author_name: "nova", content: "",
@@ -616,6 +618,7 @@ async function mockInvoke(cmd, args = {}) {
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
+        can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
         stickers: s.stickers || [], emoticons: s.emoticons || [], stickers_shareable: !!s.stickers_shareable, emoticons_shareable: !!s.emoticons_shareable,
         add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
         can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
@@ -816,10 +819,12 @@ async function mockInvoke(cmd, args = {}) {
         if (thread && thread.locked && mock.plainMember) throw "that thread is locked";
         if (thread) thread.archived = false;
       }
+      if (args.tts && mock.plainMember && Object.values(mock.servers).some(s => s.tts_restricted && s.channels.includes(chan))) throw "you do not have permission to send text-to-speech messages here";
       const msg = {
         id: crypto.randomUUID(), channel: args.channelId, author_id: "me",
         author_name: mock.user.username, content: args.content,
         created_at: new Date().toISOString(), edited: false, attachments: [], reactions: [],
+        tts: Boolean(args.tts),
         reply_to: args.replyTo || null,
         reply_preview: (() => { const o = (mock.messages[args.channelId] || []).find(m => m.id === args.replyTo); return o ? { author_id: o.author_id, author_name: o.author_name, excerpt: o.content.slice(0, 120) } : null; })(),
       };
@@ -3334,6 +3339,69 @@ function onMessageCreated(msg) {
     invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
     playSound("message");
   }
+  speakIncoming(msg, viewing);
+}
+
+const TTS_KEY = "commy.tts";
+
+function ttsPrefs() {
+  try {
+    return readTtsPrefs(localStorage.getItem(TTS_KEY));
+  } catch {
+    return readTtsPrefs(null);
+  }
+}
+
+function saveTtsPrefs(prefs) {
+  try { localStorage.setItem(TTS_KEY, JSON.stringify(prefs)); } catch {}
+}
+
+function speechAvailable() {
+  return typeof window !== "undefined" && Boolean(window.speechSynthesis) && typeof SpeechSynthesisUtterance === "function";
+}
+
+function stopSpeaking() {
+  if (speechAvailable()) window.speechSynthesis.cancel();
+}
+
+function speakText(text) {
+  if (!text || !speechAvailable()) return false;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = ttsPrefs().rate;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
+
+function speakMessage(message) {
+  if (!speakText(spokenText(message.author_name, message.content, plainText))) toast("Text-to-speech is not available here");
+}
+
+function speakIncoming(msg, viewing) {
+  const speak = shouldSpeakIncoming({
+    mode: ttsPrefs().mode,
+    tts: Boolean(msg.tts),
+    ownMessage: Boolean(state.user && msg.author === state.user.id),
+    deafened: Boolean(state.voice.deafened),
+    viewing: Boolean(viewing),
+    blocked: isBlocked(msg.author),
+    presence: state.user?.presence,
+  });
+  if (speak) speakText(spokenText(msg.author_name, msg.content, plainText));
+}
+
+function canSendTtsHere() {
+  return canSendTts(state.currentServer);
+}
+
+function renderTtsSettings() {
+  const prefs = ttsPrefs();
+  $("tts-mode").value = prefs.mode;
+  $("tts-rate").value = String(Math.round(prefs.rate * 10));
+  $("tts-rate-label").textContent = `${prefs.rate.toFixed(1)}x`;
+  $("tts-mode").disabled = !speechAvailable();
+  $("tts-preview").disabled = !speechAvailable();
+  $("tts-preview").title = speechAvailable() ? "" : "Text-to-speech is not available here";
 }
 
 function onMessagesCaughtUp(payload) {
@@ -4834,6 +4902,16 @@ function pinnedMark() {
   return mark;
 }
 
+function ttsMark() {
+  const mark = el("span", "msg-tts");
+  mark.title = "Sent as text-to-speech. Read Aloud is in the message menu.";
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", "Text-to-speech");
+  mark.appendChild(svgIcon("speaker", 13));
+  mark.appendChild(document.createTextNode("Spoken"));
+  return mark;
+}
+
 function heldMark(reason) {
   const mark = el("span", "msg-held");
   mark.title = "Members don't see this message. Auto moderation held it.";
@@ -4847,8 +4925,8 @@ function heldMark(reason) {
 function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {}) {
   const pending = Boolean(message.pending);
   const held = Boolean(message.held);
-  if (held) grouped = false;
-  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : "") + (held ? " held" : ""));
+  if (held || message.tts) grouped = false;
+  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : "") + (held ? " held" : "") + (message.tts ? " tts" : ""));
   row.dataset.id = message.id;
   row.appendChild(messageActions(message, inThread));
   if (message.reply_to) row.appendChild(replyReference(message));
@@ -4865,6 +4943,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     head.appendChild(el("span", "msg-time", formatTime(message.created_at)));
     if (pending) head.appendChild(pendingMark());
     if (message.pinned) head.appendChild(pinnedMark());
+    if (message.tts) head.appendChild(ttsMark());
     if (held) head.appendChild(heldMark(message.held));
     body.appendChild(head);
   }
@@ -8667,7 +8746,7 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
-  ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
+  ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "send_tts_messages", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
   ["Voice", ["priority_speaker"]],
 ];
@@ -10680,7 +10759,7 @@ function suggestionsFor(token, input) {
   if (token.kind === "mention") return mentionSuggestions(token.query);
   if (token.kind === "emoji") return emojiSuggestions(token.query, emojiGroupsHere(), EMOJI_DATA);
   if (token.kind === "command" && suggestPop.commandInputs.has(input)) {
-    return commandSuggestions(token, { gifs: Boolean(gifSettings().key) || serverHasGifs() });
+    return commandSuggestions(token, { gifs: Boolean(gifSettings().key) || serverHasGifs(), tts: state.view === "server" && canSendTtsHere() });
   }
   return [];
 }
@@ -10693,6 +10772,7 @@ function suggestHeading(token) {
 }
 
 function commandHint(item) {
+  if (item.name === TTS_COMMAND) return ttsCommandHint(item);
   if (!item.available) return "GIF search is not set up";
   return item.args ? "Search GIFs" : "Search for a GIF";
 }
@@ -10889,6 +10969,7 @@ function openMessageMenu(message, anchor) {
     item("Copy Message Link", () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied"));
   }
   if (message.content) item("Forward", () => openForward(message));
+  if (message.content && speechAvailable()) item("Read Aloud", () => speakMessage(message));
   savedMenuItems(item, message);
   if (state.view === "server" && state.currentChannel && !message.pending) item("Mark as Unread", () => markUnreadFrom(message));
   const r = anchor.getBoundingClientRect();
@@ -12513,8 +12594,14 @@ async function sendMessage() {
     return;
   }
   if (state.view === "dm") return sendDm();
-  const content = input.value.trim();
+  const typed = input.value.trim();
+  const { tts, content } = parseTtsPrefix(typed);
   if (!content || !state.currentServer || !state.currentChannel) return;
+  if (tts && !canSendTtsHere()) {
+    toast("You can't send text-to-speech messages in this server");
+    return;
+  }
+  stopSpeaking();
   input.value = "";
   fitComposer(input);
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
@@ -12534,12 +12621,13 @@ async function sendMessage() {
       content: outgoing,
       replyTo,
       previewUrl,
+      tts,
     });
     pushOverlayChat(state.user.id, state.user.display_name || state.user.username, outgoing, false);
     noteSlowSend(state.currentChannel.id, 0);
     await selectChannel(state.currentChannel);
   } catch (e) {
-    input.value = content;
+    input.value = typed;
     fitComposer(input);
     const wait = slowModeWaitFromError(e);
     if (wait) noteSlowSend(state.currentChannel.id, wait);
@@ -14284,7 +14372,9 @@ function wireEvents() {
     closeFloating();
   });
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") closeFloating();
+    if (e.key !== "Escape") return;
+    closeFloating();
+    stopSpeaking();
   });
 
   setIcon($("reply-bar-cancel"), "close", 16);
@@ -14596,6 +14686,17 @@ function wireEvents() {
     prefs.friendOnline = e.target.checked;
     saveNotifyPrefs(prefs);
   });
+  $("tts-mode").addEventListener("change", e => {
+    saveTtsPrefs({ ...ttsPrefs(), mode: e.target.value });
+    renderTtsSettings();
+  });
+  $("tts-rate").addEventListener("input", e => {
+    saveTtsPrefs({ ...ttsPrefs(), rate: clampRate(Number(e.target.value) / 10) });
+    renderTtsSettings();
+  });
+  $("tts-preview").onclick = () => {
+    if (!speakText(spokenText(state.user ? state.user.display_name || state.user.username : "Commy", "this is how text-to-speech sounds"))) toast("Text-to-speech is not available here");
+  };
   $("close-to-tray-toggle").addEventListener("change", async e => {
     try {
       state.voice = await invoke("set_close_to_tray", { enabled: e.target.checked });
@@ -15511,6 +15612,7 @@ const PERMISSION_LABELS = [
   ["bypass_slow_mode", "Bypass Slow Mode"],
   ["attach_files", "Send Files and Images"],
   ["send_voice_messages", "Send Voice Messages"],
+  ["send_tts_messages", "Send Text-to-Speech Messages"],
   ["add_emojis", "Add Emojis"],
   ["add_stickers", "Add Stickers"],
   ["add_emoticons", "Add Emoticons"],
@@ -15621,6 +15723,7 @@ function openUserSettings(tab) {
   });
   $("notify-level").value = notifyPrefs().level;
   $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
+  renderTtsSettings();
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
   invoke("get_autostart").then(on => { $("autostart-toggle").checked = on; }).catch(() => {});
   $("output-vol").value = Math.round((state.voice.output_volume ?? 1) * 100);

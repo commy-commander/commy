@@ -1317,6 +1317,27 @@
             </div>
             <input type="checkbox" id="friend-online-toggle" class="switch" />
           </label>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Text-to-speech</div>
+              <div class="setting-sub">Messages sent with /tts are read aloud as "name said: message" through your computer's voice. Never while you are deafened or Do Not Disturb, never your own, and Escape or sending a message stops it. Open any message's menu and pick Read Aloud to hear it on demand.</div>
+            </div>
+            <select id="tts-mode" class="compact-select">
+              <option value="never">Never</option>
+              <option value="open">Only when the channel is open</option>
+              <option value="all">All channels</option>
+            </select>
+          </div>
+          <div class="settings-card">
+            <div class="slider-row">
+              <div class="setting-title">Voice rate <span id="tts-rate-label">1.0x</span></div>
+              <input type="range" id="tts-rate" min="5" max="20" value="10" />
+            </div>
+            <div class="setting-row tts-preview-row">
+              <div class="setting-sub">Hear the voice at this rate.</div>
+              <button class="btn-secondary btn-small" id="tts-preview">Preview</button>
+            </div>
+          </div>
           <label class="settings-card setting-row">
             <div>
               <div class="setting-title">Close to tray</div>
@@ -2391,6 +2412,7 @@
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>
+  <script src="scripts/tts.js"></script>
   <script src="scripts/embeds.js"></script>
   <script src="scripts/voice-message.js"></script>
   <script src="scripts/link-preview.js"></script>

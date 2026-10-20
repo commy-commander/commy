@@ -1,6 +1,7 @@
 use crate::event::ServerEvent;
 use crate::identity::{Identity, IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
+use crate::permissions::Permissions;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,8 @@ pub struct Attachment {
 
 pub const VOICE_MESSAGE_FILENAME: &str = "voice-message.ogg";
 pub const VOICE_MESSAGE_MIME: &str = "audio/ogg";
+pub const TTS_MARKER_FILENAME: &str = "text-to-speech";
+pub const TTS_MARKER_MIME: &str = "application/vnd.commy.tts";
 
 impl Attachment {
     pub fn is_image(&self) -> bool {
@@ -23,7 +26,15 @@ impl Attachment {
     }
 
     pub fn is_card(&self) -> bool {
-        self.is_link_preview() || self.is_poll() || self.is_voice_invite()
+        self.is_link_preview() || self.is_poll() || self.is_voice_invite() || self.is_tts_marker()
+    }
+
+    pub fn tts_marker() -> Self {
+        Self { blob: String::new(), filename: TTS_MARKER_FILENAME.into(), size_bytes: 0, mime_type: TTS_MARKER_MIME.into(), provider: None }
+    }
+
+    pub fn is_tts_marker(&self) -> bool {
+        self.mime_type == TTS_MARKER_MIME
     }
 
     pub fn carries_a_file(&self) -> bool {
@@ -163,6 +174,20 @@ impl Message {
 
     pub fn files(&self) -> impl Iterator<Item = &Attachment> {
         self.attachments.iter().filter(|a| !a.is_card())
+    }
+
+    pub fn mark_tts(&mut self) {
+        if !self.is_tts() {
+            self.attachments.push(Attachment::tts_marker());
+        }
+    }
+
+    pub fn is_tts(&self) -> bool {
+        self.attachments.iter().any(Attachment::is_tts_marker)
+    }
+
+    pub fn speaks_for(&self, author_permissions: Permissions) -> bool {
+        self.is_tts() && !self.content.trim().is_empty() && author_permissions.can_send_tts()
     }
 
     pub fn link_previews(&self) -> impl Iterator<Item = (crate::link_preview::LinkPreview, &Attachment)> {
@@ -341,6 +366,32 @@ mod tests {
         assert!(!only_a_voice_message("hear this", std::iter::once(&voice)));
         assert!(!only_a_voice_message("", std::iter::empty()));
         assert!(!only_a_voice_message("", [&voice, &renamed].into_iter()));
+    }
+
+    #[test]
+    fn a_tts_marker_is_a_card_that_speaks_only_for_those_allowed_to() {
+        let mut msg = Message::new(ChannelId::new(), UserId::new(), "hear me");
+        assert!(!msg.is_tts());
+        msg.mark_tts();
+        msg.mark_tts();
+        assert!(msg.is_tts());
+        assert_eq!(msg.attachments.len(), 1, "marking twice adds one marker");
+        let marker = &msg.attachments[0];
+        assert!(marker.is_tts_marker());
+        assert!(marker.is_card());
+        assert!(!marker.carries_a_file());
+        assert!(!marker.is_plain_file());
+        assert!(!marker.is_voice_message());
+        assert_eq!(msg.files().count(), 0);
+        assert!(msg.speaks_for(Permissions::default_member()));
+        assert!(msg.speaks_for(Permissions::ADMINISTRATOR));
+        assert!(!msg.speaks_for(Permissions::SEND_MESSAGES));
+        let silent = Message { content: "  ".into(), ..msg.clone() };
+        assert!(!silent.speaks_for(Permissions::default_member()));
+        let plain = Message::new(ChannelId::new(), UserId::new(), "hear me");
+        assert!(!plain.speaks_for(Permissions::ADMINISTRATOR));
+        let bytes = postcard::to_stdvec(&msg).unwrap();
+        assert_eq!(postcard::from_bytes::<Message>(&bytes).unwrap(), msg);
     }
 
     fn sample(identity: &Identity, server: ServerId) -> Message {
