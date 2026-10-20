@@ -12,7 +12,9 @@ import {
   emojiggCategory,
   emojiggSearch,
   igdbResults,
+  steamOf,
   klipyResults,
+  klipyStickerResults,
   mediaHost,
   mediaUrl,
 } from "../src/media.js";
@@ -38,15 +40,41 @@ const klipyBody = {
   },
 };
 
+const stickerBody = {
+  result: true,
+  data: {
+    data: [
+      {
+        slug: "grrr-rawr",
+        title: "Grrr Rawr",
+        file: {
+          hd: { webp: { url: "https://static.klipy.com/hd.webp", width: 498, height: 498, size: 900000 } },
+          md: {
+            webp: { url: "https://static.klipy.com/md.webp", width: 300, height: 300, size: 700000 },
+            gif: { url: "https://static.klipy.com/md.gif", width: 300, height: 300, size: 400000 },
+          },
+          sm: { webp: { url: "https://static.klipy.com/sm.webp", width: 150, height: 120, size: 90000 } },
+        },
+      },
+      {
+        slug: "too-big",
+        title: "Too big",
+        file: { sm: { gif: { url: "https://static.klipy.com/big.gif", width: 150, height: 150, size: 900000 } } },
+      },
+      { slug: "", title: "No slug", file: { sm: { webp: { url: "https://static.klipy.com/x.webp" } } } },
+    ],
+  },
+};
+
 function fakeFetch(log) {
   return async (url, init = {}) => {
     const u = String(url);
     log.push({ url: u, init });
-    if (u.startsWith("https://api.klipy.com/")) return Response.json(klipyBody);
+    if (u.startsWith("https://api.klipy.com/")) return Response.json(u.includes("/stickers/") ? stickerBody : klipyBody);
     if (u === "https://emoji.gg/api/") return Response.json(emojiggBody);
     if (u.startsWith("https://id.twitch.tv/")) return Response.json({ access_token: "twitch-token", expires_in: 3600 });
     if (u.startsWith("https://api.igdb.com/")) {
-      return Response.json([{ id: 72, name: "Portal 2", cover: { image_id: "co1rs4" }, first_release_date: 1303171200 }]);
+      return Response.json([{ id: 72, name: "Portal 2", cover: { image_id: "co1rs4" }, first_release_date: 1303171200, external_games: [{ external_game_source: 1, uid: "620" }] }]);
     }
     if (u.startsWith("https://static.klipy.com/") && u.endsWith(".gif")) {
       return new Response(GIF_BYTES, { headers: { "content-type": "image/gif" } });
@@ -107,6 +135,13 @@ test("KLIPY results keep https renditions only", () => {
   assert.deepEqual(klipyResults({ data: "nope" }), []);
 });
 
+test("KLIPY stickers send the first rendition small enough to keep", () => {
+  assert.deepEqual(klipyStickerResults(stickerBody), [
+    { id: "grrr-rawr", preview: "https://static.klipy.com/sm.webp", url: "https://static.klipy.com/md.gif", ratio: 0.8, title: "Grrr Rawr" },
+  ]);
+  assert.deepEqual(klipyStickerResults(null), []);
+});
+
 test("the emoji.gg catalog keeps safe, named, CDN-hosted emojis, most loved first", () => {
   const catalog = emojiggCatalog(emojiggBody);
   assert.deepEqual(
@@ -151,15 +186,33 @@ test("emoji search needs a session and loads the catalog once", async () => {
 
 test("IGDB results drop unsafe cover ids and unnamed games", () => {
   const results = igdbResults([
-    { id: 7, name: " Celeste ", cover: { image_id: "co3byy" }, first_release_date: 1516665600 },
-    { id: 8, name: "Evil", cover: { image_id: "../x" } },
+    {
+      id: 7,
+      name: " Celeste ",
+      cover: { image_id: "co3byy" },
+      first_release_date: 1516665600,
+      external_games: [
+        { external_game_source: 5, uid: "gog-celeste", url: "https://www.gog.com/game/celeste" },
+        { external_game_source: 1, uid: "504230" },
+      ],
+    },
+    { id: 8, name: "Evil", cover: { image_id: "../x" }, external_games: [{ external_game_source: 1, uid: "12; rm" }] },
     { id: 9 },
   ]);
   assert.deepEqual(results, [
-    { id: 7, name: "Celeste", cover: "co3byy", year: 2018 },
-    { id: 8, name: "Evil", cover: null, year: null },
+    { id: 7, name: "Celeste", cover: "co3byy", year: 2018, steam: 504230 },
+    { id: 8, name: "Evil", cover: null, year: null, steam: null },
   ]);
   assert.deepEqual(igdbResults({}), []);
+});
+
+test("the Steam store id comes from the Steam entry, or a Steam store link", () => {
+  assert.equal(steamOf([{ url: "https://store.steampowered.com/app/367520/Hollow_Knight/" }]), 367520);
+  assert.equal(steamOf([{ external_game_source: 1, uid: "0" }]), null);
+  assert.equal(steamOf([{ external_game_source: 1, uid: "99999999999" }]), null);
+  assert.equal(steamOf([{ url: "https://store.steampowered.com.evil.test/app/9" }]), null);
+  assert.equal(steamOf([{ url: "https://store.steampowered.com/bundle/9" }]), null);
+  assert.equal(steamOf(null), null);
 });
 
 test("queries are cleaned and escaped", () => {
@@ -178,10 +231,11 @@ test("customer ids are stable and do not reveal the account id", () => {
 
 test("discovery advertises only the searches with keys", () => {
   const none = discoveryDocument(loadConfig(ENV));
-  assert.deepEqual(none.features, { gifs: false, games: false, emojis: true, media: true, vault: true, doorbell: true, twoFactor: true, changeEmail: false });
+  assert.deepEqual(none.features, { gifs: false, stickers: false, games: false, emojis: true, media: true, vault: true, doorbell: true, twoFactor: true, changeEmail: false });
   const both = discoveryDocument(loadConfig({ ...ENV, KLIPY_API_KEY: KLIPY_KEY, TWITCH_CLIENT_ID: "id", TWITCH_CLIENT_SECRET: "s" }));
-  assert.deepEqual(both.features, { gifs: true, games: true, emojis: true, media: true, vault: true, doorbell: true, twoFactor: true, changeEmail: false });
+  assert.deepEqual(both.features, { gifs: true, stickers: true, games: true, emojis: true, media: true, vault: true, doorbell: true, twoFactor: true, changeEmail: false });
   assert.equal(both.endpoints.gifSearch, `${ORIGIN}/api/auth/commy/gifs/search`);
+  assert.equal(both.endpoints.stickerSearch, `${ORIGIN}/api/auth/commy/stickers/search`);
   assert.equal(both.endpoints.gameSearch, `${ORIGIN}/api/auth/commy/games/search`);
   assert.ok(!JSON.stringify(both).includes(KLIPY_KEY), "the key never appears in discovery");
 });
@@ -213,6 +267,7 @@ test("searches without keys say they are not set up", async () => {
   const { call, signUp } = makeAuth();
   const cookie = await signUp("nokeys@example.test");
   assert.equal((await call("GET", "/commy/gifs/search", { cookie, query: { q: "cat" } })).status, 404);
+  assert.equal((await call("GET", "/commy/stickers/search", { cookie, query: { q: "cat" } })).status, 404);
   assert.equal((await call("GET", "/commy/games/search", { cookie, query: { q: "portal" } })).status, 404);
 });
 
@@ -236,6 +291,25 @@ test("GIF search needs a session and keeps the key server side", async () => {
   assert.equal(log.length, 2);
 });
 
+test("sticker search uses the KLIPY key server side", async () => {
+  const { call, signUp, log } = makeAuth({ KLIPY_API_KEY: KLIPY_KEY });
+  assert.equal((await call("GET", "/commy/stickers/search", { query: { q: "rawr" } })).status, 401);
+  assert.equal(log.length, 0);
+
+  const cookie = await signUp("stickers@example.test");
+  const r = await call("GET", "/commy/stickers/search", { cookie, query: { q: "rawr" } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.deepEqual(r.json.results.map((s) => s.id), ["grrr-rawr"]);
+  assert.ok(!JSON.stringify(r.json).includes(KLIPY_KEY));
+  assert.ok(log[0].url.startsWith(`https://api.klipy.com/api/v1/${KLIPY_KEY}/stickers/search?q=rawr`));
+  assert.match(log[0].url, /format_filter=webp%2Cgif/);
+
+  await call("GET", "/commy/stickers/search", { cookie });
+  assert.ok(log[1].url.includes("/stickers/trending?"));
+  await call("GET", "/commy/gifs/search", { cookie, query: { q: "rawr" } });
+  assert.ok(log[2].url.includes("/gifs/search?"), "GIF and sticker results are cached apart");
+});
+
 test("game search reuses the Twitch app token", async () => {
   const { call, signUp, log } = makeAuth({ TWITCH_CLIENT_ID: "tw", TWITCH_CLIENT_SECRET: "tws" });
   const cookie = await signUp("games@example.test");
@@ -243,12 +317,13 @@ test("game search reuses the Twitch app token", async () => {
 
   const r = await call("GET", "/commy/games/search", { cookie, query: { q: "portal" } });
   assert.equal(r.status, 200, JSON.stringify(r.json));
-  assert.deepEqual(r.json.results, [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }]);
+  assert.deepEqual(r.json.results, [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011, steam: 620 }]);
   await call("GET", "/commy/games/search", { cookie, query: { q: "half life" } });
   assert.equal(log.filter((l) => l.url.startsWith("https://id.twitch.tv/")).length, 1, "one token for both searches");
   const igdb = log.find((l) => l.url.startsWith("https://api.igdb.com/"));
   assert.equal(igdb.init.headers["Client-ID"], "tw");
   assert.match(igdb.init.body, /^search "portal";/);
+  assert.match(igdb.init.body, /external_games\.external_game_source,external_games\.uid/);
 
   const short = await call("GET", "/commy/games/search", { cookie, query: { q: "p" } });
   assert.deepEqual(short.json.results, []);

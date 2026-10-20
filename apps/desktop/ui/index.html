@@ -235,6 +235,14 @@
           </span>
           <button class="icon-btn" id="link-draft-dismiss" title="Send Without Preview"></button>
         </div>
+        <div class="voice-rec hidden" id="voice-rec" role="status" aria-live="polite">
+          <span class="voice-rec-dot" aria-hidden="true"></span>
+          <span class="voice-rec-label">Recording</span>
+          <span class="voice-rec-time" id="voice-rec-time">0:00</span>
+          <span class="voice-rec-hint">up to 5:00</span>
+          <button class="btn-secondary btn-small" id="voice-rec-cancel" type="button">Cancel</button>
+          <button class="btn-primary btn-small voice-rec-send" id="voice-rec-send" type="button">Send</button>
+        </div>
         <button class="icon-btn composer-attach" id="attach-btn" title="Add Files and GIFs">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4z"/></svg>
         </button>
@@ -272,6 +280,7 @@
       <div class="dm-profile-card">
         <div class="dm-profile-name" id="dm-profile-name"></div>
         <div class="dm-profile-status" id="dm-profile-status"></div>
+        <div class="activity-box hidden" id="dm-profile-activity"></div>
         <div class="dm-profile-divider"></div>
         <div class="dm-profile-label" id="dm-profile-mutual-label">Mutual Servers</div>
         <div class="dm-profile-servers" id="dm-profile-servers"></div>
@@ -279,6 +288,23 @@
         <button class="dm-profile-action danger" id="dm-profile-block">Block</button>
       </div>
     </aside>
+  </div>
+
+  <div class="switcher-backdrop hidden" id="switcher-backdrop">
+    <div class="switcher" id="switcher" role="dialog" aria-label="Quick Switcher">
+      <label class="switcher-field">
+        <span class="switcher-icon" id="switcher-icon"></span>
+        <input id="switcher-input" type="text" placeholder="Jump to a channel, person or server" autocomplete="off" spellcheck="false" aria-label="Quick switcher" aria-controls="switcher-list" />
+        <kbd class="switcher-chip" data-shortcut="K">Ctrl+K</kbd>
+      </label>
+      <div class="switcher-list" id="switcher-list" role="listbox" aria-label="Matches"></div>
+      <footer class="switcher-foot">
+        <span><b>&uarr;&darr;</b> move</span>
+        <span><b>Enter</b> open</span>
+        <span><b>Esc</b> close</span>
+        <span class="switcher-foot-tip"><b>#</b> channels &middot; <b>@</b> people &middot; <b>*</b> servers</span>
+      </footer>
+    </div>
   </div>
 
   <div class="modal-backdrop hidden" id="modal-backdrop">
@@ -454,6 +480,30 @@
       </div>
     </div>
 
+    <div class="modal modal-poll hidden" id="modal-poll">
+      <h2>Create a Poll</h2>
+      <label class="field-label">Question
+        <input id="poll-question" type="text" maxlength="300" placeholder="What should we play next?" autocomplete="off" />
+      </label>
+      <div class="field-label">Answers</div>
+      <div class="poll-rows" id="poll-rows"></div>
+      <button class="poll-add" id="poll-add" type="button">Add an answer</button>
+      <div class="setting-row poll-switch">
+        <div>
+          <div class="setting-title">Allow more than one answer</div>
+          <div class="setting-sub">People pick every answer that fits instead of just one.</div>
+        </div>
+        <input type="checkbox" id="poll-multi" class="switch" aria-label="Allow more than one answer" />
+      </div>
+      <label class="field-label">Duration
+        <select id="poll-duration"></select>
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="poll-cancel">Cancel</button>
+        <button class="btn-primary" id="poll-send">Post Poll</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-leave-server">
       <h2 id="leave-server-title">Leave Server</h2>
       <p id="leave-server-body">Are you sure you want to leave? You will not be able to rejoin unless you are invited again, and your copy of its history is removed from this device.</p>
@@ -567,6 +617,7 @@
       </div>
       <div class="modal-actions">
         <button class="btn-secondary danger-text" id="si-leave">Leave Server</button>
+        <button class="btn-secondary hidden" id="si-answers">Change My Answers</button>
         <button class="btn-primary" id="si-close">Done</button>
       </div>
     </div>
@@ -577,6 +628,24 @@
       <div class="pins-list pins-list-wide" id="pins-modal-list"></div>
       <div class="modal-actions">
         <button class="btn-primary" id="pins-modal-close">Done</button>
+      </div>
+    </div>
+
+    <div class="modal modal-wide hidden" id="modal-onboarding" role="dialog" aria-label="Onboarding questions">
+      <div class="sw-head">
+        <div class="server-icon sw-icon" id="ob-icon"></div>
+        <div class="sw-titles">
+          <h2 id="ob-title">A few questions</h2>
+          <p id="ob-sub"></p>
+        </div>
+        <span class="ob-preview-badge hidden" id="ob-preview-badge">Preview</span>
+      </div>
+      <div class="sw-steps hidden" id="ob-steps"></div>
+      <div class="ob-questions" id="ob-questions"></div>
+      <div class="modal-actions ob-actions">
+        <button class="btn-secondary" id="ob-later">Later</button>
+        <button class="btn-secondary hidden" id="ob-back">Back</button>
+        <button class="btn-primary" id="ob-next">Next</button>
       </div>
     </div>
 
@@ -599,6 +668,7 @@
         <div class="fp-name-row"><span class="fp-name" id="fp-name"></span></div>
         <div class="fp-username" id="fp-username"></div>
         <div class="fp-status" id="fp-status"></div>
+        <div class="activity-box hidden" id="fp-activity"></div>
         <div class="fp-section hidden" id="fp-about-wrap">
           <div class="mc-label">About Me</div>
           <div class="fp-about" id="fp-about"></div>
@@ -1339,6 +1409,14 @@
               <input type="checkbox" id="link-preview-show-toggle" class="switch" />
             </label>
           </div>
+          <h2 class="settings-subhead">Age-restricted Channels</h2>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Reset age-restricted confirmations</div>
+              <div class="setting-sub">Every age-restricted channel asks again before it shows anything on this device.</div>
+            </div>
+            <button class="btn-secondary btn-small" type="button" id="sensitive-reset">Reset</button>
+          </div>
           <h2 class="settings-subhead">Blocked Users</h2>
           <div class="settings-card">
             <div class="setting-sub">Blocked people cannot send you direct messages, and their messages in servers are collapsed for you. They are not told.</div>
@@ -1396,6 +1474,23 @@
             </div>
             <input type="checkbox" id="compact-toggle" class="switch" />
           </label>
+          <h2 class="settings-subhead">Keyboard Shortcuts</h2>
+          <div class="settings-card shortcut-card">
+            <div class="shortcut-row">
+              <div>
+                <div class="setting-title">Quick Switcher</div>
+                <div class="setting-sub">Jump to any channel, conversation or server.</div>
+              </div>
+              <kbd class="shortcut-key" data-shortcut="K">Ctrl+K</kbd>
+            </div>
+            <div class="shortcut-row">
+              <div>
+                <div class="setting-title">Search This Server</div>
+                <div class="setting-sub">Find messages by keyword, author or channel.</div>
+              </div>
+              <kbd class="shortcut-key" data-shortcut="F">Ctrl+F</kbd>
+            </div>
+          </div>
           <h2 class="settings-subhead">App Icon</h2>
           <div class="settings-card icon-card">
             <div class="setting-sub">Shown in your taskbar or dock while Commy is running.</div>
@@ -1471,6 +1566,13 @@
               <div class="setting-sub">Only members allowed to post announcements can write here. Everyone can read and react, and new posts notify members who only want @mentions.</div>
             </div>
             <input type="checkbox" id="channel-edit-announce" class="switch" />
+          </div>
+          <div class="settings-card setting-row" id="channel-sensitive-row">
+            <div>
+              <div class="setting-title">Age-restricted</div>
+              <div class="setting-sub">People are asked to confirm they are 18 or older before this channel shows anything.</div>
+            </div>
+            <input type="checkbox" id="channel-edit-sensitive" class="switch" />
           </div>
           <div class="settings-card setting-row">
             <div>
@@ -1552,6 +1654,7 @@
         <button class="settings-tab" data-tab="channels" id="tab-channels">Channels</button>
         <button class="settings-tab" data-tab="roles" id="tab-roles">Roles</button>
         <button class="settings-tab" data-tab="rules" id="tab-rules">Rules</button>
+        <button class="settings-tab" data-tab="onboarding" id="tab-onboarding">Onboarding</button>
         <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
         <button class="settings-tab" data-tab="emoji" id="tab-emoji">Emoji</button>
         <button class="settings-tab" data-tab="stickers" id="tab-stickers">Stickers</button>
@@ -1786,6 +1889,19 @@
           </div>
         </section>
 
+        <section class="settings-page" data-page="onboarding">
+          <h1>Onboarding</h1>
+          <div class="setting-sub expr-intro">Ask new members a few questions when they join, right after the rules. Each answer can hand out roles, and channels limited to those roles open up with them. Roles that can manage the server, roles or everything are never offered. Members can change their answers later from the server menu.</div>
+          <div class="ob-editor" id="ob-editor"></div>
+          <div class="expr-toolbar">
+            <button class="btn-secondary btn-small" id="ob-add-question">Add Question</button>
+            <button class="btn-primary btn-small" id="ob-save">Save</button>
+            <button class="btn-secondary btn-small" id="ob-preview">Preview</button>
+            <button class="btn-link danger hidden" id="ob-remove">Remove Questions</button>
+            <span class="expr-count" id="ob-count"></span>
+          </div>
+        </section>
+
         <section class="settings-page" data-page="automod">
           <h1>Auto Moderation</h1>
           <div class="setting-sub expr-intro">Every member's Commy app checks messages against these rules, including ones already posted. A message that breaks a rule is held: members don't see it and aren't notified, and moderators see it marked in the channel so they can deal with it. The owner and anyone who can manage messages or the server are never held. Currently: <span id="automod-status">Off</span>.</div>
@@ -1964,6 +2080,7 @@
       <div class="mc-name-row"><span class="mc-name" id="mc-name"></span></div>
       <div class="mc-username hidden" id="mc-username"></div>
       <div class="mc-status" id="mc-status"></div>
+      <div class="activity-box hidden" id="mc-activity"></div>
       <div class="mc-actions" id="mc-actions"></div>
       <div class="mc-about hidden" id="mc-about"></div>
       <div class="mc-label hidden" id="mc-roles-label">Roles</div>
@@ -1998,11 +2115,12 @@
 
   <div class="pop-menu ctx-menu hidden" id="member-menu" role="menu"></div>
   <div class="pop-menu ctx-menu hidden" id="msg-menu" role="menu"></div>
-
   <div class="pop-menu composer-menu hidden" id="composer-menu" role="menu">
     <button id="cm-file" role="menuitem">Upload a File</button>
     <button id="cm-video" role="menuitem">Post a Video</button>
     <button id="cm-gif" role="menuitem">GIF</button>
+    <button id="cm-poll" role="menuitem">Create a Poll</button>
+    <button id="cm-voice" role="menuitem">Record a Voice Message</button>
   </div>
 
   <div class="pop-menu ctx-menu hidden" id="server-menu" role="menu">
@@ -2022,6 +2140,7 @@
     <button id="sm-events">Events</button>
     <button id="sm-rules" class="hidden">Server Rules</button>
     <button id="sm-roles" class="hidden">Choose Roles</button>
+    <button id="sm-onboarding" class="hidden">Change My Answers</button>
     <button id="sm-settings">Server Settings</button>
     <button id="sm-ungroup" class="hidden">Remove From Folder</button>
     <div class="ctx-sep"></div>
@@ -2030,6 +2149,7 @@
   <div class="pop-menu ctx-menu hidden" id="channel-menu" role="menu">
     <div class="ctx-title" id="channel-menu-title"></div>
     <button id="chm-read">Mark As Read</button>
+    <button id="chm-pin">Pin Channel</button>
     <div class="ctx-sep"></div>
     <div class="ctx-label">Notifications</div>
     <button class="ctx-radio" data-level="default">Use server setting</button>
@@ -2077,22 +2197,30 @@
   <script src="scripts/stream-audio.js"></script>
   <script src="scripts/typing.js"></script>
   <script src="scripts/nicknames.js"></script>
+  <script src="scripts/onboarding.js"></script>
   <script src="scripts/message-link.js"></script>
   <script src="scripts/slow-mode.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>
   <script src="scripts/embeds.js"></script>
+  <script src="scripts/voice-message.js"></script>
   <script src="scripts/link-preview.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/mentions.js"></script>
   <script src="scripts/pins.js"></script>
+  <script src="scripts/pins-order.js"></script>
+  <script src="scripts/polls.js"></script>
+  <script src="scripts/read-state.js"></script>
   <script src="scripts/channel-access.js"></script>
+  <script src="scripts/sensitive.js"></script>
   <script src="scripts/audit-log.js"></script>
   <script src="scripts/invites.js"></script>
   <script src="scripts/automod.js"></script>
   <script src="scripts/search.js"></script>
+  <script src="scripts/switcher.js"></script>
   <script src="scripts/presence.js"></script>
+  <script src="scripts/activity.js"></script>
   <script src="scripts/people.js"></script>
   <script src="scripts/timers.js"></script>
   <script src="scripts/timeouts.js"></script>

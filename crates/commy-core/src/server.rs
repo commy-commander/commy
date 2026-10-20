@@ -34,6 +34,8 @@ pub struct Channel {
     pub send_roles: Vec<RoleId>,
     #[serde(default)]
     pub slow_mode: u32,
+    #[serde(default)]
+    pub sensitive: bool,
 }
 
 pub const MAX_ACCESS_ROLES: usize = 16;
@@ -55,6 +57,7 @@ impl Channel {
             view_roles: Vec::new(),
             send_roles: Vec::new(),
             slow_mode: 0,
+            sensitive: false,
         }
     }
 
@@ -239,6 +242,8 @@ pub struct Server {
     pub stickers_shareable: bool,
     #[serde(default)]
     pub emoticons_shareable: bool,
+    #[serde(default)]
+    pub onboarding: Option<crate::onboarding::Onboarding>,
 }
 
 impl Server {
@@ -303,6 +308,7 @@ impl Server {
             emoticons: vec![],
             stickers_shareable: false,
             emoticons_shareable: false,
+            onboarding: None,
         }
     }
 

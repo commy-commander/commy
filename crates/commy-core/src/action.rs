@@ -74,8 +74,9 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::EventRsvp { user, .. }
         | E::DoorbellSet { user, .. }
         | E::BotSet { user, .. }
+        | E::PollVote { user, .. }
         | E::PronounsSet { user, .. } => Some(*user),
-        E::MessagePin { by, .. } | E::MemberTimeout { by, .. } => Some(*by),
+        E::MessagePin { by, .. } | E::MemberTimeout { by, .. } | E::PollClose { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -108,6 +109,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ChannelColor { channel, .. } => format!("channel.color:{channel}"),
         E::ChannelKindSet { channel, .. } => format!("channel.kind:{channel}"),
         E::ChannelAccessSet { channel, .. } => format!("channel.access:{channel}"),
+        E::ChannelSensitiveSet { channel, .. } => format!("channel.sensitive:{channel}"),
         E::ChannelKeyAdd { channel, key, .. } => format!("channel.key:{channel}:{}", key.id.to_hex()),
         E::ChannelKeyGrant { channel, user, .. } => format!("channel.grant:{channel}:{user}"),
         E::AfkChannelSet { .. } => "afk_channel".into(),
@@ -117,6 +119,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::PublicSet { .. } => "public".into(),
         E::GameTagsSet { .. } => "game_tags".into(),
         E::RulesSet { .. } => "rules".into(),
+        E::OnboardingSet { .. } => "onboarding".into(),
         E::AutoModSet { .. } => "automod".into(),
         E::BotSet { user, .. } => format!("bot:{user}"),
         E::PronounsSet { user, .. } => format!("pronouns:{user}"),
@@ -146,7 +149,10 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::VoiceModerate { user, .. } => format!("voice_moderate:{user}"),
         E::MemberTimeout { user, .. } => format!("timeout:{user}"),
         E::MemberNickname { user, .. } => format!("nickname:{user}"),
+        E::VoiceMove { user, .. } => format!("voice_move:{user}"),
         E::MessagePin { message, .. } => format!("pin:{message}"),
+        E::PollVote { message, user, .. } => format!("vote:{message}:{user}"),
+        E::PollClose { message, .. } => format!("poll:{message}"),
         E::ReactionToggle { message, emoji, user, .. } | E::ReactionSet { message, emoji, user, .. } => {
             format!("reaction:{message}:{emoji}:{user}")
         }
@@ -166,12 +172,14 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
 }
 
 pub fn settles_authority(subject: &str) -> bool {
-    const LIVE: [&str; 7] = ["presence:", "voice:", "share:", "camera:", "reaction:", "rsvp:", "profile:"];
+    const LIVE: [&str; 8] = ["presence:", "voice:", "share:", "camera:", "reaction:", "rsvp:", "profile:", "voice_move:"];
     !LIVE.iter().any(|p| subject.starts_with(p))
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 11] = ["emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:", "channel.key:", "channel.grant:", "timeout:"];
+    const OMITTED: [&str; 13] = [
+        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "invite:", "channel.key:", "channel.grant:", "timeout:", "vote:", "poll:",
+    ];
     const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
     SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
 }
@@ -187,7 +195,7 @@ fn may_add(perms: Permissions, member: bool, kind: Permissions, taken: bool) -> 
 fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
     use ServerEvent as E;
     match event {
-        E::VoiceState { channel, .. } => *channel,
+        E::VoiceState { channel, .. } | E::VoiceMove { channel, .. } => *channel,
         E::TypingStart { channel, .. }
         | E::ScreenShare { channel, .. }
         | E::CameraState { channel, .. }
@@ -195,6 +203,8 @@ fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
         | E::ReactionSet { channel, .. }
         | E::SoundboardPlay { channel, .. }
         | E::SharedSoundPlay { channel, .. }
+        | E::PollVote { channel, .. }
+        | E::PollClose { channel, .. }
         | E::MessagePin { channel, .. } => Some(*channel),
         _ => None,
     }
@@ -222,6 +232,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
             member && speaks && actor(event) == Some(by) && allows(Permissions::USE_SOUNDBOARD) && sees(event)
         }
         E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin() && sees(event),
+        E::PollVote { .. } => member && speaks && actor(event) == Some(by) && sees(event),
+        E::PollClose { .. } => member && actor(event) == Some(by) && sees(event),
         E::ChannelKeyAdd { channel, .. } | E::ChannelKeyGrant { channel, .. } => {
             member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)
         }
@@ -234,12 +246,14 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::ChannelBanner { .. }
         | E::ChannelColor { .. }
         | E::ChannelKindSet { .. }
-        | E::ChannelAccessSet { .. } => allows(Permissions::MANAGE_CHANNELS),
+        | E::ChannelAccessSet { .. }
+        | E::ChannelSensitiveSet { .. } => allows(Permissions::MANAGE_CHANNELS),
         E::ServerRename { .. }
         | E::ServerImages { .. }
         | E::PublicSet { .. }
         | E::GameTagsSet { .. }
         | E::RulesSet { .. }
+        | E::OnboardingSet { .. }
         | E::AutoModSet { .. }
         | E::AfkChannelSet { .. }
         | E::AfkTimeoutSet { .. }
@@ -250,6 +264,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => {
             allows(Permissions::MANAGE_ROLES)
                 || (*user == by && server.roles.iter().any(|r| r.id == *role && r.self_assignable))
+                || (*user == by && crate::onboarding::may_self_assign(server, by, *role))
         }
         E::EmojiRemove { .. } | E::StickerRemove { .. } | E::EmoticonRemove { .. } | E::SoundRemove { .. } => {
             allows(Permissions::MANAGE_EXPRESSIONS)
@@ -283,6 +298,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
             let others = *user != server.owner && allows(Permissions::MANAGE_NICKNAMES);
             member && (own || others)
         }
+        E::VoiceMove { user, .. } => allows(Permissions::MOVE_MEMBERS) && *user != by && sees(event),
         E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
         E::MemberTimeout { user, .. } => *user != by && actor(event) == Some(by) && allows(Permissions::TIME_OUT_MEMBERS),
         E::ServerDelete { .. } => by == server.owner,
@@ -411,6 +427,7 @@ mod tests {
             ServerEvent::MemberLeave { server: sid, user: admin },
             ServerEvent::VoiceModerate { server: sid, user: plain, muted: true, deafened: false },
             ServerEvent::MemberNickname { server: sid, user: admin, nickname: Some("Ad".into()) },
+            ServerEvent::VoiceMove { server: sid, user: plain, channel: None },
         ];
         for event in &events {
             assert!(authorized(&state.server, owner, event), "{event:?}");
@@ -440,6 +457,30 @@ mod tests {
         assert_eq!(state.apply(transfer(plain)), Ok(false));
         assert!(authorized(&state.server, plain, &ServerEvent::ServerDelete { server: sid }));
         assert!(!authorized(&state.server, owner, &ServerEvent::ServerDelete { server: sid }), "the old owner is a member now");
+    }
+
+    #[test]
+    fn votes_come_from_members_who_see_the_channel_and_are_not_timed_out() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        let message = crate::ids::MessageId::new();
+        let vote = |user| ServerEvent::PollVote { server: sid, channel, message, user, choices: vec![0] };
+        let close = |by| ServerEvent::PollClose { server: sid, channel, message, by };
+        assert!(authorized(&state.server, a, &vote(a)));
+        assert!(authorized(&state.server, a, &close(a)));
+        assert!(!authorized(&state.server, a, &vote(b)), "nobody votes for someone else");
+        assert!(!authorized(&state.server, b, &close(a)));
+        assert!(!authorized(&state.server, UserId::new(), &vote(UserId::new())), "strangers do not vote");
+        let until = Some(chrono::Utc::now() + chrono::Duration::minutes(10));
+        let timeout = ServerEvent::MemberTimeout { server: sid, user: a, by: owner, at: chrono::Utc::now(), until };
+        state.apply(timeout).unwrap();
+        assert!(!authorized(&state.server, a, &vote(a)), "timed out members sit polls out");
+        assert!(authorized(&state.server, a, &close(a)), "but may still close their own poll");
+        let hidden = ChannelId::new();
+        let elsewhere = ServerEvent::PollVote { server: sid, channel: hidden, message, user: b, choices: vec![0] };
+        assert!(!authorized(&state.server, b, &elsewhere), "a channel they cannot see");
     }
 
     #[test]
@@ -516,6 +557,52 @@ mod tests {
         assert!(!authorized(&state.server, user, &grant(user, mods_id)), "not that one");
         assert!(!authorized(&state.server, user, &grant(mod_, picks_id)), "only for oneself");
         assert!(authorized(&state.server, user, &ServerEvent::RoleUnassign { server: sid, user, role: picks_id }));
+    }
+
+    #[test]
+    fn onboarding_answers_let_members_take_only_the_roles_they_hand_out() {
+        use crate::onboarding::{Answer, Onboarding, Question};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "user");
+        let other = join(&mut state, "other");
+        let gamers = role(Permissions::NONE, false);
+        let artists = role(Permissions::NONE, false);
+        let admins = role(Permissions::ADMINISTRATOR, false);
+        let (gamers_id, artists_id, admins_id) = (gamers.id, artists.id, admins.id);
+        for r in [gamers, artists, admins] {
+            state.apply(ServerEvent::RoleCreate { server: sid, role: r }).unwrap();
+        }
+        let questions = Onboarding {
+            questions: vec![Question {
+                title: "What do you do?".into(),
+                description: String::new(),
+                multiple: true,
+                answers: vec![
+                    Answer { label: "Play".into(), roles: vec![gamers_id] },
+                    Answer { label: "Run things".into(), roles: vec![admins_id] },
+                ],
+            }],
+        };
+        let set = ServerEvent::OnboardingSet { server: sid, onboarding: Some(questions) };
+        assert!(authorized(&state.server, owner, &set));
+        assert!(!authorized(&state.server, user, &set), "manage server only");
+        let grant = |who, role| ServerEvent::RoleAssign { server: sid, user: who, role };
+        assert!(!authorized(&state.server, user, &grant(user, gamers_id)), "before any questions exist");
+        state.apply(set).unwrap();
+        assert!(authorized(&state.server, user, &grant(user, gamers_id)));
+        assert!(authorized(&state.server, user, &ServerEvent::RoleUnassign { server: sid, user, role: gamers_id }));
+        assert!(!authorized(&state.server, user, &grant(user, artists_id)), "no answer grants it");
+        assert!(!authorized(&state.server, user, &grant(user, admins_id)), "never administrator");
+        assert!(!authorized(&state.server, user, &grant(other, gamers_id)), "only for oneself");
+        assert!(!authorized(&state.server, UserId::new(), &grant(UserId::new(), gamers_id)), "members only");
+        let signed = SignedEvent::sign(sid, user, 1_000, grant(user, gamers_id), &identity_for(user));
+        assert_eq!(state.apply_signed(&signed), Ok(true));
+        assert!(state.server.member(user).unwrap().roles.contains(&gamers_id));
+        let forged = SignedEvent::sign(sid, user, 2_000, grant(user, admins_id), &identity_for(user));
+        assert_eq!(state.apply_signed(&forged), Err(StoreError::NotAllowed));
+        assert_eq!(subject(&ServerEvent::OnboardingSet { server: sid, onboarding: None }).as_deref(), Some("onboarding"));
+        assert!(!snapshot_omits("onboarding"), "the server snapshot carries the questions");
     }
 
     #[test]

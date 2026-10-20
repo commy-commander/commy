@@ -15,6 +15,7 @@ pub enum Purpose {
     Invite,
     EntryList,
     InviteBackground,
+    ReadState,
 }
 
 impl Purpose {
@@ -23,6 +24,7 @@ impl Purpose {
             Purpose::Invite => b"commy-invite-v1",
             Purpose::EntryList => b"commy-entry-list-v1",
             Purpose::InviteBackground => b"commy-invite-bg-v1",
+            Purpose::ReadState => b"commy-read-state-v1",
         }
     }
 }

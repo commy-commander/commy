@@ -17,6 +17,7 @@ const AUDIT_GROUP_OF = {
   server_public: "server",
   game_tags: "server",
   rules: "server",
+  onboarding: "server",
   auto_mod: "server",
   afk_channel: "server",
   afk_timeout: "server",
@@ -44,6 +45,8 @@ const AUDIT_GROUP_OF = {
   member_timeout: "members",
   member_timeout_clear: "members",
   member_nickname: "members",
+  voice_move: "members",
+  voice_disconnect: "members",
   emoji_add: "expressions",
   emoji_remove: "expressions",
   sound_add: "expressions",
@@ -53,6 +56,7 @@ const AUDIT_GROUP_OF = {
   event_delete: "events",
   message_pin: "messages",
   message_unpin: "messages",
+  poll_close: "messages",
   message_delete: "messages",
   invite_create: "invites",
   invite_revoke: "invites",
@@ -63,6 +67,7 @@ const AUDIT_GROUP_OF = {
   emoticon_remove: "expressions",
   expression_sharing: "expressions",
   channel_access: "channels",
+  channel_sensitive: "channels",
 };
 
 const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", announcement: "announcement channel", category: "category" };
@@ -100,6 +105,7 @@ function describeAudit(entry) {
     case "server_public": return [detail === "on" ? "made the server public" : "made the server private"];
     case "game_tags": return detail ? ["set the server's games to ", auditStrong(detail)] : ["cleared the server's games"];
     case "rules": return [detail === "removed" ? "removed the server rules" : "updated the server rules"];
+    case "onboarding": return [detail === "removed" ? "removed the onboarding questions" : "updated the onboarding questions"];
     case "auto_mod": return ["changed the auto moderation rules"];
     case "afk_channel": return label ? ["set the AFK channel to ", channel] : ["turned off the AFK channel"];
     case "afk_timeout": return detail ? [`set the server AFK timer to ${auditCount(count, "minute", "minutes")}`] : ["turned off the server AFK timer"];
@@ -116,6 +122,7 @@ function describeAudit(entry) {
     case "channel_color": return [detail ? "changed the color of " : "removed the color of ", channel];
     case "channel_kind": return ["turned ", channel, ` into a ${CHANNEL_KIND_WORDS[detail] || "channel"}`];
     case "channel_access": return detail === "private" ? ["made ", channel, " private"] : detail === "send" ? ["limited who can send in ", channel] : ["opened ", channel, " to everyone"];
+    case "channel_sensitive": return detail === "on" ? ["made ", channel, " age-restricted"] : ["removed the age restriction from ", channel];
     case "role_create": return ["created the role ", role];
     case "role_update": return ["updated the role ", role];
     case "role_delete": return label ? ["deleted the role ", role] : ["deleted a role"];
@@ -124,6 +131,8 @@ function describeAudit(entry) {
     case "member_kick": return ["kicked ", member];
     case "member_ban": return ["banned ", member];
     case "member_unban": return ["unbanned ", member];
+    case "voice_move": return ["moved ", member, " to ", auditStrong(detail || "another voice channel")];
+    case "voice_disconnect": return ["disconnected ", member, " from voice"];
     case "voice_moderate": return VOICE_MODERATION_WORDS[detail] ? [`${VOICE_MODERATION_WORDS[detail]} `, member] : ["lifted the server mute on ", member];
     case "member_timeout": return detail ? ["timed out ", member, ` for ${detail}`] : ["timed out ", member];
     case "member_timeout_clear": return ["removed the timeout on ", member];
@@ -142,6 +151,7 @@ function describeAudit(entry) {
     case "event_delete": return ["cancelled the event ", named("an event")];
     case "message_pin": return ["pinned a message in ", channel];
     case "message_unpin": return ["unpinned a message in ", channel];
+    case "poll_close": return ["closed a poll in ", channel];
     case "message_delete": return detail ? ["deleted a message by ", member, " in ", auditStrong(detail)] : ["deleted a message by ", member];
     case "invite_create": return ["created the invite ", named("a link")];
     case "invite_revoke": return detail ? ["revoked the invite ", named("a link"), " made by ", auditStrong(detail)] : ["revoked the invite ", named("a link")];

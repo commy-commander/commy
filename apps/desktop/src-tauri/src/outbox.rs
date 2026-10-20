@@ -46,6 +46,7 @@ pub fn is_transient(event: &ServerEvent) -> bool {
             | ServerEvent::SoundboardPlay { .. }
             | ServerEvent::SharedSoundPlay { .. }
             | ServerEvent::VoiceModerate { .. }
+            | ServerEvent::VoiceMove { .. }
     )
 }
 

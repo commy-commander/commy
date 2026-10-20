@@ -11,20 +11,25 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 
 - **Servers and channels.** Create a server from scratch or a starter
   template, add text and voice channels, group servers into folders, and
-  invite people with a link. Copy any server's channels, roles and rules as a
-  template code so others can start from the same layout, and hand a server
-  you own to another member.
+  invite people with a link. A Ctrl+K quick switcher jumps to any channel,
+  conversation or server by name. Mark a channel age-restricted and it asks
+  people to confirm they are 18 or older before showing anything. Copy any
+  server's channels, roles and rules as a template code so others can start
+  from the same layout, and hand a server you own to another member.
+  Onboarding questions ask new members what they are here for and hand out
+  the roles, and so the channels, that match; answers can be changed later.
 - **Roles and moderation.** Colored roles with fine-grained permissions,
   kick, ban and timeouts, per-server nicknames, server mute and deafen,
-  pinned messages and announcements, and auto moderation that holds messages
-  with blocked words, links, too many mentions or flooding. A moderation bot
-  you run yourself can remove new ones for everyone
-  ([crates/commy-bot](crates/commy-bot/README.md)).
+  moving people between voice channels, pinned messages and announcements,
+  and auto moderation that holds messages with blocked words, links, too many
+  mentions or flooding. A moderation bot you run yourself can remove new ones
+  for everyone ([crates/commy-bot](crates/commy-bot/README.md)).
   Channels can be limited to roles. Messages sent in a private channel are
   encrypted so only those roles and admins can read them.
 - **Rich chat.** Replies, reactions, edits, emoji (including custom server
-  emoji), images and files shown inline, clickable links, and a GIF picker when the server
-  operator has set up a GIF provider key.
+  emoji), images and files shown inline, voice messages recorded from the
+  composer and played back in place, clickable links, polls with a closing
+  time, and a GIF picker when the server operator has set up a GIF provider key.
 - **Message search.** Search a server by keyword, phrase, author, mention or
   channel. Search runs on your device over the history it keeps, and a result
   jumps straight to the message, even weeks back.
@@ -37,10 +42,14 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   along with the picture; viewers set their own stream volume.
 - **Direct messages.** Private conversations between two people, delivered
   straight to their devices, with offline messages that arrive when the other
-  person comes back.
+  person comes back. Pin the conversations you use most, and the channels too,
+  so they stay at the top of the list on that device.
 - **Presence and notifications.** Status, Do Not Disturb with a "back at"
   time, appear offline, notification toasts, and a notification level or a
-  timed mute for each server and each channel.
+  timed mute for each server and each channel. A red "NEW" line marks where
+  you left off in a channel, any message can be marked unread, and read
+  positions follow you between your devices in the same encrypted sync as
+  your server list.
 - **Game overlay.** On Windows, an in-game overlay shows who is talking and
   recent chat, in the screen corner you choose.
 - **Safety tools.** Block and report people, an audit log of server changes,
