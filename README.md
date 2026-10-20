@@ -46,7 +46,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   so they stay at the top of the list on that device.
 - **Presence and notifications.** Status, Do Not Disturb with a "back at"
   time, appear offline, notification toasts, and a notification level or a
-  timed mute for each server and each channel. A red "NEW" line marks where
+  timed mute for each server and each channel. An optional toast when a
+  friend comes online, for everyone or just the few you pick, quiet while
+  you are Do Not Disturb. A red "NEW" line marks where
   you left off in a channel, any message can be marked unread, and read
   positions follow you between your devices in the same encrypted sync as
   your server list.
