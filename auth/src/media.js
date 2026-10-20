@@ -163,6 +163,35 @@ export function emojiggCategory(value) {
 }
 
 const IMAGE_ID = /^[A-Za-z0-9]{1,32}$/;
+const STEAM_SOURCE = 1;
+const STEAM_APP_ID = /^[0-9]{1,10}$/;
+const MAX_STEAM_APP_ID = 0xffffffff;
+const IGDB_SEARCH_FIELDS =
+  "name,cover.image_id,first_release_date,external_games.external_game_source,external_games.uid,external_games.url";
+
+function steamAppId(uid) {
+  const text = String(uid ?? "").trim();
+  if (!STEAM_APP_ID.test(text)) return null;
+  const id = Number(text);
+  return id > 0 && id <= MAX_STEAM_APP_ID ? id : null;
+}
+
+function steamIdFromUrl(raw) {
+  try {
+    const url = new URL(String(raw ?? ""));
+    if (url.hostname !== "store.steampowered.com") return null;
+    const [kind, id] = url.pathname.split("/").filter(Boolean);
+    return kind === "app" ? steamAppId(id) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function steamOf(externalGames) {
+  if (!Array.isArray(externalGames)) return null;
+  const listed = externalGames.filter((e) => e?.external_game_source === STEAM_SOURCE).map((e) => steamAppId(e.uid)).find(Boolean);
+  return listed ?? externalGames.map((e) => steamIdFromUrl(e?.url)).find(Boolean) ?? null;
+}
 
 export function igdbResults(games) {
   if (!Array.isArray(games)) return [];
@@ -173,7 +202,8 @@ export function igdbResults(games) {
       const year = Number.isFinite(game?.first_release_date)
         ? new Date(game.first_release_date * 1000).getUTCFullYear()
         : null;
-      return { id: Number(game?.id), name, cover: IMAGE_ID.test(cover ?? "") ? cover : null, year };
+      const steam = steamOf(game?.external_games);
+      return { id: Number(game?.id), name, cover: IMAGE_ID.test(cover ?? "") ? cover : null, year, steam };
     })
     .filter((g) => Number.isInteger(g.id) && g.name);
 }
@@ -306,7 +336,7 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
       doFetch(IGDB_GAMES_URL, {
         method: "POST",
         headers: { "Client-ID": igdb.clientId, Authorization: `Bearer ${token}` },
-        body: `search "${apicalypseString(query)}"; fields name,cover.image_id,first_release_date; where version_parent = null; limit 8;`,
+        body: `search "${apicalypseString(query)}"; fields ${IGDB_SEARCH_FIELDS}; where version_parent = null; limit 8;`,
       }),
     );
     if (res.status === 401 && retry) {

@@ -5,13 +5,18 @@ function indexPeople(servers, meId) {
       if (meId && member.id === meId) continue;
       const person = people.get(member.id) || {
         id: member.id, name: member.name, presence: member.presence, presence_until: member.presence_until ?? null,
-        custom_status: member.custom_status, status_emoji: member.status_emoji, activity: member.activity, servers: [],
+        custom_status: member.custom_status, status_emoji: member.status_emoji, activity: member.activity,
+        activity_cover: member.activity_cover ?? null, activity_since: member.activity_since ?? null, servers: [],
       };
       if (person.presence === "offline" && member.presence !== "offline") person.presence = member.presence;
       person.presence_until ||= member.presence_until ?? null;
       person.custom_status ||= member.custom_status;
       person.status_emoji ||= member.status_emoji;
-      person.activity ||= member.activity;
+      if (!person.activity && member.activity) {
+        person.activity = member.activity;
+        person.activity_cover = member.activity_cover ?? null;
+        person.activity_since = member.activity_since ?? null;
+      }
       if (!server.group && !person.servers.some(s => s.id === server.id)) person.servers.push({ id: server.id, name: server.name });
       people.set(member.id, person);
     }

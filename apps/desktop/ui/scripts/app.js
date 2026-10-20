@@ -147,7 +147,8 @@ function mockSeed() {
     members: [
       { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
-      { id: "m2", name: "nova", pronouns: "they / them", presence: "idle", custom_status: null, roles: ["r2"] },
+      { id: "m2", name: "nova", pronouns: "they / them", presence: "idle", custom_status: null, roles: ["r2"],
+        activity: "Playing Portal 2", activity_cover: "co1rs4", activity_since: Math.floor(Date.now() / 1000) - 983 },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
       { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
     ],
@@ -867,6 +868,8 @@ async function mockInvoke(cmd, args = {}) {
       mock.integrations = { igdb_client_id: args.clientId, igdb_configured: Boolean(args.clientId) };
       return args.clientId ? [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }] : [];
     case "gif_search": return null;
+    case "game_details":
+      return { "hollowknight": { id: 14593, name: "Hollow Knight", cover: "co93cr", year: 2017, steam: 367520 }, "portal2": { id: 72, name: "Portal 2", cover: "co1rs4", year: 2011, steam: 620 } }[args.name.toLowerCase().replace(/[^a-z0-9]/g, "")] || null;
     case "search_games":
       return [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }, { id: 71, name: "Portal", cover: "co1x7d", year: 2007 }]
         .filter(g => g.name.toLowerCase().includes(args.query.toLowerCase()));
@@ -1172,6 +1175,7 @@ const ICONS = {
   clock: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
   link: "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 0-10z",
   download: "M18 15v3H6v-3H4v3c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-3zm-1-4-1.41-1.41L13 12.17V4h-2v8.17L8.41 9.59 7 11l5 5z",
+  steam: "M11.979 0C5.678 0 .511 4.86.022 11.037l6.432 2.658c.545-.371 1.203-.59 1.912-.59.063 0 .125.004.188.006l2.861-4.142V8.91c0-2.495 2.028-4.524 4.524-4.524 2.494 0 4.524 2.031 4.524 4.527s-2.03 4.525-4.524 4.525h-.105l-4.076 2.911c0 .052.004.105.004.159 0 1.875-1.515 3.396-3.39 3.396-1.635 0-3.016-1.173-3.331-2.727L.436 15.27C1.862 20.307 6.486 24 11.979 24c6.627 0 11.999-5.373 11.999-12S18.605 0 11.979 0zM7.54 18.21l-1.473-.61c.262.543.714.999 1.314 1.25 1.297.539 2.793-.076 3.332-1.375.263-.63.264-1.319.005-1.949s-.75-1.121-1.377-1.383c-.624-.26-1.29-.249-1.878-.03l1.523.63c.956.4 1.409 1.5 1.009 2.455-.397.957-1.497 1.41-2.454 1.012H7.54zm11.415-9.303c0-1.662-1.353-3.015-3.015-3.015-1.665 0-3.015 1.353-3.015 3.015 0 1.665 1.35 3.015 3.015 3.015 1.663 0 3.015-1.35 3.015-3.015zm-5.273-.005c0-1.252 1.013-2.266 2.265-2.266 1.249 0 2.266 1.014 2.266 2.266 0 1.251-1.017 2.265-2.266 2.265-1.253 0-2.265-1.014-2.265-2.265z",
   openExternal: "M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3z",
 };
 
@@ -3381,6 +3385,7 @@ function renderMembers() {
   renderCamGrid();
 
   const sharers = new Set((state.currentServer.screen_shares || []).map(s => s.user));
+  renderPlayingNow(list, state.currentServer.members);
 
   const group = (title, members, dim, color) => {
     if (!members.length) return;
@@ -5178,6 +5183,150 @@ function igdbCover(imageId, size = "t_cover_small") {
   return /^[A-Za-z0-9]{1,32}$/.test(imageId || "") ? viaAccountServer(`https://images.igdb.com/igdb/image/upload/${size}/${imageId}.jpg`) : null;
 }
 
+const knownGames = new Map();
+const pendingGames = new Map();
+const missedGames = new Map();
+const GAME_RETRY_MS = 10 * 60e3;
+
+function gameKey(name) {
+  return String(name || "").toLowerCase();
+}
+
+function lookUpGame(name) {
+  const key = gameKey(name);
+  if (!key) return Promise.resolve(null);
+  if (knownGames.has(key)) return Promise.resolve(knownGames.get(key));
+  if (Date.now() - (missedGames.get(key) || 0) < GAME_RETRY_MS) return Promise.resolve(null);
+  if (!pendingGames.has(key)) {
+    pendingGames.set(key, invoke("game_details", { name })
+      .catch(() => null)
+      .then(hit => {
+        if (hit) knownGames.set(key, hit);
+        else missedGames.set(key, Date.now());
+        return hit || null;
+      })
+      .finally(() => pendingGames.delete(key)));
+  }
+  return pendingGames.get(key);
+}
+
+function steamButton(appId) {
+  const url = steamStoreUrl(appId);
+  if (!url) return null;
+  const btn = el("button", "ac-steam");
+  btn.type = "button";
+  btn.append(svgIcon("steam", 18), el("span", null, "Get on Steam"));
+  btn.onclick = e => {
+    e.stopPropagation();
+    invoke("open_url", { url }).catch(err => toast(String(err)));
+  };
+  return btn;
+}
+
+function coverSlot(className, imageId, size) {
+  const slot = el("div", className);
+  const src = igdbCover(imageId, size);
+  if (!src) {
+    slot.appendChild(svgIcon("gamepad", 22));
+    return slot;
+  }
+  const img = el("img");
+  img.alt = "";
+  img.onerror = () => img.replaceWith(svgIcon("gamepad", 22));
+  img.src = src;
+  slot.appendChild(img);
+  return slot;
+}
+
+function activityTime(person) {
+  const time = el("div", "ac-time");
+  time.appendChild(svgIcon("gamepad", 14));
+  if (person.activity_since) time.appendChild(liveElapsed(person.activity_since, "clock"));
+  else time.appendChild(el("span", null, "In game"));
+  return time;
+}
+
+function activityCard(person) {
+  const game = gameFromActivity(person.activity);
+  const details = knownGames.get(gameKey(game));
+  const art = activityArt(person, details);
+  const card = el("div", "activity-card");
+  const glow = el("div", "ac-glow");
+  const glowSrc = igdbCover(art, "t_cover_big");
+  if (glowSrc) glow.style.backgroundImage = `url("${glowSrc}")`;
+  const main = el("div", "ac-main");
+  const info = el("div", "ac-info");
+  info.append(el("div", "ac-game", game), activityTime(person));
+  main.append(coverSlot("ac-cover", art, "t_cover_big"), info);
+  card.append(glow, main);
+  const steam = details && steamButton(details.steam);
+  if (steam) card.appendChild(steam);
+  return card;
+}
+
+function fillActivity(box, person, afterLookup) {
+  box.replaceChildren();
+  const game = isShowingActivity(person) && gameFromActivity(person.activity);
+  box.classList.toggle("hidden", !game);
+  if (!game) return;
+  box.append(el("div", "ac-label", "Playing"), activityCard(person));
+  if (knownGames.has(gameKey(game))) return;
+  lookUpGame(game).then(() => {
+    if (!knownGames.has(gameKey(game)) || !box.isConnected || box.dataset.user !== person.id) return;
+    fillActivity(box, person, afterLookup);
+    if (afterLookup) afterLookup();
+  });
+}
+
+function showActivityIn(box, person, afterLookup) {
+  box.dataset.user = person ? person.id : "";
+  fillActivity(box, person || {}, afterLookup);
+}
+
+function keepOnScreen(node) {
+  const r = node.getBoundingClientRect();
+  if (r.bottom > window.innerHeight - 8) node.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`;
+}
+
+function statusBesideGame(person) {
+  const own = [person.status_emoji, person.custom_status].filter(Boolean).join(" ");
+  return [backLine(person), own].filter(Boolean).join(" · ");
+}
+
+function activityChip(member) {
+  const game = gameFromActivity(member.activity);
+  const details = knownGames.get(gameKey(game));
+  const chip = el("button", "activity-chip");
+  chip.type = "button";
+  chip.title = `${member.name} is playing ${game}`;
+  const text = el("div", "acc-text");
+  const who = el("div", "acc-who");
+  who.append(makeAvatar(member.id, member.name, "avatar acc-avatar"), el("span", null, member.name));
+  text.append(who, el("div", "ac-game", game), activityTime(member));
+  const cover = coverSlot("acc-cover", activityArt(member, details), "t_cover_small");
+  chip.append(text, cover);
+  chip.onclick = e => {
+    e.stopPropagation();
+    openMemberCard(member, chip);
+  };
+  if (!details) {
+    lookUpGame(game).then(found => {
+      if (member.activity_cover) return;
+      if (found && found.cover && chip.isConnected) cover.replaceWith(coverSlot("acc-cover", found.cover, "t_cover_small"));
+    });
+  }
+  return chip;
+}
+
+function renderPlayingNow(list, members) {
+  const playing = playingNow(members, state.user && state.user.id);
+  if (!playing.length) return;
+  list.appendChild(el("div", "member-group", "Playing now"));
+  const strip = el("div", "playing-now");
+  for (const member of playing) strip.appendChild(activityChip(member));
+  list.appendChild(strip);
+}
+
 function renderIntegrations() {
   $("igdb-client-id").value = integrations.igdb_client_id || "";
   $("igdb-client-secret").value = "";
@@ -6194,7 +6343,8 @@ async function openFullProfile(member) {
   $("fp-name").parentElement.querySelector(".role-tag")?.remove();
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = [person.username ? `@${person.username}` : "", person.pronouns || ""].filter(Boolean).join(" \u00b7 ");
-  $("fp-status").textContent = subLine(person) || presenceLabel(person);
+  $("fp-status").textContent = (isShowingActivity(person) ? statusBesideGame(person) : subLine(person)) || presenceLabel(person);
+  showActivityIn($("fp-activity"), person);
   $("fp-about-wrap").classList.toggle("hidden", !person.about);
   $("fp-about").textContent = person.about || "";
   const servers = (state.people.get(person.id) || {}).servers || [];
@@ -6302,18 +6452,24 @@ function openMemberCard(member, anchor) {
   $("mc-username").classList.toggle("hidden", !accountLine);
   const status = $("mc-status");
   status.replaceChildren();
-  const line = subLine(member);
-  const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
-  if (cover) {
-    const img = el("img", "activity-cover");
-    img.src = cover;
-    status.appendChild(img);
+  const playing = isShowingActivity(member);
+  if (playing) {
+    status.textContent = statusBesideGame(member) || presenceLabel(member);
+  } else {
+    const line = subLine(member);
+    const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
+    if (cover) {
+      const img = el("img", "activity-cover");
+      img.src = cover;
+      status.appendChild(img);
+    }
+    status.appendChild(document.createTextNode(line || presenceLabel(member)));
+    if (member.activity && member.activity_since) {
+      status.appendChild(document.createTextNode(" · "));
+      status.appendChild(liveElapsed(member.activity_since, "words"));
+    }
   }
-  status.appendChild(document.createTextNode(line || presenceLabel(member)));
-  if (member.activity && member.activity_since) {
-    status.appendChild(document.createTextNode(" · "));
-    status.appendChild(liveElapsed(member.activity_since, "words"));
-  }
+  showActivityIn($("mc-activity"), member, () => keepOnScreen(card));
   const roles = $("mc-roles");
   roles.replaceChildren();
   const held = (server.roles || []).filter(r => (member.roles || []).includes(r.id));
@@ -9682,7 +9838,9 @@ function renderDmProfile(userId, name) {
   $("dm-profile-presence").className = `presence-dot ${presence}`;
   $("dm-profile-banner").style.background = bannerColor(userId);
   $("dm-profile-name").textContent = name;
-  $("dm-profile-status").textContent = (person && subLine(person)) || presenceLabel({ ...(person || {}), presence });
+  const seen = { ...(person || {}), presence };
+  $("dm-profile-status").textContent = (person && (isShowingActivity(seen) ? statusBesideGame(seen) : subLine(seen))) || presenceLabel(seen);
+  showActivityIn($("dm-profile-activity"), person && seen);
   const servers = person ? person.servers : [];
   $("dm-profile-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
   const list = $("dm-profile-servers");

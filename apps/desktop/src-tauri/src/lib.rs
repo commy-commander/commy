@@ -5740,16 +5740,30 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
 async fn enrich_activity(app: &tauri::State<'_, App>, activity: Option<String>) -> (Option<String>, Option<String>) {
     let Some(text) = activity else { return (None, None) };
     let Some(name) = text.strip_prefix("Playing ") else { return (Some(text), None) };
-    let creds = app.igdb_creds.lock().unwrap().clone();
-    let hit = if creds.configured() {
-        app.igdb.lock().await.resolve(&app.http, &creds, name).await
-    } else {
-        resolve_game_via_account(app, name).await
-    };
-    match hit {
+    match resolve_game(app, name).await {
         Some(game) => (Some(format!("Playing {}", game.name)), game.cover),
         None => (Some(text), None),
     }
+}
+
+async fn resolve_game(app: &tauri::State<'_, App>, name: &str) -> Option<igdb::GameHit> {
+    let creds = app.igdb_creds.lock().unwrap().clone();
+    if creds.configured() {
+        app.igdb.lock().await.resolve(&app.http, &creds, name).await
+    } else {
+        resolve_game_via_account(app, name).await
+    }
+}
+
+const MAX_GAME_NAME_CHARS: usize = 128;
+
+#[tauri::command]
+async fn game_details(app: tauri::State<'_, App>, name: String) -> CmdResult<Option<igdb::GameHit>> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > MAX_GAME_NAME_CHARS {
+        return Ok(None);
+    }
+    Ok(resolve_game(&app, name).await)
 }
 
 async fn resolve_game_via_account(app: &tauri::State<'_, App>, name: &str) -> Option<igdb::GameHit> {
@@ -6975,6 +6989,7 @@ pub fn run() {
             get_integrations,
             set_igdb_credentials,
             search_games,
+            game_details,
             gif_search,
             get_overlay_settings,
             overlay_hotkey_problems,
