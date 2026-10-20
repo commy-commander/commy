@@ -244,6 +244,10 @@
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4z"/></svg>
         </button>
         <textarea id="message-input" rows="1" autocomplete="off" placeholder="Message #welcome"></textarea>
+        <span class="composer-slow hidden" id="composer-slow" role="status" title="Slow mode is on in this channel">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.2 3.1.8-1.2-4.5-2.7z"/></svg>
+          <span id="composer-slow-text">5s</span>
+        </span>
         <button class="icon-btn gif-btn hidden" id="gif-btn" title="GIFs">GIF</button>
         <button class="icon-btn" id="emoji-btn" title="Emoji">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zM8.5 11A1.5 1.5 0 1 0 7 9.5 1.5 1.5 0 0 0 8.5 11zm7 0A1.5 1.5 0 1 0 14 9.5 1.5 1.5 0 0 0 15.5 11zm-8 3a5 5 0 0 0 9 0z"/></svg>
@@ -1487,6 +1491,13 @@
               <option value="365">1 year</option>
             </select>
           </div>
+          <div class="settings-card setting-row" id="channel-slow-row">
+            <div>
+              <div class="setting-title">Slow Mode</div>
+              <div class="setting-sub">How long each member waits between messages here. Moderators and roles with Bypass Slow Mode are not held back.</div>
+            </div>
+            <select id="channel-slow" class="compact-select"></select>
+          </div>
           <div class="settings-card setting-row hidden" id="channel-limit-row">
             <div>
               <div class="setting-title">User Limit <span id="channel-limit-label">No limit</span></div>
@@ -2072,6 +2083,7 @@
   <script src="scripts/typing.js"></script>
   <script src="scripts/nicknames.js"></script>
   <script src="scripts/message-link.js"></script>
+  <script src="scripts/slow-mode.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>

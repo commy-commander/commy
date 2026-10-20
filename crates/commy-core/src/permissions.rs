@@ -36,6 +36,7 @@ impl Permissions {
     pub const ADD_EMOTICONS: Permissions = Permissions(1 << 26);
     pub const MENTION_EVERYONE: Permissions = Permissions(1 << 27);
     pub const TIME_OUT_MEMBERS: Permissions = Permissions(1 << 28);
+    pub const BYPASS_SLOW_MODE: Permissions = Permissions(1 << 29);
     pub const CHANGE_NICKNAME: Permissions = Permissions(1 << 31);
     pub const MANAGE_NICKNAMES: Permissions = Permissions(1 << 32);
 
@@ -73,6 +74,10 @@ impl Permissions {
 
     pub fn allows(self, other: Permissions) -> bool {
         self.contains(Self::ADMINISTRATOR) || self.contains(other)
+    }
+
+    pub fn bypasses_slow_mode(self) -> bool {
+        self.allows(Self::BYPASS_SLOW_MODE) || self.allows(Self::MANAGE_MESSAGES) || self.allows(Self::MANAGE_CHANNELS)
     }
 
     pub fn can_pin(self) -> bool {

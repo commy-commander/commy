@@ -406,10 +406,10 @@ async function mockInvoke(cmd, args = {}) {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
             const sees = admits(c.view_roles);
             const sendable = admits(c.send_roles);
-            return { parent: null, position: i, user_limit: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], ...c, can_view: sees, can_send: sees && sendable, key_ready: sees };
+            return { parent: null, position: i, user_limit: 0, slow_mode: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], ...c, can_view: sees, can_send: sees && sendable, key_ready: sees };
           })
           .filter(c => c.can_view || !mock.plainMember),
-        can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember,
+        can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         stickers: s.stickers || [], emoticons: s.emoticons || [], stickers_shareable: !!s.stickers_shareable, emoticons_shareable: !!s.emoticons_shareable,
@@ -506,6 +506,12 @@ async function mockInvoke(cmd, args = {}) {
     case "send_message": {
       const chan = Object.values(mock.servers).flatMap(s => s.channels).find(c => c.id === args.channelId);
       if (chan && chan.kind === "announcement" && mock.plainMember) throw "only members allowed to post announcements can write in this channel";
+      if (chan && chan.slow_mode && mock.plainMember) {
+        const mine = (mock.messages[args.channelId] || []).filter(m => m.author_id === "me");
+        const last = mine.length ? Date.parse(mine[mine.length - 1].created_at) : 0;
+        const left = Math.ceil((last + chan.slow_mode * 1000 - Date.now()) / 1000);
+        if (left > 0) throw `slow mode is on here: you can send again in ${left}s`;
+      }
       const msg = {
         id: crypto.randomUUID(), channel: args.channelId, author_id: "me",
         author_name: mock.user.username, content: args.content,
@@ -899,6 +905,7 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "set_channel_limit": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).user_limit = args.limit; return null;
+    case "set_channel_slow_mode": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).slow_mode = args.seconds; return null;
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
       Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag, mentionable: Boolean(args.mentionable) });
@@ -3048,6 +3055,8 @@ function openChannelSettings(channelId, tab = "overview") {
   $("channel-limit-row").classList.toggle("hidden", !voice);
   $("channel-limit").value = String(channel.user_limit || 0);
   syncLimitLabel();
+  $("channel-slow-row").classList.toggle("hidden", !holdsMessages(channel));
+  fillSlowModeSelect(channel.slow_mode || 0);
   channelColorDraft = channel.color || null;
   $("channel-edit-color").value = `#${channel.color || "9b7bff"}`;
   paintChannelBandPreview();
@@ -3179,10 +3188,11 @@ function channelEdits() {
   if (holdsMessages(channel)) name = name.toLowerCase().replace(/\s+/g, "-");
   const retention = Number($("channel-edit-retention").value) || 0;
   const limit = channel.kind === "voice" ? Number($("channel-limit").value) || 0 : 0;
+  const slow = holdsMessages(channel) ? Number($("channel-slow").value) || 0 : 0;
   const color = channelColorDraft;
   const dirty = name !== channel.name || retention !== (channel.retention_days || 0) || limit !== (channel.user_limit || 0)
-    || color !== (channel.color || null);
-  return { channel, name, retention, limit, color, dirty };
+    || slow !== (channel.slow_mode || 0) || color !== (channel.color || null);
+  return { channel, name, retention, limit, slow, color, dirty };
 }
 
 function syncChannelDirty() {
@@ -3204,6 +3214,9 @@ async function saveChannelEdits() {
     if (edits.limit !== (edits.channel.user_limit || 0)) {
       await invoke("set_channel_limit", { serverId: state.currentServer.id, channelId: edits.channel.id, limit: edits.limit });
     }
+    if (edits.slow !== (edits.channel.slow_mode || 0)) {
+      await invoke("set_channel_slow_mode", { serverId: state.currentServer.id, channelId: edits.channel.id, seconds: edits.slow });
+    }
     if (edits.color !== (edits.channel.color || null)) {
       await invoke("set_channel_color", { serverId: state.currentServer.id, channelId: edits.channel.id, color: edits.color });
     }
@@ -3212,6 +3225,47 @@ async function saveChannelEdits() {
     openChannelSettings(edits.channel.id);
   } catch (e) {
     toast(String(e));
+  }
+}
+
+function fillSlowModeSelect(current) {
+  const select = $("channel-slow");
+  const values = SLOW_MODE_OPTIONS.includes(current) ? SLOW_MODE_OPTIONS : [...SLOW_MODE_OPTIONS, current].sort((a, b) => a - b);
+  select.replaceChildren(...values.map(v => new Option(slowModeOptionText(v), String(v))));
+  select.value = String(current);
+}
+
+const slowSent = new Map();
+let slowTimer = null;
+
+function noteSlowSend(channelId, waitSeconds) {
+  const channel = state.currentChannel;
+  const seconds = channel && channel.id === channelId ? Number(channel.slow_mode) || 0 : 0;
+  if (!seconds) return;
+  const at = waitSeconds ? Date.now() - (seconds - waitSeconds) * 1000 : Date.now();
+  slowSent.set(channelId, at);
+  syncSlowMode();
+}
+
+function syncSlowMode() {
+  const pill = $("composer-slow");
+  const channel = state.view === "server" ? state.currentChannel : null;
+  const view = slowModeState({
+    channel,
+    canBypass: Boolean(state.currentServer && state.currentServer.can_bypass_slow_mode),
+    sentAt: channel ? slowSent.get(channel.id) || 0 : 0,
+    now: Date.now(),
+  });
+  pill.classList.toggle("hidden", !view.shown);
+  pill.classList.toggle("waiting", view.waiting > 0);
+  if (view.shown) {
+    $("composer-slow-text").textContent = view.text;
+    pill.title = view.waiting ? `Slow mode: you can send again in ${view.waiting}s` : `Slow mode: one message every ${slowModeOptionText(view.seconds)}`;
+  }
+  if (view.waiting > 0 && !slowTimer) slowTimer = setInterval(syncSlowMode, 1000);
+  if (view.waiting === 0 && slowTimer) {
+    clearInterval(slowTimer);
+    slowTimer = null;
   }
 }
 
@@ -6394,7 +6448,7 @@ const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff",
 
 const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
-  ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "mention_everyone", "create_invites"]],
+  ["Chat", ["manage_messages", "pin_messages", "attach_files", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "manage_nicknames", "change_nickname"]],
 ];
 
@@ -9829,6 +9883,7 @@ async function selectChannel(channel) {
   $("channel-topic").textContent = (channel && channel.topic) || "";
   $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
   syncPinButton();
+  syncSlowMode();
   renderTypingStrip();
   if (!channel) return renderMessages([]);
   renderMessages(await fetchChannelMessages(channel));
@@ -9865,10 +9920,13 @@ async function sendMessage() {
       previewUrl,
     });
     pushOverlayChat(state.user.id, state.user.display_name || state.user.username, outgoing, false);
+    noteSlowSend(state.currentChannel.id, 0);
     await selectChannel(state.currentChannel);
   } catch (e) {
     input.value = content;
     fitComposer(input);
+    const wait = slowModeWaitFromError(e);
+    if (wait) noteSlowSend(state.currentChannel.id, wait);
     toast(String(e));
   }
 }
@@ -11723,6 +11781,7 @@ function wireEvents() {
     if (e.key === "Enter") saveChannelEdits();
   });
   $("channel-edit-retention").addEventListener("change", syncChannelDirty);
+  $("channel-slow").addEventListener("change", syncChannelDirty);
   $("channel-limit").addEventListener("input", () => {
     syncLimitLabel();
     syncChannelDirty();
@@ -12475,6 +12534,7 @@ const PERMISSION_LABELS = [
   ["manage_channels", "Manage Channels"],
   ["manage_messages", "Manage Messages"],
   ["pin_messages", "Pin Messages"],
+  ["bypass_slow_mode", "Bypass Slow Mode"],
   ["attach_files", "Send Files and Images"],
   ["add_emojis", "Add Emojis"],
   ["add_stickers", "Add Stickers"],

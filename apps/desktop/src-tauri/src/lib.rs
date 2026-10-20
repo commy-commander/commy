@@ -339,6 +339,14 @@ fn search_messages(
     Ok(search::search(state, &query, me, search::MAX_HITS, &keys))
 }
 
+fn slow_mode_words(seconds: i64) -> String {
+    match seconds {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m {}s", s / 60, s % 60),
+        s => format!("{}h {}m", s / 3600, (s % 3600) / 60),
+    }
+}
+
 async fn commit_message(
     app: &App,
     handle: &tauri::AppHandle,
@@ -354,6 +362,9 @@ async fn commit_message(
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         require_rules_accepted(state, message.author)?;
         require_can_post(app, state, message.author, message.channel)?;
+        if let Some(wait) = state.slow_mode_wait(message.channel, message.author, message.created_at) {
+            return Err(format!("slow mode is on here: you can send again in {}", slow_mode_words(wait)));
+        }
         refuse_held(keys.hold(state, &message))?;
         state.apply(event.clone()).map_err(err_to_string)?;
         MessageView::build(&message, state, &keys)
@@ -3999,6 +4010,18 @@ async fn set_channel_limit(app: tauri::State<'_, App>, handle: tauri::AppHandle,
     apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelLimit { server: sid, channel: cid, user_limit: limit }).await
 }
 
+#[tauri::command]
+async fn set_channel_slow_mode(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, channel_id: String, seconds: u32) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_CHANNELS, "change slow mode")?;
+    if seconds > commy_core::server::MAX_SLOW_MODE {
+        return Err("slow mode can be at most six hours".into());
+    }
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelSlowMode { server: sid, channel: cid, seconds }).await
+}
+
 fn voice_channel_full(app: &App, state: &ServerState, channel: ChannelId, user: UserId) -> bool {
     let Some(c) = state.server.channel(channel) else { return false };
     if c.user_limit == 0 || our_permissions(app, state, user).allows(Permissions::MANAGE_CHANNELS) {
@@ -6962,6 +6985,7 @@ pub fn run() {
             move_channels,
             create_category,
             set_channel_limit,
+            set_channel_slow_mode,
             update_role,
             set_own_role,
             get_safety,
