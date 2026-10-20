@@ -1,0 +1,63 @@
+name: Web client
+
+on:
+  push:
+    branches: [main]
+    paths: &web-paths
+      - "apps/web/**"
+      - "apps/desktop/ui/**"
+      - "crates/commy-core/**"
+      - "crates/commy-net/**"
+      - "crates/commy-view/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/web.yml"
+  pull_request:
+    paths: *web-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: Browser build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: wasm
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Syntax check the bridge
+        run: for f in apps/web/ui/*.js apps/web/*.mjs; do node --check "$f"; done
+
+      - name: node --test
+        run: node --test "apps/web/tests/**/*.test.mjs"
+
+      - name: Install wasm-bindgen
+        run: |
+          version=$(cargo metadata --format-version 1 --locked | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
+          cargo install wasm-bindgen-cli --version "$version" --locked
+
+      - name: Build the web client
+        run: node apps/web/build.mjs

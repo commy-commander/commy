@@ -915,6 +915,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "ed25519-dalek 2.2.0",
+ "getrandom 0.2.17",
  "hmac",
  "postcard",
  "rand 0.8.8",
@@ -936,6 +937,7 @@ dependencies = [
  "commy-core",
  "commy-media",
  "commy-net",
+ "commy-view",
  "data-encoding",
  "ed25519-dalek 2.2.0",
  "image 0.25.10",
@@ -984,6 +986,8 @@ dependencies = [
  "aes-gcm 0.11.1",
  "anyhow",
  "async-channel",
+ "base64 0.22.1",
+ "cfg_aliases",
  "chrono",
  "commy-core",
  "data-encoding",
@@ -992,12 +996,45 @@ dependencies = [
  "iroh",
  "iroh-blobs",
  "iroh-gossip",
+ "n0-future",
  "postcard",
  "rand 0.8.8",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "commy-view"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "commy-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "commy-web-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "commy-core",
+ "commy-net",
+ "commy-view",
+ "console_error_panic_hook",
+ "data-encoding",
+ "iroh",
+ "js-sys",
+ "n0-future",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -1007,6 +1044,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
+]
+
+[[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
 ]
 
 [[package]]

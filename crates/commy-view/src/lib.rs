@@ -8,6 +8,14 @@ use serde::Serialize;
 
 const EVERYONE_ROLE_POSITION: u32 = 0;
 
+pub fn truncate(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
+pub fn valid_image_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 32 && id.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
 #[derive(Debug, Serialize)]
 pub struct ServerSummary {
     pub id: String,
@@ -237,12 +245,12 @@ impl ServerView {
                         .activity
                         .clone()
                         .filter(|_| p.presence.is_visible_online()),
-                    about: p.about.as_deref().map(|a| crate::safety::truncate(a, commy_core::user::MAX_ABOUT_CHARS)),
+                    about: p.about.as_deref().map(|a| truncate(a, commy_core::user::MAX_ABOUT_CHARS)),
                     pronouns: state.server.pronouns.get(&p.id).cloned(),
                     activity_cover: p
                         .activity_cover
                         .clone()
-                        .filter(|c| p.activity.is_some() && crate::igdb::valid_image_id(c)),
+                        .filter(|c| p.activity.is_some() && valid_image_id(c)),
                     activity_since: p.activity_since.filter(|_| p.activity.is_some() && p.presence.is_visible_online()),
                     voice_channel: state.voice_states.get(&p.id).map(|c| c.to_string()),
                     voice_since: state.voice_since(p.id),
@@ -470,7 +478,7 @@ pub fn dm_thread_views(dms: &DmStore, me: UserId) -> Vec<DmThreadView> {
                 last_message: last
                     .map(|m| {
                         let prefix = if m.from == me { "You: " } else { "" };
-                        format!("{prefix}{}", crate::safety::truncate(&m.content, 60))
+                        format!("{prefix}{}", truncate(&m.content, 60))
                     })
                     .unwrap_or_default(),
                 last_at: last
@@ -609,7 +617,7 @@ impl MessageView {
             reply_to: message.reply_to.map(|id| id.to_string()),
             reply_preview: message.reply_to.and_then(|id| {
                 let original = state.message(id).filter(|m| m.channel == message.channel)?;
-                let mut excerpt = crate::safety::truncate(&original.content, 120);
+                let mut excerpt = truncate(&original.content, 120);
                 if excerpt.is_empty() && original.files().next().is_some() {
                     excerpt = "Click to see attachment".to_string();
                 }

@@ -7,6 +7,7 @@ mod catchup;
 mod doorbell;
 mod expressions;
 mod media_engine;
+mod mirror;
 mod igdb;
 mod instance;
 mod invite_link;
@@ -25,7 +26,7 @@ mod templates;
 mod toast;
 mod tray;
 mod updater;
-mod view;
+use commy_view as view;
 mod wake;
 
 use media_engine::{should_dial, CameraSession, MicTest, ScreenShareSession, ScreenWatch, VoiceSession};
@@ -5518,6 +5519,9 @@ pub fn run() {
                         let hex = node.node_id_hex();
                         if let Some(asks) = node.take_entry_key_requests() {
                             tauri::async_runtime::spawn(entry_list::run_entry_key_requests(handle.clone(), asks));
+                        }
+                        if let Some(asks) = node.take_mirror_requests() {
+                            tauri::async_runtime::spawn(mirror::run_mirror_requests(handle.clone(), asks));
                         }
 
                         let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);

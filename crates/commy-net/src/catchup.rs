@@ -254,6 +254,30 @@ pub trait CatchupStore {
     }
 }
 
+pub fn apply_live(
+    state: &mut ServerState,
+    event: ServerEvent,
+    action: Option<commy_core::Action>,
+) -> (Result<bool, commy_core::StoreError>, Option<Message>, Option<UserId>) {
+    let created = match &event {
+        ServerEvent::MessageCreate { message } if !state.has_message(message.id) => Some(message.clone()),
+        _ => None,
+    };
+    let keyless = match &event {
+        ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } => {
+            Some(profile.id).filter(|user| state.identity_of(*user).is_none())
+        }
+        _ => None,
+    };
+    let applied = match action {
+        Some(action) => state.apply_signed(&commy_core::SignedEvent { action, event }),
+        None => state.apply_unsigned(event),
+    };
+    let created = created.filter(|m| matches!(applied, Ok(true)) && state.has_message(m.id));
+    let pinned = keyless.filter(|user| applied.is_ok() && state.identity_of(*user).is_some());
+    (applied, created, pinned)
+}
+
 pub fn check_peer(state: &ServerState, user: UserId, key: &IdentityKey) -> PeerCheck {
     if state.server.banned.contains(&user) {
         return PeerCheck::Denied;
@@ -455,7 +479,7 @@ where
     S: CatchupStore + ?Sized,
 {
     let handshake = admit(&mut io, store, local_node, remote_node);
-    let admitted = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake)
+    let admitted = n0_future::time::timeout(HANDSHAKE_TIMEOUT, handshake)
         .await
         .map_err(|_| CatchupError::Timeout)??;
     respond(io, store, admitted, local_node, remote_node).await
@@ -583,7 +607,7 @@ where
     let got = receive_pages(&mut io, store, server, |_, key| answered.contains(&key)).await?;
     send(&mut io, &got.verdict()).await?;
     let pushed = send_items(&mut io, store, server, &want, |_| true).await?;
-    let verdict = match tokio::time::timeout(APPLIED_TIMEOUT, read_applied(&mut io)).await {
+    let verdict = match n0_future::time::timeout(APPLIED_TIMEOUT, read_applied(&mut io)).await {
         Ok(Ok(verdict)) => Some(verdict),
         Ok(Err(e)) => {
             tracing::debug!("catch-up peer did not confirm our pages: {e}");
@@ -1158,7 +1182,7 @@ async fn send<W: AsyncWrite + Unpin>(io: &mut W, frame: &CatchupFrame) -> Result
 }
 
 async fn read<R: AsyncRead + Unpin>(io: &mut R) -> Result<CatchupFrame, CatchupError> {
-    match tokio::time::timeout(FRAME_TIMEOUT, read_frame(io)).await {
+    match n0_future::time::timeout(FRAME_TIMEOUT, read_frame(io)).await {
         Err(_) => Err(CatchupError::Timeout),
         Ok(Ok(Some(frame))) => Ok(frame),
         Ok(Ok(None)) => Err(CatchupError::Closed),
@@ -1195,8 +1219,8 @@ fn dedup<T: Copy + Eq + Hash>(values: impl IntoIterator<Item = T>) -> Vec<T> {
 }
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    n0_future::time::SystemTime::now()
+        .duration_since(n0_future::time::SystemTime::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
 }
 

@@ -5,8 +5,9 @@ use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
 use commy_core::identity::IDENTITY_FILE;
-use commy_core::{Identity, ServerId, UserProfile};
-use commy_net::sealed::{Purpose, SealKey};
+use commy_core::{ServerId, UserProfile};
+use commy_net::entry_list::decode_identity;
+use commy_net::sealed::SealKey;
 use commy_net::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ServerTicket};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -19,75 +20,7 @@ const VAULT_ITEM: &str = "servers";
 const NO_VAULT: &str = "Your account server cannot keep a server list yet.";
 const SIGNED_OUT: &str = "Your account server signed this device out.";
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Entry {
-    pub name: String,
-    pub ticket: String,
-    pub since: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct EntryList {
-    #[serde(default)]
-    pub profile: Option<UserProfile>,
-    #[serde(default)]
-    pub profile_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub identity: Option<String>,
-    #[serde(default)]
-    pub servers: BTreeMap<ServerId, Entry>,
-    #[serde(default)]
-    pub left: BTreeMap<ServerId, DateTime<Utc>>,
-}
-
-impl EntryList {
-    pub fn merge(shared: &EntryList, local: &EntryList) -> EntryList {
-        let mut left = shared.left.clone();
-        for (id, at) in &local.left {
-            let keep = left.get(id).map_or(true, |existing| at > existing);
-            if keep {
-                left.insert(*id, *at);
-            }
-        }
-        let mut servers = shared.servers.clone();
-        for (id, entry) in &local.servers {
-            let newer = servers.get(id).map_or(true, |existing| entry.since > existing.since);
-            if newer {
-                servers.insert(*id, entry.clone());
-            }
-        }
-        servers.retain(|id, entry| left.get(id).map_or(true, |at| entry.since > *at));
-        let same_person = matches!((&shared.profile, &local.profile), (Some(a), Some(b)) if a.id == b.id);
-        let local_newer = same_person && local.profile_at > shared.profile_at;
-        let (profile, profile_at) = if shared.profile.is_none() || local_newer {
-            (local.profile.clone(), local.profile_at)
-        } else {
-            (shared.profile.clone(), shared.profile_at)
-        };
-        EntryList {
-            profile,
-            profile_at,
-            identity: if shared.profile.is_some() {
-                shared.identity.clone().or_else(|| local.identity.clone().filter(|_| same_person))
-            } else {
-                local.identity.clone()
-            },
-            servers,
-            left,
-        }
-    }
-
-    fn seal(&self, key: &SealKey) -> String {
-        key.seal(Purpose::EntryList, &serde_json::to_vec(self).expect("entry list serialization cannot fail"))
-    }
-
-    fn open(key: &SealKey, sealed: &str) -> Result<EntryList, String> {
-        let bytes = key
-            .open(Purpose::EntryList, sealed)
-            .map_err(|_| "Your recovery code or device key does not open this server list".to_string())?;
-        serde_json::from_slice(&bytes).map_err(|_| "The server list is damaged".to_string())
-    }
-}
+pub use commy_net::entry_list::{Entry, EntryList};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredKey {
@@ -168,14 +101,6 @@ fn read_identity(dir: &Path) -> Option<String> {
     use base64::Engine;
     let bytes = std::fs::read(dir.join(IDENTITY_FILE)).ok()?;
     Some(base64::engine::general_purpose::STANDARD.encode(bytes))
-}
-
-fn decode_identity(encoded: &str) -> Option<Identity> {
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
-    let text = std::str::from_utf8(&bytes).ok()?;
-    let secret: [u8; 32] = data_encoding::HEXLOWER_PERMISSIVE.decode(text.trim().as_bytes()).ok()?.try_into().ok()?;
-    Some(Identity::from_bytes(&secret))
 }
 
 fn write_identity(dir: &Path, encoded: &str) -> bool {
@@ -818,6 +743,7 @@ pub async fn entry_list_start_over(handle: AppHandle) -> Result<EntryStatus, Str
 mod tests {
     use super::*;
     use chrono::Duration;
+    use commy_core::Identity;
 
     fn entry(name: &str, since: DateTime<Utc>) -> Entry {
         Entry { name: name.into(), ticket: format!("commy{name}"), since }

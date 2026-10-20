@@ -78,10 +78,12 @@ will ask you to confirm before the first launch.
 apps/desktop            Tauri 2 desktop app
   src-tauri             Rust shell: commands, app state, network event loop
   ui                    Frontend (plain HTML, CSS and JavaScript)
+apps/web                Browser build: the same UI on a WebAssembly backend
 crates/commy-core       Domain model: servers, channels, messages,
                         permissions, replicated state (no I/O)
 crates/commy-net        Peer to peer transport: invite tickets, gossip
                         protocol, node wrapper, blob transfer
+crates/commy-view       The view models the UI renders, shared by both apps
 crates/commy-audio      Voice processing: noise cancellation, mute gate,
                         voice activity detection, Opus codec
 crates/commy-media      Device I/O: microphone, playback mixing with jitter
@@ -155,6 +157,10 @@ instance with its own data directory and join your own server with an invite:
 $env:COMMY_DATA_DIR = "$env:APPDATA\chat.commy.desktop-2"
 cargo run -p commy-desktop
 ```
+
+The web client is an early preview with text channels only. Building it needs
+the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at the version in
+`Cargo.lock`; see [apps/web/README.md](apps/web/README.md).
 
 `auth/docker-compose.dev.yml` runs a local account server with a mail catcher
 and Redis.

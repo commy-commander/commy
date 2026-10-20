@@ -2,7 +2,7 @@ use crate::state::App;
 use chrono::Utc;
 use commy_core::catchup::{apply_reaction_changes, digests, items, reaction_changes, BucketItems, ReactionChange};
 use commy_core::{
-    Action, BucketDigest, BucketKey, ChannelId, Identity, IdentityKey, Message, MessageId, ServerEvent,
+    BucketDigest, BucketKey, ChannelId, Identity, IdentityKey, Message, MessageId, ServerEvent,
     ServerId, ServerState, SignedEvent, StoreError, TombstoneProof, UserId, UserProfile,
 };
 use commy_net::catchup::{
@@ -467,29 +467,7 @@ pub fn retry_held(state: &mut ServerState, unread: &Unread, events: Vec<Held>) -
     out
 }
 
-pub fn apply_live(
-    state: &mut ServerState,
-    event: ServerEvent,
-    action: Option<Action>,
-) -> (Result<bool, StoreError>, Option<Message>, Option<UserId>) {
-    let created = match &event {
-        ServerEvent::MessageCreate { message } if !state.has_message(message.id) => Some(message.clone()),
-        _ => None,
-    };
-    let keyless = match &event {
-        ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } => {
-            Some(profile.id).filter(|user| state.identity_of(*user).is_none())
-        }
-        _ => None,
-    };
-    let applied = match action {
-        Some(action) => state.apply_signed(&SignedEvent { action, event }),
-        None => state.apply_unsigned(event),
-    };
-    let created = created.filter(|m| matches!(applied, Ok(true)) && state.has_message(m.id));
-    let pinned = keyless.filter(|user| applied.is_ok() && state.identity_of(*user).is_some());
-    (applied, created, pinned)
-}
+pub use commy_net::catchup::apply_live;
 
 pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChannel>, state: Option<&ServerState>) -> serde_json::Value {
     let channels: serde_json::Map<String, serde_json::Value> = fresh

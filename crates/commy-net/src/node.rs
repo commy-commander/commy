@@ -15,6 +15,7 @@ pub use iroh::endpoint::Connection;
 use iroh::endpoint::{RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
+#[cfg(not(wasm_browser))]
 use iroh_blobs::store::mem::MemStore;
 use iroh_gossip::api::{Event as GossipEvent, GossipSender};
 use iroh_gossip::net::Gossip;
@@ -104,7 +105,7 @@ impl MediaChannel {
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<MediaPacket>();
 
         let stats_handle = connection.clone();
-        tokio::spawn(async move {
+        n0_future::task::spawn(async move {
             let path = connection.clone();
             let _keep_connection_alive_for_both_pumps = connection;
             let reader = async {
@@ -179,13 +180,13 @@ const RECHECK_PATH_FOR_HOLE_PUNCH_UPGRADE: std::time::Duration = std::time::Dura
 #[derive(Default)]
 struct VideoPacer {
     relayed: Option<bool>,
-    checked: Option<std::time::Instant>,
-    last_sent: Option<std::time::Instant>,
+    checked: Option<n0_future::time::Instant>,
+    last_sent: Option<n0_future::time::Instant>,
 }
 
 impl VideoPacer {
     fn allow(&mut self, connection: &Connection) -> bool {
-        let now = std::time::Instant::now();
+        let now = n0_future::time::Instant::now();
         if self.checked.map_or(true, |t| now.duration_since(t) > RECHECK_PATH_FOR_HOLE_PUNCH_UPGRADE) {
             self.checked = Some(now);
             let relayed = connection.paths().iter().any(|p| p.is_selected() && p.is_relay());
@@ -223,7 +224,7 @@ impl std::fmt::Debug for MediaAcceptor {
 
 impl MediaAcceptor {
     async fn admitted(&self, peer: [u8; 32], hello: &MediaHello) -> bool {
-        let started = std::time::Instant::now();
+        let started = n0_future::time::Instant::now();
         loop {
             let allowed = self
                 .gate
@@ -237,7 +238,7 @@ impl MediaAcceptor {
             if started.elapsed() >= MEDIA_GATE_WAIT {
                 return false;
             }
-            tokio::time::sleep(MEDIA_GATE_POLL).await;
+            n0_future::time::sleep(MEDIA_GATE_POLL).await;
         }
     }
 }
@@ -347,7 +348,7 @@ impl Inbound {
         let Some(store) = store else {
             return Err(refuse(&mut io, Refusal::Busy).await);
         };
-        let admitted = tokio::time::timeout(self.handshake, admit(&mut io, store, local, peer))
+        let admitted = n0_future::time::timeout(self.handshake, admit(&mut io, store, local, peer))
             .await
             .map_err(|_| CatchupError::Timeout)??;
         drop(waiting);
@@ -358,7 +359,7 @@ impl Inbound {
             return Err(refuse(&mut io, Refusal::Busy).await);
         };
         let session = respond(io, store, admitted, local, peer);
-        tokio::time::timeout(CATCHUP_SESSION_TIMEOUT, session)
+        n0_future::time::timeout(CATCHUP_SESSION_TIMEOUT, session)
             .await
             .map_err(|_| CatchupError::Timeout)?
     }
@@ -440,7 +441,7 @@ impl CatchupAcceptor {
     async fn answer(&self, connection: Connection) -> Result<()> {
         let peer = *connection.remote_id().as_bytes();
         let Ok(opened) =
-            tokio::time::timeout(self.inbound.handshake, connection.accept_bi()).await
+            n0_future::time::timeout(self.inbound.handshake, connection.accept_bi()).await
         else {
             connection.close(0u32.into(), b"timeout");
             return Ok(());
@@ -469,7 +470,7 @@ impl CatchupAcceptor {
         }
         let (_, mut send) = io.into_inner();
         send.finish().ok();
-        let _ = tokio::time::timeout(CATCHUP_LINGER, connection.closed()).await;
+        let _ = n0_future::time::timeout(CATCHUP_LINGER, connection.closed()).await;
         Ok(())
     }
 }
@@ -477,7 +478,7 @@ impl CatchupAcceptor {
 struct TopicHandle {
     sender: GossipSender,
     neighbors: tokio::sync::watch::Receiver<BTreeSet<[u8; 32]>>,
-    reader: tokio::task::AbortHandle,
+    reader: n0_future::task::AbortHandle,
 }
 
 impl Drop for TopicHandle {
@@ -540,7 +541,7 @@ impl MediaDialer {
                 recv,
             ))
         };
-        tokio::time::timeout(MEDIA_DIAL_TIMEOUT, dial)
+        n0_future::time::timeout(MEDIA_DIAL_TIMEOUT, dial)
             .await
             .map_err(|_| anyhow::anyhow!("that person could not be reached"))?
     }
@@ -554,11 +555,13 @@ pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
 }
 
 #[derive(Clone)]
+#[cfg(not(wasm_browser))]
 pub struct BlobFetcher {
     blobs: MemStore,
     endpoint: Endpoint,
 }
 
+#[cfg(not(wasm_browser))]
 impl BlobFetcher {
     pub async fn fetch(&self, hash: &str, provider_hex: Option<&str>, max: u64) -> Result<Vec<u8>> {
         let hash: iroh_blobs::Hash = hash.parse().context("invalid blob hash")?;
@@ -578,6 +581,7 @@ impl BlobFetcher {
     }
 }
 
+#[cfg(not(wasm_browser))]
 async fn fetch_capped(endpoint: &Endpoint, node_id: EndpointId, hash: iroh_blobs::Hash, max: u64) -> Result<Vec<u8>> {
     use iroh_blobs::get::fsm::{self, ConnectedNext, EndBlobNext};
     let connection = endpoint
@@ -602,12 +606,14 @@ async fn fetch_capped(endpoint: &Endpoint, node_id: EndpointId, hash: iroh_blobs
 pub struct CommyNode {
     router: Router,
     gossip: Gossip,
+    #[cfg(not(wasm_browser))]
     blobs: MemStore,
     lookup: MemoryLookup,
     relays: Vec<RelayUrl>,
     topics: HashMap<ServerId, TopicHandle>,
     events_tx: mpsc::UnboundedSender<NetEvent>,
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
+    mirror_requests: Option<mpsc::UnboundedReceiver<crate::mirror::MirrorAsk>>,
     catchup_store: StoreSlot,
     media_gate: GateSlot,
 }
@@ -649,10 +655,15 @@ impl CommyNode {
         let (media_tx, media_rx) = mpsc::unbounded_channel();
         let (dm_tx, dm_rx) = mpsc::unbounded_channel();
         let (entry_key_tx, entry_key_rx) = mpsc::unbounded_channel();
+        let (mirror_tx, mirror_rx) = mpsc::unbounded_channel();
         let lookup = MemoryLookup::new();
         let relay_mode = relays.map_or_else(iroh::endpoint::default_relay_mode, iroh::RelayMode::Custom);
         let relays = relay_mode.relay_map().urls();
-        let builder = Endpoint::builder(iroh::endpoint::presets::N0).address_lookup(lookup.clone());
+        #[cfg(not(wasm_browser))]
+        let builder = Endpoint::builder(iroh::endpoint::presets::N0);
+        #[cfg(wasm_browser)]
+        let builder = Endpoint::builder(iroh::endpoint::presets::Minimal);
+        let builder = builder.address_lookup(lookup.clone());
         let mut builder = builder.relay_mode(relay_mode);
         if let Some(bytes) = secret {
             builder = builder.secret_key(iroh::SecretKey::from_bytes(&bytes));
@@ -669,27 +680,32 @@ impl CommyNode {
             inbound: Inbound::new(MAX_CATCHUP_SESSIONS, HANDSHAKE_TIMEOUT),
         };
         let gossip = Gossip::builder().spawn(endpoint.clone());
+        let router = Router::builder(endpoint).accept(iroh_gossip::ALPN, gossip.clone());
+        #[cfg(not(wasm_browser))]
         let blobs = MemStore::new();
-        let router = Router::builder(endpoint)
-            .accept(iroh_gossip::ALPN, gossip.clone())
-            .accept(iroh_blobs::ALPN, iroh_blobs::BlobsProtocol::new(&blobs, None))
+        #[cfg(not(wasm_browser))]
+        let router = router.accept(iroh_blobs::ALPN, iroh_blobs::BlobsProtocol::new(&blobs, None));
+        let router = router
             .accept(MEDIA_ALPN, MediaAcceptor { tx: media_tx, gate: media_gate.clone() })
             .accept(DM_ALPN, DmAcceptor { tx: dm_tx })
             .accept(crate::entry_key::ENTRY_KEY_ALPN, crate::entry_key::EntryKeyAcceptor { tx: entry_key_tx })
             .accept(CATCHUP_ALPN, catchup)
+            .accept(crate::mirror::MIRROR_ALPN, crate::mirror::MirrorAcceptor { tx: mirror_tx, local })
             .accept(crate::wake::WAKE_ALPN, crate::wake::WakeAcceptor::new(events_tx.clone()))
             .spawn();
-        let _ = tokio::time::timeout(ADDRESS_WAIT, router.endpoint().online()).await;
+        let _ = n0_future::time::timeout(ADDRESS_WAIT, router.endpoint().online()).await;
         Ok((
             Self {
                 router,
                 gossip,
+                #[cfg(not(wasm_browser))]
                 blobs,
                 lookup,
                 relays,
                 topics: HashMap::new(),
                 events_tx,
                 entry_key_requests: Some(entry_key_rx),
+                mirror_requests: Some(mirror_rx),
                 catchup_store,
                 media_gate,
             },
@@ -701,6 +717,10 @@ impl CommyNode {
 
     pub fn take_entry_key_requests(&mut self) -> Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>> {
         self.entry_key_requests.take()
+    }
+
+    pub fn take_mirror_requests(&mut self) -> Option<mpsc::UnboundedReceiver<crate::mirror::MirrorAsk>> {
+        self.mirror_requests.take()
     }
 
     pub fn endpoint(&self) -> Endpoint {
@@ -724,7 +744,7 @@ impl CommyNode {
             write_frame(&mut send, &envelope)
                 .await
                 .map_err(|e| anyhow::anyhow!("dm send failed: {e}"))?;
-            let ack = tokio::time::timeout(
+            let ack = n0_future::time::timeout(
                 std::time::Duration::from_secs(15),
                 read_frame::<_, DmAck>(&mut recv),
             )
@@ -767,7 +787,7 @@ impl CommyNode {
             let (send, recv) = connection.open_bi().await?;
             let mut io = tokio::io::join(recv, send);
             let session = run_initiator(&mut io, &*store, &identity, server, me, local, peer);
-            let result = tokio::time::timeout(CATCHUP_SESSION_TIMEOUT, session).await;
+            let result = n0_future::time::timeout(CATCHUP_SESSION_TIMEOUT, session).await;
             let (_, send) = io.into_inner();
             let_our_applied_reach_the_peer(send).await;
             connection.close(0u32.into(), b"done");
@@ -786,7 +806,7 @@ impl CommyNode {
 
     pub async fn node_addr(&self) -> Result<crate::ticket::NodeAddr> {
         let endpoint = self.router.endpoint();
-        let _ = tokio::time::timeout(ADDRESS_WAIT, endpoint.online()).await;
+        let _ = n0_future::time::timeout(ADDRESS_WAIT, endpoint.online()).await;
         Ok(crate::ticket::NodeAddr::from(&endpoint.addr()))
     }
 
@@ -840,7 +860,7 @@ impl CommyNode {
             return false;
         };
         let mut neighbors = handle.neighbors.clone();
-        tokio::time::timeout(timeout, async {
+        n0_future::time::timeout(timeout, async {
             loop {
                 if !neighbors.borrow().is_empty() {
                     return;
@@ -886,7 +906,7 @@ impl CommyNode {
         let events_tx = self.events_tx.clone();
         let our_id = self.node_id_bytes();
         let (neighbors_tx, neighbors_rx) = tokio::sync::watch::channel(BTreeSet::new());
-        let reader = tokio::spawn(async move {
+        let reader = n0_future::task::spawn(async move {
             while let Some(item) = stream.next().await {
                 let Ok(event) = item else {
                     continue;
@@ -990,10 +1010,12 @@ impl CommyNode {
         MediaDialer { endpoint: self.endpoint() }
     }
 
+    #[cfg(not(wasm_browser))]
     pub async fn add_blob(&self, bytes: Vec<u8>) -> Result<String> {
         Ok(self.blobs.add_bytes(bytes).await?.hash.to_string())
     }
 
+    #[cfg(not(wasm_browser))]
     pub fn blob_fetcher(&self) -> BlobFetcher {
         BlobFetcher { blobs: self.blobs.clone(), endpoint: self.endpoint() }
     }
@@ -1030,6 +1052,10 @@ impl CommyNode {
         self.join_topic(server_id, topic_for(server_id), ids).await
     }
 
+    pub fn reach_via_relays(&self, peers_hex: &[String]) -> usize {
+        self.add_peers(peers_hex).len()
+    }
+
     fn add_peers(&self, peers_hex: &[String]) -> Vec<EndpointId> {
         let our_id = self.node_id_bytes();
         let mut ids = Vec::new();
@@ -1058,7 +1084,7 @@ impl CommyNode {
 
 async fn let_our_applied_reach_the_peer(mut send: SendStream) {
     if send.finish().is_ok() {
-        let _ = tokio::time::timeout(CATCHUP_LINGER, send.stopped()).await;
+        let _ = n0_future::time::timeout(CATCHUP_LINGER, send.stopped()).await;
     }
 }
 

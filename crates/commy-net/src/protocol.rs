@@ -142,8 +142,8 @@ pub struct Envelope {
 fn next_nonce() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let nanos = n0_future::time::SystemTime::now()
+        .duration_since(n0_future::time::SystemTime::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
     nanos ^ COUNTER.fetch_add(1, Ordering::Relaxed).rotate_left(48)
