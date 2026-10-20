@@ -10635,6 +10635,7 @@ function wireEvents() {
   };
   $("signin-server-select").addEventListener("change", async e => {
     const value = e.target.value;
+    syncServerNote();
     if (value === "custom") {
       $("signin-server-edit").classList.remove("hidden");
       $("signin-server-input").value = "";
@@ -13417,6 +13418,16 @@ async function loadAccount() {
 
 let signInUrl = null;
 
+const SERVER_NOTE_DEFAULT = "Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.";
+const SERVER_NOTE_WARNING = "Only add a server you know and trust. It handles your sign-in and sees your email and display name.";
+
+function syncServerNote() {
+  const custom = $("signin-server-select").value !== "default";
+  const note = $("signin-server-note");
+  note.textContent = custom ? SERVER_NOTE_WARNING : SERVER_NOTE_DEFAULT;
+  note.classList.toggle("warn", custom);
+}
+
 function showSignIn() {
   $("signin-start").classList.remove("hidden");
   $("signin-wait").classList.add("hidden");
@@ -13432,6 +13443,7 @@ function showSignIn() {
   select.disabled = Boolean(account.server_from_env);
   select.title = account.server_from_env ? "Set by COMMY_AUTH_URL" : "";
   $("signin-server-edit").classList.add("hidden");
+  syncServerNote();
   showModal("modal-signin");
 }
 
