@@ -22,6 +22,7 @@ mod persist;
 mod pins;
 mod read_state;
 mod safety;
+mod saved;
 mod search;
 mod settle;
 mod state;
@@ -7530,6 +7531,10 @@ pub fn run() {
             pins::pins_load,
             pins::pin_dm,
             pins::pin_channel,
+            saved::saved_list,
+            saved::saved_set,
+            saved::reminder_set,
+            saved::reminder_cancel,
             get_messages,
             send_message,
             attach_file,
