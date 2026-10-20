@@ -76,7 +76,11 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::BotSet { user, .. }
         | E::PollVote { user, .. }
         | E::PronounsSet { user, .. } => Some(*user),
-        E::MessagePin { by, .. } | E::MemberTimeout { by, .. } | E::PollClose { by, .. } | E::ThreadSet { by, .. } => Some(*by),
+        E::MessagePin { by, .. }
+        | E::MemberTimeout { by, .. }
+        | E::PollClose { by, .. }
+        | E::ThreadSet { by, .. }
+        | E::VoiceStatusSet { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -111,6 +115,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ChannelKindSet { channel, .. } => format!("channel.kind:{channel}"),
         E::ChannelAccessSet { channel, .. } => format!("channel.access:{channel}"),
         E::ChannelSensitiveSet { channel, .. } => format!("channel.sensitive:{channel}"),
+        E::VoiceStatusSet { channel, .. } => format!("voice-status:{channel}"),
         E::ChannelKeyAdd { channel, key, .. } => format!("channel.key:{channel}:{}", key.id.to_hex()),
         E::ChannelKeyGrant { channel, user, .. } => format!("channel.grant:{channel}:{user}"),
         E::AfkChannelSet { .. } => "afk_channel".into(),
@@ -207,7 +212,8 @@ fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
         | E::PollVote { channel, .. }
         | E::PollClose { channel, .. }
         | E::MessagePin { channel, .. }
-        | E::ThreadSet { channel, .. } => Some(*channel),
+        | E::ThreadSet { channel, .. }
+        | E::VoiceStatusSet { channel, .. } => Some(*channel),
         _ => None,
     }
 }
@@ -244,6 +250,9 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::PollClose { .. } => member && actor(event) == Some(by) && sees(event),
         E::ThreadSet { root, .. } => {
             member && actor(event) == Some(by) && sees(event) && (root.is_bound_to(by) || allows(Permissions::MANAGE_MESSAGES))
+        }
+        E::VoiceStatusSet { .. } => {
+            member && speaks && actor(event) == Some(by) && sees(event) && perms.can_set_voice_status(true)
         }
         E::ChannelKeyAdd { channel, .. } | E::ChannelKeyGrant { channel, .. } => {
             member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)
@@ -543,6 +552,39 @@ mod tests {
         everyone.permissions.remove(Permissions::CHANGE_NICKNAME);
         assert!(!authorized(&state.server, a, &nick(a)), "no change nickname permission");
         assert!(authorized(&state.server, b, &nick(b)), "managing covers one's own");
+    }
+
+    #[test]
+    fn voice_status_comes_from_speaking_members_or_channel_managers() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        let set = |by| ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: "Ranked grind".into(), by };
+        assert!(authorized(&state.server, a, &set(a)));
+        assert!(authorized(&state.server, owner, &set(owner)));
+        assert!(!authorized(&state.server, a, &set(b)), "statuses name who set them");
+        assert!(!authorized(&state.server, UserId::new(), &set(UserId::new())), "strangers");
+        assert_eq!(subject(&set(a)), Some(format!("voice-status:{voice}")));
+        assert_eq!(subject(&set(a)), subject(&set(b)));
+        assert!(settles_authority(&subject(&set(a)).unwrap()));
+        assert!(!snapshot_omits(&subject(&set(a)).unwrap()));
+        let everyone = state.server.roles.iter_mut().find(|r| r.is_everyone()).unwrap();
+        everyone.permissions.remove(Permissions::SPEAK);
+        assert!(!authorized(&state.server, a, &set(a)), "no speak permission");
+        let managers = role(Permissions::MANAGE_CHANNELS, false);
+        let rid = managers.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: managers }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: b, role: rid }).unwrap();
+        assert!(authorized(&state.server, b, &set(b)), "channel managers need no voice");
+        let until = Some(chrono::Utc::now() + chrono::Duration::minutes(10));
+        state.apply(ServerEvent::MemberTimeout { server: sid, user: a, by: owner, at: chrono::Utc::now(), until }).unwrap();
+        let everyone = state.server.roles.iter_mut().find(|r| r.is_everyone()).unwrap();
+        everyone.permissions.insert(Permissions::SPEAK);
+        assert!(!authorized(&state.server, a, &set(a)), "timed out members stay quiet");
+        let hidden = ServerEvent::VoiceStatusSet { server: sid, channel: ChannelId::new(), text: "x".into(), by: b };
+        assert!(!authorized(&state.server, b, &hidden), "a channel they cannot see");
     }
 
     #[test]

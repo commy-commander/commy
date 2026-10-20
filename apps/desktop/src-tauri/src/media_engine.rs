@@ -119,11 +119,14 @@ impl VoiceSession {
         let now = || chrono::Utc::now().timestamp();
         let last_activity = Arc::new(std::sync::atomic::AtomicI64::new(now()));
         let own_silence = Arc::new(AtomicI64::new(0));
+        let mixer = Arc::new(Mutex::new(Mixer::new()));
         let seq_task = {
             let mic_broadcast = mic_broadcast.clone();
             let last_activity = last_activity.clone();
             let on_speaking = on_speaking.clone();
             let own_silence = own_silence.clone();
+            let mixer = mixer.clone();
+            let my_key = mixer_key(me);
             tokio::spawn(async move {
                 let mut mic_rx = mic_rx;
                 let mut seq: u32 = 0;
@@ -143,6 +146,7 @@ impl VoiceSession {
                                 continue;
                             }
                             if let Some(speaking) = detector.push(&pcm) {
+                                mixer.lock().unwrap().set_speaking(my_key, speaking);
                                 on_speaking(me, speaking);
                             }
                             if let Some(packet) = encoder.encode(&pcm) {
@@ -153,6 +157,7 @@ impl VoiceSession {
                         _ = tick.tick() => {
                             if !std::mem::take(&mut heard_since_tick) {
                                 if let Some(speaking) = credit_silence(&mut detector) {
+                                    mixer.lock().unwrap().set_speaking(my_key, speaking);
                                     on_speaking(me, speaking);
                                 }
                             }
@@ -160,6 +165,7 @@ impl VoiceSession {
                     }
                 }
                 if detector.reset() {
+                    mixer.lock().unwrap().set_speaking(my_key, false);
                     on_speaking(me, false);
                 }
             })
@@ -167,7 +173,7 @@ impl VoiceSession {
         Self {
             server,
             channel,
-            mixer: Arc::new(Mutex::new(Mixer::new())),
+            mixer,
             deafened: Arc::new(AtomicBool::new(deafened)),
             mic_broadcast,
             last_activity,
@@ -187,6 +193,10 @@ impl VoiceSession {
 
     pub fn set_speaker(&mut self, speaker: Option<OutputHandle>) {
         self.devices.speaker = speaker;
+    }
+
+    pub fn me(&self) -> UserId {
+        self.me
     }
 
     pub fn switch_devices(
@@ -277,6 +287,7 @@ impl VoiceSession {
                     _ = tick.tick() => {
                         if !std::mem::take(&mut heard_since_tick) {
                             if let Some(speaking) = credit_silence(&mut detector) {
+                                mixer.lock().unwrap().set_speaking(key, speaking);
                                 on_speaking(user, speaking);
                             }
                         }
@@ -312,6 +323,7 @@ impl VoiceSession {
                             None => break,
                         };
                         if let Some(speaking) = detector.push(&pcm) {
+                            mixer.lock().unwrap().set_speaking(key, speaking);
                             on_speaking(user, speaking);
                         }
                         if !deafened.load(Ordering::Relaxed) {
@@ -331,6 +343,7 @@ impl VoiceSession {
             }
             mixer.lock().unwrap().remove_peer(key);
             if detector.reset() {
+                mixer.lock().unwrap().set_speaking(key, false);
                 on_speaking(user, false);
             }
         });

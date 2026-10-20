@@ -74,6 +74,8 @@ pub struct ChannelView {
     pub slow_mode: u32,
     pub sensitive: bool,
     pub threads: Vec<ThreadView>,
+    pub voice_status: Option<String>,
+    pub can_set_voice_status: bool,
     pub can_view: bool,
     pub can_send: bool,
     pub key_ready: bool,
@@ -128,6 +130,7 @@ pub struct MemberView {
     pub role_banner: Option<String>,
     pub bot: bool,
     pub can_mention_everyone: bool,
+    pub priority_speaker: bool,
     pub timeout_until: Option<i64>,
     pub timeout_by: Option<String>,
 }
@@ -283,6 +286,12 @@ impl ServerView {
     pub fn for_viewer(state: &ServerState, viewer: Option<UserId>, keys: &KeyHolder) -> Self {
         let manages_channels = viewer.is_some_and(|v| state.server.permissions_for(v).allows(Permissions::MANAGE_CHANNELS));
         let sees = |c: ChannelId| viewer.is_some_and(|v| state.server.can_view(c, v));
+        let sets_voice_status = |c: ChannelId| {
+            viewer.is_some_and(|v| {
+                let in_channel = state.voice_states.get(&v) == Some(&c);
+                state.server.is_member(v) && state.server.permissions_for(v).can_set_voice_status(in_channel)
+            })
+        };
         let channels = state
             .server
             .sorted_channels()
@@ -313,6 +322,8 @@ impl ServerView {
                     slow_mode: c.slow_mode,
                     sensitive: c.sensitive,
                     threads: if can_view { ThreadView::list(c, state) } else { Vec::new() },
+                    voice_status: c.voice_status.clone().filter(|_| c.kind == ChannelKind::Voice),
+                    can_set_voice_status: can_view && c.kind == ChannelKind::Voice && sets_voice_status(c.id),
                     can_view,
                     can_send: can_view && viewer.is_some_and(|v| state.server.can_post_in(c.id, v)),
                     key_ready: can_view && keys.key_ready(state, c.id),
@@ -372,6 +383,7 @@ impl ServerView {
                     role_banner: state.server.top_role_with(p.id, |r| r.banner.is_some()).and_then(|r| r.banner.clone()),
                     bot: state.is_bot(p.id),
                     can_mention_everyone: state.server.can_mention_everyone(p.id),
+                    priority_speaker: state.server.permissions_for(p.id).is_priority_speaker(),
                     timeout_until: state.server.timeout_of(p.id, now).map(|t| t.until.timestamp_millis()),
                     timeout_by: state.server.timeout_of(p.id, now).map(|t| t.by.to_string()),
                 }
@@ -567,6 +579,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_nicknames", Permissions::MANAGE_NICKNAMES),
     ("change_nickname", Permissions::CHANGE_NICKNAME),
     ("move_members", Permissions::MOVE_MEMBERS),
+    ("priority_speaker", Permissions::PRIORITY_SPEAKER),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("add_emojis", Permissions::ADD_EMOJIS),
     ("add_stickers", Permissions::ADD_STICKERS),
@@ -1182,6 +1195,41 @@ mod tests {
         assert_eq!(about(&view, quiet.id).as_deref(), Some("from a DM"));
         assert_eq!(banner(&view, quiet.id).as_deref(), Some("blob:dmbanner"));
         assert_eq!(about(&view, loud.id).as_deref(), Some("gossiped"), "what the server was shown wins");
+    }
+
+    #[test]
+    fn voice_status_and_priority_speakers_reach_the_view_with_who_may_change_them() {
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(Identity::generate().public());
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let voice = server.channels[1].id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let member = UserProfile::new("member");
+        let member_id = member.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: member }).unwrap();
+        let keys = KeyHolder::default();
+        fn channel<'a>(view: &'a ServerView, id: ChannelId) -> &'a ChannelView {
+            view.channels.iter().find(|c| c.id == id.to_string()).unwrap()
+        }
+        let before = ServerView::for_viewer(&state, Some(member_id), &keys);
+        assert!(!channel(&before, voice).can_set_voice_status, "not in the room");
+        assert_eq!(channel(&before, voice).voice_status, None);
+        let as_owner = ServerView::for_viewer(&state, Some(owner.id), &keys);
+        assert!(channel(&as_owner, voice).can_set_voice_status, "managers always may");
+        let join = ServerEvent::VoiceState { user: member_id, channel: Some(voice), muted: false, deafened: false, since: None };
+        state.apply(join).unwrap();
+        let set = ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: "Ranked grind".into(), by: member_id };
+        state.apply(set).unwrap();
+        let after = ServerView::for_viewer(&state, Some(member_id), &keys);
+        assert!(channel(&after, voice).can_set_voice_status);
+        assert_eq!(channel(&after, voice).voice_status.as_deref(), Some("Ranked grind"));
+        let priority = |view: &ServerView, id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().priority_speaker;
+        assert!(priority(&after, owner.id));
+        assert!(!priority(&after, member_id));
+        assert_eq!(permissions_from_names(&["priority_speaker".to_string()]), Permissions::PRIORITY_SPEAKER);
+        assert_eq!(permission_names(Permissions::PRIORITY_SPEAKER), vec!["priority_speaker".to_string()]);
     }
 
     #[test]

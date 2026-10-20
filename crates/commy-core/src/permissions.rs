@@ -41,6 +41,7 @@ impl Permissions {
     pub const CHANGE_NICKNAME: Permissions = Permissions(1 << 31);
     pub const MANAGE_NICKNAMES: Permissions = Permissions(1 << 32);
     pub const SEND_VOICE_MESSAGES: Permissions = Permissions(1 << 33);
+    pub const PRIORITY_SPEAKER: Permissions = Permissions(1 << 34);
 
     pub fn default_member() -> Permissions {
         Self::VIEW_CHANNELS
@@ -105,6 +106,14 @@ impl Permissions {
 
     pub fn can_change_own_nickname(self) -> bool {
         self.allows(Self::CHANGE_NICKNAME) || self.allows(Self::MANAGE_NICKNAMES)
+    }
+
+    pub fn is_priority_speaker(self) -> bool {
+        self.allows(Self::PRIORITY_SPEAKER)
+    }
+
+    pub fn can_set_voice_status(self, in_channel: bool) -> bool {
+        self.allows(Self::MANAGE_CHANNELS) || (in_channel && self.allows(Self::SPEAK))
     }
 }
 
@@ -206,6 +215,24 @@ mod tests {
         assert!(Permissions::MANAGE_SERVER.can_view_audit_log());
         assert!(Permissions::ADMINISTRATOR.can_view_audit_log());
         assert!(!Permissions::MANAGE_ROLES.can_view_audit_log());
+    }
+
+    #[test]
+    fn priority_speaking_is_granted_not_assumed() {
+        assert!(!Permissions::default_member().is_priority_speaker());
+        assert!(Permissions::PRIORITY_SPEAKER.is_priority_speaker());
+        assert!(Permissions::ADMINISTRATOR.is_priority_speaker());
+        assert!(!Permissions::MUTE_MEMBERS.is_priority_speaker());
+        assert_ne!(Permissions::PRIORITY_SPEAKER, Permissions::SEND_VOICE_MESSAGES);
+    }
+
+    #[test]
+    fn voice_status_needs_a_voice_in_the_room_or_channel_management() {
+        assert!(Permissions::default_member().can_set_voice_status(true));
+        assert!(!Permissions::default_member().can_set_voice_status(false));
+        assert!(Permissions::MANAGE_CHANNELS.can_set_voice_status(false));
+        assert!(!Permissions::VIEW_CHANNELS.can_set_voice_status(true));
+        assert!(Permissions::ADMINISTRATOR.can_set_voice_status(false));
     }
 
     #[test]
