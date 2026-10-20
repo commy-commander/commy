@@ -381,7 +381,20 @@ pub struct Server {
     pub emoticons_shareable: bool,
     #[serde(default)]
     pub onboarding: Option<crate::onboarding::Onboarding>,
+    #[serde(default)]
+    pub defaults_version: u32,
 }
+
+pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
+
+const LATE_MEMBER_DEFAULTS: Permissions = Permissions(
+    Permissions::ADD_EMOJIS.0
+        | Permissions::ADD_STICKERS.0
+        | Permissions::ADD_EMOTICONS.0
+        | Permissions::CHANGE_NICKNAME.0
+        | Permissions::SEND_VOICE_MESSAGES.0
+        | Permissions::SEND_TTS_MESSAGES.0,
+);
 
 impl Server {
     pub fn new(name: impl Into<String>, owner: UserId) -> Self {
@@ -446,6 +459,7 @@ impl Server {
             stickers_shareable: false,
             emoticons_shareable: false,
             onboarding: None,
+            defaults_version: MEMBER_DEFAULTS_VERSION,
         }
     }
 
@@ -500,7 +514,7 @@ impl Server {
             return Permissions::NONE;
         };
         let applicable: Vec<&Role> = self.roles.iter().filter(|r| r.is_everyone() || member.roles.contains(&r.id)).collect();
-        let mut perms = applicable.iter().fold(Permissions::NONE, |acc, r| acc | permissions_granted_by(r)) & !Permissions::RESTRICTIONS;
+        let mut perms = applicable.iter().fold(Permissions::NONE, |acc, r| acc | self.granted_by(r)) & !Permissions::RESTRICTIONS;
         if perms.contains(Permissions::ADMINISTRATOR) {
             return Permissions::all();
         }
@@ -611,12 +625,31 @@ impl Server {
     }
 }
 
-fn permissions_granted_by(role: &Role) -> Permissions {
-    let mut granted = role.permissions;
-    if role.is_everyone() {
-        granted.remove(Permissions::CREATE_INVITES);
+impl Server {
+    pub fn granted_by(&self, role: &Role) -> Permissions {
+        let mut granted = role.permissions;
+        if role.is_everyone() {
+            granted.remove(Permissions::CREATE_INVITES);
+            granted |= self.late_member_defaults();
+        }
+        granted
     }
-    granted
+
+    pub fn late_member_defaults(&self) -> Permissions {
+        if self.defaults_version < MEMBER_DEFAULTS_VERSION {
+            LATE_MEMBER_DEFAULTS
+        } else {
+            Permissions::NONE
+        }
+    }
+
+    pub fn everyone_permissions(&self) -> Permissions {
+        self.roles
+            .iter()
+            .find(|r| r.is_everyone())
+            .map(|r| r.permissions | self.late_member_defaults())
+            .unwrap_or(Permissions::NONE)
+    }
 }
 
 #[cfg(test)]
@@ -804,6 +837,22 @@ mod tests {
         assert!(perms.allows(Permissions::SEND_MESSAGES));
         assert!(!perms.allows(Permissions::KICK_MEMBERS));
         assert!(!perms.allows(Permissions::CREATE_INVITES));
+    }
+
+    #[test]
+    fn servers_from_before_the_newer_member_defaults_still_grant_them() {
+        let owner = UserId::new();
+        let mut server = Server::new("s", owner);
+        let plain = UserId::new();
+        server.members.push(Member { user: plain, nickname: None, roles: vec![], joined_at: Utc::now(), timeout: None });
+        server.roles[0].permissions.remove(Permissions::CHANGE_NICKNAME | Permissions::SEND_VOICE_MESSAGES);
+        assert!(!server.permissions_for(plain).can_change_own_nickname(), "a current server honours the stored bits");
+        server.defaults_version = 0;
+        let perms = server.permissions_for(plain);
+        assert!(perms.can_change_own_nickname() && perms.allows(Permissions::SEND_VOICE_MESSAGES) && perms.can_send_tts());
+        assert!(!perms.allows(Permissions::CREATE_INVITES));
+        assert!(server.everyone_permissions().allows(Permissions::ADD_EMOJIS));
+        assert_eq!(Server::new("t", owner).defaults_version, MEMBER_DEFAULTS_VERSION);
     }
 
     #[test]

@@ -1579,14 +1579,24 @@ impl ServerState {
                 if role.tag.as_deref().is_some_and(|t| !crate::server::valid_role_tag(t)) || role.name.trim().is_empty() {
                     return Ok(false);
                 }
+                let late_defaults = self.server.late_member_defaults();
+                let adopting = self.server.defaults_version < crate::server::MEMBER_DEFAULTS_VERSION;
                 let Some(existing) = self.server.roles.iter_mut().find(|r| r.id == role.id) else { return Ok(false) };
                 if existing.is_everyone() && (role.name != existing.name || role.self_assignable || role.mentionable) {
                     return Ok(false);
                 }
-                if *existing == role {
+                let mut role = role;
+                if existing.is_everyone() {
+                    role.permissions |= late_defaults;
+                }
+                let adopted = existing.is_everyone() && adopting;
+                if *existing == role && !adopted {
                     return Ok(false);
                 }
                 *existing = role;
+                if adopted {
+                    self.server.defaults_version = crate::server::MEMBER_DEFAULTS_VERSION;
+                }
                 Ok(true)
             }
             ServerEvent::ChannelBanner { server, channel, banner } => {
@@ -3321,6 +3331,27 @@ mod tests {
         assert_eq!(state.apply(share.clone()), Ok(true));
         assert_eq!(state.apply(share), Ok(false));
         assert!(state.server.stickers_shareable && !state.server.emoticons_shareable);
+    }
+
+    #[test]
+    fn the_first_everyone_edit_on_an_older_server_adopts_the_newer_member_defaults() {
+        let (mut state, _channel, _owner) = fixture();
+        let sid = state.server.id;
+        let plain = join(&mut state, "plain");
+        state.server.defaults_version = 0;
+        state.server.roles[0].permissions.remove(Permissions::CHANGE_NICKNAME);
+        assert!(state.server.permissions_for(plain).can_change_own_nickname());
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.remove(Permissions::ATTACH_FILES);
+        assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone.clone() }), Ok(true));
+        assert_eq!(state.server.defaults_version, crate::server::MEMBER_DEFAULTS_VERSION);
+        let perms = state.server.permissions_for(plain);
+        assert!(perms.can_change_own_nickname() && !perms.allows(Permissions::ATTACH_FILES));
+        assert!(state.server.roles[0].permissions.contains(Permissions::CHANGE_NICKNAME), "the defaults are now stored");
+        everyone.permissions = state.server.roles[0].permissions;
+        everyone.permissions.remove(Permissions::CHANGE_NICKNAME);
+        assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }), Ok(true));
+        assert!(!state.server.permissions_for(plain).can_change_own_nickname(), "later edits are taken as written");
     }
 
     #[test]

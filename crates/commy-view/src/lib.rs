@@ -710,21 +710,11 @@ impl ServerView {
 }
 
 fn everyone_holds(state: &ServerState, permission: Permissions) -> bool {
-    state
-        .server
-        .roles
-        .iter()
-        .find(|r| r.position == EVERYONE_ROLE_POSITION)
-        .is_some_and(|r| r.permissions.contains(permission))
+    state.server.everyone_permissions().contains(permission)
 }
 
 fn everyone_lacks(state: &ServerState, permission: Permissions) -> bool {
-    state
-        .server
-        .roles
-        .iter()
-        .find(|r| r.position == EVERYONE_ROLE_POSITION)
-        .is_some_and(|r| !r.permissions.contains(permission))
+    !state.server.everyone_permissions().contains(permission)
 }
 
 pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[

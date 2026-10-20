@@ -14,8 +14,26 @@ pub const MAX_DESCRIPTION_CHARS: usize = 160;
 pub const MAX_ANSWER_CHARS: usize = 60;
 pub const MAX_TEXT_BYTES: usize = 2000;
 
-const NEVER_HANDED_OUT: Permissions =
-    Permissions(Permissions::ADMINISTRATOR.0 | Permissions::MANAGE_SERVER.0 | Permissions::MANAGE_ROLES.0);
+const NEVER_HANDED_OUT: Permissions = Permissions(
+    Permissions::ADMINISTRATOR.0
+        | Permissions::MANAGE_SERVER.0
+        | Permissions::MANAGE_ROLES.0
+        | Permissions::MANAGE_CHANNELS.0
+        | Permissions::MANAGE_MESSAGES.0
+        | Permissions::MANAGE_NICKNAMES.0
+        | Permissions::MANAGE_EXPRESSIONS.0
+        | Permissions::MANAGE_EVENTS.0
+        | Permissions::KICK_MEMBERS.0
+        | Permissions::BAN_MEMBERS.0
+        | Permissions::TIME_OUT_MEMBERS.0
+        | Permissions::MUTE_MEMBERS.0
+        | Permissions::DEAFEN_MEMBERS.0
+        | Permissions::MOVE_MEMBERS.0
+        | Permissions::PIN_MESSAGES.0
+        | Permissions::POST_ANNOUNCEMENTS.0
+        | Permissions::MENTION_EVERYONE.0
+        | Permissions::VIEW_AUDIT_LOG.0,
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Answer {
@@ -239,8 +257,12 @@ mod tests {
         let manager = role(Permissions::MANAGE_SERVER | Permissions::SEND_MESSAGES);
         let roles_admin = role(Permissions::MANAGE_ROLES);
         let moderator = role(Permissions::MANAGE_MESSAGES | Permissions::BAN_MEMBERS);
+        let muter = role(Permissions::MUTE_MEMBERS | Permissions::SEND_MESSAGES);
+        let poster = role(Permissions::SEND_MESSAGES | Permissions::ATTACH_FILES | Permissions::CONNECT_VOICE);
         assert!(hands_out_safely(&plain));
-        assert!(hands_out_safely(&moderator));
+        assert!(hands_out_safely(&poster));
+        assert!(!hands_out_safely(&moderator), "moderation is never handed out by a questionnaire");
+        assert!(!hands_out_safely(&muter));
         assert!(!hands_out_safely(&admin));
         assert!(!hands_out_safely(&manager));
         assert!(!hands_out_safely(&roles_admin));
