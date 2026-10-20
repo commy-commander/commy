@@ -12,11 +12,16 @@ pub enum ChannelKind {
     Announcement,
     Category,
     Forum,
+    Stage,
 }
 
 impl ChannelKind {
     pub fn holds_messages(self) -> bool {
         matches!(self, ChannelKind::Text | ChannelKind::Announcement | ChannelKind::Forum)
+    }
+
+    pub fn is_voice(self) -> bool {
+        matches!(self, ChannelKind::Voice | ChannelKind::Stage)
     }
 }
 
@@ -66,9 +71,12 @@ pub struct Channel {
     pub tags: Vec<ForumTag>,
     #[serde(default)]
     pub posts: std::collections::BTreeMap<MessageId, ForumPost>,
+    #[serde(default)]
+    pub speakers: Vec<UserId>,
 }
 
 pub const MAX_ACCESS_ROLES: usize = 16;
+pub const MAX_STAGE_SPEAKERS: usize = 50;
 pub const MAX_SLOW_MODE: u32 = 21_600;
 pub const MAX_THREAD_NAME_CHARS: usize = 100;
 pub const MAX_THREADS_PER_CHANNEL: usize = 500;
@@ -178,11 +186,16 @@ impl Channel {
             voice_status: None,
             tags: Vec::new(),
             posts: std::collections::BTreeMap::new(),
+            speakers: Vec::new(),
         }
     }
 
     pub fn is_forum(&self) -> bool {
         self.kind == ChannelKind::Forum
+    }
+
+    pub fn is_stage(&self) -> bool {
+        self.kind == ChannelKind::Stage
     }
 
     pub fn is_private(&self) -> bool {
@@ -515,6 +528,16 @@ impl Server {
 
     pub fn can_view(&self, channel: ChannelId, user: UserId) -> bool {
         self.channel(channel).is_some_and(|c| self.admits(user, &c.view_roles))
+    }
+
+    pub fn is_stage_speaker(&self, channel: ChannelId, user: UserId) -> bool {
+        self.channel(channel).is_some_and(|c| {
+            c.is_stage() && (c.speakers.contains(&user) || self.permissions_for(user).can_manage_stage())
+        })
+    }
+
+    pub fn in_audience(&self, channel: ChannelId, user: UserId) -> bool {
+        self.channel(channel).is_some_and(|c| c.is_stage()) && !self.is_stage_speaker(channel, user)
     }
 
     fn admits(&self, user: UserId, roles: &[RoleId]) -> bool {

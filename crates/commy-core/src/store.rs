@@ -105,6 +105,7 @@ pub struct ServerState {
     pub voice_flags: HashMap<UserId, (bool, bool)>,
     pub screen_shares: HashMap<UserId, ChannelId>,
     pub cameras: HashMap<UserId, ChannelId>,
+    pub hands: HashMap<UserId, ChannelId>,
     deleted_messages: HashSet<MessageId>,
     tombstones: HashMap<MessageId, Vec<StoredProof>>,
     unapplied: Option<HashMap<UserId, BTreeSet<UnappliedKey>>>,
@@ -188,6 +189,7 @@ impl ServerState {
             voice_flags: HashMap::new(),
             screen_shares: HashMap::new(),
             cameras: HashMap::new(),
+            hands: HashMap::new(),
             deleted_messages: Default::default(),
             tombstones: HashMap::new(),
             unapplied: None,
@@ -693,7 +695,8 @@ impl ServerState {
             | E::VoiceStatusSet { channel, .. }
             | E::ChannelKeyAdd { channel, .. }
             | E::ChannelKeyGrant { channel, .. }
-            | E::ForumTagsSet { channel, .. } => server.channel(*channel).is_some(),
+            | E::ForumTagsSet { channel, .. }
+            | E::StageSet { channel, .. } => server.channel(*channel).is_some(),
             E::RoleUpdate { role, .. } => server.roles.iter().any(|r| r.id == role.id),
             E::RoleDelete { role, .. } | E::RoleAssign { role, .. } | E::RoleUnassign { role, .. } => {
                 server.roles.iter().any(|r| r.id == *role)
@@ -927,6 +930,7 @@ impl ServerState {
                 self.server.channels.retain(|c| c.id != channel);
                 self.server.pins.retain(|p| p.channel != channel);
                 self.channel_keys.remove(&channel);
+                self.hands.retain(|_, c| *c != channel);
                 for m in self.messages.remove(&channel).into_iter().flatten() {
                     self.index.remove(&m.id);
                 }
@@ -989,6 +993,9 @@ impl ServerState {
                     live_room(&self.voice_states, user)?;
                     let previous = self.voice_states.insert(user, ch);
                     let moved = previous != Some(ch);
+                    if moved {
+                        self.hands.remove(&user);
+                    }
                     let flagged = self.voice_flags.insert(user, (muted, deafened)) != Some((muted, deafened));
                     if moved || !self.voice_since.contains_key(&user) {
                         let now = Utc::now().timestamp();
@@ -1278,7 +1285,7 @@ impl ServerState {
             ServerEvent::ChannelLimit { server, channel, user_limit } => {
                 self.same_server(server)?;
                 let Some(target) = self.server.channel_mut(channel) else { return Ok(false) };
-                if target.kind != crate::server::ChannelKind::Voice || user_limit > crate::server::MAX_USER_LIMIT {
+                if !target.kind.is_voice() || user_limit > crate::server::MAX_USER_LIMIT {
                     return Ok(false);
                 }
                 Ok(replace(&mut target.user_limit, user_limit))
@@ -1371,6 +1378,48 @@ impl ServerState {
                     }
                 }
             }
+            ServerEvent::StageSet { server, channel, user, speaker, .. } => {
+                self.same_server(server)?;
+                if !self.server.is_member(user) {
+                    return Ok(false);
+                }
+                let Some(target) = self.server.channel_mut(channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                if !target.is_stage() {
+                    return Ok(false);
+                }
+                let listed = target.speakers.contains(&user);
+                match (speaker, listed) {
+                    (true, true) | (false, false) => Ok(false),
+                    (false, true) => {
+                        target.speakers.retain(|u| *u != user);
+                        Ok(true)
+                    }
+                    (true, false) => {
+                        if target.speakers.len() >= crate::server::MAX_STAGE_SPEAKERS {
+                            return Err(StoreError::Limit);
+                        }
+                        target.speakers.push(user);
+                        self.hands.remove(&user);
+                        Ok(true)
+                    }
+                }
+            }
+            ServerEvent::HandRaise { server, channel, user, raised } => {
+                self.same_server(server)?;
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                if !raised {
+                    return Ok(self.hands.remove(&user).is_some());
+                }
+                if self.voice_states.get(&user) != Some(&channel) || !self.server.in_audience(channel, user) {
+                    return Ok(false);
+                }
+                live_room(&self.hands, user)?;
+                Ok(self.hands.insert(user, channel) != Some(channel))
+            }
             ServerEvent::VoiceModerate { server, user, muted, deafened } => {
                 self.same_server(server)?;
                 if user == self.server.owner {
@@ -1414,7 +1463,7 @@ impl ServerState {
                 };
                 match channel {
                     Some(target) => match self.server.channel(target) {
-                        Some(c) if c.kind == ChannelKind::Voice => Ok(target != current),
+                        Some(c) if c.kind.is_voice() => Ok(target != current),
                         Some(_) => Ok(false),
                         None => Err(StoreError::UnknownChannel),
                     },
@@ -1696,6 +1745,7 @@ impl ServerState {
         let server = &self.server;
         self.screen_shares.retain(|u, c| server.can_view(*c, *u));
         self.cameras.retain(|u, c| server.can_view(*c, *u));
+        self.hands.retain(|u, c| server.can_view(*c, *u));
         let gone: Vec<UserId> =
             self.voice_states.iter().filter(|(u, c)| !server.can_view(**c, **u)).map(|(u, _)| *u).collect();
         for user in gone {
@@ -2108,6 +2158,16 @@ impl ServerState {
         self.voice_since.get(&user).copied()
     }
 
+    pub fn hands_in(&self, channel: ChannelId) -> Vec<UserId> {
+        let mut hands: Vec<UserId> = self.hands.iter().filter(|(_, ch)| **ch == channel).map(|(u, _)| *u).collect();
+        hands.sort();
+        hands
+    }
+
+    pub fn hand_of(&self, user: UserId) -> Option<ChannelId> {
+        self.hands.get(&user).copied()
+    }
+
     pub fn voice_members(&self, channel: ChannelId) -> Vec<UserId> {
         self.voice_states
             .iter()
@@ -2130,6 +2190,7 @@ impl ServerState {
     fn drop_voice_presence(&mut self, user: UserId) -> bool {
         self.voice_since.remove(&user);
         self.voice_flags.remove(&user);
+        self.hands.remove(&user);
         let left = self.voice_states.remove(&user);
         if let Some(channel) = left {
             self.clear_empty_voice_status(channel);
@@ -5546,5 +5607,109 @@ mod poll_tests {
         state.apply(close(&state, &message, owner)).unwrap();
         rebuilt.carry_polls(&state);
         assert!(rebuilt.poll_closed(message.id, Utc::now()));
+    }
+
+    #[test]
+    fn stage_speakers_are_listed_members_and_hosts_and_everyone_else_is_audience() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let stage = crate::server::Channel::new("Town Hall", ChannelKind::Stage, 9);
+        let stage_id = stage.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: stage }).unwrap();
+        let guest = join(&mut state, "guest");
+        let host = crate::test_support::join_moderator(&mut state, "host");
+        let set = |user, speaker| ServerEvent::StageSet { server: sid, channel: stage_id, user, speaker, by: owner };
+        assert!(state.server.is_stage_speaker(stage_id, owner), "the owner hosts every stage");
+        assert!(state.server.in_audience(stage_id, guest));
+        assert!(state.server.in_audience(stage_id, host), "managing messages is not hosting a stage");
+        assert_eq!(state.apply(set(guest, true)), Ok(true));
+        assert_eq!(state.apply(set(guest, true)), Ok(false));
+        assert!(state.server.is_stage_speaker(stage_id, guest));
+        assert_eq!(state.apply(set(guest, false)), Ok(true));
+        assert_eq!(state.apply(set(guest, false)), Ok(false));
+        assert!(state.server.in_audience(stage_id, guest));
+        assert_eq!(state.apply(set(UserId::new(), true)), Ok(false), "strangers cannot be speakers");
+        let voice = state.server.channels[1].id;
+        let plain = ServerEvent::StageSet { server: sid, channel: voice, user: guest, speaker: true, by: owner };
+        assert_eq!(state.apply(plain), Ok(false), "only a stage keeps a speakers list");
+        assert!(!state.server.in_audience(voice, guest), "a voice channel has no audience");
+        let gone = ServerEvent::StageSet { server: sid, channel: ChannelId::new(), user: guest, speaker: true, by: owner };
+        assert_eq!(state.apply(gone), Err(StoreError::UnknownChannel));
+    }
+
+    #[test]
+    fn stage_speakers_survive_a_snapshot_and_stop_at_the_cap() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let stage = crate::server::Channel::new("Town Hall", ChannelKind::Stage, 9);
+        let stage_id = stage.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: stage }).unwrap();
+        for i in 0..crate::server::MAX_STAGE_SPEAKERS {
+            let user = join(&mut state, &format!("s{i}"));
+            assert_eq!(state.apply(ServerEvent::StageSet { server: sid, channel: stage_id, user, speaker: true, by: owner }), Ok(true));
+        }
+        let extra = join(&mut state, "extra");
+        let event = ServerEvent::StageSet { server: sid, channel: stage_id, user: extra, speaker: true, by: owner };
+        assert_eq!(state.apply(event), Err(StoreError::Limit));
+        let back = ServerState::from_snapshot(state.snapshot());
+        assert_eq!(back.server.channel(stage_id).unwrap().speakers.len(), crate::server::MAX_STAGE_SPEAKERS);
+    }
+
+    #[test]
+    fn hands_go_up_only_from_the_audience_and_come_down_on_leaving_or_promotion() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let stage = crate::server::Channel::new("Town Hall", ChannelKind::Stage, 9);
+        let stage_id = stage.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: stage }).unwrap();
+        let guest = join(&mut state, "guest");
+        let hand = |user, raised| ServerEvent::HandRaise { server: sid, channel: stage_id, user, raised };
+        let sit = |user, channel| ServerEvent::VoiceState { user, channel, muted: false, deafened: false, since: None };
+        assert_eq!(state.apply(hand(guest, true)), Ok(false), "not in the room yet");
+        state.apply(sit(guest, Some(stage_id))).unwrap();
+        assert_eq!(state.apply(hand(guest, true)), Ok(true));
+        assert_eq!(state.apply(hand(guest, true)), Ok(false));
+        assert_eq!(state.hands_in(stage_id), vec![guest]);
+        assert_eq!(state.hand_of(guest), Some(stage_id));
+        assert_eq!(state.apply(hand(guest, false)), Ok(true));
+        assert_eq!(state.apply(hand(guest, false)), Ok(false));
+        assert!(state.hands_in(stage_id).is_empty());
+
+        state.apply(hand(guest, true)).unwrap();
+        state.apply(ServerEvent::StageSet { server: sid, channel: stage_id, user: guest, speaker: true, by: owner }).unwrap();
+        assert!(state.hands_in(stage_id).is_empty(), "a new speaker no longer asks");
+        assert_eq!(state.apply(hand(guest, true)), Ok(false), "speakers do not raise hands");
+        state.apply(ServerEvent::StageSet { server: sid, channel: stage_id, user: guest, speaker: false, by: owner }).unwrap();
+
+        state.apply(hand(guest, true)).unwrap();
+        state.apply(sit(guest, None)).unwrap();
+        assert!(state.hands_in(stage_id).is_empty(), "leaving lowers the hand");
+
+        state.apply(sit(guest, Some(stage_id))).unwrap();
+        state.apply(hand(guest, true)).unwrap();
+        let voice = state.server.channels[1].id;
+        state.apply(sit(guest, Some(voice))).unwrap();
+        assert!(state.hands_in(stage_id).is_empty(), "moving rooms lowers the hand");
+
+        state.apply(sit(owner, Some(stage_id))).unwrap();
+        assert_eq!(state.apply(hand(owner, true)), Ok(false), "hosts already speak");
+        assert!(state.snapshot().server.channel(stage_id).unwrap().speakers.is_empty());
+        let unknown = ServerEvent::HandRaise { server: sid, channel: ChannelId::new(), user: guest, raised: true };
+        assert_eq!(state.apply(unknown), Err(StoreError::UnknownChannel));
+    }
+
+    #[test]
+    fn stage_channels_take_a_user_limit_and_voice_moves_like_voice_channels() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let stage = crate::server::Channel::new("Town Hall", ChannelKind::Stage, 9);
+        let stage_id = stage.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: stage }).unwrap();
+        assert_eq!(state.apply(ServerEvent::ChannelLimit { server: sid, channel: stage_id, user_limit: 5 }), Ok(true));
+        let guest = join(&mut state, "guest");
+        let voice = state.server.channels[1].id;
+        state.apply(ServerEvent::VoiceState { user: guest, channel: Some(voice), muted: false, deafened: false, since: None }).unwrap();
+        assert_eq!(state.apply(ServerEvent::VoiceMove { server: sid, user: guest, channel: Some(stage_id) }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::AfkChannelSet { server: sid, channel: Some(stage_id) }), Ok(false), "a stage is no AFK room");
     }
 }

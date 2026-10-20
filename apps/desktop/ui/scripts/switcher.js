@@ -1,5 +1,5 @@
 const SWITCHER_RECENT_CAP = 20;
-const SWITCHER_CHANNEL_KINDS = new Set(["text", "voice", "announcement", "forum"]);
+const SWITCHER_CHANNEL_KINDS = new Set(["text", "voice", "announcement", "forum", "stage"]);
 const SWITCHER_PREFIXES = { "#": "channel", "@": "person", "*": "server" };
 
 function parseSwitcherQuery(raw) {
@@ -72,7 +72,7 @@ function readRecent(raw) {
 
 function switcherChannelLabel(channel, plainName) {
   const name = plainName ? plainName(channel) : channel.name;
-  return channel.kind === "voice" ? name : `#${name}`;
+  return channel.kind === "voice" || channel.kind === "stage" ? name : `#${name}`;
 }
 
 function buildSwitcherItems({ servers = [], views = {}, threads = [], friends = [], presence = () => "", plainName = null, actions = [] }) {

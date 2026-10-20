@@ -47,6 +47,7 @@ pub fn is_transient(event: &ServerEvent) -> bool {
             | ServerEvent::SharedSoundPlay { .. }
             | ServerEvent::VoiceModerate { .. }
             | ServerEvent::VoiceMove { .. }
+            | ServerEvent::HandRaise { .. }
     )
 }
 
@@ -815,6 +816,7 @@ mod tests {
             ServerEvent::CameraState { user, channel, active: true },
             ServerEvent::SoundboardPlay { server: sid, channel, user, name: "boop".into() },
             ServerEvent::VoiceModerate { server: sid, user, muted: true, deafened: false },
+            ServerEvent::HandRaise { server: sid, channel, user, raised: true },
         ];
         for event in &transient {
             assert!(is_transient(event));
@@ -822,6 +824,8 @@ mod tests {
         }
         assert_eq!(outbox, Outbox::default());
         assert!(!is_transient(&rename(sid, "x")));
+        let promote = ServerEvent::StageSet { server: sid, channel, user, speaker: true, by: user };
+        assert!(!is_transient(&promote), "speaker lists are kept");
     }
 
     #[test]

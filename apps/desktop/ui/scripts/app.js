@@ -184,6 +184,7 @@ function mockSeed() {
       ch("mod-lounge", "text", "For the moderators"),
       ch("Lounge", "voice"),
       ch("after-dark", "text", "Grown-up talk, after hours"),
+      ch("Town Hall", "stage"),
     ],
     members: [
       { id: "m1", name: "ferris", presence: "online", custom_status: "heads down", about: "Crab by day, raid lead by night.", profile_policy: "friends",
@@ -193,6 +194,10 @@ function mockSeed() {
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
       { id: "m5", name: "quill", presence: "offline", custom_status: null, about: "Only friends get to read this.", pronouns: "she / her", profile_policy: "friends" },
       { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
+      { id: "m6", name: "ash", presence: "online", custom_status: "hosting tonight", roles: ["r2"] },
+      { id: "m7", name: "pip", presence: "online", custom_status: null },
+      { id: "m8", name: "lumen", presence: "idle", custom_status: null },
+      { id: "m9", name: "dot", presence: "online", custom_status: "lurking" },
     ],
   };
   server.roles = [
@@ -258,6 +263,20 @@ function mockSeed() {
   server.members[0].voice_muted = true;
   server.members[0].priority_speaker = true;
   general.voice_status = "Ranked grind";
+  const hall = server.channels.find(c => c.kind === "stage");
+  const seated = [["m2", "nova", 1810], ["m6", "ash", 1790], ["m7", "pip", 640], ["m8", "lumen", 420], ["m9", "dot", 95]];
+  hall.voice_users = seated.map(([, name]) => name);
+  hall.voice_user_ids = seated.map(([id]) => id);
+  hall.voice_since = seated.map(([, , ago]) => Math.floor(Date.now() / 1000) - ago);
+  hall.voice_muted = seated.map(() => false);
+  hall.voice_deafened = seated.map(() => false);
+  hall.speakers = ["m2", "m6"];
+  hall.hands = ["m7"];
+  for (const [id, , ago] of seated) {
+    const member = server.members.find(m => m.id === id);
+    member.voice_channel = hall.id;
+    member.voice_since = Math.floor(Date.now() / 1000) - ago;
+  }
   server.members[0].tag = "RAID";
   server.members[0].tag_color = "9b7bff";
   server.members[0].color = "9b7bff";
@@ -594,7 +613,7 @@ async function mockInvoke(cmd, args = {}) {
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
         const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
-        const vc = s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
+        const vc = s.channels.find(c => isVoiceKind(c.kind) && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
           Object.assign(me, { voice_channel: vc.id, voice_since: vc.voice_since[at], voice_muted: vc.voice_muted[at], voice_deafened: vc.voice_deafened[at] });
@@ -609,7 +628,7 @@ async function mockInvoke(cmd, args = {}) {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
             const sees = admits(c.view_roles);
             const sendable = admits(c.send_roles);
-            const view = { parent: null, position: i, user_limit: 0, slow_mode: 0, tags: [], threads: [], pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], voice_status: null, ...c, can_view: sees, can_send: sees && sendable, key_ready: sees, can_set_voice_status: mockCanSetVoiceStatus(c) };
+            const view = { parent: null, position: i, user_limit: 0, slow_mode: 0, tags: [], threads: [], speakers: [], hands: [], pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], voice_status: null, ...c, can_view: sees, can_send: sees && sendable, key_ready: sees, can_set_voice_status: mockCanSetVoiceStatus(c) };
             view.posts = c.kind === "forum" && sees ? forumPostViews((mock.forumPosts || {})[c.id] || [], mock.messages[c.id] || [], mockMemberName) : [];
             return view;
           })
@@ -623,7 +642,7 @@ async function mockInvoke(cmd, args = {}) {
         add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
         can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
         can_add_emoticons: !mock.plainMember || !(s.add_restricted || {}).emoticons, can_use_external: s.can_use_external !== false,
-        can_mute: !mock.plainMember, can_move: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_manage_nicknames: !mock.plainMember, can_change_nickname: true, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_move: !mock.plainMember, can_manage_stage: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_manage_nicknames: !mock.plainMember, can_change_nickname: true, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
@@ -852,16 +871,19 @@ async function mockInvoke(cmd, args = {}) {
       const s = mock.servers[args.serverId];
       if (!s) return null;
       for (const c of s.channels) {
-        if (c.kind !== "voice") continue;
+        if (!isVoiceKind(c.kind)) continue;
         const at = (c.voice_user_ids || []).indexOf("me");
         if (at >= 0) for (const k of ["voice_users", "voice_user_ids", "voice_since", "voice_muted", "voice_deafened"]) (c[k] || []).splice(at, 1);
         if (at >= 0 && !(c.voice_user_ids || []).length) c.voice_status = null;
+        c.hands = (c.hands || []).filter(id => id !== "me");
+        if (c.kind === "stage") c.speakers = (c.speakers || []).filter(id => id !== "me");
         if (c.id === args.channelId) {
           (c.voice_user_ids ||= []).push("me");
           (c.voice_since ||= []).push(Math.floor(Date.now() / 1000));
           (c.voice_muted ||= []).push(mock.voice.muted);
           (c.voice_deafened ||= []).push(mock.voice.deafened);
           c.voice_users.push(mock.user.display_name || mock.user.username);
+          if (c.kind === "stage" && !mock.plainMember) c.speakers.push("me");
         }
       }
       return null;
@@ -893,6 +915,24 @@ async function mockInvoke(cmd, args = {}) {
         outgoing: true, pending: false, reply_to: null, reply_preview: null, reactions: [], attachments: [], voice_invite };
       dm.messages.push(sent);
       return sent;
+    }
+    case "set_stage_speaker": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      if (!c || c.kind !== "stage") throw "that is not a stage channel";
+      c.speakers = (c.speakers || []).filter(id => id !== args.userId);
+      if (args.speaker) {
+        c.speakers.push(args.userId);
+        c.hands = (c.hands || []).filter(id => id !== args.userId);
+      }
+      return null;
+    }
+    case "raise_hand": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.kind === "stage" && (ch.voice_user_ids || []).includes("me"));
+      if (!c) throw "you are not in a stage channel here";
+      if (args.raised && (c.speakers || []).includes("me")) throw "you already have the floor";
+      c.hands = (c.hands || []).filter(id => id !== "me");
+      if (args.raised) c.hands.push("me");
+      return null;
     }
     case "list_dm_threads":
       return Object.entries(mock.dms)
@@ -1640,6 +1680,11 @@ const ICONS = {
   bookmark: "M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2zm0 15-5-2.18L7 18V5h10z",
   bookmarkOn: "M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z",
   bell: "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z",
+  stage: "M11 2h2v3.5h-2zM9 6h6v1.6H9zM4 8.6h16v2.2H4zM6.2 12h11.6l1.2 10H5zM8.6 14 7.9 20h8.2l-.7-6z",
+};
+
+const STROKE_ICONS = {
+  hand: "M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15",
 };
 
 function svgIcon(name, size = 20) {
@@ -1650,10 +1695,23 @@ function svgIcon(name, size = 20) {
   svg.setAttribute("height", size);
   svg.setAttribute("aria-hidden", "true");
   const path = document.createElementNS(ns, "path");
-  path.setAttribute("fill", "currentColor");
-  path.setAttribute("d", ICONS[name]);
+  if (STROKE_ICONS[name]) {
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "2");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    path.setAttribute("d", STROKE_ICONS[name]);
+  } else {
+    path.setAttribute("fill", "currentColor");
+    path.setAttribute("d", ICONS[name]);
+  }
   svg.appendChild(path);
   return svg;
+}
+
+function voiceKindIcon(kind, size = 18) {
+  return svgIcon(kind === "stage" ? "stage" : "speaker", size);
 }
 
 function setIcon(button, name, size = 20) {
@@ -2568,7 +2626,7 @@ function renderChannels() {
     for (const channel of section.channels) {
       const active = (state.currentChannel && channel.id === state.currentChannel.id) || channel.id === state.voiceChannelId;
       if (isCollapsed && !active) continue;
-      const row = channel.kind === "voice" ? voiceChannelRow(channel, canCreate, section.pinned) : textChannelRow(channel, canCreate, section.pinned);
+      const row = isVoiceKind(channel.kind) ? voiceChannelRow(channel, canCreate, section.pinned) : textChannelRow(channel, canCreate, section.pinned);
       if (canCreate && !section.fixed) {
         row.draggable = true;
         row.addEventListener("dragstart", e => {
@@ -2579,7 +2637,7 @@ function renderChannels() {
       }
       list.appendChild(row);
       if (channel.kind === "voice" && channel.voice_status) list.appendChild(voiceStatusLine(channel));
-      if (channel.kind === "voice") appendVoiceUsers(list, channel);
+      if (isVoiceKind(channel.kind)) appendVoiceUsers(list, channel);
     }
   }
   scheduleMuteExpiry(server);
@@ -2641,6 +2699,7 @@ function channelHeaderMark(channel) {
 
 function channelKindMark(kind, size = 16) {
   if (kind === "voice") return svgIcon("speaker", size);
+  if (kind === "stage") return svgIcon("stage", size);
   if (kind === "category") return svgIcon("chevronDown", size);
   if (kind === "announcement") return svgIcon("megaphone", size);
   if (kind === "forum") return svgIcon("forum", size);
@@ -2706,7 +2765,7 @@ function textChannelRow(channel, canCreate, pinned = false) {
 function voiceChannelRow(channel, canCreate, pinned = false) {
   const row = el("div", "channel voice-channel");
   const icon = el("span", "channel-icon");
-  icon.appendChild(svgIcon("speaker", 18));
+  icon.appendChild(voiceKindIcon(channel.kind, 18));
   row.appendChild(icon);
   row.appendChild(channelNameNode(channel, "channel-label"));
   channelLockMark(row, channel);
@@ -2717,7 +2776,7 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
     row.classList.add("active", "connected");
     row.title = "Click to disconnect";
   } else {
-    row.title = full ? "This channel is full" : "Click to join voice";
+    row.title = full ? "This channel is full" : isStageChannel(channel) ? "Click to join the audience" : "Click to join voice";
   }
   const count = voiceCountLabel(channel);
   if (count) {
@@ -2747,61 +2806,88 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
 
 function appendVoiceUsers(list, channel) {
   const myName = state.user ? (state.user.display_name || state.user.username) : null;
-  const ids = channel.voice_user_ids || [];
-  channel.voice_users.forEach((user, i) => {
-    const userId = ids[i];
-    const isMe = state.user && userId ? userId === state.user.id : user === myName;
-    const vu = el("div", "voice-user");
-    if (userId) {
-      vu.dataset.user = userId;
-      vu.classList.toggle("speaking", state.speaking.has(userId));
+  if (!isStageChannel(channel)) {
+    for (const entry of stageRoster(channel)) list.appendChild(voiceUserRow(channel, entry, myName));
+    return;
+  }
+  const { speakers, audience } = stageSections(channel);
+  if (speakers.length || audience.length) list.appendChild(stageGroupLabel("Speakers", speakers.length));
+  for (const entry of speakers) list.appendChild(voiceUserRow(channel, entry, myName, "speaker"));
+  if (audience.length) list.appendChild(stageGroupLabel("Audience", audience.length));
+  for (const entry of audience) list.appendChild(voiceUserRow(channel, entry, myName, "audience"));
+}
+
+function stageGroupLabel(title, count) {
+  const label = el("div", "stage-group");
+  label.appendChild(el("span", "stage-group-title", title));
+  label.appendChild(el("span", "stage-group-count", String(count)));
+  return label;
+}
+
+function voiceUserRow(channel, entry, myName, role = null) {
+  const { id: userId, name: user, since, muted, deafened } = entry;
+  const isMe = state.user && userId ? userId === state.user.id : user === myName;
+  const vu = el("div", "voice-user");
+  if (userId) {
+    vu.dataset.user = userId;
+    vu.classList.toggle("speaking", state.speaking.has(userId));
+  }
+  vu.appendChild(makeAvatar(userId, user, "avatar avatar-sm"));
+  vu.appendChild(el("span", "voice-user-name", user));
+  decorateVoiceUser(vu, channel, userId);
+  if (since) vu.appendChild(liveElapsed(since, "clock", "voice-user-time"));
+  if (role) {
+    const slot = el("span", "hand-slot");
+    if (entry.hand) {
+      slot.appendChild(svgIcon("hand", 14));
+      slot.title = "Wants to speak";
+      vu.classList.add("hand");
     }
-    vu.appendChild(makeAvatar(userId, user, "avatar avatar-sm"));
-    vu.appendChild(el("span", "voice-user-name", user));
-    decorateVoiceUser(vu, channel, userId);
-    const since = (channel.voice_since || [])[i];
-    if (since) vu.appendChild(liveElapsed(since, "clock", "voice-user-time"));
-    vu.appendChild(el("span", "vs-icon")).appendChild(svgIcon("mic", 14));
-    const muted = (channel.voice_muted || [])[i];
-    const deafened = (channel.voice_deafened || [])[i];
-    if (!isMe && muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
-    if (!isMe && deafened) {
+    vu.appendChild(slot);
+  }
+  vu.appendChild(el("span", "vs-icon")).appendChild(svgIcon("mic", 14));
+  if (role === "audience") {
+    vu.classList.add("audience");
+    setVoiceStatus(vu.lastChild, "micOff", "In the audience");
+    vu.lastChild.classList.remove("off");
+  }
+  if (!isMe && muted && role !== "audience") setVoiceStatus(vu.lastChild, "micOff", "Muted");
+  if (!isMe && deafened) {
+    vu.appendChild(el("span", "vs-icon"));
+    setVoiceStatus(vu.lastChild, "headsetOff", "Deafened");
+  }
+  const server = state.currentServer;
+  if (userId && server && (server.server_muted || []).includes(userId)) {
+    vu.appendChild(el("span", "vs-icon forced"));
+    setVoiceStatus(vu.lastChild, "micOff", "Server Muted");
+  }
+  if (userId && server && (server.server_deafened || []).includes(userId)) {
+    vu.appendChild(el("span", "vs-icon forced"));
+    setVoiceStatus(vu.lastChild, "headsetOff", "Server Deafened");
+  }
+  if (userId && (state.voice.muted_users || []).includes(userId)) vu.classList.add("muted-for-me");
+  if (userId && !isMe) {
+    vu.onclick = vu.oncontextmenu = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const member = server && server.members.find(m => m.id === userId);
+      openMemberMenu(member || { id: userId, name: user }, e.clientX, e.clientY);
+    };
+  } else if (isMe) {
+    vu.onclick = vu.oncontextmenu = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      openSelfVoiceMenu(e.clientX, e.clientY);
+    };
+  }
+  if (isMe && channel.id === state.voiceChannelId && role !== "audience") {
+    if (state.voice.muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
+    if (state.voice.deafened) {
       vu.appendChild(el("span", "vs-icon"));
       setVoiceStatus(vu.lastChild, "headsetOff", "Deafened");
     }
-    const server = state.currentServer;
-    if (userId && server && (server.server_muted || []).includes(userId)) {
-      vu.appendChild(el("span", "vs-icon forced"));
-      setVoiceStatus(vu.lastChild, "micOff", "Server Muted");
-    }
-    if (userId && server && (server.server_deafened || []).includes(userId)) {
-      vu.appendChild(el("span", "vs-icon forced"));
-      setVoiceStatus(vu.lastChild, "headsetOff", "Server Deafened");
-    }
-    if (userId && (state.voice.muted_users || []).includes(userId)) vu.classList.add("muted-for-me");
-    if (userId && !isMe) {
-      vu.onclick = vu.oncontextmenu = e => {
-        e.preventDefault();
-        e.stopPropagation();
-        const member = server && server.members.find(m => m.id === userId);
-        openMemberMenu(member || { id: userId, name: user }, e.clientX, e.clientY);
-      };
-    } else if (isMe) {
-      vu.onclick = vu.oncontextmenu = e => {
-        e.preventDefault();
-        e.stopPropagation();
-        openSelfVoiceMenu(e.clientX, e.clientY);
-      };
-    }
-    if (isMe && channel.id === state.voiceChannelId) {
-      if (state.voice.muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
-      if (state.voice.deafened) {
-        vu.appendChild(el("span", "vs-icon"));
-        setVoiceStatus(vu.lastChild, "headsetOff", "Deafened");
-      }
-    }
-    list.appendChild(vu);
-  });
+  }
+  return vu;
 }
 
 const serverImages = new Map();
@@ -3947,7 +4033,7 @@ function openChannelSettings(channelId, tab = "overview") {
   editingChannelId = channelId;
   const channel = editingChannel();
   if (!channel) return;
-  const voice = channel.kind === "voice";
+  const voice = isVoiceKind(channel.kind);
   const announcement = channel.kind === "announcement";
   $("channel-settings-title").replaceChildren(...(voice || isForumChannel(channel) ? [] : [document.createTextNode("# ")]), channelNameNode(channel));
   $("channel-edit-prefix").replaceChildren(channelKindMark(channel.kind, 16));
@@ -4010,7 +4096,7 @@ function paintChannelAccess() {
   const channel = editingChannel();
   const server = state.currentServer;
   if (!channel || !server || !accessDraft) return;
-  $("channel-view-title").textContent = channel.kind === "voice" ? "Who can see and join this channel" : "Who can see this channel";
+  $("channel-view-title").textContent = isVoiceKind(channel.kind) ? "Who can see and join this channel" : "Who can see this channel";
   $("channel-send-card").classList.toggle("hidden", !holdsMessages(channel));
   paintAccessChips($("channel-view-roles"), server, accessDraft.view, ids => {
     accessDraft.view = ids;
@@ -4098,7 +4184,7 @@ function channelEdits() {
   let name = $("channel-edit-name").value.trim();
   if (holdsMessages(channel)) name = name.toLowerCase().replace(/\s+/g, "-");
   const retention = Number($("channel-edit-retention").value) || 0;
-  const limit = channel.kind === "voice" ? Number($("channel-limit").value) || 0 : 0;
+  const limit = isVoiceKind(channel.kind) ? Number($("channel-limit").value) || 0 : 0;
   const slow = holdsMessages(channel) ? Number($("channel-slow").value) || 0 : 0;
   const color = channelColorDraft;
   const dirty = name !== channel.name || retention !== (channel.retention_days || 0) || limit !== (channel.user_limit || 0)
@@ -4188,7 +4274,7 @@ function syncLimitLabel() {
 function openDeleteChannel() {
   const channel = editingChannel();
   if (!channel) return;
-  const label = channel.kind === "voice" ? channel.name : `#${channel.name}`;
+  const label = isVoiceKind(channel.kind) ? channel.name : `#${channel.name}`;
   $("delete-channel-title").textContent = `Delete ${label}?`;
   $("delete-channel-name").textContent = channel.name;
   $("delete-channel-confirm").value = "";
@@ -4204,7 +4290,7 @@ async function confirmDeleteChannel() {
     await invoke("delete_channel", { serverId: state.currentServer.id, channelId: channel.id });
     hideModals();
     await closeSettingsLayers();
-    toast(`Deleted ${channel.kind === "voice" ? channel.name : "#" + channel.name}`);
+    toast(`Deleted ${isVoiceKind(channel.kind) ? channel.name : "#" + channel.name}`);
     editingChannelId = null;
     await refreshCurrentServer();
   } catch (e) {
@@ -4230,8 +4316,9 @@ function setCreateChannelKind(kind) {
   for (const opt of $("create-channel-kinds").querySelectorAll(".kind-option")) {
     opt.classList.toggle("active", opt.dataset.kind === kind);
   }
+  const stageHint = stageCreateHint(kind);
   $("create-channel-prefix").replaceChildren(channelKindMark(kind, 16));
-  $("create-channel-name").placeholder = kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : kind === "forum" ? "ideas" : "new-channel";
+  $("create-channel-name").placeholder = stageHint ? stageHint.placeholder : kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : kind === "forum" ? "ideas" : "new-channel";
   syncCreateChannelName();
 }
 
@@ -4847,11 +4934,11 @@ function buildChannelIntro(channel) {
   }
   const mark = el("div", "channel-intro-mark");
   const announcement = channel.kind === "announcement";
-  if (channel.kind === "voice") mark.appendChild(svgIcon("speaker", 32));
+  if (isVoiceKind(channel.kind)) mark.appendChild(voiceKindIcon(channel.kind, 32));
   else if (announcement) mark.appendChild(svgIcon("megaphone", 34));
   else mark.appendChild(el("span", "channel-intro-hash", "#"));
   intro.appendChild(mark);
-  const title = el("h2", null, channel.kind === "voice" ? "Welcome to " : "Welcome to #");
+  const title = el("h2", null, isVoiceKind(channel.kind) ? "Welcome to " : "Welcome to #");
   title.appendChild(channelNameNode(channel));
   intro.appendChild(title);
   const fallback = announcement
@@ -5575,7 +5662,7 @@ function switcherGlyph(item) {
   }
   if (item.kind === "person") glyph.appendChild(svgIcon("people", 18));
   else if (item.kind === "action") glyph.appendChild(svgIcon(item.action === "settings" ? "gear" : "plus", 18));
-  else if (item.channelKind === "voice") glyph.appendChild(svgIcon("speaker", 18));
+  else if (isVoiceKind(item.channelKind)) glyph.appendChild(voiceKindIcon(item.channelKind, 18));
   else if (item.channelKind === "announcement") glyph.appendChild(svgIcon("megaphone", 18));
   else glyph.textContent = "#";
   return glyph;
@@ -5608,7 +5695,7 @@ async function runSwitcherItem(item) {
   if (!state.currentServer || state.currentServer.id !== item.serverId) await selectServer(item.serverId);
   const channel = state.currentServer && state.currentServer.channels.find(c => c.id === item.channelId);
   if (!channel) return toast("That channel is gone");
-  if (channel.kind === "voice") {
+  if (isVoiceKind(channel.kind)) {
     if (state.voiceChannelId !== channel.id) await toggleVoice(channel);
     return;
   }
@@ -8126,7 +8213,7 @@ function toggleSection(key) {
 }
 
 function channelSections(server, canCreate) {
-  const byPos = (a, b) => (a.kind === "voice") - (b.kind === "voice") || a.position - b.position;
+  const byPos = (a, b) => isVoiceKind(a.kind) - isVoiceKind(b.kind) || a.position - b.position;
   const afk = server.channels.find(c => c.id === server.afk_channel && c.kind === "voice");
   const channels = server.channels.filter(c => c !== afk);
   const categories = channels.filter(c => c.kind === "category").sort((a, b) => a.position - b.position);
@@ -8134,7 +8221,7 @@ function channelSections(server, canCreate) {
   const loose = channels.filter(c => c.kind !== "category" && !(c.parent && catIds.has(c.parent)));
   const sections = [];
   const looseText = loose.filter(holdsMessages).sort(byPos);
-  const looseVoice = loose.filter(c => c.kind === "voice").sort(byPos);
+  const looseVoice = loose.filter(c => isVoiceKind(c.kind)).sort(byPos);
   if (looseText.length || canCreate) sections.push({ key: `${server.id}:text`, title: "Text Channels", kind: "text", parent: null, channels: looseText });
   if (looseVoice.length || canCreate) sections.push({ key: `${server.id}:voice`, title: "Voice Channels", kind: "voice", parent: null, channels: looseVoice });
   for (const category of categories) {
@@ -9237,9 +9324,17 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
-  const moderates = inServer && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames);
+  const moderates = inServer && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames || server.can_manage_stage);
   if (inServer && member.id !== server.owner && moderates) {
     sep();
+    const stageAction = stageMenuAction(stageChannelOf(server, member.id), member.id, Boolean(server.can_manage_stage));
+    if (stageAction) {
+      const entry = item(stageAction.label, () => setStageSpeaker(stageChannelOf(server, member.id), member, stageAction));
+      if (stageAction.speaker && (stageChannelOf(server, member.id).hands || []).includes(member.id)) {
+        entry.classList.add("ctx-hand");
+        entry.prepend(svgIcon("hand", 14));
+      }
+    }
     if (server.can_mute) {
       const sm = (server.server_muted || []).includes(member.id);
       const sd = (server.server_deafened || []).includes(member.id);
@@ -9253,7 +9348,7 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     }
     const inVoice = server.can_move ? (server.members.find(m => m.id === member.id) || {}).voice_channel : null;
     if (inVoice) {
-      for (const channel of server.channels.filter(c => c.kind === "voice" && c.id !== inVoice && c.can_view !== false)) {
+      for (const channel of server.channels.filter(c => isVoiceKind(c.kind) && c.id !== inVoice && c.can_view !== false)) {
         item(`Move to ${channelPlainName(channel)}`, () => moveVoiceMember(member, channel));
       }
       item("Disconnect from Voice", () => moveVoiceMember(member, null), "danger");
@@ -9284,6 +9379,29 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     }
   }
   placeMenuAt(menu, x, y);
+}
+
+async function setStageSpeaker(channel, member, action) {
+  if (!channel || !state.currentServer) return;
+  try {
+    await invoke("set_stage_speaker", { serverId: state.currentServer.id, channelId: channel.id, userId: member.id, speaker: action.speaker });
+    toast(`${member.name} ${action.done}`);
+    await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function toggleHand(raised) {
+  if (!state.voiceServer) return;
+  try {
+    await invoke("raise_hand", { serverId: state.voiceServer.id, raised });
+    toast(raised ? "Hand raised" : "Hand lowered");
+    if (state.currentServer && state.currentServer.id === state.voiceServer.id) await refreshCurrentServer();
+    else renderVoicePanel();
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function openSelfVoiceMenu(x, y) {
@@ -11692,6 +11810,7 @@ function renderVoicePanel() {
   const streams = $("vp-streams");
   streams.innerHTML = "";
   const server = state.currentServer && state.currentServer.id === vs.id ? state.currentServer : null;
+  renderStageStrip(server);
   const others = server
     ? (server.screen_shares || []).filter(s => (!state.user || s.user !== state.user.id) && s.user !== state.watchingUser)
     : [];
@@ -11704,6 +11823,24 @@ function renderVoicePanel() {
     row.appendChild(watch);
     streams.appendChild(row);
   }
+}
+
+function renderStageStrip(server) {
+  const strip = $("vp-stage");
+  const channel = server && !server.group ? server.channels.find(c => c.id === state.voiceChannelId) : null;
+  const hand = channel && state.user ? handState(channel, state.user.id, Boolean(server.can_manage_stage)) : null;
+  strip.classList.toggle("hidden", !hand);
+  if (!hand) return;
+  $("vp-stage-icon").replaceChildren(svgIcon(hand.role === "speaker" ? "mic" : "hand", 14));
+  $("vp-stage-text").textContent = hand.text;
+  $("vp-stage-text").title = hand.detail;
+  const button = $("vp-hand");
+  button.textContent = hand.label;
+  button.title = hand.title;
+  button.classList.toggle("on", hand.raised);
+  button.classList.toggle("spent", hand.role === "speaker");
+  button.disabled = hand.role === "speaker";
+  button.onclick = () => toggleHand(!hand.raised);
 }
 
 async function disconnectVoice() {
@@ -13231,7 +13368,7 @@ async function toggleVoice(channel) {
       state.sharing = false;
       state.shareSource = null;
     }
-    toast(leaving ? "Disconnected from voice" : `Joined voice: ${channel.name}`);
+    toast(leaving ? "Disconnected from voice" : isStageChannel(channel) ? `Joined the stage: ${channel.name}` : `Joined voice: ${channel.name}`);
     playSound(leaving ? "leave" : "join");
     renderShareButton();
     await selectServer(state.currentServer.id);
@@ -14878,6 +15015,7 @@ function wireEvents() {
     opt.onclick = () => setCreateChannelKind(opt.dataset.kind);
   }
   $("create-voice-icon").appendChild(svgIcon("speaker", 22));
+  $("create-stage-icon").appendChild(svgIcon("stage", 22));
   $("create-announcement-icon").appendChild(svgIcon("megaphone", 22));
   $("create-forum-icon").appendChild(svgIcon("forum", 22));
   wireForum();
@@ -15092,6 +15230,12 @@ function wireEvents() {
       const { muted, deafened } = event.payload;
       toast(deafened ? "A moderator server-deafened you" : muted ? "A moderator server-muted you" : "A moderator lifted your server mute");
       document.body.classList.toggle("server-muted", muted || deafened);
+      renderChannels();
+    });
+    window.__TAURI__.event.listen("stage-role", event => {
+      const { audience } = event.payload || {};
+      toast(audience ? "You are in the audience now" : "You can speak now");
+      renderVoicePanel();
       renderChannels();
     });
     window.__TAURI__.event.listen("timed-out", event => {
@@ -15852,7 +15996,7 @@ function chosenTemplate() {
 function templateChip(name, kind) {
   const chip = document.createElement("span");
   chip.className = "template-chip";
-  if (kind === "voice") chip.appendChild(svgIcon("speaker", 14));
+  if (isVoiceKind(kind)) chip.appendChild(voiceKindIcon(kind, 14));
   else if (kind === "announcement") chip.appendChild(svgIcon("megaphone", 14));
   else {
     const hash = document.createElement("span");
@@ -16009,7 +16153,7 @@ function openServerSettings(tab) {
     const row = el("div", "manage-row");
     const label = el("span", "manage-row-label");
     const icon = el("span", "channel-icon");
-    if (channel.kind === "voice") icon.appendChild(svgIcon("speaker", 18));
+    if (isVoiceKind(channel.kind)) icon.appendChild(voiceKindIcon(channel.kind, 18));
     else icon.textContent = "#";
     label.appendChild(icon);
     label.appendChild(channelNameNode(channel));

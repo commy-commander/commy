@@ -319,6 +319,19 @@ pub enum ServerEvent {
         tags: Vec<TagId>,
         by: UserId,
     },
+    StageSet {
+        server: ServerId,
+        channel: ChannelId,
+        user: UserId,
+        speaker: bool,
+        by: UserId,
+    },
+    HandRaise {
+        server: ServerId,
+        channel: ChannelId,
+        user: UserId,
+        raised: bool,
+    },
 }
 
 #[cfg(test)]
@@ -389,6 +402,8 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::ForumTagsSet { server, channel, tags: vec![], by: user }), 76);
         let post = ServerEvent::ForumPost { server, channel, message: MessageId::new(), title: "t".into(), tags: vec![], by: user };
         assert_eq!(wire_tag(post), 77);
+        assert_eq!(wire_tag(ServerEvent::StageSet { server, channel, user, speaker: true, by: user }), 78);
+        assert_eq!(wire_tag(ServerEvent::HandRaise { server, channel, user, raised: true }), 79);
     }
 
     #[test]

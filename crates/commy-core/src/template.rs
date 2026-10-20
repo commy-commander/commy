@@ -284,7 +284,7 @@ impl ServerTemplate {
                     .retention_days
                     .filter(|d| *d > 0 && is_text_like(c.kind))
                     .map(|d| d.min(MAX_RETENTION_DAYS)),
-                user_limit: if c.kind == ChannelKind::Voice { c.user_limit.min(MAX_USER_LIMIT) } else { 0 },
+                user_limit: if c.kind.is_voice() { c.user_limit.min(MAX_USER_LIMIT) } else { 0 },
                 color: clean_color(c.color.as_deref()),
                 view_roles: if c.kind == ChannelKind::Category { vec![] } else { role_picks(&c.view_roles, self.roles.len()) },
                 send_roles: if is_text_like(c.kind) { role_picks(&c.send_roles, self.roles.len()) } else { vec![] },
