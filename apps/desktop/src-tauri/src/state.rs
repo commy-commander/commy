@@ -49,6 +49,8 @@ pub struct VoiceSettings {
     #[serde(default = "default_tray_icon")]
     pub tray_icon: String,
     #[serde(default)]
+    pub pronouns: Option<String>,
+    #[serde(default)]
     pub presence_until: Option<i64>,
     #[serde(default)]
     pub status_until: Option<i64>,
@@ -94,6 +96,7 @@ impl Default for VoiceSettings {
             close_to_tray: true,
             app_icon: default_app_icon(),
             tray_icon: default_tray_icon(),
+            pronouns: None,
             presence_until: None,
             status_until: None,
             overlay: crate::overlay::OverlaySettings::default(),

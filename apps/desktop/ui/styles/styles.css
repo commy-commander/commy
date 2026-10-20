@@ -124,7 +124,7 @@ body {
   scrollbar-width: none;
 }
 .rail::-webkit-scrollbar { display: none; }
-.rail-spacer { flex: 1; }
+.rail-spacer { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; }
 .rail-brand {
   font-family: var(--font-display);
   font-weight: 700;
@@ -3692,6 +3692,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .mc-body { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 6px; }
 .mc-name-row { display: flex; align-items: center; }
 .mc-name { font-size: 20px; font-weight: 700; color: var(--text-normal); }
+.mc-pronouns { margin-left: 8px; font-size: 13px; font-weight: 500; color: var(--text-muted); }
 .mc-status { font-size: 13px; color: var(--text-muted); min-height: 16px; }
 .mc-label { margin-top: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); }
 .mc-roles { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -4325,3 +4326,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .icon-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .icon-label { font-size: 12px; font-weight: 600; text-align: center; line-height: 1.15; }
 .icon-replace { align-self: center; }
+.rail-context { display: flex; align-items: center; gap: 10px; height: 34px; min-width: 0; max-width: 320px; visibility: hidden; pointer-events: none; }
+.rail-context.on { visibility: visible; }
+.rail-context-icon { width: 28px; height: 28px; flex: none; border-radius: 9px; font-size: 11px; cursor: default; }
+.rail-context-name { font-family: var(--font-display); font-weight: 600; font-size: 15px; color: var(--header-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
