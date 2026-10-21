@@ -8332,6 +8332,7 @@ pub fn run() {
                 invite_link::register_scheme();
                 invite_link::start(&handle, &dir, launch_link);
                 *app.account.lock().unwrap() = account::load(&dir);
+                tauri::async_runtime::spawn(account::resume_sign_in(handle.clone()));
                 account_folder::set_aside_unowned_data(&dir);
                 if let Some(folder) = account::ready_folder(&app) {
                     open_account(&handle, folder);

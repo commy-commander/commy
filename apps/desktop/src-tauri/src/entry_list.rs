@@ -327,7 +327,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
     let app = handle.state::<App>();
     let Some(dir) = app.data_dir().cloned() else { return Ok(()) };
     let Some(s) = session(&app) else {
-        return finish(handle, "off", "", 0, false).await;
+        return finish(handle, "off", "Sign in to your Commy account to sync your servers.", 0, false).await;
     };
     if app.account.lock().unwrap().features.is_some_and(|f| !f.vault) {
         return finish(handle, "unsupported", NO_VAULT, 0, false).await;
