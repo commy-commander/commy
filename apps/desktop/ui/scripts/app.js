@@ -1857,6 +1857,7 @@ function openSettingsLayer(id, tab) {
   $(id).classList.remove("hidden");
   selectSettingsTab(id, tab);
   for (const range of $(id).querySelectorAll('input[type="range"]')) syncRangeFill(range);
+  if (isPhoneWidth(window.innerWidth)) history.pushState({ pane: phonePane(), settings: true }, "");
 }
 
 function syncRangeFill(range) {
@@ -1880,6 +1881,7 @@ function selectSettingsTab(id, tab) {
   }
   layer.querySelector(".settings-content").scrollTop = 0;
   layer.dataset.tab = tab;
+  settingsPhoneView(layer, "page");
   if (tab === "voice") prepareAvatarStage();
 }
 
@@ -12935,9 +12937,60 @@ function phoneShowChat() {
   else if (pane === "list") phoneStep("open");
 }
 
+function settingsPhoneView(layer, view) {
+  layer.dataset.phoneView = view;
+  const title = layer.querySelector(".settings-phone-title");
+  if (!title) return;
+  const active = layer.querySelector(".settings-tab.active");
+  const heading = layer.querySelector(".settings-nav-title");
+  title.textContent = view === "page" && active ? active.textContent : heading ? heading.textContent : layer.getAttribute("aria-label");
+}
+
+function showSettingsMenuOnPhone(id) {
+  if (isPhoneWidth(window.innerWidth) && !$(id).classList.contains("hidden")) settingsPhoneView($(id), "menu");
+}
+
+function onPhoneHistory(e) {
+  const entry = e.state || {};
+  const layer = document.querySelector(".settings-layer:not(.hidden)");
+  if (layer && !entry.settings) closeSettingsLayers();
+  else if (layer && !entry.page) settingsPhoneView(layer, "menu");
+  setPhonePane(entry.pane || "list", { fromHistory: true });
+}
+
+function wireSettingsPhoneBars() {
+  for (const layer of document.querySelectorAll(".settings-layer")) {
+    const bar = el("div", "settings-phone-bar");
+    const back = el("button", "icon-btn settings-phone-back");
+    back.title = "Back";
+    back.setAttribute("aria-label", "Back");
+    back.appendChild(svgIcon("chevronLeft", 22));
+    back.onclick = () => {
+      if (history.state && history.state.page) history.back();
+      else settingsPhoneView(layer, "menu");
+    };
+    const close = el("button", "icon-btn settings-phone-close");
+    close.title = "Close";
+    close.setAttribute("aria-label", "Close");
+    close.appendChild(svgIcon("close", 20));
+    close.onclick = () => {
+      const depth = history.state && history.state.settings ? (history.state.page ? 2 : 1) : 0;
+      layer.querySelector(".settings-close").click();
+      if (depth) history.go(-depth);
+    };
+    bar.append(back, el("span", "settings-phone-title"), close);
+    layer.prepend(bar);
+    layer.querySelector(".settings-nav").addEventListener("click", e => {
+      const tab = e.target.closest(".settings-tab[data-tab]");
+      if (tab && isPhoneWidth(window.innerWidth)) history.pushState({ pane: phonePane(), settings: true, page: true }, "");
+    }, true);
+  }
+}
+
 function wirePhoneLayout() {
   $("app").dataset.pane = "list";
-  window.addEventListener("popstate", e => setPhonePane((e.state && e.state.pane) || "list", { fromHistory: true }));
+  window.addEventListener("popstate", onPhoneHistory);
+  wireSettingsPhoneBars();
   $("phone-back").onclick = () => phoneStep("back");
   $("channel-list").addEventListener("click", e => {
     const row = e.target.closest(".channel");
@@ -14998,7 +15051,10 @@ function wireEvents() {
     toast("Invite copied to clipboard");
   };
 
-  $("settings-btn").onclick = () => openUserSettings("voice");
+  $("settings-btn").onclick = () => {
+    openUserSettings("voice");
+    showSettingsMenuOnPhone("user-settings");
+  };
   $("settings-close").onclick = closeSettingsLayers;
   $("server-settings-close").onclick = closeSettingsLayers;
   for (const layer of document.querySelectorAll(".settings-layer")) {
@@ -15053,7 +15109,10 @@ function wireEvents() {
     }
   });
 
-  $("server-settings-btn").onclick = () => openServerSettings();
+  $("server-settings-btn").onclick = async () => {
+    await openServerSettings();
+    showSettingsMenuOnPhone("server-settings");
+  };
   $("emoji-upload").onclick = uploadEmoji;
   $("emoji-browse").onclick = () => openCatalog("emojis");
   $("sticker-browse").onclick = () => openCatalog("stickers");
