@@ -76,6 +76,7 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::BotSet { user, .. }
         | E::PollVote { user, .. }
         | E::HandRaise { user, .. }
+        | E::DeviceAnnounce { user, .. }
         | E::PronounsSet { user, .. } => Some(*user),
         E::MessagePin { by, .. }
         | E::MemberTimeout { by, .. }
@@ -179,6 +180,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ScreenShare { user, .. } => format!("share:{user}"),
         E::CameraState { user, .. } => format!("camera:{user}"),
         E::PresenceUpdate { user, .. } => format!("presence:{user}"),
+        E::DeviceAnnounce { user, node, .. } => format!("device:{user}:{}", node.to_ascii_lowercase()),
         E::MessageCreate { .. }
         | E::MessageEdit { .. }
         | E::MessageDelete { .. }
@@ -193,7 +195,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
 }
 
 pub fn settles_authority(subject: &str) -> bool {
-    const LIVE: [&str; 9] = ["presence:", "voice:", "share:", "camera:", "reaction:", "rsvp:", "profile:", "voice_move:", "hand:"];
+    const LIVE: [&str; 10] =
+        ["presence:", "voice:", "share:", "camera:", "reaction:", "rsvp:", "profile:", "voice_move:", "hand:", "device:"];
     !LIVE.iter().any(|p| subject.starts_with(p))
 }
 
@@ -217,6 +220,7 @@ fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
     use ServerEvent as E;
     match event {
         E::VoiceState { channel, .. } | E::VoiceMove { channel, .. } => *channel,
+        E::DeviceAnnounce { voice, .. } => *voice,
         E::TypingStart { channel, .. }
         | E::ScreenShare { channel, .. }
         | E::CameraState { channel, .. }
@@ -262,7 +266,9 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::BotSet { .. } | E::PronounsSet { .. } => member && actor(event) == Some(by),
         E::BotCommandsSet { bot, .. } => member && *bot == by && actor(event) == Some(by),
         E::PresenceUpdate { .. } | E::RulesAccept { .. } | E::EventRsvp { .. } => member && actor(event) == Some(by),
-        E::VoiceState { .. } | E::ScreenShare { .. } | E::CameraState { .. } => member && actor(event) == Some(by) && sees(event),
+        E::VoiceState { .. } | E::ScreenShare { .. } | E::CameraState { .. } | E::DeviceAnnounce { .. } => {
+            member && actor(event) == Some(by) && sees(event)
+        }
         E::TypingStart { .. } | E::ReactionToggle { .. } | E::ReactionSet { .. } => {
             member && speaks && actor(event) == Some(by) && sees(event)
         }
