@@ -29,6 +29,7 @@ const klipyBody = {
   data: {
     data: [
       {
+        slug: "wave",
         title: "Wave",
         file: {
           sm: { gif: { url: "https://static.klipy.com/sm.gif", width: 200, height: 100 } },
@@ -44,6 +45,7 @@ const klipyBody = {
 const stickerBody = {
   result: true,
   data: {
+    has_next: true,
     data: [
       {
         slug: "grrr-rawr",
@@ -301,6 +303,7 @@ test("sticker search uses the KLIPY key server side", async () => {
   const r = await call("GET", "/commy/stickers/search", { cookie, query: { q: "rawr" } });
   assert.equal(r.status, 200, JSON.stringify(r.json));
   assert.deepEqual(r.json.results.map((s) => s.id), ["grrr-rawr"]);
+  assert.equal(r.json.more, true);
   assert.ok(!JSON.stringify(r.json).includes(KLIPY_KEY));
   assert.ok(log[0].url.startsWith(`https://api.klipy.com/api/v1/${KLIPY_KEY}/stickers/search?q=rawr`));
   assert.match(log[0].url, /format_filter=webp%2Cgif/);
@@ -309,6 +312,16 @@ test("sticker search uses the KLIPY key server side", async () => {
   assert.ok(log[1].url.includes("/stickers/trending?"));
   await call("GET", "/commy/gifs/search", { cookie, query: { q: "rawr" } });
   assert.ok(log[2].url.includes("/gifs/search?"), "GIF and sticker results are cached apart");
+
+  const gifs = await call("GET", "/commy/stickers/search", { cookie, query: { q: "rawr", from: "gifs", page: "3" } });
+  assert.equal(gifs.status, 200);
+  assert.ok(log[3].url.includes("/gifs/search?"));
+  assert.match(log[3].url, /page=3/);
+  assert.match(log[3].url, /format_filter=webp%2Cgif/);
+  assert.deepEqual(gifs.json.results.map((g) => g.url), ["https://static.klipy.com/md.gif"]);
+  assert.equal(gifs.json.more, false);
+  await call("GET", "/commy/stickers/search", { cookie, query: { q: "rawr", page: "99" } });
+  assert.match(log[4].url, /page=20/);
 });
 
 test("game search reuses the Twitch app token", async () => {
