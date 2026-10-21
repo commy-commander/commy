@@ -99,6 +99,23 @@ fn ensure_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
         .build()
 }
 
+pub fn wanted(toggled_on: bool, game_in_front: bool, previewing: bool, needs_game: bool) -> bool {
+    previewing || (toggled_on && (game_in_front || !needs_game))
+}
+
+pub fn refresh(app: &AppHandle) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let state = app.state::<crate::state::App>();
+    let settings = state.voice.lock().unwrap().overlay.clone();
+    let visible = wanted(
+        state.overlay_visible.load(Relaxed),
+        state.game_in_front.load(Relaxed),
+        state.overlay_preview.load(Relaxed),
+        cfg!(windows),
+    );
+    apply(app, &settings, visible);
+}
+
 pub fn apply(app: &AppHandle, settings: &OverlaySettings, visible: bool) {
     if !settings.enabled || !visible {
         if let Some(window) = app.get_webview_window(LABEL) {
@@ -170,6 +187,15 @@ fn show_without_focus(window: &tauri::WebviewWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_overlay_only_shows_over_a_game_when_it_is_on() {
+        assert!(!wanted(true, false, false, true));
+        assert!(wanted(true, true, false, true));
+        assert!(!wanted(false, true, false, true));
+        assert!(wanted(true, false, false, false));
+        assert!(wanted(false, false, true, true));
+    }
 
     #[test]
     fn corners_stay_inside_the_work_area() {
