@@ -43,6 +43,7 @@ id_type!(ServerId);
 id_type!(ChannelId);
 id_type!(MessageId);
 id_type!(RoleId);
+id_type!(TagId);
 
 pub const CALL_SERVER: ServerId = ServerId(Uuid::nil());
 

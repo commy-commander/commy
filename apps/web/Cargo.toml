@@ -1,0 +1,29 @@
+[package]
+name = "commy-web-client"
+description = "Commy in the browser: the desktop UI on a WebAssembly backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+commy-core = { workspace = true }
+commy-net = { workspace = true }
+commy-view = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { version = "1", features = ["sync"] }
+data-encoding = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+anyhow = { workspace = true }
+iroh = { workspace = true }
+n0-future = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"

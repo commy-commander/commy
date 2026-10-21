@@ -3,6 +3,7 @@ use crate::audit::{AuditEntry, AuditKind};
 use crate::invites::TrackedInvite;
 use crate::automod::{AutoMod, Hold};
 use crate::channel_key::ChannelKeys;
+use crate::command::{BotCommand, CommandUse};
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
@@ -51,6 +52,8 @@ pub enum StoreError {
     NoUploads,
     #[error("members without the send voice messages permission cannot send voice messages here")]
     NoVoiceMessages,
+    #[error("members without the create polls permission cannot post polls here")]
+    NoPolls,
     #[error("the signer may not do that here")]
     NotAllowed,
     #[error("unsigned event from a member whose key is known")]
@@ -59,7 +62,11 @@ pub enum StoreError {
     Limit,
     #[error("that member is timed out")]
     TimedOut,
+    #[error("that thread is locked")]
+    ThreadLocked,
 }
+
+const MAX_THREAD_DEPTH: usize = 64;
 
 pub const TOMBSTONE_KEEP_DAYS: i64 = 60;
 
@@ -101,6 +108,8 @@ pub struct ServerState {
     pub voice_flags: HashMap<UserId, (bool, bool)>,
     pub screen_shares: HashMap<UserId, ChannelId>,
     pub cameras: HashMap<UserId, ChannelId>,
+    pub hands: HashMap<UserId, ChannelId>,
+    pub activities: HashMap<ChannelId, crate::activity::Activity>,
     deleted_messages: HashSet<MessageId>,
     tombstones: HashMap<MessageId, Vec<StoredProof>>,
     unapplied: Option<HashMap<UserId, BTreeSet<UnappliedKey>>>,
@@ -112,6 +121,7 @@ pub struct ServerState {
     channel_keys: HashMap<ChannelId, ChannelKeys>,
     automod: AutoMod,
     bots: BTreeSet<UserId>,
+    bot_commands: BTreeMap<UserId, Vec<BotCommand>>,
     audit: Vec<AuditEntry>,
     deleted: bool,
     invites: BTreeMap<String, TrackedInvite>,
@@ -154,6 +164,8 @@ pub struct Snapshot {
     #[serde(default)]
     pub bots: Vec<UserId>,
     #[serde(default)]
+    pub bot_commands: Vec<(UserId, Vec<BotCommand>)>,
+    #[serde(default)]
     pub audit: Vec<AuditEntry>,
     #[serde(default)]
     pub deleted: bool,
@@ -184,6 +196,8 @@ impl ServerState {
             voice_flags: HashMap::new(),
             screen_shares: HashMap::new(),
             cameras: HashMap::new(),
+            hands: HashMap::new(),
+            activities: HashMap::new(),
             deleted_messages: Default::default(),
             tombstones: HashMap::new(),
             unapplied: None,
@@ -195,6 +209,7 @@ impl ServerState {
             channel_keys: HashMap::new(),
             automod: AutoMod::default(),
             bots: BTreeSet::new(),
+            bot_commands: BTreeMap::new(),
             audit: Vec::new(),
             deleted: false,
             invites: BTreeMap::new(),
@@ -234,6 +249,7 @@ impl ServerState {
             channel_keys: self.channel_keys.iter().map(|(c, k)| (*c, k.clone())).collect(),
             automod: self.automod.clone(),
             bots: self.bots.iter().copied().collect(),
+            bot_commands: self.bot_commands.iter().map(|(bot, list)| (*bot, list.clone())).collect(),
             audit: self.audit.clone(),
             deleted: self.deleted,
             invites: self.invites.values().cloned().collect(),
@@ -287,6 +303,11 @@ impl ServerState {
         state.action_floor = snapshot.action_floor;
         state.automod = snapshot.automod;
         state.bots = snapshot.bots.into_iter().filter(|user| state.server.is_member(*user)).collect();
+        state.bot_commands = snapshot
+            .bot_commands
+            .into_iter()
+            .filter(|(bot, list)| state.bots.contains(bot) && !list.is_empty() && crate::command::valid_commands(list))
+            .collect();
         state.audit = crate::audit::tidy(snapshot.audit);
         state.deleted = snapshot.deleted;
         state.invites = snapshot.invites.into_iter().filter(TrackedInvite::valid).map(|i| (i.id(), i)).collect();
@@ -299,7 +320,7 @@ impl ServerState {
         state.closed_polls = snapshot.closed_polls.into_iter().filter(|id| state.index.contains_key(id)).collect();
         for signed in snapshot.signed_actions {
             if let Some(subject) = action::subject(&signed.event) {
-                if state.action_times.get(&subject) == Some(&signed.action.at) {
+                if state.action_times.get(&subject) == Some(&signed.action.at) && state.still_verifies(&signed) {
                     state.signed_actions.insert(subject, signed);
                 }
             }
@@ -369,7 +390,8 @@ impl ServerState {
         if !self.messages.values().flatten().any(|m| m.created_at < floor) {
             return 0;
         }
-        let pinned: HashSet<MessageId> = self.server.pins.iter().map(|p| p.message).collect();
+        let mut pinned: HashSet<MessageId> = self.server.pins.iter().map(|p| p.message).collect();
+        pinned.extend(self.server.channels.iter().flat_map(|c| c.posts.keys().copied()));
         let parents: HashMap<MessageId, MessageId> =
             self.messages.values().flatten().filter_map(|m| Some((m.id, m.reply_to?))).collect();
         let mut keep: HashSet<MessageId> = self
@@ -598,6 +620,26 @@ impl ServerState {
         self.bots.iter().copied()
     }
 
+    pub fn commands_of(&self, bot: UserId) -> &[BotCommand] {
+        self.bot_commands.get(&bot).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn bot_commands(&self) -> impl Iterator<Item = (UserId, &[BotCommand])> + '_ {
+        self.bot_commands.iter().map(|(bot, list)| (*bot, list.as_slice()))
+    }
+
+    pub fn command_of(&self, used: &CommandUse) -> Option<&BotCommand> {
+        self.commands_of(used.bot).iter().find(|c| c.name == used.command).filter(|c| used.fits(c))
+    }
+
+    pub fn carry_bot_commands(&mut self, from: &ServerState) {
+        for (bot, list) in from.bot_commands() {
+            if self.bots.contains(&bot) && !self.bot_commands.contains_key(&bot) {
+                self.bot_commands.insert(bot, list.to_vec());
+            }
+        }
+    }
+
     pub fn hold(&self, message: &Message) -> Option<Hold> {
         self.automod.hold(&self.server, self.messages(message.channel), message)
     }
@@ -685,8 +727,11 @@ impl ServerState {
             | E::ChannelKindSet { channel, .. }
             | E::ChannelAccessSet { channel, .. }
             | E::ChannelSensitiveSet { channel, .. }
+            | E::VoiceStatusSet { channel, .. }
             | E::ChannelKeyAdd { channel, .. }
-            | E::ChannelKeyGrant { channel, .. } => server.channel(*channel).is_some(),
+            | E::ChannelKeyGrant { channel, .. }
+            | E::ForumTagsSet { channel, .. }
+            | E::StageSet { channel, .. } => server.channel(*channel).is_some(),
             E::RoleUpdate { role, .. } => server.roles.iter().any(|r| r.id == role.id),
             E::RoleDelete { role, .. } | E::RoleAssign { role, .. } | E::RoleUnassign { role, .. } => {
                 server.roles.iter().any(|r| r.id == *role)
@@ -704,7 +749,8 @@ impl ServerState {
             | E::ReactionSet { message, .. }
             | E::ReactionToggle { message, .. }
             | E::PollVote { message, .. }
-            | E::PollClose { message, .. } => self.has_message(*message),
+            | E::PollClose { message, .. }
+            | E::ThreadSet { root: message, .. } => self.has_message(*message),
             _ => true,
         }
     }
@@ -724,9 +770,22 @@ impl ServerState {
             None => {
                 !action::settles_authority(subject)
                     || action::snapshot_omits(subject)
+                    || self.missing_from_trimmed_snapshot(subject)
                     || at + MAX_ACTION_FLOOR_MS >= self.action_floor
             }
         }
+    }
+
+    fn missing_from_trimmed_snapshot(&self, subject: &str) -> bool {
+        match subject {
+            "images" => self.server.icon.is_none() && self.server.banner.is_none(),
+            "game_tags" => self.server.game_tags.is_empty(),
+            _ => false,
+        }
+    }
+
+    fn still_verifies(&self, signed: &SignedEvent) -> bool {
+        self.signer_key(signed).is_some_and(|key| signed.verify(self.server.id, &key))
     }
 
     fn signer_key(&self, signed: &SignedEvent) -> Option<IdentityKey> {
@@ -883,10 +942,9 @@ impl ServerState {
                 self.same_server(server)?;
                 let before = self.server.members.len();
                 self.server.members.retain(|m| m.user != user);
-                self.voice_states.remove(&user);
-                self.voice_since.remove(&user);
-                self.voice_flags.remove(&user);
+                self.drop_voice_presence(user);
                 self.bots.remove(&user);
+                self.bot_commands.remove(&user);
                 Ok(self.server.members.len() != before)
             }
             ServerEvent::PresenceUpdate { user, presence } => {
@@ -921,6 +979,7 @@ impl ServerState {
                 self.server.channels.retain(|c| c.id != channel);
                 self.server.pins.retain(|p| p.channel != channel);
                 self.channel_keys.remove(&channel);
+                self.hands.retain(|_, c| *c != channel);
                 for m in self.messages.remove(&channel).into_iter().flatten() {
                     self.index.remove(&m.id);
                 }
@@ -981,20 +1040,26 @@ impl ServerState {
                         return Err(StoreError::UnknownChannel);
                     }
                     live_room(&self.voice_states, user)?;
-                    let moved = self.voice_states.insert(user, ch) != Some(ch);
+                    let previous = self.voice_states.insert(user, ch);
+                    let moved = previous != Some(ch);
+                    if moved {
+                        self.hands.remove(&user);
+                        self.activities.retain(|room, a| a.starter != user || *room == ch);
+                    }
                     let flagged = self.voice_flags.insert(user, (muted, deafened)) != Some((muted, deafened));
                     if moved || !self.voice_since.contains_key(&user) {
                         let now = Utc::now().timestamp();
                         self.voice_since.insert(user, since.filter(|s| *s <= now).unwrap_or(now));
+                    }
+                    if let Some(left) = previous.filter(|_| moved) {
+                        self.clear_empty_voice_status(left);
                     }
                     Ok(moved || flagged)
                 }
                 None => {
                     self.screen_shares.remove(&user);
                     self.cameras.remove(&user);
-                    self.voice_since.remove(&user);
-                    self.voice_flags.remove(&user);
-                    Ok(self.voice_states.remove(&user).is_some())
+                    Ok(self.drop_voice_presence(user))
                 }
             },
             ServerEvent::ScreenShare {
@@ -1103,7 +1168,17 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.invite_background, background))
             }
-            ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } => Ok(false),
+            ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } | ServerEvent::ActivityInput { .. } => Ok(false),
+            ServerEvent::ActivitySet { server, channel, activity, by } => {
+                self.same_server(server)?;
+                if !crate::activity::admits_set(self, by, channel, activity.as_ref()) {
+                    return Ok(false);
+                }
+                match activity {
+                    Some(next) => Ok(self.activities.insert(channel, next.clone()) != Some(next)),
+                    None => Ok(self.activities.remove(&channel).is_some()),
+                }
+            }
             ServerEvent::StickerAdd { server, sticker } => {
                 self.same_server(server)?;
                 if !crate::server::valid_expression_name(&sticker.name)
@@ -1171,9 +1246,20 @@ impl ServerState {
             ServerEvent::BotSet { server, user, bot } => {
                 self.same_server(server)?;
                 if !bot {
+                    self.bot_commands.remove(&user);
                     return Ok(self.bots.remove(&user));
                 }
                 Ok(self.server.is_member(user) && self.bots.insert(user))
+            }
+            ServerEvent::BotCommandsSet { server, bot, commands, by } => {
+                self.same_server(server)?;
+                if by != bot || !self.bots.contains(&bot) || !self.server.is_member(bot) || !crate::command::valid_commands(&commands) {
+                    return Ok(false);
+                }
+                if commands.is_empty() {
+                    return Ok(self.bot_commands.remove(&bot).is_some());
+                }
+                Ok(self.bot_commands.insert(bot, commands.clone()).as_ref() != Some(&commands))
             }
             ServerEvent::PronounsSet { server, user, pronouns } => {
                 self.same_server(server)?;
@@ -1270,7 +1356,7 @@ impl ServerState {
             ServerEvent::ChannelLimit { server, channel, user_limit } => {
                 self.same_server(server)?;
                 let Some(target) = self.server.channel_mut(channel) else { return Ok(false) };
-                if target.kind != crate::server::ChannelKind::Voice || user_limit > crate::server::MAX_USER_LIMIT {
+                if !target.kind.is_voice() || user_limit > crate::server::MAX_USER_LIMIT {
                     return Ok(false);
                 }
                 Ok(replace(&mut target.user_limit, user_limit))
@@ -1278,10 +1364,132 @@ impl ServerState {
             ServerEvent::ChannelSlowMode { server, channel, seconds } => {
                 self.same_server(server)?;
                 let Some(target) = self.server.channel_mut(channel) else { return Ok(false) };
-                if !matches!(target.kind, crate::server::ChannelKind::Text | crate::server::ChannelKind::Announcement) || seconds > crate::server::MAX_SLOW_MODE {
+                if !target.kind.holds_messages() || seconds > crate::server::MAX_SLOW_MODE {
                     return Ok(false);
                 }
                 Ok(replace(&mut target.slow_mode, seconds))
+            }
+            ServerEvent::ForumTagsSet { server, channel, tags, .. } => {
+                self.same_server(server)?;
+                let Some(target) = self.server.channel_mut(channel) else { return Err(StoreError::UnknownChannel) };
+                let Some(tags) = crate::server::clean_forum_tags(&tags).filter(|_| target.is_forum()) else { return Ok(false) };
+                if target.tags == tags {
+                    return Ok(false);
+                }
+                target.tags = tags;
+                for post in target.posts.values_mut() {
+                    post.tags.retain(|t| target.tags.iter().any(|known| known.id == *t));
+                }
+                Ok(true)
+            }
+            ServerEvent::ThreadSet { server, channel, root, name, archived, locked, by } => {
+                self.same_server(server)?;
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                if self.index.get(&root).is_some_and(|c| *c != channel) {
+                    return Err(StoreError::WrongChannel);
+                }
+                if self.deleted_messages.contains(&root) || self.tombstones.contains_key(&root) {
+                    return Ok(false);
+                }
+                if name.as_deref().is_some_and(|n| !crate::server::valid_thread_name(n)) {
+                    return Ok(false);
+                }
+                let target = self.server.channel_mut(channel).ok_or(StoreError::UnknownChannel)?;
+                if !target.kind.holds_messages() {
+                    return Ok(false);
+                }
+                let thread = crate::server::Thread { name, archived, locked, by };
+                if thread.is_plain() {
+                    return Ok(target.threads.remove(&root).is_some());
+                }
+                if target.threads.get(&root).is_some_and(|t| t.same_settings(&thread)) {
+                    return Ok(false);
+                }
+                if !target.threads.contains_key(&root) && target.threads.len() >= crate::server::MAX_THREADS_PER_CHANNEL {
+                    return Err(StoreError::Limit);
+                }
+                target.threads.insert(root, thread);
+                Ok(true)
+            }
+            ServerEvent::ForumPost { server, channel, message, title, tags, by } => {
+                self.same_server(server)?;
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                let root_fits = match self.index.get(&message) {
+                    Some(home) => *home == channel && self.message(message).is_some_and(|m| m.reply_to.is_none()),
+                    None => true,
+                };
+                if !root_fits || self.deleted_messages.contains(&message) || self.tombstones.contains_key(&message) {
+                    return Ok(false);
+                }
+                let Some(target) = self.server.channel_mut(channel).filter(|c| c.is_forum()) else { return Ok(false) };
+                let Some(title) = crate::server::clean_post_title(&title) else { return Ok(false) };
+                let tags = crate::server::clean_post_tags(&tags, &target.tags);
+                match target.posts.get_mut(&message) {
+                    Some(post) => {
+                        if post.title == title && post.tags == tags {
+                            return Ok(false);
+                        }
+                        post.title = title;
+                        post.tags = tags;
+                        Ok(true)
+                    }
+                    None => {
+                        if !message.is_bound_to(by) {
+                            return Ok(false);
+                        }
+                        if target.posts.len() >= crate::server::MAX_FORUM_POSTS {
+                            return Err(StoreError::Limit);
+                        }
+                        target.posts.insert(message, crate::server::ForumPost { title, tags, author: by });
+                        Ok(true)
+                    }
+                }
+            }
+            ServerEvent::StageSet { server, channel, user, speaker, .. } => {
+                self.same_server(server)?;
+                if !self.server.is_member(user) {
+                    return Ok(false);
+                }
+                let Some(target) = self.server.channel_mut(channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                if !target.is_stage() {
+                    return Ok(false);
+                }
+                let listed = target.speakers.contains(&user);
+                match (speaker, listed) {
+                    (true, true) | (false, false) => Ok(false),
+                    (false, true) => {
+                        target.speakers.retain(|u| *u != user);
+                        Ok(true)
+                    }
+                    (true, false) => {
+                        if target.speakers.len() >= crate::server::MAX_STAGE_SPEAKERS {
+                            return Err(StoreError::Limit);
+                        }
+                        target.speakers.push(user);
+                        self.hands.remove(&user);
+                        Ok(true)
+                    }
+                }
+            }
+            ServerEvent::HandRaise { server, channel, user, raised } => {
+                self.same_server(server)?;
+                if self.server.channel(channel).is_none() {
+                    return Err(StoreError::UnknownChannel);
+                }
+                if !raised {
+                    return Ok(self.hands.remove(&user).is_some());
+                }
+                if self.voice_states.get(&user) != Some(&channel) || !self.server.in_audience(channel, user) {
+                    return Ok(false);
+                }
+                live_room(&self.hands, user)?;
+                Ok(self.hands.insert(user, channel) != Some(channel))
             }
             ServerEvent::VoiceModerate { server, user, muted, deafened } => {
                 self.same_server(server)?;
@@ -1326,7 +1534,7 @@ impl ServerState {
                 };
                 match channel {
                     Some(target) => match self.server.channel(target) {
-                        Some(c) if c.kind == ChannelKind::Voice => Ok(target != current),
+                        Some(c) if c.kind.is_voice() => Ok(target != current),
                         Some(_) => Ok(false),
                         None => Err(StoreError::UnknownChannel),
                     },
@@ -1343,11 +1551,10 @@ impl ServerState {
                 }
                 self.server.banned.push(user);
                 self.server.members.retain(|m| m.user != user);
-                self.voice_states.remove(&user);
-                self.voice_since.remove(&user);
-                self.voice_flags.remove(&user);
+                self.drop_voice_presence(user);
                 self.screen_shares.remove(&user);
                 self.bots.remove(&user);
+                self.bot_commands.remove(&user);
                 Ok(true)
             }
             ServerEvent::AfkTimeoutSet { server, minutes } => {
@@ -1372,14 +1579,24 @@ impl ServerState {
                 if role.tag.as_deref().is_some_and(|t| !crate::server::valid_role_tag(t)) || role.name.trim().is_empty() {
                     return Ok(false);
                 }
+                let late_defaults = self.server.late_member_defaults();
+                let adopting = self.server.defaults_version < crate::server::MEMBER_DEFAULTS_VERSION;
                 let Some(existing) = self.server.roles.iter_mut().find(|r| r.id == role.id) else { return Ok(false) };
                 if existing.is_everyone() && (role.name != existing.name || role.self_assignable || role.mentionable) {
                     return Ok(false);
                 }
-                if *existing == role {
+                let mut role = role;
+                if existing.is_everyone() {
+                    role.permissions |= late_defaults;
+                }
+                let adopted = existing.is_everyone() && adopting;
+                if *existing == role && !adopted {
                     return Ok(false);
                 }
                 *existing = role;
+                if adopted {
+                    self.server.defaults_version = crate::server::MEMBER_DEFAULTS_VERSION;
+                }
                 Ok(true)
             }
             ServerEvent::ChannelBanner { server, channel, banner } => {
@@ -1405,10 +1622,24 @@ impl ServerState {
                 let Some(target) = self.server.channel_mut(channel) else {
                     return Err(StoreError::UnknownChannel);
                 };
-                if !matches!(target.kind, ChannelKind::Text | ChannelKind::Announcement) {
+                if !target.kind.holds_messages() {
                     return Ok(false);
                 }
                 Ok(replace(&mut target.sensitive, sensitive))
+            }
+            ServerEvent::VoiceStatusSet { server, channel, text, by } => {
+                self.same_server(server)?;
+                let in_channel = self.voice_states.get(&by) == Some(&channel);
+                if !self.server.permissions_for(by).can_set_voice_status(in_channel) {
+                    return Ok(false);
+                }
+                let Some(target) = self.server.channel_mut(channel) else {
+                    return Err(StoreError::UnknownChannel);
+                };
+                if target.kind != ChannelKind::Voice {
+                    return Ok(false);
+                }
+                Ok(replace(&mut target.voice_status, crate::server::clean_voice_status(&text)))
             }
             ServerEvent::MessagePin { server, channel, message, by, at, pinned } => {
                 self.same_server(server)?;
@@ -1596,12 +1827,11 @@ impl ServerState {
         let server = &self.server;
         self.screen_shares.retain(|u, c| server.can_view(*c, *u));
         self.cameras.retain(|u, c| server.can_view(*c, *u));
+        self.hands.retain(|u, c| server.can_view(*c, *u));
         let gone: Vec<UserId> =
             self.voice_states.iter().filter(|(u, c)| !server.can_view(**c, **u)).map(|(u, _)| *u).collect();
         for user in gone {
-            self.voice_states.remove(&user);
-            self.voice_since.remove(&user);
-            self.voice_flags.remove(&user);
+            self.drop_voice_presence(user);
         }
     }
 
@@ -1617,6 +1847,39 @@ impl ServerState {
 
     fn slow_mode_blocks(&self, message: &Message) -> bool {
         self.slow_mode_wait(message.channel, message.author, message.created_at).is_some()
+    }
+
+    pub fn thread_root_of(&self, channel: ChannelId, id: MessageId) -> MessageId {
+        let list = self.messages(channel);
+        let mut current = id;
+        for _ in 0..MAX_THREAD_DEPTH {
+            let Some(parent) = list.iter().rev().find(|m| m.id == current).and_then(|m| m.reply_to) else { break };
+            if !list.iter().any(|m| m.id == parent) {
+                break;
+            }
+            current = parent;
+        }
+        current
+    }
+
+    pub fn thread_of(&self, channel: ChannelId, root: MessageId) -> Option<&crate::server::Thread> {
+        self.server.channel(channel)?.threads.get(&root)
+    }
+
+    fn thread_locked_for(&self, message: &Message, root: MessageId) -> bool {
+        self.thread_of(message.channel, root).is_some_and(|t| t.locked)
+            && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::MANAGE_MESSAGES)
+    }
+
+    fn reopen_thread(&mut self, channel: ChannelId, root: MessageId) {
+        let Some(target) = self.server.channel_mut(channel) else { return };
+        let Some(thread) = target.threads.get_mut(&root) else { return };
+        if thread.archived {
+            thread.archived = false;
+            if thread.is_plain() {
+                target.threads.remove(&root);
+            }
+        }
     }
 
     fn create_message(&mut self, mut message: Message) -> Result<bool, StoreError> {
@@ -1648,6 +1911,10 @@ impl ServerState {
                 _ => {}
             }
         }
+        let thread_root = message.reply_to.filter(|_| !held).map(|parent| self.thread_root_of(message.channel, parent));
+        if thread_root.is_some_and(|root| self.thread_locked_for(&message, root)) {
+            return Err(StoreError::ThreadLocked);
+        }
         if !held
             && message.attachments.iter().any(Attachment::is_plain_file)
             && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::ATTACH_FILES)
@@ -1659,6 +1926,12 @@ impl ServerState {
             && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::SEND_VOICE_MESSAGES)
         {
             return Err(StoreError::NoVoiceMessages);
+        }
+        if !held
+            && message.attachments.iter().any(Attachment::is_poll)
+            && !self.server.permissions_for(message.author).can_send_polls()
+        {
+            return Err(StoreError::NoPolls);
         }
         if !held {
             if let Some(changed) = self.bind_proofs(&message) {
@@ -1705,8 +1978,12 @@ impl ServerState {
             .ok_or(StoreError::UnknownChannel)?;
         message.reactions = relayed_reactions(std::mem::take(&mut message.reactions));
         self.index.insert(message.id, message.channel);
+        let channel = message.channel;
         let pos = list.partition_point(|m| m.created_at <= message.created_at);
         list.insert(pos, message);
+        if let Some(root) = thread_root {
+            self.reopen_thread(channel, root);
+        }
         Ok(true)
     }
 
@@ -1803,6 +2080,10 @@ impl ServerState {
             self.server.pins.retain(|p| p.message != proof.message);
             self.ballots.remove(&proof.message);
             self.closed_polls.remove(&proof.message);
+            if let Some(target) = self.server.channel_mut(channel) {
+                target.threads.remove(&proof.message);
+                target.posts.remove(&proof.message);
+            }
             self.store_proof(proof, Some(author));
             return Ok(true);
         }
@@ -1965,12 +2246,52 @@ impl ServerState {
         self.voice_since.get(&user).copied()
     }
 
+    pub fn hands_in(&self, channel: ChannelId) -> Vec<UserId> {
+        let mut hands: Vec<UserId> = self.hands.iter().filter(|(_, ch)| **ch == channel).map(|(u, _)| *u).collect();
+        hands.sort();
+        hands
+    }
+
+    pub fn hand_of(&self, user: UserId) -> Option<ChannelId> {
+        self.hands.get(&user).copied()
+    }
+
     pub fn voice_members(&self, channel: ChannelId) -> Vec<UserId> {
         self.voice_states
             .iter()
             .filter(|(_, ch)| **ch == channel)
             .map(|(u, _)| *u)
             .collect()
+    }
+
+    pub fn voice_status(&self, channel: ChannelId) -> Option<&str> {
+        self.server.channel(channel).and_then(|c| c.voice_status.as_deref())
+    }
+
+    pub fn priority_speakers(&self, channel: ChannelId) -> Vec<UserId> {
+        self.voice_members(channel)
+            .into_iter()
+            .filter(|u| self.server.permissions_for(*u).is_priority_speaker())
+            .collect()
+    }
+
+    fn drop_voice_presence(&mut self, user: UserId) -> bool {
+        self.voice_since.remove(&user);
+        self.voice_flags.remove(&user);
+        self.hands.remove(&user);
+        self.activities.retain(|_, a| a.starter != user);
+        let left = self.voice_states.remove(&user);
+        if let Some(channel) = left {
+            self.clear_empty_voice_status(channel);
+        }
+        left.is_some()
+    }
+
+    fn clear_empty_voice_status(&mut self, channel: ChannelId) -> bool {
+        if self.voice_states.values().any(|c| *c == channel) {
+            return false;
+        }
+        self.server.channel_mut(channel).is_some_and(|c| c.voice_status.take().is_some())
     }
 
     pub fn member_list(&self) -> Vec<&UserProfile> {
@@ -2758,6 +3079,108 @@ mod tests {
         assert_eq!(state.apply(set(ChannelId::new(), true)), Err(StoreError::UnknownChannel));
     }
 
+    fn enter_voice(state: &mut ServerState, user: UserId, channel: ChannelId) {
+        let event = ServerEvent::VoiceState { user, channel: Some(channel), muted: false, deafened: false, since: None };
+        state.apply(event).unwrap();
+    }
+
+    fn leave_voice(state: &mut ServerState, user: UserId) {
+        let event = ServerEvent::VoiceState { user, channel: None, muted: false, deafened: false, since: None };
+        state.apply(event).unwrap();
+    }
+
+    #[test]
+    fn voice_status_is_set_by_people_in_the_room_and_cleaned_on_the_way_in() {
+        let (mut state, text, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let member = join(&mut state, "member");
+        let outsider = join(&mut state, "outsider");
+        let set = |channel, by, t: &str| ServerEvent::VoiceStatusSet { server: sid, channel, text: t.into(), by };
+        assert_eq!(state.apply(set(voice, member, "Ranked grind")), Ok(false), "not in the channel yet");
+        enter_voice(&mut state, member, voice);
+        assert_eq!(state.apply(set(voice, member, "  Ranked \u{7}  grind \n")), Ok(true));
+        assert_eq!(state.voice_status(voice), Some("Ranked grind"));
+        assert_eq!(state.apply(set(voice, member, "Ranked grind")), Ok(false));
+        assert_eq!(state.apply(set(voice, outsider, "Hijack")), Ok(false), "outsiders without manage channels");
+        assert_eq!(state.voice_status(voice), Some("Ranked grind"));
+        assert_eq!(state.apply(set(voice, owner, "Owner says")), Ok(true), "managers set it from anywhere");
+        let long = "x".repeat(200);
+        assert_eq!(state.apply(set(voice, owner, &long)), Ok(true));
+        assert_eq!(state.voice_status(voice).map(|s| s.chars().count()), Some(crate::server::MAX_VOICE_STATUS_CHARS));
+        assert_eq!(state.apply(set(voice, owner, "   ")), Ok(true), "blank clears");
+        assert_eq!(state.voice_status(voice), None);
+        assert_eq!(state.apply(set(voice, owner, "")), Ok(false));
+        assert_eq!(state.apply(set(text, owner, "Not a voice channel")), Ok(false));
+        assert_eq!(state.apply(set(ChannelId::new(), owner, "x")), Err(StoreError::UnknownChannel));
+    }
+
+    #[test]
+    fn voice_status_clears_when_the_room_empties() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        enter_voice(&mut state, a, voice);
+        enter_voice(&mut state, b, voice);
+        let set = |t: &str| ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: t.into(), by: a };
+        assert_eq!(state.apply(set("Ranked grind")), Ok(true));
+        leave_voice(&mut state, a);
+        assert_eq!(state.voice_status(voice), Some("Ranked grind"), "someone is still there");
+        let lobby = Channel::new("Lobby", ChannelKind::Voice, 9);
+        let lobby_id = lobby.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: lobby }).unwrap();
+        enter_voice(&mut state, b, lobby_id);
+        assert_eq!(state.voice_status(voice), None, "the last person moved away");
+        enter_voice(&mut state, a, voice);
+        assert_eq!(state.apply(set("Round two")), Ok(true));
+        state.apply(ServerEvent::MemberLeave { server: sid, user: a }).unwrap();
+        assert_eq!(state.voice_status(voice), None, "leaving the server empties the room too");
+        enter_voice(&mut state, b, voice);
+        assert_eq!(state.apply(ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: "Three".into(), by: b }), Ok(true));
+        state.apply(ServerEvent::MemberBan { server: sid, user: b }).unwrap();
+        assert_eq!(state.voice_status(voice), None);
+        assert_eq!(state.apply(ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: "Empty".into(), by: owner }), Ok(true));
+        assert_eq!(state.voice_status(voice), Some("Empty"), "a manager may label an empty room until someone leaves it");
+    }
+
+    #[test]
+    fn priority_speakers_are_the_voice_members_holding_the_permission() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        let role = Role {
+            id: RoleId::new(),
+            name: "host".into(),
+            color: None,
+            permissions: Permissions::PRIORITY_SPEAKER,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        };
+        let rid = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: a, role: rid }).unwrap();
+        assert!(state.priority_speakers(voice).is_empty());
+        enter_voice(&mut state, a, voice);
+        enter_voice(&mut state, b, voice);
+        assert_eq!(state.priority_speakers(voice), vec![a]);
+        enter_voice(&mut state, owner, voice);
+        let mut speakers = state.priority_speakers(voice);
+        speakers.sort();
+        let mut expected = vec![a, owner];
+        expected.sort();
+        assert_eq!(speakers, expected, "the owner holds every permission");
+        leave_voice(&mut state, a);
+        assert_eq!(state.priority_speakers(voice), vec![owner]);
+    }
+
     fn pin_event(state: &ServerState, channel: ChannelId, message: MessageId, by: UserId, pinned: bool) -> ServerEvent {
         ServerEvent::MessagePin { server: state.server.id, channel, message, by, at: Utc::now(), pinned }
     }
@@ -2908,6 +3331,27 @@ mod tests {
         assert_eq!(state.apply(share.clone()), Ok(true));
         assert_eq!(state.apply(share), Ok(false));
         assert!(state.server.stickers_shareable && !state.server.emoticons_shareable);
+    }
+
+    #[test]
+    fn the_first_everyone_edit_on_an_older_server_adopts_the_newer_member_defaults() {
+        let (mut state, _channel, _owner) = fixture();
+        let sid = state.server.id;
+        let plain = join(&mut state, "plain");
+        state.server.defaults_version = 0;
+        state.server.roles[0].permissions.remove(Permissions::CHANGE_NICKNAME);
+        assert!(state.server.permissions_for(plain).can_change_own_nickname());
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.remove(Permissions::ATTACH_FILES);
+        assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone.clone() }), Ok(true));
+        assert_eq!(state.server.defaults_version, crate::server::MEMBER_DEFAULTS_VERSION);
+        let perms = state.server.permissions_for(plain);
+        assert!(perms.can_change_own_nickname() && !perms.allows(Permissions::ATTACH_FILES));
+        assert!(state.server.roles[0].permissions.contains(Permissions::CHANGE_NICKNAME), "the defaults are now stored");
+        everyone.permissions = state.server.roles[0].permissions;
+        everyone.permissions.remove(Permissions::CHANGE_NICKNAME);
+        assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }), Ok(true));
+        assert!(!state.server.permissions_for(plain).can_change_own_nickname(), "later edits are taken as written");
     }
 
     #[test]
@@ -3435,6 +3879,53 @@ mod tests {
     }
 
     #[test]
+    fn bots_register_their_own_commands_and_members_keep_them() {
+        use crate::command::{BotCommand, CommandOption, OptionKind};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let bot = join(&mut state, "bot");
+        let roll = BotCommand {
+            name: "roll".into(),
+            description: "Roll dice".into(),
+            options: vec![CommandOption { name: "sides".into(), description: "How many sides".into(), required: false, kind: OptionKind::Integer }],
+        };
+        let set = |by, at, bot, commands: Vec<BotCommand>| {
+            crate::SignedEvent::sign(sid, by, at, ServerEvent::BotCommandsSet { server: sid, bot, commands, by }, &identity_for(by))
+        };
+        assert_eq!(state.apply_signed(&set(bot, 1_000, bot, vec![roll.clone()])), Ok(false), "no badge yet");
+        let badge = crate::SignedEvent::sign(sid, bot, 1_500, ServerEvent::BotSet { server: sid, user: bot, bot: true }, &identity_for(bot));
+        state.apply_signed(&badge).unwrap();
+        assert_eq!(state.apply_signed(&set(owner, 2_000, bot, vec![roll.clone()])), Err(StoreError::NotAllowed), "only the bot itself");
+        let own = set(bot, 3_000, bot, vec![roll.clone()]);
+        assert_eq!(state.apply_signed(&own), Ok(true));
+        assert_eq!(state.commands_of(bot), &[roll.clone()]);
+        assert_eq!(state.apply_signed(&set(bot, 4_000, bot, vec![roll.clone()])), Ok(false), "same list again");
+        assert!(state.signed_actions().iter().any(|s| s.event == own.event), "relayed to members who missed it");
+        assert!(crate::action::snapshot_omits("bot_commands:x"), "owner snapshots do not carry the list, so the action stays fresh");
+        let restored = reload(&state);
+        assert_eq!(restored.commands_of(bot), &[roll.clone()]);
+        let mut older_build = serde_json::to_value(state.snapshot()).unwrap();
+        older_build.as_object_mut().unwrap().remove("bot_commands");
+        let without: crate::Snapshot = serde_json::from_value(older_build).unwrap();
+        assert!(ServerState::from_snapshot(without).commands_of(bot).is_empty(), "snapshots from before slash commands load");
+        let bad = BotCommand { name: "Roll".into(), ..roll.clone() };
+        assert_eq!(state.apply_signed(&set(bot, 5_000, bot, vec![bad])), Ok(false), "invalid lists are ignored");
+        let used = CommandUse::new(bot, "roll").with("sides", "20");
+        assert_eq!(state.command_of(&used), Some(&roll));
+        assert_eq!(state.command_of(&CommandUse::new(bot, "roll").with("sides", "d20")), None);
+        assert_eq!(state.command_of(&CommandUse::new(owner, "roll")), None);
+        let mut rebuilt = ServerState::new(state.server.clone());
+        rebuilt.apply(ServerEvent::BotSet { server: sid, user: bot, bot: true }).unwrap();
+        rebuilt.carry_bot_commands(&state);
+        assert_eq!(rebuilt.commands_of(bot), &[roll.clone()]);
+        assert_eq!(state.apply_signed(&set(bot, 6_000, bot, vec![])), Ok(true), "an empty list clears them");
+        assert!(state.commands_of(bot).is_empty());
+        assert_eq!(state.apply_signed(&set(bot, 7_000, bot, vec![roll.clone()])), Ok(true));
+        state.apply(ServerEvent::MemberLeave { server: sid, user: bot }).unwrap();
+        assert!(state.commands_of(bot).is_empty(), "leaving drops them");
+    }
+
+    #[test]
     fn events_upsert_rsvp_and_stay_deleted() {
         use crate::server::{Rsvp, ScheduledEvent};
         let (mut state, _, owner) = fixture();
@@ -3481,6 +3972,119 @@ mod tests {
         assert_eq!(state.apply(limit(text, 4)), Ok(false), "text channels have no limit");
     }
 
+    fn forum_fixture() -> (ServerState, ChannelId, UserId) {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let forum = Channel::new("ideas", ChannelKind::Forum, 7);
+        let fid = forum.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: forum }).unwrap();
+        (state, fid, owner)
+    }
+
+    fn tag(name: &str, emoji: Option<&str>) -> crate::server::ForumTag {
+        crate::server::ForumTag { id: crate::ids::TagId::new(), name: name.into(), emoji: emoji.map(String::from) }
+    }
+
+    fn post_event(state: &ServerState, channel: ChannelId, message: MessageId, title: &str, tags: Vec<crate::ids::TagId>, by: UserId) -> ServerEvent {
+        ServerEvent::ForumPost { server: state.server.id, channel, message, title: title.into(), tags, by }
+    }
+
+    #[test]
+    fn forum_tags_are_set_by_channel_managers_and_cleaned() {
+        let (mut state, forum, owner) = forum_fixture();
+        let sid = state.server.id;
+        let text = state.server.channels[0].id;
+        let member = join(&mut state, "plain");
+        let tags = vec![tag(" Feature  request ", Some("\u{1F4A1}")), tag("feature request", None), tag("Bug", Some("nope")), tag("", None)];
+        let set = |channel, tags: Vec<crate::server::ForumTag>, by| ServerEvent::ForumTagsSet { server: sid, channel, tags, by };
+        assert!(!crate::action::authorized(&state.server, member, &set(forum, tags.clone(), member)), "members cannot set tags");
+        assert!(!crate::action::authorized(&state.server, owner, &set(forum, tags.clone(), member)), "signed by someone else");
+        assert!(crate::action::authorized(&state.server, owner, &set(forum, tags.clone(), owner)));
+        assert_eq!(state.apply(set(text, tags.clone(), owner)), Ok(false), "only forums hold tags");
+        assert_eq!(state.apply(set(forum, tags.clone(), owner)), Ok(true));
+        let kept = &state.server.channel(forum).unwrap().tags;
+        assert_eq!(kept.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), vec!["Feature request", "Bug"]);
+        assert_eq!(kept[0].emoji.as_deref(), Some("\u{1F4A1}"));
+        assert_eq!(kept[1].emoji, None, "alphanumeric text is not an emoji");
+        assert_eq!(state.apply(set(forum, kept.clone(), owner)), Ok(false), "unchanged");
+        let long = vec![tag(&"x".repeat(crate::server::MAX_FORUM_TAG_CHARS + 1), None)];
+        assert_eq!(state.apply(set(forum, long, owner)), Ok(false));
+        let many: Vec<_> = (0..=crate::server::MAX_FORUM_TAGS).map(|i| tag(&format!("t{i}"), None)).collect();
+        assert_eq!(state.apply(set(forum, many, owner)), Ok(false));
+        assert_eq!(state.apply(set(ChannelId::new(), vec![], owner)), Err(StoreError::UnknownChannel));
+    }
+
+    #[test]
+    fn posting_needs_the_send_permission_in_a_forum() {
+        let (mut state, forum, owner) = forum_fixture();
+        let sid = state.server.id;
+        let text = state.server.channels[0].id;
+        let member = join(&mut state, "poster");
+        let stranger = UserId::new();
+        state.apply(ServerEvent::ForumTagsSet { server: sid, channel: forum, tags: vec![tag("Bug", None), tag("Idea", None)], by: owner }).unwrap();
+        let tags: Vec<_> = state.server.channel(forum).unwrap().tags.iter().map(|t| t.id).collect();
+        let root = post(&state, forum, member, "the body of the post");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: root.clone() }), Ok(true));
+        let event = post_event(&state, forum, root.id, "  Borrow checker   woes ", vec![tags[1], tags[1], crate::ids::TagId::new()], member);
+        assert!(crate::action::authorized(&state.server, member, &event));
+        assert!(!crate::action::authorized(&state.server, stranger, &event), "not a member");
+        assert!(!crate::action::authorized(&state.server, owner, &event), "signed by someone else than the poster");
+        let foreign = post_event(&state, forum, MessageId::for_author(member), "mine", vec![], owner);
+        assert!(!crate::action::authorized(&state.server, owner, &foreign), "the root must be the poster's own message");
+        let in_text = post_event(&state, text, MessageId::for_author(member), "nope", vec![], member);
+        assert!(!crate::action::authorized(&state.server, member, &in_text), "text channels have no posts");
+        assert_eq!(state.apply(in_text), Ok(false));
+        let role = Role { id: RoleId::new(), name: "writers".into(), color: None, permissions: Permissions::NONE, position: 1, hoist: false, self_assignable: false, mentionable: false, tag: None, banner: None };
+        let writers = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        state.apply(ServerEvent::ChannelAccessSet { server: sid, channel: forum, view: vec![], send: vec![writers] }).unwrap();
+        assert!(!crate::action::authorized(&state.server, member, &event), "the send roles gate posts like messages");
+        state.apply(ServerEvent::ChannelAccessSet { server: sid, channel: forum, view: vec![], send: vec![] }).unwrap();
+        assert_eq!(state.apply(event.clone()), Ok(true));
+        let kept = state.server.channel(forum).unwrap().posts.get(&root.id).unwrap().clone();
+        assert_eq!(kept.title, "Borrow checker woes");
+        assert_eq!(kept.tags, vec![tags[1]], "unknown and repeated tags drop out");
+        assert_eq!(kept.author, member);
+        assert_eq!(state.apply(event), Ok(false), "unchanged");
+        let reply = signed(&state, Message { reply_to: Some(root.id), ..Message::new(forum, member, "a reply") });
+        state.apply(ServerEvent::MessageCreate { message: reply.clone() }).unwrap();
+        assert_eq!(state.apply(post_event(&state, forum, reply.id, "reply as post", vec![], member)), Ok(false), "replies are not roots");
+        let early = MessageId::for_author(member);
+        assert_eq!(state.apply(post_event(&state, forum, early, "arrives first", vec![], member)), Ok(true), "the post may land before its root");
+        assert_eq!(state.apply(post_event(&state, forum, MessageId::for_author(owner), "not mine", vec![], member)), Ok(false));
+        assert_eq!(state.apply(post_event(&state, forum, root.id, "", vec![], member)), Ok(false), "a title is needed");
+        state.apply(delete(&state, &root, member)).unwrap();
+        assert!(!state.server.channel(forum).unwrap().posts.contains_key(&root.id), "deleting the root removes the post");
+        assert_eq!(state.apply(post_event(&state, forum, root.id, "back", vec![], member)), Ok(false), "deleted roots stay gone");
+    }
+
+    #[test]
+    fn a_post_title_changes_by_its_author_or_a_moderator_only() {
+        let (mut state, forum, owner) = forum_fixture();
+        let sid = state.server.id;
+        let author = join(&mut state, "author");
+        let other = join(&mut state, "other");
+        let moderator = join_moderator(&mut state, "mod");
+        state.apply(ServerEvent::ForumTagsSet { server: sid, channel: forum, tags: vec![tag("Bug", None), tag("Idea", None)], by: owner }).unwrap();
+        let tags: Vec<_> = state.server.channel(forum).unwrap().tags.iter().map(|t| t.id).collect();
+        let root = post(&state, forum, author, "body");
+        state.apply(ServerEvent::MessageCreate { message: root.clone() }).unwrap();
+        state.apply(post_event(&state, forum, root.id, "First title", vec![tags[0]], author)).unwrap();
+        let retitle = |by| post_event(&state, forum, root.id, "Second title", vec![tags[0], tags[1]], by);
+        assert!(crate::action::authorized(&state.server, author, &retitle(author)));
+        assert!(!crate::action::authorized(&state.server, other, &retitle(other)), "strangers cannot retitle");
+        assert!(crate::action::authorized(&state.server, moderator, &retitle(moderator)));
+        assert!(crate::action::authorized(&state.server, owner, &retitle(owner)));
+        assert_eq!(state.apply(retitle(moderator)), Ok(true));
+        let kept = state.server.channel(forum).unwrap().posts.get(&root.id).unwrap().clone();
+        assert_eq!((kept.title.as_str(), kept.tags.len(), kept.author), ("Second title", 2, author), "the author stays the poster");
+        state.apply(ServerEvent::ForumTagsSet { server: sid, channel: forum, tags: vec![state.server.channel(forum).unwrap().tags[1].clone()], by: owner }).unwrap();
+        assert_eq!(state.server.channel(forum).unwrap().posts.get(&root.id).unwrap().tags, vec![tags[1]], "removed tags leave the posts");
+        let snapshot = state.snapshot();
+        let back = ServerState::from_snapshot(snapshot);
+        assert_eq!(back.server.channel(forum).unwrap().posts, state.server.channel(forum).unwrap().posts);
+    }
+
     #[test]
     fn slow_mode_holds_members_to_the_interval_but_not_moderators() {
         let (mut state, channel, owner) = fixture();
@@ -3508,6 +4112,68 @@ mod tests {
         assert_eq!(state.slow_mode_wait(channel, owner, Utc::now()), None);
         assert_eq!(state.apply(slow(channel, 0)), Ok(true));
         assert_eq!(state.slow_mode_wait(channel, member, Utc::now()), None);
+    }
+
+    #[test]
+    fn threads_are_named_archived_and_locked_by_their_starter_or_a_moderator() {
+        use crate::action::authorized;
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let starter = join(&mut state, "starter");
+        let other = join(&mut state, "other");
+        let moderator = join_moderator(&mut state, "mod");
+        let root = post(&state, channel, starter, "where should we meet");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: root.clone() }), Ok(true));
+        let set = |by, name: Option<&str>, archived, locked| ServerEvent::ThreadSet {
+            server: sid,
+            channel,
+            root: root.id,
+            name: name.map(str::to_string),
+            archived,
+            locked,
+            by,
+        };
+        let rename = |by| set(by, Some("meetup"), false, false);
+        assert!(authorized(&state.server, starter, &rename(starter)), "the root author names their thread");
+        assert!(authorized(&state.server, owner, &rename(owner)));
+        assert!(authorized(&state.server, moderator, &rename(moderator)));
+        assert!(!authorized(&state.server, other, &rename(other)), "a plain member cannot");
+        assert!(!authorized(&state.server, other, &rename(starter)), "nor pretend to be the author");
+        assert!(!authorized(&state.server, UserId::new(), &rename(UserId::new())), "stranger");
+        assert_eq!(state.apply(rename(starter)), Ok(true));
+        assert_eq!(state.apply(rename(starter)), Ok(false), "unchanged");
+        assert_eq!(state.thread_of(channel, root.id).and_then(|t| t.name.clone()).as_deref(), Some("meetup"));
+        assert_eq!(state.apply(set(starter, Some(&"x".repeat(101)), false, false)), Ok(false), "name too long");
+        assert_eq!(state.apply(set(starter, None, false, false)), Ok(true), "back to plain forgets the entry");
+        assert!(state.thread_of(channel, root.id).is_none());
+        let voice = state.server.channels.iter().find(|c| c.kind == ChannelKind::Voice).unwrap().id;
+        let elsewhere = ServerEvent::ThreadSet { server: sid, channel: voice, root: root.id, name: None, archived: false, locked: true, by: owner };
+        assert_eq!(state.apply(elsewhere), Err(StoreError::WrongChannel));
+        assert_eq!(state.apply(set(moderator, Some("meetup"), false, true)), Ok(true), "locked");
+        let reply = |state: &ServerState, author, to: MessageId, text: &str| {
+            signed(state, Message { reply_to: Some(to), ..Message::new(channel, author, text) })
+        };
+        let blocked = reply(&state, other, root.id, "friday?");
+        assert!(!authorized(&state.server, other, &ServerEvent::MessageCreate { message: blocked.clone() }));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: blocked }), Err(StoreError::ThreadLocked));
+        let allowed = reply(&state, moderator, root.id, "settled: friday");
+        assert!(authorized(&state.server, moderator, &ServerEvent::MessageCreate { message: allowed.clone() }));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: allowed.clone() }), Ok(true));
+        let nested = reply(&state, other, allowed.id, "ok");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: nested }), Err(StoreError::ThreadLocked), "deeper replies too");
+        assert_eq!(state.messages(channel).len(), 2);
+        assert_eq!(state.apply(set(moderator, Some("meetup"), true, false)), Ok(true), "archived and unlocked");
+        let revived = reply(&state, other, allowed.id, "one more thing");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: revived }), Ok(true));
+        let thread = state.thread_of(channel, root.id).unwrap();
+        assert!(!thread.archived, "a reply reopens an archived thread");
+        assert_eq!(thread.name.as_deref(), Some("meetup"));
+        let restored = ServerState::from_snapshot(state.snapshot());
+        assert_eq!(restored.thread_of(channel, root.id), state.thread_of(channel, root.id));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: root.clone() }), Ok(false));
+        let gone = delete(&state, &root, starter);
+        assert_eq!(state.apply(gone), Ok(true));
+        assert!(state.thread_of(channel, root.id).is_none(), "deleting the root forgets the thread");
     }
 
     #[test]
@@ -4931,6 +5597,42 @@ mod poll_tests {
     }
 
     #[test]
+    fn polls_need_the_send_polls_permission() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let member = join(&mut state, "member");
+        let first = post_poll(&mut state, channel, member, poll(false, None));
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.insert(Permissions::NO_SEND_POLLS);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        let mut blocked = Message::new(channel, member, "");
+        blocked.attachments.push(poll(true, None).into_attachment());
+        let blocked = signed(&state, blocked);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: blocked }), Err(StoreError::NoPolls));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: first.clone() }), Ok(false), "held polls stay");
+        assert_eq!(state.apply(vote(&state, &first, member, vec![0])), Ok(true), "and can still be voted on");
+        let words = post(&state, channel, member, "no poll here");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: words }), Ok(true));
+        post_poll(&mut state, channel, owner, poll(false, None));
+        let pollsters = crate::server::Role {
+            id: crate::ids::RoleId::new(),
+            name: "pollsters".into(),
+            color: None,
+            permissions: Permissions::NONE,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        };
+        let rid = pollsters.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: pollsters }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: member, role: rid }).unwrap();
+        post_poll(&mut state, channel, member, poll(true, None));
+    }
+
+    #[test]
     fn latest_vote_per_member_wins_and_repeats_change_nothing() {
         let (mut state, channel, owner) = fixture();
         let member = join(&mut state, "member");
@@ -5098,5 +5800,109 @@ mod poll_tests {
         state.apply(close(&state, &message, owner)).unwrap();
         rebuilt.carry_polls(&state);
         assert!(rebuilt.poll_closed(message.id, Utc::now()));
+    }
+
+    #[test]
+    fn stage_speakers_are_listed_members_and_hosts_and_everyone_else_is_audience() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let stage = crate::server::Channel::new("Town Hall", ChannelKind::Stage, 9);
+        let stage_id = stage.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: stage }).unwrap();
+        let guest = join(&mut state, "guest");
+        let host = crate::test_support::join_moderator(&mut state, "host");
+        let set = |user, speaker| ServerEvent::StageSet { server: sid, channel: stage_id, user, speaker, by: owner };
+        assert!(state.server.is_stage_speaker(stage_id, owner), "the owner hosts every stage");
+        assert!(state.server.in_audience(stage_id, guest));
+        assert!(state.server.in_audience(stage_id, host), "managing messages is not hosting a stage");
+        assert_eq!(state.apply(set(guest, true)), Ok(true));
+        assert_eq!(state.apply(set(guest, true)), Ok(false));
+        assert!(state.server.is_stage_speaker(stage_id, guest));
+        assert_eq!(state.apply(set(guest, false)), Ok(true));
+        assert_eq!(state.apply(set(guest, false)), Ok(false));
+        assert!(state.server.in_audience(stage_id, guest));
+        assert_eq!(state.apply(set(UserId::new(), true)), Ok(false), "strangers cannot be speakers");
+        let voice = state.server.channels[1].id;
+        let plain = ServerEvent::StageSet { server: sid, channel: voice, user: guest, speaker: true, by: owner };
+        assert_eq!(state.apply(plain), Ok(false), "only a stage keeps a speakers list");
+        assert!(!state.server.in_audience(voice, guest), "a voice channel has no audience");
+        let gone = ServerEvent::StageSet { server: sid, channel: ChannelId::new(), user: guest, speaker: true, by: owner };
+        assert_eq!(state.apply(gone), Err(StoreError::UnknownChannel));
+    }
+
+    #[test]
+    fn stage_speakers_survive_a_snapshot_and_stop_at_the_cap() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let stage = crate::server::Channel::new("Town Hall", ChannelKind::Stage, 9);
+        let stage_id = stage.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: stage }).unwrap();
+        for i in 0..crate::server::MAX_STAGE_SPEAKERS {
+            let user = join(&mut state, &format!("s{i}"));
+            assert_eq!(state.apply(ServerEvent::StageSet { server: sid, channel: stage_id, user, speaker: true, by: owner }), Ok(true));
+        }
+        let extra = join(&mut state, "extra");
+        let event = ServerEvent::StageSet { server: sid, channel: stage_id, user: extra, speaker: true, by: owner };
+        assert_eq!(state.apply(event), Err(StoreError::Limit));
+        let back = ServerState::from_snapshot(state.snapshot());
+        assert_eq!(back.server.channel(stage_id).unwrap().speakers.len(), crate::server::MAX_STAGE_SPEAKERS);
+    }
+
+    #[test]
+    fn hands_go_up_only_from_the_audience_and_come_down_on_leaving_or_promotion() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let stage = crate::server::Channel::new("Town Hall", ChannelKind::Stage, 9);
+        let stage_id = stage.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: stage }).unwrap();
+        let guest = join(&mut state, "guest");
+        let hand = |user, raised| ServerEvent::HandRaise { server: sid, channel: stage_id, user, raised };
+        let sit = |user, channel| ServerEvent::VoiceState { user, channel, muted: false, deafened: false, since: None };
+        assert_eq!(state.apply(hand(guest, true)), Ok(false), "not in the room yet");
+        state.apply(sit(guest, Some(stage_id))).unwrap();
+        assert_eq!(state.apply(hand(guest, true)), Ok(true));
+        assert_eq!(state.apply(hand(guest, true)), Ok(false));
+        assert_eq!(state.hands_in(stage_id), vec![guest]);
+        assert_eq!(state.hand_of(guest), Some(stage_id));
+        assert_eq!(state.apply(hand(guest, false)), Ok(true));
+        assert_eq!(state.apply(hand(guest, false)), Ok(false));
+        assert!(state.hands_in(stage_id).is_empty());
+
+        state.apply(hand(guest, true)).unwrap();
+        state.apply(ServerEvent::StageSet { server: sid, channel: stage_id, user: guest, speaker: true, by: owner }).unwrap();
+        assert!(state.hands_in(stage_id).is_empty(), "a new speaker no longer asks");
+        assert_eq!(state.apply(hand(guest, true)), Ok(false), "speakers do not raise hands");
+        state.apply(ServerEvent::StageSet { server: sid, channel: stage_id, user: guest, speaker: false, by: owner }).unwrap();
+
+        state.apply(hand(guest, true)).unwrap();
+        state.apply(sit(guest, None)).unwrap();
+        assert!(state.hands_in(stage_id).is_empty(), "leaving lowers the hand");
+
+        state.apply(sit(guest, Some(stage_id))).unwrap();
+        state.apply(hand(guest, true)).unwrap();
+        let voice = state.server.channels[1].id;
+        state.apply(sit(guest, Some(voice))).unwrap();
+        assert!(state.hands_in(stage_id).is_empty(), "moving rooms lowers the hand");
+
+        state.apply(sit(owner, Some(stage_id))).unwrap();
+        assert_eq!(state.apply(hand(owner, true)), Ok(false), "hosts already speak");
+        assert!(state.snapshot().server.channel(stage_id).unwrap().speakers.is_empty());
+        let unknown = ServerEvent::HandRaise { server: sid, channel: ChannelId::new(), user: guest, raised: true };
+        assert_eq!(state.apply(unknown), Err(StoreError::UnknownChannel));
+    }
+
+    #[test]
+    fn stage_channels_take_a_user_limit_and_voice_moves_like_voice_channels() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let stage = crate::server::Channel::new("Town Hall", ChannelKind::Stage, 9);
+        let stage_id = stage.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: stage }).unwrap();
+        assert_eq!(state.apply(ServerEvent::ChannelLimit { server: sid, channel: stage_id, user_limit: 5 }), Ok(true));
+        let guest = join(&mut state, "guest");
+        let voice = state.server.channels[1].id;
+        state.apply(ServerEvent::VoiceState { user: guest, channel: Some(voice), muted: false, deafened: false, since: None }).unwrap();
+        assert_eq!(state.apply(ServerEvent::VoiceMove { server: sid, user: guest, channel: Some(stage_id) }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::AfkChannelSet { server: sid, channel: Some(stage_id) }), Ok(false), "a stage is no AFK room");
     }
 }

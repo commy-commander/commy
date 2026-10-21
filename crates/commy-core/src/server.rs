@@ -1,7 +1,8 @@
-use crate::ids::{ChannelId, MessageId, RoleId, ServerId, UserId};
+use crate::ids::{ChannelId, MessageId, RoleId, ServerId, TagId, UserId};
 use crate::permissions::Permissions;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -10,6 +11,33 @@ pub enum ChannelKind {
     Voice,
     Announcement,
     Category,
+    Forum,
+    Stage,
+}
+
+impl ChannelKind {
+    pub fn holds_messages(self) -> bool {
+        matches!(self, ChannelKind::Text | ChannelKind::Announcement | ChannelKind::Forum)
+    }
+
+    pub fn is_voice(self) -> bool {
+        matches!(self, ChannelKind::Voice | ChannelKind::Stage)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForumTag {
+    pub id: TagId,
+    pub name: String,
+    #[serde(default)]
+    pub emoji: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForumPost {
+    pub title: String,
+    pub tags: Vec<TagId>,
+    pub author: UserId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,10 +64,106 @@ pub struct Channel {
     pub slow_mode: u32,
     #[serde(default)]
     pub sensitive: bool,
+    #[serde(default)]
+    pub threads: BTreeMap<MessageId, Thread>,
+    pub voice_status: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<ForumTag>,
+    #[serde(default)]
+    pub posts: std::collections::BTreeMap<MessageId, ForumPost>,
+    #[serde(default)]
+    pub speakers: Vec<UserId>,
 }
 
 pub const MAX_ACCESS_ROLES: usize = 16;
+pub const MAX_STAGE_SPEAKERS: usize = 50;
 pub const MAX_SLOW_MODE: u32 = 21_600;
+pub const MAX_THREAD_NAME_CHARS: usize = 100;
+pub const MAX_THREADS_PER_CHANNEL: usize = 500;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Thread {
+    pub name: Option<String>,
+    pub archived: bool,
+    pub locked: bool,
+    pub by: UserId,
+}
+
+impl Thread {
+    pub fn is_plain(&self) -> bool {
+        self.name.is_none() && !self.archived && !self.locked
+    }
+
+    pub fn same_settings(&self, other: &Thread) -> bool {
+        self.name == other.name && self.archived == other.archived && self.locked == other.locked
+    }
+}
+
+pub fn clean_thread_name(name: &str) -> Option<String> {
+    let name = name.chars().filter(|c| !c.is_control()).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
+    (!name.is_empty()).then_some(name)
+}
+
+pub fn valid_thread_name(name: &str) -> bool {
+    clean_thread_name(name).as_deref() == Some(name) && name.chars().count() <= MAX_THREAD_NAME_CHARS
+}
+
+pub const MAX_VOICE_STATUS_CHARS: usize = 80;
+
+pub fn clean_voice_status(text: &str) -> Option<String> {
+    let cleaned: String = text
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cleaned: String = cleaned.chars().take(MAX_VOICE_STATUS_CHARS).collect();
+    let cleaned = cleaned.trim_end().to_string();
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
+pub const MAX_FORUM_TAGS: usize = 20;
+pub const MAX_FORUM_TAG_CHARS: usize = 20;
+pub const MAX_POST_TAGS: usize = 5;
+pub const MAX_POST_TITLE_CHARS: usize = 100;
+pub const MAX_FORUM_POSTS: usize = 1000;
+
+pub fn clean_forum_tags(tags: &[ForumTag]) -> Option<Vec<ForumTag>> {
+    let mut out: Vec<ForumTag> = Vec::new();
+    for tag in tags {
+        let name = tag.name.split_whitespace().collect::<Vec<_>>().join(" ");
+        if name.is_empty() {
+            continue;
+        }
+        if name.chars().count() > MAX_FORUM_TAG_CHARS {
+            return None;
+        }
+        if out.iter().any(|t| t.id == tag.id || t.name.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        let emoji = tag.emoji.as_deref().map(str::trim).filter(|e| valid_sound_emoji(e)).map(String::from);
+        out.push(ForumTag { id: tag.id, name, emoji });
+    }
+    (out.len() <= MAX_FORUM_TAGS).then_some(out)
+}
+
+pub fn clean_post_title(title: &str) -> Option<String> {
+    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let fits = (1..=MAX_POST_TITLE_CHARS).contains(&title.chars().count()) && !title.chars().any(char::is_control);
+    fits.then_some(title)
+}
+
+pub fn clean_post_tags(picks: &[TagId], known: &[ForumTag]) -> Vec<TagId> {
+    let mut out: Vec<TagId> = Vec::new();
+    for pick in picks {
+        if known.iter().any(|t| t.id == *pick) && !out.contains(pick) {
+            out.push(*pick);
+        }
+    }
+    out.truncate(MAX_POST_TAGS);
+    out
+}
 
 impl Channel {
     pub fn new(name: impl Into<String>, kind: ChannelKind, position: u32) -> Self {
@@ -58,7 +182,20 @@ impl Channel {
             send_roles: Vec::new(),
             slow_mode: 0,
             sensitive: false,
+            threads: BTreeMap::new(),
+            voice_status: None,
+            tags: Vec::new(),
+            posts: std::collections::BTreeMap::new(),
+            speakers: Vec::new(),
         }
+    }
+
+    pub fn is_forum(&self) -> bool {
+        self.kind == ChannelKind::Forum
+    }
+
+    pub fn is_stage(&self) -> bool {
+        self.kind == ChannelKind::Stage
     }
 
     pub fn is_private(&self) -> bool {
@@ -244,7 +381,20 @@ pub struct Server {
     pub emoticons_shareable: bool,
     #[serde(default)]
     pub onboarding: Option<crate::onboarding::Onboarding>,
+    #[serde(default)]
+    pub defaults_version: u32,
 }
+
+pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
+
+const LATE_MEMBER_DEFAULTS: Permissions = Permissions(
+    Permissions::ADD_EMOJIS.0
+        | Permissions::ADD_STICKERS.0
+        | Permissions::ADD_EMOTICONS.0
+        | Permissions::CHANGE_NICKNAME.0
+        | Permissions::SEND_VOICE_MESSAGES.0
+        | Permissions::SEND_TTS_MESSAGES.0,
+);
 
 impl Server {
     pub fn new(name: impl Into<String>, owner: UserId) -> Self {
@@ -309,6 +459,7 @@ impl Server {
             stickers_shareable: false,
             emoticons_shareable: false,
             onboarding: None,
+            defaults_version: MEMBER_DEFAULTS_VERSION,
         }
     }
 
@@ -362,13 +513,13 @@ impl Server {
         let Some(member) = self.member(user) else {
             return Permissions::NONE;
         };
-        let mut perms = self
-            .roles
-            .iter()
-            .filter(|r| r.is_everyone() || member.roles.contains(&r.id))
-            .fold(Permissions::NONE, |acc, r| acc | permissions_granted_by(r));
+        let applicable: Vec<&Role> = self.roles.iter().filter(|r| r.is_everyone() || member.roles.contains(&r.id)).collect();
+        let mut perms = applicable.iter().fold(Permissions::NONE, |acc, r| acc | self.granted_by(r)) & !Permissions::RESTRICTIONS;
         if perms.contains(Permissions::ADMINISTRATOR) {
-            perms = Permissions::all();
+            return Permissions::all();
+        }
+        if !applicable.is_empty() {
+            perms |= applicable.iter().fold(Permissions::RESTRICTIONS, |acc, r| acc & r.permissions);
         }
         perms
     }
@@ -391,6 +542,16 @@ impl Server {
 
     pub fn can_view(&self, channel: ChannelId, user: UserId) -> bool {
         self.channel(channel).is_some_and(|c| self.admits(user, &c.view_roles))
+    }
+
+    pub fn is_stage_speaker(&self, channel: ChannelId, user: UserId) -> bool {
+        self.channel(channel).is_some_and(|c| {
+            c.is_stage() && (c.speakers.contains(&user) || self.permissions_for(user).can_manage_stage())
+        })
+    }
+
+    pub fn in_audience(&self, channel: ChannelId, user: UserId) -> bool {
+        self.channel(channel).is_some_and(|c| c.is_stage()) && !self.is_stage_speaker(channel, user)
     }
 
     fn admits(&self, user: UserId, roles: &[RoleId]) -> bool {
@@ -464,12 +625,31 @@ impl Server {
     }
 }
 
-fn permissions_granted_by(role: &Role) -> Permissions {
-    let mut granted = role.permissions;
-    if role.is_everyone() {
-        granted.remove(Permissions::CREATE_INVITES);
+impl Server {
+    pub fn granted_by(&self, role: &Role) -> Permissions {
+        let mut granted = role.permissions;
+        if role.is_everyone() {
+            granted.remove(Permissions::CREATE_INVITES);
+            granted |= self.late_member_defaults();
+        }
+        granted
     }
-    granted
+
+    pub fn late_member_defaults(&self) -> Permissions {
+        if self.defaults_version < MEMBER_DEFAULTS_VERSION {
+            LATE_MEMBER_DEFAULTS
+        } else {
+            Permissions::NONE
+        }
+    }
+
+    pub fn everyone_permissions(&self) -> Permissions {
+        self.roles
+            .iter()
+            .find(|r| r.is_everyone())
+            .map(|r| r.permissions | self.late_member_defaults())
+            .unwrap_or(Permissions::NONE)
+    }
 }
 
 #[cfg(test)]
@@ -588,6 +768,59 @@ mod tests {
         assert_eq!(server.permissions_for(UserId::new()), Permissions::NONE);
     }
 
+    fn role_with(name: &str, permissions: Permissions, position: u32) -> Role {
+        Role {
+            id: RoleId::new(),
+            name: name.into(),
+            color: None,
+            permissions,
+            position,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        }
+    }
+
+    #[test]
+    fn restrictions_hold_only_when_every_applicable_role_carries_them() {
+        let owner = UserId::new();
+        let mut server = Server::new("s", owner);
+        let member = UserId::new();
+        server.members.push(Member { user: member, nickname: None, roles: vec![], joined_at: Utc::now(), timeout: None });
+        assert!(server.permissions_for(member).can_send_polls(), "no role mentions the bit, so it is allowed");
+        assert!(!server.permissions_for(member).contains(Permissions::RESTRICTIONS));
+        server.roles[0].permissions.insert(Permissions::NO_SEND_POLLS | Permissions::NO_EMBED_LINKS);
+        let restricted = server.permissions_for(member);
+        assert!(!restricted.can_send_polls() && !restricted.can_embed_links(), "everyone restricted and no other role: restricted");
+        assert!(restricted.can_read_history(), "only the bits every role carries hold");
+        let trusted = role_with("trusted", Permissions::NONE, 1);
+        let trusted_id = trusted.id;
+        server.roles.push(trusted);
+        server.member_mut(member).unwrap().roles.push(trusted_id);
+        let lifted = server.permissions_for(member);
+        assert!(lifted.can_send_polls() && lifted.can_embed_links(), "a role without the restriction lets its members through");
+        assert!(lifted.allows(Permissions::SEND_MESSAGES), "grants stay a union");
+        let other = UserId::new();
+        server.members.push(Member { user: other, nickname: None, roles: vec![], joined_at: Utc::now(), timeout: None });
+        assert!(!server.permissions_for(other).can_send_polls(), "members without the role stay restricted");
+        server.roles[0].permissions.remove(Permissions::RESTRICTIONS);
+        let lone = role_with("quiet", Permissions::NO_SEND_POLLS, 2);
+        let lone_id = lone.id;
+        server.roles.push(lone);
+        server.member_mut(other).unwrap().roles.push(lone_id);
+        assert!(server.permissions_for(other).can_send_polls(), "a lone restricted role on top of a permissive everyone does nothing");
+        server.roles[0].permissions.insert(Permissions::RESTRICTIONS);
+        let admins = role_with("admins", Permissions::ADMINISTRATOR | Permissions::RESTRICTIONS, 3);
+        let admins_id = admins.id;
+        server.roles.push(admins);
+        server.member_mut(other).unwrap().roles.push(admins_id);
+        assert_eq!(server.permissions_for(other), Permissions::all(), "administrator clears everything");
+        assert!(server.permissions_for(other).can_read_history());
+        assert_eq!(server.permissions_for(owner), Permissions::all());
+    }
+
     #[test]
     fn member_gets_everyone_role_permissions() {
         let owner = UserId::new();
@@ -604,6 +837,22 @@ mod tests {
         assert!(perms.allows(Permissions::SEND_MESSAGES));
         assert!(!perms.allows(Permissions::KICK_MEMBERS));
         assert!(!perms.allows(Permissions::CREATE_INVITES));
+    }
+
+    #[test]
+    fn servers_from_before_the_newer_member_defaults_still_grant_them() {
+        let owner = UserId::new();
+        let mut server = Server::new("s", owner);
+        let plain = UserId::new();
+        server.members.push(Member { user: plain, nickname: None, roles: vec![], joined_at: Utc::now(), timeout: None });
+        server.roles[0].permissions.remove(Permissions::CHANGE_NICKNAME | Permissions::SEND_VOICE_MESSAGES);
+        assert!(!server.permissions_for(plain).can_change_own_nickname(), "a current server honours the stored bits");
+        server.defaults_version = 0;
+        let perms = server.permissions_for(plain);
+        assert!(perms.can_change_own_nickname() && perms.allows(Permissions::SEND_VOICE_MESSAGES) && perms.can_send_tts());
+        assert!(!perms.allows(Permissions::CREATE_INVITES));
+        assert!(server.everyone_permissions().allows(Permissions::ADD_EMOJIS));
+        assert_eq!(Server::new("t", owner).defaults_version, MEMBER_DEFAULTS_VERSION);
     }
 
     #[test]
@@ -1004,6 +1253,19 @@ mod community_tests {
         let e = event();
         assert!(!valid_event(&ScheduledEvent { end: Some(e.start), ..e.clone() }));
         assert!(valid_event(&ScheduledEvent { end: Some(e.start + chrono::Duration::hours(2)), ..e }));
+    }
+
+    #[test]
+    fn voice_statuses_are_one_tidy_line_of_at_most_eighty_characters() {
+        assert_eq!(clean_voice_status("Ranked grind"), Some("Ranked grind".into()));
+        assert_eq!(clean_voice_status("  Ranked \n\t grind  "), Some("Ranked grind".into()));
+        assert_eq!(clean_voice_status("Ran\u{0}ked"), Some("Ranked".into()));
+        assert_eq!(clean_voice_status(""), None);
+        assert_eq!(clean_voice_status(" \n "), None);
+        let long = "a".repeat(100);
+        assert_eq!(clean_voice_status(&long).map(|s| s.chars().count()), Some(MAX_VOICE_STATUS_CHARS));
+        let cut = format!("{} tail", "b".repeat(79));
+        assert_eq!(clean_voice_status(&cut), Some("b".repeat(79)), "no dangling space after the cut");
     }
 
     #[test]

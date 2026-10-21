@@ -26,6 +26,7 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 commy-core = { workspace = true }
 commy-net = { workspace = true }
+commy-view = { workspace = true }
 commy-audio = { workspace = true }
 commy-media = { workspace = true }
 chrono = { workspace = true }

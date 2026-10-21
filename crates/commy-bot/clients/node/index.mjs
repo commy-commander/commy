@@ -181,6 +181,15 @@ export class Client extends EventEmitter {
     return this;
   }
 
+  slashCommand(name, run) {
+    this.commands.set(`/${String(name).toLowerCase()}`, run);
+    return this;
+  }
+
+  registerCommands(server, commands) {
+    return this.request("set_commands", { server: typeof server === "string" ? server : server.id, commands });
+  }
+
   server(nameOrId) {
     const key = String(nameOrId || "").toLowerCase();
     return this.servers.get(nameOrId) || [...this.servers.values()].find(s => s.name.toLowerCase() === key) || null;
@@ -285,7 +294,19 @@ export class Client extends EventEmitter {
         server.members.delete(event.user);
         return this.emit("memberLeave", member);
       }
+      case "command_invoked":
+        return this.onSlashCommand(new Message(this, server, event.message), event.command, event.options || {});
     }
+  }
+
+  onSlashCommand(message, name, options) {
+    if (message.late && !this.includeLate) return;
+    this.emit("commandInvoked", message, { name, options });
+    const run = this.commands.get(`/${name}`);
+    if (!run) return;
+    Promise.resolve()
+      .then(() => run(message, options))
+      .catch(error => this.emit("error", error));
   }
 
   onMessage(type, message) {

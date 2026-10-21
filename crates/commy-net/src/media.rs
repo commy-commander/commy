@@ -73,6 +73,18 @@ where
     R: AsyncRead + Unpin,
     T: DeserializeOwned,
 {
+    let Some(buf) = read_frame_bytes(reader, max).await? else {
+        return Ok(None);
+    };
+    postcard::from_bytes(&buf)
+        .map(Some)
+        .map_err(|_| MediaError::Malformed)
+}
+
+pub(crate) async fn read_frame_bytes<R>(reader: &mut R, max: u32) -> Result<Option<Vec<u8>>, MediaError>
+where
+    R: AsyncRead + Unpin,
+{
     let mut len_bytes = [0u8; 4];
     match reader.read_exact(&mut len_bytes).await {
         Ok(_) => {}
@@ -85,9 +97,7 @@ where
     }
     let mut buf = vec![0u8; len as usize];
     reader.read_exact(&mut buf).await?;
-    postcard::from_bytes(&buf)
-        .map(Some)
-        .map_err(|_| MediaError::Malformed)
+    Ok(Some(buf))
 }
 
 #[cfg(test)]

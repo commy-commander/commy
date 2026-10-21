@@ -136,6 +136,17 @@ impl UserProfile {
         shared
     }
 
+    pub fn without_details(&self) -> UserProfile {
+        UserProfile {
+            about: None,
+            banner: None,
+            activity: None,
+            activity_cover: None,
+            activity_since: None,
+            ..self.clone()
+        }
+    }
+
     pub fn pin_identity(&mut self, pinned: Option<IdentityKey>) -> bool {
         match (pinned, self.identity) {
             (Some(pinned), Some(key)) => pinned == key,
@@ -182,6 +193,27 @@ mod tests {
         profile.presence = Presence::Invisible;
         assert_eq!(profile.as_seen_by_others().presence_until, None, "but not how long you look offline");
         assert!(!Presence::Offline.is_visible_online());
+    }
+
+    #[test]
+    fn a_profile_without_details_keeps_what_chat_needs() {
+        let mut profile = UserProfile::new("quiet");
+        profile.display_name = Some("Quiet One".into());
+        profile.avatar = Some("emoji:\u{1f60e}".into());
+        profile.custom_status = Some("around".into());
+        profile.about = Some("long bio".into());
+        profile.banner = Some("blob:abc".into());
+        profile.activity = Some("Playing Chess".into());
+        profile.activity_cover = Some("co1abc".into());
+        profile.activity_since = Some(1_700_000_000);
+        profile.identity = Some(crate::Identity::generate().public());
+        let bare = profile.without_details();
+        assert_eq!(bare.visible_name(), "Quiet One");
+        assert_eq!(bare.avatar, profile.avatar);
+        assert_eq!(bare.custom_status, profile.custom_status);
+        assert_eq!(bare.identity, profile.identity);
+        assert_eq!((bare.about, bare.banner, bare.activity), (None, None, None));
+        assert_eq!((bare.activity_cover, bare.activity_since), (None, None));
     }
 
     #[test]

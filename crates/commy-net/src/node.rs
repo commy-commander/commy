@@ -3,7 +3,7 @@ use crate::catchup::{
     CATCHUP_ALPN, HANDSHAKE_TIMEOUT,
 };
 use crate::dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
-use crate::media::{read_frame, write_frame, MediaHello, MediaPacket, MEDIA_ALPN};
+use crate::media::{read_frame, read_frame_bytes, write_frame, MediaError, MediaHello, MediaPacket, MAX_MEDIA_FRAME, MEDIA_ALPN};
 use crate::protocol::{Envelope, WirePayload};
 use crate::ticket::ServerTicket;
 use anyhow::{Context, Result};
@@ -15,6 +15,7 @@ pub use iroh::endpoint::Connection;
 use iroh::endpoint::{RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
+#[cfg(not(wasm_browser))]
 use iroh_blobs::store::mem::MemStore;
 use iroh_gossip::api::{Event as GossipEvent, GossipSender};
 use iroh_gossip::net::Gossip;
@@ -104,7 +105,7 @@ impl MediaChannel {
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<MediaPacket>();
 
         let stats_handle = connection.clone();
-        tokio::spawn(async move {
+        n0_future::task::spawn(async move {
             let path = connection.clone();
             let _keep_connection_alive_for_both_pumps = connection;
             let reader = async {
@@ -179,13 +180,13 @@ const RECHECK_PATH_FOR_HOLE_PUNCH_UPGRADE: std::time::Duration = std::time::Dura
 #[derive(Default)]
 struct VideoPacer {
     relayed: Option<bool>,
-    checked: Option<std::time::Instant>,
-    last_sent: Option<std::time::Instant>,
+    checked: Option<n0_future::time::Instant>,
+    last_sent: Option<n0_future::time::Instant>,
 }
 
 impl VideoPacer {
     fn allow(&mut self, connection: &Connection) -> bool {
-        let now = std::time::Instant::now();
+        let now = n0_future::time::Instant::now();
         if self.checked.map_or(true, |t| now.duration_since(t) > RECHECK_PATH_FOR_HOLE_PUNCH_UPGRADE) {
             self.checked = Some(now);
             let relayed = connection.paths().iter().any(|p| p.is_selected() && p.is_relay());
@@ -223,7 +224,7 @@ impl std::fmt::Debug for MediaAcceptor {
 
 impl MediaAcceptor {
     async fn admitted(&self, peer: [u8; 32], hello: &MediaHello) -> bool {
-        let started = std::time::Instant::now();
+        let started = n0_future::time::Instant::now();
         loop {
             let allowed = self
                 .gate
@@ -237,7 +238,7 @@ impl MediaAcceptor {
             if started.elapsed() >= MEDIA_GATE_WAIT {
                 return false;
             }
-            tokio::time::sleep(MEDIA_GATE_POLL).await;
+            n0_future::time::sleep(MEDIA_GATE_POLL).await;
         }
     }
 }
@@ -293,7 +294,7 @@ impl DmAcceptor {
             let envelope = if self.legacy {
                 read_frame::<_, LegacyDmEnvelope>(&mut recv).await.map(|frame| frame.map(LegacyDmEnvelope::upgrade))
             } else {
-                read_frame::<_, DmEnvelope>(&mut recv).await
+                read_dm_frame(&mut recv).await
             };
             let Some(envelope) = envelope.map_err(|e| anyhow::anyhow!("bad dm frame: {e}"))? else {
                 return Ok(());
@@ -304,6 +305,13 @@ impl DmAcceptor {
                 .map_err(|e| anyhow::anyhow!("dm ack failed: {e}"))?;
         }
     }
+}
+
+async fn read_dm_frame<R: AsyncRead + Unpin>(recv: &mut R) -> Result<Option<DmEnvelope>, MediaError> {
+    let Some(bytes) = read_frame_bytes(recv, MAX_MEDIA_FRAME).await? else {
+        return Ok(None);
+    };
+    DmEnvelope::decode(&bytes).map(Some).ok_or(MediaError::Malformed)
 }
 
 pub type SharedCatchupStore = Arc<dyn CatchupStore + Send + Sync>;
@@ -352,7 +360,7 @@ impl Inbound {
         let Some(store) = store else {
             return Err(refuse(&mut io, Refusal::Busy).await);
         };
-        let admitted = tokio::time::timeout(self.handshake, admit(&mut io, store, local, peer))
+        let admitted = n0_future::time::timeout(self.handshake, admit(&mut io, store, local, peer))
             .await
             .map_err(|_| CatchupError::Timeout)??;
         drop(waiting);
@@ -363,7 +371,7 @@ impl Inbound {
             return Err(refuse(&mut io, Refusal::Busy).await);
         };
         let session = respond(io, store, admitted, local, peer);
-        tokio::time::timeout(CATCHUP_SESSION_TIMEOUT, session)
+        n0_future::time::timeout(CATCHUP_SESSION_TIMEOUT, session)
             .await
             .map_err(|_| CatchupError::Timeout)?
     }
@@ -445,7 +453,7 @@ impl CatchupAcceptor {
     async fn answer(&self, connection: Connection) -> Result<()> {
         let peer = *connection.remote_id().as_bytes();
         let Ok(opened) =
-            tokio::time::timeout(self.inbound.handshake, connection.accept_bi()).await
+            n0_future::time::timeout(self.inbound.handshake, connection.accept_bi()).await
         else {
             connection.close(0u32.into(), b"timeout");
             return Ok(());
@@ -474,7 +482,7 @@ impl CatchupAcceptor {
         }
         let (_, mut send) = io.into_inner();
         send.finish().ok();
-        let _ = tokio::time::timeout(CATCHUP_LINGER, connection.closed()).await;
+        let _ = n0_future::time::timeout(CATCHUP_LINGER, connection.closed()).await;
         Ok(())
     }
 }
@@ -482,7 +490,7 @@ impl CatchupAcceptor {
 struct TopicHandle {
     sender: GossipSender,
     neighbors: tokio::sync::watch::Receiver<BTreeSet<[u8; 32]>>,
-    reader: tokio::task::AbortHandle,
+    reader: n0_future::task::AbortHandle,
 }
 
 impl Drop for TopicHandle {
@@ -511,6 +519,15 @@ pub fn topic_for(server_id: ServerId) -> [u8; 32] {
     topic[..16].copy_from_slice(uuid);
     topic[16..].copy_from_slice(uuid);
     topic
+}
+
+#[cfg(any(wasm_browser, test))]
+pub(crate) fn reachable_from_browser(mut addr: EndpointAddr, relays: &[RelayUrl]) -> EndpointAddr {
+    addr.addrs.retain(|a| matches!(a, iroh::TransportAddr::Relay(url) if relays.contains(url)));
+    if addr.addrs.is_empty() {
+        addr.addrs.extend(relays.iter().cloned().map(iroh::TransportAddr::Relay));
+    }
+    addr
 }
 
 pub(crate) fn addr_via_relays(node: EndpointId, relays: &[RelayUrl]) -> EndpointAddr {
@@ -545,7 +562,7 @@ impl MediaDialer {
                 recv,
             ))
         };
-        tokio::time::timeout(MEDIA_DIAL_TIMEOUT, dial)
+        n0_future::time::timeout(MEDIA_DIAL_TIMEOUT, dial)
             .await
             .map_err(|_| anyhow::anyhow!("that person could not be reached"))?
     }
@@ -559,11 +576,13 @@ pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
 }
 
 #[derive(Clone)]
+#[cfg(not(wasm_browser))]
 pub struct BlobFetcher {
     blobs: MemStore,
     endpoint: Endpoint,
 }
 
+#[cfg(not(wasm_browser))]
 impl BlobFetcher {
     pub async fn fetch(&self, hash: &str, provider_hex: Option<&str>, max: u64) -> Result<Vec<u8>> {
         let hash: iroh_blobs::Hash = hash.parse().context("invalid blob hash")?;
@@ -583,6 +602,7 @@ impl BlobFetcher {
     }
 }
 
+#[cfg(not(wasm_browser))]
 async fn fetch_capped(endpoint: &Endpoint, node_id: EndpointId, hash: iroh_blobs::Hash, max: u64) -> Result<Vec<u8>> {
     use iroh_blobs::get::fsm::{self, ConnectedNext, EndBlobNext};
     let connection = endpoint
@@ -607,17 +627,23 @@ async fn fetch_capped(endpoint: &Endpoint, node_id: EndpointId, hash: iroh_blobs
 pub struct CommyNode {
     router: Router,
     gossip: Gossip,
+    #[cfg(not(wasm_browser))]
     blobs: MemStore,
     lookup: MemoryLookup,
     relays: Vec<RelayUrl>,
     topics: HashMap<ServerId, TopicHandle>,
     events_tx: mpsc::UnboundedSender<NetEvent>,
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
+    mirror_requests: Option<mpsc::UnboundedReceiver<crate::mirror::MirrorAsk>>,
     catchup_store: StoreSlot,
     media_gate: GateSlot,
 }
 
 const ADDRESS_WAIT: Duration = Duration::from_secs(5);
+
+const PATH_IDLE_TIMEOUT: Duration = Duration::from_secs(6);
+
+const PATH_KEEP_ALIVE: Duration = Duration::from_secs(2);
 
 impl CommyNode {
     pub fn generate_secret() -> [u8; 32] {
@@ -632,6 +658,18 @@ impl CommyNode {
         mpsc::UnboundedReceiver<MediaChannel>,
         mpsc::UnboundedReceiver<IncomingDm>,
     )> {
+        Self::spawn_on_port(secret, None).await
+    }
+
+    pub async fn spawn_on_port(
+        secret: Option<[u8; 32]>,
+        port: Option<u16>,
+    ) -> Result<(
+        Self,
+        mpsc::UnboundedReceiver<NetEvent>,
+        mpsc::UnboundedReceiver<MediaChannel>,
+        mpsc::UnboundedReceiver<IncomingDm>,
+    )> {
         let relays = match crate::relays::relay_map(&crate::relays::own_relays()) {
             Ok(map) => Some(map),
             Err(e) => {
@@ -639,7 +677,12 @@ impl CommyNode {
                 None
             }
         };
-        Self::spawn_with(secret, relays).await
+        let fallback = relays.as_ref().map(crate::relays::fallback_relays).unwrap_or_default();
+        let spawned = Self::spawn_inner(secret, relays, port).await?;
+        if !fallback.is_empty() {
+            n0_future::task::spawn(crate::relays::fall_back_when_unreachable(spawned.0.endpoint(), fallback));
+        }
+        Ok(spawned)
     }
 
     pub async fn spawn_with(
@@ -651,18 +694,58 @@ impl CommyNode {
         mpsc::UnboundedReceiver<MediaChannel>,
         mpsc::UnboundedReceiver<IncomingDm>,
     )> {
+        Self::spawn_inner(secret, relays, None).await
+    }
+
+    async fn spawn_inner(
+        secret: Option<[u8; 32]>,
+        relays: Option<iroh::RelayMap>,
+        port: Option<u16>,
+    ) -> Result<(
+        Self,
+        mpsc::UnboundedReceiver<NetEvent>,
+        mpsc::UnboundedReceiver<MediaChannel>,
+        mpsc::UnboundedReceiver<IncomingDm>,
+    )> {
         let (media_tx, media_rx) = mpsc::unbounded_channel();
         let (dm_tx, dm_rx) = mpsc::unbounded_channel();
         let (entry_key_tx, entry_key_rx) = mpsc::unbounded_channel();
+        let (mirror_tx, mirror_rx) = mpsc::unbounded_channel();
         let lookup = MemoryLookup::new();
         let relay_mode = relays.map_or_else(iroh::endpoint::default_relay_mode, iroh::RelayMode::Custom);
         let relays = relay_mode.relay_map().urls();
-        let builder = Endpoint::builder(iroh::endpoint::presets::N0).address_lookup(lookup.clone());
-        let mut builder = builder.relay_mode(relay_mode);
-        if let Some(bytes) = secret {
-            builder = builder.secret_key(iroh::SecretKey::from_bytes(&bytes));
-        }
-        let endpoint = builder.bind().await.context("failed to build iroh node")?;
+        let build = |port: Option<u16>| -> Result<iroh::endpoint::Builder> {
+            #[cfg(not(wasm_browser))]
+            let builder = Endpoint::builder(iroh::endpoint::presets::N0);
+            #[cfg(wasm_browser)]
+            let builder = Endpoint::builder(iroh::endpoint::presets::Minimal);
+            let transport = iroh::endpoint::QuicTransportConfig::builder()
+                .default_path_max_idle_timeout(PATH_IDLE_TIMEOUT)
+                .default_path_keep_alive_interval(PATH_KEEP_ALIVE)
+                .build();
+            let builder = builder.address_lookup(lookup.clone()).transport_config(transport);
+            let mut builder = builder.relay_mode(relay_mode.clone());
+            if let Some(bytes) = secret {
+                builder = builder.secret_key(iroh::SecretKey::from_bytes(&bytes));
+            }
+            #[cfg(not(wasm_browser))]
+            if let Some(port) = port.filter(|p| *p != 0) {
+                builder = builder
+                    .bind_addr(std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, port)))?
+                    .bind_addr(std::net::SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port)))?;
+            }
+            #[cfg(wasm_browser)]
+            let _ = port;
+            Ok(builder)
+        };
+        let endpoint = match build(port)?.bind().await {
+            Ok(endpoint) => endpoint,
+            Err(e) if port.is_some() => {
+                tracing::warn!("could not keep the previous network port, picking a new one: {e:#}");
+                build(None)?.bind().await.context("failed to build iroh node")?
+            }
+            Err(e) => return Err(e).context("failed to build iroh node"),
+        };
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let catchup_store = StoreSlot::default();
         let media_gate = GateSlot::default();
@@ -674,28 +757,33 @@ impl CommyNode {
             inbound: Inbound::new(MAX_CATCHUP_SESSIONS, HANDSHAKE_TIMEOUT),
         };
         let gossip = Gossip::builder().spawn(endpoint.clone());
+        let router = Router::builder(endpoint).accept(iroh_gossip::ALPN, gossip.clone());
+        #[cfg(not(wasm_browser))]
         let blobs = MemStore::new();
-        let router = Router::builder(endpoint)
-            .accept(iroh_gossip::ALPN, gossip.clone())
-            .accept(iroh_blobs::ALPN, iroh_blobs::BlobsProtocol::new(&blobs, None))
+        #[cfg(not(wasm_browser))]
+        let router = router.accept(iroh_blobs::ALPN, iroh_blobs::BlobsProtocol::new(&blobs, None));
+        let router = router
             .accept(MEDIA_ALPN, MediaAcceptor { tx: media_tx, gate: media_gate.clone() })
             .accept(DM_ALPN, DmAcceptor { tx: dm_tx.clone(), legacy: false })
             .accept(LEGACY_DM_ALPN, DmAcceptor { tx: dm_tx, legacy: true })
             .accept(crate::entry_key::ENTRY_KEY_ALPN, crate::entry_key::EntryKeyAcceptor { tx: entry_key_tx })
             .accept(CATCHUP_ALPN, catchup)
+            .accept(crate::mirror::MIRROR_ALPN, crate::mirror::MirrorAcceptor { tx: mirror_tx, local })
             .accept(crate::wake::WAKE_ALPN, crate::wake::WakeAcceptor::new(events_tx.clone()))
             .spawn();
-        let _ = tokio::time::timeout(ADDRESS_WAIT, router.endpoint().online()).await;
+        let _ = n0_future::time::timeout(ADDRESS_WAIT, router.endpoint().online()).await;
         Ok((
             Self {
                 router,
                 gossip,
+                #[cfg(not(wasm_browser))]
                 blobs,
                 lookup,
                 relays,
                 topics: HashMap::new(),
                 events_tx,
                 entry_key_requests: Some(entry_key_rx),
+                mirror_requests: Some(mirror_rx),
                 catchup_store,
                 media_gate,
             },
@@ -707,6 +795,10 @@ impl CommyNode {
 
     pub fn take_entry_key_requests(&mut self) -> Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>> {
         self.entry_key_requests.take()
+    }
+
+    pub fn take_mirror_requests(&mut self) -> Option<mpsc::UnboundedReceiver<crate::mirror::MirrorAsk>> {
+        self.mirror_requests.take()
     }
 
     pub fn endpoint(&self) -> Endpoint {
@@ -723,20 +815,75 @@ impl CommyNode {
         let envelope = envelope.clone();
         async move {
             let node_id = node_id?;
-            let connection = match endpoint.connect(node_id, DM_ALPN).await {
+            let connection = match dial(&endpoint, node_id, DM_ALPN).await {
                 Ok(connection) => connection,
                 Err(e) => {
                     let Some(legacy) = LegacyDmEnvelope::downgrade(&envelope) else {
                         return Err(e).context("peer is unreachable");
                     };
-                    let connection = endpoint
-                        .connect(node_id, LEGACY_DM_ALPN)
+                    let connection = dial(&endpoint, node_id, LEGACY_DM_ALPN)
                         .await
                         .context("peer is unreachable")?;
                     return confirm_dm(connection, &legacy).await;
                 }
             };
             confirm_dm(connection, &envelope).await
+        }
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub fn bound_port(&self) -> Option<u16> {
+        let sockets = self.router.endpoint().bound_sockets();
+        sockets
+            .iter()
+            .find(|addr| addr.is_ipv4())
+            .or(sockets.first())
+            .map(|addr| addr.port())
+    }
+}
+
+const REDIAL_AT: [Duration; 4] = [
+    Duration::from_millis(500),
+    Duration::from_millis(1000),
+    Duration::from_millis(2000),
+    Duration::from_millis(4000),
+];
+
+async fn dial(
+    endpoint: &Endpoint,
+    node_id: EndpointId,
+    alpn: &'static [u8],
+) -> Result<Connection, iroh::endpoint::ConnectError> {
+    race_dials(|| endpoint.connect(node_id, alpn), &REDIAL_AT).await
+}
+
+async fn race_dials<F, Fut, T, E>(mut attempt: F, redial_at: &[Duration]) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+{
+    let started = n0_future::time::Instant::now();
+    let mut attempts = futures_util::stream::FuturesUnordered::new();
+    attempts.push(attempt());
+    let mut redials = redial_at.iter();
+    let mut next = redials.next();
+    loop {
+        let redial = async {
+            match next {
+                Some(at) => n0_future::time::sleep_until(started + *at).await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            outcome = attempts.next() => match outcome {
+                Some(Ok(value)) => return Ok(value),
+                Some(Err(e)) if attempts.is_empty() => return Err(e),
+                Some(Err(_)) | None => {}
+            },
+            _ = redial => {
+                attempts.push(attempt());
+                next = redials.next();
+            }
         }
     }
 }
@@ -746,7 +893,7 @@ async fn confirm_dm<T: serde::Serialize>(connection: Connection, envelope: &T) -
     write_frame(&mut send, envelope)
         .await
         .map_err(|e| anyhow::anyhow!("dm send failed: {e}"))?;
-    let ack = tokio::time::timeout(
+    let ack = n0_future::time::timeout(
         std::time::Duration::from_secs(15),
         read_frame::<_, DmAck>(&mut recv),
     )
@@ -789,7 +936,7 @@ impl CommyNode {
             let (send, recv) = connection.open_bi().await?;
             let mut io = tokio::io::join(recv, send);
             let session = run_initiator(&mut io, &*store, &identity, server, me, local, peer);
-            let result = tokio::time::timeout(CATCHUP_SESSION_TIMEOUT, session).await;
+            let result = n0_future::time::timeout(CATCHUP_SESSION_TIMEOUT, session).await;
             let (_, send) = io.into_inner();
             let_our_applied_reach_the_peer(send).await;
             connection.close(0u32.into(), b"done");
@@ -808,11 +955,13 @@ impl CommyNode {
 
     pub async fn node_addr(&self) -> Result<crate::ticket::NodeAddr> {
         let endpoint = self.router.endpoint();
-        let _ = tokio::time::timeout(ADDRESS_WAIT, endpoint.online()).await;
+        let _ = n0_future::time::timeout(ADDRESS_WAIT, endpoint.online()).await;
         Ok(crate::ticket::NodeAddr::from(&endpoint.addr()))
     }
 
     fn learn(&self, addr: EndpointAddr) {
+        #[cfg(wasm_browser)]
+        let addr = reachable_from_browser(addr, &self.relays);
         if addr.id != self.router.endpoint().id() {
             self.lookup.add_endpoint_info(addr);
         }
@@ -862,7 +1011,7 @@ impl CommyNode {
             return false;
         };
         let mut neighbors = handle.neighbors.clone();
-        tokio::time::timeout(timeout, async {
+        n0_future::time::timeout(timeout, async {
             loop {
                 if !neighbors.borrow().is_empty() {
                     return;
@@ -908,7 +1057,7 @@ impl CommyNode {
         let events_tx = self.events_tx.clone();
         let our_id = self.node_id_bytes();
         let (neighbors_tx, neighbors_rx) = tokio::sync::watch::channel(BTreeSet::new());
-        let reader = tokio::spawn(async move {
+        let reader = n0_future::task::spawn(async move {
             while let Some(item) = stream.next().await {
                 let Ok(event) = item else {
                     continue;
@@ -1012,10 +1161,12 @@ impl CommyNode {
         MediaDialer { endpoint: self.endpoint() }
     }
 
+    #[cfg(not(wasm_browser))]
     pub async fn add_blob(&self, bytes: Vec<u8>) -> Result<String> {
         Ok(self.blobs.add_bytes(bytes).await?.hash.to_string())
     }
 
+    #[cfg(not(wasm_browser))]
     pub fn blob_fetcher(&self) -> BlobFetcher {
         BlobFetcher { blobs: self.blobs.clone(), endpoint: self.endpoint() }
     }
@@ -1052,6 +1203,10 @@ impl CommyNode {
         self.join_topic(server_id, topic_for(server_id), ids).await
     }
 
+    pub fn reach_via_relays(&self, peers_hex: &[String]) -> usize {
+        self.add_peers(peers_hex).len()
+    }
+
     fn add_peers(&self, peers_hex: &[String]) -> Vec<EndpointId> {
         let our_id = self.node_id_bytes();
         let mut ids = Vec::new();
@@ -1080,7 +1235,7 @@ impl CommyNode {
 
 async fn let_our_applied_reach_the_peer(mut send: SendStream) {
     if send.finish().is_ok() {
-        let _ = tokio::time::timeout(CATCHUP_LINGER, send.stopped()).await;
+        let _ = n0_future::time::timeout(CATCHUP_LINGER, send.stopped()).await;
     }
 }
 
@@ -1098,6 +1253,77 @@ pub(crate) fn parse_node_hex(hex: &str) -> Result<EndpointId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browsers_keep_only_commy_relay_addresses() {
+        let id = iroh::SecretKey::from_bytes(&[3; 32]).public();
+        let ours: RelayUrl = "https://relay.commy.chat:8443".parse().unwrap();
+        let theirs: RelayUrl = "https://usw1-1.relay.n0.iroh.link".parse().unwrap();
+        let direct = iroh::TransportAddr::Ip("192.0.2.1:4433".parse().unwrap());
+        let mixed = EndpointAddr::from_parts(id, [iroh::TransportAddr::Relay(theirs.clone()), iroh::TransportAddr::Relay(ours.clone()), direct.clone()]);
+        let kept = reachable_from_browser(mixed, std::slice::from_ref(&ours));
+        assert_eq!(kept.addrs.into_iter().collect::<Vec<_>>(), vec![iroh::TransportAddr::Relay(ours.clone())]);
+        let foreign = EndpointAddr::from_parts(id, [iroh::TransportAddr::Relay(theirs), direct]);
+        let kept = reachable_from_browser(foreign, std::slice::from_ref(&ours));
+        assert_eq!(kept.addrs.into_iter().collect::<Vec<_>>(), vec![iroh::TransportAddr::Relay(ours)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_dial_is_joined_by_a_fresh_one() {
+        use std::pin::Pin;
+        let started = n0_future::time::Instant::now();
+        let mut calls = 0;
+        let result: Result<u32, &str> = race_dials(
+            || -> Pin<Box<dyn Future<Output = Result<u32, &str>>>> {
+                calls += 1;
+                match calls {
+                    1 => Box::pin(std::future::pending()),
+                    n => Box::pin(std::future::ready(Ok(n))),
+                }
+            },
+            &REDIAL_AT,
+        )
+        .await;
+        assert_eq!(result, Ok(2));
+        assert_eq!(started.elapsed(), REDIAL_AT[0]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_dial_that_fails_outright_does_not_wait_for_redials() {
+        use std::pin::Pin;
+        let started = n0_future::time::Instant::now();
+        let result: Result<u32, &str> = race_dials(
+            || -> Pin<Box<dyn Future<Output = Result<u32, &str>>>> { Box::pin(std::future::ready(Err("no address"))) },
+            &REDIAL_AT,
+        )
+        .await;
+        assert_eq!(result, Err("no address"));
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_late_failure_waits_for_the_dials_still_running() {
+        use std::pin::Pin;
+        let mut calls = 0;
+        let result: Result<u32, &str> = race_dials(
+            || -> Pin<Box<dyn Future<Output = Result<u32, &str>>>> {
+                calls += 1;
+                match calls {
+                    1 => Box::pin(async {
+                        n0_future::time::sleep(Duration::from_millis(700)).await;
+                        Err("timed out")
+                    }),
+                    _ => Box::pin(async {
+                        n0_future::time::sleep(Duration::from_millis(400)).await;
+                        Ok(7)
+                    }),
+                }
+            },
+            &REDIAL_AT[..1],
+        )
+        .await;
+        assert_eq!(result, Ok(7));
+    }
 
     #[test]
     fn node_hex_roundtrip() {
@@ -1432,7 +1658,7 @@ mod tests {
         sender.node = Some(data_encoding::HEXLOWER.encode(&[9u8; 32]));
         let mut message = DmMessage::new(sender.id, UserId::new(), "hi");
         message.from_node = a.node_id_hex();
-        let envelope = DmEnvelope { message, sender };
+        let envelope = DmEnvelope::new(message, sender);
         tokio::time::timeout(within(30), a.send_dm(&b.node_id_hex(), &envelope))
             .await
             .unwrap()
@@ -1465,7 +1691,7 @@ mod tests {
         let sender = keyed_profile("sender");
         let mut message = DmMessage::new(sender.id, UserId::new(), "for you only");
         message.sign(&a.node_id_hex(), &identity_for(sender.id));
-        let envelope = DmEnvelope { message, sender };
+        let envelope = DmEnvelope::new(message, sender);
         assert!(envelope.signed_by_sender());
 
         let replay = tokio::time::timeout(within(30), relay.send_dm(&b.node_id_hex(), &envelope))

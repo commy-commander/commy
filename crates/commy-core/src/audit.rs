@@ -67,6 +67,14 @@ pub enum AuditKind {
     PollClose,
     ChannelSensitive,
     Onboarding,
+    ThreadRename,
+    ThreadArchive,
+    ThreadLock,
+    VoiceStatusSet,
+    ForumTags,
+    ForumPostEdit,
+    StageSpeaker,
+    BotCommands,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +235,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             let (target, label) = channel(id);
             (K::ChannelSensitive, target, label, Some(if *sensitive { "on" } else { "off" }.into()))
         }
+        E::VoiceStatusSet { channel: id, text, .. } => {
+            let (target, label) = channel(id);
+            (K::VoiceStatusSet, target, label, crate::server::clean_voice_status(text))
+        }
         E::RoleCreate { role, .. } => (K::RoleCreate, Some(role.id.to_string()), Some(clip(&role.name)), None),
         E::RoleUpdate { role, .. } => (K::RoleUpdate, Some(role.id.to_string()), Some(clip(&role.name)), None),
         E::RoleDelete { role, .. } => (K::RoleDelete, Some(role.to_string()), role_name(state, *role), None),
@@ -303,12 +315,42 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
             }
             (K::PollClose, Some(message.to_string()), channel_name(state, *id), None)
         }
+        E::ThreadSet { channel: id, root, name, archived, locked, .. } => {
+            let current = state.thread_of(*id, *root);
+            let (target, label) = (Some(root.to_string()), channel_name(state, *id));
+            if *locked != current.is_some_and(|t| t.locked) {
+                (K::ThreadLock, target, label, on_off(*locked))
+            } else if *archived != current.is_some_and(|t| t.archived) {
+                (K::ThreadArchive, target, label, on_off(*archived))
+            } else {
+                (K::ThreadRename, target, label, name.as_deref().map(clip))
+            }
+        }
+        E::StageSet { user, speaker, .. } => {
+            let (target, label) = member(user);
+            (K::StageSpeaker, target, label, Some(if *speaker { "speaker" } else { "audience" }.into()))
+        }
         E::InviteTrack { invite, .. } => (K::InviteCreate, Some(invite.creator.to_string()), Some(clip(&invite.code)), None),
         E::InviteRevoke { code, creator, .. } => {
             let (target, made_by) = member(creator);
             (K::InviteRevoke, target, Some(clip(code)), made_by)
         }
         E::InviteBackgroundSet { background, .. } => (K::InviteBackground, None, None, set_or_removed(background.is_some())),
+        E::ForumTagsSet { channel: id, tags, .. } => {
+            let (target, label) = channel(id);
+            (K::ForumTags, target, label, Some(tags.len().to_string()))
+        }
+        E::ForumPost { channel: id, message, title, .. } => {
+            let post = server.channel(*id)?.posts.get(message)?;
+            if post.author == by {
+                return None;
+            }
+            (K::ForumPostEdit, Some(message.to_string()), channel_name(state, *id), Some(clip(title)))
+        }
+        E::BotCommandsSet { bot, commands, .. } => {
+            let (target, label) = member(bot);
+            (K::BotCommands, target, label, Some(commands.len().to_string()))
+        }
         _ => return None,
     })
 }
@@ -417,6 +459,35 @@ mod tests {
         assert!(log.iter().all(|e| e.by == owner));
         let restored = ServerState::from_snapshot(state.snapshot());
         assert_eq!(restored.audit_log(), log, "kept across restarts");
+    }
+
+    #[test]
+    fn thread_changes_are_logged_as_a_name_an_archive_or_a_lock() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let sign = |at, event| SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        let root = crate::test_support::post(&state, channel, owner, "first");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: root.clone() }), Ok(true));
+        let set = |name: &str, archived, locked| ServerEvent::ThreadSet {
+            server: sid,
+            channel,
+            root: root.id,
+            name: Some(name.into()),
+            archived,
+            locked,
+            by: owner,
+        };
+        assert_eq!(state.apply_signed(&sign(1_000, set("plans", false, false))), Ok(true));
+        assert_eq!(state.apply_signed(&sign(2_000, set("plans", false, true))), Ok(true));
+        assert_eq!(state.apply_signed(&sign(3_000, set("plans", true, true))), Ok(true));
+        assert_eq!(state.apply_signed(&sign(4_000, set("plans", true, true))), Ok(false), "unchanged");
+        let log = state.audit_log();
+        let kinds: Vec<AuditKind> = log.iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, vec![AuditKind::ThreadRename, AuditKind::ThreadLock, AuditKind::ThreadArchive]);
+        assert_eq!(log[0].detail.as_deref(), Some("plans"));
+        assert_eq!(log[1].detail.as_deref(), Some("on"));
+        assert_eq!(log[0].target, Some(root.id.to_string()));
+        assert!(log.iter().all(|e| e.label.as_deref() == Some(state.server.channel(channel).unwrap().name.as_str())));
     }
 
     #[test]
@@ -546,6 +617,27 @@ mod tests {
     }
 
     #[test]
+    fn voice_status_changes_are_logged_with_the_text_or_its_clearing() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let sign = |at, text: &str| {
+            let event = ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: text.into(), by: owner };
+            SignedEvent::sign(sid, owner, at, event, &identity_for(owner))
+        };
+        state.apply_signed(&sign(1_000, "  Ranked   grind ")).unwrap();
+        state.apply_signed(&sign(2_000, "Ranked grind")).unwrap();
+        state.apply_signed(&sign(3_000, "")).unwrap();
+        let log = state.audit_log();
+        assert_eq!(log.len(), 2, "a repeat changes nothing");
+        assert_eq!(log[0].kind, AuditKind::VoiceStatusSet);
+        assert_eq!(log[0].target.as_deref(), Some(voice.to_string().as_str()));
+        assert_eq!(log[0].label.as_deref(), Some("General"));
+        assert_eq!(log[0].detail.as_deref(), Some("Ranked grind"));
+        assert_eq!(log[1].detail, None);
+    }
+
+    #[test]
     fn a_moderator_deleting_someone_elses_message_is_logged_but_own_deletes_are_not() {
         let (mut state, channel, owner) = fixture();
         let user = join(&mut state, "nova");
@@ -565,6 +657,29 @@ mod tests {
     }
 
     #[test]
+    fn stage_speaker_changes_are_logged_with_their_direction() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let stage = Channel::new("Town Hall", ChannelKind::Stage, 9);
+        let stage_id = stage.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: stage }).unwrap();
+        let guest = join(&mut state, "guest");
+        let sign = |at, speaker| {
+            let event = ServerEvent::StageSet { server: sid, channel: stage_id, user: guest, speaker, by: owner };
+            SignedEvent::sign(sid, owner, at, event, &identity_for(owner))
+        };
+        assert_eq!(state.apply_signed(&sign(1_000, true)), Ok(true));
+        assert_eq!(state.apply_signed(&sign(2_000, true)), Ok(false));
+        assert_eq!(state.apply_signed(&sign(3_000, false)), Ok(true));
+        let log = state.audit_log();
+        assert_eq!(log.len(), 2, "a repeat changes nothing");
+        assert_eq!(log[0].kind, AuditKind::StageSpeaker);
+        assert_eq!(log[0].label.as_deref(), Some("guest"));
+        assert_eq!(log[0].detail.as_deref(), Some("speaker"));
+        assert_eq!(log[1].detail.as_deref(), Some("audience"));
+    }
+
+    #[test]
     fn a_channel_created_names_its_kind() {
         let (mut state, _, owner) = fixture();
         let sid = state.server.id;
@@ -572,6 +687,29 @@ mod tests {
         let signed = SignedEvent::sign(sid, owner, 1_000, ServerEvent::ChannelCreate { server: sid, channel: voice }, &identity_for(owner));
         state.apply_signed(&signed).unwrap();
         assert_eq!(state.audit_log()[0].detail.as_deref(), Some("voice"));
+    }
+
+    #[test]
+    fn forum_tags_and_moderator_retitles_are_logged_but_own_posts_are_not() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let forum = Channel::new("ideas", ChannelKind::Forum, 5);
+        let fid = forum.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: forum }).unwrap();
+        let member = join(&mut state, "poster");
+        let sign = |by: UserId, at: i64, event: ServerEvent| SignedEvent::sign(sid, by, at, event, &identity_for(by));
+        let tags = vec![crate::server::ForumTag { id: crate::ids::TagId::new(), name: "Bug".into(), emoji: None }];
+        state.apply_signed(&sign(owner, 1_000, ServerEvent::ForumTagsSet { server: sid, channel: fid, tags, by: owner })).unwrap();
+        assert_eq!((state.audit_log()[0].kind, state.audit_log()[0].detail.as_deref()), (AuditKind::ForumTags, Some("1")));
+        let root = crate::test_support::post(&state, fid, member, "body");
+        state.apply(ServerEvent::MessageCreate { message: root.clone() }).unwrap();
+        let post = |by: UserId, title: &str| ServerEvent::ForumPost { server: sid, channel: fid, message: root.id, title: title.into(), tags: vec![], by };
+        state.apply_signed(&sign(member, 2_000, post(member, "My post"))).unwrap();
+        state.apply_signed(&sign(member, 3_000, post(member, "My renamed post"))).unwrap();
+        assert_eq!(state.audit_log().len(), 1, "own posts and own edits stay out");
+        state.apply_signed(&sign(owner, 4_000, post(owner, "Tidier title"))).unwrap();
+        let entry = &state.audit_log()[1];
+        assert_eq!((entry.kind, entry.detail.as_deref(), entry.label.as_deref()), (AuditKind::ForumPostEdit, Some("Tidier title"), Some("ideas")));
     }
 
     #[test]

@@ -1,7 +1,9 @@
 pub mod catchup;
 pub mod dm;
 pub mod entry_key;
+pub mod entry_list;
 pub mod media;
+pub mod mirror;
 pub mod node;
 pub mod protocol;
 pub mod relays;
@@ -17,8 +19,11 @@ pub use catchup::{
 };
 pub use dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
 pub use entry_key::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ENTRY_KEY_ALPN};
+pub use mirror::{MirrorAsk, MirrorRequest, MirroredServer, MIRROR_ALPN};
 pub use media::{MediaHello, MediaPacket, MEDIA_ALPN};
-pub use node::{link_path, BlobFetcher, CommyNode, LinkPath, MediaChannel, MediaDialer, NetEvent, SharedCatchupStore, MEDIA_DIAL_TIMEOUT};
+#[cfg(not(wasm_browser))]
+pub use node::BlobFetcher;
+pub use node::{link_path, CommyNode, LinkPath, MediaChannel, MediaDialer, NetEvent, SharedCatchupStore, MEDIA_DIAL_TIMEOUT};
 pub use protocol::{Envelope, WirePayload, PROTOCOL_VERSION};
 pub use sealed::{SealError, SealKey};
 pub use ticket::{ServerTicket, TicketError};

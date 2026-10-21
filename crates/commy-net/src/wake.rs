@@ -62,11 +62,11 @@ impl WakeAcceptor {
             send.finish()?;
             anyhow::Ok(send)
         };
-        let send = tokio::time::timeout(WAKE_TIMEOUT, read).await.context("wake timed out")??;
+        let send = n0_future::time::timeout(WAKE_TIMEOUT, read).await.context("wake timed out")??;
         if self.admit(node, Instant::now()) {
             let _ = self.events.send(NetEvent::Wake { from: node });
         }
-        let _ = tokio::time::timeout(Duration::from_secs(5), send.stopped()).await;
+        let _ = n0_future::time::timeout(Duration::from_secs(5), send.stopped()).await;
         Ok(())
     }
 }
@@ -88,7 +88,7 @@ pub(crate) async fn send(
         anyhow::ensure!(byte[0] == WAKE_BYTE, "unexpected wake reply");
         anyhow::Ok(())
     };
-    tokio::time::timeout(WAKE_TIMEOUT, wake).await.context("wake timed out")?
+    n0_future::time::timeout(WAKE_TIMEOUT, wake).await.context("wake timed out")?
 }
 
 #[cfg(test)]

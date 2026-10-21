@@ -2,7 +2,7 @@
 
 const IS_TAURI = Boolean(window.__TAURI__);
 const invoke = IS_TAURI ? window.__TAURI__.core.invoke : mockInvoke;
-const discoverState = { open: false, q: "", category: null, cursor: null, entries: [], busy: false, request: 0 };
+const discoverState = { open: false, q: "", category: null, cursor: null, entries: [], busy: false, request: 0, host: "" };
 const discoveryState = { listing: null, dirty: false };
 
 window.addEventListener("error", e => {
@@ -43,20 +43,44 @@ const mock = {
   voice: { noise_cancellation: true, echo_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
 };
 
-function mockSearch({ serverId, terms, from, mentions, channelId }) {
+function mockSearchMatcher({ terms, from, mentions }, named) {
+  return (authorId, content) => {
+    if (from && authorId !== from) return false;
+    if (mentions && !(named && mentionsName(content, [named.name]))) return false;
+    const text = content.toLowerCase();
+    return terms.every(t => text.includes(t.toLowerCase()));
+  };
+}
+
+function mockPage(hits, offset) {
+  const total = hits.length;
+  const at = total ? Math.min(Math.max(0, offset || 0), Math.floor((total - 1) / 50) * 50) : 0;
+  return { total, offset: at, hits: hits.slice(at, at + 50) };
+}
+
+function mockSearch({ serverId, terms, from, mentions, channelId, offset }) {
   const server = mock.servers[serverId];
-  const named = server.members.find(m => m.id === mentions);
+  const hidden = mockChatRestricted(server, "read_history");
+  const matches = mockSearchMatcher({ terms, from, mentions }, server.members.find(m => m.id === mentions));
   const hits = server.channels
     .filter(c => holdsMessages(c) && (!channelId || c.id === channelId))
-    .flatMap(c => (mock.messages[c.id] || []).map(message => ({ channel: c.id, channel_name: c.name, message })))
-    .filter(({ message }) => {
-      const text = message.content.toLowerCase();
-      if (from && message.author_id !== from) return false;
-      if (mentions && !(named && mentionsName(message.content, [named.name]))) return false;
-      return terms.every(t => text.includes(t.toLowerCase()));
-    })
+    .flatMap(c => (hidden ? historyWindow(mock.messages[c.id] || [], (mock.channelOpens || {})[c.id]) : mock.messages[c.id] || []).map(message => ({ channel: c.id, channel_name: c.name, message })))
+    .filter(({ message }) => matches(message.author_id, message.content))
     .sort((a, b) => Date.parse(b.message.created_at) - Date.parse(a.message.created_at));
-  return { total: hits.length, hits: hits.slice(0, 50) };
+  return mockPage(hits, offset);
+}
+
+function mockSearchDms({ terms, from, mentions, userId, offset }) {
+  const contact = mock.dms[mentions];
+  const named = contact ? { name: contact.name } : mentions === "me" && mock.user ? { name: mock.user.username } : null;
+  const matches = mockSearchMatcher({ terms, from, mentions }, named);
+  const dms = Object.entries(mock.dms)
+    .filter(([user]) => !userId || user === userId)
+    .flatMap(([user, d]) => d.messages.filter(m => matches(m.from, m.content)).map(message => ({ kind: "dm", user, name: d.name, message })));
+  const groups = userId ? [] : Object.values(mock.servers).filter(s => s.group).flatMap(s => s.channels.filter(holdsMessages).flatMap(c =>
+    (mock.messages[c.id] || []).filter(m => matches(m.author_id, m.content)).map(message => ({ kind: "group", server: s.id, name: s.name, channel: c.id, message }))));
+  const hits = [...dms, ...groups].sort((a, b) => Date.parse(b.message.created_at) - Date.parse(a.message.created_at));
+  return mockPage(hits, offset);
 }
 
 function mockReadView(channelIds) {
@@ -167,6 +191,27 @@ function mockOgg(secs) {
   return out.buffer;
 }
 
+const MOCK_OPPONENT = "m1";
+let mockActivitySeq = 0;
+
+function mockActivityOpponent(server, channel, input) {
+  const activity = channel.activity;
+  if (activity.kind !== "tic_tac_toe" || !(channel.voice_user_ids || []).includes(MOCK_OPPONENT)) return;
+  const send = (payload, delay) => setTimeout(() => onActivityInput({ server: server.id, channel: channel.id, seq: ++mockActivitySeq, by: MOCK_OPPONENT, ...payload }), delay);
+  const run = activityUi.run;
+  if (input === "join" && activity.starter === MOCK_OPPONENT) {
+    const board = [1, 0, 0, 0, 2, 0, 0, 0, 1];
+    send({ input: { sync: { participants: ["me", "m2"], players: [MOCK_OPPONENT, "me"], board, playing: false, position: 0, at: 0 } } }, 300);
+    return;
+  }
+  if (activity.starter === "me" && run && run.players.length < 2 && !isParticipant(run, MOCK_OPPONENT)) send({ input: "join" }, 800);
+  if (input && input.move) {
+    const free = run ? run.board.map((c, i) => (c === 0 ? i : -1)).filter(i => i >= 0) : [];
+    if (free.length && !gameOver(run.board)) send({ input: { move: { cell: free[Math.floor(Math.random() * free.length)] } } }, 700);
+  }
+  if (input === "rematch") send({ input: { move: { cell: 4 } } }, 900);
+}
+
 function mockSeed() {
   const ch = (name, kind, topic) => ({
     id: crypto.randomUUID(), name, kind, topic: topic || null, voice_users: [],
@@ -184,14 +229,21 @@ function mockSeed() {
       ch("mod-lounge", "text", "For the moderators"),
       ch("Lounge", "voice"),
       ch("after-dark", "text", "Grown-up talk, after hours"),
+      ch("Town Hall", "stage"),
     ],
     members: [
-      { id: "m1", name: "ferris", presence: "online", custom_status: "heads down",
+      { id: "m1", name: "ferris", presence: "online", custom_status: "heads down", about: "Crab by day, raid lead by night.", profile_policy: "friends",
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
       { id: "m2", name: "nova", pronouns: "they / them", presence: "idle", custom_status: null, roles: ["r2"],
         activity: "Playing Portal 2", activity_cover: "co1rs4", activity_since: Math.floor(Date.now() / 1000) - 983 },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
-      { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
+      { id: "m5", name: "quill", presence: "offline", custom_status: null, about: "Only friends get to read this.", pronouns: "she / her", profile_policy: "friends" },
+      { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true, roles: ["r2"] },
+      { id: "m10", name: "Quotebook", presence: "offline", custom_status: null, bot: true },
+      { id: "m6", name: "ash", presence: "online", custom_status: "hosting tonight", roles: ["r2"] },
+      { id: "m7", name: "pip", presence: "online", custom_status: null },
+      { id: "m8", name: "lumen", presence: "idle", custom_status: null },
+      { id: "m9", name: "dot", presence: "online", custom_status: "lurking" },
     ],
   };
   server.roles = [
@@ -252,9 +304,26 @@ function mockSeed() {
   general.voice_since = [Math.floor(Date.now() / 1000) - 754];
   general.voice_muted = [true];
   general.voice_deafened = [false];
+  general.activity = { id: "mock-tic-tac-toe", kind: "tic_tac_toe", starter: "m1", started_at: Date.now() - 120e3 };
   server.members[0].voice_channel = general.id;
   server.members[0].voice_since = general.voice_since[0];
   server.members[0].voice_muted = true;
+  server.members[0].priority_speaker = true;
+  general.voice_status = "Ranked grind";
+  const hall = server.channels.find(c => c.kind === "stage");
+  const seated = [["m2", "nova", 1810], ["m6", "ash", 1790], ["m7", "pip", 640], ["m8", "lumen", 420], ["m9", "dot", 95]];
+  hall.voice_users = seated.map(([, name]) => name);
+  hall.voice_user_ids = seated.map(([id]) => id);
+  hall.voice_since = seated.map(([, , ago]) => Math.floor(Date.now() / 1000) - ago);
+  hall.voice_muted = seated.map(() => false);
+  hall.voice_deafened = seated.map(() => false);
+  hall.speakers = ["m2", "m6"];
+  hall.hands = ["m7"];
+  for (const [id, , ago] of seated) {
+    const member = server.members.find(m => m.id === id);
+    member.voice_channel = hall.id;
+    member.voice_since = Math.floor(Date.now() / 1000) - ago;
+  }
   server.members[0].tag = "RAID";
   server.members[0].tag_color = "9b7bff";
   server.members[0].color = "9b7bff";
@@ -282,6 +351,15 @@ function mockSeed() {
     ],
   };
   mock.reports = [{ id: "r1", server: server.id, channel: null, message: null, reporter: "m1", reporter_name: "ferris", reported: "m2", reported_name: "nova", reason: "spam", note: "Keeps posting invite links in every channel.", excerpt: "join my server https://example.com/invite", created_at: new Date().toISOString() }];
+  const nightNotes = ["build is green", "flaky voice test again", "shipped the overlay fix", "waiting on review"];
+  mock.dms.m3 = {
+    name: "sleepy",
+    messages: Array.from({ length: 64 }, (_, i) => ({
+      id: `dl${i}`, from: i % 3 === 2 ? "me" : "m3", from_name: i % 3 === 2 ? "You" : "sleepy",
+      content: `night log ${i + 1}: ${nightNotes[i % nightNotes.length]}`,
+      created_at: new Date(Date.now() - 3 * 86400e3 - (64 - i) * 5400e3).toISOString(), outgoing: i % 3 === 2,
+    })),
+  };
   mock.dms.m1 = {
     name: "ferris",
     messages: [
@@ -317,6 +395,14 @@ function mockSeed() {
       content: "Removed a message from sleepy: blocked word", created_at: new Date(Date.now() - 20e3).toISOString(), edited: false, attachments: [] },
   ];
   server.automod = { blocked_terms: ["free gifts", "scam*"], block_links: false, max_mentions: 5, burst: { messages: 5, seconds: 10 }, exempt_roles: ["r2"] };
+  server.commands = [{ bot: "m4", bot_name: "Tidy", commands: [
+    { name: "remind", description: "Remind a member about something later", options: [
+      { name: "who", description: "Who to remind", required: true, kind: "user" },
+      { name: "minutes", description: "How many minutes from now", required: true, kind: "integer" },
+      { name: "note", description: "What to say", required: false, kind: "string" },
+    ] },
+    { name: "roll", description: "Roll some dice", options: [{ name: "sides", description: "How many sides", required: false, kind: "integer" }] },
+  ] }];
   mock.messages[server.channels[1].id] = [
     { id: "g0", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
       content: "<sticker:party:party@mock>", created_at: new Date(Date.now() - 1200e3).toISOString(), edited: false, attachments: [] },
@@ -333,10 +419,55 @@ function mockSeed() {
     { id: "g3", channel: server.channels[1].id, author_id: "m1", author_name: "ferris",
       content: "", created_at: new Date(Date.now() - 300e3).toISOString(), edited: false,
       attachments: [{ filename: VOICE_MESSAGE_FILENAME, size_bytes: 61440, is_image: false, mime: VOICE_MESSAGE_MIME, blob: "voice@mock", provider: null }] },
+    { id: "g8", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
+      content: "raid starts in five, grab your potions", created_at: new Date(Date.now() - 240e3).toISOString(), edited: false, attachments: [], tts: true },
+    { id: "c1", channel: server.channels[1].id, author_id: "m2", author_name: "nova",
+      content: "/roll 20", created_at: new Date(Date.now() - 240e3).toISOString(), edited: false, attachments: [],
+      command: { bot: "m4", bot_name: "Tidy", name: "roll", options: { sides: "20" } } },
+    { id: "c2", channel: server.channels[1].id, author_id: "m4", author_name: "Tidy",
+      content: "nova rolled a 14 on a 20-sided die", created_at: new Date(Date.now() - 239e3).toISOString(), edited: false, attachments: [],
+      reply_to: "c1", reply_preview: { author_id: "m2", author_name: "nova", excerpt: "/roll 20" } },
   ];
+  mock.messages[server.channels[1].id].push(
+    { id: "vi1", channel: server.channels[1].id, author_id: "m2", author_name: "nova", content: "",
+      created_at: new Date(Date.now() - 240e3).toISOString(), edited: false, attachments: [], reactions: [],
+      voice_invite: { server: server.id, channel: server.channels[4].id, invite_link: null, server_name: server.name, channel_name: server.channels[4].name } },
+  );
+  mock.dms.m1.messages.push(
+    { id: "d5", from: "m1", from_name: "ferris", content: "", created_at: new Date(Date.now() - 500e3).toISOString(), outgoing: false,
+      voice_invite: { server: crypto.randomUUID(), channel: crypto.randomUUID(), invite_link: `https://commy.chat/i/SYNTH2V4W#${"s".repeat(43)}`, server_name: "Synth Lounge", channel_name: "Jam Room" } },
+  );
   mock.readMarks = { [server.channels[1].id]: { id: "g0", at: Date.now() - 1200e3, set: Date.now() - 1100e3 } };
   (mock.voiceClips ||= {})["voice@mock"] = 14;
   mock.listPins = { dms: ["m1"], channels: [{ server: server.id, channel: server.channels[1].id }] };
+  const g = server.channels[1].id;
+  const ref = (author_id, author_name, excerpt) => ({ author_id, author_name, excerpt });
+  mock.messages[g].push(
+    { id: "g7", channel: g, author_id: "m1", author_name: "ferris", content: "party time :ferris_wave:", created_at: new Date(Date.now() - 1100e3).toISOString(), edited: false, attachments: [],
+      reply_to: "g0", reply_preview: ref("m2", "nova", "Sticker") },
+    { id: "g3", channel: g, author_id: "m2", author_name: "nova", content: "that flick at the end :ferris:", created_at: new Date(Date.now() - 800e3).toISOString(), edited: false, attachments: [],
+      reply_to: "g1", reply_preview: ref("m1", "ferris", "clutch round from last night") },
+    { id: "g4", channel: g, author_id: "m1", author_name: "ferris", content: "pure luck, honestly", created_at: new Date(Date.now() - 700e3).toISOString(), edited: false, attachments: [],
+      reply_to: "g3", reply_preview: ref("m2", "nova", "that flick at the end :ferris:") },
+    { id: "g5", channel: g, author_id: "m3", author_name: "sleepy", content: "the water shader looks off on the east side", created_at: new Date(Date.now() - 500e3).toISOString(), edited: false, attachments: [],
+      reply_to: "g2", reply_preview: ref("m2", "nova", "full res screenshot of the new map") },
+    { id: "g6", channel: g, author_id: "m2", author_name: "nova", content: "known issue, the fix lands with the next patch", created_at: new Date(Date.now() - 400e3).toISOString(), edited: false, attachments: [],
+      reply_to: "g5", reply_preview: ref("m3", "sleepy", "the water shader looks off on the east side") },
+  );
+  server.channels[1].threads = [
+    { root: "g2", name: "Map feedback", archived: false, locked: false, by: "m2" },
+    { root: "g1", name: "Clip of the week", archived: false, locked: true, by: "m2" },
+    { root: "g0", name: null, archived: true, locked: false, by: "m2" },
+  ];
+  mock.saved = {
+    saved: [
+      { message: "x2", server: server.id, server_name: server.name, channel: c0, channel_name: "welcome", dm: null, dm_name: null, author_id: "m2", author_name: "nova", content: "No central servers, no paywall. Everything peer to peer.", attachment: null, created_at: mock.messages[c0][1].created_at, saved_at: Date.now() - 600e3 },
+      { message: "d4", server: null, server_name: null, channel: null, channel_name: null, dm: "m1", dm_name: "ferris", author_id: "m1", author_name: "ferris", content: "", attachment: "voice-fix-notes.txt", created_at: mock.dms.m1.messages[2].created_at, saved_at: Date.now() - 86400e3 },
+    ],
+    reminders: [
+      { id: "r-x1", due: Date.now() + 50 * 60e3, entry: { message: "x1", server: server.id, server_name: server.name, channel: c0, channel_name: "welcome", dm: null, dm_name: null, author_id: "m1", author_name: "ferris", content: "Welcome to Commy, a private P2P chat app.", attachment: null, created_at: mock.messages[c0][0].created_at } },
+    ],
+  };
   mock.pins = [
     { channel: c0, message: "x2", by: "m1", at: new Date(Date.now() - 900e3).toISOString() },
     { channel: c0, message: "x1", by: "m1", at: new Date(Date.now() - 3000e3).toISOString() },
@@ -349,6 +480,48 @@ function mockSeed() {
   ];
   mock.pins.push({ channel: news, message: "n1", by: "m1", at: new Date(Date.now() - 7000e3).toISOString() });
   server.awaited = 2;
+  const ideas = ch("ideas", "forum", "Pitch a feature, report a bug or ask a question");
+  ideas.tags = [
+    { id: "ft1", name: "Feature", emoji: "\u{1F4A1}" },
+    { id: "ft2", name: "Bug", emoji: "\u{1F41B}" },
+    { id: "ft3", name: "Question", emoji: "\u2753" },
+    { id: "ft4", name: "Voice", emoji: null },
+  ];
+  server.channels.push(ideas);
+  const post = (id, author, name, content, minutesAgo, replyTo = null) => ({
+    id, channel: ideas.id, author_id: author, author_name: name, content, created_at: new Date(Date.now() - minutesAgo * 60e3).toISOString(),
+    edited: false, attachments: [], reactions: [], reply_to: replyTo,
+  });
+  mock.messages[ideas.id] = [
+    post("f1", "m2", "nova", "It would be great to pick a **different sound** for each channel so raid pings stand out from chatter.\n\n- short clip per channel\n- falls back to the server sound", 2880),
+    post("f1a", "m1", "ferris", "yes, and let the soundboard clips be picked too", 2700, "f1"),
+    post("f1b", "m3", "sleepy", "as long as there is an off switch", 1500, "f1a"),
+    post("f2", "m1", "ferris", "When two people share a screen in the same voice channel the second stream shows the first person's name until I click away. Windows build, both on the latest version.", 1440),
+    post("f2a", "m2", "nova", "I can reproduce this. Looks like the label only updates on the first frame.", 1380, "f2"),
+    post("f3", "m3", "sleepy", "Is there a way to keep the overlay on a second monitor? Mine always lands on the game screen.", 600),
+    post("f3a", "me", mock.user ? mock.user.username : "you", "Not yet, the overlay follows the game window. A corner picker per monitor is on the list.", 540, "f3"),
+    post("f3b", "m3", "sleepy", "thanks, that works for now", 90, "f3a"),
+    post("f4", "me", mock.user ? mock.user.username : "you", "Noise cancellation eats the first syllable when I start talking after a long pause. Toggling it off and on fixes it until the next pause.", 240),
+    post("f5", "m2", "nova", "Can we get a quick poll for picking raid nights? Reactions work but counting them is a chore.", 45),
+  ];
+  mock.forumPosts = { ...(mock.forumPosts || {}), [ideas.id]: [
+    { message: "f1", title: "Per-channel notification sounds", tags: ["ft1"], author: "m2" },
+    { message: "f2", title: "Second screen share shows the wrong name", tags: ["ft2", "ft4"], author: "m1" },
+    { message: "f3", title: "Overlay on a second monitor?", tags: ["ft3"], author: "m3" },
+    { message: "f4", title: "Noise cancellation clips the first word", tags: ["ft2", "ft4"], author: "me" },
+    { message: "f5", title: "Polls for raid nights", tags: ["ft1"], author: "m2" },
+  ] };
+}
+
+function mockMemberName(id) {
+  if (id === "me") return mock.user ? mock.user.username : "you";
+  const member = Object.values(mock.servers).flatMap(s => s.members).find(m => m.id === id);
+  return member ? member.name : "Someone";
+}
+
+function mockSavedStore() {
+  mock.saved ||= { saved: [], reminders: [] };
+  return mock.saved;
 }
 
 function mockPinViews(channelId) {
@@ -452,6 +625,35 @@ function mockTemplateFromCode(code) {
   }
 }
 
+function mockSafety() {
+  return mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true, profile_policy: "everyone" });
+}
+
+function mockFriends() {
+  return mock.friends || (mock.friends = {
+    friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }],
+    incoming: [{ id: "m2", name: "nova", note: "We were in the Hangout call last night, the one where we planned Friday's raid" }],
+    outgoing: [],
+  });
+}
+
+function mockProfileFor(member) {
+  const friend = mockFriends().friends.some(f => f.id === member.id);
+  return publicProfile(member, canSeeProfile(member.profile_policy, { friend, sharesServer: true }));
+}
+
+function mockChatRestricted(server, field) {
+  return mock.plainMember && Boolean(server.chat_restricted && server.chat_restricted[field]);
+}
+
+function mockServerOfChannel(channelId) {
+  return Object.values(mock.servers).find(s => s.channels.some(c => c.id === channelId));
+}
+
+function mockCanSetVoiceStatus(channel) {
+  return channel.kind === "voice" && (!mock.plainMember || (channel.voice_user_ids || []).includes("me"));
+}
+
 async function mockInvoke(cmd, args = {}) {
   switch (cmd) {
     case "get_user": return mock.user;
@@ -485,11 +687,11 @@ async function mockInvoke(cmd, args = {}) {
     case "get_server": {
       const s = mock.servers[args.serverId];
       if (!s) throw "unknown server";
-      const members = s.members.map(m => ({ username: m.username || m.name, nickname: m.nickname || null, ...m }));
+      const members = s.members.map(m => mockProfileFor({ username: m.username || m.name, nickname: m.nickname || null, priority_speaker: false, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
         const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
-        const vc = s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
+        const vc = s.channels.find(c => isVoiceKind(c.kind) && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
           Object.assign(me, { voice_channel: vc.id, voice_since: vc.voice_since[at], voice_muted: vc.voice_muted[at], voice_deafened: vc.voice_deafened[at] });
@@ -498,24 +700,30 @@ async function mockInvoke(cmd, args = {}) {
       }
       return {
         ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
-        game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: true, onboarding: s.onboarding || null,
+        game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: !mock.plainMember, onboarding: s.onboarding || null,
+        chat_restricted: { embed_links: false, read_history: false, create_threads: false, send_polls: false, create_events: false, ...(s.chat_restricted || {}) },
+        can_embed_links: !mockChatRestricted(s, "embed_links"), can_read_history: !mockChatRestricted(s, "read_history"), can_create_threads: !mockChatRestricted(s, "create_threads"),
+        can_send_polls: !mockChatRestricted(s, "send_polls"), can_create_events: !mockChatRestricted(s, "create_events"),
         channels: s.channels
           .map((c, i) => {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
             const sees = admits(c.view_roles);
             const sendable = admits(c.send_roles);
-            return { parent: null, position: i, user_limit: 0, slow_mode: 0, pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], ...c, can_view: sees, can_send: sees && sendable, key_ready: sees };
+            const view = { parent: null, position: i, user_limit: 0, slow_mode: 0, tags: [], threads: [], speakers: [], hands: [], pins: (mock.pins || []).filter(p => p.channel === c.id).length, view_roles: [], send_roles: [], voice_status: null, ...c, can_view: sees, can_send: sees && sendable, key_ready: sees, can_set_voice_status: mockCanSetVoiceStatus(c) };
+            view.posts = c.kind === "forum" && sees ? forumPostViews((mock.forumPosts || {})[c.id] || [], mock.messages[c.id] || [], mockMemberName) : [];
+            return view;
           })
           .filter(c => c.can_view || !mock.plainMember),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
+        can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
         stickers: s.stickers || [], emoticons: s.emoticons || [], stickers_shareable: !!s.stickers_shareable, emoticons_shareable: !!s.emoticons_shareable,
         add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
         can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
         can_add_emoticons: !mock.plainMember || !(s.add_restricted || {}).emoticons, can_use_external: s.can_use_external !== false,
-        can_mute: !mock.plainMember, can_move: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_manage_nicknames: !mock.plainMember, can_change_nickname: true, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_move: !mock.plainMember, can_manage_stage: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_manage_nicknames: !mock.plainMember, can_change_nickname: true, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
@@ -571,6 +779,7 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "browse_directory": {
+      if (mock.directoryMissing) return { host: "commy.chat", next_cursor: null, entries: [], available: false };
       const words = normalizeDirectorySearch(args.q).split(" ").filter(Boolean);
       const rows = (mock.directory || [])
         .filter(l => !args.category || l.category === args.category)
@@ -578,7 +787,7 @@ async function mockInvoke(cmd, args = {}) {
         .sort((a, b) => b.members - a.members || a.name.localeCompare(b.name));
       const start = Number(args.cursor) || 0;
       const page = rows.slice(start, start + 24);
-      return { host: "commy.chat", next_cursor: start + 24 < rows.length ? String(start + 24) : null,
+      return { host: "commy.chat", available: true, next_cursor: start + 24 < rows.length ? String(start + 24) : null,
         entries: page.map(l => ({ code: l.code, name: l.name, description: l.description, category: l.category, members: l.members, link: `https://commy.chat/i/${l.code}#${l.key}` })) };
     }
     case "publish_listing": {
@@ -609,21 +818,47 @@ async function mockInvoke(cmd, args = {}) {
         expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock",
         background: background ? mock.serverImages?.[background] || null : null };
     }
+    case "open_channel": (mock.channelOpens ||= {})[args.channelId] = Date.now(); return null;
     case "get_messages": {
-      const all = (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+      const kept = (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
+      const historyOwner = mockServerOfChannel(args.channelId);
+      const hidden = historyOwner && mockChatRestricted(historyOwner, "read_history");
+      const all = hidden ? historyWindow(kept, (mock.channelOpens || {})[args.channelId]) : kept;
       if (!args.around) return all.slice(-100);
       const at = all.findIndex(m => m.id === args.around);
-      if (at === -1) throw "that message is no longer on this device";
+      if (at === -1) throw hidden && kept.some(m => m.id === args.around) ? "you can see only new messages in this channel" : "that message is no longer on this device";
       return all.slice(Math.max(0, at - 50), at + 51);
     }
     case "search_messages": return mockSearch(args);
+    case "search_dms": return mockSearchDms(args);
     case "get_pins": return mockPinViews(args.channelId || null);
+    case "saved_list": return mockSavedStore();
+    case "saved_set": {
+      const store = mockSavedStore();
+      store.saved = store.saved.filter(s => s.message !== args.entry.message);
+      if (args.saved) store.saved.unshift({ ...args.entry, saved_at: Date.now() });
+      return store;
+    }
+    case "reminder_set": {
+      const store = mockSavedStore();
+      if (args.due <= Date.now()) throw "pick a time that is still ahead";
+      store.reminders = store.reminders.filter(r => r.entry.message !== args.entry.message);
+      store.reminders.push({ id: `${args.due}-${args.entry.message}`, due: args.due, entry: args.entry });
+      store.reminders.sort((a, b) => a.due - b.due);
+      return store;
+    }
+    case "reminder_cancel": {
+      const store = mockSavedStore();
+      store.reminders = store.reminders.filter(r => r.id !== args.id);
+      return store;
+    }
     case "pin_message": {
       mock.pins = (mock.pins || []).filter(p => p.message !== args.messageId);
       if (args.pinned) mock.pins.push({ channel: args.channelId, message: args.messageId, by: "me", at: new Date().toISOString() });
       return null;
     }
     case "send_poll": {
+      if (mockChatRestricted(mockServerOfChannel(args.channelId) || {}, "send_polls")) throw "you do not have permission to create polls here";
       const closes_at = args.hours ? new Date(Date.now() + args.hours * 3600e3).toISOString() : null;
       const msg = {
         id: crypto.randomUUID(), channel: args.channelId, author_id: "me", author_name: mock.user.username, content: "",
@@ -663,6 +898,17 @@ async function mockInvoke(cmd, args = {}) {
       c.kind = args.kind;
       return null;
     }
+    case "set_thread": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      const root = (mock.messages[args.channelId] || []).find(m => m.id === args.rootId);
+      if (!root) throw "that message no longer exists";
+      if (mock.plainMember && root.author_id !== "me") throw "only the person who started a thread or a moderator can change it";
+      if (!(c.threads || []).some(t => t.root === args.rootId) && mockChatRestricted(mock.servers[args.serverId], "create_threads")) throw "you do not have permission to start threads here";
+      const name = (args.name || "").replace(/\s+/g, " ").trim() || null;
+      c.threads = (c.threads || []).filter(t => t.root !== args.rootId);
+      if (name || args.archived || args.locked) c.threads.push({ root: args.rootId, name, archived: Boolean(args.archived), locked: Boolean(args.locked), by: "me" });
+      return null;
+    }
     case "send_message": {
       const chan = Object.values(mock.servers).flatMap(s => s.channels).find(c => c.id === args.channelId);
       if (chan && chan.kind === "announcement" && mock.plainMember) throw "only members allowed to post announcements can write in this channel";
@@ -672,13 +918,30 @@ async function mockInvoke(cmd, args = {}) {
         const left = Math.ceil((last + chan.slow_mode * 1000 - Date.now()) / 1000);
         if (left > 0) throw `slow mode is on here: you can send again in ${left}s`;
       }
+      if (chan && args.replyTo) {
+        const all = mock.messages[args.channelId] || [];
+        const byId = new Map(all.map(m => [m.id, m]));
+        const parent = byId.get(args.replyTo);
+        const root = parent ? threadRootOf(parent, byId) : args.replyTo;
+        const thread = (chan.threads || []).find(t => t.root === root);
+        if (thread && thread.locked && mock.plainMember) throw "that thread is locked";
+        if (thread) thread.archived = false;
+      }
+      if (args.tts && mock.plainMember && Object.values(mock.servers).some(s => s.tts_restricted && s.channels.includes(chan))) throw "you do not have permission to send text-to-speech messages here";
       const msg = {
         id: crypto.randomUUID(), channel: args.channelId, author_id: "me",
         author_name: mock.user.username, content: args.content,
         created_at: new Date().toISOString(), edited: false, attachments: [], reactions: [],
+        tts: Boolean(args.tts),
         reply_to: args.replyTo || null,
         reply_preview: (() => { const o = (mock.messages[args.channelId] || []).find(m => m.id === args.replyTo); return o ? { author_id: o.author_id, author_name: o.author_name, excerpt: o.content.slice(0, 120) } : null; })(),
       };
+      if (args.command) {
+        const server = Object.values(mock.servers).find(s => s.channels.some(c => c.id === args.channelId));
+        const group = ((server && server.commands) || []).find(g => g.bot === args.command.bot);
+        if (!group || !group.commands.some(c => c.name === args.command.command)) throw "that bot has no such command, or an option does not fit";
+        msg.command = { bot: args.command.bot, bot_name: group.bot_name, name: args.command.command, options: args.command.options || {} };
+      }
       (mock.messages[args.channelId] ||= []).push(msg);
       return msg;
     }
@@ -703,17 +966,85 @@ async function mockInvoke(cmd, args = {}) {
       const s = mock.servers[args.serverId];
       if (!s) return null;
       for (const c of s.channels) {
-        if (c.kind !== "voice") continue;
+        if (!isVoiceKind(c.kind)) continue;
         const at = (c.voice_user_ids || []).indexOf("me");
         if (at >= 0) for (const k of ["voice_users", "voice_user_ids", "voice_since", "voice_muted", "voice_deafened"]) (c[k] || []).splice(at, 1);
+        if (at >= 0 && !(c.voice_user_ids || []).length) c.voice_status = null;
+        c.hands = (c.hands || []).filter(id => id !== "me");
+        if (c.kind === "stage") c.speakers = (c.speakers || []).filter(id => id !== "me");
         if (c.id === args.channelId) {
           (c.voice_user_ids ||= []).push("me");
           (c.voice_since ||= []).push(Math.floor(Date.now() / 1000));
           (c.voice_muted ||= []).push(mock.voice.muted);
           (c.voice_deafened ||= []).push(mock.voice.deafened);
           c.voice_users.push(mock.user.display_name || mock.user.username);
+          if (c.kind === "stage" && !mock.plainMember) c.speakers.push("me");
         }
       }
+      return null;
+    }
+    case "voice_channel_presence": {
+      const s = mock.servers[args.serverId];
+      if (!s) return null;
+      const c = s.channels.find(c => c.id === args.channelId);
+      if (!c) throw "that voice channel is gone";
+      const ids = c.voice_user_ids || [];
+      return { server_name: s.name, channel_name: c.name, user_limit: c.user_limit || 0, can_view: true, users: (c.voice_users || []).map((name, i) => ({ id: ids[i] || null, name })) };
+    }
+    case "send_voice_invite":
+    case "send_dm_voice_invite": {
+      const s = mock.servers[args.serverId];
+      const c = s && s.channels.find(c => c.id === args.channelId);
+      if (!c || c.kind !== "voice") throw "that is not a voice channel";
+      const voice_invite = { server: s.id, channel: c.id, invite_link: null, server_name: s.name, channel_name: c.name };
+      if (cmd === "send_voice_invite") {
+        const msg = { id: crypto.randomUUID(), channel: args.toChannelId, author_id: "me", author_name: mock.user.username, content: "",
+          created_at: new Date().toISOString(), edited: false, attachments: [], reactions: [], voice_invite };
+        (mock.messages[args.toChannelId] ||= []).push(msg);
+        return msg;
+      }
+      const dm = mock.dms[args.userId];
+      if (!dm) throw "no such conversation";
+      if (!s.group && !s.members.some(m => m.id === args.userId)) voice_invite.invite_link = `https://commy.chat/i/KQ7M3N4P#${"q".repeat(43)}`;
+      const sent = { id: crypto.randomUUID(), from: "me", from_name: mock.user.username, content: "", created_at: new Date().toISOString(),
+        outgoing: true, pending: false, reply_to: null, reply_preview: null, reactions: [], attachments: [], voice_invite };
+      dm.messages.push(sent);
+      return sent;
+    }
+    case "set_stage_speaker": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      if (!c || c.kind !== "stage") throw "that is not a stage channel";
+      c.speakers = (c.speakers || []).filter(id => id !== args.userId);
+      if (args.speaker) {
+        c.speakers.push(args.userId);
+        c.hands = (c.hands || []).filter(id => id !== args.userId);
+      }
+      return null;
+    }
+    case "raise_hand": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.kind === "stage" && (ch.voice_user_ids || []).includes("me"));
+      if (!c) throw "you are not in a stage channel here";
+      if (args.raised && (c.speakers || []).includes("me")) throw "you already have the floor";
+      c.hands = (c.hands || []).filter(id => id !== "me");
+      if (args.raised) c.hands.push("me");
+      return null;
+    }
+    case "set_activity": {
+      const s = mock.servers[args.serverId];
+      const channel = s && s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
+      if (!channel) throw "join a voice channel first";
+      if (args.activity && channel.activity && channel.activity.id !== args.activity.id && channel.activity.starter !== "me" && mock.plainMember) {
+        throw "another activity is already running in this channel";
+      }
+      if (args.activity) channel.activity = args.activity;
+      else delete channel.activity;
+      return null;
+    }
+    case "send_activity_input": {
+      const s = mock.servers[args.serverId];
+      const channel = s && s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
+      if (!channel || !channel.activity) throw "nothing is running in this channel";
+      mockActivityOpponent(s, channel, args.input);
       return null;
     }
     case "list_dm_threads":
@@ -847,9 +1178,12 @@ async function mockInvoke(cmd, args = {}) {
         mock.user.banner = null;
       }
       return mock.user;
-    case "rename_server":
+    case "rename_server": {
       mock.servers[args.serverId].name = args.name;
+      const listing = (mock.listings || {})[args.serverId];
+      if (listing) mock.directory = (mock.directory || []).map(l => l.code === listing.code ? { ...l, name: args.name } : l);
       return null;
+    }
     case "create_channel":
       mock.servers[args.serverId].channels.push({
         id: crypto.randomUUID(), name: args.name, kind: args.kind, topic: null, voice_users: [],
@@ -877,7 +1211,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_channel_sensitive": {
       const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
-      if (!holdsMessages(c)) throw "only text channels can be age-restricted";
+      if (!holdsMessages(c)) throw "only text and forum channels can be age-restricted";
       c.sensitive = Boolean(args.sensitive);
       return null;
     }
@@ -1021,13 +1355,15 @@ async function mockInvoke(cmd, args = {}) {
     case "is_mobile_app": return new URLSearchParams(location.search).has("mobile");
     case "set_role_access": {
       const srv = mock.servers[args.serverId];
-      const perm = { files: "attach_files", emojis: "add_emojis", stickers: "add_stickers", emoticons: "add_emoticons" }[args.access];
-      if (args.access === "files") srv.uploads_restricted = args.restricted;
+      const chat = EVERYONE_CHAT_ACCESS.find(spec => spec.key === args.access);
+      const perm = chat ? chat.permission : { files: "attach_files", emojis: "add_emojis", stickers: "add_stickers", emoticons: "add_emoticons" }[args.access];
+      if (chat) srv.chat_restricted = { ...(srv.chat_restricted || {}), [chat.field]: args.restricted };
+      else if (args.access === "files") srv.uploads_restricted = args.restricted;
       else srv.add_restricted = { ...(srv.add_restricted || {}), [args.access]: args.restricted };
       for (const r of srv.roles || []) {
         const has = (r.permissions || []).includes(perm);
-        const want = args.restricted && args.roleIds.includes(r.id);
-        if (args.restricted && want !== has) r.permissions = want ? [...(r.permissions || []), perm] : r.permissions.filter(x => x !== perm);
+        const want = chat ? args.restricted && !args.roleIds.includes(r.id) : args.restricted && args.roleIds.includes(r.id);
+        if ((chat || args.restricted) && want !== has) r.permissions = want ? [...(r.permissions || []), perm] : r.permissions.filter(x => x !== perm);
       }
       return null;
     }
@@ -1081,6 +1417,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "save_event": {
       const s = mock.servers[args.serverId];
+      if (!args.eventId && mockChatRestricted(s, "create_events")) throw "you do not have permission to create events";
       s.events = (s.events || []).filter(e => e.id !== args.eventId);
       const channel = s.channels.find(c => c.id === args.channelId);
       s.events.push({ id: args.eventId || crypto.randomUUID(), title: args.title, description: args.description, start: args.start, end: args.end,
@@ -1106,15 +1443,40 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_channel_limit": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).user_limit = args.limit; return null;
     case "set_channel_slow_mode": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).slow_mode = args.seconds; return null;
+    case "set_voice_status": mock.servers[args.serverId].channels.find(c => c.id === args.channelId).voice_status = cleanVoiceStatus(args.text) || null; return null;
+    case "set_forum_tags": {
+      const c = mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId);
+      c.tags = args.tags.map(t => ({ id: t.id || crypto.randomUUID(), name: t.name, emoji: t.emoji || null }));
+      for (const p of (mock.forumPosts || {})[c.id] || []) p.tags = p.tags.filter(t => c.tags.some(k => k.id === t));
+      return null;
+    }
+    case "post_forum": {
+      if (mock.plainMember && mock.servers[args.serverId].channels.find(ch => ch.id === args.channelId).send_roles?.length) throw "only some roles can send messages in this channel";
+      const msg = {
+        id: crypto.randomUUID(), channel: args.channelId, author_id: "me", author_name: mock.user.username, content: args.content,
+        created_at: new Date().toISOString(), edited: false, attachments: [], reactions: [], reply_to: null,
+      };
+      (mock.messages[args.channelId] ||= []).push(msg);
+      ((mock.forumPosts ||= {})[args.channelId] ||= []).push({ message: msg.id, title: args.title, tags: [...args.tags], author: "me" });
+      return msg;
+    }
+    case "edit_forum_post": {
+      const p = ((mock.forumPosts || {})[args.channelId] || []).find(x => x.message === args.messageId);
+      if (!p) throw "that post no longer exists";
+      if (p.author !== "me" && mock.plainMember) throw "you can only change your own posts";
+      p.title = args.title;
+      p.tags = [...args.tags];
+      return null;
+    }
     case "update_role": {
       const r = (mock.servers[args.serverId].roles || []).find(x => x.id === args.roleId);
       Object.assign(r, { name: args.name, color: args.color, self_assignable: args.selfAssignable, hoist: !!args.hoist, tag: args.tag, mentionable: Boolean(args.mentionable) });
       if (args.permissions) r.permissions = args.permissions;
       return null;
     }
-    case "list_friends": return mock.friends || { friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] };
+    case "list_friends": return mockFriends();
     case "friend_action": {
-      const f = mock.friends || (mock.friends = { friends: [{ id: "m1", name: "ferris" }, { id: "m3", name: "sleepy" }], incoming: [{ id: "m2", name: "nova" }], outgoing: [] });
+      const f = mockFriends();
       const name = (Object.values(mock.servers)[0].members.find(m => m.id === args.userId) || { name: "Someone" }).name;
       f.incoming = f.incoming.filter(x => x.id !== args.userId);
       if (args.action === "accept") f.friends.push({ id: args.userId, name });
@@ -1238,21 +1600,22 @@ async function mockInvoke(cmd, args = {}) {
       return s;
     }
     case "get_safety": {
-      const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
+      const s = mockSafety();
       return { ...s, blocked: s.blocked.map(id => ({ id, name: (Object.values(mock.servers)[0].members.find(m => m.id === id) || { name: "Someone" }).name })) };
     }
     case "set_blocked": {
-      const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
+      const s = mockSafety();
       s.blocked = s.blocked.filter(id => id !== args.userId);
       if (args.blocked) s.blocked.push(args.userId);
       return null;
     }
     case "set_dm_settings": {
-      const s = mock.safety || (mock.safety = { blocked: [], dm_policy: "everyone", spam_filter: true });
+      const s = mockSafety();
       s.dm_policy = args.policy;
       s.spam_filter = args.spamFilter;
       return null;
     }
+    case "set_profile_privacy": mockSafety().profile_policy = args.policy; return null;
     case "accept_dm_request": if (mock.dms[args.userId]) mock.dms[args.userId].kind = "inbox"; return null;
     case "decline_dm_request": delete mock.dms[args.userId]; return null;
     case "report_user": console.info("report", args); return null;
@@ -1347,6 +1710,7 @@ async function mockInvoke(cmd, args = {}) {
     case "note_user_activity": return null;
     case "get_attachment_video": throw "this feature needs the desktop app";
     case "get_attachment_preview":
+    case "get_profile_image":
       if (mock.avatars && mock.avatars[args.blob]) return mock.avatars[args.blob];
       throw "this feature needs the desktop app";
     default: throw `unknown command ${cmd}`;
@@ -1371,6 +1735,9 @@ const ICONS = {
   headsetOff: "M12 4a7 7 0 0 0-5.2 2.3L5.4 4.9A9 9 0 0 1 21 12v7c0 .3-.1.6-.2.9L19 18.1V14h-3v1.1L8.2 7.7A7 7 0 0 1 19 13v-1a7 7 0 0 0-7-7zM3.3 3 2 4.3l1.7 1.7A9 9 0 0 0 3 12v7a2 2 0 0 0 2 2h3v-8H5v-1c0-1.2.3-2.4.9-3.4L19.7 21 21 19.7z",
   chat: "M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-2 12H6v-2h12zm0-3H6V9h12zm0-3H6V6h12z",
   plus: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z",
+  forum: "M4 3h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2v4h16V5H4zm0 8h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2zm0 2v4h16v-4H4zm2-9h5v2H6V6zm0 10h8v2H6v-2z",
+  grid: "M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h8v8h-8v-8zm2 2v4h4v-4h-4z",
+  list: "M3 5h2v2H3V5zm4 0h14v2H7V5zM3 11h2v2H3v-2zm4 0h14v2H7v-2zM3 17h2v2H3v-2zm4 0h14v2H7v-2z",
   screen: "M20 3H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h5v2H7v2h10v-2h-2v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 13H4V5h16zm-9-2 5-3.5L11 7z",
   screenOff: "M21 16V5a2 2 0 0 0-2-2H6.8l2 2H19v10.2zM2.4 2.1 1.1 3.4 3 5.3V16a2 2 0 0 0 2 2h5v2H8v2h8v-2h-2v-2h3.7l3 3 1.3-1.3zM5 16V7.3l8.7 8.7z",
   hangup: "M12 9c-1.6 0-3.1.3-4.6.7v3.1c0 .4-.2.7-.6.9-1 .5-1.9 1.1-2.6 1.8a1 1 0 0 1-1.4 0L.3 13.1a1 1 0 0 1 0-1.4C3.3 8.8 7.5 7 12 7s8.7 1.8 11.7 4.7a1 1 0 0 1 0 1.4l-2.5 2.5a1 1 0 0 1-1.4 0c-.8-.7-1.6-1.3-2.6-1.8a1 1 0 0 1-.6-.9V9.7C15.1 9.3 13.6 9 12 9z",
@@ -1383,6 +1750,8 @@ const ICONS = {
   trash: "M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z",
   eyeOff: "M12 7a5 5 0 0 1 5 5 4.9 4.9 0 0 1-.36 1.83l2.92 2.92A11.8 11.8 0 0 0 22.99 12 11.83 11.83 0 0 0 11.99 4.5a11.6 11.6 0 0 0-4 .7l2.17 2.16A4.9 4.9 0 0 1 12 7zM2 4.27l2.28 2.28.46.46A11.8 11.8 0 0 0 1 12a11.82 11.82 0 0 0 15.4 6.66l.43.42L19.73 22 21 20.73 3.27 3zM7.53 9.8l1.55 1.55A2.8 2.8 0 0 0 9 12a3 3 0 0 0 3 3 2.8 2.8 0 0 0 .65-.08l1.55 1.55A5 5 0 0 1 7 12a4.9 4.9 0 0 1 .53-2.2zm4.31-.78 3.15 3.15.02-.16a3 3 0 0 0-3-3z",
   thread: "M4 4h16v12H5.17L4 17.17zm0-2a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm2 4h12v2H6zm0 4h9v2H6z",
+  lock: "M7 8h1V6a4 4 0 0 1 8 0v2h1a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2zm3 0h4V6a2 2 0 0 0-4 0zm-3 2v9h10v-9zm5 2.5a1.5 1.5 0 0 1 1.5 1.5 1.5 1.5 0 0 1-1.5 1.5 1.5 1.5 0 0 1-1.5-1.5 1.5 1.5 0 0 1 1.5-1.5z",
+  archive: "M3 4h18v4H3zm2 2v2h14V6zM4 8h16v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zm2 2v10h12V10zm3 2v2h6v-2z",
   reply: "M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z",
   smilePlus: "M20 4V2h-2v2h-2v2h2v2h2V6h2V4zM12 20a8 8 0 0 1 0-16 7.9 7.9 0 0 1 2 .26V2.2A10 10 0 1 0 21.8 10h-2.06A7.9 7.9 0 0 1 20 12a8 8 0 0 1-8 8zm-3.5-9A1.5 1.5 0 1 0 7 9.5 1.5 1.5 0 0 0 8.5 11zm7 0A1.5 1.5 0 1 0 14 9.5 1.5 1.5 0 0 0 15.5 11zm-8 3a5 5 0 0 0 9 0z",
   play: "M8 5v14l11-7z",
@@ -1429,6 +1798,14 @@ const ICONS = {
   steam: "M11.979 0C5.678 0 .511 4.86.022 11.037l6.432 2.658c.545-.371 1.203-.59 1.912-.59.063 0 .125.004.188.006l2.861-4.142V8.91c0-2.495 2.028-4.524 4.524-4.524 2.494 0 4.524 2.031 4.524 4.527s-2.03 4.525-4.524 4.525h-.105l-4.076 2.911c0 .052.004.105.004.159 0 1.875-1.515 3.396-3.39 3.396-1.635 0-3.016-1.173-3.331-2.727L.436 15.27C1.862 20.307 6.486 24 11.979 24c6.627 0 11.999-5.373 11.999-12S18.605 0 11.979 0zM7.54 18.21l-1.473-.61c.262.543.714.999 1.314 1.25 1.297.539 2.793-.076 3.332-1.375.263-.63.264-1.319.005-1.949s-.75-1.121-1.377-1.383c-.624-.26-1.29-.249-1.878-.03l1.523.63c.956.4 1.409 1.5 1.009 2.455-.397.957-1.497 1.41-2.454 1.012H7.54zm11.415-9.303c0-1.662-1.353-3.015-3.015-3.015-1.665 0-3.015 1.353-3.015 3.015 0 1.665 1.35 3.015 3.015 3.015 1.663 0 3.015-1.35 3.015-3.015zm-5.273-.005c0-1.252 1.013-2.266 2.265-2.266 1.249 0 2.266 1.014 2.266 2.266 0 1.251-1.017 2.265-2.266 2.265-1.253 0-2.265-1.014-2.265-2.265z",
   warning: "M12 5.99 19.53 19H4.47L12 5.99M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v4h2v-4z",
   openExternal: "M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3z",
+  bookmark: "M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2zm0 15-5-2.18L7 18V5h10z",
+  bookmarkOn: "M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z",
+  bell: "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z",
+  stage: "M11 2h2v3.5h-2zM9 6h6v1.6H9zM4 8.6h16v2.2H4zM6.2 12h11.6l1.2 10H5zM8.6 14 7.9 20h8.2l-.7-6z",
+};
+
+const STROKE_ICONS = {
+  hand: "M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15",
 };
 
 function svgIcon(name, size = 20) {
@@ -1439,10 +1816,23 @@ function svgIcon(name, size = 20) {
   svg.setAttribute("height", size);
   svg.setAttribute("aria-hidden", "true");
   const path = document.createElementNS(ns, "path");
-  path.setAttribute("fill", "currentColor");
-  path.setAttribute("d", ICONS[name]);
+  if (STROKE_ICONS[name]) {
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "2");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    path.setAttribute("d", STROKE_ICONS[name]);
+  } else {
+    path.setAttribute("fill", "currentColor");
+    path.setAttribute("d", ICONS[name]);
+  }
   svg.appendChild(path);
   return svg;
+}
+
+function voiceKindIcon(kind, size = 18) {
+  return svgIcon(kind === "stage" ? "stage" : "speaker", size);
 }
 
 function setIcon(button, name, size = 20) {
@@ -1487,6 +1877,22 @@ function selectSettingsTab(id, tab) {
   if (tab === "voice") prepareAvatarStage();
 }
 
+function hideEmptyNavGroups(layer) {
+  let group = null;
+  let shown = false;
+  const settle = () => group && group.classList.toggle("hidden", !shown);
+  for (const item of layer.querySelector(".settings-nav-inner").children) {
+    if (item.classList.contains("settings-nav-group") || item.classList.contains("settings-nav-sep")) {
+      settle();
+      group = item.classList.contains("settings-nav-group") ? item : null;
+      shown = false;
+    } else if (item.classList.contains("settings-tab") && !item.classList.contains("hidden")) {
+      shown = true;
+    }
+  }
+  settle();
+}
+
 function openSettingsLayerId() {
   const open = document.querySelector(".settings-layer:not(.hidden)");
   return open ? open.id : null;
@@ -1518,6 +1924,90 @@ function applyAppearance(prefs) {
 function saveAppearance(prefs) {
   applyAppearance(prefs);
   try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(prefs)); } catch {}
+}
+
+const OS_REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+const OS_DARK_QUERY = "(prefers-color-scheme: dark)";
+
+function osPrefers(query) {
+  return typeof matchMedia === "function" && matchMedia(query).matches;
+}
+
+function loadAccessibility() {
+  let raw = null;
+  try { raw = localStorage.getItem(ACCESSIBILITY_KEY); } catch {}
+  return readAccessibility(raw, availableLanguages().map(l => l.code));
+}
+
+function applyTranslations(root) {
+  for (const node of root.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
+  for (const node of root.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
+}
+
+function renderAccessibilitySettings(prefs, resolved) {
+  $("reduced-motion-toggle").checked = resolved.reducedMotion;
+  $("reduced-motion-hint").classList.toggle("hidden", !resolved.followsOsMotion);
+  $("saturation").value = resolved.saturation;
+  $("saturation-label").textContent = `${resolved.saturation}%`;
+  $("high-contrast-toggle").checked = resolved.highContrast;
+  $("theme-select").value = prefs.theme;
+  const languages = $("language-select");
+  languages.replaceChildren(...availableLanguages().map(l => new Option(l.label, l.code)));
+  languages.value = prefs.language;
+}
+
+function applyAccessibility(prefs) {
+  const resolved = resolveAccessibility(prefs, { reducedMotion: osPrefers(OS_REDUCED_MOTION_QUERY), dark: osPrefers(OS_DARK_QUERY) });
+  const html = document.documentElement;
+  for (const [name, value] of Object.entries(accessibilityAttributes(resolved))) {
+    if (value === null) html.removeAttribute(name);
+    else html.setAttribute(name, value);
+  }
+  html.style.setProperty("--saturation", saturationCss(resolved));
+  html.lang = setLanguage(resolved.language);
+  applyTranslations(document);
+  renderAccessibilitySettings(prefs, resolved);
+  return resolved;
+}
+
+function saveAccessibility(prefs) {
+  try { localStorage.setItem(ACCESSIBILITY_KEY, writeAccessibility(prefs)); } catch {}
+  applyAccessibility(prefs);
+}
+
+function wireAccessibility() {
+  const prefs = loadAccessibility();
+  applyAccessibility(prefs);
+  if (typeof matchMedia === "function") {
+    for (const query of [OS_REDUCED_MOTION_QUERY, OS_DARK_QUERY]) {
+      matchMedia(query).addEventListener("change", () => applyAccessibility(prefs));
+    }
+  }
+  $("reduced-motion-toggle").addEventListener("change", e => {
+    prefs.reducedMotion = e.target.checked;
+    saveAccessibility(prefs);
+  });
+  $("saturation").addEventListener("input", e => {
+    prefs.saturation = Number(e.target.value);
+    saveAccessibility(prefs);
+  });
+  $("high-contrast-toggle").addEventListener("change", e => {
+    prefs.highContrast = e.target.checked;
+    saveAccessibility(prefs);
+  });
+  $("theme-select").addEventListener("change", e => {
+    prefs.theme = e.target.value;
+    saveAccessibility(prefs);
+  });
+  $("language-select").addEventListener("change", e => {
+    prefs.language = e.target.value;
+    saveAccessibility(prefs);
+  });
+}
+
+function paintRole(node, color) {
+  node.style.color = color ? `#${color}` : "";
+  node.classList.toggle("role-ink", Boolean(color));
 }
 
 function toast(message, { avatar = null, onClick = null } = {}) {
@@ -1578,7 +2068,7 @@ function cachedLoad(cache, key, load) {
 }
 
 function loadAvatarImage(blob, provider) {
-  return cachedLoad(avatarImages, blob, () => invoke("get_attachment_preview", { blob, provider, mime: "image/jpeg" }));
+  return cachedLoad(avatarImages, blob, () => invoke("get_profile_image", { blob, provider }));
 }
 
 function paintAvatar(node, userId, name) {
@@ -1981,7 +2471,117 @@ function openChannelMenu(channel, x, y) {
   $("chm-unmute").textContent = mute === null ? "" : muteWords(mute);
   $("chm-pin").textContent = channelIsPinned(server.id, channel.id) ? "Unpin Channel" : "Pin Channel";
   $("chm-settings").classList.toggle("hidden", !server.can_manage_channels);
+  showVoiceStatusMenuItem(channel, server);
+  showVoiceCallMenuItems(channel);
   placeMenuAt($("channel-menu"), x, y);
+}
+
+function showVoiceStatusMenuItem(channel, server) {
+  const allowed = canSetVoiceStatus({ channel, server, me: state.user && state.user.id });
+  const item = $("chm-voice-status");
+  item.classList.toggle("hidden", !allowed);
+  item.textContent = channel.voice_status ? "Change Voice Status" : "Set Voice Status";
+  $("chm-read").classList.toggle("hidden", channel.kind === "voice");
+}
+
+let voiceStatusChannel = null;
+
+function openVoiceStatusModal(channel) {
+  if (!channel || !state.currentServer) return;
+  voiceStatusChannel = { serverId: state.currentServer.id, channelId: channel.id };
+  $("voice-status-title").replaceChildren(svgIcon("speaker", 18), channelNameNode(channel));
+  $("voice-status-input").value = channel.voice_status || "";
+  showModal("modal-voice-status");
+  $("voice-status-input").focus();
+  $("voice-status-input").select();
+}
+
+async function saveVoiceStatus(text) {
+  const target = voiceStatusChannel;
+  if (!target) return;
+  const problem = voiceStatusProblem(text);
+  if (problem) {
+    toast(problem);
+    return;
+  }
+  try {
+    await invoke("set_voice_status", { serverId: target.serverId, channelId: target.channelId, text: cleanVoiceStatus(text) });
+    hideModals();
+    voiceStatusChannel = null;
+    if (state.currentServer && state.currentServer.id === target.serverId) await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireVoiceStatus() {
+  $("chm-voice-status").onclick = () => {
+    const channel = menuChannel;
+    closeFloating();
+    openVoiceStatusModal(channel);
+  };
+  $("voice-status-save").onclick = () => saveVoiceStatus($("voice-status-input").value);
+  $("voice-status-clear").onclick = () => saveVoiceStatus("");
+  $("voice-status-cancel").onclick = hideModals;
+  $("voice-status-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") saveVoiceStatus($("voice-status-input").value);
+  });
+  $("vp-topic").onclick = () => {
+    const server = state.currentServer;
+    const channel = server && state.voiceServer && server.id === state.voiceServer.id
+      ? server.channels.find(c => c.id === state.voiceChannelId)
+      : null;
+    if (channel && canSetVoiceStatus({ channel, server, me: state.user && state.user.id })) openVoiceStatusModal(channel);
+  };
+  $("vp-conn-meta").oncontextmenu = e => {
+    const server = state.currentServer;
+    const channel = server && state.voiceServer && server.id === state.voiceServer.id
+      ? server.channels.find(c => c.id === state.voiceChannelId)
+      : null;
+    if (!channel) return;
+    e.preventDefault();
+    openChannelMenu(channel, e.clientX, e.clientY);
+  };
+}
+
+function voiceStatusLine(channel) {
+  const line = el("div", "voice-status-line", channel.voice_status);
+  line.title = channel.voice_status;
+  return line;
+}
+
+function decorateVoiceUser(node, channel, userId) {
+  const server = state.currentServer;
+  if (!server || !userId) return;
+  const member = (server.members || []).find(m => m.id === userId);
+  if (member && member.priority_speaker) {
+    const badge = el("span", "vs-icon priority");
+    badge.appendChild(svgIcon("megaphone", 14));
+    badge.title = "Priority speaker";
+    node.appendChild(badge);
+  }
+  node.classList.toggle("attenuated", attenuatedUsers(channel, server.members, state.speaking).has(userId));
+}
+
+function paintAttenuation() {
+  const server = state.currentServer;
+  const channel = server && state.voiceChannelId ? server.channels.find(c => c.id === state.voiceChannelId) : null;
+  const ducked = channel ? attenuatedUsers(channel, server.members, state.speaking) : new Set();
+  for (const node of document.querySelectorAll(".voice-user[data-user]")) {
+    node.classList.toggle("attenuated", ducked.has(node.dataset.user));
+  }
+}
+
+function renderVoiceTopic(vs) {
+  const topic = $("vp-topic");
+  const server = state.currentServer && vs && state.currentServer.id === vs.id ? state.currentServer : null;
+  const channel = server ? server.channels.find(c => c.id === state.voiceChannelId) : null;
+  const text = channel && channel.voice_status ? channel.voice_status : "";
+  topic.textContent = text;
+  topic.classList.toggle("hidden", !text);
+  const editable = Boolean(channel) && canSetVoiceStatus({ channel, server, me: state.user && state.user.id });
+  topic.classList.toggle("editable", editable);
+  topic.title = editable ? "Change the channel status" : text;
 }
 
 function placeMenuAt(menu, x, y) {
@@ -2232,6 +2832,7 @@ function renderChannels() {
   if (!state.currentServer) return;
   const server = state.currentServer;
   checkVoiceRoster();
+  reconcileActivity();
   if (server.group) {
     renderDmThreads();
     return;
@@ -2248,7 +2849,7 @@ function renderChannels() {
     for (const channel of section.channels) {
       const active = (state.currentChannel && channel.id === state.currentChannel.id) || channel.id === state.voiceChannelId;
       if (isCollapsed && !active) continue;
-      const row = channel.kind === "voice" ? voiceChannelRow(channel, canCreate, section.pinned) : textChannelRow(channel, canCreate, section.pinned);
+      const row = isVoiceKind(channel.kind) ? voiceChannelRow(channel, canCreate, section.pinned) : textChannelRow(channel, canCreate, section.pinned);
       if (canCreate && !section.fixed) {
         row.draggable = true;
         row.addEventListener("dragstart", e => {
@@ -2258,7 +2859,8 @@ function renderChannels() {
         makeDropTarget(row, () => dropChannel(section, channel.id));
       }
       list.appendChild(row);
-      if (channel.kind === "voice") appendVoiceUsers(list, channel);
+      if (channel.kind === "voice" && channel.voice_status) list.appendChild(voiceStatusLine(channel));
+      if (isVoiceKind(channel.kind)) appendVoiceUsers(list, channel);
     }
   }
   scheduleMuteExpiry(server);
@@ -2304,7 +2906,31 @@ function channelMark(channel, size = 18) {
     icon.appendChild(svgIcon("megaphone", size));
     return icon;
   }
+  if (isForumChannel(channel)) {
+    const icon = el("span", "channel-icon forum-icon");
+    icon.appendChild(svgIcon("forum", size));
+    return icon;
+  }
   return el("span", "hash", "#");
+}
+
+function channelHeaderMark(channel) {
+  if (channel && channel.kind === "announcement") return svgIcon("megaphone", 22);
+  if (isForumChannel(channel)) return svgIcon("forum", 22);
+  return document.createTextNode("#");
+}
+
+function channelKindMark(kind, size = 16) {
+  if (kind === "voice") return svgIcon("speaker", size);
+  if (kind === "stage") return svgIcon("stage", size);
+  if (kind === "category") return svgIcon("chevronDown", size);
+  if (kind === "announcement") return svgIcon("megaphone", size);
+  if (kind === "forum") return svgIcon("forum", size);
+  return document.createTextNode("#");
+}
+
+function kindHoldsMessages(kind) {
+  return kind === "text" || kind === "announcement" || kind === "forum";
 }
 
 function channelLockMark(row, channel) {
@@ -2362,7 +2988,7 @@ function textChannelRow(channel, canCreate, pinned = false) {
 function voiceChannelRow(channel, canCreate, pinned = false) {
   const row = el("div", "channel voice-channel");
   const icon = el("span", "channel-icon");
-  icon.appendChild(svgIcon("speaker", 18));
+  icon.appendChild(voiceKindIcon(channel.kind, 18));
   row.appendChild(icon);
   row.appendChild(channelNameNode(channel, "channel-label"));
   channelLockMark(row, channel);
@@ -2373,7 +2999,14 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
     row.classList.add("active", "connected");
     row.title = "Click to disconnect";
   } else {
-    row.title = full ? "This channel is full" : "Click to join voice";
+    row.title = full ? "This channel is full" : isStageChannel(channel) ? "Click to join the audience" : "Click to join voice";
+  }
+  if (channel.activity && activityPillLabel(channel.activity)) {
+    const pill = el("span", "voice-activity-pill");
+    pill.appendChild(svgIcon(activityKindInfo(channel.activity).icon, 12));
+    pill.appendChild(el("span", null, activityPillLabel(channel.activity)));
+    pill.title = `${activityName(channel.activity)} is running here`;
+    row.appendChild(pill);
   }
   const count = voiceCountLabel(channel);
   if (count) {
@@ -2392,6 +3025,10 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
     }
     toggleVoice(channel);
   };
+  row.oncontextmenu = e => {
+    e.preventDefault();
+    openChannelMenu(channel, e.clientX, e.clientY);
+  };
   if (canCreate) row.appendChild(channelGear(channel));
   channelBellSlot(row, channel);
   return row;
@@ -2399,60 +3036,88 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
 
 function appendVoiceUsers(list, channel) {
   const myName = state.user ? (state.user.display_name || state.user.username) : null;
-  const ids = channel.voice_user_ids || [];
-  channel.voice_users.forEach((user, i) => {
-    const userId = ids[i];
-    const isMe = state.user && userId ? userId === state.user.id : user === myName;
-    const vu = el("div", "voice-user");
-    if (userId) {
-      vu.dataset.user = userId;
-      vu.classList.toggle("speaking", state.speaking.has(userId));
+  if (!isStageChannel(channel)) {
+    for (const entry of stageRoster(channel)) list.appendChild(voiceUserRow(channel, entry, myName));
+    return;
+  }
+  const { speakers, audience } = stageSections(channel);
+  if (speakers.length || audience.length) list.appendChild(stageGroupLabel("Speakers", speakers.length));
+  for (const entry of speakers) list.appendChild(voiceUserRow(channel, entry, myName, "speaker"));
+  if (audience.length) list.appendChild(stageGroupLabel("Audience", audience.length));
+  for (const entry of audience) list.appendChild(voiceUserRow(channel, entry, myName, "audience"));
+}
+
+function stageGroupLabel(title, count) {
+  const label = el("div", "stage-group");
+  label.appendChild(el("span", "stage-group-title", title));
+  label.appendChild(el("span", "stage-group-count", String(count)));
+  return label;
+}
+
+function voiceUserRow(channel, entry, myName, role = null) {
+  const { id: userId, name: user, since, muted, deafened } = entry;
+  const isMe = state.user && userId ? userId === state.user.id : user === myName;
+  const vu = el("div", "voice-user");
+  if (userId) {
+    vu.dataset.user = userId;
+    vu.classList.toggle("speaking", state.speaking.has(userId));
+  }
+  vu.appendChild(makeAvatar(userId, user, "avatar avatar-sm"));
+  vu.appendChild(el("span", "voice-user-name", user));
+  decorateVoiceUser(vu, channel, userId);
+  if (since) vu.appendChild(liveElapsed(since, "clock", "voice-user-time"));
+  if (role) {
+    const slot = el("span", "hand-slot");
+    if (entry.hand) {
+      slot.appendChild(svgIcon("hand", 14));
+      slot.title = "Wants to speak";
+      vu.classList.add("hand");
     }
-    vu.appendChild(makeAvatar(userId, user, "avatar avatar-sm"));
-    vu.appendChild(el("span", "voice-user-name", user));
-    const since = (channel.voice_since || [])[i];
-    if (since) vu.appendChild(liveElapsed(since, "clock", "voice-user-time"));
-    vu.appendChild(el("span", "vs-icon")).appendChild(svgIcon("mic", 14));
-    const muted = (channel.voice_muted || [])[i];
-    const deafened = (channel.voice_deafened || [])[i];
-    if (!isMe && muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
-    if (!isMe && deafened) {
+    vu.appendChild(slot);
+  }
+  vu.appendChild(el("span", "vs-icon")).appendChild(svgIcon("mic", 14));
+  if (role === "audience") {
+    vu.classList.add("audience");
+    setVoiceStatus(vu.lastChild, "micOff", "In the audience");
+    vu.lastChild.classList.remove("off");
+  }
+  if (!isMe && muted && role !== "audience") setVoiceStatus(vu.lastChild, "micOff", "Muted");
+  if (!isMe && deafened) {
+    vu.appendChild(el("span", "vs-icon"));
+    setVoiceStatus(vu.lastChild, "headsetOff", "Deafened");
+  }
+  const server = state.currentServer;
+  if (userId && server && (server.server_muted || []).includes(userId)) {
+    vu.appendChild(el("span", "vs-icon forced"));
+    setVoiceStatus(vu.lastChild, "micOff", "Server Muted");
+  }
+  if (userId && server && (server.server_deafened || []).includes(userId)) {
+    vu.appendChild(el("span", "vs-icon forced"));
+    setVoiceStatus(vu.lastChild, "headsetOff", "Server Deafened");
+  }
+  if (userId && (state.voice.muted_users || []).includes(userId)) vu.classList.add("muted-for-me");
+  if (userId && !isMe) {
+    vu.onclick = vu.oncontextmenu = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const member = server && server.members.find(m => m.id === userId);
+      openMemberMenu(member || { id: userId, name: user }, e.clientX, e.clientY);
+    };
+  } else if (isMe) {
+    vu.onclick = vu.oncontextmenu = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      openSelfVoiceMenu(e.clientX, e.clientY);
+    };
+  }
+  if (isMe && channel.id === state.voiceChannelId && role !== "audience") {
+    if (state.voice.muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
+    if (state.voice.deafened) {
       vu.appendChild(el("span", "vs-icon"));
       setVoiceStatus(vu.lastChild, "headsetOff", "Deafened");
     }
-    const server = state.currentServer;
-    if (userId && server && (server.server_muted || []).includes(userId)) {
-      vu.appendChild(el("span", "vs-icon forced"));
-      setVoiceStatus(vu.lastChild, "micOff", "Server Muted");
-    }
-    if (userId && server && (server.server_deafened || []).includes(userId)) {
-      vu.appendChild(el("span", "vs-icon forced"));
-      setVoiceStatus(vu.lastChild, "headsetOff", "Server Deafened");
-    }
-    if (userId && (state.voice.muted_users || []).includes(userId)) vu.classList.add("muted-for-me");
-    if (userId && !isMe) {
-      vu.onclick = vu.oncontextmenu = e => {
-        e.preventDefault();
-        e.stopPropagation();
-        const member = server && server.members.find(m => m.id === userId);
-        openMemberMenu(member || { id: userId, name: user }, e.clientX, e.clientY);
-      };
-    } else if (isMe) {
-      vu.onclick = vu.oncontextmenu = e => {
-        e.preventDefault();
-        e.stopPropagation();
-        openSelfVoiceMenu(e.clientX, e.clientY);
-      };
-    }
-    if (isMe && channel.id === state.voiceChannelId) {
-      if (state.voice.muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
-      if (state.voice.deafened) {
-        vu.appendChild(el("span", "vs-icon"));
-        setVoiceStatus(vu.lastChild, "headsetOff", "Deafened");
-      }
-    }
-    list.appendChild(vu);
-  });
+  }
+  return vu;
 }
 
 const serverImages = new Map();
@@ -2990,6 +3655,69 @@ function onMessageCreated(msg) {
     invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
     playSound("message");
   }
+  speakIncoming(msg, viewing);
+}
+
+const TTS_KEY = "commy.tts";
+
+function ttsPrefs() {
+  try {
+    return readTtsPrefs(localStorage.getItem(TTS_KEY));
+  } catch {
+    return readTtsPrefs(null);
+  }
+}
+
+function saveTtsPrefs(prefs) {
+  try { localStorage.setItem(TTS_KEY, JSON.stringify(prefs)); } catch {}
+}
+
+function speechAvailable() {
+  return typeof window !== "undefined" && Boolean(window.speechSynthesis) && typeof SpeechSynthesisUtterance === "function";
+}
+
+function stopSpeaking() {
+  if (speechAvailable()) window.speechSynthesis.cancel();
+}
+
+function speakText(text) {
+  if (!text || !speechAvailable()) return false;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = ttsPrefs().rate;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
+
+function speakMessage(message) {
+  if (!speakText(spokenText(message.author_name, message.content, plainText))) toast("Text-to-speech is not available here");
+}
+
+function speakIncoming(msg, viewing) {
+  const speak = shouldSpeakIncoming({
+    mode: ttsPrefs().mode,
+    tts: Boolean(msg.tts),
+    ownMessage: Boolean(state.user && msg.author === state.user.id),
+    deafened: Boolean(state.voice.deafened),
+    viewing: Boolean(viewing),
+    blocked: isBlocked(msg.author),
+    presence: state.user?.presence,
+  });
+  if (speak) speakText(spokenText(msg.author_name, msg.content, plainText));
+}
+
+function canSendTtsHere() {
+  return canSendTts(state.currentServer);
+}
+
+function renderTtsSettings() {
+  const prefs = ttsPrefs();
+  $("tts-mode").value = prefs.mode;
+  $("tts-rate").value = String(Math.round(prefs.rate * 10));
+  $("tts-rate-label").textContent = `${prefs.rate.toFixed(1)}x`;
+  $("tts-mode").disabled = !speechAvailable();
+  $("tts-preview").disabled = !speechAvailable();
+  $("tts-preview").title = speechAvailable() ? "" : "Text-to-speech is not available here";
 }
 
 function onMessagesCaughtUp(payload) {
@@ -3376,6 +4104,7 @@ function closeFloating(except) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
+  if (except !== "threads-pop") closeThreadsPanel();
   if (except !== "search-pop") closeSearchPop();
 }
 
@@ -3535,11 +4264,11 @@ function openChannelSettings(channelId, tab = "overview") {
   editingChannelId = channelId;
   const channel = editingChannel();
   if (!channel) return;
-  const voice = channel.kind === "voice";
+  const voice = isVoiceKind(channel.kind);
   const announcement = channel.kind === "announcement";
-  $("channel-settings-title").replaceChildren(...(voice ? [] : [document.createTextNode("# ")]), channelNameNode(channel));
-  $("channel-edit-prefix").replaceChildren(voice ? svgIcon("speaker", 16) : announcement ? svgIcon("megaphone", 16) : document.createTextNode("#"));
-  $("channel-announce-row").classList.toggle("hidden", voice);
+  $("channel-settings-title").replaceChildren(...(voice || isForumChannel(channel) ? [] : [document.createTextNode("# ")]), channelNameNode(channel));
+  $("channel-edit-prefix").replaceChildren(channelKindMark(channel.kind, 16));
+  $("channel-announce-row").classList.toggle("hidden", voice || isForumChannel(channel));
   $("channel-edit-announce").checked = announcement;
   $("channel-sensitive-row").classList.toggle("hidden", !holdsMessages(channel));
   $("channel-edit-sensitive").checked = Boolean(channel.sensitive);
@@ -3560,6 +4289,7 @@ function openChannelSettings(channelId, tab = "overview") {
   paintChannelBandPreview();
   syncChannelDirty();
   paintChannelBannerCard(channel);
+  paintForumTagsCard(channel);
   $("channel-tab-permissions").classList.toggle("hidden", channel.kind === "category");
   accessDraft = { view: [...(channel.view_roles || [])], send: [...(channel.send_roles || [])] };
   paintChannelAccess();
@@ -3597,7 +4327,7 @@ function paintChannelAccess() {
   const channel = editingChannel();
   const server = state.currentServer;
   if (!channel || !server || !accessDraft) return;
-  $("channel-view-title").textContent = channel.kind === "voice" ? "Who can see and join this channel" : "Who can see this channel";
+  $("channel-view-title").textContent = isVoiceKind(channel.kind) ? "Who can see and join this channel" : "Who can see this channel";
   $("channel-send-card").classList.toggle("hidden", !holdsMessages(channel));
   paintAccessChips($("channel-view-roles"), server, accessDraft.view, ids => {
     accessDraft.view = ids;
@@ -3685,7 +4415,7 @@ function channelEdits() {
   let name = $("channel-edit-name").value.trim();
   if (holdsMessages(channel)) name = name.toLowerCase().replace(/\s+/g, "-");
   const retention = Number($("channel-edit-retention").value) || 0;
-  const limit = channel.kind === "voice" ? Number($("channel-limit").value) || 0 : 0;
+  const limit = isVoiceKind(channel.kind) ? Number($("channel-limit").value) || 0 : 0;
   const slow = holdsMessages(channel) ? Number($("channel-slow").value) || 0 : 0;
   const color = channelColorDraft;
   const dirty = name !== channel.name || retention !== (channel.retention_days || 0) || limit !== (channel.user_limit || 0)
@@ -3775,7 +4505,7 @@ function syncLimitLabel() {
 function openDeleteChannel() {
   const channel = editingChannel();
   if (!channel) return;
-  const label = channel.kind === "voice" ? channel.name : `#${channel.name}`;
+  const label = isVoiceKind(channel.kind) ? channel.name : `#${channel.name}`;
   $("delete-channel-title").textContent = `Delete ${label}?`;
   $("delete-channel-name").textContent = channel.name;
   $("delete-channel-confirm").value = "";
@@ -3791,7 +4521,7 @@ async function confirmDeleteChannel() {
     await invoke("delete_channel", { serverId: state.currentServer.id, channelId: channel.id });
     hideModals();
     await closeSettingsLayers();
-    toast(`Deleted ${channel.kind === "voice" ? channel.name : "#" + channel.name}`);
+    toast(`Deleted ${isVoiceKind(channel.kind) ? channel.name : "#" + channel.name}`);
     editingChannelId = null;
     await refreshCurrentServer();
   } catch (e) {
@@ -3817,15 +4547,15 @@ function setCreateChannelKind(kind) {
   for (const opt of $("create-channel-kinds").querySelectorAll(".kind-option")) {
     opt.classList.toggle("active", opt.dataset.kind === kind);
   }
-  $("create-channel-prefix").replaceChildren(
-    kind === "voice" ? svgIcon("speaker", 16) : kind === "category" ? svgIcon("chevronDown", 16) : kind === "announcement" ? svgIcon("megaphone", 16) : document.createTextNode("#"));
-  $("create-channel-name").placeholder = kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : "new-channel";
+  const stageHint = stageCreateHint(kind);
+  $("create-channel-prefix").replaceChildren(channelKindMark(kind, 16));
+  $("create-channel-name").placeholder = stageHint ? stageHint.placeholder : kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : kind === "forum" ? "ideas" : "new-channel";
   syncCreateChannelName();
 }
 
 function syncCreateChannelName() {
   const input = $("create-channel-name");
-  if (createChannelKind === "text" || createChannelKind === "announcement") {
+  if (kindHoldsMessages(createChannelKind)) {
     const pos = input.selectionStart;
     const cleaned = input.value.toLowerCase().replace(/\s+/g, "-");
     if (cleaned !== input.value) {
@@ -3848,7 +4578,7 @@ async function saveCreateChannel() {
     hideModals();
     toast(`Created ${createChannelKind === "text" ? "#" : ""}${name}`);
     await refreshCurrentServer();
-    if (createChannelKind === "text" || createChannelKind === "announcement") {
+    if (kindHoldsMessages(createChannelKind)) {
       const made = state.currentServer.channels.filter(c => c.kind === createChannelKind).pop();
       if (made) await selectChannel(made);
     }
@@ -3866,6 +4596,7 @@ function setSpeaking(userId, speaking) {
   if (state.user && userId === state.user.id) {
     document.querySelector(".user-panel").classList.toggle("speaking", speaking);
   }
+  paintAttenuation();
 }
 
 function clearSpeaking() {
@@ -3885,7 +4616,7 @@ function renderMembers() {
   const group = (title, members, dim, color) => {
     if (!members.length) return;
     const heading = el("div", "member-group", `${title} - ${members.length}`);
-    if (color) heading.style.color = `#${color}`;
+    paintRole(heading, color);
     list.appendChild(heading);
     for (const member of members) {
       const row = el("div", "member" + (dim ? " offline" : ""));
@@ -3897,7 +4628,7 @@ function renderMembers() {
       row.appendChild(avatar);
       const meta = el("div");
       const nameRow = el("div", "member-name", member.name);
-      if (member.color) nameRow.style.color = `#${member.color}`;
+      paintRole(nameRow, member.color);
       if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
       if (timeoutActive(member.timeout_until)) nameRow.appendChild(timeoutBadge(member.timeout_until));
@@ -4009,6 +4740,7 @@ async function resetSensitiveConfirmations() {
 
 function renderMessages(messages) {
   const box = $("messages");
+  showForumView(false);
   if (state.view === "server" && ageGated(state.currentChannel)) {
     box.dataset.view = "";
     box.replaceChildren(buildSensitiveGate(state.currentChannel));
@@ -4022,7 +4754,9 @@ function renderMessages(messages) {
   box.dataset.view = viewKey;
   box.innerHTML = "";
   if (state.view === "dm" && state.currentDm) box.appendChild(buildDmIntro());
+  else if (state.currentChannel && state.view === "server" && !canReadHistory(state.currentServer)) box.appendChild(historyNotice());
   else if (state.currentChannel) box.appendChild(buildChannelIntro(state.currentChannel));
+  syncThreadsButton(messages);
   if (!messages.length) return;
   state.renderedMessages = messages;
   const replyCounts = state.view === "dm" ? new Map() : threadReplyCounts(messages);
@@ -4075,6 +4809,341 @@ function renderMessages(messages) {
   if (state.threadRoot) renderThread();
 }
 
+const FORUM_MODE_KEY = "commy.forumMode";
+const forumUi = { mode: "list", filter: new Map(), draft: null, tagEmoji: null };
+
+function storedForumMode() {
+  try {
+    return forumMode(localStorage.getItem(FORUM_MODE_KEY));
+  } catch {
+    return forumMode(null);
+  }
+}
+
+function setForumMode(mode) {
+  forumUi.mode = forumMode(mode);
+  try { localStorage.setItem(FORUM_MODE_KEY, forumUi.mode); } catch {}
+  for (const [id, value] of [["forum-mode-list", "list"], ["forum-mode-gallery", "gallery"]]) {
+    $(id).classList.toggle("active", forumUi.mode === value);
+    $(id).setAttribute("aria-pressed", String(forumUi.mode === value));
+  }
+  if (isForumChannel(state.currentChannel) && state.view === "server") renderForumPosts(state.currentChannel);
+}
+
+function showForumView(on) {
+  $("forum-view").classList.toggle("hidden", !on);
+  $("messages").classList.toggle("hidden", on);
+}
+
+function renderChannelLog(messages) {
+  if (isForumChannel(state.currentChannel)) renderForum(messages);
+  else renderMessages(messages);
+}
+
+function renderForum(messages) {
+  const channel = state.currentChannel;
+  state.renderedMessages = messages;
+  showForumView(true);
+  $("forum-new").classList.toggle("hidden", channel.can_send === false || channel.can_view === false);
+  renderForumTags(channel);
+  renderForumPosts(channel);
+  if (state.threadRoot) renderThread();
+}
+
+function forumFilterFor(channel) {
+  const picked = forumUi.filter.get(channel.id) || null;
+  return picked && (channel.tags || []).some(t => t.id === picked) ? picked : null;
+}
+
+function renderForumTags(channel) {
+  const row = $("forum-tags");
+  row.replaceChildren();
+  const picked = forumFilterFor(channel);
+  const chip = (label, id) => {
+    const button = el("button", "forum-chip" + (picked === id ? " picked" : ""), label);
+    button.type = "button";
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(picked === id));
+    button.onclick = () => {
+      if (id) forumUi.filter.set(channel.id, id);
+      else forumUi.filter.delete(channel.id);
+      renderForumTags(channel);
+      renderForumPosts(channel);
+    };
+    return button;
+  };
+  row.appendChild(chip("All", null));
+  for (const tag of channel.tags || []) row.appendChild(chip(tagLabel(tag), tag.id));
+}
+
+function forumTagPills(channel, ids) {
+  const byId = forumTagsById(channel.tags);
+  const wrap = el("span", "forum-pills");
+  for (const id of ids || []) {
+    const tag = byId.get(id);
+    if (tag) wrap.appendChild(el("span", "forum-pill", tagLabel(tag)));
+  }
+  return wrap;
+}
+
+function forumPostMeta(post) {
+  const meta = el("span", "forum-meta");
+  meta.append(
+    el("span", "forum-meta-author", post.author_name),
+    el("span", "forum-meta-dot", "\u00b7"),
+    el("span", null, replyCountLabel(post.replies)),
+    el("span", "forum-meta-dot", "\u00b7"),
+    el("span", null, activityLabel(post.last_activity)),
+  );
+  return meta;
+}
+
+function forumEditButton(post) {
+  const me = state.user && state.user.id;
+  const manages = Boolean(state.currentServer && state.currentServer.can_manage_messages);
+  if (!canEditPost(post, me, manages)) return el("span", "forum-edit-slot");
+  const button = el("button", "icon-btn forum-edit");
+  button.type = "button";
+  button.title = "Edit post";
+  button.appendChild(svgIcon("pencil", 16));
+  button.onclick = e => {
+    e.stopPropagation();
+    openForumComposer(post);
+  };
+  return button;
+}
+
+function forumOpenOn(node, post) {
+  node.setAttribute("role", "button");
+  node.tabIndex = 0;
+  node.onclick = () => openForumPost(post);
+  node.onkeydown = e => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openForumPost(post);
+    }
+  };
+}
+
+function forumPostRow(channel, post) {
+  const row = el("div", "forum-post" + (state.threadRoot === post.message ? " open" : ""));
+  const main = el("div", "forum-post-main");
+  const head = el("div", "forum-post-head");
+  head.append(el("span", "forum-post-title", post.title), forumTagPills(channel, post.tags));
+  main.append(head, forumPostMeta(post));
+  row.append(main, forumEditButton(post));
+  forumOpenOn(row, post);
+  return row;
+}
+
+function forumPostBody(post) {
+  const loaded = (state.renderedMessages || []).find(m => m.id === post.message);
+  return loaded ? loaded.content : post.excerpt || "";
+}
+
+function forumPostCard(channel, post) {
+  const card = el("div", "forum-card" + (state.threadRoot === post.message ? " open" : ""));
+  const top = el("div", "forum-card-top");
+  top.append(el("div", "forum-post-title", post.title), forumEditButton(post));
+  const foot = el("div", "forum-card-foot");
+  foot.append(forumTagPills(channel, post.tags), forumPostMeta(post));
+  card.append(top, el("p", "forum-card-excerpt", postExcerpt(forumPostBody(post), 200) || "No text"), foot);
+  forumOpenOn(card, post);
+  return card;
+}
+
+function renderForumPosts(channel) {
+  const box = $("forum-posts");
+  box.className = `forum-posts ${forumUi.mode}`;
+  box.replaceChildren();
+  const all = channel.posts || [];
+  const posts = sortPostsByActivity(filterPostsByTag(all, forumFilterFor(channel)));
+  if (!posts.length) {
+    const empty = el("div", "forum-empty");
+    const mark = el("div", "channel-intro-mark");
+    mark.appendChild(svgIcon("forum", 32));
+    const filtered = all.length > 0;
+    empty.append(
+      mark,
+      el("h2", null, filtered ? "No posts with this tag" : "No posts yet"),
+      el("p", null, filtered ? "Pick another tag or show all posts." : channel.topic || "Start the first post. Replies gather under it like a thread."),
+    );
+    box.appendChild(empty);
+    return;
+  }
+  for (const post of posts) box.appendChild(forumUi.mode === "gallery" ? forumPostCard(channel, post) : forumPostRow(channel, post));
+}
+
+async function openForumPost(post) {
+  const channel = state.currentChannel;
+  if (!channel) return;
+  if (!(state.renderedMessages || []).some(m => m.id === post.message)) {
+    state.historyAnchor = { channel: channel.id, message: post.message };
+    const messages = await fetchChannelMessages(channel);
+    if (state.currentChannel !== channel) return;
+    renderForum(messages);
+  }
+  openThread(post.message);
+  renderForumPosts(channel);
+}
+
+function forumPostFor(rootId) {
+  const channel = state.currentChannel;
+  if (!isForumChannel(channel)) return null;
+  return (channel.posts || []).find(p => p.message === rootId) || null;
+}
+
+function openForumComposer(post = null) {
+  const channel = state.currentChannel;
+  if (!isForumChannel(channel)) return;
+  forumUi.draft = { editing: post ? post.message : null, tags: post ? [...post.tags] : [] };
+  $("forum-post-heading").textContent = post ? "Edit post" : "New post";
+  $("forum-post-title").value = post ? post.title : "";
+  $("forum-post-body").value = "";
+  $("forum-post-body-label").classList.toggle("hidden", Boolean(post));
+  $("forum-post-save").textContent = post ? "Save" : "Post";
+  paintForumPostTags();
+  syncForumDraft();
+  showModal("modal-forum-post");
+  $("forum-post-title").focus();
+}
+
+function paintForumPostTags() {
+  const channel = state.currentChannel;
+  const draft = forumUi.draft;
+  const box = $("forum-post-tags");
+  box.replaceChildren();
+  if (!draft) return;
+  const tags = (channel && channel.tags) || [];
+  if (!tags.length) box.appendChild(el("span", "forum-no-tags", "This forum has no tags yet."));
+  for (const tag of tags) {
+    const chip = el("button", "access-chip" + (draft.tags.includes(tag.id) ? " picked" : ""), tagLabel(tag));
+    chip.type = "button";
+    chip.onclick = () => {
+      draft.tags = togglePostTag(draft.tags, tag.id);
+      paintForumPostTags();
+      syncForumDraft();
+    };
+    box.appendChild(chip);
+  }
+  $("forum-post-tags-left").textContent = tags.length ? `${draft.tags.length} of ${MAX_POST_TAGS}` : "";
+}
+
+function forumDraftState() {
+  const draft = forumUi.draft;
+  if (!draft) return null;
+  const body = draft.editing ? "kept" : $("forum-post-body").value;
+  return postDraftState({ title: $("forum-post-title").value, body, tags: draft.tags });
+}
+
+function syncForumDraft() {
+  const draft = forumDraftState();
+  $("forum-post-save").disabled = !(draft && draft.canSave);
+}
+
+async function saveForumPost() {
+  const draft = forumDraftState();
+  const channel = state.currentChannel;
+  if (!draft || !draft.canSave || !channel || !state.currentServer) return;
+  const editing = forumUi.draft.editing;
+  const args = { serverId: state.currentServer.id, channelId: channel.id, title: draft.title, tags: draft.tags };
+  try {
+    if (editing) await invoke("edit_forum_post", { ...args, messageId: editing });
+    else await invoke("post_forum", { ...args, content: encodeOutgoing(draft.body) });
+    hideModals();
+    forumUi.draft = null;
+    toast(editing ? "Post updated" : "Posted");
+    await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function setForumTagEmoji(picked) {
+  forumUi.tagEmoji = picked || null;
+  const button = $("channel-forum-emoji");
+  button.replaceChildren(picked ? el("span", "forum-tag-emoji-pick", picked) : svgIcon("smile", 18));
+  button.title = picked ? "Change the emoji" : "Pick an emoji";
+}
+
+function paintForumTagsCard(channel) {
+  const forum = isForumChannel(channel);
+  $("channel-forum-card").classList.toggle("hidden", !forum);
+  if (!forum) return;
+  const rows = $("channel-forum-tags");
+  rows.replaceChildren();
+  const tags = channel.tags || [];
+  if (!tags.length) rows.appendChild(el("div", "forum-tag-empty", "No tags yet. Add a few so posts can be filtered."));
+  tags.forEach((tag, i) => {
+    const row = el("div", "forum-tag-row");
+    const remove = el("button", "icon-btn forum-tag-remove");
+    remove.type = "button";
+    remove.title = "Remove tag";
+    remove.appendChild(svgIcon("close", 16));
+    remove.onclick = () => saveForumTags(tagsAfterRemove(tags, i));
+    row.append(el("span", "forum-tag-row-emoji", tag.emoji || ""), el("span", "forum-tag-row-name", tag.name), remove);
+    rows.appendChild(row);
+  });
+  $("channel-forum-name").value = "";
+  $("channel-forum-add").disabled = true;
+  setForumTagEmoji(null);
+}
+
+async function addForumTag() {
+  const channel = editingChannel();
+  if (!channel) return;
+  const next = tagsAfterAdd(channel.tags || [], $("channel-forum-name").value, forumUi.tagEmoji);
+  if (!next) {
+    toast(`A tag with that name is already here, or the forum has its ${MAX_FORUM_TAGS} tags`);
+    return;
+  }
+  await saveForumTags(next);
+}
+
+async function saveForumTags(tags) {
+  const channel = editingChannel();
+  if (!channel || !state.currentServer) return;
+  try {
+    await invoke("set_forum_tags", {
+      serverId: state.currentServer.id,
+      channelId: channel.id,
+      tags: tags.map(t => ({ id: t.id || null, name: t.name, emoji: t.emoji || null })),
+    });
+    await refreshCurrentServer();
+    openChannelSettings(channel.id);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireForum() {
+  setIcon($("forum-mode-list"), "list", 18);
+  setIcon($("forum-mode-gallery"), "grid", 18);
+  setForumMode(storedForumMode());
+  $("forum-mode-list").onclick = () => setForumMode("list");
+  $("forum-mode-gallery").onclick = () => setForumMode("gallery");
+  $("forum-new").onclick = () => openForumComposer();
+  $("forum-post-title").addEventListener("input", syncForumDraft);
+  $("forum-post-body").addEventListener("input", syncForumDraft);
+  $("forum-post-title").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (forumUi.draft && forumUi.draft.editing) saveForumPost();
+      else $("forum-post-body").focus();
+    }
+  });
+  $("forum-post-save").onclick = saveForumPost;
+  $("forum-post-cancel").onclick = hideModals;
+  $("channel-forum-name").addEventListener("input", () => {
+    $("channel-forum-add").disabled = !cleanTagName($("channel-forum-name").value);
+  });
+  $("channel-forum-name").addEventListener("keydown", e => {
+    if (e.key === "Enter" && !$("channel-forum-add").disabled) addForumTag();
+  });
+  $("channel-forum-add").onclick = addForumTag;
+  $("channel-forum-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => setForumTagEmoji(parseEmojiToken(picked) ? null : picked));
+}
+
 function buildGroupIntro(server) {
   const intro = el("div", "channel-intro");
   const mark = el("div", "channel-intro-mark");
@@ -4097,11 +5166,11 @@ function buildChannelIntro(channel) {
   }
   const mark = el("div", "channel-intro-mark");
   const announcement = channel.kind === "announcement";
-  if (channel.kind === "voice") mark.appendChild(svgIcon("speaker", 32));
+  if (isVoiceKind(channel.kind)) mark.appendChild(voiceKindIcon(channel.kind, 32));
   else if (announcement) mark.appendChild(svgIcon("megaphone", 34));
   else mark.appendChild(el("span", "channel-intro-hash", "#"));
   intro.appendChild(mark);
-  const title = el("h2", null, channel.kind === "voice" ? "Welcome to " : "Welcome to #");
+  const title = el("h2", null, isVoiceKind(channel.kind) ? "Welcome to " : "Welcome to #");
   title.appendChild(channelNameNode(channel));
   intro.appendChild(title);
   const fallback = announcement
@@ -4109,6 +5178,14 @@ function buildChannelIntro(channel) {
     : "This is the start of the channel. Say something.";
   intro.appendChild(el("p", null, channel.topic || fallback));
   return intro;
+}
+
+function historyNotice() {
+  const row = el("div", "history-notice");
+  row.setAttribute("role", "status");
+  row.appendChild(svgIcon("eyeOff", 16));
+  row.appendChild(el("span", null, HISTORY_NOTICE));
+  return row;
 }
 
 function dayDivider(date) {
@@ -4152,6 +5229,16 @@ function pinnedMark() {
   return mark;
 }
 
+function ttsMark() {
+  const mark = el("span", "msg-tts");
+  mark.title = "Sent as text-to-speech. Read Aloud is in the message menu.";
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", "Text-to-speech");
+  mark.appendChild(svgIcon("speaker", 13));
+  mark.appendChild(document.createTextNode("Spoken"));
+  return mark;
+}
+
 function heldMark(reason) {
   const mark = el("span", "msg-held");
   mark.title = "Members don't see this message. Auto moderation held it.";
@@ -4165,10 +5252,10 @@ function heldMark(reason) {
 function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {}) {
   const pending = Boolean(message.pending);
   const held = Boolean(message.held);
-  if (held) grouped = false;
-  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : "") + (held ? " held" : ""));
+  if (held || message.tts) grouped = false;
+  const row = el("div", "msg" + (grouped ? "" : " first") + (message.reply_to ? " is-reply" : "") + (pending ? " pending" : "") + (held ? " held" : "") + (message.tts ? " tts" : ""));
   row.dataset.id = message.id;
-  row.appendChild(messageActions(message, inThread));
+  row.appendChild(messageActions(message, inThread, replies));
   if (message.reply_to) row.appendChild(replyReference(message));
 
   const avatar = grouped ? el("div", "avatar spacer", "") : makeAvatar(message.author_id, message.author_name);
@@ -4181,14 +5268,20 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     head.appendChild(author);
     decorateAuthor(author, message.author_id);
     head.appendChild(el("span", "msg-time", formatTime(message.created_at)));
-    if (pending) head.appendChild(pendingMark());
     if (message.pinned) head.appendChild(pinnedMark());
+    if (message.tts) head.appendChild(ttsMark());
     if (held) head.appendChild(heldMark(message.held));
+    if (pending) head.appendChild(pendingMark());
     body.appendChild(head);
   }
   if (message.pinned) row.classList.add("pinned");
   let inlineMark = pending && grouped;
-  if (message.content) {
+  if (message.command) {
+    const line = renderCommandUse(message);
+    if (inlineMark) line.appendChild(pendingMark());
+    inlineMark = false;
+    body.appendChild(line);
+  } else if (message.content) {
     if (!isBareImageLink(message.content)) {
       const content = buildMessageContent(message.content, message.author_id);
       if (message.edited) appendAfterText(content, el("span", "edited", " (edited)"));
@@ -4196,12 +5289,13 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
       inlineMark = false;
       body.appendChild(content);
     }
-    body.append(...imageEmbeds(imageLinks(message.content)));
+    if (showsEmbeds(message)) body.append(...imageEmbeds(imageLinks(message.content)));
   }
-  if (linkPreviewPrefs().show) {
+  if (linkPreviewPrefs().show && showsEmbeds(message)) {
     for (const preview of message.previews || []) body.appendChild(renderLinkPreview(preview));
   }
   if (message.poll) body.appendChild(renderPoll(message));
+  if (message.voice_invite) body.appendChild(renderVoiceInvite(message));
   if (message.sealed) {
     const sealed = el("div", "msg-content msg-sealed");
     sealed.appendChild(svgIcon("lock", 14));
@@ -4434,22 +5528,95 @@ async function renderServerPins() {
   }
 }
 
-const searchUi = { token: 0, timer: 0, items: [], index: -1 };
+const searchUi = { token: 0, timer: 0, items: [], index: -1, scope: null, place: null, offset: 0, page: null };
 const SEARCH_DEBOUNCE_MS = 180;
 
 function searchContext() {
   const server = state.currentServer;
-  if (!server) return { members: [], channels: [] };
+  if (server) {
+    return {
+      members: server.members.map(m => ({ id: m.id, name: m.name })),
+      channels: server.channels.filter(holdsMessages).map(c => ({ id: c.id, name: channelPlainName(c) })),
+    };
+  }
+  if (state.view !== "dm") return { members: [], channels: [] };
+  const members = (state.dmThreads || []).filter(t => t.kind !== "group").map(t => ({ id: t.user, name: t.name }));
+  if (state.user) members.unshift({ id: state.user.id, name: state.user.username });
+  return { members, channels: [] };
+}
+
+function searchScopeContext() {
+  const server = state.currentServer;
+  const group = Boolean(server && server.group);
+  const dm = state.view === "dm";
+  const channel = server && state.currentChannel ? state.currentChannel : null;
+  const conversationName = dm ? state.currentDm && state.currentDm.name : group ? server.name : channel && channelPlainName(channel);
   return {
-    members: server.members.map(m => ({ id: m.id, name: m.name })),
-    channels: server.channels.filter(holdsMessages).map(c => ({ id: c.id, name: channelPlainName(c) })),
+    view: state.view,
+    group,
+    conversation: dm ? Boolean(state.currentDm) : Boolean(channel),
+    conversationName: conversationName || "",
+    serverId: server ? server.id : null,
+    channelId: channel ? channel.id : null,
+    dmUser: dm && state.currentDm ? state.currentDm.user : null,
+    active: dm || Boolean(server),
   };
 }
 
+function sameSearchPlace(a, b) {
+  return a.view === b.view && a.serverId === b.serverId && a.dmUser === b.dmUser;
+}
+
+function currentSearchScope(ctx) {
+  const place = searchPlace(ctx);
+  if (searchUi.place !== place) {
+    searchUi.place = place;
+    searchUi.scope = defaultSearchScope(ctx);
+    searchUi.offset = 0;
+  } else {
+    searchUi.scope = pickSearchScope(searchUi.scope, ctx);
+  }
+  return searchUi.scope;
+}
+
 function syncSearchBox() {
-  const visible = state.view === "server" && Boolean(state.currentServer);
-  $("search-box").classList.toggle("hidden", !visible);
-  if (!visible) closeSearchPop();
+  const ctx = searchScopeContext();
+  $("search-box").classList.toggle("hidden", !ctx.active);
+  if (!ctx.active) closeSearchPop();
+  currentSearchScope(ctx);
+}
+
+function renderSearchScope(ctx) {
+  currentSearchScope(ctx);
+  const buttons = searchScopes(ctx).map(scope => {
+    const btn = el("button", "search-scope-btn", scope.label);
+    btn.type = "button";
+    btn.disabled = !scope.enabled;
+    btn.classList.toggle("active", scope.key === searchUi.scope);
+    btn.setAttribute("aria-pressed", scope.key === searchUi.scope ? "true" : "false");
+    btn.addEventListener("mousedown", e => e.preventDefault());
+    btn.onclick = () => setSearchScope(scope.key);
+    return btn;
+  });
+  $("search-scope").replaceChildren(...buttons);
+  return searchUi.scope;
+}
+
+function setSearchScope(key) {
+  if (searchUi.scope === key) return;
+  searchUi.scope = key;
+  searchUi.offset = 0;
+  renderSearchScope(searchScopeContext());
+  if ($("search-input").value.trim()) runSearch(0);
+  else renderSearchHints();
+}
+
+function setSearchPager(page) {
+  searchUi.page = page;
+  $("search-pager").classList.toggle("idle", !page);
+  $("search-page-label").textContent = page && page.total > page.size ? pageLabel(page.total, page.offset) : "";
+  $("search-older").disabled = !page || !page.hasOlder;
+  $("search-newer").disabled = !page || !page.hasNewer;
 }
 
 function resetSearch() {
@@ -4466,8 +5633,10 @@ function closeSearchPop() {
 }
 
 function openSearchPop() {
-  if (!state.currentServer) return;
+  const ctx = searchScopeContext();
+  if (!ctx.active) return;
   closeFloating("search-pop");
+  renderSearchScope(ctx);
   $("search-pop").classList.remove("hidden");
   $("search-box").classList.add("open");
 }
@@ -4509,8 +5678,11 @@ function pickableRow(row, onPick) {
 }
 
 function renderSearchHints() {
-  setSearchHead("Search this server", "Runs on this device, over the history it keeps");
-  const rows = SEARCH_FILTERS.map(filter => {
+  const ctx = searchScopeContext();
+  setSearchHead(searchScopeTitle(searchUi.scope, ctx), "Runs on this device, over the history it keeps");
+  setSearchPager(null);
+  const filters = SEARCH_FILTERS.filter(filter => filter.key !== "in" || searchContext().channels.length);
+  const rows = filters.map(filter => {
     const row = el("button", "mention-row search-filter-row");
     row.type = "button";
     row.append(el("span", "search-filter-key", `${filter.key}:`), el("span", "mention-hint", filter.hint));
@@ -4532,7 +5704,8 @@ function renderSearchHints() {
 }
 
 function renderSearchSuggestions(token, items) {
-  setSearchHead(token.kind === "member" ? "Members" : "Channels", "");
+  setSearchHead(token.kind === "member" ? (state.view === "dm" ? "People" : "Members") : "Channels", "");
+  setSearchPager(null);
   const rows = items.map(item => {
     const row = el("button", "mention-row");
     row.type = "button";
@@ -4573,8 +5746,7 @@ function highlightedExcerpt(message, terms) {
   return node;
 }
 
-function searchResultRow(hit, terms) {
-  const message = hit.message;
+function searchRow(message, terms, label, gated, onPick) {
   const row = el("div", "pin-row search-row");
   row.dataset.id = message.id;
   row.appendChild(makeAvatar(message.author_id, message.author_name, "avatar avatar-sm"));
@@ -4582,53 +5754,101 @@ function searchResultRow(hit, terms) {
   const head = el("div", "pin-head");
   const author = el("span", "pin-author", message.author_name);
   decorateAuthor(author, message.author_id);
-  const channel = state.currentServer.channels.find(c => c.id === hit.channel);
-  head.append(author, el("span", "pin-time", formatTime(message.created_at)), el("span", "pin-channel", `#${channel ? channelPlainName(channel) : hit.channel_name}`));
-  const gated = sensitiveGated({ view: "server", channel, confirmed: sensitiveConfirmed() });
+  head.append(author, el("span", "pin-time", formatTime(message.created_at)), el("span", "pin-channel", label));
   body.append(head, gated ? el("div", "pin-text search-text muted", SENSITIVE_PREVIEW) : highlightedExcerpt(message, terms));
   row.appendChild(body);
-  return pickableRow(row, () => openSearchHit(hit));
+  return pickableRow(row, onPick);
 }
 
-function renderSearchResults(query, results) {
+function searchResultRow(hit, terms) {
+  const channel = state.currentServer ? state.currentServer.channels.find(c => c.id === hit.channel) : null;
+  const gated = sensitiveGated({ view: "server", channel, confirmed: sensitiveConfirmed() });
+  return searchRow(hit.message, terms, `#${channel ? channelPlainName(channel) : hit.channel_name}`, gated, () => openSearchHit(hit));
+}
+
+function dmSearchResultRow(hit, terms, label = dmHitKey(hit).label) {
+  return searchRow(searchHitMessage(hit), terms, label, false, () => openDmSearchHit(hit));
+}
+
+function searchTerms(query) {
+  const terms = [...query.terms];
+  if (query.mentions) terms.push(`@${query.mentions.name}`);
+  return terms;
+}
+
+function renderSearchResults(query, results, scope, ctx) {
   const hits = results.hits.filter(h => !isBlocked(h.message.author_id));
   const total = results.total - (results.hits.length - hits.length);
-  setSearchHead(searchSummary(total, hits.length), query.channel ? `In #${query.channel.name}` : "Newest first, across this server");
+  setSearchHead(pageCount(total), searchScopeLine(scope, query, ctx));
+  setSearchPager(pageWindow(total, results.offset));
   if (!hits.length) {
     setSearchItems([searchNote("No messages found", "Search covers what this device keeps. Older history may have rolled off in Settings > Storage.")]);
     return;
   }
-  const terms = [...query.terms];
-  if (query.mentions) terms.push(`@${query.mentions.name}`);
-  setSearchItems(hits.map(hit => searchResultRow(hit, terms)));
+  setSearchItems(hits.map(hit => searchResultRow(hit, searchTerms(query))));
 }
 
-async function runSearch() {
+function renderDmSearchResults(query, results, scope, ctx) {
+  const hits = results.hits.filter(h => !isBlocked(searchHitMessage(h).author_id));
+  const total = results.total - (results.hits.length - hits.length);
+  setSearchHead(pageCount(total), searchScopeLine(scope, query, ctx));
+  setSearchPager(pageWindow(total, results.offset));
+  if (!hits.length) {
+    setSearchItems([searchNote("No messages found", "Search covers the direct messages and groups this device keeps.")]);
+    return;
+  }
+  const terms = searchTerms(query);
+  const runs = groupHits(hits);
+  if (runs.length < 2) {
+    setSearchItems(hits.map(hit => dmSearchResultRow(hit, terms)));
+    return;
+  }
+  setSearchItems(runs.flatMap(run => [el("div", "mention-head search-run-head", run.label), ...run.hits.map(hit => dmSearchResultRow(hit, terms, ""))]));
+}
+
+async function runSearch(offset = searchUi.offset) {
   clearTimeout(searchUi.timer);
-  if (!state.currentServer) return;
+  const ctx = searchScopeContext();
+  if (!ctx.active) return;
+  const scope = renderSearchScope(ctx);
   const query = parseSearch($("search-input").value, searchContext());
   const token = ++searchUi.token;
   if (query.unknown.length) {
-    setSearchHead("Search this server", "");
-    setSearchItems([searchNote(unknownFilterText(query.unknown), "Pick a name from the list as you type.")]);
+    setSearchHead(searchScopeTitle(scope, ctx), "");
+    setSearchPager(null);
+    const where = ctx.view === "dm" ? "in your direct messages" : "in this server";
+    setSearchItems([searchNote(unknownFilterText(query.unknown, where), "Pick a name from the list as you type.")]);
     return;
   }
   if (searchIsEmpty(query)) return renderSearchHints();
-  const serverId = state.currentServer.id;
+  const request = searchRequest(scope, searchArgs(query), ctx, offset);
   let results;
   try {
-    results = await invoke("search_messages", { serverId, ...searchArgs(query) });
+    results = await invoke(request.command, request.args);
   } catch (e) {
-    if (token === searchUi.token) setSearchItems([searchNote("Search did not finish", String(e))]);
+    if (token === searchUi.token) {
+      setSearchPager(null);
+      setSearchItems([searchNote("Search did not finish", String(e))]);
+    }
     return;
   }
-  if (token !== searchUi.token || !state.currentServer || state.currentServer.id !== serverId) return;
-  renderSearchResults(query, results);
+  if (token !== searchUi.token || !sameSearchPlace(ctx, searchScopeContext())) return;
+  searchUi.offset = results.offset || 0;
+  if (request.command === "search_dms") renderDmSearchResults(query, results, scope, ctx);
+  else renderSearchResults(query, results, scope, ctx);
+}
+
+function turnSearchPage(direction) {
+  const page = searchUi.page;
+  if (!page) return;
+  const next = direction > 0 ? page.olderOffset : page.newerOffset;
+  if (next !== page.offset) runSearch(next);
 }
 
 function onSearchInput() {
   const input = $("search-input");
   $("search-box").classList.toggle("has-text", input.value.length > 0);
+  searchUi.offset = 0;
   openSearchPop();
   const token = searchToken(input.value, input.selectionStart ?? input.value.length);
   const items = searchSuggestions(token, searchContext());
@@ -4659,6 +5879,9 @@ function onSearchKeydown(e) {
       openSearchPop();
       runSearch();
     }
+  } else if ((e.key === "PageDown" || e.key === "PageUp") && searchUi.page) {
+    e.preventDefault();
+    turnSearchPage(e.key === "PageDown" ? 1 : -1);
   } else if (e.key === "Escape") {
     e.preventDefault();
     e.stopPropagation();
@@ -4680,6 +5903,27 @@ async function openSearchHit(hit) {
   await jumpToMessage(hit.message.id);
 }
 
+async function openDmSearchHit(hit) {
+  closeSearchPop();
+  $("search-input").blur();
+  try {
+    if (hit.kind === "group") {
+      await openMessageLink({ server: hit.server, channel: hit.channel, message: hit.message.id });
+      return;
+    }
+    if (state.view !== "dm") {
+      setViewMode("dm");
+      state.currentServer = null;
+      state.currentChannel = null;
+      renderServerRail();
+    }
+    if (!state.currentDm || state.currentDm.user !== hit.user) await selectDm(hit.user, hit.name);
+    await jumpToMessage(hit.message.id);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 function wireSearch() {
   const input = $("search-input");
   $("search-box-icon").appendChild(svgIcon("search", 16));
@@ -4693,6 +5937,10 @@ function wireSearch() {
     input.focus();
     onSearchInput();
   };
+  for (const [id, direction] of [["search-older", 1], ["search-newer", -1]]) {
+    $(id).addEventListener("mousedown", e => e.preventDefault());
+    $(id).onclick = () => turnSearchPage(direction);
+  }
   document.addEventListener("keydown", e => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f" && $("modal-backdrop").classList.contains("hidden")) {
       if ($("search-box").classList.contains("hidden")) return;
@@ -4813,7 +6061,7 @@ function switcherGlyph(item) {
   }
   if (item.kind === "person") glyph.appendChild(svgIcon("people", 18));
   else if (item.kind === "action") glyph.appendChild(svgIcon(item.action === "settings" ? "gear" : "plus", 18));
-  else if (item.channelKind === "voice") glyph.appendChild(svgIcon("speaker", 18));
+  else if (isVoiceKind(item.channelKind)) glyph.appendChild(voiceKindIcon(item.channelKind, 18));
   else if (item.channelKind === "announcement") glyph.appendChild(svgIcon("megaphone", 18));
   else glyph.textContent = "#";
   return glyph;
@@ -4846,7 +6094,7 @@ async function runSwitcherItem(item) {
   if (!state.currentServer || state.currentServer.id !== item.serverId) await selectServer(item.serverId);
   const channel = state.currentServer && state.currentServer.channels.find(c => c.id === item.channelId);
   if (!channel) return toast("That channel is gone");
-  if (channel.kind === "voice") {
+  if (isVoiceKind(channel.kind)) {
     if (state.voiceChannelId !== channel.id) await toggleVoice(channel);
     return;
   }
@@ -4969,27 +6217,6 @@ async function jumpToMessage(id) {
   row.classList.add("flash");
 }
 
-function threadRootOf(message, byId) {
-  let current = message;
-  const seen = new Set();
-  while (current.reply_to && byId.has(current.reply_to) && !seen.has(current.id)) {
-    seen.add(current.id);
-    current = byId.get(current.reply_to);
-  }
-  return current.id;
-}
-
-function threadReplyCounts(messages) {
-  const byId = new Map(messages.map(m => [m.id, m]));
-  const counts = new Map();
-  for (const m of messages) {
-    if (!m.reply_to) continue;
-    const root = threadRootOf(m, byId);
-    if (root !== m.id) counts.set(root, (counts.get(root) || 0) + 1);
-  }
-  return counts;
-}
-
 function startReply(message) {
   state.replyingTo = message;
   $("reply-bar-name").textContent = message.author_name;
@@ -5002,18 +6229,214 @@ function cancelReply() {
   $("reply-bar").classList.add("hidden");
 }
 
+let threadRenaming = null;
+let threadsArchivedOpen = false;
+
+function currentThreads() {
+  return (state.view === "server" && state.currentChannel && state.currentChannel.threads) || [];
+}
+
+function threadMetaOf(rootId) {
+  return currentThreads().find(t => t.root === rootId) || null;
+}
+
+function canManageMessagesHere() {
+  return Boolean(state.currentServer && state.currentServer.can_manage_messages);
+}
+
+function canManageCurrentThread(root) {
+  const meta = root ? threadMetaOf(root.id) : null;
+  return canManageThread(root, {
+    userId: state.user && state.user.id,
+    canManageMessages: canManageMessagesHere(),
+    meta,
+    canCreateThreads: canCreateThreads(state.currentServer),
+  });
+}
+
 function openThread(rootId) {
   state.threadRoot = rootId;
   $("app").classList.add("thread-open");
   $("thread-panel").classList.remove("hidden");
   renderThread();
-  $("thread-input").focus();
+  if (!$("thread-input").disabled) $("thread-input").focus();
 }
 
 function closeThread() {
   state.threadRoot = null;
+  cancelThreadRename();
   $("app").classList.remove("thread-open");
   $("thread-panel").classList.add("hidden");
+}
+
+function renderThreadHead(root, replies) {
+  const meta = root ? threadMetaOf(root.id) : null;
+  const manages = canManageCurrentThread(root);
+  const renaming = Boolean(root) && threadRenaming === root.id && manages;
+  if (!renaming) threadRenaming = null;
+  const title = $("thread-title");
+  const post = root ? forumPostFor(root.id) : null;
+  title.textContent = post ? post.title : root ? threadName(root, meta, plainText) : "Thread";
+  title.disabled = !manages;
+  title.title = manages ? "Rename Thread" : "";
+  title.classList.toggle("hidden", renaming);
+  $("thread-title-input").classList.toggle("hidden", !renaming);
+  $("thread-status").textContent = root ? threadStatusLine({ meta, replies }) : "";
+  for (const id of ["thread-rename", "thread-archive", "thread-lock"]) $(id).classList.toggle("hidden", !manages);
+  const flag = (id, on, onTitle, offTitle) => {
+    const btn = $(id);
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", String(on));
+    btn.title = on ? onTitle : offTitle;
+  };
+  flag("thread-archive", Boolean(meta && meta.archived), "Unarchive Thread", "Archive Thread");
+  flag("thread-lock", Boolean(meta && meta.locked), "Unlock Thread", "Lock Thread");
+  const composer = threadComposerState({ meta, canManageMessages: canManageMessagesHere() });
+  const input = $("thread-input");
+  input.disabled = composer.disabled;
+  input.placeholder = composer.placeholder;
+  input.closest(".composer").classList.toggle("locked", composer.disabled);
+}
+
+function startThreadRename() {
+  const root = (state.renderedMessages || []).find(m => m.id === state.threadRoot);
+  if (!root || !canManageCurrentThread(root)) return;
+  threadRenaming = root.id;
+  const meta = threadMetaOf(root.id);
+  const input = $("thread-title-input");
+  input.value = meta && meta.name ? meta.name : "";
+  input.placeholder = threadName(root, null, plainText);
+  $("thread-title").classList.add("hidden");
+  input.classList.remove("hidden");
+  input.focus();
+  input.select();
+}
+
+function cancelThreadRename() {
+  threadRenaming = null;
+  $("thread-title-input").classList.add("hidden");
+  $("thread-title").classList.remove("hidden");
+}
+
+async function commitThreadRename() {
+  const rootId = threadRenaming;
+  if (!rootId) return;
+  const { name, error } = cleanThreadName($("thread-title-input").value);
+  cancelThreadRename();
+  if (error) return toast(error);
+  const meta = threadMetaOf(rootId);
+  if ((meta ? meta.name : null) === name) return;
+  await setThread(rootId, { name, archived: Boolean(meta && meta.archived), locked: Boolean(meta && meta.locked) });
+}
+
+async function setThread(rootId, { name, archived, locked }) {
+  if (!state.currentServer || !state.currentChannel) return;
+  try {
+    await invoke("set_thread", { serverId: state.currentServer.id, channelId: state.currentChannel.id, rootId, name, archived, locked });
+    await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function toggleThreadFlag(flag) {
+  const rootId = state.threadRoot;
+  if (!rootId) return;
+  const meta = threadMetaOf(rootId) || { name: null, archived: false, locked: false };
+  await setThread(rootId, {
+    name: meta.name,
+    archived: flag === "archived" ? !meta.archived : meta.archived,
+    locked: flag === "locked" ? !meta.locked : meta.locked,
+  });
+}
+
+function syncThreadsButton(messages = state.renderedMessages || []) {
+  const btn = $("threads-btn");
+  const channel = state.view === "server" ? state.currentChannel : null;
+  const { active } = buildThreadList(channel ? messages : [], currentThreads(), { plain: plainText });
+  const { visible, title } = threadsButtonState({ view: state.view, channel, count: active.length });
+  btn.classList.toggle("hidden", !visible);
+  btn.title = title;
+  if (!visible) return closeThreadsPanel();
+  if (!$("threads-pop").classList.contains("hidden")) renderThreadsPanel();
+}
+
+function closeThreadsPanel() {
+  $("threads-pop").classList.add("hidden");
+  $("threads-btn").classList.remove("active");
+}
+
+function toggleThreadsPanel() {
+  const pop = $("threads-pop");
+  if (!pop.classList.contains("hidden")) return closeThreadsPanel();
+  closeFloating();
+  pop.classList.remove("hidden");
+  $("threads-btn").classList.add("active");
+  renderThreadsPanel();
+}
+
+function renderThreadsPanel() {
+  const list = $("threads-list");
+  list.innerHTML = "";
+  if (!state.currentChannel) return;
+  const { active, archived } = buildThreadList(state.renderedMessages || [], currentThreads(), { plain: plainText });
+  const where = `#${channelPlainName(state.currentChannel)}`;
+  $("threads-pop-sub").textContent = active.length ? `${active.length} active in ${where}` : `None active in ${where}`;
+  if (!active.length && !archived.length) {
+    list.appendChild(threadsEmptyState());
+    return;
+  }
+  for (const thread of active) list.appendChild(threadRow(thread));
+  if (!archived.length) return;
+  const toggle = el("button", "threads-archived-toggle");
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", String(threadsArchivedOpen));
+  toggle.appendChild(svgIcon(threadsArchivedOpen ? "chevronDown" : "chevronRight", 16));
+  toggle.appendChild(el("span", null, `Archived (${archived.length})`));
+  toggle.onclick = () => {
+    threadsArchivedOpen = !threadsArchivedOpen;
+    renderThreadsPanel();
+  };
+  list.appendChild(toggle);
+  if (threadsArchivedOpen) for (const thread of archived) list.appendChild(threadRow(thread));
+}
+
+function threadsEmptyState() {
+  const empty = el("div", "pins-empty");
+  const mark = el("div", "pins-empty-mark");
+  mark.appendChild(svgIcon("thread", 26));
+  empty.appendChild(mark);
+  empty.appendChild(el("strong", null, "No threads yet"));
+  empty.appendChild(el("span", null, "Hover a message and choose Open Thread to start one."));
+  return empty;
+}
+
+function threadRow(thread) {
+  const row = el("div", "thread-row" + (thread.archived ? " archived" : ""));
+  row.dataset.id = thread.id;
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
+  const tile = el("span", "thread-row-icon");
+  tile.appendChild(svgIcon(thread.locked ? "lock" : "thread", 16));
+  row.appendChild(tile);
+  const body = el("div", "thread-row-body");
+  body.appendChild(el("div", "thread-row-name", thread.name));
+  const meta = [`${thread.replies} ${thread.replies === 1 ? "reply" : "replies"}`];
+  if (thread.locked) meta.push("Locked");
+  meta.push(formatShortTime(new Date(thread.lastAt).toISOString()));
+  body.appendChild(el("div", "thread-row-meta", meta.join(" · ")));
+  row.appendChild(body);
+  const open = () => {
+    closeThreadsPanel();
+    openThread(thread.id);
+  };
+  row.onclick = open;
+  row.onkeydown = e => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    open();
+  };
+  return row;
 }
 
 function renderThread() {
@@ -5022,13 +6445,12 @@ function renderThread() {
   const root = byId.get(state.threadRoot);
   const box = $("thread-messages");
   box.innerHTML = "";
+  const items = root ? messages.filter(m => m.id === root.id || (m.reply_to && threadRootOf(m, byId) === root.id)) : [];
+  renderThreadHead(root, Math.max(0, items.length - 1));
   if (!root) {
     box.appendChild(el("div", "manage-empty", "This thread's first message is no longer loaded."));
     return;
   }
-  const excerpt = plainText(root.content || "Attachment").slice(0, 60);
-  $("thread-title").textContent = excerpt;
-  const items = messages.filter(m => m.id === root.id || (m.reply_to && threadRootOf(m, byId) === root.id));
   items.forEach((m, i) => {
     const row = buildMessageRow(m, false, { inThread: true });
     if (i === 0) row.classList.add("thread-root");
@@ -5055,7 +6477,7 @@ async function sendThreadReply() {
       replyTo: state.threadRoot,
       previewUrl: await previewUrlFor(content),
     });
-    await selectChannel(state.currentChannel);
+    await refreshCurrentServer();
   } catch (e) {
     input.value = content;
     fitComposer(input);
@@ -5200,7 +6622,7 @@ function dmListShown() {
   return state.view === "dm" || isGroupView();
 }
 
-function messageActions(message, inThread = false) {
+function messageActions(message, inThread = false, replies = 0) {
   const bar = el("div", "msg-actions");
   const add = (icon, title, onClick, cls = "") => {
     const btn = el("button", cls);
@@ -5218,7 +6640,9 @@ function messageActions(message, inThread = false) {
       add("reply", "Reply", () => $("thread-input").focus());
     } else {
       add("reply", "Reply", () => startReply(message));
-      if (state.view === "server") add("thread", "Open Thread", () => openThread(message.id));
+      if (state.view === "server" && threadEntryShown({ replies, meta: threadMetaOf(message.id), canCreate: canCreateThreads(state.currentServer) })) {
+        add("thread", "Open Thread", () => openThread(message.id));
+      }
     }
   }
   if (state.view === "server" && canPinIn(state.currentServer, state.currentChannel)) {
@@ -5229,6 +6653,7 @@ function messageActions(message, inThread = false) {
     add("pencil", "Edit", () => startEditMessage(message.id));
   }
   if (!isOwnMessage(message)) add("eyeOff", "Hide for Me", () => setHidden(message.id, true));
+  savedMessageActions(add, message);
   if (message.content && !parseStickerToken(message.content)) add("more", "More", e => openMessageMenu(message, e.currentTarget));
   if (state.view === "server" && reportableIn(state.currentServer, message.author_id)) {
     add("flag", "Report Message", () => openReport({
@@ -5497,7 +6922,8 @@ function onUpdateStatus(status) {
   updateStatus = status;
   const ready = status && status.phase === "ready";
   $("settings-btn").classList.toggle("update-ready", !!ready);
-  $("settings-btn").title = ready ? "Settings (update ready)" : "Settings";
+  $("settings-btn").dataset.i18nTitle = ready ? "nav.settings.updateReady" : "nav.settings";
+  $("settings-btn").title = t($("settings-btn").dataset.i18nTitle);
   if (ready && !wasReady && openSettingsLayerId() !== "user-settings") {
     toast(`Commy ${status.version} is ready. Restart from Settings > Updates.`);
   }
@@ -5883,6 +7309,8 @@ async function toggleAudioPop(which, anchor) {
   $("ap-volume").value = String(level);
   $("ap-volume-label").textContent = `${level}%`;
   syncRangeFill($("ap-volume"));
+  $("ap-nc-row").classList.toggle("hidden", !input);
+  $("ap-nc").checked = Boolean(state.voice.noise_cancellation);
   pop.classList.remove("hidden");
   placePopup(pop, anchor, "above");
   try {
@@ -6526,7 +7954,7 @@ function syncRulesGate() {
       text.append(left, document.createTextNode("."));
     }
   }
-  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || aged || Boolean(lock));
+  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || aged || Boolean(lock) || isForumChannel(state.currentChannel));
   if (gated && !rulesPrompted.has(state.currentServer.id)) {
     rulesPrompted.add(state.currentServer.id);
     openServerWelcome("rules");
@@ -6949,7 +8377,7 @@ function openEvents() {
   eventsView.month = new Date(first.getFullYear(), first.getMonth(), 1);
   eventsView.day = null;
   $("events-title").textContent = `${state.currentServer.name} Events`;
-  $("event-create").classList.toggle("hidden", !state.currentServer.can_manage_events);
+  $("event-create").classList.toggle("hidden", !canCreateEvents(state.currentServer));
   $("events-layer").classList.remove("hidden");
   renderEvents();
 }
@@ -6980,7 +8408,7 @@ function renderEvents() {
     const empty = el("div", "events-empty");
     empty.appendChild(svgIcon("calendar", 40));
     empty.appendChild(el("h3", null, "No upcoming events"));
-    empty.appendChild(el("p", null, server.can_manage_events ? "Schedule one so people know when to show up." : "Check back later."));
+    empty.appendChild(el("p", null, canCreateEvents(server) ? "Schedule one so people know when to show up." : "Check back later."));
     body.appendChild(empty);
     return;
   }
@@ -7196,7 +8624,7 @@ function toggleSection(key) {
 }
 
 function channelSections(server, canCreate) {
-  const byPos = (a, b) => (a.kind === "voice") - (b.kind === "voice") || a.position - b.position;
+  const byPos = (a, b) => isVoiceKind(a.kind) - isVoiceKind(b.kind) || a.position - b.position;
   const afk = server.channels.find(c => c.id === server.afk_channel && c.kind === "voice");
   const channels = server.channels.filter(c => c !== afk);
   const categories = channels.filter(c => c.kind === "category").sort((a, b) => a.position - b.position);
@@ -7204,7 +8632,7 @@ function channelSections(server, canCreate) {
   const loose = channels.filter(c => c.kind !== "category" && !(c.parent && catIds.has(c.parent)));
   const sections = [];
   const looseText = loose.filter(holdsMessages).sort(byPos);
-  const looseVoice = loose.filter(c => c.kind === "voice").sort(byPos);
+  const looseVoice = loose.filter(c => isVoiceKind(c.kind)).sort(byPos);
   if (looseText.length || canCreate) sections.push({ key: `${server.id}:text`, title: "Text Channels", kind: "text", parent: null, channels: looseText });
   if (looseVoice.length || canCreate) sections.push({ key: `${server.id}:voice`, title: "Voice Channels", kind: "voice", parent: null, channels: looseVoice });
   for (const category of categories) {
@@ -7355,7 +8783,7 @@ function roleTagChip(tag, color) {
   if (isEmojiTag(tag)) return el("span", "role-tag emoji", tag);
   const chip = el("span", "role-tag", tag);
   if (color) {
-    chip.style.color = `#${color}`;
+    paintRole(chip, color);
     chip.style.borderColor = `#${color}66`;
   }
   return chip;
@@ -7405,9 +8833,9 @@ function friendState(userId) {
   return "none";
 }
 
-async function friendAction(userId, action, name) {
+async function friendAction(userId, action, name, note) {
   try {
-    await invoke("friend_action", { userId, action });
+    await invoke("friend_action", { userId, action, note: note || null });
     await loadFriends();
     const done = { request: `Friend request sent to ${name}`, accept: `You and ${name} are now friends`, decline: "Request declined", remove: `Removed ${name} from friends` };
     toast(done[action] || "Done");
@@ -7425,12 +8853,61 @@ function friendButton(person, onDone) {
   btn.appendChild(el("span", null, labels[st]));
   btn.title = st === "friend" ? "Remove friend" : st === "outgoing" ? "Cancel request" : labels[st];
   btn.onclick = async () => {
-    const action = st === "none" ? "request" : st === "incoming" ? "accept" : "remove";
+    if (st === "none") {
+      openAddFriend(person, onDone);
+      return;
+    }
+    const action = st === "incoming" ? "accept" : "remove";
     if (action === "remove" && st === "friend" && !confirm(`Remove ${person.name} from your friends?`)) return;
     await friendAction(person.id, action, person.name);
     if (onDone) onDone();
   };
   return btn;
+}
+
+let addFriendTarget = null;
+
+function openAddFriend(person, onDone) {
+  closeFloating();
+  addFriendTarget = { person, onDone };
+  const av = $("add-friend-avatar");
+  av.replaceChildren();
+  paintAvatar(av, person.id, person.name);
+  $("add-friend-username").value = person.username ? `@${person.username}` : person.name;
+  $("add-friend-note").value = "";
+  renderFriendNoteCounter();
+  showModal("modal-add-friend");
+  $("add-friend-note").focus();
+}
+
+function renderFriendNoteCounter() {
+  $("add-friend-count").textContent = friendNoteState($("add-friend-note").value).counter;
+}
+
+async function sendAddFriend() {
+  const target = addFriendTarget;
+  if (!target) return;
+  const note = friendNoteState($("add-friend-note").value).text;
+  addFriendTarget = null;
+  hideModals();
+  await friendAction(target.person.id, "request", target.person.name, note);
+  if (target.onDone) target.onDone();
+}
+
+function wireProfilePrivacy() {
+  $("profile-policy").addEventListener("change", saveProfilePrivacy);
+  $("add-friend-note").addEventListener("input", renderFriendNoteCounter);
+  $("add-friend-note").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendAddFriend();
+    }
+  });
+  $("add-friend-cancel").onclick = () => {
+    addFriendTarget = null;
+    hideModals();
+  };
+  $("add-friend-send").onclick = sendAddFriend;
 }
 
 function invitableServers(userId) {
@@ -7499,7 +8976,7 @@ async function openFullProfile(member) {
   paintAvatar(av, person.id, person.name);
   av.appendChild(el("span", "presence-dot " + (person.presence || "offline")));
   $("fp-name").textContent = person.name;
-  $("fp-name").style.color = person.color ? `#${person.color}` : "";
+  paintRole($("fp-name"), person.color);
   $("fp-name").parentElement.querySelector(".role-tag")?.remove();
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = [person.username ? `@${person.username}` : "", person.pronouns || ""].filter(Boolean).join(" \u00b7 ");
@@ -7605,7 +9082,7 @@ function openMemberCard(member, anchor) {
   av.appendChild(el("span", "presence-dot " + (member.presence || "offline")));
   const name = $("mc-name");
   name.textContent = member.name;
-  name.style.color = member.color ? `#${member.color}` : "";
+  paintRole(name, member.color);
   name.parentElement.querySelectorAll(".role-tag, .bot-tag, .mc-pronouns, .timeout-badge").forEach(n => n.remove());
   if (timeoutActive(member.timeout_until)) name.after(timeoutBadge(member.timeout_until));
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
@@ -7692,7 +9169,7 @@ function openMemberCard(member, anchor) {
 function decorateAuthor(node, authorId) {
   const member = state.view === "server" && currentServerMember(authorId);
   if (!member) return;
-  if (member.color) node.style.color = `#${member.color}`;
+  paintRole(node, member.color);
   if (member.tag) node.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) node.after(botTag());
 }
@@ -7720,7 +9197,7 @@ function renderRolePicker(server, list) {
     if (role.color) dot.style.background = `#${role.color}`;
     row.appendChild(dot);
     const name = el("span", "role-pick-name", role.name);
-    if (role.color) name.style.color = `#${role.color}`;
+    paintRole(name, role.color);
     row.appendChild(name);
     if (role.tag) row.appendChild(roleTagChip(role.tag, role.color));
     row.appendChild(el("span", "role-pick-check")).appendChild(svgIcon("check", 16));
@@ -7766,9 +9243,10 @@ async function removeRoleBanner(server, role) {
 const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff", "c05ccf", "ff6fa8", "99aab5"];
 
 const PERMISSION_GROUPS = [
-  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "manage_events", "view_audit_log"]],
-  ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
+  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "create_events", "manage_events", "view_audit_log"]],
+  ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "send_tts_messages", "embed_links", "read_message_history", "create_threads", "send_polls", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
+  ["Voice", ["priority_speaker"]],
 ];
 
 function roleForm(server, role, onClose) {
@@ -7911,9 +9389,13 @@ function roleForm(server, role, onClose) {
     const input = el("input");
     input.type = "checkbox";
     input.value = value;
-    input.checked = held.has(value);
+    input.checked = switchOn(held, value);
     permInputs.push(input);
-    wrap.append(input, document.createTextNode(labels.get(value)));
+    const text = el("span", "perm-text");
+    text.appendChild(el("span", "perm-name", labels.get(value)));
+    const hint = permissionHint(value);
+    if (hint && cls !== "rf-admin") text.appendChild(el("span", "perm-hint", hint));
+    wrap.append(input, text);
     return wrap;
   };
   body.appendChild(el("div", "setting-title role-perms-title", "Permissions"));
@@ -7961,7 +9443,7 @@ function roleForm(server, role, onClose) {
       name.focus();
       return;
     }
-    const permissions = permInputs.filter(input => input.checked).map(input => input.value);
+    const permissions = namesToSave(permInputs.map(input => [input.value, input.checked]));
     try {
       let roleId = role && role.id;
       if (creating) {
@@ -8024,7 +9506,7 @@ function roleForm(server, role, onClose) {
   return form;
 }
 
-let safety = { blocked: [], dm_policy: "everyone", spam_filter: true };
+let safety = { blocked: [], dm_policy: "everyone", spam_filter: true, profile_policy: "everyone" };
 const revealedBlocked = new Set();
 
 async function loadSafety() {
@@ -8082,7 +9564,22 @@ async function setHistoryWindow(serverId, keep) {
   renderStorageSettings();
 }
 
+function renderProfilePrivacy() {
+  $("profile-policy").value = safety.profile_policy || "everyone";
+}
+
+async function saveProfilePrivacy() {
+  try {
+    await invoke("set_profile_privacy", { policy: $("profile-policy").value });
+    await loadSafety();
+  } catch (e) {
+    toast(String(e));
+  }
+  renderProfilePrivacy();
+}
+
 function renderSafetySettings() {
+  renderProfilePrivacy();
   $("dm-policy").value = safety.dm_policy;
   $("spam-filter-toggle").checked = safety.spam_filter;
   const list = $("blocked-list");
@@ -8242,9 +9739,17 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
-  const moderates = inServer && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames);
+  const moderates = inServer && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames || server.can_manage_stage);
   if (inServer && member.id !== server.owner && moderates) {
     sep();
+    const stageAction = stageMenuAction(stageChannelOf(server, member.id), member.id, Boolean(server.can_manage_stage));
+    if (stageAction) {
+      const entry = item(stageAction.label, () => setStageSpeaker(stageChannelOf(server, member.id), member, stageAction));
+      if (stageAction.speaker && (stageChannelOf(server, member.id).hands || []).includes(member.id)) {
+        entry.classList.add("ctx-hand");
+        entry.prepend(svgIcon("hand", 14));
+      }
+    }
     if (server.can_mute) {
       const sm = (server.server_muted || []).includes(member.id);
       const sd = (server.server_deafened || []).includes(member.id);
@@ -8258,37 +9763,138 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     }
     const inVoice = server.can_move ? (server.members.find(m => m.id === member.id) || {}).voice_channel : null;
     if (inVoice) {
-      for (const channel of server.channels.filter(c => c.kind === "voice" && c.id !== inVoice && c.can_view !== false)) {
+      for (const channel of server.channels.filter(c => isVoiceKind(c.kind) && c.id !== inVoice && c.can_view !== false)) {
         item(`Move to ${channelPlainName(channel)}`, () => moveVoiceMember(member, channel));
       }
       item("Disconnect from Voice", () => moveVoiceMember(member, null), "danger");
     }
-    if (server.can_kick) {
-      item(`Kick ${member.name}`, async () => {
-        if (!confirm(`Kick ${member.name} from ${server.name}?`)) return;
-        try {
-          await invoke("kick_member", { serverId: server.id, userId: member.id });
-          await refreshCurrentServer();
-          toast(`Kicked ${member.name}`);
-        } catch (e) {
-          toast(String(e));
-        }
-      }, "danger");
-    }
-    if (server.can_ban) {
-      item(`Ban ${member.name}`, async () => {
-        if (!confirm(`Ban ${member.name} from ${server.name}? They are removed and cannot rejoin until unbanned.`)) return;
-        try {
-          await invoke("ban_member", { serverId: server.id, userId: member.id });
-          await refreshCurrentServer();
-          toast(`Banned ${member.name}`);
-        } catch (e) {
-          toast(String(e));
-        }
-      }, "danger");
-    }
+    if (server.can_kick) item(`Kick ${member.name}`, () => confirmKick(member), "danger");
+    if (server.can_ban) item(`Ban ${member.name}`, () => confirmBan(member), "danger");
   }
   placeMenuAt(menu, x, y);
+}
+
+let moderateRun = null;
+
+function modWho(target, member) {
+  target.replaceChildren(makeAvatar(member.id, member.name, "avatar avatar-sm"), el("span", null, member.name));
+}
+
+function askModeration({ title, member, text, label, run }) {
+  closeFloating();
+  $("moderate-title").textContent = title;
+  modWho($("moderate-who"), member);
+  $("moderate-text").textContent = text;
+  $("moderate-go").textContent = label;
+  moderateRun = run;
+  showModal("modal-moderate");
+}
+
+function confirmKick(member) {
+  const server = state.currentServer;
+  if (!server) return;
+  askModeration({
+    title: `Kick ${member.name}`,
+    member,
+    text: `They are removed from ${server.name} and can rejoin with a new invite.`,
+    label: "Kick",
+    run: async () => {
+      await invoke("kick_member", { serverId: server.id, userId: member.id });
+      await refreshCurrentServer();
+      toast(`Kicked ${member.name}`);
+    },
+  });
+}
+
+function confirmBan(member) {
+  const server = state.currentServer;
+  if (!server) return;
+  askModeration({
+    title: `Ban ${member.name}`,
+    member,
+    text: `They are removed from ${server.name} and cannot rejoin until you unban them.`,
+    label: "Ban",
+    run: async () => {
+      await invoke("ban_member", { serverId: server.id, userId: member.id });
+      await refreshCurrentServer();
+      toast(`Banned ${member.name}`);
+    },
+  });
+}
+
+function wireModerationModal() {
+  $("moderate-cancel").onclick = () => {
+    hideModals();
+    moderateRun = null;
+  };
+  $("moderate-go").onclick = async () => {
+    const run = moderateRun;
+    moderateRun = null;
+    hideModals();
+    if (!run) return;
+    try {
+      await run();
+      if (!$("server-settings").classList.contains("hidden")) openServerSettings();
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+}
+
+function openMemberRowMenu(member, anchor) {
+  const server = state.currentServer;
+  if (!server) return;
+  closeFloating();
+  const menu = $("member-menu");
+  menu.replaceChildren(el("div", "ctx-title", member.name));
+  const { item, sep } = contextMenuBuilder(menu);
+  const isSelf = state.user && member.id === state.user.id;
+  const isOwner = member.id === server.owner;
+  let any = false;
+  if (canTimeOut(server, member, state.user && state.user.id)) {
+    const active = timeoutActive(member.timeout_until);
+    item(active ? "Remove timeout" : "Time out...", async () => {
+      if (active) {
+        await clearMemberTimeout(member);
+        openServerSettings();
+      } else {
+        openTimeoutPicker(member);
+      }
+    });
+    any = true;
+  }
+  if (!isSelf && !isOwner && (server.can_kick || server.can_ban)) {
+    if (any) sep();
+    if (server.can_kick) item("Kick...", () => confirmKick(member), "danger");
+    if (server.can_ban) item("Ban...", () => confirmBan(member), "danger");
+  }
+  const rect = anchor.getBoundingClientRect();
+  placeMenuAt(menu, rect.left, rect.bottom + 4);
+  const width = menu.getBoundingClientRect().width;
+  menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
+}
+
+async function setStageSpeaker(channel, member, action) {
+  if (!channel || !state.currentServer) return;
+  try {
+    await invoke("set_stage_speaker", { serverId: state.currentServer.id, channelId: channel.id, userId: member.id, speaker: action.speaker });
+    toast(`${member.name} ${action.done}`);
+    await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function toggleHand(raised) {
+  if (!state.voiceServer) return;
+  try {
+    await invoke("raise_hand", { serverId: state.voiceServer.id, raised });
+    toast(raised ? "Hand raised" : "Hand lowered");
+    if (state.currentServer && state.currentServer.id === state.voiceServer.id) await refreshCurrentServer();
+    else renderVoicePanel();
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function openSelfVoiceMenu(x, y) {
@@ -8378,6 +9984,7 @@ function openTimeoutPicker(member) {
   closeFloating();
   timeoutTarget = { serverId: server.id, member, seconds: TIMEOUT_CHOICES[1].seconds };
   $("timeout-title").textContent = `Time out ${member.name}`;
+  modWho($("timeout-who"), member);
   $("timeout-custom").value = "";
   renderTimeoutChoices();
   showModal("modal-timeout");
@@ -8417,6 +10024,7 @@ async function confirmTimeout() {
     await invoke("time_out_member", { serverId, userId: member.id, seconds });
     await refreshCurrentServer();
     toast(timeoutSummary(member.name, seconds));
+    if (!$("server-settings").classList.contains("hidden")) openServerSettings();
   } catch (e) {
     toast(String(e));
   }
@@ -9764,9 +11372,24 @@ function suggestionsFor(token, input) {
   if (token.kind === "mention") return mentionSuggestions(token.query);
   if (token.kind === "emoji") return emojiSuggestions(token.query, emojiGroupsHere(), EMOJI_DATA);
   if (token.kind === "command" && suggestPop.commandInputs.has(input)) {
-    return commandSuggestions(token, { gifs: Boolean(gifSettings().key) || serverHasGifs() });
+    const available = { gifs: Boolean(gifSettings().key) || serverHasGifs(), tts: state.view === "server" && canSendTtsHere() };
+    return commandSuggestions(token, available, slashCatalogHere());
   }
   return [];
+}
+
+function slashCatalogHere() {
+  return state.view === "server" && state.currentServer ? slashCatalog(state.currentServer) : [];
+}
+
+function slashUsageNode(item) {
+  const span = el("span", "suggest-args suggest-usage");
+  const at = item.args === null ? -1 : slashOptionAt(item.entry, item.args);
+  item.entry.options.forEach((option, i) => {
+    const word = el("span", "suggest-opt" + (i === at ? " on" : ""), option.required ? `<${option.name}>` : `[${option.name}]`);
+    span.appendChild(word);
+  });
+  return span;
 }
 
 function suggestHeading(token) {
@@ -9777,6 +11400,8 @@ function suggestHeading(token) {
 }
 
 function commandHint(item) {
+  if (item.name === TTS_COMMAND) return ttsCommandHint(item);
+  if (item.bot) return item.args === null ? item.entry.description : slashHint(item.entry, item.args).text;
   if (!item.available) return "GIF search is not set up";
   return item.args ? "Search GIFs" : "Search for a GIF";
 }
@@ -9791,6 +11416,12 @@ function suggestionRow(item) {
     row.append(el("span", "mention-name", `:${item.name}`), el("span", "suggest-face", item.text), el("span", "mention-hint", item.server));
   } else if (item.kind === "standard") {
     row.append(el("span", "suggest-glyph", item.emoji), el("span", "mention-name", item.name));
+  } else if (item.kind === "command" && item.bot) {
+    row.classList.add("slash-row");
+    row.append(el("span", "mention-at", "/"), el("span", "mention-name", `/${item.name}`));
+    if (item.entry.options.length) row.appendChild(slashUsageNode(item));
+    row.appendChild(el("span", "mention-hint", commandHint(item)));
+    row.title = `${item.entry.bot_name}: ${item.entry.description}`;
   } else if (item.kind === "command") {
     row.append(el("span", "mention-at", "/"), el("span", "mention-name", `/${item.name}`));
     if (item.args) row.appendChild(el("span", "suggest-args", item.args));
@@ -9806,7 +11437,8 @@ function suggestionRow(item) {
 }
 
 function updateSuggestPop(input) {
-  const token = suggestTokenAt(input.value, input.selectionStart);
+  const names = suggestPop.commandInputs.has(input) ? slashNames(slashCatalogHere()) : [];
+  const token = suggestTokenAt(input.value, input.selectionStart, names);
   const items = token ? suggestionsFor(token, input) : [];
   if (!items.length) {
     closeSuggestPop();
@@ -9849,8 +11481,12 @@ function pickSuggestion(i) {
   const item = suggestPop.items[i];
   const input = suggestPop.input;
   if (!item || !input) return;
-  if (item.kind === "command" && item.ready) {
+  if (item.kind === "command" && item.ready && !item.bot) {
     runComposerCommand(input, item);
+    return;
+  }
+  if (item.kind === "command" && item.bot && item.args !== null) {
+    closeSuggestPop();
     return;
   }
   const caret = input.selectionStart ?? input.value.length;
@@ -9869,6 +11505,11 @@ function mentionTypedInFull() {
   return !!(token && token.kind === "mention" && item && item.name.toLowerCase() === token.query);
 }
 
+function slashTypedInFull() {
+  const item = suggestPop.items[suggestPop.index];
+  return !!(item && item.kind === "command" && item.bot && item.args !== null);
+}
+
 function wireSuggestions(input, { commands = false } = {}) {
   if (commands) suggestPop.commandInputs.add(input);
   input.addEventListener("input", () => updateSuggestPop(input));
@@ -9880,7 +11521,7 @@ function wireSuggestions(input, { commands = false } = {}) {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       suggestPop.index = (suggestPop.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
       updateSuggestPop(input);
-    } else if (e.key === "Enter" && mentionTypedInFull()) {
+    } else if (e.key === "Enter" && (mentionTypedInFull() || slashTypedInFull())) {
       closeSuggestPop();
       return;
     } else if (e.key === "Enter" || e.key === "Tab") {
@@ -9928,6 +11569,23 @@ function buildMessageContent(text, authorId = null) {
   return div;
 }
 
+function renderCommandUse(message) {
+  const used = message.command;
+  const line = el("div", "cmd-use");
+  line.append(el("span", "cmd-use-badge", "/"), el("span", "cmd-use-label", "used"), el("span", "cmd-use-name", `/${used.name}`));
+  const entry = slashCatalogHere().find(c => c.name === used.name && c.bot === used.bot) || null;
+  const channelName = id => ((state.currentServer && state.currentServer.channels) || []).find(c => c.id === id)?.name || null;
+  for (const chip of slashChips(used, entry, { memberName: id => avatarNameFor(id), channelName })) {
+    const pill = el("span", "cmd-use-chip");
+    pill.append(el("span", "cmd-use-chip-name", chip.name), el("span", "cmd-use-chip-value", chip.value));
+    pill.title = `${chip.name}: ${chip.value}`;
+    line.appendChild(pill);
+  }
+  line.appendChild(el("span", "cmd-use-bot", `to ${used.bot_name || "a bot"}`));
+  line.title = message.content || `/${used.name}`;
+  return line;
+}
+
 function jumpCard(target) {
   const card = el("div", "jump-card");
   card.appendChild(svgIcon("link", 18));
@@ -9973,9 +11631,308 @@ function openMessageMenu(message, anchor) {
     item("Copy Message Link", () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied"));
   }
   if (message.content) item("Forward", () => openForward(message));
+  if (message.content && speechAvailable()) item("Read Aloud", () => speakMessage(message));
+  savedMenuItems(item, message);
   if (state.view === "server" && state.currentChannel && !message.pending) item("Mark as Unread", () => markUnreadFrom(message));
   const r = anchor.getBoundingClientRect();
   placeMenuAt(menu, r.left, r.bottom + 4);
+}
+
+const savedState = { saved: [], reminders: [], open: false, timer: null };
+
+function isSavedMessage(id) {
+  return savedState.saved.some(s => s.message === id);
+}
+
+function applySavedStore(store) {
+  savedState.saved = sortSaved(store && store.saved);
+  savedState.reminders = sortReminders(store && store.reminders);
+  syncSavedButton();
+  if (savedState.open) renderSavedView();
+}
+
+async function loadSaved() {
+  try {
+    applySavedStore(await invoke("saved_list"));
+  } catch {
+    applySavedStore(null);
+  }
+  await checkReminders();
+  if (!savedState.timer) savedState.timer = setInterval(checkReminders, REMINDER_CHECK_MS);
+}
+
+function savedContext() {
+  if (inDmView()) return { dm: state.currentDm };
+  const channel = state.currentChannel ? { id: state.currentChannel.id, name: channelPlainName(state.currentChannel) } : null;
+  return { server: state.currentServer, channel };
+}
+
+async function toggleSaved(message) {
+  const saved = !isSavedMessage(message.id);
+  try {
+    applySavedStore(await invoke("saved_set", { entry: messageEntry(message, savedContext()), saved }));
+    toast(saved ? "Message saved" : "Removed from Saved");
+    renderMessages(state.renderedMessages || []);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function savedMessageActions(add, message) {
+  if (message.pending || message.held) return;
+  const saved = isSavedMessage(message.id);
+  add(saved ? "bookmarkOn" : "bookmark", saved ? "Unsave" : "Save", () => toggleSaved(message));
+  add("bell", "Remind Me", e => openRemindPop(message, e.currentTarget));
+}
+
+function savedMenuItems(item, message) {
+  if (message.pending || message.held) return;
+  item(isSavedMessage(message.id) ? "Remove from Saved" : "Save Message", () => toggleSaved(message));
+  item("Remind Me", () => openRemindPop(message, messageRow(message.id) || $("messages")));
+}
+
+function openRemindPop(message, anchor) {
+  closeFloating();
+  const pop = $("remind-pop");
+  pop.replaceChildren(el("div", "ctx-title", "Remind me about this"));
+  const choose = (label, onPick) => {
+    const btn = el("button", null, label);
+    btn.onclick = () => {
+      closeRemindPop();
+      onPick();
+    };
+    pop.appendChild(btn);
+  };
+  for (const preset of REMINDER_PRESETS) {
+    if (preset.id === "custom") continue;
+    choose(preset.label, () => setReminder(message, reminderDue(preset.id, Date.now())));
+  }
+  pop.appendChild(el("div", "ctx-sep"));
+  const pick = el("div", "remind-pick");
+  pick.appendChild(el("span", "remind-pick-label", "Pick a time"));
+  const input = el("input");
+  input.type = "datetime-local";
+  input.min = toDateTimeLocal(Date.now() + 60e3);
+  input.value = toDateTimeLocal(Date.now() + 3600e3);
+  input.setAttribute("aria-label", "Reminder time");
+  pick.appendChild(input);
+  const set = el("button", "btn-primary btn-small", "Set");
+  set.onclick = () => {
+    const due = parseReminderTime(input.value, Date.now());
+    if (!due) {
+      toast("Pick a time that is still ahead");
+      return;
+    }
+    closeRemindPop();
+    setReminder(message, due);
+  };
+  pick.appendChild(set);
+  pop.appendChild(pick);
+  const r = anchor.getBoundingClientRect();
+  placeMenuAt(pop, r.left, r.bottom + 4);
+}
+
+function closeRemindPop() {
+  $("remind-pop").classList.add("hidden");
+}
+
+async function setReminder(message, due) {
+  if (!due) return;
+  try {
+    applySavedStore(await invoke("reminder_set", { entry: messageEntry(message, savedContext()), due }));
+    toast(`Reminder set · ${reminderLabel(due, Date.now())}`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function cancelReminder(id) {
+  try {
+    applySavedStore(await invoke("reminder_cancel", { id }));
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function checkReminders() {
+  for (const reminder of dueReminders(savedState.reminders, Date.now())) {
+    const notice = reminderNotice(reminder);
+    invoke("notify", { ...notice, target: savedTarget(reminder.entry) }).catch(() => {});
+    toast(notice.title);
+    playSound("message");
+    await cancelReminder(reminder.id);
+  }
+}
+
+function syncSavedButton() {
+  const now = Date.now();
+  const upcoming = savedState.reminders.filter(r => r.due > now).length;
+  const btn = $("saved-btn");
+  btn.title = savedButtonTitle(savedState.reminders, now);
+  const count = $("saved-count");
+  count.textContent = pinBadgeText(upcoming);
+  count.classList.toggle("hidden", !upcoming);
+  const entry = document.querySelector(".saved-entry .dm-preview");
+  if (entry) entry.textContent = savedSummary(savedState.saved, savedState.reminders, now);
+}
+
+function savedSidebarRow() {
+  const row = el("div", "channel dm-thread saved-entry");
+  if (savedState.open) row.classList.add("active");
+  const mark = el("div", "avatar saved-entry-mark");
+  mark.appendChild(svgIcon("bookmark", 18));
+  row.appendChild(mark);
+  const meta = el("div", "dm-meta");
+  meta.appendChild(el("div", "dm-name", "Saved"));
+  meta.appendChild(el("div", "dm-preview", savedSummary(savedState.saved, savedState.reminders, Date.now())));
+  row.appendChild(meta);
+  row.onclick = toggleSavedView;
+  return row;
+}
+
+function toggleSavedView() {
+  if (savedState.open) closeSavedView();
+  else openSavedView();
+}
+
+function openSavedView() {
+  closeFloating();
+  savedState.open = true;
+  $("saved-view").classList.remove("hidden");
+  $("saved-btn").classList.add("active");
+  for (const row of document.querySelectorAll(".saved-entry")) row.classList.add("active");
+  renderSavedView();
+}
+
+function closeSavedView() {
+  savedState.open = false;
+  $("saved-view").classList.add("hidden");
+  $("saved-btn").classList.remove("active");
+  for (const row of document.querySelectorAll(".saved-entry")) row.classList.remove("active");
+}
+
+function savedSectionHead(label, count) {
+  const head = el("div", "saved-section");
+  head.appendChild(el("span", null, label));
+  head.appendChild(el("span", null, String(count)));
+  return head;
+}
+
+function renderSavedView() {
+  const list = $("saved-list");
+  list.replaceChildren();
+  const now = Date.now();
+  if (savedState.reminders.length) {
+    list.appendChild(savedSectionHead("Reminders", savedState.reminders.length));
+    for (const reminder of savedState.reminders) list.appendChild(savedRow(reminder.entry, { reminder, now }));
+  }
+  list.appendChild(savedSectionHead("Saved messages", savedState.saved.length));
+  if (!savedState.saved.length) {
+    list.appendChild(savedEmptyState());
+    return;
+  }
+  for (const entry of savedState.saved) list.appendChild(savedRow(entry, { now }));
+}
+
+function savedEmptyState() {
+  const empty = el("div", "saved-empty");
+  const mark = el("div", "saved-empty-mark");
+  mark.appendChild(svgIcon("bookmark", 26));
+  empty.appendChild(mark);
+  empty.appendChild(el("strong", null, "Nothing saved yet"));
+  empty.appendChild(el("span", null, "Hover a message and choose Save to keep it here, or Remind Me to hear about it later. Saved messages stay on this device."));
+  return empty;
+}
+
+function savedRow(entry, { reminder = null, now }) {
+  const row = el("div", "saved-row");
+  row.dataset.id = entry.message;
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
+  row.appendChild(makeAvatar(entry.author_id, entry.author_name));
+  const body = el("div", "saved-body");
+  const line = el("div", "saved-line");
+  line.appendChild(el("span", "saved-author", entry.author_name || "Someone"));
+  line.appendChild(el("span", "saved-origin", savedOrigin(entry)));
+  if (reminder) {
+    const chip = el("span", "saved-chip" + (reminder.due <= now ? " due" : ""));
+    chip.appendChild(svgIcon("bell", 14));
+    chip.appendChild(el("span", null, reminderLabel(reminder.due, now)));
+    line.appendChild(chip);
+  } else {
+    line.appendChild(el("span", "saved-time", formatTime(entry.created_at)));
+  }
+  body.appendChild(line);
+  const text = savedExcerpt(entry, plainText);
+  const excerpt = el("div", "saved-text", text);
+  if (!entry.content) excerpt.classList.add("muted");
+  body.appendChild(excerpt);
+  row.appendChild(body);
+  const remove = el("button", "saved-remove");
+  remove.title = reminder ? "Cancel Reminder" : "Unsave";
+  remove.setAttribute("aria-label", remove.title);
+  remove.appendChild(svgIcon("close", 16));
+  remove.onclick = async e => {
+    e.stopPropagation();
+    if (reminder) await cancelReminder(reminder.id);
+    else await unsaveEntry(entry);
+  };
+  row.appendChild(remove);
+  const jump = () => jumpToSaved(entry);
+  row.onclick = jump;
+  row.onkeydown = e => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      jump();
+    }
+  };
+  return row;
+}
+
+async function unsaveEntry(entry) {
+  try {
+    applySavedStore(await invoke("saved_set", { entry, saved: false }));
+    renderMessages(state.renderedMessages || []);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function jumpToSaved(entry) {
+  closeSavedView();
+  try {
+    if (entry.dm) {
+      if (state.view !== "dm") {
+        setViewMode("dm");
+        state.currentServer = null;
+        state.currentChannel = null;
+        renderServerRail();
+      }
+      if (!state.currentDm || state.currentDm.user !== entry.dm) await selectDm(entry.dm, entry.dm_name || "Direct Message");
+      await jumpToMessage(entry.message);
+    } else if (entry.server && entry.channel) {
+      await openMessageLink({ server: entry.server, channel: entry.channel, message: entry.message });
+    } else {
+      toast("That message has no place to jump to");
+    }
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireSaved() {
+  $("saved-btn").onclick = toggleSavedView;
+  $("saved-close").onclick = closeSavedView;
+  document.addEventListener("click", e => {
+    const pop = $("remind-pop");
+    if (!pop.classList.contains("hidden") && !pop.contains(e.target) && !e.target.closest(".msg-actions, #msg-menu")) closeRemindPop();
+    if (savedState.open && !$("saved-view").contains(e.target) && !e.target.closest("#saved-btn, .saved-entry, #modal-backdrop, .pop-menu")) closeSavedView();
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    closeRemindPop();
+    if (savedState.open) closeSavedView();
+  });
 }
 
 let forwarding = null;
@@ -10347,10 +12304,9 @@ function renderInlineVideo(att) {
 function renderShareButton() {
   const btn = $("share-btn");
   const inVoice = Boolean(state.voiceChannelId);
-  btn.classList.toggle("hidden", !inVoice);
   btn.classList.toggle("active", state.sharing);
-  btn.title = state.sharing ? "Stop Sharing" : "Share Your Screen";
-  $("vp-nc").classList.toggle("hidden", !inVoice);
+  btn.title = state.sharing ? "Stop sharing your screen" : "Share your screen";
+  btn.replaceChildren(svgIcon("screen", 16), el("span", null, state.sharing ? "Stop Sharing" : "Share Screen"));
   $("vp-soundboard").classList.toggle("hidden", !inVoice);
   renderVoicePanel();
 }
@@ -10364,7 +12320,9 @@ function renderVoicePanel() {
   const call = vs.call ? state.call : null;
   $("vp-status-text").textContent = call && call.state !== "active" ? "Calling" : "Voice Connected";
   $("vp-where").textContent = call ? `Call with ${vs.name}` : `${vs.channelName} / ${vs.name}`;
+  renderVoiceTopic(call ? null : vs);
   $("vp-camera").classList.toggle("hidden", Boolean(call));
+  renderVoiceInviteButton(Boolean(call));
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
     : null;
@@ -10376,15 +12334,13 @@ function renderVoicePanel() {
   }
   $("vp-signal").replaceChildren(svgIcon("signal", 14));
   setIcon($("vp-disconnect"), "hangup", 20);
-  setIcon($("vp-nc"), "noise", 18);
-  $("vp-nc").classList.toggle("on", state.voice.noise_cancellation);
-  $("vp-nc").title = `Noise Cancellation: ${state.voice.noise_cancellation ? "on" : "off"}`;
 
   $("vp-camera-icon").replaceChildren(svgIcon(state.cameraOn ? "camera" : "cameraOff", 18));
   $("vp-camera").classList.toggle("active", Boolean(state.cameraOn));
   $("vp-camera").title = state.cameraOn ? "Turn Off Camera" : "Turn On Camera";
   renderCamGrid();
 
+  renderVoicePanelActivity();
   $("vp-live").classList.toggle("hidden", !state.sharing);
   $("vp-live-source").textContent = state.shareSource ? `Streaming ${state.shareSource}` : "";
   $("vp-live-title").textContent = `Live in ${vs.channelName}`;
@@ -10395,6 +12351,7 @@ function renderVoicePanel() {
   const streams = $("vp-streams");
   streams.innerHTML = "";
   const server = state.currentServer && state.currentServer.id === vs.id ? state.currentServer : null;
+  renderStageStrip(server);
   const others = server
     ? (server.screen_shares || []).filter(s => (!state.user || s.user !== state.user.id) && s.user !== state.watchingUser)
     : [];
@@ -10407,6 +12364,426 @@ function renderVoicePanel() {
     row.appendChild(watch);
     streams.appendChild(row);
   }
+}
+
+function renderStageStrip(server) {
+  const strip = $("vp-stage");
+  const channel = server && !server.group ? server.channels.find(c => c.id === state.voiceChannelId) : null;
+  const hand = channel && state.user ? handState(channel, state.user.id, Boolean(server.can_manage_stage)) : null;
+  strip.classList.toggle("hidden", !hand);
+  if (!hand) return;
+  $("vp-stage-icon").replaceChildren(svgIcon(hand.role === "speaker" ? "mic" : "hand", 14));
+  $("vp-stage-text").textContent = hand.text;
+  $("vp-stage-text").title = hand.detail;
+  const button = $("vp-hand");
+  button.textContent = hand.label;
+  button.title = hand.title;
+  button.classList.toggle("on", hand.raised);
+  button.classList.toggle("spent", hand.role === "speaker");
+  button.disabled = hand.role === "speaker";
+  button.onclick = () => toggleHand(!hand.raised);
+}
+const ACTIVITY_REMOTE_SETTLE_MS = 400;
+const ACTIVITY_DRIFT_CHECK_MS = 2000;
+
+const activityUi = { run: null, open: false, seq: 0, pick: "tictactoe", chip: null, videoBlob: null, settling: 0 };
+
+function activityMe() {
+  return state.user ? state.user.id : null;
+}
+
+function activityMemberName(id) {
+  if (id === activityMe()) return state.user.display_name || state.user.username || "You";
+  const members = (state.currentServer && state.currentServer.members) || [];
+  const member = members.find(m => m.id === id);
+  return member ? member.nickname || member.name : "Someone";
+}
+
+function activityChannelView() {
+  const server = state.currentServer;
+  if (!server || !state.voiceServer || server.id !== state.voiceServer.id || !state.voiceChannelId) return null;
+  return server.channels.find(c => c.id === state.voiceChannelId) || null;
+}
+
+function reconcileActivity() {
+  if (!state.voiceChannelId || !state.voiceServer) {
+    if (activityUi.run) endActivityLocally(null);
+    renderActivityUi();
+    return;
+  }
+  const channel = activityChannelView();
+  if (!channel) {
+    renderActivityUi();
+    return;
+  }
+  const current = channel.activity || null;
+  if (current && (!activityUi.run || activityUi.run.id !== current.id)) adoptActivity(current, null);
+  else if (!current && activityUi.run) endActivityLocally(null);
+  else renderActivityUi();
+}
+
+function adoptActivity(activity, by) {
+  releaseActivityVideo();
+  activityUi.run = newActivityRun(activity);
+  const me = activityMe();
+  activityUi.open = activity.starter === me;
+  if (by && by !== me) toast(`${activityMemberName(by)} started ${activityName(activity)}`);
+  renderActivityUi();
+}
+
+function endActivityLocally(by) {
+  const was = activityUi.run;
+  activityUi.run = null;
+  activityUi.open = false;
+  releaseActivityVideo();
+  if (was && by && by !== activityMe()) toast(`${activityMemberName(by)} ended ${activityName(was.activity)}`);
+  renderActivityUi();
+}
+
+function onActivitySet(payload) {
+  if (!state.voiceServer || payload.server !== state.voiceServer.id || payload.channel !== state.voiceChannelId) return;
+  const run = activityUi.run;
+  if (payload.activity) {
+    if (run && run.id === payload.activity.id) return;
+    adoptActivity(payload.activity, payload.by);
+  } else if (run) {
+    endActivityLocally(payload.by);
+  }
+}
+
+function onActivityInput(payload) {
+  const run = activityUi.run;
+  if (!run || !state.voiceServer || payload.server !== state.voiceServer.id || payload.channel !== state.voiceChannelId) return;
+  const result = applyActivityInput(run, payload.input, payload.by, payload.seq);
+  if (!result.ok) return;
+  if (payload.input === "join" && run.starter === activityMe()) sendActivityInput(syncInput(run, Date.now()), false);
+  if (payload.input && payload.input.playback) syncActivityVideo();
+  if (payload.input && payload.input.sync && run.kind === "watch") syncActivityVideo();
+  renderActivityUi();
+}
+
+async function sendActivityInput(input, applyLocally = true) {
+  const run = activityUi.run;
+  if (!run || !state.voiceServer) return;
+  if (applyLocally) {
+    const result = applyActivityInput(run, input, activityMe(), null);
+    if (!result.ok) {
+      if (result.reason) toast(result.reason);
+      return;
+    }
+    renderActivityUi();
+  }
+  const seq = ++activityUi.seq;
+  try {
+    await invoke("send_activity_input", { serverId: state.voiceServer.id, seq, input });
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function startActivity(activity) {
+  if (!state.voiceServer) return;
+  try {
+    await invoke("set_activity", { serverId: state.voiceServer.id, activity });
+    hideModals();
+    adoptActivity(activity, activityMe());
+    activityUi.open = true;
+    renderActivityUi();
+    if (state.currentServer && state.currentServer.id === state.voiceServer.id) await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function endActivity() {
+  if (!activityUi.run || !state.voiceServer) return;
+  try {
+    await invoke("set_activity", { serverId: state.voiceServer.id, activity: null });
+    endActivityLocally(activityMe());
+    if (state.currentServer && state.currentServer.id === state.voiceServer.id) await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function toggleActivityPanel(open) {
+  activityUi.open = open === undefined ? !activityUi.open : open;
+  renderActivityUi();
+}
+
+function renderActivityUi() {
+  renderActivityPanel();
+  renderVoicePanelActivity();
+}
+
+function renderVoicePanelActivity() {
+  const btn = $("vp-activities");
+  if (!btn) return;
+  const run = activityUi.run;
+  const vs = state.voiceServer;
+  btn.classList.toggle("hidden", !vs || Boolean(vs.call));
+  $("vp-actions").classList.toggle("solo", btn.classList.contains("hidden"));
+  btn.classList.toggle("running", Boolean(run));
+  const info = run ? activityKindInfo(run.activity) : null;
+  btn.replaceChildren(svgIcon(info ? info.icon : "gamepad", 16), el("span", null, run ? `Open ${activityName(run.activity)}` : "Activities"));
+  btn.title = run ? `${activityName(run.activity)} is running in your voice channel` : "Start something together with everyone in the channel";
+  btn.onclick = () => (run ? toggleActivityPanel() : openActivityPicker());
+}
+
+function renderActivityPanel() {
+  const panel = $("activity-panel");
+  const run = activityUi.run;
+  const shown = Boolean(run && activityUi.open);
+  panel.classList.toggle("hidden", !shown);
+  if (!shown) return;
+  const me = activityMe();
+  const info = activityKindInfo(run.activity);
+  $("activity-icon").replaceChildren(svgIcon(info ? info.icon : "gamepad", 20));
+  $("activity-title").textContent = activityName(run.activity);
+  $("activity-sub").textContent = `Started by ${activityMemberName(run.starter)}`;
+  renderActivityPeople(run);
+  const joined = isParticipant(run, me);
+  const starter = run.starter === me;
+  $("activity-join").classList.toggle("hidden", joined);
+  $("activity-leave").classList.toggle("hidden", !joined);
+  $("activity-leave").classList.toggle("ghost", starter);
+  $("activity-leave").disabled = starter;
+  const mayEnd = canEndActivity(run, me, state.currentServer);
+  $("activity-end").classList.toggle("ghost", !mayEnd);
+  $("activity-end").disabled = !mayEnd;
+  setIcon($("activity-close"), "chevronDown", 18);
+  $("activity-game").classList.toggle("hidden", run.kind !== "tictactoe");
+  $("activity-watch").classList.toggle("hidden", run.kind !== "watch");
+  if (run.kind === "tictactoe") renderTicTacToe(run, me);
+  else renderActivityWatch(run, me);
+}
+
+function renderActivityPeople(run) {
+  const box = $("activity-people");
+  box.innerHTML = "";
+  const { shown, more } = avatarRow(activityParticipants(run));
+  for (const id of shown) {
+    const avatar = makeAvatar(id, activityMemberName(id), "avatar avatar-sm");
+    const mark = markOf(run, id);
+    if (mark) avatar.classList.add("player", mark === MARK_X ? "mark-x" : "mark-o");
+    avatar.title = mark ? `${activityMemberName(id)} (${MARK_GLYPHS[mark]})` : activityMemberName(id);
+    box.appendChild(avatar);
+  }
+  if (more) box.appendChild(el("span", "activity-people-more", `+${more}`));
+}
+
+function renderTicTacToe(run, me) {
+  const status = gameStatus(run, me, activityMemberName);
+  $("activity-turn").textContent = status.text;
+  const board = $("ttt-board");
+  if (board.children.length !== BOARD_CELLS) {
+    board.innerHTML = "";
+    for (let i = 0; i < BOARD_CELLS; i++) {
+      const cell = el("button", "ttt-cell");
+      cell.type = "button";
+      cell.dataset.cell = String(i);
+      cell.setAttribute("role", "gridcell");
+      cell.onclick = () => {
+        if (canMoveAt(activityUi.run, activityMe(), i)) sendActivityInput({ move: { cell: i } });
+      };
+      board.appendChild(cell);
+    }
+  }
+  const line = status.line || [];
+  for (const cell of board.children) {
+    const i = Number(cell.dataset.cell);
+    const mark = run.board[i];
+    cell.textContent = MARK_GLYPHS[mark] || "";
+    cell.classList.toggle("o", mark === MARK_O);
+    cell.classList.toggle("x", mark === MARK_X);
+    cell.classList.toggle("win", line.includes(i));
+    cell.classList.toggle("open", canMoveAt(run, me, i));
+    cell.setAttribute("aria-label", mark ? `Cell ${i + 1}, ${MARK_GLYPHS[mark]}` : `Cell ${i + 1}, empty`);
+  }
+  $("ttt-rematch").classList.toggle("hidden", !status.canRematch);
+  const hint = $("ttt-hint");
+  if (status.canRematch) hint.textContent = "";
+  else if (status.over) hint.textContent = "Waiting for a rematch";
+  else if (run.players.length < 2) hint.textContent = isPlayer(run, me) ? "Share the voice channel to find an opponent" : "The first to join plays O";
+  else hint.textContent = isPlayer(run, me) ? `You are ${MARK_GLYPHS[markOf(run, me)]}` : "You are watching";
+}
+
+function renderActivityWatch(run, me) {
+  $("activity-watch-title").textContent = watchTitle(run.activity);
+  const video = $("activity-video");
+  video.controls = isParticipant(run, me);
+  loadActivityVideo(run);
+  renderActivitySyncLabel(run);
+}
+
+function renderActivitySyncLabel(run) {
+  const label = $("activity-sync");
+  const video = $("activity-video");
+  if (!video.src || !isParticipant(run, activityMe())) {
+    label.textContent = isParticipant(run, activityMe()) ? "" : "Join to control playback";
+    label.className = "activity-sync";
+    return;
+  }
+  const off = watchNeedsSeek(video.currentTime, watchTargetPosition(run.playback, Date.now()));
+  label.textContent = off ? "Catching up" : "In sync";
+  label.className = `activity-sync ${off ? "catching" : "good"}`;
+}
+
+async function loadActivityVideo(run) {
+  const video = $("activity-video");
+  const url = watchLinkUrl(run.activity);
+  if (url) {
+    if (video.src !== url) {
+      video.src = url;
+      activityUi.videoBlob = null;
+    }
+    return;
+  }
+  const att = watchAttachment(run.activity);
+  if (!att || activityUi.videoBlob === att.blob) return;
+  activityUi.videoBlob = att.blob;
+  const cached = videoUrls.get(att.blob);
+  if (cached) {
+    video.src = cached;
+    return;
+  }
+  $("activity-video-wait").classList.remove("hidden");
+  try {
+    const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null });
+    const objectUrl = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
+    videoUrls.set(att.blob, objectUrl);
+    if (activityUi.run && activityUi.run.id === run.id) video.src = objectUrl;
+  } catch (e) {
+    toast(`Could not load the video: ${e}`);
+  } finally {
+    $("activity-video-wait").classList.add("hidden");
+  }
+}
+
+function releaseActivityVideo() {
+  const video = $("activity-video");
+  if (!video) return;
+  activityUi.settling = performance.now() + ACTIVITY_REMOTE_SETTLE_MS;
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+  activityUi.videoBlob = null;
+}
+
+function syncActivityVideo() {
+  const run = activityUi.run;
+  const video = $("activity-video");
+  if (!run || run.kind !== "watch" || !video.src) return;
+  const target = watchTargetPosition(run.playback, Date.now());
+  activityUi.settling = performance.now() + ACTIVITY_REMOTE_SETTLE_MS;
+  if (Number.isFinite(video.duration) && watchNeedsSeek(video.currentTime, target)) video.currentTime = target;
+  if (run.playback.playing && video.paused) video.play().catch(() => {});
+  else if (!run.playback.playing && !video.paused) video.pause();
+  renderActivitySyncLabel(run);
+}
+
+function onActivityVideoChange() {
+  const run = activityUi.run;
+  const video = $("activity-video");
+  if (!run || run.kind !== "watch" || performance.now() < activityUi.settling) return;
+  if (!isParticipant(run, activityMe()) || !video.src) return;
+  sendActivityInput({ playback: { playing: !video.paused, position: video.currentTime, at: Date.now() } });
+}
+
+function openActivityPicker() {
+  if (!state.voiceServer || !state.voiceChannelId) {
+    toast("Join a voice channel first");
+    return;
+  }
+  activityUi.pick = "tictactoe";
+  activityUi.chip = null;
+  $("activity-link-input").value = "";
+  renderActivityPicker();
+  showModal("modal-activities");
+}
+
+function renderActivityPicker() {
+  const cards = $("activity-cards");
+  cards.innerHTML = "";
+  for (const kind of ACTIVITY_KINDS) {
+    const card = el("button", "activity-card");
+    card.type = "button";
+    card.setAttribute("role", "radio");
+    card.setAttribute("aria-checked", String(kind.key === activityUi.pick));
+    card.appendChild(el("span", "activity-card-icon")).appendChild(svgIcon(kind.icon, 22));
+    card.appendChild(el("span", "activity-card-name", kind.name));
+    card.appendChild(el("span", "activity-card-blurb", kind.blurb));
+    card.onclick = () => {
+      activityUi.pick = kind.key;
+      renderActivityPicker();
+    };
+    cards.appendChild(card);
+  }
+  const watch = activityUi.pick === "watch";
+  $("activity-setup-game").classList.toggle("hidden", watch);
+  $("activity-setup-watch").classList.toggle("hidden", !watch);
+  const chips = $("activity-chips");
+  chips.innerHTML = "";
+  for (const att of channelVideoAttachments(state.renderedMessages)) {
+    const chip = el("button", "activity-chip");
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", String(activityUi.chip && activityUi.chip.blob === att.blob));
+    chip.appendChild(svgIcon("movie", 14));
+    chip.appendChild(el("span", null, att.filename));
+    chip.title = `${att.filename}, ${formatSize(att.size_bytes)}`;
+    chip.onclick = () => {
+      activityUi.chip = activityUi.chip && activityUi.chip.blob === att.blob ? null : att;
+      if (activityUi.chip) $("activity-link-input").value = "";
+      renderActivityPicker();
+    };
+    chips.appendChild(chip);
+  }
+  $("activity-start").textContent = watch ? "Start watching" : "Start game";
+}
+
+function pickedActivity() {
+  const now = Date.now();
+  const id = crypto.randomUUID();
+  if (activityUi.pick !== "watch") return makeActivity("tictactoe", activityMe(), now, id);
+  const url = $("activity-link-input").value.trim();
+  if (url) {
+    if (!isVideoLink(url)) throw new Error("Paste a direct https link that ends in .mp4, .webm or .ogg");
+    return makeActivity("watch", activityMe(), now, id, watchLinkSource(url));
+  }
+  if (activityUi.chip) return makeActivity("watch", activityMe(), now, id, watchAttachmentSource(activityUi.chip));
+  throw new Error("Paste a video link or pick an attached video");
+}
+
+function initActivityUi() {
+  $("activity-cancel").onclick = hideModals;
+  $("activity-start").onclick = async () => {
+    try {
+      await startActivity(pickedActivity());
+    } catch (e) {
+      toast(e.message || String(e));
+    }
+  };
+  $("activity-link-input").addEventListener("input", () => {
+    if ($("activity-link-input").value.trim()) {
+      activityUi.chip = null;
+      renderActivityPicker();
+    }
+  });
+  $("activity-join").onclick = () => sendActivityInput("join");
+  $("activity-leave").onclick = () => {
+    sendActivityInput("leave");
+    toggleActivityPanel(false);
+  };
+  $("activity-end").onclick = endActivity;
+  $("activity-close").onclick = () => toggleActivityPanel(false);
+  $("ttt-rematch").onclick = () => sendActivityInput("rematch");
+  const video = $("activity-video");
+  for (const name of ["play", "pause", "seeked"]) video.addEventListener(name, onActivityVideoChange);
+  video.addEventListener("loadedmetadata", syncActivityVideo);
+  setInterval(() => {
+    const run = activityUi.run;
+    if (run && run.kind === "watch" && run.playback.playing) syncActivityVideo();
+  }, ACTIVITY_DRIFT_CHECK_MS);
 }
 
 async function disconnectVoice() {
@@ -10464,6 +12841,11 @@ async function refreshServers() {
   }
   loadShareableEmojis();
   renderServerRail();
+}
+
+async function refreshServersIfChanged() {
+  const servers = await invoke("list_servers");
+  if (JSON.stringify(servers) !== JSON.stringify(state.servers)) await refreshServers();
 }
 
 function readMembersPref() {
@@ -10554,8 +12936,7 @@ function setViewMode(mode) {
     $("dm-profile-btn").classList.add("hidden");
     $("dm-search").value = "";
   }
-  if (dm) $("share-btn").classList.add("hidden");
-  else renderShareButton();
+  renderShareButton();
   syncPinButton();
   syncSearchBox();
   syncRulesGate();
@@ -10794,6 +13175,7 @@ async function renderDmThreads() {
   list.innerHTML = "";
   const threads = await invoke("list_dm_threads");
   state.dmThreads = threads;
+  list.appendChild(savedSidebarRow());
   const query = $("dm-search").value.trim().toLowerCase();
   const matches = threads.filter(t => !query || t.name.toLowerCase().includes(query));
   const shown = matches.filter(t => t.kind === "inbox" || t.kind === "group");
@@ -10829,7 +13211,9 @@ async function renderDmThreads() {
       row.appendChild(avatarWithPresence(req.name, req.id));
       const meta = el("div", "dm-meta");
       meta.appendChild(el("div", "dm-name", req.name));
-      meta.appendChild(el("div", "dm-preview", "Wants to be friends"));
+      const line = el("div", "dm-preview friend-note", friendRequestLine(req));
+      line.title = req.note || "";
+      meta.appendChild(line);
       row.appendChild(meta);
       const yes = el("button", "icon-btn friend-yes");
       yes.title = "Accept";
@@ -11266,6 +13650,7 @@ function dmToRenderable(m) {
     reactions: m.reactions || [],
     attachments: m.attachments || [],
     pending: Boolean(m.pending),
+    voice_invite: m.voice_invite || null,
   };
 }
 
@@ -11304,8 +13689,10 @@ async function sendDm() {
 }
 
 async function selectChannel(channel) {
+  const switched = Boolean(channel) && (!state.currentChannel || channel.id !== state.currentChannel.id);
   if (state.currentChannel && (!channel || channel.id !== state.currentChannel.id)) state.previousChannel = state.currentChannel;
   state.currentChannel = channel;
+  if (switched && state.currentServer) await invoke("open_channel", { serverId: state.currentServer.id, channelId: channel.id }).catch(() => {});
   if (channel && state.currentServer && !state.currentServer.group) rememberSwitcherRecent(`channel:${channel.id}`);
   if (channel) openChannelWithLine(channel);
   renderDmRequestBar(null);
@@ -11314,7 +13701,7 @@ async function selectChannel(channel) {
   if (channel) clearChannelUnread(channel.id);
   renderChannels();
   $("channel-name").replaceChildren(channel ? channelNameNode(channel) : document.createTextNode("no channel"));
-  $("chat-hash").replaceChildren(channel && channel.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
+  $("chat-hash").replaceChildren(channelHeaderMark(channel));
   $("channel-topic").textContent = (channel && channel.topic) || "";
   $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
   syncPinButton();
@@ -11322,7 +13709,7 @@ async function selectChannel(channel) {
   renderTypingStrip();
   if (!channel || ageGated(channel)) return renderMessages([]);
   const messages = await fetchChannelMessages(channel);
-  renderMessages(messages);
+  renderChannelLog(messages);
   if (state.currentChannel === channel && !state.historyAnchor) advanceRead(channel.id, messages);
 }
 
@@ -11336,8 +13723,22 @@ async function sendMessage() {
     return;
   }
   if (state.view === "dm") return sendDm();
-  const content = input.value.trim();
+  const typed = input.value.trim();
+  const { tts, content } = parseTtsPrefix(typed);
   if (!content || !state.currentServer || !state.currentChannel) return;
+  if (tts && !canSendTtsHere()) {
+    toast("You can't send text-to-speech messages in this server");
+    return;
+  }
+  stopSpeaking();
+  let command = null;
+  const slash = matchSlashCommand(content, slashCatalogHere());
+  if (slash) {
+    const { members, channels } = state.currentServer;
+    const parsed = parseSlashOptions(slash.entry, slash.rest, { members, channels });
+    if (parsed.problem) return toast(parsed.problem);
+    command = { bot: slash.entry.bot, command: slash.entry.name, options: parsed.options };
+  }
   input.value = "";
   fitComposer(input);
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
@@ -11348,21 +13749,23 @@ async function sendMessage() {
   readState.held = null;
   cancelReply();
   try {
-    const previewUrl = await previewUrlFor(content);
+    const previewUrl = command ? null : await previewUrlFor(content);
     clearLinkDraft();
-    const outgoing = encodeOutgoing(content);
+    const outgoing = command ? content : encodeOutgoing(content);
     await invoke("send_message", {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
       content: outgoing,
       replyTo,
       previewUrl,
+      tts,
+      command,
     });
     pushOverlayChat(state.user.id, state.user.display_name || state.user.username, outgoing, false);
     noteSlowSend(state.currentChannel.id, 0);
     await selectChannel(state.currentChannel);
   } catch (e) {
-    input.value = content;
+    input.value = typed;
     fitComposer(input);
     const wait = slowModeWaitFromError(e);
     if (wait) noteSlowSend(state.currentChannel.id, wait);
@@ -11418,6 +13821,11 @@ function refreshLinkDraft() {
   const token = ++linkDraft.token;
   renderLinkDraft();
   if (!url || url === linkDraft.dismissed) return;
+  if (!canEmbedLinks(state.currentServer)) {
+    linkDraft.preview = { off: true, url };
+    renderLinkDraft();
+    return;
+  }
   linkDraft.loading = invoke("prepare_link_preview", { url })
     .catch(() => null)
     .then(preview => {
@@ -11444,6 +13852,13 @@ function renderLinkDraft() {
   if (!visible) return;
   const thumb = $("link-draft-thumb");
   thumb.replaceChildren();
+  bar.classList.toggle("off", Boolean(preview.off));
+  if (preview.off) {
+    thumb.appendChild(svgIcon("link", 18));
+    $("link-draft-title").textContent = LINK_EMBED_OFF.title;
+    $("link-draft-site").textContent = LINK_EMBED_OFF.sub;
+    return;
+  }
   if (preview.image) {
     const img = el("img");
     img.alt = "";
@@ -11463,7 +13878,7 @@ function dismissLinkDraft() {
 
 async function previewUrlFor(content) {
   const url = previewableDraftLink(content);
-  if (!url || url === linkDraft.dismissed) return null;
+  if (!url || url === linkDraft.dismissed || !canEmbedLinks(state.currentServer)) return null;
   const pending = url === linkDraft.url && linkDraft.loading
     ? linkDraft.loading
     : invoke("prepare_link_preview", { url }).catch(() => null);
@@ -11636,7 +14051,7 @@ function toggleComposerMenu() {
   $("cm-video").classList.toggle("hidden", !files);
   $("cm-gif").classList.toggle("hidden", !files || (!gifSettings().key && !serverHasGifs()));
   $("cm-voice").classList.toggle("hidden", !voice || voiceRec.target !== null);
-  $("cm-poll").classList.toggle("hidden", state.view !== "server");
+  $("cm-poll").classList.toggle("hidden", state.view !== "server" || !canSendPolls(state.currentServer));
   placePopup(menu, $("attach-btn"), "above");
 }
 
@@ -11977,7 +14392,7 @@ async function toggleVoice(channel) {
       state.sharing = false;
       state.shareSource = null;
     }
-    toast(leaving ? "Disconnected from voice" : `Joined voice: ${channel.name}`);
+    toast(leaving ? "Disconnected from voice" : isStageChannel(channel) ? `Joined the stage: ${channel.name}` : `Joined voice: ${channel.name}`);
     playSound(leaving ? "leave" : "join");
     renderShareButton();
     await selectServer(state.currentServer.id);
@@ -12434,6 +14849,7 @@ function wireEvents() {
       await refreshServers();
       await loadReadState();
       await loadPins();
+      await loadSaved();
       if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
     } catch (e) {
@@ -12446,6 +14862,7 @@ function wireEvents() {
 
   $("add-server-btn").onclick = () => showModal("modal-add-server");
   wireDiscover();
+  wireVoiceInvites();
   $("create-server-open").onclick = () => openCreateServer();
   $("create-server-back").onclick = () => showModal("modal-add-server");
   $("template-code-input").addEventListener("input", readTemplateCode);
@@ -12901,6 +15318,7 @@ function wireEvents() {
     btn.onclick = () => setShareQuality(btn.dataset.q);
   }
   $("share-go").onclick = goLive;
+  initActivityUi();
   $("vp-game-share").onclick = async () => {
     try {
       const sources = await invoke("list_share_sources");
@@ -13051,6 +15469,7 @@ function wireEvents() {
   wireHotkeyInput($("overlay-chat-key"), combo => saveOverlaySettings({ chat_hotkey: combo }));
   wireVoiceInputSettings();
   $("dm-policy").addEventListener("change", saveDmSettings);
+  wireProfilePrivacy();
   $("keep-default").addEventListener("change", e => setHistoryWindow(null, e.target.value));
   $("spam-filter-toggle").addEventListener("change", saveDmSettings);
   $("block-cancel").onclick = hideModals;
@@ -13108,14 +15527,16 @@ function wireEvents() {
   };
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
-    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #attach-btn, #search-box")) return;
+    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #threads-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
   });
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") closeFloating();
+    if (e.key !== "Escape") return;
+    closeFloating();
+    stopSpeaking();
   });
 
   setIcon($("reply-bar-cancel"), "close", 16);
@@ -13124,6 +15545,28 @@ function wireEvents() {
   setIcon($("thread-close"), "close", 20);
   $("thread-head-icon").appendChild(svgIcon("thread", 20));
   $("thread-close").onclick = closeThread;
+  setIcon($("threads-btn"), "thread", 20);
+  $("threads-btn").onclick = toggleThreadsPanel;
+  setIcon($("thread-rename"), "pencil", 18);
+  setIcon($("thread-archive"), "archive", 18);
+  setIcon($("thread-lock"), "lock", 18);
+  $("thread-rename").onclick = startThreadRename;
+  $("thread-title").onclick = startThreadRename;
+  $("thread-archive").onclick = () => toggleThreadFlag("archived");
+  $("thread-lock").onclick = () => toggleThreadFlag("locked");
+  $("thread-title-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitThreadRename();
+    }
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      cancelThreadRename();
+    }
+  });
+  $("thread-title-input").addEventListener("blur", () => {
+    if (threadRenaming) commitThreadRename();
+  });
   $("thread-input").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -13371,6 +15814,7 @@ function wireEvents() {
   });
   $("rename-folder-cancel").onclick = hideModals;
   wireNicknameModal();
+  wireVoiceStatus();
 
   const uploadServerImage = async which => {
     try {
@@ -13404,6 +15848,17 @@ function wireEvents() {
     prefs.friendOnline = e.target.checked;
     saveNotifyPrefs(prefs);
   });
+  $("tts-mode").addEventListener("change", e => {
+    saveTtsPrefs({ ...ttsPrefs(), mode: e.target.value });
+    renderTtsSettings();
+  });
+  $("tts-rate").addEventListener("input", e => {
+    saveTtsPrefs({ ...ttsPrefs(), rate: clampRate(Number(e.target.value) / 10) });
+    renderTtsSettings();
+  });
+  $("tts-preview").onclick = () => {
+    if (!speakText(spokenText(state.user ? state.user.display_name || state.user.username : "Commy", "this is how text-to-speech sounds"))) toast("Text-to-speech is not available here");
+  };
   $("close-to-tray-toggle").addEventListener("change", async e => {
     try {
       state.voice = await invoke("set_close_to_tray", { enabled: e.target.checked });
@@ -13585,7 +16040,10 @@ function wireEvents() {
     opt.onclick = () => setCreateChannelKind(opt.dataset.kind);
   }
   $("create-voice-icon").appendChild(svgIcon("speaker", 22));
+  $("create-stage-icon").appendChild(svgIcon("stage", 22));
   $("create-announcement-icon").appendChild(svgIcon("megaphone", 22));
+  $("create-forum-icon").appendChild(svgIcon("forum", 22));
+  wireForum();
   $("create-channel-name").addEventListener("input", syncCreateChannelName);
   $("create-channel-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("create-channel-name"), picked), { custom: "local" });
   $("create-channel-name").addEventListener("keydown", e => {
@@ -13627,14 +16085,14 @@ function wireEvents() {
   setIcon($("group-add-btn"), "friendAdd");
   setIcon($("call-accept"), "phone", 26);
   setIcon($("call-decline"), "hangup", 26);
-  $("vp-nc").onclick = async () => {
+  $("ap-nc").onchange = async e => {
     try {
-      state.voice = await invoke("set_noise_cancellation", { enabled: !state.voice.noise_cancellation });
+      state.voice = await invoke("set_noise_cancellation", { enabled: e.target.checked });
       $("nc-toggle").checked = state.voice.noise_cancellation;
       toast(`Noise cancellation ${state.voice.noise_cancellation ? "on" : "off"}`);
-      renderVoicePanel();
-    } catch (e) {
-      toast(String(e));
+    } catch (err) {
+      e.target.checked = Boolean(state.voice.noise_cancellation);
+      toast(String(err));
     }
   };
 
@@ -13766,6 +16224,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("server-event", async event => {
       const serverId = event.payload;
       loadShareableEmojis();
+      await refreshServersIfChanged();
       if (state.currentServer && serverId === state.currentServer.id) {
         await refreshCurrentServer();
       }
@@ -13778,6 +16237,8 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
+    window.__TAURI__.event.listen("activity-set", event => onActivitySet(event.payload));
+    window.__TAURI__.event.listen("activity-input", event => onActivityInput(event.payload));
     window.__TAURI__.event.listen("stream-deck-pair", event => onStreamDeckPair(event.payload));
     window.__TAURI__.event.listen("stream-deck-pair-closed", event => onStreamDeckPairClosed(event.payload));
     window.__TAURI__.event.listen("stream-deck-changed", event => {
@@ -13792,7 +16253,8 @@ function wireEvents() {
       const p = event.payload || {};
       if (p.signal === "request" && friendState(p.user) === "incoming") {
         toast(`${p.name} sent you a friend request`);
-        invoke("notify", { title: "Friend request", body: `${p.name} wants to be friends`, target: `dm:${p.user}` }).catch(() => {});
+        const body = p.note ? `${p.name}: ${p.note}` : `${p.name} wants to be friends`;
+        invoke("notify", { title: "Friend request", body, target: `dm:${p.user}` }).catch(() => {});
         playSound("message");
       } else if (p.signal === "accept" && friendState(p.user) === "friend") {
         toast(`You and ${p.name} are now friends`);
@@ -13803,6 +16265,12 @@ function wireEvents() {
       const { muted, deafened } = event.payload;
       toast(deafened ? "A moderator server-deafened you" : muted ? "A moderator server-muted you" : "A moderator lifted your server mute");
       document.body.classList.toggle("server-muted", muted || deafened);
+      renderChannels();
+    });
+    window.__TAURI__.event.listen("stage-role", event => {
+      const { audience } = event.payload || {};
+      toast(audience ? "You are in the audience now" : "You can speak now");
+      renderVoicePanel();
       renderChannels();
     });
     window.__TAURI__.event.listen("timed-out", event => {
@@ -13870,14 +16338,16 @@ function wireEvents() {
         toast("New direct message");
       }
     });
-    window.__TAURI__.event.listen("dm-sent", async event => {
-      if (state.view !== "dm") return;
-      if (state.currentDm && event.payload === state.currentDm.user) {
-        await selectDm(state.currentDm.user, state.currentDm.name);
-      } else {
-        await renderDmThreads();
-      }
-    });
+    for (const name of ["dm-sending", "dm-sent"]) {
+      window.__TAURI__.event.listen(name, async event => {
+        if (state.view !== "dm") return;
+        if (state.currentDm && event.payload === state.currentDm.user) {
+          await selectDm(state.currentDm.user, state.currentDm.name);
+        } else {
+          await renderDmThreads();
+        }
+      });
+    }
     window.__TAURI__.event.listen("afk-disconnected", async () => {
       toast("You were disconnected from voice for inactivity");
       state.voiceChannelId = null;
@@ -14323,6 +16793,11 @@ const PERMISSION_LABELS = [
   ["bypass_slow_mode", "Bypass Slow Mode"],
   ["attach_files", "Send Files and Images"],
   ["send_voice_messages", "Send Voice Messages"],
+  ["send_tts_messages", "Send Text-to-Speech Messages"],
+  ["embed_links", "Embed Links"],
+  ["read_message_history", "Read Message History"],
+  ["create_threads", "Create Threads"],
+  ["send_polls", "Create Polls"],
   ["add_emojis", "Add Emojis"],
   ["add_stickers", "Add Stickers"],
   ["add_emoticons", "Add Emoticons"],
@@ -14330,6 +16805,7 @@ const PERMISSION_LABELS = [
   ["post_announcements", "Post Announcements"],
   ["mention_everyone", "Mention Everyone and Any Role"],
   ["manage_expressions", "Manage Expressions"],
+  ["create_events", "Create Events"],
   ["manage_events", "Manage Events"],
   ["manage_roles", "Manage Roles"],
   ["kick_members", "Kick Members"],
@@ -14338,6 +16814,7 @@ const PERMISSION_LABELS = [
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
   ["time_out_members", "Time Out Members"],
+  ["priority_speaker", "Priority Speaker"],
   ["manage_nicknames", "Manage Nicknames"],
   ["change_nickname", "Change Nickname"],
   ["move_members", "Move Members"],
@@ -14432,6 +16909,7 @@ function openUserSettings(tab) {
   });
   $("notify-level").value = notifyPrefs().level;
   $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
+  renderTtsSettings();
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
   invoke("get_autostart").then(on => { $("autostart-toggle").checked = on; }).catch(() => {});
   $("output-vol").value = Math.round((state.voice.output_volume ?? 1) * 100);
@@ -14560,7 +17038,7 @@ function chosenTemplate() {
 function templateChip(name, kind) {
   const chip = document.createElement("span");
   chip.className = "template-chip";
-  if (kind === "voice") chip.appendChild(svgIcon("speaker", 14));
+  if (isVoiceKind(kind)) chip.appendChild(voiceKindIcon(kind, 14));
   else if (kind === "announcement") chip.appendChild(svgIcon("megaphone", 14));
   else {
     const hash = document.createElement("span");
@@ -14688,9 +17166,14 @@ function openServerSettings(tab) {
   const canInvites = Boolean(server.can_invite || server.can_manage_server);
   $("tab-invites").classList.toggle("hidden", !canInvites);
   if (canInvites) renderInvitesPage(server);
+  const canBots = canSeeBotsPage(server);
+  $("tab-bots").classList.toggle("hidden", !canBots);
+  if (canBots) renderBotsPage(server);
   const allowed = {
+    bots: canBots,
     invites: canInvites,
     overview: true,
+    discovery: true,
     channels: server.can_manage_channels,
     roles: server.can_manage_roles,
     emoji: canEmoji,
@@ -14708,6 +17191,7 @@ function openServerSettings(tab) {
   renderStickerSettings(server);
   renderEmoticonSettings(server);
   renderSoundboardSettings(server);
+  hideEmptyNavGroups(layer);
   let current = tab || (layer.classList.contains("hidden") ? "overview" : layer.dataset.tab);
   if (!allowed[current]) current = "overview";
 
@@ -14717,7 +17201,7 @@ function openServerSettings(tab) {
     const row = el("div", "manage-row");
     const label = el("span", "manage-row-label");
     const icon = el("span", "channel-icon");
-    if (channel.kind === "voice") icon.appendChild(svgIcon("speaker", 18));
+    if (isVoiceKind(channel.kind)) icon.appendChild(voiceKindIcon(channel.kind, 18));
     else icon.textContent = "#";
     label.appendChild(icon);
     label.appendChild(channelNameNode(channel));
@@ -15032,8 +17516,38 @@ function syncAttachAccess() {
   $("attach-btn").title = locked ? "You can't send files or voice messages in this server" : "Attach";
 }
 
+function renderEveryoneChatAccess(server) {
+  const box = $("chat-access");
+  box.replaceChildren();
+  box.appendChild(el("div", "setting-title", "Everyone can"));
+  box.appendChild(el("div", "setting-sub", "What every member may do. Switching one off applies to every role; turn it back on in a role's form to let that role through. The owner and administrators are never held back."));
+  const save = async (access, restricted, ids) => {
+    try {
+      await invoke("set_role_access", { serverId: server.id, access, restricted, roleIds: ids });
+      await refreshCurrentServer();
+      openServerSettings();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  };
+  for (const spec of EVERYONE_CHAT_ACCESS) {
+    const row = el("label", "setting-row chat-access-row");
+    const text = el("div");
+    text.append(el("div", "setting-title", spec.title), el("div", "setting-sub", spec.sub));
+    const check = el("input", "switch");
+    check.type = "checkbox";
+    check.checked = !everyoneLacks(server, spec);
+    check.disabled = !server.can_manage_roles;
+    check.onchange = () => save(spec.key, !check.checked, []);
+    row.append(text, check);
+    box.appendChild(row);
+  }
+}
+
 function renderRoleSettings(server) {
   renderRoleAccess(server, "files");
+  renderEveryoneChatAccess(server);
   const list = $("manage-role-list");
   list.innerHTML = "";
   for (const role of server.roles) {
@@ -15063,15 +17577,16 @@ function renderRoleSettings(server) {
     if (role.color) dot.style.background = `#${role.color}`;
     label.appendChild(dot);
     const name = el("span", "role-card-name", role.name);
-    if (role.color) name.style.color = `#${role.color}`;
+    paintRole(name, role.color);
     label.appendChild(name);
     if (role.tag) label.appendChild(roleTagChip(role.tag, role.color));
     if (role.self_assignable) label.appendChild(el("span", "kind pickable", "pickable"));
     if (role.mentionable) label.appendChild(el("span", "kind", "anyone can mention"));
     if (role.hoist) label.appendChild(el("span", "kind", "own group"));
-    const count = role.permissions.length;
+    const granted = grantedNames(role.permissions);
+    const count = granted.length;
     const perms = el("span", "kind", count ? (count === 1 ? "1 permission" : `${count} permissions`) : "no permissions");
-    if (count) perms.title = role.permissions.map(p => (PERMISSION_LABELS.find(([v]) => v === p) || [p, p])[1]).join(", ");
+    if (count) perms.title = granted.map(p => (PERMISSION_LABELS.find(([v]) => v === p) || [p, p])[1]).join(", ");
     label.appendChild(perms);
     row.appendChild(label);
     const edit = el("button", "btn-secondary btn-small", "Edit");
@@ -15119,38 +17634,25 @@ function renderMemberSettings(server) {
     const who = el("span", "manage-row-label");
     who.appendChild(makeAvatar(member.id, member.name, "avatar avatar-sm"));
     const name = el("span", null, member.name);
-    if (member.color) name.style.color = `#${member.color}`;
+    paintRole(name, member.color);
     who.appendChild(name);
     if (member.id === server.owner) who.appendChild(el("span", "kind", "owner"));
     top.appendChild(who);
     const isSelf = state.user && member.id === state.user.id;
     const isOwner = member.id === server.owner;
-    if (canTimeOut(server, member, state.user && state.user.id)) {
-      const active = timeoutActive(member.timeout_until);
-      const timeOut = el("button", (active ? "btn-secondary" : "btn-danger") + " btn-small", timeoutActionLabel(member));
-      timeOut.onclick = async () => {
-        if (active) {
-          await clearMemberTimeout(member);
-          openServerSettings();
-        } else {
-          openTimeoutPicker(member);
-        }
+    if (timeoutActive(member.timeout_until)) who.appendChild(timeoutBadge(member.timeout_until));
+    const moderable = canTimeOut(server, member, state.user && state.user.id) || (!isSelf && !isOwner && (server.can_kick || server.can_ban));
+    if (moderable) {
+      const more = el("button", "icon-btn row-more");
+      more.title = `Actions for ${member.name}`;
+      more.setAttribute("aria-label", more.title);
+      more.setAttribute("aria-haspopup", "menu");
+      more.appendChild(svgIcon("more", 18));
+      more.onclick = e => {
+        e.stopPropagation();
+        openMemberRowMenu(member, more);
       };
-      top.appendChild(timeOut);
-    }
-    if (server.can_kick && !isSelf && !isOwner) {
-      const kick = el("button", "btn-danger btn-small", "Kick");
-      kick.onclick = async () => {
-        if (!confirm(`Kick ${member.name} from the server?`)) return;
-        try {
-          await invoke("kick_member", { serverId: server.id, userId: member.id });
-          await refreshCurrentServer();
-          openServerSettings();
-        } catch (e) {
-          toast(String(e));
-        }
-      };
-      top.appendChild(kick);
+      top.appendChild(more);
     }
     row.appendChild(top);
 
@@ -15183,6 +17685,232 @@ function renderMemberSettings(server) {
   }
 }
 
+function renderBotsPage(server) {
+  const bots = serverBots(server);
+  const add = $("bots-add");
+  add.disabled = !server.can_invite;
+  add.title = server.can_invite ? "" : "You need permission to create invites to add a bot";
+  $("bots-count").textContent = bots.length ? `Installed - ${bots.length}` : "Installed";
+  const list = $("bots-list");
+  if (!bots.length) {
+    const empty = el("div", "bots-empty");
+    empty.appendChild(el("div", "bots-empty-title", "No bots yet"));
+    empty.appendChild(el("div", "setting-sub", "Bots can tidy up chat, run slash commands and post updates from your other tools. Add one to see it here."));
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...bots.map(bot => botCard(server, bot)));
+}
+
+function botCard(server, bot) {
+  const { member } = bot;
+  const card = el("div", "bot-card");
+  const top = el("div", "bot-card-top");
+  const avatar = makeAvatar(member.id, member.name, "avatar bot-card-avatar");
+  avatar.appendChild(el("span", "presence-dot " + (bot.online ? member.presence : "offline")));
+  top.appendChild(avatar);
+  const who = el("div", "bot-card-who");
+  const name = el("div", "bot-card-name");
+  name.appendChild(el("span", "bot-card-label", member.name));
+  name.appendChild(botTag());
+  who.appendChild(name);
+  who.appendChild(el("div", "bot-card-status" + (bot.online ? " online" : ""), bot.online ? "Online" : "Offline"));
+  top.appendChild(who);
+  const actions = el("div", "bot-card-actions");
+  const removable = member.id !== server.owner && !(state.user && member.id === state.user.id);
+  if (server.can_kick && removable) {
+    const remove = el("button", "btn-secondary btn-small", "Remove");
+    remove.onclick = () => removeBot(server, member, "kick_member");
+    actions.appendChild(remove);
+  }
+  if (server.can_ban && removable) {
+    const ban = el("button", "btn-danger btn-small", "Ban");
+    ban.onclick = () => removeBot(server, member, "ban_member");
+    actions.appendChild(ban);
+  }
+  top.appendChild(actions);
+  card.appendChild(top);
+  card.appendChild(el("div", "bot-card-ability", bot.abilities));
+
+  const roles = el("div", "bot-card-row");
+  roles.appendChild(el("div", "bot-card-key", "Roles"));
+  roles.appendChild(botRoleChips(server, member, async () => {
+    await refreshCurrentServer();
+    openServerSettings();
+  }));
+  card.appendChild(roles);
+
+  const commands = el("div", "bot-card-row");
+  commands.appendChild(el("div", "bot-card-key", "Commands"));
+  const chips = el("div", "bot-card-commands");
+  for (const command of bot.commands) {
+    const chip = el("span", "bot-command", `/${command.name}`);
+    if (command.description) chip.title = command.description;
+    chips.appendChild(chip);
+  }
+  if (!bot.commands.length) chips.appendChild(el("span", "bot-card-none", "No slash commands"));
+  commands.appendChild(chips);
+  card.appendChild(commands);
+  return card;
+}
+
+function botRoleChips(server, member, changed) {
+  const chips = el("div", "role-chips bot-role-chips");
+  const held = new Set(member.roles || []);
+  if (!server.can_manage_roles) {
+    for (const role of server.roles.filter(r => held.has(r.id))) {
+      const chip = el("span", "role-chip held readonly", role.name);
+      if (role.color) chip.style.borderColor = `#${role.color}`;
+      chips.appendChild(chip);
+    }
+    if (!chips.children.length) chips.appendChild(el("span", "bot-card-none", "No roles"));
+    return chips;
+  }
+  for (const role of server.roles) {
+    const has = held.has(role.id);
+    const chip = el("button", "role-chip" + (has ? " held" : ""), role.name);
+    if (role.color) chip.style.borderColor = `#${role.color}`;
+    chip.title = has ? "Click to remove role" : "Click to grant role";
+    chip.onclick = async () => {
+      try {
+        await invoke("set_member_role", { serverId: server.id, userId: member.id, roleId: role.id, grant: !has });
+        await changed();
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    chips.appendChild(chip);
+  }
+  if (!server.roles.length) chips.appendChild(el("span", "bot-card-none", "No roles yet. Make one in Roles."));
+  return chips;
+}
+
+async function removeBot(server, member, command) {
+  const banning = command === "ban_member";
+  const question = banning
+    ? `Ban ${member.name} from ${server.name}? It is removed and cannot rejoin until unbanned.`
+    : `Remove ${member.name} from ${server.name}?`;
+  if (!confirm(question)) return;
+  try {
+    await invoke(command, { serverId: server.id, userId: member.id });
+    await refreshCurrentServer();
+    openServerSettings();
+    toast(banning ? `Banned ${member.name}` : `Removed ${member.name}`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+const addBot = { serverId: null, known: [], invite: "", joined: null, timer: null, changed: false };
+
+function botCodeRow(text, ready = true) {
+  const row = el("div", "bot-code-row");
+  const code = el("code", "bot-code", text);
+  code.title = text;
+  row.appendChild(code);
+  const copy = el("button", "btn-secondary btn-small bot-copy", "Copy");
+  copy.disabled = !ready;
+  copy.onclick = () => copyText(text, "Copied");
+  row.appendChild(copy);
+  return row;
+}
+
+function paintAddBotCommands() {
+  const commands = botSetupCommands($("add-bot-name").value, addBot.invite);
+  const ready = Boolean(addBot.invite);
+  $("add-bot-commands").replaceChildren(botCodeRow(commands.create), botCodeRow(commands.join, ready), botCodeRow(commands.run));
+  $("add-bot-bridge").replaceChildren(botCodeRow(commands.bridge));
+}
+
+function paintAddBotInvite(text, ready) {
+  $("add-bot-invite").textContent = text;
+  $("add-bot-invite").title = ready ? text : "";
+  $("add-bot-invite").classList.toggle("muted", !ready);
+  $("add-bot-invite-copy").disabled = !ready;
+}
+
+function paintAddBotJoined(server) {
+  const bot = server && addBot.joined ? serverBots(server).find(b => b.member.id === addBot.joined) : null;
+  $("add-bot-waiting").classList.toggle("hidden", Boolean(bot));
+  $("add-bot-joined").classList.toggle("hidden", !bot);
+  if (!bot) return;
+  $("add-bot-joined-text").textContent = server.can_manage_roles
+    ? `${bot.member.name} joined. Pick the roles it needs:`
+    : `${bot.member.name} joined. Ask someone who manages roles to give it the roles it needs.`;
+  $("add-bot-ability").textContent = bot.abilities;
+  $("add-bot-roles").replaceWith(Object.assign(botRoleChips(server, bot.member, async () => {
+    addBot.changed = true;
+    paintAddBotJoined(await invoke("get_server", { serverId: server.id }));
+  }), { id: "add-bot-roles" }));
+}
+
+function stopAddBotWatch() {
+  clearInterval(addBot.timer);
+  addBot.timer = null;
+}
+
+function addBotOpen() {
+  return !$("modal-backdrop").classList.contains("hidden") && !$("modal-add-bot").classList.contains("hidden");
+}
+
+async function watchForBot() {
+  if (!addBotOpen()) return stopAddBotWatch();
+  let server;
+  try {
+    server = await invoke("get_server", { serverId: addBot.serverId });
+  } catch {
+    return;
+  }
+  const fresh = newBots(addBot.known, server);
+  if (!fresh.length || !addBotOpen()) return;
+  stopAddBotWatch();
+  addBot.joined = fresh[0].member.id;
+  addBot.changed = true;
+  paintAddBotJoined(server);
+}
+
+async function openAddBot() {
+  const server = state.currentServer;
+  if (!server || !server.can_invite) return;
+  stopAddBotWatch();
+  Object.assign(addBot, { serverId: server.id, known: serverBots(server).map(b => b.member.id), invite: "", joined: null, changed: false });
+  $("add-bot-name").value = "";
+  $("add-bot-name").placeholder = BOT_DEFAULT_NAME;
+  $("add-bot-port").open = false;
+  paintAddBotInvite("Making an invite...", false);
+  paintAddBotCommands();
+  paintAddBotJoined(null);
+  showModal("modal-add-bot");
+  try {
+    const invite = await invoke("get_invite", { serverId: server.id });
+    if (addBot.serverId !== server.id || !addBotOpen()) return;
+    addBot.invite = invite;
+    paintAddBotInvite(invite, true);
+    paintAddBotCommands();
+    addBot.timer = setInterval(watchForBot, 2000);
+  } catch (e) {
+    paintAddBotInvite(String(e), false);
+  }
+}
+
+async function closeAddBot() {
+  stopAddBotWatch();
+  hideModals();
+  if (!addBot.changed || !state.currentServer || state.currentServer.id !== addBot.serverId) return;
+  await refreshCurrentServer();
+  if (!$("server-settings").classList.contains("hidden")) openServerSettings();
+}
+
+function wireBots() {
+  $("bots-add").onclick = openAddBot;
+  wireExternalLink($("bots-guide"), BOT_GUIDE_URL);
+  wireExternalLink($("add-bot-guide"), BOT_GUIDE_URL);
+  wireExternalLink($("add-bot-porting"), BOT_PORTING_URL);
+  $("add-bot-invite-copy").onclick = () => addBot.invite && copyText(addBot.invite, "Invite code copied");
+  $("add-bot-name").addEventListener("input", paintAddBotCommands);
+  $("add-bot-done").onclick = closeAddBot;
+}
+
 async function refreshCurrentServer() {
   const keepChannel = state.currentChannel;
   try {
@@ -15193,6 +17921,7 @@ async function refreshCurrentServer() {
   renderServerRail();
   renderMembers();
   renderChannels();
+  refreshVoiceInviteCards();
   syncRulesGate();
   syncAwaitedBar();
   syncAttachAccess();
@@ -15204,9 +17933,10 @@ async function refreshCurrentServer() {
       syncPinButton();
       syncRulesGate();
       if (still.kind !== keepChannel.kind) {
-        $("chat-hash").replaceChildren(still.kind === "announcement" ? svgIcon("megaphone", 22) : document.createTextNode("#"));
+        $("chat-hash").replaceChildren(channelHeaderMark(still));
+        syncRulesGate();
       }
-      renderMessages(await fetchChannelMessages(still));
+      renderChannelLog(await fetchChannelMessages(still));
       return;
     }
   }
@@ -15229,10 +17959,14 @@ function wireActivityPing() {
 
 async function boot() {
   await markMobileApp();
+  wireAccessibility();
   wireEvents();
+  wireSaved();
   wirePhoneLayout();
   wireTimeoutModal();
+  wireModerationModal();
   wireActivityPing();
+  wireBots();
   if (IS_TAURI) {
     await invoke("ui_ready");
   } else {
@@ -15266,6 +18000,7 @@ async function continueBoot() {
   await refreshServers();
   await loadReadState();
   await loadPins();
+  await loadSaved();
   if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
   await primeFriendPresence();
@@ -15282,13 +18017,11 @@ async function loadAccount() {
 
 let signInUrl = null;
 
-const SERVER_NOTE_DEFAULT = "Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.";
-const SERVER_NOTE_WARNING = "Only add a server you know and trust. It handles your sign-in and sees your email and display name.";
-
 function syncServerNote() {
   const custom = $("signin-server-select").value !== "default";
   const note = $("signin-server-note");
-  note.textContent = custom ? SERVER_NOTE_WARNING : SERVER_NOTE_DEFAULT;
+  note.dataset.i18n = custom ? "signin.server.warning" : "signin.server.note";
+  note.textContent = t(note.dataset.i18n);
   note.classList.toggle("warn", custom);
 }
 
@@ -15299,7 +18032,10 @@ function showSignIn() {
   const select = $("signin-server-select");
   const custom = !account.is_default_server;
   const defaultHost = account.default_server_host || "commy.chat";
-  select.options[0].text = defaultHost === "commy.chat" ? "commy.chat (free Commy service)" : `${defaultHost} (test server)`;
+  const first = select.options[0];
+  if (defaultHost === "commy.chat") first.dataset.i18n = "signin.server.default";
+  else delete first.dataset.i18n;
+  first.text = defaultHost === "commy.chat" ? t("signin.server.default") : t("signin.server.test", { host: defaultHost });
   if (custom && ![...select.options].some(o => o.value === account.server)) {
     select.insertBefore(new Option(account.server_host, account.server), select.options[1]);
   }
@@ -15396,8 +18132,8 @@ async function openDiscover() {
   button.classList.add("active");
   button.setAttribute("aria-pressed", "true");
   renderDiscoverChips();
-  if (!discoverState.entries.length) await loadDiscover(true);
   $("discover-search").focus();
+  await loadDiscover(true);
 }
 
 function renderDiscoverChips() {
@@ -15418,12 +18154,17 @@ function renderDiscoverChips() {
   }
 }
 
+function discoverFiltered() {
+  return Boolean(normalizeDirectorySearch(discoverState.q) || discoverState.category);
+}
+
 async function loadDiscover(reset) {
-  if (discoverState.busy) return;
-  discoverState.busy = true;
-  const more = $("discover-more");
-  more.disabled = true;
+  if (!reset && (discoverState.busy || !discoverState.cursor)) return;
   const request = ++discoverState.request;
+  discoverState.busy = true;
+  $("discover-more").disabled = true;
+  if (reset && !discoverState.entries.length) renderDiscoverCards({ loading: true });
+  let outcome = {};
   try {
     const page = await invoke("browse_directory", {
       q: normalizeDirectorySearch(discoverState.q) || null,
@@ -15433,19 +18174,27 @@ async function loadDiscover(reset) {
     if (request !== discoverState.request) return;
     discoverState.entries = reset ? page.entries : discoverState.entries.concat(page.entries);
     discoverState.cursor = page.next_cursor || null;
-    if (page.host) $("discover-sub").textContent = `Public servers listed by the people who run them, through ${page.host}.`;
-    renderDiscoverCards();
+    if (page.host) {
+      discoverState.host = page.host;
+      $("discover-sub").textContent = `Public servers listed by the people who run them, through ${page.host}.`;
+    }
+    outcome = { unavailable: page.available === false };
   } catch (e) {
-    if (reset) discoverState.entries = [];
-    discoverState.cursor = null;
-    renderDiscoverCards(String(e));
-  } finally {
-    discoverState.busy = false;
-    more.disabled = false;
+    if (request !== discoverState.request) return;
+    if (reset) {
+      discoverState.entries = [];
+      discoverState.cursor = null;
+      outcome = { error: String(e) };
+    } else {
+      toast(String(e));
+    }
   }
+  discoverState.busy = false;
+  $("discover-more").disabled = false;
+  renderDiscoverCards(outcome);
 }
 
-function renderDiscoverCards(error) {
+function renderDiscoverCards(outcome = {}) {
   const grid = $("discover-grid");
   grid.innerHTML = "";
   for (const entry of discoverState.entries) grid.appendChild(discoverCard(entry));
@@ -15453,11 +18202,13 @@ function renderDiscoverCards(error) {
   const none = !discoverState.entries.length;
   empty.classList.toggle("hidden", !none);
   if (none) {
-    $("discover-empty-art").replaceChildren(svgIcon("search", 48));
-    $("discover-empty-title").textContent = error ? "Could not load Discover" : "No servers found";
-    $("discover-empty-text").textContent = error || "Try another word or category, or list your own public server from Server Settings.";
+    const view = discoverEmptyView({ ...outcome, host: discoverState.host, filtered: discoverFiltered() });
+    $("discover-empty-art").replaceChildren(svgIcon(view.icon, 48));
+    $("discover-empty-title").textContent = view.title;
+    $("discover-empty-text").textContent = view.text;
+    $("discover-retry").classList.toggle("hidden", !view.retry);
   }
-  $("discover-more").classList.toggle("hidden", !discoverState.cursor);
+  $("discover-more").classList.toggle("hidden", none || !discoverState.cursor);
 }
 
 function discoverCard(entry) {
@@ -15572,6 +18323,7 @@ function wireDiscover() {
     timer = setTimeout(() => loadDiscover(true), 250);
   });
   $("discover-more").onclick = () => loadDiscover(false);
+  $("discover-retry").onclick = () => loadDiscover(true);
   $("discovery-description").addEventListener("input", () => {
     discoveryState.dirty = true;
     paintDiscoveryCounter();
@@ -15580,4 +18332,229 @@ function wireDiscover() {
   $("discovery-list").onclick = saveDiscoveryListing;
   $("discovery-update").onclick = saveDiscoveryListing;
   $("discovery-unlist").onclick = removeDiscoveryListing;
+}
+
+let voiceInviting = null;
+function showVoiceCallMenuItems(channel) {
+  const voice = channel.kind === "voice" && channel.can_view !== false;
+  $("chm-voice-join").textContent = state.voiceChannelId === channel.id ? "Disconnect" : "Join Voice";
+  $("chm-voice-join").classList.toggle("hidden", !voice);
+  $("chm-voice-invite").classList.toggle("hidden", !voice);
+}
+
+function voiceInviteSource(serverId, channelId) {
+  const current = state.currentServer && state.currentServer.id === serverId ? state.currentServer : null;
+  const channel = current ? current.channels.find(c => c.id === channelId) : null;
+  const connected = state.voiceServer && state.voiceServer.id === serverId && state.voiceChannelId === channelId ? state.voiceServer : null;
+  const summary = state.servers.find(s => s.id === serverId);
+  return {
+    serverName: (current && current.name) || (connected && connected.name) || (summary && summary.name) || "",
+    channelName: channel ? channelPlainName(channel) : (connected && connected.channelName) || "",
+  };
+}
+
+async function openVoiceInvite(serverId, channelId) {
+  voiceInviting = { server: serverId, channel: channelId, targets: null };
+  $("voice-invite-where").textContent = voiceInviteTitle(voiceInviteSource(serverId, channelId));
+  $("voice-invite-search").value = "";
+  renderVoiceInviteList();
+  showModal("modal-voice-invite");
+  $("voice-invite-search").focus();
+  const views = [];
+  for (const summary of state.servers) {
+    try {
+      views.push(await invoke("get_server", { serverId: summary.id }));
+    } catch {
+      continue;
+    }
+  }
+  let dms = [];
+  try {
+    dms = await invoke("list_dm_threads");
+  } catch {}
+  if (!voiceInviting || voiceInviting.server !== serverId || voiceInviting.channel !== channelId) return;
+  voiceInviting.targets = { servers: views.map(s => ({ ...s, channels: s.channels.map(c => ({ ...c, name: channelPlainName(c) })) })), dms };
+  renderVoiceInviteList();
+}
+
+function renderVoiceInviteList() {
+  const list = $("voice-invite-list");
+  list.replaceChildren();
+  if (!voiceInviting || !voiceInviting.targets) {
+    list.appendChild(el("div", "dm-list-empty", "Loading places to send to"));
+    return;
+  }
+  const targets = forwardTargets({ ...voiceInviting.targets, query: $("voice-invite-search").value });
+  for (const target of targets) {
+    const row = el("button", "person-row forward-row");
+    if (target.kind === "dm") row.appendChild(avatarWithPresence(target.name, target.user));
+    else if (target.kind === "group") row.appendChild(groupAvatar());
+    else row.appendChild(el("span", "server-chip", initials(target.sub)));
+    const meta = el("div", "dm-meta");
+    meta.appendChild(el("div", "dm-name", target.name));
+    meta.appendChild(el("div", "dm-preview", target.sub));
+    row.appendChild(meta);
+    row.onclick = () => sendVoiceInvite(target);
+    list.appendChild(row);
+  }
+  if (!targets.length) list.appendChild(el("div", "dm-list-empty", "Nowhere matches that name."));
+}
+
+async function sendVoiceInvite(target) {
+  const inviting = voiceInviting;
+  if (!inviting) return;
+  try {
+    if (target.kind === "dm") {
+      await invoke("send_dm_voice_invite", { serverId: inviting.server, channelId: inviting.channel, userId: target.user });
+    } else {
+      await invoke("send_voice_invite", { serverId: inviting.server, channelId: inviting.channel, toServerId: target.server, toChannelId: target.channel });
+    }
+    hideModals();
+    voiceInviting = null;
+    toast(`Invite sent to ${target.name}`);
+    if (target.kind !== "dm" && state.view === "server" && state.currentChannel && state.currentChannel.id === target.channel) await refreshChannelInPlace();
+    else if (target.kind === "dm" && inDmView() && state.currentDm && state.currentDm.user === target.user) await selectDm(target.user, target.name);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function voiceInviteLocalPresence(invite) {
+  const server = state.currentServer;
+  if (!server || server.id !== invite.server) return null;
+  const channel = server.channels.find(c => c.id === invite.channel);
+  if (!channel) return { known: true, gone: true };
+  const ids = channel.voice_user_ids || [];
+  return {
+    known: true,
+    server_name: server.name,
+    channel_name: channelPlainName(channel),
+    user_limit: channel.user_limit || 0,
+    can_view: channel.can_view !== false,
+    users: (channel.voice_users || []).map((name, i) => ({ id: ids[i] || null, name })),
+  };
+}
+
+function renderVoiceInvite(message) {
+  const invite = message.voice_invite;
+  const card = el("div", "voice-invite");
+  card.dataset.server = invite.server;
+  card.dataset.channel = invite.channel;
+  const body = el("div", "voice-invite-body");
+  body.appendChild(el("div", "voice-invite-kicker", "Voice call invite"));
+  body.appendChild(el("div", "voice-invite-title"));
+  const row = el("div", "voice-invite-row");
+  row.appendChild(el("div", "voice-invite-faces"));
+  row.appendChild(el("span", "voice-invite-more empty"));
+  row.appendChild(el("span", "voice-invite-status"));
+  body.appendChild(row);
+  card.appendChild(body);
+  const join = el("button", "voice-invite-join", "Join");
+  join.type = "button";
+  card.appendChild(join);
+  card.voiceInvite = invite;
+  const local = voiceInviteLocalPresence(invite);
+  paintVoiceInviteCard(card, invite, local);
+  if (!local) {
+    invoke("voice_channel_presence", { serverId: invite.server, channelId: invite.channel })
+      .then(presence => paintVoiceInviteCard(card, invite, presence ? { known: true, ...presence } : { known: false }))
+      .catch(() => paintVoiceInviteCard(card, invite, { known: true, gone: true }));
+  }
+  return card;
+}
+
+function paintVoiceInviteCard(card, invite, presence) {
+  const live = presence && presence.known && !presence.gone ? presence : null;
+  const inThisCall = Boolean(state.voiceServer) && state.voiceServer.id === invite.server && state.voiceChannelId === invite.channel;
+  const users = live ? live.users || [] : [];
+  const limit = live ? live.user_limit || 0 : 0;
+  const full = live ? voiceInviteIsFull({ users, limit, inThisCall }) : false;
+  card.querySelector(".voice-invite-title").textContent = voiceInviteTitle({ channelName: invite.channel_name, serverName: invite.server_name, live });
+  const summary = voiceInviteSummary(users);
+  const faces = card.querySelector(".voice-invite-faces");
+  faces.replaceChildren(...summary.shown.map(user => makeAvatar(user.id, user.name, "avatar avatar-sm")));
+  const more = card.querySelector(".voice-invite-more");
+  more.textContent = summary.overflowLabel;
+  more.classList.toggle("empty", !summary.overflow);
+  more.title = summary.overflow ? `${summary.count} people are in the call` : "";
+  const status = card.querySelector(".voice-invite-status");
+  status.textContent = presence
+    ? voiceInviteStatus({ known: presence.known, gone: presence.gone, canView: presence.can_view, users, limit })
+    : "Looking up the call";
+  const action = presence
+    ? voiceInviteAction({ known: presence.known, gone: presence.gone, canView: presence.can_view, inThisCall, hasLink: Boolean(invite.invite_link), full })
+    : { label: "Join", kind: "none", enabled: false, note: "" };
+  const join = card.querySelector(".voice-invite-join");
+  join.textContent = action.label;
+  join.disabled = !action.enabled;
+  join.title = action.note || "";
+  join.onclick = e => {
+    e.stopPropagation();
+    if (action.kind === "join") joinVoiceInvite(invite);
+    else if (action.kind === "link") openInviteLink(invite.invite_link);
+  };
+}
+
+function refreshVoiceInviteCards() {
+  for (const card of document.querySelectorAll(".voice-invite")) {
+    const invite = card.voiceInvite;
+    if (!invite) continue;
+    const local = voiceInviteLocalPresence(invite);
+    if (local) paintVoiceInviteCard(card, invite, local);
+  }
+}
+
+async function joinVoiceInvite(invite) {
+  if (!state.servers.some(s => s.id === invite.server)) {
+    if (invite.invite_link) return openInviteLink(invite.invite_link);
+    toast("Ask for an invite to this server");
+    return;
+  }
+  if (!state.currentServer || state.currentServer.id !== invite.server) await selectServer(invite.server);
+  const server = state.currentServer && state.currentServer.id === invite.server ? state.currentServer : null;
+  const channel = server ? server.channels.find(c => c.id === invite.channel) : null;
+  if (!channel) {
+    toast("That voice channel is gone");
+    return;
+  }
+  if (channel.can_view === false) {
+    toast(`Only ${accessWho(server, channel.view_roles)} can join this channel`);
+    return;
+  }
+  if (state.voiceChannelId === channel.id) return;
+  if (voiceFull(channel)) {
+    toast("That voice channel is full");
+    return;
+  }
+  await toggleVoice(channel);
+}
+
+function renderVoiceInviteButton(call) {
+  const button = $("vp-invite");
+  setIcon(button, "friendAdd", 18);
+  button.classList.toggle("hidden", call);
+}
+
+function wireVoiceInvites() {
+  $("vp-invite").onclick = () => {
+    const vs = state.voiceServer;
+    if (!vs || vs.call || !state.voiceChannelId) return;
+    openVoiceInvite(vs.id, state.voiceChannelId);
+  };
+  $("chm-voice-invite").onclick = () => {
+    closeFloating();
+    if (menuChannel && state.currentServer) openVoiceInvite(state.currentServer.id, menuChannel.id);
+  };
+  $("chm-voice-join").onclick = () => {
+    closeFloating();
+    const channel = menuChannel;
+    if (!channel) return;
+    if (voiceFull(channel)) {
+      toast("That voice channel is full");
+      return;
+    }
+    toggleVoice(channel);
+  };
+  $("voice-invite-cancel").onclick = hideModals;
+  $("voice-invite-search").addEventListener("input", renderVoiceInviteList);
 }

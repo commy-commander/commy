@@ -144,6 +144,25 @@ test("messages run commands, reply through the bridge and skip late ones", async
   }
 });
 
+test("slash commands register through the bridge and run with their parsed options", async () => {
+  const bridge = await fakeBridge({ answer: () => ({ ok: true }) });
+  try {
+    const client = new Client();
+    const seen = [];
+    client.on("commandInvoked", (m, command) => seen.push([m.content, command]));
+    const done = new Promise(resolve => client.slashCommand("roll", (m, options) => resolve(options)));
+    await client.login({ token: "secret", port: bridge.port });
+    await client.registerCommands("s1", [{ name: "roll", description: "Roll dice", options: [] }]);
+    assert.equal(bridge.requests.find(r => r.op === "set_commands").commands[0].name, "roll");
+    bridge.push({ type: "command_invoked", server: "s1", command: "roll", options: { sides: "20" }, message: message({ content: "/roll 20" }) });
+    assert.deepEqual(await done, { sides: "20" });
+    assert.deepEqual(seen, [["/roll 20", { name: "roll", options: { sides: "20" } }]]);
+    client.destroy();
+  } finally {
+    bridge.close();
+  }
+});
+
 test("failed actions reject with the bridge's reason and members stay in step", async () => {
   const bridge = await fakeBridge({
     answer: request => (request.op === "ban" ? { ok: false, error: "the bot needs a role with Ban Members" } : { ok: true }),

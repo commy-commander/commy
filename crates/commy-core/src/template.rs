@@ -1,8 +1,8 @@
 use crate::ids::UserId;
 use crate::permissions::Permissions;
 use crate::server::{
-    parse_emoji_token, valid_hex_color, valid_role_tag, valid_rules, Channel, ChannelKind, Role, Server,
-    MAX_ACCESS_ROLES, MAX_USER_LIMIT, SERVER_AFK_MINUTES,
+    clean_forum_tags, parse_emoji_token, valid_hex_color, valid_role_tag, valid_rules, Channel, ChannelKind, ForumTag,
+    Role, Server, MAX_ACCESS_ROLES, MAX_USER_LIMIT, SERVER_AFK_MINUTES,
 };
 use crate::store::{MAX_CHANNELS, MAX_ROLES};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -35,6 +35,15 @@ pub struct TemplateChannel {
     pub send_roles: Vec<usize>,
     #[serde(default)]
     pub sensitive: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<TemplateForumTag>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemplateForumTag {
+    pub name: String,
+    #[serde(default)]
+    pub emoji: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +131,13 @@ fn known_permissions() -> Permissions {
         Permissions::MANAGE_NICKNAMES,
         Permissions::MOVE_MEMBERS,
         Permissions::SEND_VOICE_MESSAGES,
+        Permissions::PRIORITY_SPEAKER,
+        Permissions::SEND_TTS_MESSAGES,
+        Permissions::NO_EMBED_LINKS,
+        Permissions::NO_READ_MESSAGE_HISTORY,
+        Permissions::NO_CREATE_THREADS,
+        Permissions::NO_SEND_POLLS,
+        Permissions::NO_CREATE_EVENTS,
     ]
     .into_iter()
     .fold(Permissions::NONE, |acc, p| acc | p)
@@ -132,7 +148,31 @@ fn everyone_may_hold() -> Permissions {
 }
 
 fn is_text_like(kind: ChannelKind) -> bool {
-    matches!(kind, ChannelKind::Text | ChannelKind::Announcement)
+    kind.holds_messages()
+}
+
+fn portable_forum_tags(tags: &[ForumTag]) -> Vec<TemplateForumTag> {
+    tags.iter()
+        .map(|t| TemplateForumTag {
+            name: t.name.clone(),
+            emoji: t.emoji.as_deref().filter(|e| parse_emoji_token(e).is_none()).map(String::from),
+        })
+        .collect()
+}
+
+fn clean_template_tags(tags: &[TemplateForumTag], kind: ChannelKind) -> Vec<TemplateForumTag> {
+    if kind != ChannelKind::Forum {
+        return vec![];
+    }
+    let with_ids: Vec<ForumTag> = tags
+        .iter()
+        .map(|t| ForumTag { id: crate::ids::TagId::new(), name: t.name.clone(), emoji: t.emoji.clone() })
+        .collect();
+    let cleaned = clean_forum_tags(&with_ids).unwrap_or_else(|| {
+        let short: Vec<ForumTag> = with_ids.into_iter().filter(|t| t.name.chars().count() <= crate::server::MAX_FORUM_TAG_CHARS).collect();
+        clean_forum_tags(&short).unwrap_or_default()
+    });
+    portable_forum_tags(&cleaned)
 }
 
 pub fn text_channel_name(name: &str) -> String {
@@ -194,6 +234,7 @@ impl ServerTemplate {
                 view_roles: role_indexes(&c.view_roles),
                 send_roles: role_indexes(&c.send_roles),
                 sensitive: c.sensitive,
+                tags: portable_forum_tags(&c.tags),
             })
             .collect();
         let everyone = server
@@ -248,11 +289,12 @@ impl ServerTemplate {
                     .retention_days
                     .filter(|d| *d > 0 && is_text_like(c.kind))
                     .map(|d| d.min(MAX_RETENTION_DAYS)),
-                user_limit: if c.kind == ChannelKind::Voice { c.user_limit.min(MAX_USER_LIMIT) } else { 0 },
+                user_limit: if c.kind.is_voice() { c.user_limit.min(MAX_USER_LIMIT) } else { 0 },
                 color: clean_color(c.color.as_deref()),
                 view_roles: if c.kind == ChannelKind::Category { vec![] } else { role_picks(&c.view_roles, self.roles.len()) },
                 send_roles: if is_text_like(c.kind) { role_picks(&c.send_roles, self.roles.len()) } else { vec![] },
                 sensitive: c.sensitive && is_text_like(c.kind),
+                tags: clean_template_tags(&c.tags, c.kind),
             });
         }
         if !channels.iter().any(|c| c.kind != ChannelKind::Category) {
@@ -266,6 +308,7 @@ impl ServerTemplate {
                 view_roles: vec![],
                 send_roles: vec![],
                 sensitive: false,
+                tags: vec![],
             });
         }
         let mut roles = Vec::with_capacity(self.roles.len());
@@ -329,6 +372,11 @@ impl ServerTemplate {
         for (channel, t) in server.channels.iter_mut().zip(&self.channels) {
             channel.view_roles = picked(&t.view_roles);
             channel.send_roles = picked(&t.send_roles);
+            channel.tags = t
+                .tags
+                .iter()
+                .map(|tag| ForumTag { id: crate::ids::TagId::new(), name: tag.name.clone(), emoji: tag.emoji.clone() })
+                .collect();
         }
         server.roles.extend(self.roles.iter().enumerate().map(|(i, r)| Role {
             id: role_ids[i],
@@ -440,6 +488,7 @@ impl Draft {
             view_roles: vec![],
             send_roles: vec![],
             sensitive: false,
+            tags: vec![],
         });
         self.channels.len() - 1
     }
@@ -685,6 +734,29 @@ mod tests {
     }
 
     #[test]
+    fn forum_channels_keep_their_tags_through_a_template() {
+        let mut server = ServerTemplate::builtin(BuiltinTemplate::Community).build("Hub", owner());
+        let mut forum = Channel::new("ideas", ChannelKind::Forum, 40);
+        let tag = |name: &str, emoji: Option<&str>| ForumTag { id: crate::ids::TagId::new(), name: name.into(), emoji: emoji.map(String::from) };
+        forum.tags = vec![tag("Feature", Some("\u{1F4A1}")), tag("Bug", Some("<:bug:blob@node>")), tag("Question", None)];
+        let old_ids: Vec<_> = forum.tags.iter().map(|t| t.id).collect();
+        server.channels.push(forum);
+        let code = ServerTemplate::from_server(&server).unwrap().encode();
+        assert!(ServerTemplate::decode(&code).unwrap().channels.iter().any(|c| c.kind == ChannelKind::Forum));
+        let rebuilt = ServerTemplate::decode(&code).unwrap().build("Hub 2", owner());
+        let copy = rebuilt.channels.iter().find(|c| c.name == "ideas").unwrap();
+        assert_eq!(copy.kind, ChannelKind::Forum);
+        let names: Vec<(&str, Option<&str>)> = copy.tags.iter().map(|t| (t.name.as_str(), t.emoji.as_deref())).collect();
+        assert_eq!(names, vec![("Feature", Some("\u{1F4A1}")), ("Bug", None), ("Question", None)], "custom emoji stay behind");
+        assert!(copy.tags.iter().all(|t| !old_ids.contains(&t.id)), "tags get fresh ids");
+        assert!(copy.posts.is_empty());
+        let mut template = ServerTemplate::decode(&code).unwrap();
+        let text = template.channels.iter().position(|c| c.kind == ChannelKind::Text).unwrap();
+        template.channels[text].tags = vec![TemplateForumTag { name: "stray".into(), emoji: None }];
+        assert!(template.cleaned().unwrap().channels[text].tags.is_empty(), "only forums carry tags");
+    }
+
+    #[test]
     fn codes_round_trip() {
         let template = ServerTemplate::builtin(BuiltinTemplate::Study);
         let code = template.encode();
@@ -726,7 +798,7 @@ mod tests {
         assert!(!cleaned.everyone.contains(Permissions::ADMINISTRATOR));
         assert!(!cleaned.everyone.contains(Permissions::MANAGE_ROLES));
         assert!(cleaned.everyone.contains(Permissions::SEND_MESSAGES));
-        assert_eq!(cleaned.roles[0].permissions, known_permissions());
+        assert_eq!(cleaned.roles[0].permissions, known_permissions() & !Permissions::RESTRICTIONS);
         let server = cleaned.build("Safe", owner());
         let member = UserId::new();
         let mut server = server;
@@ -784,6 +856,7 @@ mod tests {
             view_roles: vec![],
             send_roles: vec![],
             sensitive: false,
+            tags: vec![],
         }];
         template.afk_channel = None;
         let cleaned = template.cleaned().unwrap();

@@ -18,7 +18,7 @@ function channelIsPrivate(channel) {
 }
 
 function channelAccessLock({ view, server, channel }) {
-  if (view !== "server" || !channel || channel.kind === "voice" || channel.kind === "category") return null;
+  if (view !== "server" || !channel || channel.kind === "voice" || channel.kind === "stage" || channel.kind === "category") return null;
   if (channel.can_view === false) {
     return {
       title: "You can't read this channel",

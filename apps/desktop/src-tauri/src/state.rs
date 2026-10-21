@@ -191,6 +191,7 @@ pub struct App {
     pub talk_press: std::sync::atomic::AtomicU64,
     pub forced_mute: std::sync::atomic::AtomicBool,
     pub forced_deaf: std::sync::atomic::AtomicBool,
+    pub audience: std::sync::atomic::AtomicBool,
     pub share_seen: Mutex<HashMap<(ServerId, UserId), std::time::Instant>>,
     pub last_game: Mutex<Option<(u32, String)>>,
     pub account: Mutex<crate::account::AccountState>,
@@ -201,8 +202,10 @@ pub struct App {
     pub http: reqwest::Client,
     pub identity: Mutex<Option<Identity>>,
     pub outbox: Mutex<crate::outbox::Outbox>,
+    pub channel_opens: Mutex<HashMap<ServerId, crate::view::ChannelOpens>>,
     pub dm_backoff: Mutex<crate::outbox::DmBackoff>,
     pub dm_wake: tokio::sync::Notify,
+    pub listing_wake: tokio::sync::Notify,
     pub catchup: Mutex<crate::catchup::Catchup>,
     pub doorbell: Mutex<crate::doorbell::Doorbell>,
     pub rest: Mutex<crate::wake::Rest>,
@@ -247,6 +250,7 @@ impl Default for App {
             talk_press: std::sync::atomic::AtomicU64::new(0),
             forced_mute: std::sync::atomic::AtomicBool::new(false),
             forced_deaf: std::sync::atomic::AtomicBool::new(false),
+            audience: std::sync::atomic::AtomicBool::new(false),
             share_seen: Mutex::new(HashMap::new()),
             last_game: Mutex::new(None),
             account: Mutex::new(crate::account::AccountState::default()),
@@ -262,8 +266,10 @@ impl Default for App {
                 .unwrap_or_default(),
             identity: Mutex::new(None),
             outbox: Mutex::new(crate::outbox::Outbox::default()),
+            channel_opens: Mutex::new(HashMap::new()),
             dm_backoff: Mutex::new(crate::outbox::DmBackoff::default()),
             dm_wake: tokio::sync::Notify::new(),
+            listing_wake: tokio::sync::Notify::new(),
             catchup: Mutex::new(crate::catchup::Catchup::default()),
             doorbell: Mutex::new(crate::doorbell::Doorbell::default()),
             rest: Mutex::new(crate::wake::Rest::default()),
@@ -401,7 +407,21 @@ impl App {
         if !self.key_settled() {
             profile.identity = None;
         }
+        if !self.safety.lock().unwrap().profile_policy.shows_details_to_servers() {
+            profile = profile.without_details();
+        }
         profile
+    }
+
+    pub fn profile_for(&self, me: &UserProfile, partner: UserId) -> UserProfile {
+        let shares_server = self.servers.lock().unwrap().values().any(|s| s.server.is_member(partner));
+        let shown = self.safety.lock().unwrap().shows_details_to(partner, shares_server);
+        let profile = me.as_seen_by_others();
+        if shown {
+            profile
+        } else {
+            profile.without_details()
+        }
     }
 
     pub fn awaits_snapshot(&self, server: ServerId) -> bool {
@@ -590,6 +610,43 @@ mod tests {
         assert_eq!(announced.presence, commy_core::Presence::Offline);
         assert_eq!(announced.activity, None);
         assert!(!serde_json::to_string(&announced).unwrap().contains("invisible"));
+    }
+
+    #[test]
+    fn a_friends_only_profile_reaches_servers_without_details() {
+        let app = App::default();
+        let mut me = UserProfile::new("me");
+        me.about = Some("hello".into());
+        me.banner = Some("blob:abc".into());
+        me.activity = Some("Playing Chess".into());
+        assert_eq!(app.announced(me.clone()), me);
+        app.safety.lock().unwrap().profile_policy = crate::safety::ProfilePolicy::SharedServers;
+        assert_eq!(app.announced(me.clone()), me, "everyone on a server shares it with us");
+        app.safety.lock().unwrap().profile_policy = crate::safety::ProfilePolicy::Friends;
+        let announced = app.announced(me.clone());
+        assert_eq!((announced.about, announced.banner, announced.activity), (None, None, None));
+        assert_eq!(announced.username, "me");
+    }
+
+    #[test]
+    fn a_dm_carries_details_only_to_those_allowed() {
+        let app = App::default();
+        let mut me = UserProfile::new("me");
+        me.about = Some("hello".into());
+        let friend = UserId::new();
+        let member = UserId::new();
+        let stranger = UserId::new();
+        app.safety.lock().unwrap().friends.insert(friend);
+        let mut server = commy_core::Server::new("s", me.id);
+        server.members.push(commy_core::Member { user: member, nickname: None, roles: Vec::new(), joined_at: chrono::Utc::now(), timeout: None });
+        let sid = server.id;
+        app.servers.lock().unwrap().insert(sid, ServerState::new(server));
+        let about = |to: UserId| app.profile_for(&me, to).about.is_some();
+        assert!(about(friend) && about(member) && about(stranger));
+        app.safety.lock().unwrap().profile_policy = crate::safety::ProfilePolicy::SharedServers;
+        assert!(about(friend) && about(member) && !about(stranger));
+        app.safety.lock().unwrap().profile_policy = crate::safety::ProfilePolicy::Friends;
+        assert!(about(friend) && !about(member) && !about(stranger));
     }
 
     #[test]

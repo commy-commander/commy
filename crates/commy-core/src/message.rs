@@ -1,6 +1,7 @@
 use crate::event::ServerEvent;
 use crate::identity::{Identity, IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
+use crate::permissions::Permissions;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,8 @@ pub struct Attachment {
 
 pub const VOICE_MESSAGE_FILENAME: &str = "voice-message.ogg";
 pub const VOICE_MESSAGE_MIME: &str = "audio/ogg";
+pub const TTS_MARKER_FILENAME: &str = "text-to-speech";
+pub const TTS_MARKER_MIME: &str = "application/vnd.commy.tts";
 
 impl Attachment {
     pub fn is_image(&self) -> bool {
@@ -23,7 +26,15 @@ impl Attachment {
     }
 
     pub fn is_card(&self) -> bool {
-        self.is_link_preview() || self.is_poll()
+        self.is_link_preview() || self.is_poll() || self.is_voice_invite() || self.is_tts_marker() || self.is_command()
+    }
+
+    pub fn tts_marker() -> Self {
+        Self { blob: String::new(), filename: TTS_MARKER_FILENAME.into(), size_bytes: 0, mime_type: TTS_MARKER_MIME.into(), provider: None }
+    }
+
+    pub fn is_tts_marker(&self) -> bool {
+        self.mime_type == TTS_MARKER_MIME
     }
 
     pub fn carries_a_file(&self) -> bool {
@@ -165,11 +176,33 @@ impl Message {
         self.attachments.iter().filter(|a| !a.is_card())
     }
 
+    pub fn mark_tts(&mut self) {
+        if !self.is_tts() {
+            self.attachments.push(Attachment::tts_marker());
+        }
+    }
+
+    pub fn is_tts(&self) -> bool {
+        self.attachments.iter().any(Attachment::is_tts_marker)
+    }
+
+    pub fn speaks_for(&self, author_permissions: Permissions) -> bool {
+        self.is_tts() && !self.content.trim().is_empty() && author_permissions.can_send_tts()
+    }
+
     pub fn link_previews(&self) -> impl Iterator<Item = (crate::link_preview::LinkPreview, &Attachment)> {
         self.attachments
             .iter()
             .filter_map(|a| a.link_preview().map(|p| (p, a)))
             .filter(|(p, _)| self.content.contains(&p.url))
+    }
+
+    pub fn embeds_for(&self, author_permissions: Permissions) -> bool {
+        author_permissions.can_embed_links()
+    }
+
+    pub fn previews_for(&self, author_permissions: Permissions) -> impl Iterator<Item = (crate::link_preview::LinkPreview, &Attachment)> {
+        self.link_previews().filter(move |_| self.embeds_for(author_permissions))
     }
 
     pub fn sign(&mut self, server: ServerId, identity: &Identity) {
@@ -341,6 +374,54 @@ mod tests {
         assert!(!only_a_voice_message("hear this", std::iter::once(&voice)));
         assert!(!only_a_voice_message("", std::iter::empty()));
         assert!(!only_a_voice_message("", [&voice, &renamed].into_iter()));
+    }
+
+    #[test]
+    fn a_tts_marker_is_a_card_that_speaks_only_for_those_allowed_to() {
+        let mut msg = Message::new(ChannelId::new(), UserId::new(), "hear me");
+        assert!(!msg.is_tts());
+        msg.mark_tts();
+        msg.mark_tts();
+        assert!(msg.is_tts());
+        assert_eq!(msg.attachments.len(), 1, "marking twice adds one marker");
+        let marker = &msg.attachments[0];
+        assert!(marker.is_tts_marker());
+        assert!(marker.is_card());
+        assert!(!marker.carries_a_file());
+        assert!(!marker.is_plain_file());
+        assert!(!marker.is_voice_message());
+        assert_eq!(msg.files().count(), 0);
+        assert!(msg.speaks_for(Permissions::default_member()));
+        assert!(msg.speaks_for(Permissions::ADMINISTRATOR));
+        assert!(!msg.speaks_for(Permissions::SEND_MESSAGES));
+        let silent = Message { content: "  ".into(), ..msg.clone() };
+        assert!(!silent.speaks_for(Permissions::default_member()));
+        let plain = Message::new(ChannelId::new(), UserId::new(), "hear me");
+        assert!(!plain.speaks_for(Permissions::ADMINISTRATOR));
+        let bytes = postcard::to_stdvec(&msg).unwrap();
+        assert_eq!(postcard::from_bytes::<Message>(&bytes).unwrap(), msg);
+    }
+
+    #[test]
+    fn link_previews_show_only_for_authors_allowed_to_embed() {
+        let preview = crate::link_preview::LinkPreview {
+            url: "https://example.org/a".into(),
+            site: String::new(),
+            title: "A page".into(),
+            description: String::new(),
+            image: None,
+        };
+        let mut msg = Message::new(ChannelId::new(), UserId::new(), "see https://example.org/a");
+        msg.attachments.push(preview.into_attachment(None));
+        assert_eq!(msg.link_previews().count(), 1);
+        assert_eq!(msg.previews_for(Permissions::default_member()).count(), 1);
+        assert_eq!(msg.previews_for(Permissions::NONE).count(), 1, "an unset bit allows");
+        assert_eq!(msg.previews_for(Permissions::SEND_MESSAGES | Permissions::NO_EMBED_LINKS).count(), 0);
+        assert!(msg.embeds_for(Permissions::SEND_MESSAGES));
+        assert!(!msg.embeds_for(Permissions::NO_EMBED_LINKS));
+        assert!(msg.embeds_for(Permissions::NO_SEND_POLLS), "other restrictions leave links alone");
+        let plain = Message::new(ChannelId::new(), UserId::new(), "no links");
+        assert_eq!(plain.previews_for(Permissions::ADMINISTRATOR).count(), 0);
     }
 
     fn sample(identity: &Identity, server: ServerId) -> Message {

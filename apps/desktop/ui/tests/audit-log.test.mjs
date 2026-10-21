@@ -49,6 +49,16 @@ test("sentences name the actor, the target and the change", () => {
   assert.equal(auditText(entry("channel_limit", { label: "Duo", detail: "0" })), "Mia removed the people limit in Duo");
   assert.equal(auditText(entry("channel_slow_mode", { label: "general", detail: "30" })), "Mia set slow mode to 30 seconds in general");
   assert.equal(auditText(entry("channel_slow_mode", { label: "general", detail: "0" })), "Mia turned off slow mode in general");
+  assert.equal(auditText(entry("thread_rename", { label: "general", detail: "Raid night" })), "Mia named a thread in general Raid night");
+  assert.equal(auditText(entry("thread_rename", { label: "general" })), "Mia cleared a thread's name in general");
+  assert.equal(auditText(entry("thread_archive", { label: "general", detail: "on" })), "Mia archived a thread in general");
+  assert.equal(auditText(entry("thread_archive", { label: "general", detail: "off" })), "Mia reopened a thread in general");
+  assert.equal(auditText(entry("thread_lock", { label: "general", detail: "on" })), "Mia locked a thread in general");
+  assert.equal(auditText(entry("thread_lock", { label: "general", detail: "off" })), "Mia unlocked a thread in general");
+  assert.equal(auditText(entry("channel_create", { label: "ideas", detail: "forum" })), "Mia created the forum channel ideas");
+  assert.equal(auditText(entry("forum_tags", { label: "ideas", detail: "3" })), "Mia set 3 post tags in ideas");
+  assert.equal(auditText(entry("forum_tags", { label: "ideas", detail: "0" })), "Mia removed the post tags in ideas");
+  assert.equal(auditText(entry("forum_post_edit", { label: "ideas", detail: "Dark mode" })), "Mia changed the post Dark mode in ideas");
   assert.equal(auditText(entry("sticker_add", { label: "party" })), "Mia added the sticker party");
   assert.equal(auditText(entry("emoticon_remove", { label: "shrug" })), "Mia removed the emoticon :shrug");
   assert.equal(auditText(entry("expression_sharing", { detail: "stickers and emoticons" })), "Mia let members use this server's stickers and emoticons in other servers and DMs");
@@ -63,6 +73,9 @@ test("sentences name the actor, the target and the change", () => {
   assert.equal(auditText(entry("onboarding", { detail: "set" })), "Mia updated the onboarding questions");
   assert.equal(auditText(entry("onboarding", { detail: "removed" })), "Mia removed the onboarding questions");
   assert.equal(auditGroup("onboarding"), "server");
+  assert.equal(auditText(entry("voice_status_set", { label: "General", detail: "Ranked grind" })), "Mia set the status of General to Ranked grind");
+  assert.equal(auditText(entry("voice_status_set", { label: "General" })), "Mia cleared the status of General");
+  assert.equal(auditGroup("voice_status_set"), "channels");
   assert.equal(auditText(entry("message_delete", { label: "Nova", detail: "general" })), "Mia deleted a message by Nova in general");
   assert.equal(auditText(entry("channel_access", { label: "mods", detail: "private" })), "Mia made mods private");
   assert.equal(auditText(entry("channel_access", { label: "news", detail: "send" })), "Mia limited who can send in news");
@@ -73,6 +86,9 @@ test("sentences name the actor, the target and the change", () => {
   assert.equal(auditText(entry("invite_create", { label: "pixel-pioneers" })), "Mia created the invite pixel-pioneers");
   assert.equal(auditText(entry("invite_revoke", { label: "KQ7M3N4P", detail: "Theo" })), "Mia revoked the invite KQ7M3N4P made by Theo");
   assert.equal(auditText(entry("invite_background", { detail: "removed" })), "Mia removed the invite background");
+  assert.equal(auditText(entry("bot_commands", { label: "Tidy", detail: "2" })), "Mia registered 2 slash commands");
+  assert.equal(auditText(entry("bot_commands", { label: "Tidy", detail: "1" })), "Mia registered 1 slash command");
+  assert.equal(auditText(entry("bot_commands", { label: "Tidy", detail: "0" })), "Mia removed its slash commands");
 });
 
 test("missing names fall back to plain words instead of blanks", () => {

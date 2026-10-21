@@ -93,6 +93,12 @@ RELAY_PROXY_ALIAS=commy-relay-staging-proxy STUN_PORT=3479 RELAY_MONTHLY_LIMIT_G
   docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d --build relay relay-proxy relay-meter
 ```
 
+The relay image is tagged with the iroh-relay version it builds, so a version
+bump in `relay/Dockerfile` gets a fresh build even without `--build`. To check
+which relay is live, `https://relay.<domain>:8443/ping` answers 200 on
+iroh-relay 1.x, which the web app needs; an older relay answers 404 and refuses
+browsers.
+
 ### Dockhand
 
 Dockhand shows the containers the script starts (projects `commy-edge`,

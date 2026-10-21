@@ -10,21 +10,21 @@
 <body>
   <div id="app" class="app">
     <nav class="rail" id="rail">
-      <button class="rail-btn rail-home" id="home-btn" title="Direct Messages">
+      <button class="rail-btn rail-home" id="home-btn" title="Direct Messages" data-i18n-title="nav.dms">
         <img src="images/commy_v3_noback.png" alt="" width="38" height="38" draggable="false" />
         <span class="rail-brand">Commy</span>
       </button>
       <div class="rail-divider"></div>
       <div id="server-list" class="server-list"></div>
-      <button class="rail-btn rail-add" id="add-server-btn" title="Add a Server">
+      <button class="rail-btn rail-add" id="add-server-btn" title="Add a Server" data-i18n-title="nav.addServer">
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
       </button>
-      <button class="rail-btn rail-add rail-discover" id="discover-btn" title="Discover Servers" aria-pressed="false">
+      <button class="rail-btn rail-add rail-discover" id="discover-btn" title="Discover Servers" data-i18n-title="nav.discover" aria-pressed="false">
         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 10.9c-.61 0-1.1.49-1.1 1.1s.49 1.1 1.1 1.1c.61 0 1.1-.49 1.1-1.1s-.49-1.1-1.1-1.1zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm2.19 12.19L6 18l3.81-8.19L18 6l-3.81 8.19zM12 20c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
       </button>
       <div class="rail-spacer"></div>
       <footer class="user-panel">
-      <button class="user-chip" id="user-chip" title="Set status">
+      <button class="user-chip" id="user-chip" title="Set status" data-i18n-title="nav.status">
         <span class="avatar" id="me-avatar">?</span>
         <span class="user-meta">
           <span class="user-name" id="me-name">Not set</span>
@@ -32,7 +32,7 @@
         </span>
       </button>
       <div class="user-actions">
-        <button class="icon-btn" id="settings-btn" title="Settings">
+        <button class="icon-btn" id="settings-btn" title="Settings" data-i18n-title="nav.settings">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19.4 13a7.9 7.9 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.9 7.9 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.9 7.9 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.9 7.9 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.9 7.9 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.9 7.9 0 0 0 1.7-1l2.4 1 2-3.4zM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5z"/></svg>
         </button>
       </div>
@@ -77,11 +77,18 @@
           <button class="vp-pill" id="vp-stop-watch">Stop Watching</button>
         </div>
         <div class="vp-streams" id="vp-streams"></div>
+        <div class="vp-stage hidden" id="vp-stage">
+          <span class="vp-stage-icon" id="vp-stage-icon"></span>
+          <span class="vp-stage-text" id="vp-stage-text"></span>
+          <button class="vp-pill vp-hand" id="vp-hand" type="button">Raise hand</button>
+        </div>
         <div class="vp-conn">
           <div class="vp-conn-meta" id="vp-conn-meta" title="Go to voice channel">
             <div class="vp-status"><span class="vp-signal" id="vp-signal"></span><span id="vp-status-text">Voice Connected</span></div>
             <div class="vp-where" id="vp-where"></div>
+            <div class="vp-topic hidden" id="vp-topic"></div>
           </div>
+          <button class="icon-btn vp-invite" id="vp-invite" title="Invite to Call"></button>
           <button class="icon-btn vp-hangup" id="vp-disconnect" title="Disconnect"></button>
         </div>
         <div class="vp-voice">
@@ -94,6 +101,10 @@
             <button class="caret-btn" id="deafen-caret" title="Output Options"></button>
           </div>
           <button class="icon-btn" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
+        </div>
+        <div class="vp-actions" id="vp-actions">
+          <button class="vp-activities" id="vp-activities" title="Start something together with everyone in the channel"></button>
+          <button class="vp-activities vp-share desktop-only" id="share-btn" title="Share Your Screen"></button>
         </div>
         <button class="vp-game-share hidden" id="vp-game-share"></button>
       </section>
@@ -110,14 +121,15 @@
         <span class="presence-dot inline hidden" id="chat-presence"></span>
         <span class="topic" id="channel-topic"></span>
         <div class="header-actions">
-          <button class="icon-btn hidden" id="vp-nc" title="Noise Cancellation"></button>
           <button class="icon-btn hidden" id="vp-soundboard" title="Soundboard"></button>
-          <button class="icon-btn hidden desktop-only" id="share-btn" title="Share Your Screen">
-            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 3H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h5v2H7v2h10v-2h-2v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 13H4V5h16zm-9-2 5-3.5L11 7z"/></svg>
-          </button>
           <button class="icon-btn hidden" id="pins-btn" title="Pinned Messages" aria-haspopup="dialog">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>
             <span class="pin-count hidden" id="pins-count"></span>
+          </button>
+          <button class="icon-btn hidden" id="threads-btn" title="Threads" aria-haspopup="dialog"></button>
+          <button class="icon-btn" id="saved-btn" title="Saved Messages" aria-haspopup="dialog">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2zm0 15-5-2.18L7 18V5h10z"/></svg>
+            <span class="pin-count hidden" id="saved-count"></span>
           </button>
           <button class="icon-btn hidden" id="members-btn" title="Hide Members" aria-pressed="true">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zM8 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05A4.2 4.2 0 0 1 17 16.5V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
@@ -132,7 +144,7 @@
           </button>
           <label class="search-box hidden" id="search-box">
             <span class="search-box-icon" id="search-box-icon"></span>
-            <input id="search-input" type="text" placeholder="Search" autocomplete="off" spellcheck="false" aria-label="Search messages in this server" aria-controls="search-pop" />
+            <input id="search-input" type="text" placeholder="Search" autocomplete="off" spellcheck="false" aria-label="Search messages" aria-controls="search-pop" />
             <button class="search-clear" id="search-clear" type="button" title="Clear Search" aria-label="Clear Search"></button>
           </label>
         </div>
@@ -141,8 +153,14 @@
         <header class="search-pop-head">
           <span class="search-pop-title" id="search-pop-title">Search this server</span>
           <span class="search-pop-sub" id="search-pop-sub"></span>
+          <div class="search-scope" id="search-scope" role="group" aria-label="Search scope"></div>
         </header>
         <div class="search-list" id="search-list" role="listbox"></div>
+        <footer class="search-pager idle" id="search-pager">
+          <span class="search-page-label" id="search-page-label" role="status"></span>
+          <button class="search-page-btn" id="search-newer" type="button" disabled>Newer</button>
+          <button class="search-page-btn" id="search-older" type="button" disabled>Older</button>
+        </footer>
       </section>
       <section class="pins-pop hidden" id="pins-pop" role="dialog" aria-label="Pinned Messages">
         <header class="pins-pop-head">
@@ -150,6 +168,24 @@
           <button class="btn-link" id="pins-all">All pins in this server</button>
         </header>
         <div class="pins-list" id="pins-list"></div>
+      </section>
+      <section class="pins-pop threads-pop hidden" id="threads-pop" role="dialog" aria-label="Threads">
+        <header class="pins-pop-head">
+          <span class="pins-pop-title">Threads</span>
+          <span class="threads-pop-sub" id="threads-pop-sub"></span>
+        </header>
+        <div class="pins-list threads-list" id="threads-list"></div>
+      </section>
+      <section class="saved-view hidden" id="saved-view" role="dialog" aria-label="Saved Messages">
+        <header class="saved-head">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2zm0 15-5-2.18L7 18V5h10z"/></svg>
+          <span class="saved-title">Saved</span>
+          <span class="saved-sub">Only on this device</span>
+          <button class="icon-btn" id="saved-close" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7l1.4-1.4 6.3 6.3 6.3-6.3z"/></svg>
+          </button>
+        </header>
+        <div class="saved-list" id="saved-list"></div>
       </section>
       <div class="stage hidden" id="video-pane">
         <div class="stage-view" id="stage-view">
@@ -178,6 +214,42 @@
         </div>
       </div>
       <div class="cam-grid hidden" id="cam-grid"></div>
+      <section class="activity-panel hidden" id="activity-panel" aria-label="Activity">
+        <header class="activity-head">
+          <span class="activity-icon" id="activity-icon"></span>
+          <div class="activity-heading">
+            <span class="activity-title" id="activity-title">Activity</span>
+            <span class="activity-sub" id="activity-sub"></span>
+          </div>
+          <div class="activity-people" id="activity-people"></div>
+          <div class="activity-actions">
+            <button class="vp-pill" id="activity-join">Join</button>
+            <button class="vp-pill hidden" id="activity-leave">Leave</button>
+            <button class="vp-pill danger" id="activity-end">End</button>
+            <button class="icon-btn" id="activity-close" title="Back to chat" aria-label="Back to chat"></button>
+          </div>
+        </header>
+        <div class="activity-body">
+          <div class="activity-game hidden" id="activity-game">
+            <div class="activity-turn" id="activity-turn"></div>
+            <div class="ttt-board" id="ttt-board" role="grid" aria-label="Tic-tac-toe board"></div>
+            <div class="activity-slot">
+              <button class="btn-primary btn-small hidden" id="ttt-rematch">Rematch</button>
+              <span class="activity-hint" id="ttt-hint"></span>
+            </div>
+          </div>
+          <div class="activity-watch hidden" id="activity-watch">
+            <div class="activity-screen">
+              <video id="activity-video" controls playsinline preload="metadata"></video>
+              <div class="activity-screen-wait hidden" id="activity-video-wait"><div class="spinner"></div><span>Loading video</span></div>
+            </div>
+            <div class="activity-watch-line">
+              <span class="activity-watch-title" id="activity-watch-title"></span>
+              <span class="activity-sync" id="activity-sync"></span>
+            </div>
+          </div>
+        </div>
+      </section>
       <div class="messages" id="messages"></div>
       <section class="discover hidden" id="discover" aria-label="Discover Servers">
         <header class="discover-head">
@@ -195,13 +267,27 @@
           <div class="discover-grid" id="discover-grid"></div>
           <div class="empty-state discover-empty hidden" id="discover-empty">
             <div class="discover-empty-art" id="discover-empty-art"></div>
-            <h3 id="discover-empty-title">No servers found</h3>
-            <p id="discover-empty-text">Try another word or category, or list your own public server from Server Settings.</p>
+            <h3 id="discover-empty-title">Looking for servers</h3>
+            <p id="discover-empty-text">Loading the public server list.</p>
+            <button class="btn-secondary discover-retry hidden" id="discover-retry">Try again</button>
           </div>
           <div class="discover-foot">
             <button class="btn-secondary discover-more hidden" id="discover-more">Load more</button>
           </div>
         </div>
+      </section>
+      <section class="forum hidden" id="forum-view" aria-label="Forum posts">
+        <div class="forum-toolbar">
+          <div class="forum-tags" id="forum-tags" role="tablist" aria-label="Filter posts by tag"></div>
+          <div class="forum-tools">
+            <div class="forum-modes" role="group" aria-label="Layout">
+              <button class="forum-mode active" id="forum-mode-list" type="button" title="List" aria-pressed="true"></button>
+              <button class="forum-mode" id="forum-mode-gallery" type="button" title="Gallery" aria-pressed="false"></button>
+            </div>
+            <button class="btn-primary btn-small forum-new" id="forum-new" type="button">New post</button>
+          </div>
+        </div>
+        <div class="forum-posts list" id="forum-posts"></div>
       </section>
       <div class="emoji-picker hidden" id="emoji-picker">
         <div class="picker-tabs" id="picker-tabs" role="tablist">
@@ -293,7 +379,14 @@
     <aside class="thread-panel hidden" id="thread-panel">
       <header class="thread-head">
         <span class="thread-head-icon" id="thread-head-icon"></span>
-        <span class="thread-title" id="thread-title">Thread</span>
+        <div class="thread-head-text">
+          <button class="thread-title" id="thread-title" type="button" disabled>Thread</button>
+          <input class="thread-title-input hidden" id="thread-title-input" type="text" maxlength="100" autocomplete="off" spellcheck="false" aria-label="Thread name" />
+          <span class="thread-status" id="thread-status"></span>
+        </div>
+        <button class="icon-btn hidden" id="thread-rename" title="Rename Thread"></button>
+        <button class="icon-btn hidden" id="thread-archive" title="Archive Thread" aria-pressed="false"></button>
+        <button class="icon-btn hidden" id="thread-lock" title="Lock Thread" aria-pressed="false"></button>
         <button class="icon-btn" id="thread-close" title="Close Thread"></button>
       </header>
       <div class="thread-messages" id="thread-messages"></div>
@@ -340,33 +433,33 @@
   <div class="modal-backdrop hidden" id="modal-backdrop">
     <div class="modal modal-signin hidden" id="modal-signin">
       <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
-      <h2>Sign in to Commy</h2>
-      <p>A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
+      <h2 data-i18n="signin.title">Sign in to Commy</h2>
+      <p data-i18n="signin.intro">A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
       <div class="signin-start" id="signin-start">
-        <button class="btn-primary signin-go" id="signin-go">Sign in with your browser</button>
-        <div class="signin-note">Your browser opens to sign in or create an account. Come back here once you approve.</div>
+        <button class="btn-primary signin-go" id="signin-go" data-i18n="signin.go">Sign in with your browser</button>
+        <div class="signin-note" data-i18n="signin.note">Your browser opens to sign in or create an account. Come back here once you approve.</div>
       </div>
       <div class="signin-wait hidden" id="signin-wait">
-        <div class="signin-label">Check that your browser shows this code, then approve it</div>
+        <div class="signin-label" data-i18n="signin.code">Check that your browser shows this code, then approve it</div>
         <div class="signin-code" id="signin-code"></div>
-        <div class="signin-status"><span class="signin-spinner"></span>Waiting for approval</div>
+        <div class="signin-status"><span class="signin-spinner"></span><span data-i18n="signin.waiting">Waiting for approval</span></div>
         <div class="signin-links">
-          <button class="btn-link" id="signin-reopen">Open the page again</button>
-          <button class="btn-link" id="signin-cancel">Cancel</button>
+          <button class="btn-link" id="signin-reopen" data-i18n="signin.reopen">Open the page again</button>
+          <button class="btn-link" id="signin-cancel" data-i18n="signin.cancel">Cancel</button>
         </div>
       </div>
       <div class="signin-error hidden" id="signin-error"></div>
-      <label class="signin-server">Account server
+      <label class="signin-server"><span data-i18n="signin.server">Account server</span>
         <select id="signin-server-select" class="compact-select">
-          <option value="default">commy.chat (free Commy service)</option>
-          <option value="custom">A self-hosted server...</option>
+          <option value="default" data-i18n="signin.server.default">commy.chat (free Commy service)</option>
+          <option value="custom" data-i18n="signin.server.custom">A self-hosted server...</option>
         </select>
       </label>
       <div class="signin-server-edit hidden" id="signin-server-edit">
         <input id="signin-server-input" type="text" autocomplete="off" spellcheck="false" placeholder="chat.example.com" />
-        <button class="btn-secondary btn-small" id="signin-server-save">Use</button>
+        <button class="btn-secondary btn-small" id="signin-server-save" data-i18n="signin.server.use">Use</button>
       </div>
-      <div class="signin-server-note" id="signin-server-note">Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.</div>
+      <div class="signin-server-note" id="signin-server-note" data-i18n="signin.server.note">Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.</div>
     </div>
 
     <div class="modal hidden" id="modal-username">
@@ -383,6 +476,29 @@
       <div class="modal-divider">OR</div>
       <input id="join-ticket-input" type="text" placeholder="Paste an invite link or commy... invite" />
       <button class="btn-secondary" id="join-server-save">Join Server</button>
+    </div>
+
+    <div class="modal modal-activities hidden" id="modal-activities" role="dialog" aria-labelledby="activities-title">
+      <h2 id="activities-title">Activities</h2>
+      <p>Everyone in your voice channel can take part. One activity runs at a time.</p>
+      <div class="activity-cards" id="activity-cards" role="radiogroup" aria-label="Activity"></div>
+      <div class="activity-setup" id="activity-setup">
+        <div class="activity-setup-game" id="activity-setup-game">
+          <div class="activity-setup-title">You play X</div>
+          <div class="setting-sub">The first person to press Join plays O. Everyone else in the channel watches, and a Rematch swaps who starts.</div>
+        </div>
+        <div class="activity-setup-watch hidden" id="activity-setup-watch">
+          <label class="field-label">Video link
+            <input id="activity-link-input" type="text" placeholder="https://… ending in .mp4, .webm or .ogg" spellcheck="false" autocomplete="off" />
+          </label>
+          <div class="activity-chips" id="activity-chips"></div>
+          <div class="setting-sub">Each viewer's computer fetches the file itself, like a link preview. Only direct video files play, nothing else loads.</div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="activity-cancel">Cancel</button>
+        <button class="btn-primary" id="activity-start">Start</button>
+      </div>
     </div>
 
     <div class="modal modal-template hidden" id="modal-create-server">
@@ -431,6 +547,47 @@
       <div class="invite-actions">
         <button class="btn-primary" id="invite-link-copy">Copy Invite Link</button>
         <button class="btn-secondary" id="invite-copy">Copy Invite Code</button>
+      </div>
+    </div>
+
+    <div class="modal modal-wide hidden" id="modal-add-bot" role="dialog" aria-labelledby="add-bot-title">
+      <h2 id="add-bot-title">Add a Bot</h2>
+      <p>A bot runs as its own member on a computer or server that stays on, such as your PC, a home server or a small VPS. Commy does not host bots.</p>
+      <ol class="bot-steps">
+        <li class="bot-step">
+          <div class="bot-step-title">Make an invite for the bot</div>
+          <div class="setting-sub">Bots join with an invite code, the same as people. Your app has to be online the first time the bot connects, because the bot only trusts a copy of the server it gets from the owner.</div>
+          <div class="bot-code-row">
+            <code class="bot-code" id="add-bot-invite"></code>
+            <button class="btn-secondary btn-small" id="add-bot-invite-copy">Copy</button>
+          </div>
+        </li>
+        <li class="bot-step">
+          <div class="bot-step-title">Run it on the bot's computer</div>
+          <div class="setting-sub">Build <code>commy-bot</code> from the Commy source as the <button class="btn-link inline" id="add-bot-guide">bot guide</button> explains, then run:</div>
+          <label class="field-label bot-name-field">Bot name
+            <input id="add-bot-name" type="text" maxlength="32" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="bot-commands" id="add-bot-commands"></div>
+          <details class="bot-port" id="add-bot-port">
+            <summary>Bringing a bot from somewhere else?</summary>
+            <div class="setting-sub">Start the bot with the bridge instead, then connect your bot's code to it. The JavaScript library in the Commy source works like the common bot libraries: events such as <code>messageCreate</code>, and <code>reply</code>, <code>react</code> and role changes. Mentions and rich cards are converted for you.</div>
+            <div class="bot-commands" id="add-bot-bridge"></div>
+            <button class="btn-link" id="add-bot-porting">How to port a bot</button>
+          </details>
+        </li>
+        <li class="bot-step">
+          <div class="bot-step-title">Give it a role</div>
+          <div class="bot-waiting" id="add-bot-waiting"><span class="bot-waiting-dot" aria-hidden="true"></span>Waiting for the bot to join...</div>
+          <div class="hidden" id="add-bot-joined">
+            <div class="setting-sub" id="add-bot-joined-text"></div>
+            <div class="role-chips" id="add-bot-roles"></div>
+            <div class="bot-card-ability" id="add-bot-ability"></div>
+          </div>
+        </li>
+      </ol>
+      <div class="modal-actions">
+        <button class="btn-primary" id="add-bot-done">Done</button>
       </div>
     </div>
 
@@ -714,6 +871,21 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-add-friend" role="dialog" aria-labelledby="add-friend-title">
+      <h2 id="add-friend-title">Add Friend</h2>
+      <p>They see your note under your name on the request.</p>
+      <div class="add-friend-who">
+        <div class="avatar avatar-sm" id="add-friend-avatar"></div>
+        <input id="add-friend-username" type="text" readonly aria-label="Username" />
+      </div>
+      <input id="add-friend-note" type="text" maxlength="200" autocomplete="off" placeholder="Add a note (optional)" aria-describedby="add-friend-count" />
+      <div class="add-friend-count" id="add-friend-count">0/200</div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="add-friend-cancel">Cancel</button>
+        <button class="btn-primary" id="add-friend-send">Send Request</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-block">
       <h2 id="block-title">Block</h2>
       <p id="block-body">They will not be able to send you direct messages, and their messages in servers will be collapsed for you. They will not be told.</p>
@@ -756,6 +928,17 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-voice-status" role="dialog" aria-labelledby="voice-status-title">
+      <h2 id="voice-status-title" class="voice-status-heading">Voice Channel Status</h2>
+      <p>A short line everyone sees under the channel name, like what you are playing. It clears when the last person leaves.</p>
+      <input id="voice-status-input" type="text" maxlength="80" autocomplete="off" placeholder="What is happening in here?" />
+      <div class="modal-actions">
+        <button class="btn-secondary" id="voice-status-cancel">Cancel</button>
+        <button class="btn-secondary" id="voice-status-clear">Clear</button>
+        <button class="btn-primary" id="voice-status-save">Save</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-rename-folder">
       <h2>Rename Folder</h2>
       <input id="rename-folder-input" type="text" maxlength="32" placeholder="Folder name" />
@@ -786,6 +969,17 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-voice-invite">
+      <h2>Invite to Call</h2>
+      <div class="voice-invite-where" id="voice-invite-where"></div>
+      <div class="setting-sub">The invite shows who is in the call right now and a Join button.</div>
+      <input id="voice-invite-search" type="text" autocomplete="off" placeholder="Find a channel or person" />
+      <div class="people-list" id="voice-invite-list"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="voice-invite-cancel">Cancel</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-delete-message">
       <h2>Delete Message</h2>
       <p>Are you sure you want to delete this message? It is removed for everyone.</p>
@@ -798,8 +992,19 @@
       </div>
     </div>
 
-    <div class="modal hidden" id="modal-timeout">
+    <div class="modal modal-moderate hidden" id="modal-moderate">
+      <h2 id="moderate-title">Kick member</h2>
+      <div class="mod-who" id="moderate-who"></div>
+      <p id="moderate-text"></p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="moderate-cancel">Cancel</button>
+        <button class="btn-danger" id="moderate-go">Kick</button>
+      </div>
+    </div>
+
+    <div class="modal modal-moderate hidden" id="modal-timeout">
       <h2 id="timeout-title">Time out member</h2>
+      <div class="mod-who" id="timeout-who"></div>
       <p>They can still read channels and listen in voice, but cannot send messages, react, edit or talk until it ends.</p>
       <div class="timeout-choices" id="timeout-choices" role="radiogroup" aria-label="How long"></div>
       <label class="field-label">Custom length in minutes
@@ -840,9 +1045,19 @@
           <span class="kind-text"><strong>Voice</strong><span>Hang out together with voice and screen share</span></span>
           <span class="kind-radio"></span>
         </button>
+        <button class="kind-option" data-kind="stage">
+          <span class="kind-icon" id="create-stage-icon"></span>
+          <span class="kind-text"><strong>Stage</strong><span>Speakers talk, the audience listens and can raise a hand</span></span>
+          <span class="kind-radio"></span>
+        </button>
         <button class="kind-option" data-kind="announcement">
           <span class="kind-icon" id="create-announcement-icon"></span>
           <span class="kind-text"><strong>Announcement</strong><span>Only members allowed to post announcements write here; everyone reads</span></span>
+          <span class="kind-radio"></span>
+        </button>
+        <button class="kind-option" data-kind="forum">
+          <span class="kind-icon" id="create-forum-icon"></span>
+          <span class="kind-text"><strong>Forum</strong><span>Posts with a title and tags; replies gather under each post</span></span>
           <span class="kind-radio"></span>
         </button>
         <button class="kind-option" data-kind="category">
@@ -863,6 +1078,22 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="create-channel-cancel">Cancel</button>
         <button class="btn-primary" id="create-channel-save" disabled>Create Channel</button>
+      </div>
+    </div>
+
+    <div class="modal modal-forum-post hidden" id="modal-forum-post" role="dialog" aria-labelledby="forum-post-heading">
+      <h2 id="forum-post-heading">New post</h2>
+      <label class="field-label">Title
+        <input id="forum-post-title" type="text" maxlength="100" placeholder="What is this post about?" autocomplete="off" />
+      </label>
+      <label class="field-label" id="forum-post-body-label">Post
+        <textarea id="forum-post-body" rows="6" maxlength="4000" placeholder="Write the first message of the post"></textarea>
+      </label>
+      <div class="field-label forum-tags-label">Tags <span class="forum-post-tags-left" id="forum-post-tags-left"></span></div>
+      <div class="access-chips forum-pick-tags" id="forum-post-tags"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="forum-post-cancel" type="button">Cancel</button>
+        <button class="btn-primary" id="forum-post-save" type="button" disabled>Post</button>
       </div>
     </div>
 
@@ -917,25 +1148,26 @@
   <div class="settings-layer hidden" id="user-settings" role="dialog" aria-label="User Settings">
     <nav class="settings-nav">
       <div class="settings-nav-inner">
-        <div class="settings-nav-group">User Settings</div>
-        <button class="settings-tab" data-tab="account">Profile</button>
-        <button class="settings-tab" data-tab="commy-account">Commy Account</button>
-        <button class="settings-tab" data-tab="privacy">Privacy &amp; Safety</button>
-        <div class="settings-nav-group">Voice &amp; Video</div>
-        <button class="settings-tab" data-tab="voice">Voice &amp; Camera</button>
-        <button class="settings-tab desktop-only" data-tab="overlay">Game Overlay</button>
-        <div class="settings-nav-group">App Settings</div>
-        <button class="settings-tab" data-tab="appearance">Appearance</button>
-        <button class="settings-tab" data-tab="notifications">Notifications</button>
-        <button class="settings-tab" data-tab="integrations">Integrations</button>
-        <button class="settings-tab" data-tab="storage">Storage</button>
-        <button class="settings-tab desktop-only" data-tab="updates">Updates</button>
+        <div class="settings-nav-group" data-i18n="settings.group.user">User Settings</div>
+        <button class="settings-tab" data-tab="account" data-i18n="settings.tab.profile">Profile</button>
+        <button class="settings-tab" data-tab="commy-account" data-i18n="settings.tab.account">Commy Account</button>
+        <button class="settings-tab" data-tab="privacy" data-i18n="settings.tab.privacy">Privacy &amp; Safety</button>
+        <div class="settings-nav-group" data-i18n="settings.group.voice">Voice &amp; Video</div>
+        <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">Voice &amp; Camera</button>
+        <button class="settings-tab desktop-only" data-tab="overlay" data-i18n="settings.tab.overlay">Game Overlay</button>
+        <div class="settings-nav-group" data-i18n="settings.group.app">App Settings</div>
+        <button class="settings-tab" data-tab="appearance" data-i18n="settings.tab.appearance">Appearance</button>
+        <button class="settings-tab" data-tab="accessibility" data-i18n="settings.tab.accessibility">Accessibility</button>
+        <button class="settings-tab" data-tab="notifications" data-i18n="settings.tab.notifications">Notifications</button>
+        <button class="settings-tab" data-tab="integrations" data-i18n="settings.tab.integrations">Integrations</button>
+        <button class="settings-tab" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
+        <button class="settings-tab desktop-only" data-tab="updates" data-i18n="settings.tab.updates">Updates</button>
       </div>
     </nav>
     <div class="settings-content">
       <div class="settings-content-inner">
         <section class="settings-page" data-page="account">
-          <h1>Profile</h1>
+          <h1 data-i18n="settings.tab.profile">Profile</h1>
           <div class="profile-card">
             <div class="profile-banner" id="account-banner">
               <div class="role-banner-tools">
@@ -986,7 +1218,7 @@
         </section>
 
         <section class="settings-page" data-page="commy-account">
-          <h1>Commy Account</h1>
+          <h1 data-i18n="settings.tab.account">Commy Account</h1>
           <div class="settings-card account-card">
             <div class="account-line">
               <div>
@@ -1026,7 +1258,7 @@
         </section>
 
         <section class="settings-page" data-page="voice">
-          <h1>Voice &amp; Camera</h1>
+          <h1 data-i18n="settings.tab.voice">Voice &amp; Camera</h1>
           <div class="settings-card device-grid">
             <label class="field-label">Input Device
               <select id="input-device"><option value="">Default</option></select>
@@ -1175,7 +1407,7 @@
 
 
         <section class="settings-page" data-page="storage">
-          <h1>Storage</h1>
+          <h1 data-i18n="settings.tab.storage">Storage</h1>
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">Keep server messages for</div>
@@ -1198,7 +1430,7 @@
         </section>
 
         <section class="settings-page" data-page="notifications">
-          <h1>Notifications</h1>
+          <h1 data-i18n="settings.tab.notifications">Notifications</h1>
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">Desktop notifications</div>
@@ -1217,6 +1449,27 @@
             </div>
             <input type="checkbox" id="friend-online-toggle" class="switch" />
           </label>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Text-to-speech</div>
+              <div class="setting-sub">Messages sent with /tts are read aloud as "name said: message" through your computer's voice. Never while you are deafened or Do Not Disturb, never your own, and Escape or sending a message stops it. Open any message's menu and pick Read Aloud to hear it on demand.</div>
+            </div>
+            <select id="tts-mode" class="compact-select">
+              <option value="never">Never</option>
+              <option value="open">Only when the channel is open</option>
+              <option value="all">All channels</option>
+            </select>
+          </div>
+          <div class="settings-card">
+            <div class="slider-row">
+              <div class="setting-title">Voice rate <span id="tts-rate-label">1.0x</span></div>
+              <input type="range" id="tts-rate" min="5" max="20" value="10" />
+            </div>
+            <div class="setting-row tts-preview-row">
+              <div class="setting-sub">Hear the voice at this rate.</div>
+              <button class="btn-secondary btn-small" id="tts-preview">Preview</button>
+            </div>
+          </div>
           <label class="settings-card setting-row desktop-only">
             <div>
               <div class="setting-title">Close to tray</div>
@@ -1270,7 +1523,7 @@
         </section>
 
         <section class="settings-page" data-page="integrations">
-          <h1>Integrations</h1>
+          <h1 data-i18n="settings.tab.integrations">Integrations</h1>
           <div class="settings-card integration-card" id="gif-card">
             <div class="integration-head">
               <div class="integration-logo integration-logo-deck">
@@ -1344,7 +1597,7 @@
         </section>
 
         <section class="settings-page" data-page="overlay">
-          <h1>Game Overlay</h1>
+          <h1 data-i18n="settings.tab.overlay">Game Overlay</h1>
           <label class="settings-card setting-row">
             <div>
               <div class="setting-title">Enable in-game overlay</div>
@@ -1407,7 +1660,7 @@
         </section>
 
         <section class="settings-page" data-page="privacy">
-          <h1>Privacy &amp; Safety</h1>
+          <h1 data-i18n="settings.tab.privacy">Privacy &amp; Safety</h1>
           <h2 class="settings-subhead">Direct Messages</h2>
           <div class="settings-card">
             <div class="setting-row">
@@ -1428,6 +1681,20 @@
               </div>
               <input type="checkbox" id="spam-filter-toggle" class="switch" />
             </label>
+          </div>
+          <h2 class="settings-subhead">Profile</h2>
+          <div class="settings-card">
+            <div class="setting-row">
+              <div>
+                <div class="setting-title">Who can see your profile</div>
+                <div class="setting-sub">Your bio, banner, pronouns and what you're playing. Everyone still sees your name and avatar so the chat reads normally. Friends only also hides these from the servers you share.</div>
+              </div>
+              <select id="profile-policy" class="compact-select">
+                <option value="everyone">Everyone</option>
+                <option value="shared_servers">Friends and servers we share</option>
+                <option value="friends">Friends only</option>
+              </select>
+            </div>
           </div>
           <h2 class="settings-subhead">Links</h2>
           <div class="settings-card">
@@ -1470,7 +1737,7 @@
         </section>
 
         <section class="settings-page" data-page="updates">
-          <h1>Updates</h1>
+          <h1 data-i18n="settings.tab.updates">Updates</h1>
           <div class="settings-card setting-row update-card">
             <div>
               <div class="setting-title" id="update-version">Commy</div>
@@ -1488,7 +1755,7 @@
         </section>
 
         <section class="settings-page" data-page="appearance">
-          <h1>Appearance</h1>
+          <h1 data-i18n="settings.tab.appearance">Appearance</h1>
           <div class="appearance-preview">
             <div class="msg first">
               <div class="avatar">C</div>
@@ -1500,48 +1767,91 @@
           </div>
           <div class="settings-card">
             <div class="slider-row">
-              <div class="setting-title">Chat Font Size <span id="chat-size-label">16px</span></div>
+              <div class="setting-title"><span data-i18n="appearance.chatSize">Chat Font Size</span> <span id="chat-size-label">16px</span></div>
               <input type="range" id="chat-size" min="12" max="20" step="1" value="16" />
             </div>
           </div>
           <label class="settings-card setting-row">
             <div>
-              <div class="setting-title">Compact Mode</div>
-              <div class="setting-sub">Tighter spacing between messages.</div>
+              <div class="setting-title" data-i18n="appearance.compact">Compact Mode</div>
+              <div class="setting-sub" data-i18n="appearance.compact.sub">Tighter spacing between messages.</div>
             </div>
             <input type="checkbox" id="compact-toggle" class="switch" />
           </label>
-          <h2 class="settings-subhead desktop-only">Keyboard Shortcuts</h2>
+          <h2 class="settings-subhead desktop-only" data-i18n="appearance.shortcuts">Keyboard Shortcuts</h2>
           <div class="settings-card shortcut-card desktop-only">
             <div class="shortcut-row">
               <div>
-                <div class="setting-title">Quick Switcher</div>
-                <div class="setting-sub">Jump to any channel, conversation or server.</div>
+                <div class="setting-title" data-i18n="appearance.switcher">Quick Switcher</div>
+                <div class="setting-sub" data-i18n="appearance.switcher.sub">Jump to any channel, conversation or server.</div>
               </div>
               <kbd class="shortcut-key" data-shortcut="K">Ctrl+K</kbd>
             </div>
             <div class="shortcut-row">
               <div>
-                <div class="setting-title">Search This Server</div>
-                <div class="setting-sub">Find messages by keyword, author or channel.</div>
+                <div class="setting-title" data-i18n="appearance.search">Search This Server</div>
+                <div class="setting-sub" data-i18n="appearance.search.sub">Find messages by keyword, author or channel.</div>
               </div>
               <kbd class="shortcut-key" data-shortcut="F">Ctrl+F</kbd>
             </div>
           </div>
-          <h2 class="settings-subhead desktop-only">App Icon</h2>
+          <h2 class="settings-subhead desktop-only" data-i18n="appearance.appIcon">App Icon</h2>
           <div class="settings-card icon-card desktop-only">
-            <div class="setting-sub">Shown in your taskbar or dock while Commy is running.</div>
+            <div class="setting-sub" data-i18n="appearance.appIcon.sub">Shown in your taskbar or dock while Commy is running.</div>
             <div class="icon-grid" id="app-icon-grid" role="radiogroup" aria-label="App icon"></div>
           </div>
-          <h2 class="settings-subhead desktop-only">Tray Icon</h2>
+          <h2 class="settings-subhead desktop-only" data-i18n="appearance.trayIcon">Tray Icon</h2>
           <div class="settings-card icon-card desktop-only">
-            <div class="setting-sub">Shown in the system tray, with your unread count on it.</div>
+            <div class="setting-sub" data-i18n="appearance.trayIcon.sub">Shown in the system tray, with your unread count on it.</div>
             <div class="icon-grid" id="tray-icon-grid" role="radiogroup" aria-label="Tray icon"></div>
+          </div>
+        </section>
+        <section class="settings-page" data-page="accessibility">
+          <h1 data-i18n="settings.tab.accessibility">Accessibility</h1>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.reducedMotion">Reduced motion</div>
+              <div class="setting-sub" data-i18n="accessibility.reducedMotion.sub">Turns off the app's own animations and transitions. Follows your system setting until you change it here.</div>
+              <div class="setting-hint" id="reduced-motion-hint" data-i18n="accessibility.reducedMotion.system">Following your system</div>
+            </div>
+            <input type="checkbox" id="reduced-motion-toggle" class="switch" />
+          </label>
+          <div class="settings-card">
+            <div class="slider-row">
+              <div class="setting-title"><span data-i18n="accessibility.saturation">Colour saturation</span> <span id="saturation-label">100%</span></div>
+              <div class="setting-sub" data-i18n="accessibility.saturation.sub">Tones down role colours, mentions and status colours. Pictures and avatars stay as they are.</div>
+              <input type="range" id="saturation" min="0" max="100" step="5" value="100" />
+            </div>
+          </div>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.highContrast">High contrast</div>
+              <div class="setting-sub" data-i18n="accessibility.highContrast.sub">Stronger text and visible edges on cards, rows and inputs.</div>
+            </div>
+            <input type="checkbox" id="high-contrast-toggle" class="switch" />
+          </label>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.theme">Theme</div>
+              <div class="setting-sub" data-i18n="accessibility.theme.sub">Dark, light, or whatever your system uses.</div>
+            </div>
+            <select id="theme-select" class="compact-select">
+              <option value="dark" data-i18n="accessibility.theme.dark">Dark</option>
+              <option value="light" data-i18n="accessibility.theme.light">Light</option>
+              <option value="system" data-i18n="accessibility.theme.system">Follow system</option>
+            </select>
+          </div>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.language">Language</div>
+              <div class="setting-sub" data-i18n="accessibility.language.sub">Settings, navigation and sign-in are translated so far; the rest of the app stays in English for now.</div>
+            </div>
+            <select id="language-select" class="compact-select"></select>
           </div>
         </section>
       </div>
       <div class="settings-close-wrap">
-        <button class="settings-close" id="settings-close" title="Close">
+        <button class="settings-close" id="settings-close" title="Close" data-i18n-title="settings.close">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z"/></svg>
         </button>
         <span class="settings-close-key desktop-only">ESC</span>
@@ -1632,6 +1942,18 @@
             </div>
             <select id="channel-slow" class="compact-select"></select>
           </div>
+          <div class="settings-card hidden" id="channel-forum-card">
+            <div class="setting-title">Post Tags</div>
+            <div class="setting-sub">Members pick up to five of these when they post. Removing a tag takes it off every post.</div>
+            <div class="forum-tag-rows" id="channel-forum-tags"></div>
+            <div class="forum-tag-add">
+              <button type="button" class="forum-tag-emoji" id="channel-forum-emoji" title="Pick an emoji">
+                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 17.5c2.3 0 4.3-1.4 5.1-3.5H6.9c.8 2.1 2.8 3.5 5.1 3.5z"/></svg>
+              </button>
+              <input id="channel-forum-name" type="text" maxlength="20" placeholder="New tag" autocomplete="off" />
+              <button type="button" class="btn-secondary btn-small" id="channel-forum-add" disabled>Add</button>
+            </div>
+          </div>
           <div class="settings-card setting-row hidden" id="channel-limit-row">
             <div>
               <div class="setting-title">User Limit <span id="channel-limit-label">No limit</span></div>
@@ -1686,21 +2008,29 @@
   <div class="settings-layer hidden" id="server-settings" role="dialog" aria-label="Server Settings">
     <nav class="settings-nav">
       <div class="settings-nav-inner">
-        <div class="settings-nav-group" id="server-settings-title">Server</div>
+        <div class="settings-nav-title" id="server-settings-title">Server</div>
+        <div class="settings-nav-group">General</div>
         <button class="settings-tab" data-tab="overview" id="tab-overview">Overview</button>
         <button class="settings-tab" data-tab="channels" id="tab-channels">Channels</button>
+        <div class="settings-nav-group">People</div>
+        <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
         <button class="settings-tab" data-tab="roles" id="tab-roles">Roles</button>
-        <button class="settings-tab" data-tab="rules" id="tab-rules">Rules</button>
+        <button class="settings-tab" data-tab="invites" id="tab-invites">Invites</button>
+        <div class="settings-nav-group">Community</div>
+        <button class="settings-tab" data-tab="discovery" id="tab-discovery">Discovery</button>
         <button class="settings-tab" data-tab="onboarding" id="tab-onboarding">Onboarding</button>
-        <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
+        <button class="settings-tab" data-tab="rules" id="tab-rules">Rules</button>
+        <div class="settings-nav-group">Expressions</div>
         <button class="settings-tab" data-tab="emoji" id="tab-emoji">Emoji</button>
         <button class="settings-tab" data-tab="stickers" id="tab-stickers">Stickers</button>
         <button class="settings-tab" data-tab="emoticons" id="tab-emoticons">Emoticons</button>
         <button class="settings-tab" data-tab="soundboard" id="tab-soundboard">Soundboard</button>
-        <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
-        <button class="settings-tab" data-tab="invites" id="tab-invites">Invites</button>
+        <div class="settings-nav-group">Moderation</div>
+        <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
         <button class="settings-tab" data-tab="reports" id="tab-reports">Reports</button>
         <button class="settings-tab" data-tab="audit" id="tab-audit">Audit Log</button>
+        <div class="settings-nav-group">Integrations</div>
+        <button class="settings-tab" data-tab="bots" id="tab-bots">Bots</button>
         <div class="settings-nav-sep"></div>
         <button class="settings-tab danger" id="leave-server-btn">Leave Server</button>
       </div>
@@ -1723,40 +2053,6 @@
                 </div>
               </label>
               <div class="setting-sub" id="overview-readonly">Only members with Manage Server can change these settings.</div>
-            </div>
-          </div>
-          <label class="settings-card setting-row" id="server-public-row">
-            <div>
-              <div class="setting-title">Public server</div>
-              <div class="setting-sub">Anyone with an invite is welcome. Invite links to this server can be set to never expire.</div>
-            </div>
-            <input type="checkbox" id="server-public-toggle" class="switch" />
-          </label>
-          <h2 class="settings-subhead">Server discovery</h2>
-          <div class="settings-card discovery-card" id="discovery-card">
-            <div class="setting-sub" id="discovery-hint"></div>
-            <label class="field-label">Description
-              <textarea id="discovery-description" rows="4" maxlength="300" placeholder="What is this server about, and who is it for?"></textarea>
-            </label>
-            <div class="discovery-row">
-              <label class="field-label discovery-category">Category
-                <select id="discovery-category" class="compact-select"></select>
-              </label>
-              <span class="expr-count" id="discovery-count">0 / 300</span>
-            </div>
-            <div class="discovery-actions">
-              <button class="btn-primary btn-small" id="discovery-list">List in Discover</button>
-              <button class="btn-primary btn-small hidden" id="discovery-update">Update Listing</button>
-              <button class="btn-link danger hidden" id="discovery-unlist">Unlist</button>
-            </div>
-          </div>
-          <h2 class="settings-subhead">Games</h2>
-          <div class="settings-card">
-            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name.</div>
-            <div class="tag-editor" id="game-tag-editor">
-              <div class="tag-chips" id="game-tag-chips"></div>
-              <input id="game-tag-input" type="text" maxlength="32" autocomplete="off" placeholder="Add a game and press Enter" />
-              <div class="game-search hidden" id="game-search"></div>
             </div>
           </div>
           <h2 class="settings-subhead">Banner</h2>
@@ -1820,6 +2116,44 @@
           </div>
         </section>
 
+        <section class="settings-page" data-page="discovery">
+          <h1>Discovery</h1>
+          <label class="settings-card setting-row" id="server-public-row">
+            <div>
+              <div class="setting-title">Public server</div>
+              <div class="setting-sub">Anyone with an invite is welcome. Invite links to this server can be set to never expire.</div>
+            </div>
+            <input type="checkbox" id="server-public-toggle" class="switch" />
+          </label>
+          <h2 class="settings-subhead">Discover listing</h2>
+          <div class="settings-card discovery-card" id="discovery-card">
+            <div class="setting-sub" id="discovery-hint"></div>
+            <label class="field-label">Description
+              <textarea id="discovery-description" rows="4" maxlength="300" placeholder="What is this server about, and who is it for?"></textarea>
+            </label>
+            <div class="discovery-row">
+              <label class="field-label discovery-category">Category
+                <select id="discovery-category" class="compact-select"></select>
+              </label>
+              <span class="expr-count" id="discovery-count">0 / 300</span>
+            </div>
+            <div class="discovery-actions">
+              <button class="btn-primary btn-small" id="discovery-list">List in Discover</button>
+              <button class="btn-primary btn-small hidden" id="discovery-update">Update Listing</button>
+              <button class="btn-link danger hidden" id="discovery-unlist">Unlist</button>
+            </div>
+          </div>
+          <h2 class="settings-subhead">Games</h2>
+          <div class="settings-card">
+            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name.</div>
+            <div class="tag-editor" id="game-tag-editor">
+              <div class="tag-chips" id="game-tag-chips"></div>
+              <input id="game-tag-input" type="text" maxlength="32" autocomplete="off" placeholder="Add a game and press Enter" />
+              <div class="game-search hidden" id="game-search"></div>
+            </div>
+          </div>
+        </section>
+
         <section class="settings-page" data-page="channels">
           <h1>Channels</h1>
           <div class="settings-card">
@@ -1829,6 +2163,7 @@
               <select id="new-channel-kind">
                 <option value="text">Text</option>
                 <option value="voice">Voice</option>
+                <option value="stage">Stage</option>
               </select>
               <button class="btn-primary btn-small" id="new-channel-save">Create</button>
             </div>
@@ -1844,6 +2179,7 @@
           </div>
           <div class="hidden" id="new-role-card"></div>
           <div class="settings-card upload-access" id="upload-access"></div>
+          <div class="settings-card upload-access chat-access" id="chat-access"></div>
           <div id="manage-role-list" class="role-cards"></div>
         </section>
 
@@ -2053,6 +2389,16 @@
           <h1>Members</h1>
           <div id="manage-member-list" class="manage-list"></div>
         </section>
+        <section class="settings-page" data-page="bots">
+          <h1>Bots</h1>
+          <div class="setting-sub expr-intro">Bots are members that run on their own, on a computer or server someone keeps online. They join with an invite like anyone else, wear a BOT badge, and can only do what their roles allow.</div>
+          <div class="bots-actions">
+            <button class="btn-primary" id="bots-add">Add a Bot</button>
+            <button class="btn-link" id="bots-guide">Bot guide</button>
+          </div>
+          <h2 class="settings-subhead" id="bots-count">Installed</h2>
+          <div id="bots-list" class="bots-list"></div>
+        </section>
       </div>
       <div class="settings-close-wrap">
         <button class="settings-close" id="server-settings-close" title="Close">
@@ -2165,11 +2511,13 @@
     <select id="ap-device" class="compact-select"></select>
     <div class="ap-title" id="ap-volume-title">Input Volume <span id="ap-volume-label">100%</span></div>
     <input type="range" id="ap-volume" min="0" max="200" value="100" />
+    <label class="ap-row" id="ap-nc-row"><span>Noise Cancellation</span><input type="checkbox" id="ap-nc" class="switch" /></label>
     <button class="pp-link" id="ap-settings">Voice Settings</button>
   </div>
 
   <div class="pop-menu ctx-menu hidden" id="member-menu" role="menu"></div>
   <div class="pop-menu ctx-menu hidden" id="msg-menu" role="menu"></div>
+  <div class="pop-menu ctx-menu remind-pop hidden" id="remind-pop" role="menu"></div>
   <div class="pop-menu composer-menu hidden" id="composer-menu" role="menu">
     <button id="cm-file" role="menuitem">Upload a File</button>
     <button id="cm-video" role="menuitem">Post a Video</button>
@@ -2204,6 +2552,8 @@
   <div class="pop-menu ctx-menu hidden" id="channel-menu" role="menu">
     <div class="ctx-title" id="channel-menu-title"></div>
     <button id="chm-read">Mark As Read</button>
+    <button id="chm-voice-join" class="hidden">Join Voice</button>
+    <button id="chm-voice-invite" class="hidden">Invite to Call</button>
     <button id="chm-pin">Pin Channel</button>
     <div class="ctx-sep"></div>
     <div class="ctx-label">Notifications</div>
@@ -2220,6 +2570,7 @@
     <button class="ctx-radio" data-mute="forever">Until I turn it back on</button>
     <button class="ctx-check checked" id="chm-unmute"></button>
     <div class="ctx-sep"></div>
+    <button id="chm-voice-status" class="hidden">Set Voice Status</button>
     <button id="chm-settings">Edit Channel</button>
   </div>
   <div class="pop-menu ctx-menu hidden" id="folder-menu" role="menu">
@@ -2255,9 +2606,17 @@
   <script src="scripts/onboarding.js"></script>
   <script src="scripts/message-link.js"></script>
   <script src="scripts/slow-mode.js"></script>
+  <script src="scripts/threads.js"></script>
+  <script src="scripts/voice-status.js"></script>
+  <script src="scripts/forum.js"></script>
+  <script src="scripts/stage.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/expressions.js"></script>
   <script src="scripts/composer-suggest.js"></script>
+  <script src="scripts/tts.js"></script>
+  <script src="scripts/slash-commands.js"></script>
+  <script src="scripts/bots.js"></script>
+  <script src="scripts/permissions.js"></script>
   <script src="scripts/embeds.js"></script>
   <script src="scripts/voice-message.js"></script>
   <script src="scripts/link-preview.js"></script>
@@ -2266,7 +2625,10 @@
   <script src="scripts/mentions.js"></script>
   <script src="scripts/pins.js"></script>
   <script src="scripts/pins-order.js"></script>
+  <script src="scripts/saved.js"></script>
   <script src="scripts/polls.js"></script>
+  <script src="scripts/voice-invite.js"></script>
+  <script src="scripts/activities.js"></script>
   <script src="scripts/read-state.js"></script>
   <script src="scripts/channel-access.js"></script>
   <script src="scripts/sensitive.js"></script>
@@ -2275,10 +2637,12 @@
   <script src="scripts/directory.js"></script>
   <script src="scripts/automod.js"></script>
   <script src="scripts/search.js"></script>
+  <script src="scripts/search-paging.js"></script>
   <script src="scripts/switcher.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/activity.js"></script>
   <script src="scripts/people.js"></script>
+  <script src="scripts/profile-privacy.js"></script>
   <script src="scripts/timers.js"></script>
   <script src="scripts/timeouts.js"></script>
   <script src="scripts/server-colors.js"></script>
@@ -2287,6 +2651,10 @@
   <script src="scripts/layout.js"></script>
   <script src="scripts/phone.js"></script>
   <script src="scripts/tint.js"></script>
+  <script src="scripts/i18n.js"></script>
+  <script src="scripts/locales/en.js"></script>
+  <script src="scripts/locales/es.js"></script>
+  <script src="scripts/accessibility.js"></script>
   <script src="scripts/updates.js"></script>
   <script src="scripts/server-templates.js"></script>
   <script src="scripts/camera-fx.js"></script>

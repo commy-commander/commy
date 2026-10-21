@@ -33,6 +33,8 @@ const AUDIT_GROUP_OF = {
   channel_banner: "channels",
   channel_color: "channels",
   channel_kind: "channels",
+  forum_tags: "channels",
+  forum_post_edit: "messages",
   role_create: "roles",
   role_update: "roles",
   role_delete: "roles",
@@ -47,6 +49,7 @@ const AUDIT_GROUP_OF = {
   member_nickname: "members",
   voice_move: "members",
   voice_disconnect: "members",
+  stage_speaker: "members",
   emoji_add: "expressions",
   emoji_remove: "expressions",
   sound_add: "expressions",
@@ -58,6 +61,9 @@ const AUDIT_GROUP_OF = {
   message_unpin: "messages",
   poll_close: "messages",
   message_delete: "messages",
+  thread_rename: "messages",
+  thread_archive: "messages",
+  thread_lock: "messages",
   invite_create: "invites",
   invite_revoke: "invites",
   invite_background: "invites",
@@ -68,9 +74,11 @@ const AUDIT_GROUP_OF = {
   expression_sharing: "expressions",
   channel_access: "channels",
   channel_sensitive: "channels",
+  voice_status_set: "channels",
+  bot_commands: "server",
 };
 
-const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", announcement: "announcement channel", category: "category" };
+const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", stage: "stage channel", announcement: "announcement channel", category: "category", forum: "forum channel" };
 
 const VOICE_MODERATION_WORDS = {
   muted: "server-muted",
@@ -121,8 +129,11 @@ function describeAudit(entry) {
     case "channel_banner": return [detail === "removed" ? "removed the banner of " : "changed the banner of ", channel];
     case "channel_color": return [detail ? "changed the color of " : "removed the color of ", channel];
     case "channel_kind": return ["turned ", channel, ` into a ${CHANNEL_KIND_WORDS[detail] || "channel"}`];
+    case "forum_tags": return count > 0 ? [`set ${auditCount(count, "post tag", "post tags")} in `, channel] : ["removed the post tags in ", channel];
+    case "forum_post_edit": return ["changed the post ", auditStrong(detail || "a post"), " in ", channel];
     case "channel_access": return detail === "private" ? ["made ", channel, " private"] : detail === "send" ? ["limited who can send in ", channel] : ["opened ", channel, " to everyone"];
     case "channel_sensitive": return detail === "on" ? ["made ", channel, " age-restricted"] : ["removed the age restriction from ", channel];
+    case "voice_status_set": return detail ? ["set the status of ", channel, " to ", auditStrong(detail)] : ["cleared the status of ", channel];
     case "role_create": return ["created the role ", role];
     case "role_update": return ["updated the role ", role];
     case "role_delete": return label ? ["deleted the role ", role] : ["deleted a role"];
@@ -134,6 +145,7 @@ function describeAudit(entry) {
     case "voice_move": return ["moved ", member, " to ", auditStrong(detail || "another voice channel")];
     case "voice_disconnect": return ["disconnected ", member, " from voice"];
     case "voice_moderate": return VOICE_MODERATION_WORDS[detail] ? [`${VOICE_MODERATION_WORDS[detail]} `, member] : ["lifted the server mute on ", member];
+    case "stage_speaker": return detail === "speaker" ? ["invited ", member, " to speak on the stage"] : ["moved ", member, " to the stage audience"];
     case "member_timeout": return detail ? ["timed out ", member, ` for ${detail}`] : ["timed out ", member];
     case "member_timeout_clear": return ["removed the timeout on ", member];
     case "member_nickname": return detail ? ["changed ", member, "'s nickname to ", auditStrong(detail)] : ["cleared ", member, "'s nickname"];
@@ -153,9 +165,13 @@ function describeAudit(entry) {
     case "message_unpin": return ["unpinned a message in ", channel];
     case "poll_close": return ["closed a poll in ", channel];
     case "message_delete": return detail ? ["deleted a message by ", member, " in ", auditStrong(detail)] : ["deleted a message by ", member];
+    case "thread_rename": return detail ? ["named a thread in ", channel, " ", auditStrong(detail)] : ["cleared a thread's name in ", channel];
+    case "thread_archive": return [detail === "on" ? "archived a thread in " : "reopened a thread in ", channel];
+    case "thread_lock": return [detail === "on" ? "locked a thread in " : "unlocked a thread in ", channel];
     case "invite_create": return ["created the invite ", named("a link")];
     case "invite_revoke": return detail ? ["revoked the invite ", named("a link"), " made by ", auditStrong(detail)] : ["revoked the invite ", named("a link")];
     case "invite_background": return [detail === "removed" ? "removed the invite background" : "changed the invite background"];
+    case "bot_commands": return count > 0 ? [`registered ${auditCount(count, "slash command", "slash commands")}`] : ["removed its slash commands"];
     default: return ["made a change"];
   }
 }

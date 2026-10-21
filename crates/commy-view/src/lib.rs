@@ -1,13 +1,24 @@
-use crate::channel_lock::KeyHolder;
+pub mod keys;
+pub mod voice_invite;
+
+use crate::keys::KeyHolder;
 use commy_core::server::Rsvp;
 use commy_core::{
     AutoMod, ChannelId, ChannelKind, DmMessage, DmStore, Hold, Message, MessageId, Permissions, Presence, ServerState,
-    UserId,
+    UserId, UserProfile,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 
 const EVERYONE_ROLE_POSITION: u32 = 0;
+
+pub fn truncate(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
+pub fn valid_image_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 32 && id.chars().all(|c| c.is_ascii_alphanumeric())
+}
 
 #[derive(Debug, Serialize)]
 pub struct ServerSummary {
@@ -73,9 +84,108 @@ pub struct ChannelView {
     pub send_roles: Vec<String>,
     pub slow_mode: u32,
     pub sensitive: bool,
+    pub threads: Vec<ThreadView>,
+    pub voice_status: Option<String>,
+    pub can_set_voice_status: bool,
+    pub tags: Vec<ForumTagView>,
+    pub posts: Vec<ForumPostView>,
     pub can_view: bool,
     pub can_send: bool,
     pub key_ready: bool,
+    pub speakers: Vec<String>,
+    pub hands: Vec<String>,
+    pub activity: Option<commy_core::Activity>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ThreadView {
+    pub root: String,
+    pub name: Option<String>,
+    pub archived: bool,
+    pub locked: bool,
+    pub by: String,
+}
+
+impl ThreadView {
+    fn list(channel: &commy_core::server::Channel, state: &ServerState) -> Vec<ThreadView> {
+        channel
+            .threads
+            .iter()
+            .filter(|(root, _)| state.has_message(**root))
+            .map(|(root, t)| ThreadView { root: root.to_string(), name: t.name.clone(), archived: t.archived, locked: t.locked, by: t.by.to_string() })
+            .collect()
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ForumTagView {
+    pub id: String,
+    pub name: String,
+    pub emoji: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ForumPostView {
+    pub message: String,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub author: String,
+    pub author_name: String,
+    pub replies: usize,
+    pub created_at: i64,
+    pub last_activity: i64,
+    pub excerpt: String,
+}
+
+const POST_EXCERPT_CHARS: usize = 240;
+
+fn forum_posts(state: &ServerState, channel: &commy_core::Channel, keys: &KeyHolder) -> Vec<ForumPostView> {
+    let messages = state.messages(channel.id);
+    let by_id: std::collections::HashMap<MessageId, &Message> = messages.iter().map(|m| (m.id, m)).collect();
+    let root_of = |m: &Message| {
+        let mut current = m;
+        let mut seen = HashSet::new();
+        while let Some(parent) = current.reply_to.and_then(|p| by_id.get(&p)) {
+            if !seen.insert(current.id) {
+                break;
+            }
+            current = parent;
+        }
+        current.id
+    };
+    let mut stats: std::collections::HashMap<MessageId, (usize, i64)> = std::collections::HashMap::new();
+    for m in messages.iter().filter(|m| m.reply_to.is_some()) {
+        let root = root_of(m);
+        if root == m.id {
+            continue;
+        }
+        let entry = stats.entry(root).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 = entry.1.max(m.created_at.timestamp_millis());
+    }
+    let mut posts: Vec<ForumPostView> = channel
+        .posts
+        .iter()
+        .filter_map(|(id, post)| {
+            let root = by_id.get(id)?;
+            let created_at = root.created_at.timestamp_millis();
+            let (replies, last_reply) = stats.get(id).copied().unwrap_or((0, 0));
+            let excerpt = keys.open(state, root).map(|m| truncate(&m.content, POST_EXCERPT_CHARS)).unwrap_or_default();
+            Some(ForumPostView {
+                message: id.to_string(),
+                title: post.title.clone(),
+                tags: post.tags.iter().map(|t| t.to_string()).collect(),
+                author: post.author.to_string(),
+                author_name: display_name(state, post.author),
+                replies,
+                created_at,
+                last_activity: created_at.max(last_reply),
+                excerpt,
+            })
+        })
+        .collect();
+    posts.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+    posts
 }
 
 #[derive(Debug, Serialize)]
@@ -107,6 +217,7 @@ pub struct MemberView {
     pub role_banner: Option<String>,
     pub bot: bool,
     pub can_mention_everyone: bool,
+    pub priority_speaker: bool,
     pub timeout_until: Option<i64>,
     pub timeout_by: Option<String>,
 }
@@ -185,6 +296,7 @@ pub struct ServerView {
     pub afk_timeout_minutes: Option<u32>,
     pub can_mute: bool,
     pub can_move: bool,
+    pub can_manage_stage: bool,
     pub can_ban: bool,
     pub can_time_out: bool,
     pub my_timeout_until: Option<i64>,
@@ -208,12 +320,47 @@ pub struct ServerView {
     pub uploads_restricted: bool,
     pub can_attach_files: bool,
     pub can_send_voice_messages: bool,
+    pub can_send_tts_messages: bool,
+    pub can_embed_links: bool,
+    pub can_read_history: bool,
+    pub can_create_threads: bool,
+    pub can_send_polls: bool,
+    pub can_create_events: bool,
+    pub chat_restricted: ChatRestrictions,
     pub public: bool,
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
     pub can_use_soundboard: bool,
     pub automod: Option<AutoMod>,
     pub onboarding: Option<commy_core::Onboarding>,
+    pub commands: Vec<BotCommandsView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BotCommandsView {
+    pub bot: String,
+    pub bot_name: String,
+    pub commands: Vec<commy_core::BotCommand>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CommandUseView {
+    pub bot: String,
+    pub bot_name: String,
+    pub name: String,
+    pub options: std::collections::BTreeMap<String, String>,
+}
+
+impl CommandUseView {
+    fn build(message: &Message, state: &ServerState) -> Option<Self> {
+        let used = message.command_use()?;
+        Some(Self {
+            bot: used.bot.to_string(),
+            bot_name: display_name(state, used.bot),
+            name: used.command,
+            options: used.options,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -235,6 +382,15 @@ pub struct AddRestrictions {
     pub emoticons: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ChatRestrictions {
+    pub embed_links: bool,
+    pub read_history: bool,
+    pub create_threads: bool,
+    pub send_polls: bool,
+    pub create_events: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SoundView {
     pub name: String,
@@ -244,9 +400,30 @@ pub struct SoundView {
 }
 
 impl ServerView {
+    pub fn with_friend_details(mut self, friends: &HashSet<UserId>, contacts: &HashMap<UserId, UserProfile>) -> Self {
+        for member in &mut self.members {
+            let Some(contact) = member.id.parse::<UserId>().ok().filter(|id| friends.contains(id)).and_then(|id| contacts.get(&id)) else {
+                continue;
+            };
+            if member.about.is_none() {
+                member.about = contact.about.as_deref().map(|a| truncate(a, commy_core::user::MAX_ABOUT_CHARS));
+            }
+            if member.banner.is_none() {
+                member.banner = contact.banner.clone().filter(|b| commy_core::user::valid_banner(b));
+            }
+        }
+        self
+    }
+
     pub fn for_viewer(state: &ServerState, viewer: Option<UserId>, keys: &KeyHolder) -> Self {
         let manages_channels = viewer.is_some_and(|v| state.server.permissions_for(v).allows(Permissions::MANAGE_CHANNELS));
         let sees = |c: ChannelId| viewer.is_some_and(|v| state.server.can_view(c, v));
+        let sets_voice_status = |c: ChannelId| {
+            viewer.is_some_and(|v| {
+                let in_channel = state.voice_states.get(&v) == Some(&c);
+                state.server.is_member(v) && state.server.permissions_for(v).can_set_voice_status(in_channel)
+            })
+        };
         let channels = state
             .server
             .sorted_channels()
@@ -276,9 +453,17 @@ impl ServerView {
                     send_roles: c.send_roles.iter().map(|r| r.to_string()).collect(),
                     slow_mode: c.slow_mode,
                     sensitive: c.sensitive,
+                    threads: if can_view { ThreadView::list(c, state) } else { Vec::new() },
+                    voice_status: c.voice_status.clone().filter(|_| c.kind == ChannelKind::Voice),
+                    can_set_voice_status: can_view && c.kind == ChannelKind::Voice && sets_voice_status(c.id),
+                    tags: c.tags.iter().map(|t| ForumTagView { id: t.id.to_string(), name: t.name.clone(), emoji: t.emoji.clone() }).collect(),
+                    posts: if can_view && c.is_forum() { forum_posts(state, c, keys) } else { Vec::new() },
                     can_view,
                     can_send: can_view && viewer.is_some_and(|v| state.server.can_post_in(c.id, v)),
                     key_ready: can_view && keys.key_ready(state, c.id),
+                    speakers: c.speakers.iter().map(|u| u.to_string()).collect(),
+                    hands: if can_view { state.hands_in(c.id).iter().map(|u| u.to_string()).collect() } else { Vec::new() },
+                    activity: if can_view { state.activities.get(&c.id).cloned() } else { None },
                 }
             })
             .collect();
@@ -319,12 +504,12 @@ impl ServerView {
                         .activity
                         .clone()
                         .filter(|_| p.presence.is_visible_online()),
-                    about: p.about.as_deref().map(|a| crate::safety::truncate(a, commy_core::user::MAX_ABOUT_CHARS)),
+                    about: p.about.as_deref().map(|a| truncate(a, commy_core::user::MAX_ABOUT_CHARS)),
                     pronouns: state.server.pronouns.get(&p.id).cloned(),
                     activity_cover: p
                         .activity_cover
                         .clone()
-                        .filter(|c| p.activity.is_some() && crate::igdb::valid_image_id(c)),
+                        .filter(|c| p.activity.is_some() && valid_image_id(c)),
                     activity_since: p.activity_since.filter(|_| p.activity.is_some() && p.presence.is_visible_online()),
                     voice_channel: state.voice_states.get(&p.id).map(|c| c.to_string()),
                     voice_since: state.voice_since(p.id),
@@ -335,6 +520,7 @@ impl ServerView {
                     role_banner: state.server.top_role_with(p.id, |r| r.banner.is_some()).and_then(|r| r.banner.clone()),
                     bot: state.is_bot(p.id),
                     can_mention_everyone: state.server.can_mention_everyone(p.id),
+                    priority_speaker: state.server.permissions_for(p.id).is_priority_speaker(),
                     timeout_until: state.server.timeout_of(p.id, now).map(|t| t.until.timestamp_millis()),
                     timeout_by: state.server.timeout_of(p.id, now).map(|t| t.by.to_string()),
                 }
@@ -445,6 +631,7 @@ impl ServerView {
             afk_timeout_minutes: state.server.afk_timeout_minutes,
             can_mute: perms.allows(Permissions::MUTE_MEMBERS),
             can_move: perms.allows(Permissions::MOVE_MEMBERS),
+            can_manage_stage: perms.can_manage_stage(),
             can_ban: perms.allows(Permissions::BAN_MEMBERS),
             can_time_out: perms.allows(Permissions::TIME_OUT_MEMBERS),
             my_timeout_until: viewer.and_then(|v| state.server.timeout_of(v, now)).map(|t| t.until.timestamp_millis()),
@@ -492,6 +679,19 @@ impl ServerView {
             uploads_restricted: everyone_lacks(state, Permissions::ATTACH_FILES),
             can_attach_files: perms.allows(Permissions::ATTACH_FILES),
             can_send_voice_messages: perms.allows(Permissions::SEND_VOICE_MESSAGES),
+            can_send_tts_messages: perms.can_send_tts(),
+            can_embed_links: perms.can_embed_links(),
+            can_read_history: perms.can_read_history(),
+            can_create_threads: is_member && perms.can_create_threads(),
+            can_send_polls: is_member && perms.can_send_polls(),
+            can_create_events: is_member && perms.can_create_events(),
+            chat_restricted: ChatRestrictions {
+                embed_links: everyone_holds(state, Permissions::NO_EMBED_LINKS),
+                read_history: everyone_holds(state, Permissions::NO_READ_MESSAGE_HISTORY),
+                create_threads: everyone_holds(state, Permissions::NO_CREATE_THREADS),
+                send_polls: everyone_holds(state, Permissions::NO_SEND_POLLS),
+                create_events: everyone_holds(state, Permissions::NO_CREATE_EVENTS),
+            },
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS) || (state.server.soundboard_open && is_member),
@@ -500,17 +700,21 @@ impl ServerView {
             onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {
                 o.tidied(|r| commy_core::onboarding::grantable(&state.server.roles, r))
             }),
+            commands: state
+                .bot_commands()
+                .filter(|(bot, _)| state.server.is_current_member(*bot))
+                .map(|(bot, commands)| BotCommandsView { bot: bot.to_string(), bot_name: display_name(state, bot), commands: commands.to_vec() })
+                .collect(),
         }
     }
 }
 
+fn everyone_holds(state: &ServerState, permission: Permissions) -> bool {
+    state.server.everyone_permissions().contains(permission)
+}
+
 fn everyone_lacks(state: &ServerState, permission: Permissions) -> bool {
-    state
-        .server
-        .roles
-        .iter()
-        .find(|r| r.position == EVERYONE_ROLE_POSITION)
-        .is_some_and(|r| !r.permissions.contains(permission))
+    !state.server.everyone_permissions().contains(permission)
 }
 
 pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
@@ -521,6 +725,11 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("bypass_slow_mode", Permissions::BYPASS_SLOW_MODE),
     ("attach_files", Permissions::ATTACH_FILES),
     ("send_voice_messages", Permissions::SEND_VOICE_MESSAGES),
+    ("send_tts_messages", Permissions::SEND_TTS_MESSAGES),
+    ("embed_links", Permissions::NO_EMBED_LINKS),
+    ("read_message_history", Permissions::NO_READ_MESSAGE_HISTORY),
+    ("create_threads", Permissions::NO_CREATE_THREADS),
+    ("send_polls", Permissions::NO_SEND_POLLS),
     ("post_announcements", Permissions::POST_ANNOUNCEMENTS),
     ("manage_roles", Permissions::MANAGE_ROLES),
     ("kick_members", Permissions::KICK_MEMBERS),
@@ -530,11 +739,13 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("manage_nicknames", Permissions::MANAGE_NICKNAMES),
     ("change_nickname", Permissions::CHANGE_NICKNAME),
     ("move_members", Permissions::MOVE_MEMBERS),
+    ("priority_speaker", Permissions::PRIORITY_SPEAKER),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("add_emojis", Permissions::ADD_EMOJIS),
     ("add_stickers", Permissions::ADD_STICKERS),
     ("add_emoticons", Permissions::ADD_EMOTICONS),
     ("use_external_emojis", Permissions::USE_EXTERNAL_EMOJIS),
+    ("create_events", Permissions::NO_CREATE_EVENTS),
     ("manage_events", Permissions::MANAGE_EVENTS),
     ("create_invites", Permissions::CREATE_INVITES),
     ("view_audit_log", Permissions::VIEW_AUDIT_LOG),
@@ -583,6 +794,7 @@ pub struct DmMessageView {
     pub reply_preview: Option<ReplyPreview>,
     pub reactions: Vec<ReactionView>,
     pub attachments: Vec<AttachmentView>,
+    pub voice_invite: Option<crate::voice_invite::VoiceInviteView>,
 }
 
 fn dm_author_name(msg_from: UserId, me: UserId, dms: &DmStore) -> String {
@@ -594,9 +806,12 @@ fn dm_author_name(msg_from: UserId, me: UserId, dms: &DmStore) -> String {
 }
 
 pub fn dm_excerpt(msg: &DmMessage) -> String {
-    let excerpt = crate::safety::truncate(&msg.content, 120);
+    let excerpt = truncate(&msg.content, 120);
     if excerpt.is_empty() {
-        if let Some(file) = msg.attachments.first() {
+        if let Some(invite) = msg.voice_invite() {
+            return crate::voice_invite::excerpt(&invite);
+        }
+        if let Some(file) = msg.attachments.iter().find(|a| !a.is_card()) {
             return file.filename.clone();
         }
     }
@@ -635,6 +850,7 @@ pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore, pending: bool
         attachments: msg
             .attachments
             .iter()
+            .filter(|a| !a.is_card())
             .map(|a| AttachmentView {
                 filename: a.filename.clone(),
                 size_bytes: a.size_bytes,
@@ -644,6 +860,7 @@ pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore, pending: bool
                 provider: a.provider.clone(),
             })
             .collect(),
+        voice_invite: crate::voice_invite::dm_view_of(msg),
     }
 }
 
@@ -658,7 +875,7 @@ pub fn dm_thread_views(dms: &DmStore, me: UserId) -> Vec<DmThreadView> {
                 last_message: last
                     .map(|m| {
                         let prefix = if m.from == me { "You: " } else { "" };
-                        format!("{prefix}{}", crate::safety::truncate(&dm_excerpt(m), 60))
+                        format!("{prefix}{}", truncate(&dm_excerpt(m), 60))
                     })
                     .unwrap_or_default(),
                 last_at: last
@@ -686,9 +903,13 @@ pub struct MessageView {
     pub attachments: Vec<AttachmentView>,
     pub previews: Vec<LinkPreviewView>,
     pub poll: Option<PollView>,
+    pub tts: bool,
+    pub command: Option<CommandUseView>,
+    pub embeds: bool,
     pub pending: bool,
     pub pinned: bool,
     pub held: Option<String>,
+    pub voice_invite: Option<crate::voice_invite::VoiceInviteView>,
 }
 
 #[derive(Debug, Serialize)]
@@ -840,6 +1061,7 @@ impl MessageView {
         let sealed = opened.is_none();
         let message = opened.as_ref().unwrap_or(message);
         let (content, attachments) = if sealed { (String::new(), &[][..]) } else { (message.content.clone(), &message.attachments[..]) };
+        let author_permissions = state.server.permissions_for(message.author);
         Self {
             id: message.id.to_string(),
             channel: message.channel.to_string(),
@@ -853,10 +1075,12 @@ impl MessageView {
             reply_preview: message.reply_to.and_then(|id| {
                 let stored = state.message(id).filter(|m| m.channel == message.channel)?;
                 let original = keys.open(state, stored)?;
-                let mut excerpt = crate::safety::truncate(&original.content, 120);
+                let mut excerpt = truncate(&original.content, 120);
                 if excerpt.is_empty() {
                     if let Some(poll) = original.poll() {
-                        excerpt = crate::safety::truncate(&poll.question, 120);
+                        excerpt = truncate(&poll.question, 120);
+                    } else if let Some(invite) = original.voice_invite() {
+                        excerpt = crate::voice_invite::excerpt(&invite);
                     } else if original.files().next().is_some() {
                         excerpt = "Click to see attachment".to_string();
                     }
@@ -891,11 +1115,15 @@ impl MessageView {
                     provider: a.provider.clone(),
                 })
                 .collect(),
-            previews: message.link_previews().take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
+            previews: message.previews_for(author_permissions).take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
             poll: (!sealed).then(|| PollView::build(message, state, keys.user())).flatten(),
+            tts: !sealed && message.speaks_for(author_permissions),
+            command: (!sealed).then(|| CommandUseView::build(message, state)).flatten(),
+            embeds: message.embeds_for(author_permissions),
             pending: false,
             pinned: state.server.is_pinned(message.id),
             held: None,
+            voice_invite: (!sealed).then(|| crate::voice_invite::view_of(message)).flatten(),
         }
     }
 
@@ -912,6 +1140,23 @@ impl MessageView {
 
 const HELD_EXCERPT: &str = "Held by auto moderation";
 
+pub type ChannelOpens = HashMap<ChannelId, chrono::DateTime<chrono::Utc>>;
+
+pub fn history_floor(
+    state: &ServerState,
+    viewer: Option<UserId>,
+    opens: &ChannelOpens,
+    channel: ChannelId,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let reads = viewer.is_none_or(|v| state.server.permissions_for(v).can_read_history());
+    (!reads).then(|| opens.get(&channel).copied().unwrap_or(now))
+}
+
+pub fn within_history(floor: Option<chrono::DateTime<chrono::Utc>>, message: &Message) -> bool {
+    floor.is_none_or(|from| message.created_at >= from)
+}
+
 pub fn message_views(
     state: &ServerState,
     channel: ChannelId,
@@ -919,8 +1164,13 @@ pub fn message_views(
     pending: &HashSet<MessageId>,
     viewer: Option<UserId>,
     keys: &KeyHolder,
+    floor: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Vec<MessageView> {
-    visible_views(state, state.page(channel, None, limit), pending, viewer, keys)
+    let all = state.messages(channel);
+    let start = all.iter().position(|m| within_history(floor, m)).unwrap_or(all.len());
+    let recent = &all[start..];
+    let page = &recent[recent.len().saturating_sub(limit)..];
+    visible_views(state, page, pending, viewer, keys)
 }
 
 pub fn sees_message<'a>(state: &'a ServerState, viewer: Option<UserId>, keys: &'a KeyHolder) -> impl Fn(&Message) -> bool + 'a {
@@ -956,13 +1206,15 @@ pub fn message_views_around(
     pending: &HashSet<MessageId>,
     viewer: Option<UserId>,
     keys: &KeyHolder,
+    floor: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Option<Vec<MessageView>> {
     let all = state.messages(channel);
     let at = all.iter().position(|m| m.id == around)?;
-    if !sees_message(state, viewer, keys)(&all[at]) {
+    if !sees_message(state, viewer, keys)(&all[at]) || !within_history(floor, &all[at]) {
         return None;
     }
-    let start = at.saturating_sub(AROUND_EACH_SIDE);
+    let first = all.iter().position(|m| within_history(floor, m)).unwrap_or(all.len());
+    let start = at.saturating_sub(AROUND_EACH_SIDE).max(first);
     let end = (at + AROUND_EACH_SIDE + 1).min(all.len());
     Some(visible_views(state, &all[start..end], pending, viewer, keys))
 }
@@ -1015,7 +1267,7 @@ mod tests {
         }
         let pending = HashSet::from([ids[1]]);
         let keys = KeyHolder::default();
-        let views = message_views(&state, channel, 100, &pending, Some(owner.id), &keys);
+        let views = message_views(&state, channel, 100, &pending, Some(owner.id), &keys, None);
         let flags: Vec<(&str, bool)> = views.iter().map(|v| (v.content.as_str(), v.pending)).collect();
         assert_eq!(flags, vec![("sent", false), ("waiting", true)]);
         assert!(!MessageView::build(state.message(ids[1]).unwrap(), &state, &keys).pending);
@@ -1054,7 +1306,7 @@ mod tests {
         let rules = AutoMod { blocked_terms: vec!["gold".into()], ..AutoMod::default() };
         state.apply(ServerEvent::AutoModSet { server: sid, rules }).unwrap();
         let seen = |viewer| {
-            message_views(&state, channel, 100, &HashSet::new(), Some(viewer), &KeyHolder::default())
+            message_views(&state, channel, 100, &HashSet::new(), Some(viewer), &KeyHolder::default(), None)
                 .into_iter()
                 .map(|v| (v.content, v.held))
                 .collect::<Vec<_>>()
@@ -1063,9 +1315,9 @@ mod tests {
         assert_eq!(seen(owner.id), all);
         assert_eq!(seen(author), all);
         assert_eq!(seen(reader), vec![("fine".to_string(), None)]);
-        let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader), &KeyHolder::default()).remove(0);
+        let reply = message_views(&state, channel, 100, &HashSet::new(), Some(reader), &KeyHolder::default(), None).remove(0);
         assert_eq!(reply.reply_preview.unwrap().excerpt, HELD_EXCERPT);
-        let around = |viewer| message_views_around(&state, channel, bad, &HashSet::new(), Some(viewer), &KeyHolder::default()).map(|v| v.len());
+        let around = |viewer| message_views_around(&state, channel, bad, &HashSet::new(), Some(viewer), &KeyHolder::default(), None).map(|v| v.len());
         assert_eq!(around(owner.id), Some(2));
         assert_eq!(around(reader), None);
     }
@@ -1088,14 +1340,107 @@ mod tests {
             state.apply(ServerEvent::MessageCreate { message }).unwrap();
         }
         let none = HashSet::new();
-        let middle = message_views_around(&state, channel, ids[120], &none, Some(owner.id), &KeyHolder::default()).unwrap();
+        let middle = message_views_around(&state, channel, ids[120], &none, Some(owner.id), &KeyHolder::default(), None).unwrap();
         assert_eq!(middle.len(), 2 * AROUND_EACH_SIDE + 1);
         assert_eq!((middle[0].content.as_str(), middle[AROUND_EACH_SIDE].content.as_str()), ("m70", "m120"));
-        let first = message_views_around(&state, channel, ids[3], &none, Some(owner.id), &KeyHolder::default()).unwrap();
+        let first = message_views_around(&state, channel, ids[3], &none, Some(owner.id), &KeyHolder::default(), None).unwrap();
         assert_eq!((first[0].content.as_str(), first.len()), ("m0", 3 + AROUND_EACH_SIDE + 1));
-        let last = message_views_around(&state, channel, ids[299], &none, Some(owner.id), &KeyHolder::default()).unwrap();
+        let last = message_views_around(&state, channel, ids[299], &none, Some(owner.id), &KeyHolder::default(), None).unwrap();
         assert_eq!(last.last().unwrap().content, "m299");
-        assert!(message_views_around(&state, channel, MessageId::for_author(owner.id), &none, Some(owner.id), &KeyHolder::default()).is_none());
+        assert!(message_views_around(&state, channel, MessageId::for_author(owner.id), &none, Some(owner.id), &KeyHolder::default(), None).is_none());
+    }
+
+    fn keyed(name: &str) -> (UserProfile, Identity) {
+        let identity = Identity::generate();
+        let mut profile = UserProfile::new(name);
+        profile.identity = Some(identity.public());
+        (profile, identity)
+    }
+
+    #[test]
+    fn without_read_message_history_only_what_arrives_after_opening_the_channel_shows() {
+        let (owner, owner_key) = keyed("owner");
+        let server = Server::new("s", owner.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let (reader, _) = keyed("reader");
+        let reader_id = reader.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: reader }).unwrap();
+        let now = chrono::Utc::now();
+        let mut ids = Vec::new();
+        for (text, seconds_ago) in [("old", 1800), ("recent", 300), ("new", 1)] {
+            let mut message = Message::new(channel, owner.id, text);
+            message.created_at = now - chrono::Duration::seconds(seconds_ago);
+            message.sign(sid, &owner_key);
+            ids.push(message.id);
+            state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        }
+        let none = HashSet::new();
+        let keys = KeyHolder::default();
+        let opens: ChannelOpens = HashMap::from([(channel, now - chrono::Duration::minutes(10))]);
+        assert_eq!(history_floor(&state, Some(reader_id), &opens, channel, now), None, "readers see everything by default");
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.insert(Permissions::NO_READ_MESSAGE_HISTORY);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        assert_eq!(history_floor(&state, Some(owner.id), &opens, channel, now), None, "the owner keeps history");
+        let floor = history_floor(&state, Some(reader_id), &opens, channel, now);
+        assert_eq!(floor, Some(now - chrono::Duration::minutes(10)));
+        let texts = |views: Vec<MessageView>| views.into_iter().map(|v| v.content).collect::<Vec<_>>();
+        assert_eq!(texts(message_views(&state, channel, 100, &none, Some(reader_id), &keys, floor)), ["recent", "new"]);
+        assert_eq!(texts(message_views(&state, channel, 1, &none, Some(reader_id), &keys, floor)), ["new"]);
+        assert_eq!(texts(message_views(&state, channel, 100, &none, Some(reader_id), &keys, None)), ["old", "recent", "new"]);
+        let unopened = history_floor(&state, Some(reader_id), &ChannelOpens::new(), channel, now);
+        assert_eq!(unopened, Some(now));
+        assert!(message_views(&state, channel, 100, &none, Some(reader_id), &keys, unopened).is_empty(), "a channel never opened shows nothing yet");
+        assert!(message_views_around(&state, channel, ids[0], &none, Some(reader_id), &keys, floor).is_none(), "no jumping into hidden history");
+        let around = message_views_around(&state, channel, ids[2], &none, Some(reader_id), &keys, floor).unwrap();
+        assert_eq!(texts(around), ["recent", "new"], "a window stops at the floor");
+    }
+
+    #[test]
+    fn link_cards_and_embeds_follow_the_authors_embed_links_permission() {
+        let (owner, _) = keyed("owner");
+        let server = Server::new("s", owner.id);
+        let (sid, channel) = (server.id, server.channels[0].id);
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let (author, author_key) = keyed("author");
+        let author_id = author.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: author }).unwrap();
+        let preview = commy_core::LinkPreview {
+            url: "https://example.org/a".into(),
+            site: String::new(),
+            title: "A page".into(),
+            description: String::new(),
+            image: None,
+        };
+        let mut message = Message::new(channel, author_id, "see https://example.org/a");
+        message.attachments.push(preview.into_attachment(None));
+        message.sign(sid, &author_key);
+        let id = message.id;
+        state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        let keys = KeyHolder::default();
+        let view = MessageView::build(state.message(id).unwrap(), &state, &keys);
+        assert!(view.embeds);
+        assert_eq!(view.previews.len(), 1);
+        let mut everyone = state.server.roles[0].clone();
+        everyone.permissions.insert(Permissions::NO_EMBED_LINKS);
+        state.apply(ServerEvent::RoleUpdate { server: sid, role: everyone }).unwrap();
+        let view = MessageView::build(state.message(id).unwrap(), &state, &keys);
+        assert!(!view.embeds, "readers drop the card once the author may not embed");
+        assert!(view.previews.is_empty());
+        assert_eq!(view.content, "see https://example.org/a", "the text itself still posts");
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["embeds"], false);
+        let server_view = ServerView::for_viewer(&state, Some(author_id), &keys);
+        assert!(!server_view.can_embed_links && server_view.chat_restricted.embed_links);
+        assert!(server_view.can_read_history && !server_view.chat_restricted.read_history);
+        assert!(server_view.can_create_threads && server_view.can_send_polls && server_view.can_create_events);
+        assert!(!server_view.can_manage_events);
+        assert!(permission_names(Permissions::NO_CREATE_EVENTS | Permissions::NO_EMBED_LINKS).contains(&"create_events".to_string()), "a listed name means the restriction is set");
+        assert_eq!(permissions_from_names(&["send_polls".to_string(), "read_message_history".to_string()]), Permissions::NO_SEND_POLLS | Permissions::NO_READ_MESSAGE_HISTORY);
+        assert!(permission_names(Permissions::default_member()).iter().all(|n| !["embed_links", "send_polls", "create_events"].contains(&n.as_str())));
     }
 
     #[test]
@@ -1114,6 +1459,101 @@ mod tests {
         let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
         assert!(badge(bot_id));
         assert!(!badge(owner.id));
+    }
+
+    #[test]
+    fn registered_commands_and_their_uses_show_in_views() {
+        use commy_core::command::{BotCommand, CommandUse};
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(Identity::generate().public());
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let channel = server.channels[0].id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let bot = UserProfile::new("Tidy");
+        let bot_id = bot.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: bot }).unwrap();
+        state.apply(ServerEvent::BotSet { server: sid, user: bot_id, bot: true }).unwrap();
+        let roll = BotCommand { name: "roll".into(), description: "Roll dice".into(), options: vec![] };
+        state.apply(ServerEvent::BotCommandsSet { server: sid, bot: bot_id, commands: vec![roll.clone()], by: bot_id }).unwrap();
+        let view = ServerView::for_viewer(&state, Some(owner.id), &KeyHolder::default());
+        assert_eq!(view.commands.len(), 1);
+        assert_eq!((view.commands[0].bot_name.as_str(), &view.commands[0].commands), ("Tidy", &vec![roll]));
+        let mut message = Message::new(channel, owner.id, "/roll 20");
+        message.attachments.push(CommandUse::new(bot_id, "roll").with("sides", "20").into_attachment());
+        let shown = MessageView::build(&message, &state, &KeyHolder::default());
+        let used = shown.command.unwrap();
+        assert_eq!((used.bot_name.as_str(), used.name.as_str(), used.options.get("sides").map(String::as_str)), ("Tidy", "roll", Some("20")));
+        assert!(shown.attachments.is_empty(), "the marker is not shown as a file");
+        state.apply(ServerEvent::MemberLeave { server: sid, user: bot_id }).unwrap();
+        assert!(ServerView::for_viewer(&state, Some(owner.id), &KeyHolder::default()).commands.is_empty());
+    }
+
+    #[test]
+    fn friends_fill_in_the_details_a_server_was_not_shown() {
+        let owner = UserProfile::new("owner");
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let mut quiet = UserProfile::new("quiet");
+        quiet.about = Some("from a DM".into());
+        quiet.banner = Some("blob:dmbanner".into());
+        let mut loud = UserProfile::new("loud");
+        loud.about = Some("gossiped".into());
+        for p in [quiet.without_details(), loud.clone()] {
+            state.apply(ServerEvent::MemberJoin { server: sid, profile: p }).unwrap();
+        }
+        let mut loud_contact = loud.clone();
+        loud_contact.about = Some("stale DM bio".into());
+        let contacts: HashMap<UserId, UserProfile> = [(quiet.id, quiet.clone()), (loud.id, loud_contact)].into_iter().collect();
+        let about = |view: &ServerView, id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().about.clone();
+        let banner = |view: &ServerView, id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().banner.clone();
+
+        let strangers = ServerView::for_viewer(&state, Some(owner.id), &KeyHolder::default()).with_friend_details(&HashSet::new(), &contacts);
+        assert_eq!(about(&strangers, quiet.id), None, "a DM contact who is not a friend adds nothing");
+
+        let friends: HashSet<UserId> = [quiet.id, loud.id].into_iter().collect();
+        let view = ServerView::for_viewer(&state, Some(owner.id), &KeyHolder::default()).with_friend_details(&friends, &contacts);
+        assert_eq!(about(&view, quiet.id).as_deref(), Some("from a DM"));
+        assert_eq!(banner(&view, quiet.id).as_deref(), Some("blob:dmbanner"));
+        assert_eq!(about(&view, loud.id).as_deref(), Some("gossiped"), "what the server was shown wins");
+    }
+
+    #[test]
+    fn voice_status_and_priority_speakers_reach_the_view_with_who_may_change_them() {
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(Identity::generate().public());
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let voice = server.channels[1].id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let member = UserProfile::new("member");
+        let member_id = member.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: member }).unwrap();
+        let keys = KeyHolder::default();
+        fn channel<'a>(view: &'a ServerView, id: ChannelId) -> &'a ChannelView {
+            view.channels.iter().find(|c| c.id == id.to_string()).unwrap()
+        }
+        let before = ServerView::for_viewer(&state, Some(member_id), &keys);
+        assert!(!channel(&before, voice).can_set_voice_status, "not in the room");
+        assert_eq!(channel(&before, voice).voice_status, None);
+        let as_owner = ServerView::for_viewer(&state, Some(owner.id), &keys);
+        assert!(channel(&as_owner, voice).can_set_voice_status, "managers always may");
+        let join = ServerEvent::VoiceState { user: member_id, channel: Some(voice), muted: false, deafened: false, since: None };
+        state.apply(join).unwrap();
+        let set = ServerEvent::VoiceStatusSet { server: sid, channel: voice, text: "Ranked grind".into(), by: member_id };
+        state.apply(set).unwrap();
+        let after = ServerView::for_viewer(&state, Some(member_id), &keys);
+        assert!(channel(&after, voice).can_set_voice_status);
+        assert_eq!(channel(&after, voice).voice_status.as_deref(), Some("Ranked grind"));
+        let priority = |view: &ServerView, id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().priority_speaker;
+        assert!(priority(&after, owner.id));
+        assert!(!priority(&after, member_id));
+        assert_eq!(permissions_from_names(&["priority_speaker".to_string()]), Permissions::PRIORITY_SPEAKER);
+        assert_eq!(permission_names(Permissions::PRIORITY_SPEAKER), vec!["priority_speaker".to_string()]);
     }
 
     #[test]
@@ -1178,7 +1618,7 @@ mod tests {
         let as_owner = ServerView::for_viewer(&state, Some(owner.id), &keys);
         assert!(as_owner.can_change_nickname && as_owner.can_manage_nicknames);
         assert!(!ServerView::for_viewer(&state, Some(UserId::new()), &keys).can_change_nickname);
-        let messages = message_views(&state, channel, 10, &HashSet::new(), Some(owner.id), &keys);
+        let messages = message_views(&state, channel, 10, &HashSet::new(), Some(owner.id), &keys, None);
         assert_eq!(messages[0].author_name, "Sammy");
         assert_eq!(display_name(&state, friend_id), "Sammy");
         assert_eq!(known_name_of(&state, UserId::new()), None);

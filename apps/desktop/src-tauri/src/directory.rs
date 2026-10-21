@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use commy_core::ServerId;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::account::host_of;
 use crate::invite_link::{self, Expiry, InviteLink};
@@ -13,12 +14,18 @@ pub const CATEGORIES: &[&str] = &["gaming", "music", "art", "tech", "science", "
 pub const MEMBER_BUCKETS: &[u32] = &[10, 25, 50, 100, 250, 500, 1000];
 pub const NAME_MAX: usize = 48;
 pub const DESCRIPTION_MAX: usize = 300;
+const REFRESH_EVERY: Duration = Duration::from_secs(300);
+const RETRY_AFTER: Duration = Duration::from_secs(600);
+
+static LISTING_CHANGES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Listing {
     pub origin: String,
     pub code: String,
     pub link: String,
+    #[serde(default)]
+    pub name: String,
     pub category: String,
     pub description: String,
     pub members: u32,
@@ -40,6 +47,7 @@ pub struct DirectoryPage {
     pub entries: Vec<DirectoryEntry>,
     pub next_cursor: Option<String>,
     pub host: String,
+    pub available: bool,
 }
 
 #[derive(Deserialize)]
@@ -188,37 +196,110 @@ pub async fn publish_listing(
     }
     let token = signed_in_token(&app)?;
     let origin = crate::account::effective_server();
+    require_directory(&app, &origin).await?;
     let link = permanent_link(&app, &handle, &server_id, sid, &origin).await?;
-    let body = serde_json::json!({
-        "code": link.code,
-        "key": link.key.clone().unwrap_or_default(),
-        "name": name,
-        "description": description,
-        "category": category,
-        "members": members,
-    });
-    let request = app.http.post(format!("{origin}/api/auth/commy/directory/publish")).json(&body).bearer_auth(token);
-    let reply: PublishResponse = invite_link::account_call(request, &origin).await?;
-    let listing = Listing {
-        origin: origin.clone(),
-        code: reply.code,
+    let mut listing = Listing {
+        origin,
+        code: link.code.clone(),
         link: link.url(),
+        name,
         category,
         description,
         members,
         listed_at: chrono::Utc::now().timestamp_millis(),
     };
+    let _serial = LISTING_CHANGES.lock().await;
+    listing.code = send_listing(&app, &listing, &token).await?;
     app.listings.lock().unwrap().insert(sid, listing.clone());
     app.persist_listings();
     Ok(listing)
+}
+
+async fn send_listing(app: &App, listing: &Listing, token: &str) -> Result<String, String> {
+    let link = invite_link::parse(&listing.link).ok_or("This listing lost its invite link")?;
+    let body = serde_json::json!({
+        "code": link.code,
+        "key": link.key.unwrap_or_default(),
+        "name": listing.name,
+        "description": listing.description,
+        "category": listing.category,
+        "members": listing.members,
+    });
+    let request = app.http.post(format!("{}/api/auth/commy/directory/publish", listing.origin)).json(&body).bearer_auth(token);
+    let reply: PublishResponse = invite_link::account_call(request, &listing.origin).await?;
+    Ok(reply.code)
+}
+
+pub fn server_changed(app: &App, sid: ServerId) {
+    if app.listings.lock().unwrap().contains_key(&sid) {
+        app.listing_wake.notify_one();
+    }
+}
+
+pub async fn keep_listings_current(handle: AppHandle) {
+    let mut failed = HashMap::new();
+    loop {
+        let app = handle.state::<App>();
+        refresh_listings(&app, &mut failed).await;
+        tokio::select! {
+            _ = tokio::time::sleep(REFRESH_EVERY) => {}
+            _ = app.listing_wake.notified() => {}
+        }
+    }
+}
+
+async fn refresh_listings(app: &App, failed: &mut HashMap<ServerId, Instant>) {
+    let origin = crate::account::effective_server();
+    let Some(token) = invite_link::signed_in_token(app) else { return };
+    let _serial = LISTING_CHANGES.lock().await;
+    let now = Instant::now();
+    failed.retain(|_, at| now.duration_since(*at) < RETRY_AFTER);
+    for (sid, listing) in outdated_listings(app, &origin) {
+        if failed.contains_key(&sid) {
+            continue;
+        }
+        match send_listing(app, &listing, &token).await {
+            Ok(code) => store_refreshed(app, sid, Listing { code, ..listing }),
+            Err(e) => {
+                tracing::warn!("Discover listing not refreshed: {e}");
+                failed.insert(sid, now);
+            }
+        }
+    }
+}
+
+fn outdated_listings(app: &App, origin: &str) -> Vec<(ServerId, Listing)> {
+    let listings = app.listings.lock().unwrap().clone();
+    let servers = app.servers.lock().unwrap();
+    listings
+        .into_iter()
+        .filter(|(_, listing)| listing.origin == origin)
+        .filter_map(|(sid, listing)| {
+            let server = &servers.get(&sid)?.server;
+            let current = current_listing(&listing, &server.name, server.members.len());
+            (server.public && current != listing).then_some((sid, current))
+        })
+        .collect()
+}
+
+fn current_listing(listing: &Listing, server_name: &str, member_count: usize) -> Listing {
+    Listing { name: listing_name(server_name), members: member_bucket(member_count), ..listing.clone() }
+}
+
+fn store_refreshed(app: &App, sid: ServerId, refreshed: Listing) {
+    if let Some(stored) = app.listings.lock().unwrap().get_mut(&sid) {
+        *stored = refreshed;
+    }
+    app.persist_listings();
 }
 
 #[tauri::command]
 pub async fn unlist_server(app: tauri::State<'_, App>, server_id: String) -> Result<(), String> {
     let sid: ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
     crate::require_manage_server(&app, sid, "change this server's Discover listing")?;
-    let listing = app.listings.lock().unwrap().get(&sid).cloned().ok_or("This server was not listed from this device")?;
     let token = signed_in_token(&app)?;
+    let _serial = LISTING_CHANGES.lock().await;
+    let listing = app.listings.lock().unwrap().get(&sid).cloned().ok_or("This server was not listed from this device")?;
     let request = app
         .http
         .post(format!("{}/api/auth/commy/directory/unlist", listing.origin))
@@ -261,8 +342,34 @@ pub async fn browse_directory(
             pairs.append_pair("cursor", cursor);
         }
     }
-    let reply: ListResponse = invite_link::account_call(app.http.get(url), &origin).await?;
-    Ok(DirectoryPage { entries: entries_from(&origin, reply.listings), next_cursor: reply.next_cursor, host: host_of(&origin) })
+    let host = host_of(&origin);
+    Ok(match fetch_list(&app, url, &origin).await? {
+        Some(reply) => DirectoryPage { entries: entries_from(&origin, reply.listings), next_cursor: reply.next_cursor, host, available: true },
+        None => DirectoryPage { entries: Vec::new(), next_cursor: None, host, available: false },
+    })
+}
+
+async fn fetch_list(app: &App, url: Url, origin: &str) -> Result<Option<ListResponse>, String> {
+    let res = app.http.get(url).send().await.map_err(|_| format!("Could not reach {}", host_of(origin)))?;
+    if directory_missing(res.status()) {
+        return Ok(None);
+    }
+    if !res.status().is_success() {
+        return Err(invite_link::error_message(res).await);
+    }
+    Ok(res.json::<ListResponse>().await.ok())
+}
+
+async fn require_directory(app: &App, origin: &str) -> Result<(), String> {
+    let url = Url::parse(&format!("{origin}/api/auth/commy/directory/list")).map_err(|e| e.to_string())?;
+    match fetch_list(app, url, origin).await? {
+        Some(_) => Ok(()),
+        None => Err(format!("{} does not list public servers yet", host_of(origin))),
+    }
+}
+
+fn directory_missing(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::METHOD_NOT_ALLOWED || status.is_redirection()
 }
 
 pub fn load(dir: &std::path::Path) -> HashMap<ServerId, Listing> {
@@ -307,6 +414,18 @@ mod tests {
     }
 
     #[test]
+    fn account_servers_without_a_directory_read_as_unavailable() {
+        use reqwest::StatusCode;
+        assert!(directory_missing(StatusCode::NOT_FOUND));
+        assert!(directory_missing(StatusCode::METHOD_NOT_ALLOWED));
+        assert!(directory_missing(StatusCode::FOUND));
+        assert!(directory_missing(StatusCode::TEMPORARY_REDIRECT));
+        assert!(!directory_missing(StatusCode::OK));
+        assert!(!directory_missing(StatusCode::BAD_REQUEST));
+        assert!(!directory_missing(StatusCode::INTERNAL_SERVER_ERROR));
+    }
+
+    #[test]
     fn directory_rows_become_joinable_links() {
         let key = "k".repeat(43);
         let rows = vec![
@@ -320,5 +439,62 @@ mod tests {
         assert_eq!(entries[1].category, "other");
         assert_eq!(entries[1].members, 25);
         assert_eq!(entries[1].link, "https://commy.chat/i/pixel-club#Zx9-_Zx9-_Zx9-_Zx9-_aA");
+    }
+
+    fn listed(app: &App, name: &str, public: bool) -> (ServerId, Listing) {
+        let owner = commy_core::UserProfile::new("owner");
+        let mut server = commy_core::Server::new(name, owner.id);
+        server.public = public;
+        let sid = server.id;
+        let listing = Listing {
+            origin: "https://commy.chat".into(),
+            code: "KQ7M3N4P".into(),
+            link: format!("https://commy.chat/i/KQ7M3N4P#{}", "k".repeat(43)),
+            name: listing_name(name),
+            category: "tech".into(),
+            description: "Crabs".into(),
+            members: member_bucket(server.members.len()),
+            listed_at: 1,
+        };
+        app.servers.lock().unwrap().insert(sid, commy_core::ServerState::new(server));
+        app.listings.lock().unwrap().insert(sid, listing.clone());
+        (sid, listing)
+    }
+
+    #[test]
+    fn renamed_servers_are_republished_with_their_new_name() {
+        let app = App::default();
+        let (sid, listing) = listed(&app, "Rust Hangout", true);
+        assert!(outdated_listings(&app, "https://commy.chat").is_empty());
+        app.servers.lock().unwrap().get_mut(&sid).unwrap().server.name = "  Crab   Club ".into();
+        let outdated = outdated_listings(&app, "https://commy.chat");
+        assert_eq!(outdated, vec![(sid, Listing { name: "Crab Club".into(), ..listing })]);
+        assert!(outdated_listings(&app, "https://staging.commy.chat").is_empty(), "listings on another account server wait");
+    }
+
+    #[test]
+    fn listings_from_before_names_were_kept_are_refreshed_once() {
+        let app = App::default();
+        let (sid, _) = listed(&app, "Rust Hangout", true);
+        app.listings.lock().unwrap().get_mut(&sid).unwrap().name.clear();
+        let outdated = outdated_listings(&app, "https://commy.chat");
+        assert_eq!(outdated[0].1.name, "Rust Hangout");
+        store_refreshed(&app, sid, outdated[0].1.clone());
+        assert!(outdated_listings(&app, "https://commy.chat").is_empty());
+    }
+
+    #[test]
+    fn private_servers_are_left_alone() {
+        let app = App::default();
+        let (sid, _) = listed(&app, "Rust Hangout", false);
+        app.servers.lock().unwrap().get_mut(&sid).unwrap().server.name = "Hidden".into();
+        assert!(outdated_listings(&app, "https://commy.chat").is_empty());
+    }
+
+    #[test]
+    fn stored_listings_without_a_name_still_load() {
+        let old = r#"{"origin":"https://commy.chat","code":"KQ7M3N4P","link":"https://commy.chat/i/KQ7M3N4P","category":"tech","description":"","members":10,"listed_at":1}"#;
+        let listing: Listing = serde_json::from_str(old).unwrap();
+        assert_eq!(listing.name, "");
     }
 }

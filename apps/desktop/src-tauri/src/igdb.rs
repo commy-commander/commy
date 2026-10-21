@@ -88,9 +88,7 @@ struct TokenResponse {
     expires_in: u64,
 }
 
-pub fn valid_image_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 32 && id.chars().all(|c| c.is_ascii_alphanumeric())
-}
+pub use commy_view::valid_image_id;
 
 pub fn normalize(name: &str) -> String {
     name.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()

@@ -1,5 +1,5 @@
 use crate::identity::Signature;
-use crate::ids::{ChannelId, MessageId, RoleId, ServerId, UserId};
+use crate::ids::{ChannelId, MessageId, RoleId, ServerId, TagId, UserId};
 use crate::message::Message;
 use crate::server::Channel;
 use crate::user::{Presence, UserProfile};
@@ -290,6 +290,67 @@ pub enum ServerEvent {
         server: ServerId,
         onboarding: Option<crate::onboarding::Onboarding>,
     },
+    ThreadSet {
+        server: ServerId,
+        channel: ChannelId,
+        root: MessageId,
+        name: Option<String>,
+        archived: bool,
+        locked: bool,
+        by: UserId,
+    },
+    VoiceStatusSet {
+        server: ServerId,
+        channel: ChannelId,
+        text: String,
+        by: UserId,
+    },
+    ForumTagsSet {
+        server: ServerId,
+        channel: ChannelId,
+        tags: Vec<crate::server::ForumTag>,
+        by: UserId,
+    },
+    ForumPost {
+        server: ServerId,
+        channel: ChannelId,
+        message: MessageId,
+        title: String,
+        tags: Vec<TagId>,
+        by: UserId,
+    },
+    StageSet {
+        server: ServerId,
+        channel: ChannelId,
+        user: UserId,
+        speaker: bool,
+        by: UserId,
+    },
+    HandRaise {
+        server: ServerId,
+        channel: ChannelId,
+        user: UserId,
+        raised: bool,
+    },
+    BotCommandsSet {
+        server: ServerId,
+        bot: UserId,
+        commands: Vec<crate::command::BotCommand>,
+        by: UserId,
+    },
+    ActivitySet {
+        server: ServerId,
+        channel: ChannelId,
+        activity: Option<crate::activity::Activity>,
+        by: UserId,
+    },
+    ActivityInput {
+        server: ServerId,
+        channel: ChannelId,
+        seq: u64,
+        input: crate::activity::ActivityInput,
+        by: UserId,
+    },
 }
 
 #[cfg(test)]
@@ -353,6 +414,19 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::PollClose { server, channel, message, by: user }), 70);
         assert_eq!(wire_tag(ServerEvent::ChannelSensitiveSet { server, channel, sensitive: true }), 72);
         assert_eq!(wire_tag(ServerEvent::OnboardingSet { server, onboarding: None }), 73);
+        let root = crate::ids::MessageId::new();
+        let thread = ServerEvent::ThreadSet { server, channel, root, name: None, archived: false, locked: false, by: user };
+        assert_eq!(wire_tag(thread), 74);
+        assert_eq!(wire_tag(ServerEvent::VoiceStatusSet { server, channel, text: "t".into(), by: user }), 75);
+        assert_eq!(wire_tag(ServerEvent::ForumTagsSet { server, channel, tags: vec![], by: user }), 76);
+        let post = ServerEvent::ForumPost { server, channel, message: MessageId::new(), title: "t".into(), tags: vec![], by: user };
+        assert_eq!(wire_tag(post), 77);
+        assert_eq!(wire_tag(ServerEvent::StageSet { server, channel, user, speaker: true, by: user }), 78);
+        assert_eq!(wire_tag(ServerEvent::HandRaise { server, channel, user, raised: true }), 79);
+        assert_eq!(wire_tag(ServerEvent::BotCommandsSet { server, bot: user, commands: vec![], by: user }), 80);
+        assert_eq!(wire_tag(ServerEvent::ActivitySet { server, channel, activity: None, by: user }), 81);
+        let input = crate::activity::ActivityInput::Join;
+        assert_eq!(wire_tag(ServerEvent::ActivityInput { server, channel, seq: 1, input, by: user }), 82);
     }
 
     #[test]

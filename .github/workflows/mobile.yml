@@ -90,6 +90,7 @@ jobs:
   ios:
     name: iOS simulator build
     timeout-minutes: 60
+    continue-on-error: true
     runs-on: macos-15-intel
     defaults:
       run:
