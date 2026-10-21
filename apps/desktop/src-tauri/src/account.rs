@@ -42,6 +42,8 @@ pub struct ServerFeatures {
     pub vault: bool,
     #[serde(default)]
     pub stickers: bool,
+    #[serde(default, alias = "folderLock")]
+    pub folder_lock: bool,
 }
 
 impl AccountState {
@@ -127,10 +129,96 @@ fn signed_in_folder(app: &App) -> Option<(PathBuf, String, String)> {
 
 pub fn ready_folder(app: &App) -> Option<PathBuf> {
     let (base, server, account) = signed_in_folder(app)?;
-    match account_folder::choose(&base, &server, &account) {
-        account_folder::Opening::Ready(dir) => Some(dir),
-        account_folder::Opening::AskAboutUnclaimed => None,
+    let account_folder::Opening::Ready(dir) = account_folder::choose(&base, &server, &account) else { return None };
+    match quick_unlock(app, &dir) {
+        Unlock::Key(key) => {
+            use_folder_key(&dir, &key);
+            Some(dir)
+        }
+        Unlock::DeviceKeyOnly => Some(dir),
+        Unlock::AskServer => None,
     }
+}
+
+#[derive(Debug, PartialEq)]
+enum Unlock {
+    Key([u8; 32]),
+    DeviceKeyOnly,
+    AskServer,
+}
+
+fn quick_unlock(app: &App, dir: &Path) -> Unlock {
+    let server_locks = app.account.lock().unwrap().features.is_some_and(|f| f.folder_lock);
+    unlock_step(account_folder::cached_key(dir), account_folder::is_locked(dir), server_locks)
+}
+
+fn unlock_step(cached: Option<[u8; 32]>, locked: bool, server_locks: bool) -> Unlock {
+    match cached {
+        Some(key) => Unlock::Key(key),
+        None if locked || server_locks => Unlock::AskServer,
+        None => Unlock::DeviceKeyOnly,
+    }
+}
+
+fn use_folder_key(dir: &Path, key: &[u8; 32]) {
+    commy_core::at_rest::install_folder(dir, *key);
+    if let Err(e) = account_folder::finish_resealing(dir, key) {
+        tracing::warn!("could not finish moving this account's files to its key: {e}");
+    }
+}
+
+#[derive(Deserialize)]
+struct FolderKeyResponse {
+    key: String,
+}
+
+async fn server_folder_key(app: &App, server: &str, token: &str, lock_id: &str) -> Result<String, String> {
+    let host = host_of(server);
+    let res = app
+        .http
+        .post(format!("{server}/api/auth/commy/folder-key"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "lockId": lock_id }))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|_| format!("Could not reach {host} to unlock this account on this computer."))?;
+    match res.status().as_u16() {
+        200 => {}
+        401 => return Err(format!("Sign in to {host} again to unlock this account.")),
+        _ => return Err(format!("{host} could not unlock this account right now.")),
+    }
+    let body: FolderKeyResponse = res.json().await.map_err(|_| format!("{host} sent an unexpected reply"))?;
+    Ok(body.key)
+}
+
+async fn unlock_folder(app: &App, dir: &Path, server: &str, token: &str) -> Result<Option<[u8; 32]>, String> {
+    match quick_unlock(app, dir) {
+        Unlock::Key(key) => return Ok(Some(key)),
+        Unlock::DeviceKeyOnly => return Ok(None),
+        Unlock::AskServer => {}
+    }
+    std::fs::create_dir_all(dir).map_err(|_| "Could not create this account's folder".to_string())?;
+    let key = match account_folder::read_lock(dir) {
+        Some(lock) => {
+            let server_key = server_folder_key(app, server, token, &lock.lock_id).await?;
+            account_folder::unwrap(&server_key, &lock)
+                .ok_or("Your account server's key does not open this account's data on this computer.")?
+        }
+        None if account_folder::is_locked(dir) => {
+            return Err("This account's lock on this computer cannot be read.".into());
+        }
+        None => {
+            let lock_id = account_folder::new_lock_id();
+            let server_key = server_folder_key(app, server, token, &lock_id).await?;
+            let key = commy_net::CommyNode::generate_secret();
+            let lock = account_folder::wrap(&server_key, &lock_id, &key).ok_or("Your account server sent an unusable key.")?;
+            account_folder::lock(dir, &lock, &key).map_err(|e| format!("Could not lock this account's data: {e}"))?;
+            key
+        }
+    };
+    account_folder::remember_key(dir, &key);
+    Ok(Some(key))
 }
 
 static MAY_CLAIM: Mutex<Option<String>> = Mutex::new(None);
@@ -602,50 +690,47 @@ async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token
         email: crate::safety::truncate(&session.user.email, 120),
     };
     let base = app.base_dir().cloned().ok_or("This install has no data folder")?;
-    let opening = account_folder::choose(&base, server, &user.id);
-    let linking = match &opening {
-        account_folder::Opening::Ready(dir) => Some(dir.clone()),
-        account_folder::Opening::AskAboutUnclaimed => None,
-    };
-    let next = after_sign_in(opening, app.data_dir().map(|d| d.as_path()));
+    let next = after_sign_in(account_folder::choose(&base, server, &user.id), app.data_dir().map(|d| d.as_path()));
     app.igdb.lock().await.resolved.clear();
-    let device_linked = match &linking {
-        Some(dir) => link_device(&app, dir, server, doc, token).await.map_err(|e| {
+    let device_linked = match (&next, app.data_dir()) {
+        (AfterSignIn::KeepOpen, Some(dir)) => link_device(&app, dir, server, doc, token).await.map_err(|e| {
             tracing::warn!("device link failed: {e}");
             e
         }),
-        None => Ok(()),
+        _ => Ok(()),
     };
     {
         let mut state = app.account.lock().unwrap();
         state.signed_in_server = Some(server.to_string());
         state.token = Some(token.to_string());
         state.user = Some(user);
-        state.device_linked = device_linked.is_ok() && linking.is_some();
+        state.device_linked = device_linked.is_ok() && next == AfterSignIn::KeepOpen;
         state.features = doc.features;
         store(&app, &state);
     }
-    match next {
-        AfterSignIn::Restart => restart_signed_in_as_someone_else(handle),
-        AfterSignIn::Open(dir) => crate::open_account(handle, dir),
-        AfterSignIn::KeepOpen | AfterSignIn::Ask => {}
+    match (&next, app.data_dir()) {
+        (AfterSignIn::Restart, _) => restart_signed_in_as_someone_else(handle),
+        (AfterSignIn::KeepOpen, Some(dir)) if account_folder::is_locked(dir) => {
+            if let Err(e) = unlock_folder(&app, dir, server, token).await {
+                tracing::warn!("could not keep this account unlocked for the next start: {e}");
+            }
+        }
+        _ => {}
     }
     device_linked.map(|_| ())
 }
 
 #[derive(Debug, PartialEq)]
 enum AfterSignIn {
-    Open(PathBuf),
     KeepOpen,
-    Ask,
+    OpenFolder,
     Restart,
 }
 
 fn after_sign_in(opening: account_folder::Opening, open: Option<&Path>) -> AfterSignIn {
     match (opening, open) {
         (account_folder::Opening::Ready(dir), Some(open)) if dir == open => AfterSignIn::KeepOpen,
-        (account_folder::Opening::Ready(dir), None) => AfterSignIn::Open(dir),
-        (account_folder::Opening::AskAboutUnclaimed, None) => AfterSignIn::Ask,
+        (_, None) => AfterSignIn::OpenFolder,
         _ => AfterSignIn::Restart,
     }
 }
@@ -699,7 +784,8 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
         state.device_linked = false;
         store(&app, &state);
     }
-    if app.data_dir().is_some() {
+    if let Some(dir) = app.data_dir() {
+        account_folder::forget_key(dir);
         restart_signed_in_as_someone_else(&handle);
     }
     let _ = handle.emit("account-changed", ());
@@ -707,7 +793,7 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
 }
 
 #[tauri::command]
-pub async fn account_resolve_unclaimed(app: tauri::State<'_, App>, handle: AppHandle) -> Result<AccountView, String> {
+pub async fn account_open_folder(app: tauri::State<'_, App>, handle: AppHandle) -> Result<AccountView, String> {
     if app.data_dir().is_some() {
         return Ok(view(&app));
     }
@@ -751,6 +837,9 @@ async fn open_folder(
         .map_err(|e| format!("Could not set up this account's folder: {e}"))?;
     *MAY_CLAIM.lock().unwrap() = None;
     let token = app.account.lock().unwrap().token.clone().ok_or("Sign in first")?;
+    if let Some(key) = unlock_folder(app, &dir, server, &token).await? {
+        use_folder_key(&dir, &key);
+    }
     let linked = match discover(&app.http, server).await {
         Ok(doc) => link_device(app, &dir, server, &doc, &token).await.is_ok(),
         Err(_) => false,
@@ -797,6 +886,9 @@ pub async fn verify_saved_session(handle: AppHandle) {
         let mut state = app.account.lock().unwrap();
         state.clear_session();
         store(&app, &state);
+    }
+    if let Some(dir) = app.data_dir() {
+        account_folder::forget_key(dir);
     }
     let _ = handle.emit("account-changed", ());
 }
@@ -881,7 +973,7 @@ mod tests {
         };
         assert!(state.server_offers("gifs") && state.server_offers("games"));
         assert!(!state.server_offers("media"));
-        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false, stickers: true });
+        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false, stickers: true, folder_lock: false });
         assert!(state.server_offers("gifs"));
         assert!(state.server_offers("stickers"));
         assert!(state.server_offers("emojis"));
@@ -903,7 +995,7 @@ mod tests {
         let mut with = base;
         with["features"] = serde_json::json!({ "gifs": true, "games": false });
         let new: Discovery = serde_json::from_value(with).unwrap();
-        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false }));
+        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false, folder_lock: false }));
     }
 
     #[test]
@@ -914,8 +1006,17 @@ mod tests {
         assert_eq!(after_sign_in(Opening::Ready(a.clone()), Some(&a)), AfterSignIn::KeepOpen);
         assert_eq!(after_sign_in(Opening::Ready(b.clone()), Some(&a)), AfterSignIn::Restart);
         assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, Some(&a)), AfterSignIn::Restart);
-        assert_eq!(after_sign_in(Opening::Ready(b.clone()), None), AfterSignIn::Open(b));
-        assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, None), AfterSignIn::Ask);
+        assert_eq!(after_sign_in(Opening::Ready(b), None), AfterSignIn::OpenFolder);
+        assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, None), AfterSignIn::OpenFolder);
+    }
+
+    #[test]
+    fn a_locked_folder_needs_the_server_unless_this_session_already_unlocked_it() {
+        let key = [3u8; 32];
+        assert_eq!(unlock_step(Some(key), true, true), Unlock::Key(key));
+        assert_eq!(unlock_step(None, true, false), Unlock::AskServer, "a locked folder never falls back to the device key");
+        assert_eq!(unlock_step(None, false, true), Unlock::AskServer);
+        assert_eq!(unlock_step(None, false, false), Unlock::DeviceKeyOnly);
     }
 
     #[test]

@@ -1513,7 +1513,7 @@ async function mockInvoke(cmd, args = {}) {
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
     case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false, unclaimed_profile: null, needs_account_folder: /[?&]claim\b/.test(location.search) });
-    case "account_resolve_unclaimed": mock.account.unclaimed_profile = { username: "ferris", display_name: "Ferris", servers: 3 }; return mock.account;
+    case "account_open_folder": mock.account.unclaimed_profile = { username: "ferris", display_name: "Ferris", servers: 3 }; return mock.account;
     case "account_claim_profile": mock.account.unclaimed_profile = null; mock.account.needs_account_folder = false; return mock.account;
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
@@ -18024,7 +18024,7 @@ async function boot() {
 
 async function openAccountFolder() {
   try {
-    account = await invoke("account_resolve_unclaimed");
+    account = await invoke("account_open_folder");
   } catch (e) {
     paintClaim(String(e));
     return;

@@ -57,16 +57,27 @@ fn keep_running_unsealed_if_nothing_is_sealed(dir: &Path, why: String) -> Result
 }
 
 fn stored_files(dir: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> =
-        SHARED_FILES.iter().map(|name| dir.join(name)).filter(|path| path.is_file()).collect();
-    files.extend(account_files(dir));
-    for account in account_folder::folders(dir) {
+    let mut files = device_sealed_files(dir);
+    for account in account_folder::folders(dir).into_iter().filter(|folder| account_folder::is_locked(folder)) {
         files.extend(account_files(&account));
     }
     files
 }
 
-fn account_files(dir: &Path) -> Vec<PathBuf> {
+fn device_sealed_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> =
+        SHARED_FILES.iter().map(|name| dir.join(name)).filter(|path| path.is_file()).collect();
+    files.extend(account_files(dir));
+    for account in account_folder::folders(dir) {
+        files.extend(account_folder::lock_files(&account));
+        if !account_folder::is_locked(&account) {
+            files.extend(account_files(&account));
+        }
+    }
+    files
+}
+
+pub fn account_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> =
         account_folder::SEALED_FILES.iter().map(|name| dir.join(name)).filter(|path| path.is_file()).collect();
     for sub in account_folder::SEALED_DIRS {
@@ -89,7 +100,7 @@ fn is_sealed_file(path: &Path) -> bool {
 
 fn seal_older_files(dir: &Path, key: &[u8; 32]) -> usize {
     let mut sealed = 0;
-    for path in stored_files(dir) {
+    for path in device_sealed_files(dir) {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };

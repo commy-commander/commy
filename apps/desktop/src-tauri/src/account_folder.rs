@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const ACCOUNTS_DIR: &str = "accounts";
@@ -154,6 +154,109 @@ pub fn claim(base: &Path, server: &str, account: &str, keep: bool) -> std::io::R
     Ok(dir)
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FolderLock {
+    pub lock_id: String,
+    pub wrapped: String,
+}
+
+fn lock_path(dir: &Path) -> PathBuf {
+    dir.with_extension("lock")
+}
+
+fn unlocked_path(dir: &Path) -> PathBuf {
+    dir.with_extension("unlocked")
+}
+
+fn resealing_path(dir: &Path) -> PathBuf {
+    dir.with_extension("resealing")
+}
+
+pub fn lock_files(dir: &Path) -> Vec<PathBuf> {
+    [lock_path(dir), unlocked_path(dir)].into_iter().filter(|path| path.is_file()).collect()
+}
+
+pub fn is_locked(dir: &Path) -> bool {
+    lock_path(dir).is_file()
+}
+
+pub fn read_lock(dir: &Path) -> Option<FolderLock> {
+    crate::persist::read_json(&lock_path(dir))
+}
+
+pub fn new_lock_id() -> String {
+    data_encoding::HEXLOWER.encode(&commy_net::CommyNode::generate_secret()[..16])
+}
+
+fn key_encryption_key(server_key: &str) -> Option<[u8; 32]> {
+    let bytes = data_encoding::HEXLOWER_PERMISSIVE.decode(server_key.trim().as_bytes()).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"commy-folder-kek:v1\n");
+    hasher.update(&bytes);
+    Some(hasher.finalize().into())
+}
+
+pub fn wrap(server_key: &str, lock_id: &str, folder_key: &[u8; 32]) -> Option<FolderLock> {
+    let kek = key_encryption_key(server_key)?;
+    let wrapped = data_encoding::HEXLOWER.encode(&commy_core::at_rest::seal_with(&kek, folder_key));
+    Some(FolderLock { lock_id: lock_id.to_string(), wrapped })
+}
+
+pub fn unwrap(server_key: &str, lock: &FolderLock) -> Option<[u8; 32]> {
+    let kek = key_encryption_key(server_key)?;
+    let sealed = data_encoding::HEXLOWER_PERMISSIVE.decode(lock.wrapped.as_bytes()).ok()?;
+    commy_core::at_rest::open_with(Some(&kek), sealed).ok()?.try_into().ok()
+}
+
+pub fn lock(dir: &Path, lock: &FolderLock, folder_key: &[u8; 32]) -> std::io::Result<usize> {
+    std::fs::write(resealing_path(dir), b"")?;
+    crate::persist::write_secret_json(&lock_path(dir), lock).map_err(std::io::Error::other)?;
+    reseal(dir, folder_key)
+}
+
+pub fn finish_resealing(dir: &Path, folder_key: &[u8; 32]) -> std::io::Result<usize> {
+    if !resealing_path(dir).exists() {
+        return Ok(0);
+    }
+    reseal(dir, folder_key)
+}
+
+fn reseal(dir: &Path, folder_key: &[u8; 32]) -> std::io::Result<usize> {
+    let mut moved = 0;
+    for path in crate::local_key::account_files(dir) {
+        match commy_core::at_rest::reseal_for_folder(&path, folder_key) {
+            Ok(true) => moved += 1,
+            Ok(false) => {}
+            Err(e) => tracing::warn!("could not move {} to the account key: {e}", path.display()),
+        }
+    }
+    std::fs::remove_file(resealing_path(dir))?;
+    Ok(moved)
+}
+
+pub fn cached_key(dir: &Path) -> Option<[u8; 32]> {
+    let hex = commy_core::at_rest::read_to_string(&unlocked_path(dir)).ok()?;
+    data_encoding::HEXLOWER.decode(hex.trim().as_bytes()).ok()?.try_into().ok()
+}
+
+pub fn remember_key(dir: &Path, folder_key: &[u8; 32]) {
+    let written = crate::persist::write_secret(&unlocked_path(dir), data_encoding::HEXLOWER.encode(folder_key).as_bytes());
+    if let Err(e) = written {
+        tracing::warn!("could not keep this account unlocked between starts: {e}");
+    }
+}
+
+pub fn forget_key(dir: &Path) {
+    if let Err(e) = std::fs::remove_file(unlocked_path(dir)) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!("could not forget this account's key: {e}");
+        }
+    }
+}
+
 pub fn show_window_on_next_start(base: &Path) {
     if let Err(e) = std::fs::write(base.join(SHOW_WINDOW_FILE), b"") {
         tracing::warn!("could not ask the next start to show the window: {e}");
@@ -268,6 +371,57 @@ mod tests {
         let again = claim(&base, SERVER, "user-a", true).unwrap();
         assert_eq!(crate::persist::load_profile(&again).unwrap().id, profile.id);
         assert!(unclaimed(&base).is_some());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_locked_folder_opens_only_with_the_servers_key() {
+        let base = base("lock");
+        let dir = folder(&base, SERVER, "user-a");
+        std::fs::create_dir_all(dir.join("servers")).unwrap();
+        std::fs::write(dir.join("dms.json"), b"{\"hi\":1}").unwrap();
+        std::fs::write(dir.join("servers").join("s.json"), b"{}").unwrap();
+        std::fs::write(dir.join("node.port"), b"4242").unwrap();
+
+        let server_key = "ab".repeat(32);
+        let folder_key = [5u8; 32];
+        let lock_id = new_lock_id();
+        assert_eq!(lock_id.len(), 32);
+        let made = wrap(&server_key, &lock_id, &folder_key).unwrap();
+        assert!(!made.wrapped.contains(&data_encoding::HEXLOWER.encode(&folder_key)));
+        assert_eq!(lock(&dir, &made, &folder_key).unwrap(), 2);
+        assert!(is_locked(&dir));
+        assert_eq!(read_lock(&dir).unwrap(), made);
+
+        let sealed = std::fs::read(dir.join("dms.json")).unwrap();
+        assert_eq!(commy_core::at_rest::open_with(Some(&folder_key), sealed.clone()).unwrap(), b"{\"hi\":1}");
+        assert!(commy_core::at_rest::open_with(Some(&[0u8; 32]), sealed).is_err());
+        assert_eq!(std::fs::read(dir.join("node.port")).unwrap(), b"4242");
+
+        assert_eq!(unwrap(&server_key, &made), Some(folder_key));
+        assert_eq!(unwrap(&"cd".repeat(32), &made), None, "another account's key does not open it");
+        assert_eq!(unwrap("short", &made), None);
+        assert_eq!(finish_resealing(&dir, &folder_key).unwrap(), 0);
+
+        assert_eq!(cached_key(&dir), None);
+        remember_key(&dir, &folder_key);
+        assert_eq!(cached_key(&dir), Some(folder_key));
+        forget_key(&dir);
+        assert_eq!(cached_key(&dir), None, "signing out forgets the key");
+        forget_key(&dir);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn an_interrupted_reseal_finishes_on_the_next_open() {
+        let base = base("reseal");
+        let dir = folder(&base, SERVER, "user-a");
+        std::fs::create_dir_all(&dir).unwrap();
+        let folder_key = [6u8; 32];
+        std::fs::write(dir.join("profile.json"), b"{}").unwrap();
+        std::fs::write(resealing_path(&dir), b"").unwrap();
+        assert_eq!(finish_resealing(&dir, &folder_key).unwrap(), 1);
+        assert!(!resealing_path(&dir).exists());
         let _ = std::fs::remove_dir_all(&base);
     }
 
