@@ -8364,6 +8364,8 @@ pub fn run() {
             account::account_begin_sign_in,
             account::account_cancel_sign_in,
             account::account_sign_out,
+            account::account_switch,
+            account::account_sign_out_other,
             account::account_claim_profile,
             account::account_open_folder,
             voice_stats,

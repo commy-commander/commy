@@ -29,6 +29,26 @@ function unclaimedProfileLine(profile, t) {
   return `${name}${handle} · ${servers}`;
 }
 
+function accountRows(account) {
+  if (!account || !account.signed_in || !account.user || !Array.isArray(account.others)) return [];
+  const current = { ...account.user, server: account.server, server_host: account.server_host, current: true };
+  return [current, ...account.others.map(other => ({ ...other, current: false }))];
+}
+
+function canAddAccount(account) {
+  const rows = accountRows(account);
+  return rows.length > 0 && rows.length < (account.max_accounts || 0);
+}
+
+function accountLine(row, account) {
+  return row.server === account.server ? row.email : `${row.email} · ${row.server_host}`;
+}
+
+function signOutPrompt(account, t) {
+  const next = accountRows(account).find(row => !row.current);
+  return next ? t("accounts.signOut.next", { name: next.name || next.email }) : t("accounts.signOut.last");
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine };
+  module.exports = { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt };
 }
