@@ -641,6 +641,10 @@ pub struct CommyNode {
 
 const ADDRESS_WAIT: Duration = Duration::from_secs(5);
 
+const PATH_IDLE_TIMEOUT: Duration = Duration::from_secs(6);
+
+const PATH_KEEP_ALIVE: Duration = Duration::from_secs(2);
+
 impl CommyNode {
     pub fn generate_secret() -> [u8; 32] {
         rand::random()
@@ -689,7 +693,11 @@ impl CommyNode {
         let builder = Endpoint::builder(iroh::endpoint::presets::N0);
         #[cfg(wasm_browser)]
         let builder = Endpoint::builder(iroh::endpoint::presets::Minimal);
-        let builder = builder.address_lookup(lookup.clone());
+        let transport = iroh::endpoint::QuicTransportConfig::builder()
+            .default_path_max_idle_timeout(PATH_IDLE_TIMEOUT)
+            .default_path_keep_alive_interval(PATH_KEEP_ALIVE)
+            .build();
+        let builder = builder.address_lookup(lookup.clone()).transport_config(transport);
         let mut builder = builder.relay_mode(relay_mode);
         if let Some(bytes) = secret {
             builder = builder.secret_key(iroh::SecretKey::from_bytes(&bytes));
