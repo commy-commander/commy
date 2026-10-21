@@ -351,6 +351,10 @@ pub enum ServerEvent {
         input: crate::activity::ActivityInput,
         by: UserId,
     },
+    ActivitiesSet {
+        server: ServerId,
+        enabled: bool,
+    },
 }
 
 #[cfg(test)]
@@ -427,6 +431,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::ActivitySet { server, channel, activity: None, by: user }), 81);
         let input = crate::activity::ActivityInput::Join;
         assert_eq!(wire_tag(ServerEvent::ActivityInput { server, channel, seq: 1, input, by: user }), 82);
+        assert_eq!(wire_tag(ServerEvent::ActivitiesSet { server, enabled: true }), 83);
     }
 
     #[test]

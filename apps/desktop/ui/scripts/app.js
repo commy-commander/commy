@@ -588,15 +588,19 @@ function mockEmojiCatalog(query = "", category = null, page = 0) {
   return { results: matches.slice(start, start + 60).map(({ id, title, url, animated }) => ({ id, title, url, animated })), more: matches.length > start + 60, categories };
 }
 
-function mockStickerSearch(query = "") {
-  const names = ["Happy Dance", "Sleepy Cat", "Thumbs Up", "Love You", "Party Time", "Good Morning", "So Sad", "Wow", "High Five", "Bye Bye", "Hugs", "LOL"];
+function mockStickerSearch(query = "", from = "stickers") {
+  const gifs = from === "gifs";
+  const names = gifs
+    ? ["Mic Drop", "Slow Clap", "Facepalm", "Dancing", "Mind Blown", "Eye Roll", "Nodding", "Shrug", "Cheers", "Sleepy", "Excited", "Nope"]
+    : ["Happy Dance", "Sleepy Cat", "Thumbs Up", "Love You", "Party Time", "Good Morning", "So Sad", "Wow", "High Five", "Bye Bye", "Hugs", "LOL"];
   const q = String(query || "").toLowerCase().trim();
-  return names
+  const results = names
     .map((title, i) => {
-      const url = mockEmojiFace((i * 53 + 20) % 360, ["M40 84 Q64 108 88 84", "M48 82 Q64 98 80 82"][i % 2], 8);
-      return { id: `mock-${i}`, title, preview: url, url, ratio: 1 };
+      const url = mockEmojiFace((i * 53 + (gifs ? 200 : 20)) % 360, ["M40 84 Q64 108 88 84", "M48 82 Q64 98 80 82"][i % 2], 8);
+      return { id: `mock-${from}-${i}`, title, preview: url, url, ratio: 1 };
     })
     .filter(s => !q || s.title.toLowerCase().includes(q));
+  return { results, more: false };
 }
 
 function mockTemplates() {
@@ -690,7 +694,7 @@ async function mockInvoke(cmd, args = {}) {
       const members = s.members.map(m => mockProfileFor({ username: m.username || m.name, nickname: m.nickname || null, priority_speaker: false, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
+        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: mock.user.custom_status || null, status_emoji: mock.user.status_emoji || null, about: mock.user.about || null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
         const vc = s.channels.find(c => isVoiceKind(c.kind) && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -1304,7 +1308,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "search_emoji_catalog": return mockEmojiCatalog(args.query, args.category, args.page);
     case "fetch_catalog_image": return args.url;
-    case "sticker_search": return mockStickerSearch(args.query);
+    case "sticker_search": return mockStickerSearch(args.query, args.from);
     case "store_catalog_sticker": {
       const blob = `ggs${Object.keys(mock.expressions || {}).length}@mock`;
       mock.expressions = { ...(mock.expressions || {}), [blob]: `data:image/png;base64,${args.data}` };
@@ -1368,6 +1372,7 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
+    case "set_activities_enabled": mock.servers[args.serverId].activities_enabled = args.enabled; return null;
     case "list_shareable_sounds":
       return Object.values(mock.servers).filter(s => s.sounds_shareable)
         .flatMap(s => (s.sounds || []).map(x => ({ server: s.id, server_name: s.name, name: x.name, blob: x.blob, volume: x.volume ?? 1, emoji: x.emoji || null })));
@@ -1381,6 +1386,7 @@ async function mockInvoke(cmd, args = {}) {
     case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, show_everyone: false, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11" });
     case "set_overlay_settings": mock.overlay = args.settings; return mock.overlay;
     case "overlay_hotkey_problems": return [];
+    case "preview_overlay": return null;
     case "get_integrations": return mock.integrations || { igdb_client_id: "", igdb_configured: false };
     case "get_stream_deck": return mock.streamDeck || (mock.streamDeck = { enabled: false, status: "off", decks: [] });
     case "set_stream_deck_enabled":
@@ -4165,9 +4171,9 @@ function renderProfilePopover() {
   av.appendChild(el("span", "presence-dot " + (user.presence || "online")));
   $("pp-name").textContent = name;
   $("pp-username").textContent = user.username;
-  $("pp-status").value = user.custom_status || "";
+  $("pp-status").value = decodeCustomEmojis(user.custom_status);
   const emojiBtn = $("pp-emoji");
-  if (user.status_emoji) emojiBtn.textContent = user.status_emoji;
+  if (user.status_emoji) setEmojiText(emojiBtn, user.status_emoji);
   else emojiBtn.replaceChildren(svgIcon("smile", 20));
   emojiBtn.classList.toggle("set", Boolean(user.status_emoji));
   $("pp-clear").classList.toggle("hidden", !(user.custom_status || user.status_emoji));
@@ -4611,7 +4617,8 @@ function renderMembers() {
   renderCamGrid();
 
   const sharers = new Set((state.currentServer.screen_shares || []).map(s => s.user));
-  renderPlayingNow(list, state.currentServer.members);
+  const { playing, rest } = splitPlaying(state.currentServer.members);
+  renderPlayingGroup(list, playing);
 
   const group = (title, members, dim, color) => {
     if (!members.length) return;
@@ -4660,7 +4667,7 @@ function renderMembers() {
         img.alt = "";
         line.appendChild(img);
       }
-      if (text) line.appendChild(el("span", "sub-text", text));
+      if (text) line.appendChild(appendEmojiText(el("span", "sub-text"), text));
       meta.appendChild(line);
       row.appendChild(meta);
       row.onclick = e => {
@@ -4676,7 +4683,7 @@ function renderMembers() {
       list.appendChild(row);
     }
   };
-  for (const g of groupMembers(state.currentServer.members, state.currentServer.roles)) group(g.title, g.members, !!g.dim, g.color);
+  for (const g of groupMembers(rest, state.currentServer.roles)) group(g.title, g.members, !!g.dim, g.color);
 }
 
 function sensitiveConfirmed() {
@@ -7541,7 +7548,7 @@ function activityCard(person) {
   const game = gameFromActivity(person.activity);
   const details = knownGames.get(gameKey(game));
   const art = activityArt(person, details);
-  const card = el("div", "activity-card");
+  const card = el("div", "play-card");
   const glow = el("div", "ac-glow");
   const glowSrc = igdbCover(art, "t_cover_big");
   if (glowSrc) glow.style.backgroundImage = `url("${glowSrc}")`;
@@ -7587,12 +7594,14 @@ function statusBesideGame(person) {
 function activityChip(member) {
   const game = gameFromActivity(member.activity);
   const details = knownGames.get(gameKey(game));
-  const chip = el("button", "activity-chip");
+  const chip = el("button", "now-card");
   chip.type = "button";
   chip.title = `${member.name} is playing ${game}`;
   const text = el("div", "acc-text");
   const who = el("div", "acc-who");
-  who.append(makeAvatar(member.id, member.name, "avatar acc-avatar"), el("span", null, member.name));
+  const name = el("span", null, member.name);
+  paintRole(name, member.color);
+  who.append(makeAvatar(member.id, member.name, "avatar acc-avatar"), name);
   text.append(who, el("div", "ac-game", game), activityTime(member));
   const cover = coverSlot("acc-cover", activityArt(member, details), "t_cover_small");
   chip.append(text, cover);
@@ -7600,6 +7609,12 @@ function activityChip(member) {
     e.stopPropagation();
     openMemberCard(member, chip);
   };
+  if (!state.user || member.id !== state.user.id) {
+    chip.oncontextmenu = e => {
+      e.preventDefault();
+      openMemberMenu(member, e.clientX, e.clientY);
+    };
+  }
   if (!details) {
     lookUpGame(game).then(found => {
       if (member.activity_cover) return;
@@ -7609,13 +7624,12 @@ function activityChip(member) {
   return chip;
 }
 
-function renderPlayingNow(list, members) {
-  const playing = playingNow(members, state.user && state.user.id);
+function renderPlayingGroup(list, playing) {
   if (!playing.length) return;
-  list.appendChild(el("div", "member-group", "Playing now"));
-  const strip = el("div", "playing-now");
-  for (const member of playing) strip.appendChild(activityChip(member));
-  list.appendChild(strip);
+  list.appendChild(el("div", "member-group", `Playing - ${playing.length}`));
+  const group = el("div", "playing-now");
+  for (const member of playing) group.appendChild(activityChip(member));
+  list.appendChild(group);
 }
 
 function renderIntegrations() {
@@ -8980,10 +8994,10 @@ async function openFullProfile(member) {
   $("fp-name").parentElement.querySelector(".role-tag")?.remove();
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = [person.username ? `@${person.username}` : "", person.pronouns || ""].filter(Boolean).join(" \u00b7 ");
-  $("fp-status").textContent = (isShowingActivity(person) ? statusBesideGame(person) : subLine(person)) || presenceLabel(person);
+  setEmojiText($("fp-status"), (isShowingActivity(person) ? statusBesideGame(person) : subLine(person)) || presenceLabel(person));
   showActivityIn($("fp-activity"), person);
   $("fp-about-wrap").classList.toggle("hidden", !person.about);
-  $("fp-about").textContent = person.about || "";
+  setEmojiText($("fp-about"), person.about);
   const servers = (state.people.get(person.id) || {}).servers || [];
   const own = !!state.user && person.id === state.user.id;
   $("fp-mutual-label").classList.toggle("hidden", own);
@@ -9095,7 +9109,7 @@ function openMemberCard(member, anchor) {
   status.replaceChildren();
   const playing = isShowingActivity(member);
   if (playing) {
-    status.textContent = statusBesideGame(member) || presenceLabel(member);
+    setEmojiText(status, statusBesideGame(member) || presenceLabel(member));
   } else {
     const line = subLine(member);
     const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
@@ -9104,7 +9118,7 @@ function openMemberCard(member, anchor) {
       img.src = cover;
       status.appendChild(img);
     }
-    status.appendChild(document.createTextNode(line || presenceLabel(member)));
+    appendEmojiText(status, line || presenceLabel(member));
     if (member.activity && member.activity_since) {
       status.appendChild(document.createTextNode(" · "));
       status.appendChild(liveElapsed(member.activity_since, "words"));
@@ -9124,7 +9138,7 @@ function openMemberCard(member, anchor) {
   $("mc-roles-label").classList.toggle("hidden", !held.length);
   const isMe = state.user && member.id === state.user.id;
   $("mc-about").classList.toggle("hidden", !member.about);
-  $("mc-about").textContent = member.about || "";
+  setEmojiText($("mc-about"), member.about);
   const actions = $("mc-actions");
   actions.replaceChildren();
   const more = $("mc-more");
@@ -10491,6 +10505,25 @@ function encodeCustomEmojis(text) {
   });
 }
 
+function appendEmojiText(node, text) {
+  const value = String(text || "");
+  EMOJI_TOKEN_RE.lastIndex = 0;
+  let last = 0;
+  let m;
+  while ((m = EMOJI_TOKEN_RE.exec(value))) {
+    if (m.index > last) node.appendChild(document.createTextNode(value.slice(last, m.index)));
+    node.appendChild(customEmojiImg(m[1], m[2], "custom-emoji profile-emoji"));
+    last = m.index + m[0].length;
+  }
+  if (last < value.length) node.appendChild(document.createTextNode(value.slice(last)));
+  return node;
+}
+
+function setEmojiText(node, text) {
+  node.replaceChildren();
+  return appendEmojiText(node, text);
+}
+
 function appendRichText(div, text) {
   EMOJI_TOKEN_RE.lastIndex = 0;
   let last = 0;
@@ -10577,7 +10610,10 @@ const CATALOG_PICKER = {
   },
   klipy: {
     label: "KLIPY", slots: 9, cls: "sticker-tile catalog-sticker", external: false,
-    search: async q => (await invoke("sticker_search", { query: q })) || [],
+    search: async q => {
+      const page = await invoke("sticker_search", { query: q, from: "stickers", page: 1 });
+      return page ? page.results : [];
+    },
     use: (item, slot) => useCatalogSticker(item, slot),
   },
 };
@@ -10848,7 +10884,7 @@ function renderStickerSettings(server) {
   $("sticker-share-row").classList.toggle("readonly", !server.can_manage_server);
   $("sticker-upload").classList.toggle("hidden", !server.can_add_stickers);
   $("sticker-upload").disabled = stickers.length >= MAX_STICKERS;
-  $("sticker-browse").classList.toggle("hidden", !server.can_add_stickers || !account.server_emojis);
+  $("sticker-browse").classList.toggle("hidden", !server.can_add_stickers || !syncCatalogBrowse());
   $("sticker-browse").disabled = stickers.length >= MAX_STICKERS;
   renderRoleAccess(server, "stickers");
   renderImageExpressions(server, {
@@ -12516,12 +12552,19 @@ function renderActivityUi() {
   renderVoicePanelActivity();
 }
 
+function voiceServerAllowsActivities() {
+  const vs = state.voiceServer;
+  if (!vs || !vs.id) return false;
+  const current = state.currentServer && state.currentServer.id === vs.id ? state.currentServer : null;
+  return Boolean(current ? current.activities_enabled : vs.activities_enabled);
+}
+
 function renderVoicePanelActivity() {
   const btn = $("vp-activities");
   if (!btn) return;
   const run = activityUi.run;
   const vs = state.voiceServer;
-  btn.classList.toggle("hidden", !vs || Boolean(vs.call));
+  btn.classList.toggle("hidden", !vs || Boolean(vs.call) || (!run && !voiceServerAllowsActivities()));
   $("vp-actions").classList.toggle("solo", btn.classList.contains("hidden"));
   btn.classList.toggle("running", Boolean(run));
   const info = run ? activityKindInfo(run.activity) : null;
@@ -12955,6 +12998,7 @@ async function selectServer(serverId) {
   setViewMode("server");
   state.currentDm = null;
   if (state.currentServer.group) rememberSwitcherRecent(`group:${serverId}`);
+  if (state.voiceServer && state.voiceServer.id === serverId) state.voiceServer.activities_enabled = Boolean(state.currentServer.activities_enabled);
   const firstText = state.currentServer.channels.find(c => c.kind === "text" && c.can_view !== false);
   renderServerRail();
   renderMembers();
@@ -13240,7 +13284,7 @@ async function renderDmThreads() {
       const meta = el("div", "dm-meta");
       meta.appendChild(el("div", "dm-name", friend.name));
       const person = state.people.get(friend.id);
-      meta.appendChild(el("div", "dm-preview", (person && statusLine(person)) || PRESENCE_LABELS[personPresence(friend.id)] || "Offline"));
+      meta.appendChild(appendEmojiText(el("div", "dm-preview"), (person && statusLine(person)) || PRESENCE_LABELS[personPresence(friend.id)] || "Offline"));
       row.appendChild(meta);
       row.onclick = () => messageUser(friend.id, friend.name);
       row.oncontextmenu = e => {
@@ -13482,7 +13526,7 @@ function renderDmHeader(userId, name) {
   const person = state.people.get(userId);
   $("chat-presence").className = `presence-dot inline ${presence}`;
   $("chat-presence").title = presenceLabel({ ...(person || {}), presence });
-  $("channel-topic").textContent = (person && subLine(person)) || "";
+  setEmojiText($("channel-topic"), (person && subLine(person)) || "");
   renderDmProfile(userId, name);
 }
 
@@ -13497,7 +13541,7 @@ function renderDmProfile(userId, name) {
   $("dm-profile-banner").style.background = bannerColor(userId);
   $("dm-profile-name").textContent = name;
   const seen = { ...(person || {}), presence };
-  $("dm-profile-status").textContent = (person && (isShowingActivity(seen) ? statusBesideGame(seen) : subLine(seen))) || presenceLabel(seen);
+  setEmojiText($("dm-profile-status"), (person && (isShowingActivity(seen) ? statusBesideGame(seen) : subLine(seen))) || presenceLabel(seen));
   showActivityIn($("dm-profile-activity"), person && seen);
   const servers = person ? person.servers : [];
   $("dm-profile-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
@@ -14387,7 +14431,7 @@ async function toggleVoice(channel) {
     }
     state.voiceServer = leaving
       ? null
-      : { id: state.currentServer.id, name: state.currentServer.name, channelName: channel.name };
+      : { id: state.currentServer.id, name: state.currentServer.name, channelName: channel.name, activities_enabled: Boolean(state.currentServer.activities_enabled) };
     if (leaving) {
       state.sharing = false;
       state.shareSource = null;
@@ -15085,6 +15129,18 @@ function wireEvents() {
       openServerSettings();
     }
   });
+  $("server-activities-toggle").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_activities_enabled", { serverId: server.id, enabled: e.target.checked });
+      server.activities_enabled = e.target.checked;
+      renderVoicePanelActivity();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  });
   $("server-public-toggle").addEventListener("change", async e => {
     const server = state.currentServer;
     if (!server) return;
@@ -15197,7 +15253,7 @@ function wireEvents() {
     try {
       state.user = await invoke("update_profile", {
         displayName: $("account-display-name").value || null,
-        customStatus: $("account-status").value || null,
+        customStatus: encodeCustomEmojis($("account-status").value) || null,
         presence: $("account-presence").value,
       });
       renderUserPanel();
@@ -15358,18 +15414,18 @@ function wireEvents() {
   };
   $("pp-emoji").onclick = e => {
     e.stopPropagation();
-    openEmojiPop(e.currentTarget, emoji => saveOwnProfile({ statusEmoji: emoji }));
+    openEmojiPop(e.currentTarget, emoji => saveOwnProfile({ statusEmoji: emoji }), { custom: true });
   };
   $("pp-status").addEventListener("keydown", e => {
     if (e.key === "Enter") e.target.blur();
     if (e.key === "Escape") {
-      e.target.value = state.user.custom_status || "";
+      e.target.value = decodeCustomEmojis(state.user.custom_status);
       e.target.blur();
     }
   });
   $("pp-status").addEventListener("blur", e => {
     const value = e.target.value.trim();
-    if (value !== (state.user.custom_status || "")) saveOwnProfile({ customStatus: value || null });
+    if (value !== decodeCustomEmojis(state.user.custom_status)) saveOwnProfile({ customStatus: encodeCustomEmojis(value) || null });
   });
   $("pp-clear").onclick = async () => {
     await saveOwnProfile({ customStatus: null, statusEmoji: "" });
@@ -15443,7 +15499,7 @@ function wireEvents() {
   });
   $("account-about").addEventListener("change", async e => {
     try {
-      state.user = await invoke("set_about", { about: e.target.value });
+      state.user = await invoke("set_about", { about: encodeCustomEmojis(e.target.value) });
       toast("About Me saved");
     } catch (err) {
       toast(String(err));
@@ -15457,6 +15513,7 @@ function wireEvents() {
   });
   $("overlay-test").addEventListener("click", async () => {
     await saveOverlaySettings({});
+    await invoke("preview_overlay");
     setTimeout(() => emitToOverlay("overlay-test", null), 500);
   });
   $("overlay-everyone").addEventListener("change", e => saveOverlaySettings({ show_everyone: e.target.checked }));
@@ -15502,11 +15559,11 @@ function wireEvents() {
   $("account-banner-remove").onclick = () => saveAccountBanner(null);
   $("account-banner-remove").appendChild(svgIcon("close", 14));
   $("account-banner-upload").firstElementChild.appendChild(svgIcon("plus", 14));
-  $("account-status-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("account-status"), picked));
+  $("account-status-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("account-status"), picked), { custom: true });
   $("account-about-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => {
     insertEmojiInName($("account-about"), picked);
     $("account-about").dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  }, { custom: true });
   $("avatar-upload").onclick = async () => {
     $("avatar-menu").classList.add("hidden");
     try {
@@ -16537,7 +16594,19 @@ function openAddExpression(kind) {
   else openCatalog(kind);
 }
 
-const catalog = { kind: "emojis", query: "", category: null, page: 0, results: [], picked: null, seq: 0, timer: null, busy: false };
+const catalog = { kind: "emojis", source: "emoji.gg", query: "", category: null, page: 0, results: [], picked: null, seq: 0, timer: null, busy: false };
+const KLIPY_CATALOG_CHIPS = [{ id: null, name: "Stickers" }, { id: "gifs", name: "GIFs" }];
+
+function catalogSource(kind) {
+  if (kind === "stickers" && account.server_stickers) return "KLIPY";
+  return account.server_emojis ? "emoji.gg" : null;
+}
+
+function syncCatalogBrowse() {
+  const source = catalogSource("stickers");
+  $("sticker-browse").textContent = `Browse ${source || "KLIPY"}`;
+  return source;
+}
 const CATALOG_SIZES = {
   emojis: { size: 128, maxGif: 256 * 1024, command: "add_emoji", max: MAX_EMOJIS, list: "emojis" },
   stickers: { size: 320, maxGif: 512 * 1024, command: "add_sticker", max: MAX_STICKERS, list: "stickers" },
@@ -16547,20 +16616,22 @@ function openCatalog(kind, { upload = false } = {}) {
   const server = state.currentServer;
   if (!server) return;
   closeFloating();
-  Object.assign(catalog, { kind, query: "", category: null, page: 0, results: [], picked: null, busy: false });
+  const source = catalogSource(kind);
+  Object.assign(catalog, { kind, source, query: "", category: null, page: 0, results: [], picked: null, busy: false });
   $("catalog-title").textContent = kind === "stickers" ? "Add a sticker" : "Add an emoji";
   $("catalog-search").value = "";
-  $("catalog-search").placeholder = kind === "stickers" ? "Search emoji.gg for a sticker" : "Search emoji.gg";
+  $("catalog-search").placeholder = source === "KLIPY" ? "Search KLIPY stickers and GIFs" : "Search emoji.gg";
+  $("catalog-attrib-source").textContent = source || "emoji.gg";
+  $("catalog-chips").replaceChildren();
   renderCatalogPick();
   showModal("modal-catalog");
-  if (account.server_emojis) {
+  if (source) {
     $("catalog-search").disabled = false;
     $("catalog-search").focus();
     loadCatalog();
   } else {
     $("catalog-search").disabled = true;
-    $("catalog-chips").replaceChildren();
-    $("catalog-grid").replaceChildren(el("div", "catalog-note", "Sign in to an account server with emoji search to browse emoji.gg. You can still upload an image."));
+    $("catalog-grid").replaceChildren(el("div", "catalog-note", "Sign in to an account server with image search to browse. You can still upload an image."));
   }
   if (upload) uploadToCatalog();
 }
@@ -16568,11 +16639,16 @@ function openCatalog(kind, { upload = false } = {}) {
 async function loadCatalog(append = false) {
   const seq = ++catalog.seq;
   const grid = $("catalog-grid");
-  if (!append) grid.replaceChildren(el("div", "catalog-note", "Loading emoji.gg"));
+  if (!append) grid.replaceChildren(el("div", "catalog-note", `Loading ${catalog.source}`));
   try {
-    const page = await invoke("search_emoji_catalog", { query: catalog.query, category: catalog.category, page: catalog.page });
+    const klipy = catalog.source === "KLIPY";
+    const page = klipy
+      ? (await invoke("sticker_search", { query: catalog.query, from: catalog.category || "stickers", page: catalog.page + 1 })) || { results: [] }
+      : await invoke("search_emoji_catalog", { query: catalog.query, category: catalog.category, page: catalog.page });
     if (seq !== catalog.seq) return;
-    if (!$("catalog-chips").childElementCount) renderCatalogChips(page.categories || []);
+    if (!$("catalog-chips").childElementCount) {
+      renderCatalogChips(klipy ? KLIPY_CATALOG_CHIPS : [{ id: null, name: "Popular" }, ...(page.categories || [])]);
+    }
     catalog.results = append ? catalog.results.concat(page.results) : page.results;
     renderCatalogGrid(Boolean(page.more));
   } catch (e) {
@@ -16583,7 +16659,7 @@ async function loadCatalog(append = false) {
 function renderCatalogChips(categories) {
   const row = $("catalog-chips");
   row.replaceChildren();
-  for (const c of [{ id: null, name: "Popular" }, ...categories]) {
+  for (const c of categories) {
     const chip = el("button", "catalog-chip" + (c.id === catalog.category ? " active" : ""), c.name);
     chip.type = "button";
     chip.onclick = () => {
@@ -16607,7 +16683,7 @@ function renderCatalogGrid(more) {
     img.loading = "lazy";
     img.alt = item.title;
     img.draggable = false;
-    img.src = viaAccountServer(item.url);
+    img.src = viaAccountServer(item.preview || item.url);
     img.onerror = () => tile.classList.add("missing");
     tile.appendChild(img);
     if (item.animated) tile.appendChild(el("span", "catalog-gif", "GIF"));
@@ -16619,7 +16695,7 @@ function renderCatalogGrid(more) {
     };
     grid.appendChild(tile);
   }
-  if (!catalog.results.length) grid.appendChild(el("div", "catalog-note", "Nothing on emoji.gg matches that"));
+  if (!catalog.results.length) grid.appendChild(el("div", "catalog-note", `Nothing on ${catalog.source} matches that`));
   if (more) {
     const next = el("button", "btn-secondary btn-small catalog-more", "Load More");
     next.onclick = () => {
@@ -16897,7 +16973,7 @@ function openUserSettings(tab) {
   renderSoundSettings();
   loadSafety().then(renderSafetySettings);
   loadStorageSettings().then(renderStorageSettings);
-  $("account-about").value = state.user.about || "";
+  $("account-about").value = decodeCustomEmojis(state.user.about);
   $("account-pronouns").value = state.voice.pronouns || "";
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();
@@ -16919,7 +16995,7 @@ function openUserSettings(tab) {
   renderVoiceInputSettings();
   startMicMeter();
   $("account-display-name").value = state.user.display_name || "";
-  $("account-status").value = state.user.custom_status || "";
+  $("account-status").value = decodeCustomEmojis(state.user.custom_status);
   $("account-presence").value = state.user.presence || "online";
   $("account-avatar").replaceChildren();
   paintAvatar($("account-avatar"), state.user.id, state.user.display_name || state.user.username);
@@ -17129,6 +17205,9 @@ function openServerSettings(tab) {
   $("server-public-toggle").checked = Boolean(server.public);
   $("server-public-toggle").disabled = !server.can_manage_server;
   $("server-public-row").classList.toggle("readonly", !server.can_manage_server);
+  $("server-activities-toggle").checked = Boolean(server.activities_enabled);
+  $("server-activities-toggle").disabled = !server.can_manage_server;
+  $("server-activities-row").classList.toggle("readonly", !server.can_manage_server);
   discoveryState.dirty = false;
   paintDiscoverySettings(server);
   $("server-template-section").classList.toggle("hidden", !server.can_manage_server);
@@ -17922,6 +18001,7 @@ async function refreshCurrentServer() {
   renderMembers();
   renderChannels();
   refreshVoiceInviteCards();
+  renderVoicePanelActivity();
   syncRulesGate();
   syncAwaitedBar();
   syncAttachAccess();

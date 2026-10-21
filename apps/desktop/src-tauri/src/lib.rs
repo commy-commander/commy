@@ -764,6 +764,10 @@ async fn carry_expressions(app: &App, content: String, local: &std::collections:
     out
 }
 
+async fn carry_profile_emojis(app: &App, text: String) -> String {
+    carry_expressions(app, text, &std::collections::HashSet::new()).await
+}
+
 fn signed_fits_one_gossip_frame(signed: &Message) -> bool {
     let wire = WirePayload::Event(ServerEvent::MessageCreate { message: signed.clone() });
     commy_net::protocol::gossip_size(&wire) <= commy_net::protocol::MAX_GOSSIP_BYTES
@@ -2997,6 +3001,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     if state.server.sounds_shareable && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::SoundSharingSet { server: sid, shareable: true });
     }
+    if state.server.activities_enabled && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::ActivitiesSet { server: sid, enabled: true });
+    }
     let sharing = state.server.stickers_shareable || state.server.emoticons_shareable;
     if sharing && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ExpressionSharingSet {
@@ -3338,16 +3345,21 @@ async fn update_profile(
     let status_emoji = match status_emoji.map(|e| e.trim().to_string()) {
         None => None,
         Some(e) if e.is_empty() => Some(None),
-        Some(e) if commy_core::user::is_emoji_like(&e) => Some(Some(e)),
+        Some(e) if commy_core::user::valid_status_emoji(&e) => Some(Some(carry_profile_emojis(&app, e).await)),
         Some(_) => return Err("status emoji must be a single emoji".into()),
     };
     let clean = |s: Option<String>| {
         s.map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && s.len() <= 64)
+            .filter(|s| !s.is_empty() && commy_core::user::rich_text_fits(s, commy_core::user::MAX_STATUS_CHARS))
     };
+    let custom_status = match clean(custom_status) {
+        Some(status) => Some(carry_profile_emojis(&app, status).await),
+        None => None,
+    };
+    let display_name = clean(display_name).filter(|name| name.len() <= 64);
     let profile = edit_profile(&app, |profile| {
-        profile.display_name = clean(display_name);
-        profile.custom_status = clean(custom_status);
+        profile.display_name = display_name;
+        profile.custom_status = custom_status;
         if presence != profile.presence {
             profile.presence_until = None;
         }
@@ -4073,7 +4085,7 @@ fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
         let visible = !app.overlay_visible.load(std::sync::atomic::Ordering::Relaxed);
         tracing::info!("overlay hotkey: {}", if visible { "show" } else { "hide" });
         app.overlay_visible.store(visible, std::sync::atomic::Ordering::Relaxed);
-        overlay::apply(handle, &settings, visible);
+        overlay::refresh(handle);
     } else if hotkey_id(&settings.chat_hotkey) == Some(id) {
         let settings = app.update_voice(|voice| voice.overlay.show_chat = !voice.overlay.show_chat).overlay;
         let _ = handle.emit_to(overlay::LABEL, "overlay-config", &settings);
@@ -4109,16 +4121,36 @@ async fn set_overlay_settings(
         app.overlay_visible.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     register_hotkeys(&handle, &voice);
-    overlay::apply(&handle, &settings, app.overlay_visible.load(std::sync::atomic::Ordering::Relaxed));
+    overlay::refresh(&handle);
     Ok(settings)
+}
+
+#[tauri::command]
+fn preview_overlay(app: tauri::State<'_, App>, handle: tauri::AppHandle) {
+    use std::sync::atomic::Ordering::Relaxed;
+    if !app.voice.lock().unwrap().overlay.enabled {
+        return;
+    }
+    app.overlay_preview.store(true, Relaxed);
+    overlay::refresh(&handle);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+        handle.state::<App>().overlay_preview.store(false, Relaxed);
+        overlay::refresh(&handle);
+    });
 }
 
 #[tauri::command]
 async fn set_about(app: tauri::State<'_, App>, handle: tauri::AppHandle, about: String) -> CmdResult<UserProfile> {
     let about = about.trim().to_string();
-    if about.chars().count() > commy_core::user::MAX_ABOUT_CHARS {
-        return Err(format!("About Me can be up to {} characters", commy_core::user::MAX_ABOUT_CHARS));
+    if !commy_core::user::rich_text_fits(&about, commy_core::user::MAX_ABOUT_CHARS) {
+        return Err(format!(
+            "About Me can be up to {} characters and {} custom emojis",
+            commy_core::user::MAX_ABOUT_CHARS,
+            commy_core::user::MAX_PROFILE_EMOJIS
+        ));
     }
+    let about = carry_profile_emojis(&app, about).await;
     let profile = edit_profile(&app, |profile| profile.about = (!about.is_empty()).then_some(about))?;
     publish_profile(&app, &handle, &profile).await;
     Ok(profile)
@@ -5893,15 +5925,33 @@ struct StickerHit {
     title: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StickerPage {
+    results: Vec<StickerHit>,
+    #[serde(default)]
+    more: bool,
+}
+
 #[tauri::command]
-async fn sticker_search(app: tauri::State<'_, App>, query: String) -> CmdResult<Option<Vec<StickerHit>>> {
+async fn sticker_search(
+    app: tauri::State<'_, App>,
+    query: String,
+    from: Option<String>,
+    page: Option<u32>,
+) -> CmdResult<Option<StickerPage>> {
     let query = safety::truncate(query.trim(), 100);
-    let hits = account::server_search::<StickerHit>(&app, "stickers", &query).await?;
-    Ok(hits.map(|hits| {
-        hits.into_iter()
+    let from = if from.as_deref() == Some("gifs") { "gifs" } else { "stickers" };
+    let page = page.unwrap_or(1).clamp(1, 20).to_string();
+    let params = [("q", query.as_str()), ("from", from), ("page", page.as_str())];
+    let found: Option<StickerPage> = account::server_search_with(&app, "stickers", &params).await?;
+    Ok(found.map(|found| StickerPage {
+        results: found
+            .results
+            .into_iter()
             .filter(|s| catalog_source(&s.url) == Some("KLIPY") && catalog_source(&s.preview) == Some("KLIPY"))
             .map(|s| StickerHit { id: safety::truncate(&s.id, 120), title: safety::truncate(&s.title, 200), ..s })
-            .collect()
+            .collect(),
+        more: found.more,
     }))
 }
 
@@ -6045,6 +6095,21 @@ async fn set_sound_sharing(
     let me = current_profile(&app)?;
     manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change sound sharing")?;
     apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundSharingSet { server: sid, shareable }).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_activities_enabled(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    enabled: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "turn Activities on or off")?;
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ActivitiesSet { server: sid, enabled }).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
@@ -6418,6 +6483,9 @@ async fn set_activity(
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_not_timed_out(state, me.id)?;
+        if activity.is_some() && !state.server.activities_enabled {
+            return Err("Activities are turned off in this server's settings".into());
+        }
         if activity.as_ref().is_some_and(|a| !a.valid()) {
             return Err("paste a direct https link to an .mp4, .webm or .ogg file".into());
         }
@@ -6792,6 +6860,10 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
             if let Some(game) = text.strip_prefix("Playing ") {
                 *app.last_game.lock().unwrap() = Some((pid, game.to_string()));
             }
+        }
+        let in_game = seen.as_deref().is_some_and(|text| text.starts_with("Playing "));
+        if app.game_in_front.swap(in_game, std::sync::atomic::Ordering::Relaxed) != in_game {
+            overlay::refresh(&handle);
         }
         let seen = if enabled { seen } else { None };
         let stable = if !enabled || seen_last_poll == seen {
@@ -7967,7 +8039,7 @@ pub fn run() {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     let voice = handle.state::<App>().voice.lock().unwrap().clone();
                     register_hotkeys(&handle, &voice);
-                    overlay::apply(&handle, &voice.overlay, true);
+                    overlay::refresh(&handle);
                 });
             }
             updater::init(&handle);
@@ -8270,6 +8342,7 @@ pub fn run() {
             mic_level,
             send_typing,
             set_overlay_settings,
+            preview_overlay,
             set_game_tags,
             set_rules,
             set_automod,
@@ -8306,6 +8379,7 @@ pub fn run() {
             set_sound_emoji,
             set_expression_settings,
             set_sound_sharing,
+            set_activities_enabled,
             set_role_access,
             add_sticker,
             remove_sticker,

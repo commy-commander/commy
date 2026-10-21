@@ -403,7 +403,7 @@
       <div class="dm-profile-card">
         <div class="dm-profile-name" id="dm-profile-name"></div>
         <div class="dm-profile-status" id="dm-profile-status"></div>
-        <div class="activity-box hidden" id="dm-profile-activity"></div>
+        <div class="play-box hidden" id="dm-profile-activity"></div>
         <div class="dm-profile-divider"></div>
         <div class="dm-profile-label" id="dm-profile-mutual-label">Mutual Servers</div>
         <div class="dm-profile-servers" id="dm-profile-servers"></div>
@@ -648,7 +648,7 @@
         <button class="btn-secondary btn-small" id="catalog-upload">Upload Image</button>
         <button class="btn-primary btn-small" id="catalog-add" disabled>Add</button>
       </div>
-      <div class="catalog-attrib">Images from <strong>emoji.gg</strong>, loaded through your account server.</div>
+      <div class="catalog-attrib">Images from <strong id="catalog-attrib-source">emoji.gg</strong>, loaded through your account server.</div>
     </div>
 
     <div class="modal hidden" id="modal-emoticon">
@@ -855,7 +855,7 @@
         <div class="fp-name-row"><span class="fp-name" id="fp-name"></span></div>
         <div class="fp-username" id="fp-username"></div>
         <div class="fp-status" id="fp-status"></div>
-        <div class="activity-box hidden" id="fp-activity"></div>
+        <div class="play-box hidden" id="fp-activity"></div>
         <div class="fp-section hidden" id="fp-about-wrap">
           <div class="mc-label">About Me</div>
           <div class="fp-about" id="fp-about"></div>
@@ -1601,7 +1601,7 @@
           <label class="settings-card setting-row">
             <div>
               <div class="setting-title">Enable in-game overlay</div>
-              <div class="setting-sub">A small see-through overlay in a corner of your screen that shows who is talking and recent messages, then gets out of the way. It never takes focus or clicks from your game.</div>
+              <div class="setting-sub">A small see-through overlay in a corner of your screen that shows who is talking and recent messages, then gets out of the way. It only appears while a game is in front, and never takes focus or clicks from it.</div>
             </div>
             <input type="checkbox" id="overlay-enabled" class="switch" />
           </label>
@@ -2087,6 +2087,14 @@
               <option value="60">1 hour</option>
             </select>
           </div>
+          <h2 class="settings-subhead">Activities</h2>
+          <label class="settings-card setting-row" id="server-activities-row">
+            <div>
+              <div class="setting-title">Activities in voice channels</div>
+              <div class="setting-sub">Lets people in a voice channel start Watch together or Tic-tac-toe for everyone in the call. Off until you turn it on.</div>
+            </div>
+            <input type="checkbox" id="server-activities-toggle" class="switch" />
+          </label>
           <div id="server-template-section">
             <h2 class="settings-subhead">Template</h2>
             <div class="settings-card setting-row">
@@ -2214,7 +2222,7 @@
           </label>
           <div class="settings-card upload-access" id="sticker-access"></div>
           <div class="expr-toolbar">
-            <button class="btn-primary btn-small" id="sticker-browse">Browse emoji.gg</button>
+            <button class="btn-primary btn-small" id="sticker-browse">Browse KLIPY</button>
             <button class="btn-secondary btn-small" id="sticker-upload">Upload Sticker</button>
             <span class="expr-count" id="sticker-count"></span>
           </div>
@@ -2481,7 +2489,7 @@
       <div class="mc-name-row"><span class="mc-name" id="mc-name"></span></div>
       <div class="mc-username hidden" id="mc-username"></div>
       <div class="mc-status" id="mc-status"></div>
-      <div class="activity-box hidden" id="mc-activity"></div>
+      <div class="play-box hidden" id="mc-activity"></div>
       <div class="mc-actions" id="mc-actions"></div>
       <div class="mc-about hidden" id="mc-about"></div>
       <div class="mc-label hidden" id="mc-roles-label">Roles</div>

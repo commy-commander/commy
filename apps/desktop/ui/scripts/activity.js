@@ -1,6 +1,5 @@
 const PLAYING_PREFIX = "Playing ";
 const MAX_STEAM_APP_ID = 0xffffffff;
-const PLAYING_NOW_LIMIT = 4;
 
 function gameFromActivity(activity) {
   const text = typeof activity === "string" ? activity : "";
@@ -19,12 +18,13 @@ function isShowingActivity(person) {
   return !!person && person.presence !== "offline" && person.presence !== "invisible" && !!gameFromActivity(person.activity);
 }
 
-function playingNow(members, meId, limit = PLAYING_NOW_LIMIT) {
+function splitPlaying(members) {
   const since = m => Number(m.activity_since) || Number.MAX_SAFE_INTEGER;
-  return (members || [])
-    .filter(m => m.id !== meId && !m.bot && isShowingActivity(m))
-    .sort((a, b) => since(a) - since(b) || String(a.name).localeCompare(String(b.name)))
-    .slice(0, limit);
+  const playing = [];
+  const rest = [];
+  for (const m of members || []) (!m.bot && isShowingActivity(m) ? playing : rest).push(m);
+  playing.sort((a, b) => since(a) - since(b) || String(a.name).localeCompare(String(b.name)));
+  return { playing, rest };
 }
 
 function activityArt(person, details) {
@@ -33,5 +33,5 @@ function activityArt(person, details) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { gameFromActivity, steamStoreUrl, isShowingActivity, playingNow, activityArt, PLAYING_NOW_LIMIT };
+  module.exports = { gameFromActivity, steamStoreUrl, isShowingActivity, splitPlaying, activityArt };
 }

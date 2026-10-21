@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { gameFromActivity, steamStoreUrl, isShowingActivity, playingNow, activityArt, PLAYING_NOW_LIMIT } = require("../scripts/activity.js");
+const { gameFromActivity, steamStoreUrl, isShowingActivity, splitPlaying, activityArt } = require("../scripts/activity.js");
 
 const player = (id, game, since, extra = {}) => ({ id, name: id, presence: "online", activity: `Playing ${game}`, activity_since: since, ...extra });
 
@@ -27,24 +27,32 @@ test("offline and invisible people never show a game", () => {
   assert.equal(isShowingActivity({ id: "a", presence: "online", activity: "Using Notepad" }), false);
 });
 
-test("playing now lists other people in a game, longest session first, without you or bots", () => {
+test("people in a game get their own group, longest session first, and leave the rest of the list", () => {
   const members = [
     player("me", "Celeste", 10),
     player("late", "Portal 2", 300),
     player("early", "Hollow Knight", 100),
     player("bot", "Celeste", 1, { bot: true }),
     { id: "idle", name: "idle", presence: "idle", activity: null },
+    player("gone", "Celeste", 5, { presence: "offline" }),
   ];
-  assert.deepEqual(playingNow(members, "me").map(m => m.id), ["early", "late"]);
-});
-
-test("playing now is capped so the people list keeps its shape", () => {
-  const crowd = Array.from({ length: 9 }, (_, i) => player(`p${i}`, "Celeste", 100 + i));
-  assert.equal(playingNow(crowd, null).length, PLAYING_NOW_LIMIT);
+  const { playing, rest } = splitPlaying(members);
+  assert.deepEqual(playing.map(m => m.id), ["me", "early", "late"]);
+  assert.deepEqual(rest.map(m => m.id), ["bot", "idle", "gone"]);
+  assert.equal(playing.length + rest.length, members.length);
 });
 
 test("the player's own cover wins, and a looked-up cover fills in when they sent none", () => {
   assert.equal(activityArt({ activity_cover: "co1" }, { cover: "co2" }), "co1");
   assert.equal(activityArt({}, { cover: "co2" }), "co2");
   assert.equal(activityArt({}, null), null);
+});
+
+test("the game cards and the Activities picker cards each own their class names, so neither restyles the other", async () => {
+  const { readFileSync } = await import("node:fs");
+  const css = readFileSync(new URL("../styles/styles.css", import.meta.url), "utf8");
+  for (const name of ["activity-card", "activity-chip", "play-card", "now-card", "play-box"]) {
+    const heads = css.match(new RegExp(`^\\.${name} \\{`, "gm")) || [];
+    assert.equal(heads.length, 1, `.${name} is declared ${heads.length} times`);
+  }
 });

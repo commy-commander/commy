@@ -317,6 +317,7 @@ pub struct ServerView {
     pub can_use_external: bool,
     pub soundboard_open: bool,
     pub sounds_shareable: bool,
+    pub activities_enabled: bool,
     pub uploads_restricted: bool,
     pub can_attach_files: bool,
     pub can_send_voice_messages: bool,
@@ -406,7 +407,7 @@ impl ServerView {
                 continue;
             };
             if member.about.is_none() {
-                member.about = contact.about.as_deref().map(|a| truncate(a, commy_core::user::MAX_ABOUT_CHARS));
+                member.about = contact.about.as_deref().map(|a| commy_core::user::truncate_rich(a, commy_core::user::MAX_ABOUT_CHARS));
             }
             if member.banner.is_none() {
                 member.banner = contact.banner.clone().filter(|b| commy_core::user::valid_banner(b));
@@ -499,12 +500,12 @@ impl ServerView {
                     status_emoji: p
                         .status_emoji
                         .clone()
-                        .filter(|e| commy_core::user::is_emoji_like(e)),
+                        .filter(|e| commy_core::user::valid_status_emoji(e)),
                     activity: p
                         .activity
                         .clone()
                         .filter(|_| p.presence.is_visible_online()),
-                    about: p.about.as_deref().map(|a| truncate(a, commy_core::user::MAX_ABOUT_CHARS)),
+                    about: p.about.as_deref().map(|a| commy_core::user::truncate_rich(a, commy_core::user::MAX_ABOUT_CHARS)),
                     pronouns: state.server.pronouns.get(&p.id).cloned(),
                     activity_cover: p
                         .activity_cover
@@ -676,6 +677,7 @@ impl ServerView {
             can_use_external: perms.allows(Permissions::USE_EXTERNAL_EMOJIS),
             soundboard_open: state.server.soundboard_open,
             sounds_shareable: state.server.sounds_shareable,
+            activities_enabled: state.server.activities_enabled,
             uploads_restricted: everyone_lacks(state, Permissions::ATTACH_FILES),
             can_attach_files: perms.allows(Permissions::ATTACH_FILES),
             can_send_voice_messages: perms.allows(Permissions::SEND_VOICE_MESSAGES),
