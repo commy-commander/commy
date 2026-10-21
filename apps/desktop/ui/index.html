@@ -547,6 +547,47 @@
       </div>
     </div>
 
+    <div class="modal modal-wide hidden" id="modal-add-bot" role="dialog" aria-labelledby="add-bot-title">
+      <h2 id="add-bot-title">Add a Bot</h2>
+      <p>A bot runs as its own member on a computer or server that stays on, such as your PC, a home server or a small VPS. Commy does not host bots.</p>
+      <ol class="bot-steps">
+        <li class="bot-step">
+          <div class="bot-step-title">Make an invite for the bot</div>
+          <div class="setting-sub">Bots join with an invite code, the same as people. Your app has to be online the first time the bot connects, because the bot only trusts a copy of the server it gets from the owner.</div>
+          <div class="bot-code-row">
+            <code class="bot-code" id="add-bot-invite"></code>
+            <button class="btn-secondary btn-small" id="add-bot-invite-copy">Copy</button>
+          </div>
+        </li>
+        <li class="bot-step">
+          <div class="bot-step-title">Run it on the bot's computer</div>
+          <div class="setting-sub">Build <code>commy-bot</code> from the Commy source as the <button class="btn-link inline" id="add-bot-guide">bot guide</button> explains, then run:</div>
+          <label class="field-label bot-name-field">Bot name
+            <input id="add-bot-name" type="text" maxlength="32" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="bot-commands" id="add-bot-commands"></div>
+          <details class="bot-port" id="add-bot-port">
+            <summary>Bringing a bot from somewhere else?</summary>
+            <div class="setting-sub">Start the bot with the bridge instead, then connect your bot's code to it. The JavaScript library in the Commy source works like the common bot libraries: events such as <code>messageCreate</code>, and <code>reply</code>, <code>react</code> and role changes. Mentions and rich cards are converted for you.</div>
+            <div class="bot-commands" id="add-bot-bridge"></div>
+            <button class="btn-link" id="add-bot-porting">How to port a bot</button>
+          </details>
+        </li>
+        <li class="bot-step">
+          <div class="bot-step-title">Give it a role</div>
+          <div class="bot-waiting" id="add-bot-waiting"><span class="bot-waiting-dot" aria-hidden="true"></span>Waiting for the bot to join...</div>
+          <div class="hidden" id="add-bot-joined">
+            <div class="setting-sub" id="add-bot-joined-text"></div>
+            <div class="role-chips" id="add-bot-roles"></div>
+            <div class="bot-card-ability" id="add-bot-ability"></div>
+          </div>
+        </li>
+      </ol>
+      <div class="modal-actions">
+        <button class="btn-primary" id="add-bot-done">Done</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-invite-link">
       <div class="invite-link-hero" id="invite-link-hero" aria-hidden="true"></div>
       <div class="sw-head">
@@ -1974,6 +2015,8 @@
         <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
         <button class="settings-tab" data-tab="reports" id="tab-reports">Reports</button>
         <button class="settings-tab" data-tab="audit" id="tab-audit">Audit Log</button>
+        <div class="settings-nav-group">Integrations</div>
+        <button class="settings-tab" data-tab="bots" id="tab-bots">Bots</button>
         <div class="settings-nav-sep"></div>
         <button class="settings-tab danger" id="leave-server-btn">Leave Server</button>
       </div>
@@ -2332,6 +2375,16 @@
           <h1>Members</h1>
           <div id="manage-member-list" class="manage-list"></div>
         </section>
+        <section class="settings-page" data-page="bots">
+          <h1>Bots</h1>
+          <div class="setting-sub expr-intro">Bots are members that run on their own, on a computer or server someone keeps online. They join with an invite like anyone else, wear a BOT badge, and can only do what their roles allow.</div>
+          <div class="bots-actions">
+            <button class="btn-primary" id="bots-add">Add a Bot</button>
+            <button class="btn-link" id="bots-guide">Bot guide</button>
+          </div>
+          <h2 class="settings-subhead" id="bots-count">Installed</h2>
+          <div id="bots-list" class="bots-list"></div>
+        </section>
       </div>
       <div class="settings-close-wrap">
         <button class="settings-close" id="server-settings-close" title="Close">
@@ -2548,6 +2601,7 @@
   <script src="scripts/composer-suggest.js"></script>
   <script src="scripts/tts.js"></script>
   <script src="scripts/slash-commands.js"></script>
+  <script src="scripts/bots.js"></script>
   <script src="scripts/permissions.js"></script>
   <script src="scripts/embeds.js"></script>
   <script src="scripts/voice-message.js"></script>
