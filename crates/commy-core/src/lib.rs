@@ -6,6 +6,7 @@ pub mod automod;
 pub mod catchup;
 pub mod channel_key;
 pub mod command;
+pub mod devices;
 pub mod dm;
 pub mod doorbell;
 pub mod event;

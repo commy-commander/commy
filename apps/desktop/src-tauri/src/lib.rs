@@ -7,6 +7,7 @@ mod entry_list;
 mod catchup;
 mod channel_lock;
 mod deleted;
+mod devices;
 mod directory;
 mod doorbell;
 mod expressions;
@@ -1246,8 +1247,11 @@ async fn set_voice_channel(
             apply_personal_volumes(&app);
             refresh_forced_voice(&app, &handle);
             refresh_priority_speakers(&app);
+            devices::announce(&app, sid).await;
             dial_voice_members(&app, &handle, sid, channel, &profile);
-            set_own_voice_state(&app, &handle, sid, &profile, &voice, Some(channel)).await
+            set_own_voice_state(&app, &handle, sid, &profile, &voice, Some(channel)).await?;
+            devices::claim_profile_node(&app, sid).await;
+            Ok(())
         }
         None => {
             leave_voice(&app, &handle, sid, &profile, &voice).await;
@@ -1263,6 +1267,14 @@ async fn leave_voice(
     profile: &UserProfile,
     voice: &VoiceSettings,
 ) {
+    stop_voice_here(app, sid, profile).await;
+    if let Err(e) = set_own_voice_state(app, handle, sid, profile, voice, None).await {
+        tracing::warn!("leaving voice: {e}");
+    }
+    devices::announce(app, sid).await;
+}
+
+async fn stop_voice_here(app: &App, sid: ServerId, profile: &UserProfile) {
     let testing = pause_mic_test(app);
     *app.voice_session.lock().unwrap() = None;
     resume_mic_test(app, testing);
@@ -1281,9 +1293,6 @@ async fn leave_voice(
             },
         )
         .await;
-    }
-    if let Err(e) = set_own_voice_state(app, handle, sid, profile, voice, None).await {
-        tracing::warn!("leaving voice: {e}");
     }
 }
 
@@ -1487,13 +1496,7 @@ fn dial_voice_members(
             .voice_states
             .iter()
             .filter(|(user, ch)| **ch == channel && **user != me.id)
-            .filter_map(|(user, _)| {
-                state
-                    .profiles
-                    .get(user)
-                    .and_then(|p| p.node.clone())
-                    .map(|hex| (*user, hex))
-            })
+            .filter_map(|(user, _)| state.voice_node(*user).map(|hex| (*user, hex)))
             .collect()
     };
     for (user, their_hex) in targets {
@@ -1865,11 +1868,7 @@ async fn watch_screen(
             .screen_shares
             .get(&user)
             .ok_or("that user is not sharing")?;
-        let hex = state
-            .profiles
-            .get(&user)
-            .and_then(|p| p.node.clone())
-            .ok_or("sharer has no reachable identity")?;
+        let hex = state.voice_node(user).ok_or("sharer has no reachable identity")?;
         (hex, channel)
     };
 
@@ -2010,11 +2009,7 @@ async fn watch_camera(
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         let channel = *state.cameras.get(&user).ok_or("that camera is off")?;
-        let hex = state
-            .profiles
-            .get(&user)
-            .and_then(|p| p.node.clone())
-            .ok_or("that member has no reachable identity")?;
+        let hex = state.voice_node(user).ok_or("that member has no reachable identity")?;
         (hex, channel)
     };
     let media = dial_media(&app, &their_hex, MediaHello::CameraSubscribe { user: profile.id, channel }).await?;
@@ -7545,7 +7540,7 @@ async fn run_net_loop(
     while let Some(event) = events.recv().await {
         let app = handle.state::<App>();
         match event {
-            NetEvent::Event { server, event, action, .. } => {
+            NetEvent::Event { server, sender, event, action } => {
                 if let ServerEvent::TypingStart { channel, user } = &event {
                     if remote_action_ok(&app, server, &event, action) {
                         liveness::heard(&app, server, *user, std::time::Instant::now());
@@ -7651,6 +7646,11 @@ async fn run_net_loop(
                     _ => None,
                 };
                 let presence = outbox::online_user(&event);
+                let device_presence = match &event {
+                    ServerEvent::PresenceUpdate { user, presence } => Some((*user, *presence)),
+                    _ => None,
+                };
+                let device_news = matches!(event, ServerEvent::DeviceAnnounce { .. }).then(|| event.clone());
                 let speaker = liveness::speaker(&event, action.as_ref());
                 let (applied, was_online, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
@@ -7659,12 +7659,21 @@ async fn run_net_loop(
                             let was_online = presence.map(|(user, _)| {
                                 state.profiles.get(&user).is_some_and(|p| p.presence.is_visible_online())
                             });
-                            let (applied, new_message, pinned) = catchup::apply_live(state, event, action);
+                            let (mut applied, new_message, pinned) = catchup::apply_live(state, event, action);
+                            if let (Ok(_), Some((user, said))) = (&applied, device_presence) {
+                                let now = std::time::Instant::now();
+                                if liveness::settle_device_presence(&app, state, user, &sender, said, now) {
+                                    applied = Ok(true);
+                                }
+                            }
                             (applied, was_online, new_message, pinned)
                         }
                         None => continue,
                     }
                 };
+                if let (Ok(_), Some(news)) = (&applied, &device_news) {
+                    devices::on_announce(&handle, server, news).await;
+                }
                 if applied.is_ok() {
                     if let Some(user) = speaker {
                         liveness::heard(&app, server, user, std::time::Instant::now());
@@ -7761,13 +7770,18 @@ async fn run_net_loop(
                 let Some(me) = me else { continue };
                 let my_id = me.id;
                 let needs_sync = app.awaits_snapshot(server);
-                broadcast_event(&app, server, ServerEvent::MemberJoin { server, profile: app.announced(me) }).await;
+                let mut profile = app.announced(me);
+                if let Some(state) = app.servers.lock().unwrap().get(&server) {
+                    devices::point_at_voice(state, &mut profile);
+                }
+                broadcast_event(&app, server, ServerEvent::MemberJoin { server, profile }).await;
                 if needs_sync {
                     broadcast(&app, server, WirePayload::SyncRequest).await;
                 }
                 for payload in neighbor_announcements(&app, server, my_id) {
                     broadcast(&app, server, payload).await;
                 }
+                devices::announce(&app, server).await;
                 if app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == server) {
                     announce_voice_state(&app, &handle).await;
                 }
@@ -7799,6 +7813,9 @@ fn react_to_voice_change(
         }
     };
     let Some(our_channel) = session_channel else { return };
+    if app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == user) {
+        return;
+    }
 
     match channel {
         Some(ch) if ch == our_channel => {
@@ -7810,13 +7827,7 @@ fn react_to_voice_change(
                     _ => return,
                 }
             };
-            let their_hex = {
-                let servers = app.servers.lock().unwrap();
-                servers
-                    .get(&server)
-                    .and_then(|s| s.profiles.get(&user))
-                    .and_then(|p| p.node.clone())
-            };
+            let their_hex = app.servers.lock().unwrap().get(&server).and_then(|s| s.voice_node(user));
             let Some(their_hex) = their_hex else { return };
             if should_dial(&our_hex, &their_hex) && claim_voice_dial(app, our_channel, user) {
                 dial_voice_peer(handle, user, their_hex, our_channel, me.id);

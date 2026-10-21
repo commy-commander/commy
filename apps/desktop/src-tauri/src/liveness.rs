@@ -1,6 +1,6 @@
 use crate::catchup::AppAccess;
 use crate::state::App;
-use commy_core::{action, Action, Presence, ServerEvent, ServerId, UserId};
+use commy_core::{action, devices, Action, Presence, ServerEvent, ServerId, ServerState, UserId};
 use commy_net::WirePayload;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -15,9 +15,12 @@ const FAREWELL_WAIT: Duration = Duration::from_millis(1500);
 
 const FAREWELL_LINGER: Duration = Duration::from_millis(300);
 
+type DeviceSaid = HashMap<String, (Presence, Instant)>;
+
 #[derive(Debug, Default)]
 pub struct Liveness {
     heard: HashMap<(ServerId, UserId), Instant>,
+    devices: HashMap<(ServerId, UserId), DeviceSaid>,
     last_sweep_ms: Option<i64>,
 }
 
@@ -31,6 +34,28 @@ pub fn speaker(event: &ServerEvent, signed_by: Option<&Action>) -> Option<UserId
 
 pub fn heard(app: &App, server: ServerId, user: UserId, at: Instant) {
     app.liveness.lock().unwrap().heard.insert((server, user), at);
+}
+
+pub fn settle_device_presence(app: &App, state: &mut ServerState, user: UserId, sender: &[u8; 32], presence: Presence, now: Instant) -> bool {
+    let node = data_encoding::HEXLOWER.encode(sender);
+    if !state.devices_of(user).iter().any(|d| d.node == node) {
+        return false;
+    }
+    let mut live = app.liveness.lock().unwrap();
+    let said = live.devices.entry((state.server.id, user)).or_default();
+    said.insert(node, (presence, now));
+    said.retain(|_, (_, at)| now.duration_since(*at) <= EXPIRE);
+    if said.len() < 2 {
+        return false;
+    }
+    let shown = devices::combined_presence(said.values().map(|(p, _)| *p));
+    match state.profiles.get_mut(&user) {
+        Some(profile) if profile.presence != shown => {
+            profile.presence = shown;
+            true
+        }
+        _ => false,
+    }
 }
 
 pub fn sweep(app: &App, me: UserId, now: Instant, wall_ms: i64, expire: Duration) -> Vec<ServerId> {
@@ -64,6 +89,7 @@ pub fn sweep(app: &App, me: UserId, now: Instant, wall_ms: i64, expire: Duration
         }
     }
     live.heard.retain(|key, _| online.contains(key));
+    live.devices.retain(|key, _| online.contains(key));
     changed
 }
 
@@ -76,7 +102,9 @@ fn hear_voice_peers(app: &App, now: Instant) {
 }
 
 pub fn rest(app: &App) {
-    app.liveness.lock().unwrap().heard.clear();
+    let mut live = app.liveness.lock().unwrap();
+    live.heard.clear();
+    live.devices.clear();
 }
 
 fn own_beat(app: &App) -> Option<(UserId, Presence)> {
@@ -149,7 +177,7 @@ pub async fn run(access: impl AppAccess) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commy_core::{Server, ServerState, UserProfile};
+    use commy_core::{Server, UserProfile};
 
     fn app_with(members: &[&UserProfile]) -> (App, ServerId) {
         let app = App::default();
@@ -237,5 +265,37 @@ mod tests {
         let started = Instant::now();
         std::thread::spawn(move || say_goodbye(&app)).join().expect("no panic outside the runtime");
         assert!(started.elapsed() >= FAREWELL_LINGER);
+    }
+    #[test]
+    fn one_device_leaving_keeps_a_person_online_while_another_is_heard() {
+        let me = UserProfile::new("me");
+        let friend = UserProfile::new("friend");
+        let (app, sid) = app_with(&[&me, &friend]);
+        let (desktop, tablet, stranger) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+        {
+            let mut servers = app.servers.lock().unwrap();
+            let state = servers.get_mut(&sid).unwrap();
+            for node in [desktop, tablet] {
+                let node = data_encoding::HEXLOWER.encode(&node);
+                state.apply(ServerEvent::DeviceAnnounce { server: sid, user: friend.id, node, voice: None, since: None }).unwrap();
+            }
+        }
+        let now = Instant::now();
+        let says = |node: &[u8; 32], presence: Presence, at: Instant| {
+            let mut servers = app.servers.lock().unwrap();
+            let state = servers.get_mut(&sid).unwrap();
+            state.apply(ServerEvent::PresenceUpdate { user: friend.id, presence }).unwrap();
+            settle_device_presence(&app, state, friend.id, node, presence, at);
+        };
+        says(&desktop, Presence::Online, now);
+        says(&tablet, Presence::Idle, now);
+        assert_eq!(presence(&app, sid, friend.id), Presence::Online, "the desktop is in use");
+        says(&tablet, Presence::Offline, now);
+        assert_eq!(presence(&app, sid, friend.id), Presence::Online, "the tablet quitting leaves the desktop");
+        says(&stranger, Presence::Offline, now);
+        assert_eq!(presence(&app, sid, friend.id), Presence::Offline, "an unknown device is not one of theirs");
+        says(&desktop, Presence::Online, now);
+        says(&tablet, Presence::Offline, now + EXPIRE + Duration::from_secs(1));
+        assert_eq!(presence(&app, sid, friend.id), Presence::Offline, "the desktop has gone quiet too");
     }
 }

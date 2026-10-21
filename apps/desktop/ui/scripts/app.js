@@ -16350,6 +16350,19 @@ function wireEvents() {
       renderVoicePanel();
       if (state.currentServer) await refreshCurrentServer();
     });
+    window.__TAURI__.event.listen("voice-elsewhere", async () => {
+      toast("Your voice moved to your other device");
+      state.voiceChannelId = null;
+      state.voiceServer = null;
+      state.sharing = false;
+      stopCameraTracks();
+      state.cameraOn = false;
+      cam.watching.clear();
+      clearSpeaking();
+      playSound("leave");
+      renderVoicePanel();
+      if (state.currentServer) await refreshCurrentServer();
+    });
     window.__TAURI__.event.listen("voice-moved", async event => {
       const { server, channel, name } = event.payload;
       if (!channel) {
