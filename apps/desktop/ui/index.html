@@ -102,7 +102,10 @@
           </div>
           <button class="icon-btn" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
         </div>
-        <button class="vp-activities" id="vp-activities" title="Start something together with everyone in the channel"></button>
+        <div class="vp-actions" id="vp-actions">
+          <button class="vp-activities" id="vp-activities" title="Start something together with everyone in the channel"></button>
+          <button class="vp-activities vp-share" id="share-btn" title="Share Your Screen"></button>
+        </div>
         <button class="vp-game-share hidden" id="vp-game-share"></button>
       </section>
 
@@ -115,11 +118,7 @@
         <span class="presence-dot inline hidden" id="chat-presence"></span>
         <span class="topic" id="channel-topic"></span>
         <div class="header-actions">
-          <button class="icon-btn hidden" id="vp-nc" title="Noise Cancellation"></button>
           <button class="icon-btn hidden" id="vp-soundboard" title="Soundboard"></button>
-          <button class="icon-btn hidden" id="share-btn" title="Share Your Screen">
-            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 3H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h5v2H7v2h10v-2h-2v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 13H4V5h16zm-9-2 5-3.5L11 7z"/></svg>
-          </button>
           <button class="icon-btn hidden" id="pins-btn" title="Pinned Messages" aria-haspopup="dialog">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>
             <span class="pin-count hidden" id="pins-count"></span>
@@ -2445,6 +2444,7 @@
     <select id="ap-device" class="compact-select"></select>
     <div class="ap-title" id="ap-volume-title">Input Volume <span id="ap-volume-label">100%</span></div>
     <input type="range" id="ap-volume" min="0" max="200" value="100" />
+    <label class="ap-row" id="ap-nc-row"><span>Noise Cancellation</span><input type="checkbox" id="ap-nc" class="switch" /></label>
     <button class="pp-link" id="ap-settings">Voice Settings</button>
   </div>
 

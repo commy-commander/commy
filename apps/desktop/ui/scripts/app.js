@@ -7301,6 +7301,8 @@ async function toggleAudioPop(which, anchor) {
   $("ap-volume").value = String(level);
   $("ap-volume-label").textContent = `${level}%`;
   syncRangeFill($("ap-volume"));
+  $("ap-nc-row").classList.toggle("hidden", !input);
+  $("ap-nc").checked = Boolean(state.voice.noise_cancellation);
   pop.classList.remove("hidden");
   placePopup(pop, anchor, "above");
   try {
@@ -12214,10 +12216,9 @@ function renderInlineVideo(att) {
 function renderShareButton() {
   const btn = $("share-btn");
   const inVoice = Boolean(state.voiceChannelId);
-  btn.classList.toggle("hidden", !inVoice);
   btn.classList.toggle("active", state.sharing);
-  btn.title = state.sharing ? "Stop Sharing" : "Share Your Screen";
-  $("vp-nc").classList.toggle("hidden", !inVoice);
+  btn.title = state.sharing ? "Stop sharing your screen" : "Share your screen";
+  btn.replaceChildren(svgIcon("screen", 16), el("span", null, state.sharing ? "Stop Sharing" : "Share Screen"));
   $("vp-soundboard").classList.toggle("hidden", !inVoice);
   renderVoicePanel();
 }
@@ -12245,9 +12246,6 @@ function renderVoicePanel() {
   }
   $("vp-signal").replaceChildren(svgIcon("signal", 14));
   setIcon($("vp-disconnect"), "hangup", 20);
-  setIcon($("vp-nc"), "noise", 18);
-  $("vp-nc").classList.toggle("on", state.voice.noise_cancellation);
-  $("vp-nc").title = `Noise Cancellation: ${state.voice.noise_cancellation ? "on" : "off"}`;
 
   $("vp-camera-icon").replaceChildren(svgIcon(state.cameraOn ? "camera" : "cameraOff", 18));
   $("vp-camera").classList.toggle("active", Boolean(state.cameraOn));
@@ -12436,6 +12434,7 @@ function renderVoicePanelActivity() {
   const run = activityUi.run;
   const vs = state.voiceServer;
   btn.classList.toggle("hidden", !vs || Boolean(vs.call));
+  $("vp-actions").classList.toggle("solo", btn.classList.contains("hidden"));
   btn.classList.toggle("running", Boolean(run));
   const info = run ? activityKindInfo(run.activity) : null;
   btn.replaceChildren(svgIcon(info ? info.icon : "gamepad", 16), el("span", null, run ? `Open ${activityName(run.activity)}` : "Activities"));
@@ -12807,8 +12806,7 @@ function setViewMode(mode) {
     $("dm-profile-btn").classList.add("hidden");
     $("dm-search").value = "";
   }
-  if (dm) $("share-btn").classList.add("hidden");
-  else renderShareButton();
+  renderShareButton();
   syncPinButton();
   syncSearchBox();
   syncRulesGate();
@@ -15945,14 +15943,14 @@ function wireEvents() {
   setIcon($("group-add-btn"), "friendAdd");
   setIcon($("call-accept"), "phone", 26);
   setIcon($("call-decline"), "hangup", 26);
-  $("vp-nc").onclick = async () => {
+  $("ap-nc").onchange = async e => {
     try {
-      state.voice = await invoke("set_noise_cancellation", { enabled: !state.voice.noise_cancellation });
+      state.voice = await invoke("set_noise_cancellation", { enabled: e.target.checked });
       $("nc-toggle").checked = state.voice.noise_cancellation;
       toast(`Noise cancellation ${state.voice.noise_cancellation ? "on" : "off"}`);
-      renderVoicePanel();
-    } catch (e) {
-      toast(String(e));
+    } catch (err) {
+      e.target.checked = Boolean(state.voice.noise_cancellation);
+      toast(String(err));
     }
   };
 
