@@ -24,9 +24,9 @@ mod bindings {
     #[wasm_bindgen]
     impl WebClient {
         #[wasm_bindgen(constructor)]
-        pub fn new(host: Host, origin: String) -> WebClient {
+        pub fn new(host: Host, origin: String, relays: Option<String>) -> WebClient {
             console_error_panic_hook::set_once();
-            WebClient { session: Session::new(host, origin) }
+            WebClient { session: Session::new(host, origin, relays) }
         }
 
         pub fn invoke(&self, cmd: String, args: String) -> js_sys::Promise {

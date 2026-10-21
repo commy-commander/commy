@@ -32,10 +32,18 @@ cargo install wasm-bindgen-cli --locked --version "$(cargo metadata --format-ver
 node apps/web/build.mjs
 ```
 
-The bundle lands in `apps/web/dist`. Set `COMMY_DEFAULT_RELAY` to build for
-another relay (for example `https://relay-staging.commy.chat:8443`), and
-`COMMY_WEB_OUT` to write the bundle somewhere else. The page's content
-security policy allows only its own site and that relay.
+The bundle lands in `apps/web/dist`. Build settings:
+
+- `COMMY_WEB_RELAYS`: a comma-separated list of relays the page may use. The
+  page's content security policy allows only its own site and these relays.
+  The first one is the page's relay unless the site serving it says otherwise.
+  Without it, `COMMY_DEFAULT_RELAY` or `https://relay.commy.chat:8443`.
+- `COMMY_WEB_BASE`: the path the page is served under, such as `/web/`.
+- `COMMY_WEB_OUT`: where to write the bundle.
+
+The page names its relay in `<meta name="commy-relays">`. A site serving one
+bundle for several environments rewrites that tag's `content` to pick the
+relay, as long as the relay is one the bundle was built to allow.
 
 ## Tests
 

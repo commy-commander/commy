@@ -50,7 +50,7 @@
 
   const client = import("./pkg/commy_web_client.js").then(async module => {
     await module.default();
-    return new module.WebClient(host, window.location.origin);
+    return new module.WebClient(host, window.location.origin, webRelays(document));
   });
 
   async function backend(cmd, args) {
