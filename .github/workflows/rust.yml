@@ -11,6 +11,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/rust.yml"
+      - ".github/actions/rust-check/**"
   pull_request:
     paths: *rust-paths
   workflow_dispatch:
@@ -28,48 +29,68 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
-  check:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux tests
-            os: ubuntu-22.04
-          - name: Windows check
-            os: windows-latest
-          - name: macOS check
-            os: macos-15-intel
-    defaults:
-      run:
-        shell: bash
+  platforms:
+    name: Pick platforms
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      linux: ${{ steps.pick.outputs.linux }}
+      windows: ${{ steps.pick.outputs.windows }}
+      macos: ${{ steps.pick.outputs.macos }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          pick() {
+            echo "linux=$1" >> "$GITHUB_OUTPUT"
+            echo "windows=$2" >> "$GITHUB_OUTPUT"
+            echo "macos=$2" >> "$GITHUB_OUTPUT"
+            echo "Linux: $1, Windows and macOS: $2"
+          }
+          if [ -z "$PR" ]; then
+            pick true true
+            exit 0
+          fi
+          files="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[].filename')"
+          not_compiled='\.md$|^crates/commy-bot/clients/'
+          phone_only='^apps/desktop/src-tauri/(gen/|tauri\.(android|ios)\.conf\.json$|Info\.ios\.plist$|package(-lock)?\.json$)|/phone\.rs$'
+          no_os_code='^apps/web/|^crates/commy-(view|bot)/'
+          compiled="$(printf '%s\n' "$files" | grep -Ev "$not_compiled|$phone_only" || true)"
+          if [ -z "$compiled" ]; then
+            pick false false
+          elif printf '%s\n' "$compiled" | grep -Evq "$no_os_code"; then
+            pick true true
+          else
+            pick true false
+          fi
+
+  linux:
+    name: Linux tests
+    needs: platforms
+    if: needs.platforms.outputs.linux == 'true'
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/rust-check
 
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
-            libasound2-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxrandr-dev \
-            libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
-            libxdo-dev libssl-dev clang cmake
+  windows:
+    name: Windows check
+    needs: platforms
+    if: needs.platforms.outputs.windows == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/rust-check
 
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: ${{ matrix.os }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: cargo check
-        if: runner.os != 'Linux'
-        run: cargo check --workspace --all-targets --locked
-
-      - name: cargo test
-        if: runner.os == 'Linux'
-        run: cargo test --workspace --locked
+  macos:
+    name: macOS check
+    needs: platforms
+    if: needs.platforms.outputs.macos == 'true'
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/rust-check
