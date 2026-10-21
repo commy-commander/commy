@@ -67,7 +67,7 @@
     modal.className = "modal modal-signin hidden";
     modal.id = "modal-web-unlock";
     modal.innerHTML = `
-      <img class="signin-logo" src="images/commy_v2.png" alt="" />
+      <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
       <h2>Open your servers here</h2>
       <p>Your messages stay between your devices. To open them in this browser, approve it from Commy on a device that already has them.</p>
       <div class="signin-start" id="web-unlock-ask-row">

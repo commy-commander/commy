@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
@@ -101,4 +101,10 @@ test("the backend gets the relay the page names, or its built-in one when the pa
   assert.equal(webRelays(page("https://relay-staging.commy.chat:8443")), "https://relay-staging.commy.chat:8443");
   assert.equal(webRelays(page(" ")), undefined);
   assert.equal(webRelays(page(null)), undefined);
+});
+
+test("every image the bridge shows ships with the app", () => {
+  const images = [...read("apps", "web", "ui", "web-bridge.js").matchAll(/src="(images\/[^"]+)"/g)].map(m => m[1]);
+  assert.ok(images.length > 0);
+  for (const image of images) assert.ok(existsSync(join(repo, "apps", "desktop", "ui", image)), image);
 });
