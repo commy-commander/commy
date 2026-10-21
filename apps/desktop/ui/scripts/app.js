@@ -238,7 +238,8 @@ function mockSeed() {
         activity: "Playing Portal 2", activity_cover: "co1rs4", activity_since: Math.floor(Date.now() / 1000) - 983 },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
       { id: "m5", name: "quill", presence: "offline", custom_status: null, about: "Only friends get to read this.", pronouns: "she / her", profile_policy: "friends" },
-      { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
+      { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true, roles: ["r2"] },
+      { id: "m10", name: "Quotebook", presence: "offline", custom_status: null, bot: true },
       { id: "m6", name: "ash", presence: "online", custom_status: "hosting tonight", roles: ["r2"] },
       { id: "m7", name: "pip", presence: "online", custom_status: null },
       { id: "m8", name: "lumen", presence: "idle", custom_status: null },
@@ -17019,7 +17020,11 @@ function openServerSettings(tab) {
   const canInvites = Boolean(server.can_invite || server.can_manage_server);
   $("tab-invites").classList.toggle("hidden", !canInvites);
   if (canInvites) renderInvitesPage(server);
+  const canBots = canSeeBotsPage(server);
+  $("tab-bots").classList.toggle("hidden", !canBots);
+  if (canBots) renderBotsPage(server);
   const allowed = {
+    bots: canBots,
     invites: canInvites,
     overview: true,
     discovery: true,
@@ -17547,6 +17552,232 @@ function renderMemberSettings(server) {
   }
 }
 
+function renderBotsPage(server) {
+  const bots = serverBots(server);
+  const add = $("bots-add");
+  add.disabled = !server.can_invite;
+  add.title = server.can_invite ? "" : "You need permission to create invites to add a bot";
+  $("bots-count").textContent = bots.length ? `Installed - ${bots.length}` : "Installed";
+  const list = $("bots-list");
+  if (!bots.length) {
+    const empty = el("div", "bots-empty");
+    empty.appendChild(el("div", "bots-empty-title", "No bots yet"));
+    empty.appendChild(el("div", "setting-sub", "Bots can tidy up chat, run slash commands and post updates from your other tools. Add one to see it here."));
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...bots.map(bot => botCard(server, bot)));
+}
+
+function botCard(server, bot) {
+  const { member } = bot;
+  const card = el("div", "bot-card");
+  const top = el("div", "bot-card-top");
+  const avatar = makeAvatar(member.id, member.name, "avatar bot-card-avatar");
+  avatar.appendChild(el("span", "presence-dot " + (bot.online ? member.presence : "offline")));
+  top.appendChild(avatar);
+  const who = el("div", "bot-card-who");
+  const name = el("div", "bot-card-name");
+  name.appendChild(el("span", "bot-card-label", member.name));
+  name.appendChild(botTag());
+  who.appendChild(name);
+  who.appendChild(el("div", "bot-card-status" + (bot.online ? " online" : ""), bot.online ? "Online" : "Offline"));
+  top.appendChild(who);
+  const actions = el("div", "bot-card-actions");
+  const removable = member.id !== server.owner && !(state.user && member.id === state.user.id);
+  if (server.can_kick && removable) {
+    const remove = el("button", "btn-secondary btn-small", "Remove");
+    remove.onclick = () => removeBot(server, member, "kick_member");
+    actions.appendChild(remove);
+  }
+  if (server.can_ban && removable) {
+    const ban = el("button", "btn-danger btn-small", "Ban");
+    ban.onclick = () => removeBot(server, member, "ban_member");
+    actions.appendChild(ban);
+  }
+  top.appendChild(actions);
+  card.appendChild(top);
+  card.appendChild(el("div", "bot-card-ability", bot.abilities));
+
+  const roles = el("div", "bot-card-row");
+  roles.appendChild(el("div", "bot-card-key", "Roles"));
+  roles.appendChild(botRoleChips(server, member, async () => {
+    await refreshCurrentServer();
+    openServerSettings();
+  }));
+  card.appendChild(roles);
+
+  const commands = el("div", "bot-card-row");
+  commands.appendChild(el("div", "bot-card-key", "Commands"));
+  const chips = el("div", "bot-card-commands");
+  for (const command of bot.commands) {
+    const chip = el("span", "bot-command", `/${command.name}`);
+    if (command.description) chip.title = command.description;
+    chips.appendChild(chip);
+  }
+  if (!bot.commands.length) chips.appendChild(el("span", "bot-card-none", "No slash commands"));
+  commands.appendChild(chips);
+  card.appendChild(commands);
+  return card;
+}
+
+function botRoleChips(server, member, changed) {
+  const chips = el("div", "role-chips bot-role-chips");
+  const held = new Set(member.roles || []);
+  if (!server.can_manage_roles) {
+    for (const role of server.roles.filter(r => held.has(r.id))) {
+      const chip = el("span", "role-chip held readonly", role.name);
+      if (role.color) chip.style.borderColor = `#${role.color}`;
+      chips.appendChild(chip);
+    }
+    if (!chips.children.length) chips.appendChild(el("span", "bot-card-none", "No roles"));
+    return chips;
+  }
+  for (const role of server.roles) {
+    const has = held.has(role.id);
+    const chip = el("button", "role-chip" + (has ? " held" : ""), role.name);
+    if (role.color) chip.style.borderColor = `#${role.color}`;
+    chip.title = has ? "Click to remove role" : "Click to grant role";
+    chip.onclick = async () => {
+      try {
+        await invoke("set_member_role", { serverId: server.id, userId: member.id, roleId: role.id, grant: !has });
+        await changed();
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    chips.appendChild(chip);
+  }
+  if (!server.roles.length) chips.appendChild(el("span", "bot-card-none", "No roles yet. Make one in Roles."));
+  return chips;
+}
+
+async function removeBot(server, member, command) {
+  const banning = command === "ban_member";
+  const question = banning
+    ? `Ban ${member.name} from ${server.name}? It is removed and cannot rejoin until unbanned.`
+    : `Remove ${member.name} from ${server.name}?`;
+  if (!confirm(question)) return;
+  try {
+    await invoke(command, { serverId: server.id, userId: member.id });
+    await refreshCurrentServer();
+    openServerSettings();
+    toast(banning ? `Banned ${member.name}` : `Removed ${member.name}`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+const addBot = { serverId: null, known: [], invite: "", joined: null, timer: null, changed: false };
+
+function botCodeRow(text, ready = true) {
+  const row = el("div", "bot-code-row");
+  const code = el("code", "bot-code", text);
+  code.title = text;
+  row.appendChild(code);
+  const copy = el("button", "btn-secondary btn-small bot-copy", "Copy");
+  copy.disabled = !ready;
+  copy.onclick = () => copyText(text, "Copied");
+  row.appendChild(copy);
+  return row;
+}
+
+function paintAddBotCommands() {
+  const commands = botSetupCommands($("add-bot-name").value, addBot.invite);
+  const ready = Boolean(addBot.invite);
+  $("add-bot-commands").replaceChildren(botCodeRow(commands.create), botCodeRow(commands.join, ready), botCodeRow(commands.run));
+  $("add-bot-bridge").replaceChildren(botCodeRow(commands.bridge));
+}
+
+function paintAddBotInvite(text, ready) {
+  $("add-bot-invite").textContent = text;
+  $("add-bot-invite").title = ready ? text : "";
+  $("add-bot-invite").classList.toggle("muted", !ready);
+  $("add-bot-invite-copy").disabled = !ready;
+}
+
+function paintAddBotJoined(server) {
+  const bot = server && addBot.joined ? serverBots(server).find(b => b.member.id === addBot.joined) : null;
+  $("add-bot-waiting").classList.toggle("hidden", Boolean(bot));
+  $("add-bot-joined").classList.toggle("hidden", !bot);
+  if (!bot) return;
+  $("add-bot-joined-text").textContent = server.can_manage_roles
+    ? `${bot.member.name} joined. Pick the roles it needs:`
+    : `${bot.member.name} joined. Ask someone who manages roles to give it the roles it needs.`;
+  $("add-bot-ability").textContent = bot.abilities;
+  $("add-bot-roles").replaceWith(Object.assign(botRoleChips(server, bot.member, async () => {
+    addBot.changed = true;
+    paintAddBotJoined(await invoke("get_server", { serverId: server.id }));
+  }), { id: "add-bot-roles" }));
+}
+
+function stopAddBotWatch() {
+  clearInterval(addBot.timer);
+  addBot.timer = null;
+}
+
+function addBotOpen() {
+  return !$("modal-backdrop").classList.contains("hidden") && !$("modal-add-bot").classList.contains("hidden");
+}
+
+async function watchForBot() {
+  if (!addBotOpen()) return stopAddBotWatch();
+  let server;
+  try {
+    server = await invoke("get_server", { serverId: addBot.serverId });
+  } catch {
+    return;
+  }
+  const fresh = newBots(addBot.known, server);
+  if (!fresh.length || !addBotOpen()) return;
+  stopAddBotWatch();
+  addBot.joined = fresh[0].member.id;
+  addBot.changed = true;
+  paintAddBotJoined(server);
+}
+
+async function openAddBot() {
+  const server = state.currentServer;
+  if (!server || !server.can_invite) return;
+  stopAddBotWatch();
+  Object.assign(addBot, { serverId: server.id, known: serverBots(server).map(b => b.member.id), invite: "", joined: null, changed: false });
+  $("add-bot-name").value = "";
+  $("add-bot-name").placeholder = BOT_DEFAULT_NAME;
+  $("add-bot-port").open = false;
+  paintAddBotInvite("Making an invite...", false);
+  paintAddBotCommands();
+  paintAddBotJoined(null);
+  showModal("modal-add-bot");
+  try {
+    const invite = await invoke("get_invite", { serverId: server.id });
+    if (addBot.serverId !== server.id || !addBotOpen()) return;
+    addBot.invite = invite;
+    paintAddBotInvite(invite, true);
+    paintAddBotCommands();
+    addBot.timer = setInterval(watchForBot, 2000);
+  } catch (e) {
+    paintAddBotInvite(String(e), false);
+  }
+}
+
+async function closeAddBot() {
+  stopAddBotWatch();
+  hideModals();
+  if (!addBot.changed || !state.currentServer || state.currentServer.id !== addBot.serverId) return;
+  await refreshCurrentServer();
+  if (!$("server-settings").classList.contains("hidden")) openServerSettings();
+}
+
+function wireBots() {
+  $("bots-add").onclick = openAddBot;
+  wireExternalLink($("bots-guide"), BOT_GUIDE_URL);
+  wireExternalLink($("add-bot-guide"), BOT_GUIDE_URL);
+  wireExternalLink($("add-bot-porting"), BOT_PORTING_URL);
+  $("add-bot-invite-copy").onclick = () => addBot.invite && copyText(addBot.invite, "Invite code copied");
+  $("add-bot-name").addEventListener("input", paintAddBotCommands);
+  $("add-bot-done").onclick = closeAddBot;
+}
+
 async function refreshCurrentServer() {
   const keepChannel = state.currentChannel;
   try {
@@ -17599,6 +17830,7 @@ async function boot() {
   wireSaved();
   wireTimeoutModal();
   wireActivityPing();
+  wireBots();
   if (IS_TAURI) {
     await invoke("ui_ready");
   } else {
