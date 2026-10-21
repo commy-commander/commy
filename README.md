@@ -153,6 +153,12 @@ deploy                  Self-hosting stack and deploy pipeline
   read it.
 - Files, avatars, emoji and soundboard clips move as content-addressed blobs;
   chat messages carry only the hash.
+- What the app keeps on disk (messages, direct messages, keys, the sign-in
+  token, cached pictures) is encrypted with AES-256-GCM under a key that
+  Windows (DPAPI) or the macOS Keychain holds for your user account. If that
+  key is ever lost, the unreadable files are moved to an `unreadable` folder
+  instead of being deleted, and a signed-in account can get its identity and
+  server list back from another device signed in to it.
 - Voice and screen shares use direct media connections between members. The
   account server never sees messages, files, voice, video or which servers an
   account belongs to. What it does hold is listed in
