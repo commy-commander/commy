@@ -50,6 +50,7 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:-https://${DOMAIN}}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       ACCESS_CODE: ${ACCESS_CODE:-}
+      COMMY_RELAY_URLS: ${COMMY_RELAY_URLS:-}
     depends_on:
       auth:
         condition: service_healthy

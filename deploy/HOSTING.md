@@ -94,6 +94,10 @@ Set `ALLOW_SIGNUP=false` to close registration on a private instance, or set
 before showing any page except the privacy policy, and the auth server refuses
 new accounts from anyone who has not entered it. Each browser asks once, then
 remembers it for 90 days.
+
+The website serves the web app at `/web`. It uses the production relay unless
+`COMMY_RELAY_URLS` names another one; a staging site sets it to its staging
+relay so browsers meet the test builds there.
 Run `docker compose up -d` after any `.env` change.
 
 ## GIF search and Twitch
