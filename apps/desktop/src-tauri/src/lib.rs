@@ -3032,6 +3032,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     if state.server.sounds_shareable && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::SoundSharingSet { server: sid, shareable: true });
     }
+    if state.server.activities_enabled && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::ActivitiesSet { server: sid, enabled: true });
+    }
     let sharing = state.server.stickers_shareable || state.server.emoticons_shareable;
     if sharing && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ExpressionSharingSet {
@@ -6084,6 +6087,21 @@ async fn set_sound_sharing(
     Ok(())
 }
 
+#[tauri::command]
+async fn set_activities_enabled(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    enabled: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "turn Activities on or off")?;
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::ActivitiesSet { server: sid, enabled }).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
 fn role_access_permission(access: &str) -> CmdResult<(Permissions, &'static str)> {
     match access {
         "files" => Ok((Permissions::ATTACH_FILES, "change who can send files")),
@@ -6453,6 +6471,9 @@ async fn set_activity(
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_not_timed_out(state, me.id)?;
+        if activity.is_some() && !state.server.activities_enabled {
+            return Err("Activities are turned off in this server's settings".into());
+        }
         if activity.as_ref().is_some_and(|a| !a.valid()) {
             return Err("paste a direct https link to an .mp4, .webm or .ogg file".into());
         }
@@ -8322,6 +8343,7 @@ pub fn run() {
             set_sound_emoji,
             set_expression_settings,
             set_sound_sharing,
+            set_activities_enabled,
             set_role_access,
             add_sticker,
             remove_sticker,

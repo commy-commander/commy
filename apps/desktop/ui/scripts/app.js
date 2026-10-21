@@ -1363,6 +1363,7 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
+    case "set_activities_enabled": mock.servers[args.serverId].activities_enabled = args.enabled; return null;
     case "list_shareable_sounds":
       return Object.values(mock.servers).filter(s => s.sounds_shareable)
         .flatMap(s => (s.sounds || []).map(x => ({ server: s.id, server_name: s.name, name: x.name, blob: x.blob, volume: x.volume ?? 1, emoji: x.emoji || null })));
@@ -4604,7 +4605,8 @@ function renderMembers() {
   renderCamGrid();
 
   const sharers = new Set((state.currentServer.screen_shares || []).map(s => s.user));
-  renderPlayingNow(list, state.currentServer.members);
+  const { playing, rest } = splitPlaying(state.currentServer.members);
+  renderPlayingGroup(list, playing);
 
   const group = (title, members, dim, color) => {
     if (!members.length) return;
@@ -4669,7 +4671,7 @@ function renderMembers() {
       list.appendChild(row);
     }
   };
-  for (const g of groupMembers(state.currentServer.members, state.currentServer.roles)) group(g.title, g.members, !!g.dim, g.color);
+  for (const g of groupMembers(rest, state.currentServer.roles)) group(g.title, g.members, !!g.dim, g.color);
 }
 
 function sensitiveConfirmed() {
@@ -7533,7 +7535,7 @@ function activityCard(person) {
   const game = gameFromActivity(person.activity);
   const details = knownGames.get(gameKey(game));
   const art = activityArt(person, details);
-  const card = el("div", "activity-card");
+  const card = el("div", "play-card");
   const glow = el("div", "ac-glow");
   const glowSrc = igdbCover(art, "t_cover_big");
   if (glowSrc) glow.style.backgroundImage = `url("${glowSrc}")`;
@@ -7579,12 +7581,14 @@ function statusBesideGame(person) {
 function activityChip(member) {
   const game = gameFromActivity(member.activity);
   const details = knownGames.get(gameKey(game));
-  const chip = el("button", "activity-chip");
+  const chip = el("button", "now-card");
   chip.type = "button";
   chip.title = `${member.name} is playing ${game}`;
   const text = el("div", "acc-text");
   const who = el("div", "acc-who");
-  who.append(makeAvatar(member.id, member.name, "avatar acc-avatar"), el("span", null, member.name));
+  const name = el("span", null, member.name);
+  paintRole(name, member.color);
+  who.append(makeAvatar(member.id, member.name, "avatar acc-avatar"), name);
   text.append(who, el("div", "ac-game", game), activityTime(member));
   const cover = coverSlot("acc-cover", activityArt(member, details), "t_cover_small");
   chip.append(text, cover);
@@ -7592,6 +7596,12 @@ function activityChip(member) {
     e.stopPropagation();
     openMemberCard(member, chip);
   };
+  if (!state.user || member.id !== state.user.id) {
+    chip.oncontextmenu = e => {
+      e.preventDefault();
+      openMemberMenu(member, e.clientX, e.clientY);
+    };
+  }
   if (!details) {
     lookUpGame(game).then(found => {
       if (member.activity_cover) return;
@@ -7601,13 +7611,12 @@ function activityChip(member) {
   return chip;
 }
 
-function renderPlayingNow(list, members) {
-  const playing = playingNow(members, state.user && state.user.id);
+function renderPlayingGroup(list, playing) {
   if (!playing.length) return;
-  list.appendChild(el("div", "member-group", "Playing now"));
-  const strip = el("div", "playing-now");
-  for (const member of playing) strip.appendChild(activityChip(member));
-  list.appendChild(strip);
+  list.appendChild(el("div", "member-group", `Playing - ${playing.length}`));
+  const group = el("div", "playing-now");
+  for (const member of playing) group.appendChild(activityChip(member));
+  list.appendChild(group);
 }
 
 function renderIntegrations() {
@@ -12428,12 +12437,19 @@ function renderActivityUi() {
   renderVoicePanelActivity();
 }
 
+function voiceServerAllowsActivities() {
+  const vs = state.voiceServer;
+  if (!vs || !vs.id) return false;
+  const current = state.currentServer && state.currentServer.id === vs.id ? state.currentServer : null;
+  return Boolean(current ? current.activities_enabled : vs.activities_enabled);
+}
+
 function renderVoicePanelActivity() {
   const btn = $("vp-activities");
   if (!btn) return;
   const run = activityUi.run;
   const vs = state.voiceServer;
-  btn.classList.toggle("hidden", !vs || Boolean(vs.call));
+  btn.classList.toggle("hidden", !vs || Boolean(vs.call) || (!run && !voiceServerAllowsActivities()));
   $("vp-actions").classList.toggle("solo", btn.classList.contains("hidden"));
   btn.classList.toggle("running", Boolean(run));
   const info = run ? activityKindInfo(run.activity) : null;
@@ -12825,6 +12841,7 @@ async function selectServer(serverId) {
   setViewMode("server");
   state.currentDm = null;
   if (state.currentServer.group) rememberSwitcherRecent(`group:${serverId}`);
+  if (state.voiceServer && state.voiceServer.id === serverId) state.voiceServer.activities_enabled = Boolean(state.currentServer.activities_enabled);
   const firstText = state.currentServer.channels.find(c => c.kind === "text" && c.can_view !== false);
   renderServerRail();
   renderMembers();
@@ -14245,7 +14262,7 @@ async function toggleVoice(channel) {
     }
     state.voiceServer = leaving
       ? null
-      : { id: state.currentServer.id, name: state.currentServer.name, channelName: channel.name };
+      : { id: state.currentServer.id, name: state.currentServer.name, channelName: channel.name, activities_enabled: Boolean(state.currentServer.activities_enabled) };
     if (leaving) {
       state.sharing = false;
       state.shareSource = null;
@@ -14938,6 +14955,18 @@ function wireEvents() {
     try {
       await invoke("set_sound_sharing", { serverId: server.id, shareable: e.target.checked });
       await refreshExpressions();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  });
+  $("server-activities-toggle").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_activities_enabled", { serverId: server.id, enabled: e.target.checked });
+      server.activities_enabled = e.target.checked;
+      renderVoicePanelActivity();
     } catch (err) {
       toast(String(err));
       openServerSettings();
@@ -16980,6 +17009,9 @@ function openServerSettings(tab) {
   $("server-public-toggle").checked = Boolean(server.public);
   $("server-public-toggle").disabled = !server.can_manage_server;
   $("server-public-row").classList.toggle("readonly", !server.can_manage_server);
+  $("server-activities-toggle").checked = Boolean(server.activities_enabled);
+  $("server-activities-toggle").disabled = !server.can_manage_server;
+  $("server-activities-row").classList.toggle("readonly", !server.can_manage_server);
   discoveryState.dirty = false;
   paintDiscoverySettings(server);
   $("server-template-section").classList.toggle("hidden", !server.can_manage_server);
@@ -17556,6 +17588,7 @@ async function refreshCurrentServer() {
   renderMembers();
   renderChannels();
   refreshVoiceInviteCards();
+  renderVoicePanelActivity();
   syncRulesGate();
   syncAwaitedBar();
   syncAttachAccess();

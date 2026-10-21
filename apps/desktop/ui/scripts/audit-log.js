@@ -23,6 +23,7 @@ const AUDIT_GROUP_OF = {
   afk_timeout: "server",
   expressions: "expressions",
   sound_sharing: "expressions",
+  activities: "server",
   channel_create: "channels",
   channel_delete: "channels",
   channel_rename: "channels",
@@ -119,6 +120,7 @@ function describeAudit(entry) {
     case "afk_timeout": return detail ? [`set the server AFK timer to ${auditCount(count, "minute", "minutes")}`] : ["turned off the server AFK timer"];
     case "expressions": return ["changed who can share emoji and upload sounds"];
     case "sound_sharing": return [detail === "on" ? "let members play this server's sounds in their other servers" : "stopped sharing this server's sounds"];
+    case "activities": return [detail === "on" ? "turned on Activities in voice channels" : "turned off Activities in voice channels"];
     case "channel_create": return [`created the ${CHANNEL_KIND_WORDS[detail] || "channel"} `, channel];
     case "channel_delete": return label ? ["deleted the channel ", channel] : ["deleted a channel"];
     case "channel_rename": return ["renamed the channel ", channel, " to ", auditStrong(detail || "")];

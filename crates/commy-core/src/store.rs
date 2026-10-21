@@ -1124,6 +1124,10 @@ impl ServerState {
                 self.same_server(server)?;
                 Ok(replace(&mut self.server.sounds_shareable, shareable))
             }
+            ServerEvent::ActivitiesSet { server, enabled } => {
+                self.same_server(server)?;
+                Ok(replace(&mut self.server.activities_enabled, enabled))
+            }
             ServerEvent::ServerDelete { server } => {
                 self.same_server(server)?;
                 self.deleted = true;

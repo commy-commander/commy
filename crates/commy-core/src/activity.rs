@@ -145,7 +145,7 @@ pub fn present(state: &ServerState, user: UserId, channel: ChannelId) -> bool {
 }
 
 pub fn admits_set(state: &ServerState, by: UserId, channel: ChannelId, activity: Option<&Activity>) -> bool {
-    if !present(state, by, channel) {
+    if !present(state, by, channel) || (activity.is_some() && !state.server.activities_enabled) {
         return false;
     }
     let running = state.activities.get(&channel);
@@ -252,10 +252,14 @@ mod tests {
         let voice = state.server.channels.iter().find(|c| c.kind == crate::server::ChannelKind::Voice).map(|c| c.id).unwrap();
         let user = join(&mut state, "user");
         let other = join(&mut state, "other");
+        state.server.activities_enabled = true;
         assert!(!admits_set(&state, user, voice, Some(&game(user))), "not in the channel yet");
         enter_voice(&mut state, user, voice);
         enter_voice(&mut state, other, voice);
         enter_voice(&mut state, owner, voice);
+        state.server.activities_enabled = false;
+        assert!(!admits_set(&state, user, voice, Some(&game(user))), "Activities are off for this server");
+        state.server.activities_enabled = true;
         assert!(admits_set(&state, user, voice, Some(&game(user))));
         assert!(!admits_set(&state, user, voice, Some(&game(other))), "a start names its own starter");
         assert!(!admits_set(&state, user, voice, None), "nothing to end yet");
@@ -280,6 +284,7 @@ mod tests {
     #[test]
     fn the_run_ends_with_its_starter_or_when_the_starter_leaves_voice() {
         let (mut state, _, _) = fixture();
+        state.server.activities_enabled = true;
         let sid = state.server.id;
         let voice = state.server.channels.iter().find(|c| c.kind == crate::server::ChannelKind::Voice).map(|c| c.id).unwrap();
         let user = join(&mut state, "user");
