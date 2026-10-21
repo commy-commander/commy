@@ -55,6 +55,7 @@ struct Status {
 pub struct Session {
     host: Host,
     origin: String,
+    relays: Vec<String>,
     client: RefCell<Client>,
     status: RefCell<Status>,
     node: Mutex<Option<CommyNode>>,
@@ -81,10 +82,11 @@ fn to_json<T: serde::Serialize>(value: &T) -> Result<Value, String> {
 }
 
 impl Session {
-    pub fn new(host: Host, origin: String) -> Rc<Self> {
+    pub fn new(host: Host, origin: String, relays: Option<String>) -> Rc<Self> {
         Rc::new(Self {
             host,
             origin,
+            relays: commy_net::relays::own_relays_from(relays.as_deref()),
             client: RefCell::new(Client::default()),
             status: RefCell::new(Status {
                 unlock: Unlock::SignedOut,
@@ -238,7 +240,7 @@ impl Session {
         if slot.is_some() {
             return Ok(());
         }
-        let (mut node, events, _media, _dms) = CommyNode::spawn_with(Some(secret), Some(own_relay_map()?))
+        let (mut node, events, _media, _dms) = CommyNode::spawn_with(Some(secret), Some(relay_map_of(&self.relays)?))
             .await
             .map_err(|e| format!("Could not connect to the Commy network: {e}"))?;
         let (changed_tx, changed_rx) = mpsc::unbounded_channel();
@@ -508,9 +510,9 @@ impl Session {
     }
 }
 
-fn own_relay_map() -> Result<RelayMap, String> {
+fn relay_map_of(relays: &[String]) -> Result<RelayMap, String> {
     let map = RelayMap::empty();
-    for url in commy_net::relays::own_relays() {
+    for url in relays {
         let url: RelayUrl = url.parse().map_err(|_| format!("invalid relay {url}"))?;
         map.insert(url.clone(), Arc::new(RelayConfig::new(url, None)));
     }

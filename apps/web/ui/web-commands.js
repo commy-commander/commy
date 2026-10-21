@@ -70,10 +70,16 @@ function webUnlockText(view) {
   return (view && view.detail) || WEB_UNLOCK_TEXT[view && view.state] || WEB_UNLOCK_TEXT.locked;
 }
 
+function webRelays(doc) {
+  const meta = doc.querySelector('meta[name="commy-relays"]');
+  const relays = meta ? meta.getAttribute("content").trim() : "";
+  return relays || undefined;
+}
+
 function webReplyLine(status, text) {
   return `${status}\n${text}`;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webSignInUrl, webUnlockText, webReplyLine };
+  module.exports = { WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webSignInUrl, webUnlockText, webReplyLine, webRelays };
 }
