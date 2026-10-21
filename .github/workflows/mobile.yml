@@ -90,6 +90,7 @@ jobs:
 
   ios:
     name: iOS simulator build
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 60
     continue-on-error: true
     runs-on: macos-15-intel

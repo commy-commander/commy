@@ -243,8 +243,9 @@ npx tauri icon ../mobile/app-icon.png
 npx tauri ios dev
 ```
 
-The "Mobile builds" workflow builds a debug APK and an iOS simulator app on
-every change. Screen sharing, the overlay, hotkeys, the tray and Stream Deck
+The "Mobile builds" workflow builds a debug APK on every change to native or
+phone files; the iOS simulator app builds only when the workflow is run by
+hand. Screen sharing, the overlay, hotkeys, the tray and Stream Deck
 are desktop only.
 
 ## Self-hosting
