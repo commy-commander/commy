@@ -3637,6 +3637,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .custom-emoji { width: 22px; height: 22px; object-fit: contain; vertical-align: -6px; margin: 0 1px; }
 .custom-emoji:not([src]) { display: inline-block; background: var(--bg-active); border-radius: 6px; }
 .custom-emoji.missing { opacity: .4; }
+.custom-emoji.profile-emoji { width: 1.3em; height: 1.3em; vertical-align: -0.3em; margin: 0 1px; }
 .msg-content.jumbo .custom-emoji { width: 48px; height: 48px; vertical-align: -12px; margin: 2px 1px; }
 .reaction .custom-emoji { width: 16px; height: 16px; vertical-align: middle; margin: 0; }
 .emoji-grid button.custom { display: flex; align-items: center; justify-content: center; }

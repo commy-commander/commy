@@ -694,7 +694,7 @@ async function mockInvoke(cmd, args = {}) {
       const members = s.members.map(m => mockProfileFor({ username: m.username || m.name, nickname: m.nickname || null, priority_speaker: false, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
+        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: mock.user.custom_status || null, status_emoji: mock.user.status_emoji || null, about: mock.user.about || null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
         const vc = s.channels.find(c => isVoiceKind(c.kind) && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -4168,9 +4168,9 @@ function renderProfilePopover() {
   av.appendChild(el("span", "presence-dot " + (user.presence || "online")));
   $("pp-name").textContent = name;
   $("pp-username").textContent = user.username;
-  $("pp-status").value = user.custom_status || "";
+  $("pp-status").value = decodeCustomEmojis(user.custom_status);
   const emojiBtn = $("pp-emoji");
-  if (user.status_emoji) emojiBtn.textContent = user.status_emoji;
+  if (user.status_emoji) setEmojiText(emojiBtn, user.status_emoji);
   else emojiBtn.replaceChildren(svgIcon("smile", 20));
   emojiBtn.classList.toggle("set", Boolean(user.status_emoji));
   $("pp-clear").classList.toggle("hidden", !(user.custom_status || user.status_emoji));
@@ -4664,7 +4664,7 @@ function renderMembers() {
         img.alt = "";
         line.appendChild(img);
       }
-      if (text) line.appendChild(el("span", "sub-text", text));
+      if (text) line.appendChild(appendEmojiText(el("span", "sub-text"), text));
       meta.appendChild(line);
       row.appendChild(meta);
       row.onclick = e => {
@@ -8990,10 +8990,10 @@ async function openFullProfile(member) {
   $("fp-name").parentElement.querySelector(".role-tag")?.remove();
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = [person.username ? `@${person.username}` : "", person.pronouns || ""].filter(Boolean).join(" \u00b7 ");
-  $("fp-status").textContent = (isShowingActivity(person) ? statusBesideGame(person) : subLine(person)) || presenceLabel(person);
+  setEmojiText($("fp-status"), (isShowingActivity(person) ? statusBesideGame(person) : subLine(person)) || presenceLabel(person));
   showActivityIn($("fp-activity"), person);
   $("fp-about-wrap").classList.toggle("hidden", !person.about);
-  $("fp-about").textContent = person.about || "";
+  setEmojiText($("fp-about"), person.about);
   const servers = (state.people.get(person.id) || {}).servers || [];
   const own = !!state.user && person.id === state.user.id;
   $("fp-mutual-label").classList.toggle("hidden", own);
@@ -9105,7 +9105,7 @@ function openMemberCard(member, anchor) {
   status.replaceChildren();
   const playing = isShowingActivity(member);
   if (playing) {
-    status.textContent = statusBesideGame(member) || presenceLabel(member);
+    setEmojiText(status, statusBesideGame(member) || presenceLabel(member));
   } else {
     const line = subLine(member);
     const cover = member.activity && igdbCover(member.activity_cover, "t_thumb");
@@ -9114,7 +9114,7 @@ function openMemberCard(member, anchor) {
       img.src = cover;
       status.appendChild(img);
     }
-    status.appendChild(document.createTextNode(line || presenceLabel(member)));
+    appendEmojiText(status, line || presenceLabel(member));
     if (member.activity && member.activity_since) {
       status.appendChild(document.createTextNode(" · "));
       status.appendChild(liveElapsed(member.activity_since, "words"));
@@ -9134,7 +9134,7 @@ function openMemberCard(member, anchor) {
   $("mc-roles-label").classList.toggle("hidden", !held.length);
   const isMe = state.user && member.id === state.user.id;
   $("mc-about").classList.toggle("hidden", !member.about);
-  $("mc-about").textContent = member.about || "";
+  setEmojiText($("mc-about"), member.about);
   const actions = $("mc-actions");
   actions.replaceChildren();
   const more = $("mc-more");
@@ -10499,6 +10499,25 @@ function encodeCustomEmojis(text) {
     const e = findCustomEmoji(name.toLowerCase());
     return e ? `<:${e.name}:${e.image}>` : whole;
   });
+}
+
+function appendEmojiText(node, text) {
+  const value = String(text || "");
+  EMOJI_TOKEN_RE.lastIndex = 0;
+  let last = 0;
+  let m;
+  while ((m = EMOJI_TOKEN_RE.exec(value))) {
+    if (m.index > last) node.appendChild(document.createTextNode(value.slice(last, m.index)));
+    node.appendChild(customEmojiImg(m[1], m[2], "custom-emoji profile-emoji"));
+    last = m.index + m[0].length;
+  }
+  if (last < value.length) node.appendChild(document.createTextNode(value.slice(last)));
+  return node;
+}
+
+function setEmojiText(node, text) {
+  node.replaceChildren();
+  return appendEmojiText(node, text);
 }
 
 function appendRichText(div, text) {
@@ -13219,7 +13238,7 @@ async function renderDmThreads() {
       const meta = el("div", "dm-meta");
       meta.appendChild(el("div", "dm-name", friend.name));
       const person = state.people.get(friend.id);
-      meta.appendChild(el("div", "dm-preview", (person && statusLine(person)) || PRESENCE_LABELS[personPresence(friend.id)] || "Offline"));
+      meta.appendChild(appendEmojiText(el("div", "dm-preview"), (person && statusLine(person)) || PRESENCE_LABELS[personPresence(friend.id)] || "Offline"));
       row.appendChild(meta);
       row.onclick = () => messageUser(friend.id, friend.name);
       row.oncontextmenu = e => {
@@ -13461,7 +13480,7 @@ function renderDmHeader(userId, name) {
   const person = state.people.get(userId);
   $("chat-presence").className = `presence-dot inline ${presence}`;
   $("chat-presence").title = presenceLabel({ ...(person || {}), presence });
-  $("channel-topic").textContent = (person && subLine(person)) || "";
+  setEmojiText($("channel-topic"), (person && subLine(person)) || "");
   renderDmProfile(userId, name);
 }
 
@@ -13476,7 +13495,7 @@ function renderDmProfile(userId, name) {
   $("dm-profile-banner").style.background = bannerColor(userId);
   $("dm-profile-name").textContent = name;
   const seen = { ...(person || {}), presence };
-  $("dm-profile-status").textContent = (person && (isShowingActivity(seen) ? statusBesideGame(seen) : subLine(seen))) || presenceLabel(seen);
+  setEmojiText($("dm-profile-status"), (person && (isShowingActivity(seen) ? statusBesideGame(seen) : subLine(seen))) || presenceLabel(seen));
   showActivityIn($("dm-profile-activity"), person && seen);
   const servers = person ? person.servers : [];
   $("dm-profile-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
@@ -15176,7 +15195,7 @@ function wireEvents() {
     try {
       state.user = await invoke("update_profile", {
         displayName: $("account-display-name").value || null,
-        customStatus: $("account-status").value || null,
+        customStatus: encodeCustomEmojis($("account-status").value) || null,
         presence: $("account-presence").value,
       });
       renderUserPanel();
@@ -15337,18 +15356,18 @@ function wireEvents() {
   };
   $("pp-emoji").onclick = e => {
     e.stopPropagation();
-    openEmojiPop(e.currentTarget, emoji => saveOwnProfile({ statusEmoji: emoji }));
+    openEmojiPop(e.currentTarget, emoji => saveOwnProfile({ statusEmoji: emoji }), { custom: true });
   };
   $("pp-status").addEventListener("keydown", e => {
     if (e.key === "Enter") e.target.blur();
     if (e.key === "Escape") {
-      e.target.value = state.user.custom_status || "";
+      e.target.value = decodeCustomEmojis(state.user.custom_status);
       e.target.blur();
     }
   });
   $("pp-status").addEventListener("blur", e => {
     const value = e.target.value.trim();
-    if (value !== (state.user.custom_status || "")) saveOwnProfile({ customStatus: value || null });
+    if (value !== decodeCustomEmojis(state.user.custom_status)) saveOwnProfile({ customStatus: encodeCustomEmojis(value) || null });
   });
   $("pp-clear").onclick = async () => {
     await saveOwnProfile({ customStatus: null, statusEmoji: "" });
@@ -15422,7 +15441,7 @@ function wireEvents() {
   });
   $("account-about").addEventListener("change", async e => {
     try {
-      state.user = await invoke("set_about", { about: e.target.value });
+      state.user = await invoke("set_about", { about: encodeCustomEmojis(e.target.value) });
       toast("About Me saved");
     } catch (err) {
       toast(String(err));
@@ -15482,11 +15501,11 @@ function wireEvents() {
   $("account-banner-remove").onclick = () => saveAccountBanner(null);
   $("account-banner-remove").appendChild(svgIcon("close", 14));
   $("account-banner-upload").firstElementChild.appendChild(svgIcon("plus", 14));
-  $("account-status-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("account-status"), picked));
+  $("account-status-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => insertEmojiInName($("account-status"), picked), { custom: true });
   $("account-about-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => {
     insertEmojiInName($("account-about"), picked);
     $("account-about").dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  }, { custom: true });
   $("avatar-upload").onclick = async () => {
     $("avatar-menu").classList.add("hidden");
     try {
@@ -16889,7 +16908,7 @@ function openUserSettings(tab) {
   renderSoundSettings();
   loadSafety().then(renderSafetySettings);
   loadStorageSettings().then(renderStorageSettings);
-  $("account-about").value = state.user.about || "";
+  $("account-about").value = decodeCustomEmojis(state.user.about);
   $("account-pronouns").value = state.voice.pronouns || "";
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();
@@ -16911,7 +16930,7 @@ function openUserSettings(tab) {
   renderVoiceInputSettings();
   startMicMeter();
   $("account-display-name").value = state.user.display_name || "";
-  $("account-status").value = state.user.custom_status || "";
+  $("account-status").value = decodeCustomEmojis(state.user.custom_status);
   $("account-presence").value = state.user.presence || "online";
   $("account-avatar").replaceChildren();
   paintAvatar($("account-avatar"), state.user.id, state.user.display_name || state.user.username);
