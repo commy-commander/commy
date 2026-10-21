@@ -1178,9 +1178,12 @@ async function mockInvoke(cmd, args = {}) {
         mock.user.banner = null;
       }
       return mock.user;
-    case "rename_server":
+    case "rename_server": {
       mock.servers[args.serverId].name = args.name;
+      const listing = (mock.listings || {})[args.serverId];
+      if (listing) mock.directory = (mock.directory || []).map(l => l.code === listing.code ? { ...l, name: args.name } : l);
       return null;
+    }
     case "create_channel":
       mock.servers[args.serverId].channels.push({
         id: crypto.randomUUID(), name: args.name, kind: args.kind, topic: null, voice_users: [],
@@ -18063,7 +18066,7 @@ async function openDiscover() {
   button.setAttribute("aria-pressed", "true");
   renderDiscoverChips();
   $("discover-search").focus();
-  if (!discoverState.entries.length) await loadDiscover(true);
+  await loadDiscover(true);
 }
 
 function renderDiscoverChips() {
