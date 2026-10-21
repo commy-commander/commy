@@ -493,8 +493,15 @@ body {
   color: var(--header-primary);
 }
 
-.chat-header .hash { color: var(--text-faint); font-size: 22px; }
-.header-actions { margin-left: auto; display: flex; gap: 4px; }
+.chat-header { min-width: 0; }
+.chat-header .hash { color: var(--text-faint); font-size: 22px; flex: none; }
+.chat-header #channel-name { flex: 0 1 auto; min-width: 48px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-header .topic { flex: 0 100 auto; min-width: 0; }
+.chat-header .search-box { flex: 0 1 208px; min-width: 112px; }
+.header-actions { margin-left: auto; display: flex; gap: 4px; flex: 0 1 auto; min-width: 0; align-items: center; }
+@media (max-width: 1400px) and (min-width: 701px) {
+  .chat-header .topic { display: none; }
+}
 .header-actions .icon-btn.active { color: var(--red); }
 
 .video-pane {
