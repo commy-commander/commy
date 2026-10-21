@@ -63,7 +63,7 @@ fn cache_path(app: &App, blob: &str) -> Option<PathBuf> {
 }
 
 pub fn cached(app: &App, blob: &str) -> Option<Vec<u8>> {
-    std::fs::read(cache_path(app, blob)?).ok()
+    commy_core::at_rest::read(&cache_path(app, blob)?).ok()
 }
 
 pub fn keep_if_wanted(app: &App, blob: &str, bytes: &[u8]) {
@@ -74,7 +74,7 @@ pub fn keep_if_wanted(app: &App, blob: &str, bytes: &[u8]) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Err(e) = std::fs::write(path, bytes) {
+    if let Err(e) = commy_core::at_rest::write(&path, bytes) {
         tracing::debug!("profile image not kept on disk: {e}");
     }
 }

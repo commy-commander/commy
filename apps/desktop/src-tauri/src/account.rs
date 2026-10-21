@@ -97,7 +97,7 @@ fn path(dir: &Path) -> PathBuf {
 }
 
 pub fn load(dir: &Path) -> AccountState {
-    let state: AccountState = std::fs::read_to_string(path(dir))
+    let state: AccountState = commy_core::at_rest::read_to_string(&path(dir))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
