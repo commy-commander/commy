@@ -238,7 +238,8 @@ function mockSeed() {
         activity: "Playing Portal 2", activity_cover: "co1rs4", activity_since: Math.floor(Date.now() / 1000) - 983 },
       { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
       { id: "m5", name: "quill", presence: "offline", custom_status: null, about: "Only friends get to read this.", pronouns: "she / her", profile_policy: "friends" },
-      { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true },
+      { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true, roles: ["r2"] },
+      { id: "m10", name: "Quotebook", presence: "offline", custom_status: null, bot: true },
       { id: "m6", name: "ash", presence: "online", custom_status: "hosting tonight", roles: ["r2"] },
       { id: "m7", name: "pip", presence: "online", custom_status: null },
       { id: "m8", name: "lumen", presence: "idle", custom_status: null },
@@ -1870,6 +1871,22 @@ function selectSettingsTab(id, tab) {
   layer.querySelector(".settings-content").scrollTop = 0;
   layer.dataset.tab = tab;
   if (tab === "voice") prepareAvatarStage();
+}
+
+function hideEmptyNavGroups(layer) {
+  let group = null;
+  let shown = false;
+  const settle = () => group && group.classList.toggle("hidden", !shown);
+  for (const item of layer.querySelector(".settings-nav-inner").children) {
+    if (item.classList.contains("settings-nav-group") || item.classList.contains("settings-nav-sep")) {
+      settle();
+      group = item.classList.contains("settings-nav-group") ? item : null;
+      shown = false;
+    } else if (item.classList.contains("settings-tab") && !item.classList.contains("hidden")) {
+      shown = true;
+    }
+  }
+  settle();
 }
 
 function openSettingsLayerId() {
@@ -7286,6 +7303,8 @@ async function toggleAudioPop(which, anchor) {
   $("ap-volume").value = String(level);
   $("ap-volume-label").textContent = `${level}%`;
   syncRangeFill($("ap-volume"));
+  $("ap-nc-row").classList.toggle("hidden", !input);
+  $("ap-nc").checked = Boolean(state.voice.noise_cancellation);
   pop.classList.remove("hidden");
   placePopup(pop, anchor, "above");
   try {
@@ -9743,32 +9762,110 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
       }
       item("Disconnect from Voice", () => moveVoiceMember(member, null), "danger");
     }
-    if (server.can_kick) {
-      item(`Kick ${member.name}`, async () => {
-        if (!confirm(`Kick ${member.name} from ${server.name}?`)) return;
-        try {
-          await invoke("kick_member", { serverId: server.id, userId: member.id });
-          await refreshCurrentServer();
-          toast(`Kicked ${member.name}`);
-        } catch (e) {
-          toast(String(e));
-        }
-      }, "danger");
-    }
-    if (server.can_ban) {
-      item(`Ban ${member.name}`, async () => {
-        if (!confirm(`Ban ${member.name} from ${server.name}? They are removed and cannot rejoin until unbanned.`)) return;
-        try {
-          await invoke("ban_member", { serverId: server.id, userId: member.id });
-          await refreshCurrentServer();
-          toast(`Banned ${member.name}`);
-        } catch (e) {
-          toast(String(e));
-        }
-      }, "danger");
-    }
+    if (server.can_kick) item(`Kick ${member.name}`, () => confirmKick(member), "danger");
+    if (server.can_ban) item(`Ban ${member.name}`, () => confirmBan(member), "danger");
   }
   placeMenuAt(menu, x, y);
+}
+
+let moderateRun = null;
+
+function modWho(target, member) {
+  target.replaceChildren(makeAvatar(member.id, member.name, "avatar avatar-sm"), el("span", null, member.name));
+}
+
+function askModeration({ title, member, text, label, run }) {
+  closeFloating();
+  $("moderate-title").textContent = title;
+  modWho($("moderate-who"), member);
+  $("moderate-text").textContent = text;
+  $("moderate-go").textContent = label;
+  moderateRun = run;
+  showModal("modal-moderate");
+}
+
+function confirmKick(member) {
+  const server = state.currentServer;
+  if (!server) return;
+  askModeration({
+    title: `Kick ${member.name}`,
+    member,
+    text: `They are removed from ${server.name} and can rejoin with a new invite.`,
+    label: "Kick",
+    run: async () => {
+      await invoke("kick_member", { serverId: server.id, userId: member.id });
+      await refreshCurrentServer();
+      toast(`Kicked ${member.name}`);
+    },
+  });
+}
+
+function confirmBan(member) {
+  const server = state.currentServer;
+  if (!server) return;
+  askModeration({
+    title: `Ban ${member.name}`,
+    member,
+    text: `They are removed from ${server.name} and cannot rejoin until you unban them.`,
+    label: "Ban",
+    run: async () => {
+      await invoke("ban_member", { serverId: server.id, userId: member.id });
+      await refreshCurrentServer();
+      toast(`Banned ${member.name}`);
+    },
+  });
+}
+
+function wireModerationModal() {
+  $("moderate-cancel").onclick = () => {
+    hideModals();
+    moderateRun = null;
+  };
+  $("moderate-go").onclick = async () => {
+    const run = moderateRun;
+    moderateRun = null;
+    hideModals();
+    if (!run) return;
+    try {
+      await run();
+      if (!$("server-settings").classList.contains("hidden")) openServerSettings();
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+}
+
+function openMemberRowMenu(member, anchor) {
+  const server = state.currentServer;
+  if (!server) return;
+  closeFloating();
+  const menu = $("member-menu");
+  menu.replaceChildren(el("div", "ctx-title", member.name));
+  const { item, sep } = contextMenuBuilder(menu);
+  const isSelf = state.user && member.id === state.user.id;
+  const isOwner = member.id === server.owner;
+  let any = false;
+  if (canTimeOut(server, member, state.user && state.user.id)) {
+    const active = timeoutActive(member.timeout_until);
+    item(active ? "Remove timeout" : "Time out...", async () => {
+      if (active) {
+        await clearMemberTimeout(member);
+        openServerSettings();
+      } else {
+        openTimeoutPicker(member);
+      }
+    });
+    any = true;
+  }
+  if (!isSelf && !isOwner && (server.can_kick || server.can_ban)) {
+    if (any) sep();
+    if (server.can_kick) item("Kick...", () => confirmKick(member), "danger");
+    if (server.can_ban) item("Ban...", () => confirmBan(member), "danger");
+  }
+  const rect = anchor.getBoundingClientRect();
+  placeMenuAt(menu, rect.left, rect.bottom + 4);
+  const width = menu.getBoundingClientRect().width;
+  menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
 }
 
 async function setStageSpeaker(channel, member, action) {
@@ -9881,6 +9978,7 @@ function openTimeoutPicker(member) {
   closeFloating();
   timeoutTarget = { serverId: server.id, member, seconds: TIMEOUT_CHOICES[1].seconds };
   $("timeout-title").textContent = `Time out ${member.name}`;
+  modWho($("timeout-who"), member);
   $("timeout-custom").value = "";
   renderTimeoutChoices();
   showModal("modal-timeout");
@@ -9920,6 +10018,7 @@ async function confirmTimeout() {
     await invoke("time_out_member", { serverId, userId: member.id, seconds });
     await refreshCurrentServer();
     toast(timeoutSummary(member.name, seconds));
+    if (!$("server-settings").classList.contains("hidden")) openServerSettings();
   } catch (e) {
     toast(String(e));
   }
@@ -12199,10 +12298,9 @@ function renderInlineVideo(att) {
 function renderShareButton() {
   const btn = $("share-btn");
   const inVoice = Boolean(state.voiceChannelId);
-  btn.classList.toggle("hidden", !inVoice);
   btn.classList.toggle("active", state.sharing);
-  btn.title = state.sharing ? "Stop Sharing" : "Share Your Screen";
-  $("vp-nc").classList.toggle("hidden", !inVoice);
+  btn.title = state.sharing ? "Stop sharing your screen" : "Share your screen";
+  btn.replaceChildren(svgIcon("screen", 16), el("span", null, state.sharing ? "Stop Sharing" : "Share Screen"));
   $("vp-soundboard").classList.toggle("hidden", !inVoice);
   renderVoicePanel();
 }
@@ -12230,9 +12328,6 @@ function renderVoicePanel() {
   }
   $("vp-signal").replaceChildren(svgIcon("signal", 14));
   setIcon($("vp-disconnect"), "hangup", 20);
-  setIcon($("vp-nc"), "noise", 18);
-  $("vp-nc").classList.toggle("on", state.voice.noise_cancellation);
-  $("vp-nc").title = `Noise Cancellation: ${state.voice.noise_cancellation ? "on" : "off"}`;
 
   $("vp-camera-icon").replaceChildren(svgIcon(state.cameraOn ? "camera" : "cameraOff", 18));
   $("vp-camera").classList.toggle("active", Boolean(state.cameraOn));
@@ -12421,6 +12516,7 @@ function renderVoicePanelActivity() {
   const run = activityUi.run;
   const vs = state.voiceServer;
   btn.classList.toggle("hidden", !vs || Boolean(vs.call));
+  $("vp-actions").classList.toggle("solo", btn.classList.contains("hidden"));
   btn.classList.toggle("running", Boolean(run));
   const info = run ? activityKindInfo(run.activity) : null;
   btn.replaceChildren(svgIcon(info ? info.icon : "gamepad", 16), el("span", null, run ? `Open ${activityName(run.activity)}` : "Activities"));
@@ -12792,8 +12888,7 @@ function setViewMode(mode) {
     $("dm-profile-btn").classList.add("hidden");
     $("dm-search").value = "";
   }
-  if (dm) $("share-btn").classList.add("hidden");
-  else renderShareButton();
+  renderShareButton();
   syncPinButton();
   syncSearchBox();
   syncRulesGate();
@@ -15931,14 +16026,14 @@ function wireEvents() {
   setIcon($("group-add-btn"), "friendAdd");
   setIcon($("call-accept"), "phone", 26);
   setIcon($("call-decline"), "hangup", 26);
-  $("vp-nc").onclick = async () => {
+  $("ap-nc").onchange = async e => {
     try {
-      state.voice = await invoke("set_noise_cancellation", { enabled: !state.voice.noise_cancellation });
+      state.voice = await invoke("set_noise_cancellation", { enabled: e.target.checked });
       $("nc-toggle").checked = state.voice.noise_cancellation;
       toast(`Noise cancellation ${state.voice.noise_cancellation ? "on" : "off"}`);
-      renderVoicePanel();
-    } catch (e) {
-      toast(String(e));
+    } catch (err) {
+      e.target.checked = Boolean(state.voice.noise_cancellation);
+      toast(String(err));
     }
   };
 
@@ -17005,9 +17100,14 @@ function openServerSettings(tab) {
   const canInvites = Boolean(server.can_invite || server.can_manage_server);
   $("tab-invites").classList.toggle("hidden", !canInvites);
   if (canInvites) renderInvitesPage(server);
+  const canBots = canSeeBotsPage(server);
+  $("tab-bots").classList.toggle("hidden", !canBots);
+  if (canBots) renderBotsPage(server);
   const allowed = {
+    bots: canBots,
     invites: canInvites,
     overview: true,
+    discovery: true,
     channels: server.can_manage_channels,
     roles: server.can_manage_roles,
     emoji: canEmoji,
@@ -17025,6 +17125,7 @@ function openServerSettings(tab) {
   renderStickerSettings(server);
   renderEmoticonSettings(server);
   renderSoundboardSettings(server);
+  hideEmptyNavGroups(layer);
   let current = tab || (layer.classList.contains("hidden") ? "overview" : layer.dataset.tab);
   if (!allowed[current]) current = "overview";
 
@@ -17473,32 +17574,19 @@ function renderMemberSettings(server) {
     top.appendChild(who);
     const isSelf = state.user && member.id === state.user.id;
     const isOwner = member.id === server.owner;
-    if (canTimeOut(server, member, state.user && state.user.id)) {
-      const active = timeoutActive(member.timeout_until);
-      const timeOut = el("button", (active ? "btn-secondary" : "btn-danger") + " btn-small", timeoutActionLabel(member));
-      timeOut.onclick = async () => {
-        if (active) {
-          await clearMemberTimeout(member);
-          openServerSettings();
-        } else {
-          openTimeoutPicker(member);
-        }
+    if (timeoutActive(member.timeout_until)) who.appendChild(timeoutBadge(member.timeout_until));
+    const moderable = canTimeOut(server, member, state.user && state.user.id) || (!isSelf && !isOwner && (server.can_kick || server.can_ban));
+    if (moderable) {
+      const more = el("button", "icon-btn row-more");
+      more.title = `Actions for ${member.name}`;
+      more.setAttribute("aria-label", more.title);
+      more.setAttribute("aria-haspopup", "menu");
+      more.appendChild(svgIcon("more", 18));
+      more.onclick = e => {
+        e.stopPropagation();
+        openMemberRowMenu(member, more);
       };
-      top.appendChild(timeOut);
-    }
-    if (server.can_kick && !isSelf && !isOwner) {
-      const kick = el("button", "btn-danger btn-small", "Kick");
-      kick.onclick = async () => {
-        if (!confirm(`Kick ${member.name} from the server?`)) return;
-        try {
-          await invoke("kick_member", { serverId: server.id, userId: member.id });
-          await refreshCurrentServer();
-          openServerSettings();
-        } catch (e) {
-          toast(String(e));
-        }
-      };
-      top.appendChild(kick);
+      top.appendChild(more);
     }
     row.appendChild(top);
 
@@ -17529,6 +17617,232 @@ function renderMemberSettings(server) {
     }
     list.appendChild(row);
   }
+}
+
+function renderBotsPage(server) {
+  const bots = serverBots(server);
+  const add = $("bots-add");
+  add.disabled = !server.can_invite;
+  add.title = server.can_invite ? "" : "You need permission to create invites to add a bot";
+  $("bots-count").textContent = bots.length ? `Installed - ${bots.length}` : "Installed";
+  const list = $("bots-list");
+  if (!bots.length) {
+    const empty = el("div", "bots-empty");
+    empty.appendChild(el("div", "bots-empty-title", "No bots yet"));
+    empty.appendChild(el("div", "setting-sub", "Bots can tidy up chat, run slash commands and post updates from your other tools. Add one to see it here."));
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...bots.map(bot => botCard(server, bot)));
+}
+
+function botCard(server, bot) {
+  const { member } = bot;
+  const card = el("div", "bot-card");
+  const top = el("div", "bot-card-top");
+  const avatar = makeAvatar(member.id, member.name, "avatar bot-card-avatar");
+  avatar.appendChild(el("span", "presence-dot " + (bot.online ? member.presence : "offline")));
+  top.appendChild(avatar);
+  const who = el("div", "bot-card-who");
+  const name = el("div", "bot-card-name");
+  name.appendChild(el("span", "bot-card-label", member.name));
+  name.appendChild(botTag());
+  who.appendChild(name);
+  who.appendChild(el("div", "bot-card-status" + (bot.online ? " online" : ""), bot.online ? "Online" : "Offline"));
+  top.appendChild(who);
+  const actions = el("div", "bot-card-actions");
+  const removable = member.id !== server.owner && !(state.user && member.id === state.user.id);
+  if (server.can_kick && removable) {
+    const remove = el("button", "btn-secondary btn-small", "Remove");
+    remove.onclick = () => removeBot(server, member, "kick_member");
+    actions.appendChild(remove);
+  }
+  if (server.can_ban && removable) {
+    const ban = el("button", "btn-danger btn-small", "Ban");
+    ban.onclick = () => removeBot(server, member, "ban_member");
+    actions.appendChild(ban);
+  }
+  top.appendChild(actions);
+  card.appendChild(top);
+  card.appendChild(el("div", "bot-card-ability", bot.abilities));
+
+  const roles = el("div", "bot-card-row");
+  roles.appendChild(el("div", "bot-card-key", "Roles"));
+  roles.appendChild(botRoleChips(server, member, async () => {
+    await refreshCurrentServer();
+    openServerSettings();
+  }));
+  card.appendChild(roles);
+
+  const commands = el("div", "bot-card-row");
+  commands.appendChild(el("div", "bot-card-key", "Commands"));
+  const chips = el("div", "bot-card-commands");
+  for (const command of bot.commands) {
+    const chip = el("span", "bot-command", `/${command.name}`);
+    if (command.description) chip.title = command.description;
+    chips.appendChild(chip);
+  }
+  if (!bot.commands.length) chips.appendChild(el("span", "bot-card-none", "No slash commands"));
+  commands.appendChild(chips);
+  card.appendChild(commands);
+  return card;
+}
+
+function botRoleChips(server, member, changed) {
+  const chips = el("div", "role-chips bot-role-chips");
+  const held = new Set(member.roles || []);
+  if (!server.can_manage_roles) {
+    for (const role of server.roles.filter(r => held.has(r.id))) {
+      const chip = el("span", "role-chip held readonly", role.name);
+      if (role.color) chip.style.borderColor = `#${role.color}`;
+      chips.appendChild(chip);
+    }
+    if (!chips.children.length) chips.appendChild(el("span", "bot-card-none", "No roles"));
+    return chips;
+  }
+  for (const role of server.roles) {
+    const has = held.has(role.id);
+    const chip = el("button", "role-chip" + (has ? " held" : ""), role.name);
+    if (role.color) chip.style.borderColor = `#${role.color}`;
+    chip.title = has ? "Click to remove role" : "Click to grant role";
+    chip.onclick = async () => {
+      try {
+        await invoke("set_member_role", { serverId: server.id, userId: member.id, roleId: role.id, grant: !has });
+        await changed();
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    chips.appendChild(chip);
+  }
+  if (!server.roles.length) chips.appendChild(el("span", "bot-card-none", "No roles yet. Make one in Roles."));
+  return chips;
+}
+
+async function removeBot(server, member, command) {
+  const banning = command === "ban_member";
+  const question = banning
+    ? `Ban ${member.name} from ${server.name}? It is removed and cannot rejoin until unbanned.`
+    : `Remove ${member.name} from ${server.name}?`;
+  if (!confirm(question)) return;
+  try {
+    await invoke(command, { serverId: server.id, userId: member.id });
+    await refreshCurrentServer();
+    openServerSettings();
+    toast(banning ? `Banned ${member.name}` : `Removed ${member.name}`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+const addBot = { serverId: null, known: [], invite: "", joined: null, timer: null, changed: false };
+
+function botCodeRow(text, ready = true) {
+  const row = el("div", "bot-code-row");
+  const code = el("code", "bot-code", text);
+  code.title = text;
+  row.appendChild(code);
+  const copy = el("button", "btn-secondary btn-small bot-copy", "Copy");
+  copy.disabled = !ready;
+  copy.onclick = () => copyText(text, "Copied");
+  row.appendChild(copy);
+  return row;
+}
+
+function paintAddBotCommands() {
+  const commands = botSetupCommands($("add-bot-name").value, addBot.invite);
+  const ready = Boolean(addBot.invite);
+  $("add-bot-commands").replaceChildren(botCodeRow(commands.create), botCodeRow(commands.join, ready), botCodeRow(commands.run));
+  $("add-bot-bridge").replaceChildren(botCodeRow(commands.bridge));
+}
+
+function paintAddBotInvite(text, ready) {
+  $("add-bot-invite").textContent = text;
+  $("add-bot-invite").title = ready ? text : "";
+  $("add-bot-invite").classList.toggle("muted", !ready);
+  $("add-bot-invite-copy").disabled = !ready;
+}
+
+function paintAddBotJoined(server) {
+  const bot = server && addBot.joined ? serverBots(server).find(b => b.member.id === addBot.joined) : null;
+  $("add-bot-waiting").classList.toggle("hidden", Boolean(bot));
+  $("add-bot-joined").classList.toggle("hidden", !bot);
+  if (!bot) return;
+  $("add-bot-joined-text").textContent = server.can_manage_roles
+    ? `${bot.member.name} joined. Pick the roles it needs:`
+    : `${bot.member.name} joined. Ask someone who manages roles to give it the roles it needs.`;
+  $("add-bot-ability").textContent = bot.abilities;
+  $("add-bot-roles").replaceWith(Object.assign(botRoleChips(server, bot.member, async () => {
+    addBot.changed = true;
+    paintAddBotJoined(await invoke("get_server", { serverId: server.id }));
+  }), { id: "add-bot-roles" }));
+}
+
+function stopAddBotWatch() {
+  clearInterval(addBot.timer);
+  addBot.timer = null;
+}
+
+function addBotOpen() {
+  return !$("modal-backdrop").classList.contains("hidden") && !$("modal-add-bot").classList.contains("hidden");
+}
+
+async function watchForBot() {
+  if (!addBotOpen()) return stopAddBotWatch();
+  let server;
+  try {
+    server = await invoke("get_server", { serverId: addBot.serverId });
+  } catch {
+    return;
+  }
+  const fresh = newBots(addBot.known, server);
+  if (!fresh.length || !addBotOpen()) return;
+  stopAddBotWatch();
+  addBot.joined = fresh[0].member.id;
+  addBot.changed = true;
+  paintAddBotJoined(server);
+}
+
+async function openAddBot() {
+  const server = state.currentServer;
+  if (!server || !server.can_invite) return;
+  stopAddBotWatch();
+  Object.assign(addBot, { serverId: server.id, known: serverBots(server).map(b => b.member.id), invite: "", joined: null, changed: false });
+  $("add-bot-name").value = "";
+  $("add-bot-name").placeholder = BOT_DEFAULT_NAME;
+  $("add-bot-port").open = false;
+  paintAddBotInvite("Making an invite...", false);
+  paintAddBotCommands();
+  paintAddBotJoined(null);
+  showModal("modal-add-bot");
+  try {
+    const invite = await invoke("get_invite", { serverId: server.id });
+    if (addBot.serverId !== server.id || !addBotOpen()) return;
+    addBot.invite = invite;
+    paintAddBotInvite(invite, true);
+    paintAddBotCommands();
+    addBot.timer = setInterval(watchForBot, 2000);
+  } catch (e) {
+    paintAddBotInvite(String(e), false);
+  }
+}
+
+async function closeAddBot() {
+  stopAddBotWatch();
+  hideModals();
+  if (!addBot.changed || !state.currentServer || state.currentServer.id !== addBot.serverId) return;
+  await refreshCurrentServer();
+  if (!$("server-settings").classList.contains("hidden")) openServerSettings();
+}
+
+function wireBots() {
+  $("bots-add").onclick = openAddBot;
+  wireExternalLink($("bots-guide"), BOT_GUIDE_URL);
+  wireExternalLink($("add-bot-guide"), BOT_GUIDE_URL);
+  wireExternalLink($("add-bot-porting"), BOT_PORTING_URL);
+  $("add-bot-invite-copy").onclick = () => addBot.invite && copyText(addBot.invite, "Invite code copied");
+  $("add-bot-name").addEventListener("input", paintAddBotCommands);
+  $("add-bot-done").onclick = closeAddBot;
 }
 
 async function refreshCurrentServer() {
@@ -17582,7 +17896,9 @@ async function boot() {
   wireEvents();
   wireSaved();
   wireTimeoutModal();
+  wireModerationModal();
   wireActivityPing();
+  wireBots();
   if (IS_TAURI) {
     await invoke("ui_ready");
   } else {

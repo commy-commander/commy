@@ -353,6 +353,19 @@ never reach this stack. The auth database holds:
 - short-lived rows for verification, device sign-in codes, and a keyed hash
   of the requesting network (deleted after 15 minutes, never the raw IP)
 
+Emails, display names, avatar URLs, session tokens, provider account ids and
+ID tokens, linked node ids, passkey names, device sign-in codes and
+verification values are encrypted in the database with AES-256-GCM under a
+key derived from `BETTER_AUTH_SECRET`. Columns the server looks rows up by
+(email, session token, provider account id, node id, device code) use a
+deterministic nonce, so equal values encrypt to the same bytes and nothing
+else about them shows. Email links (sign-in, password reset, two-step
+challenges) are stored only as hashes. A database dump or a copy of `pgdata`
+without the `.env` therefore holds no readable account data. The operator
+who holds the `.env` can still read it all. Rows written by an older auth
+server stay readable to the new one and are encrypted ten minutes after it
+starts, once the container it replaced has stopped.
+
 Redis holds the message doorbell (random tokens and blinded message ids with
 the time they arrived, deleted when an app takes them or after 14 days) and
 rate-limit counters under keyed hashes of IP address and path, which expire
@@ -387,7 +400,19 @@ To have the server update itself whenever GitHub publishes new images, or to run
 dev, staging and prod side by side, see [DEPLOYING.md](DEPLOYING.md).
 
 Volumes: `pgdata` holds accounts, `caddy_data` holds TLS certificates. Back up
-`pgdata` and your `.env`. Rotating `BETTER_AUTH_SECRET` signs everyone out.
+`pgdata` and your `.env` separately: a backup is only readable together with
+`BETTER_AUTH_SECRET`, so losing the secret loses every account.
+
+To change `BETTER_AUTH_SECRET` or go back to an auth image from before
+encryption at rest, decrypt the rows first with the current secret, then
+switch. The new server encrypts them again under its own secret when it
+starts. Changing the secret still signs everyone out and resets two-step
+sign-in.
+
+```bash
+docker compose stop auth
+docker compose run --rm --no-deps auth node src/open-sealed-rows.js
+```
 
 ## Trying it locally
 

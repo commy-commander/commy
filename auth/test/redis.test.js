@@ -6,6 +6,7 @@ import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { loadConfig } from "../src/config.js";
 import { MAX_AGE_MS, MAX_PER_TOKEN, REDIS_PREFIX, commyDoorbell } from "../src/doorbell.js";
@@ -70,7 +71,7 @@ async function makeAuth({ doorbell, rateLimit = false, shared = redis } = {}) {
   const options = buildAuthOptions(loadConfig(ENV), { pool: null, send: async () => {}, redis: shared });
   if (doorbell) options.plugins = options.plugins.map((p) => (p.id === "commy-doorbell" ? commyDoorbell({ redis: shared, ...doorbell }) : p));
   const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [] };
-  options.database = memoryAdapter(db);
+  options.database = sealedAtRest(memoryAdapter(db), options.secret);
   if (!rateLimit) options.rateLimit = { enabled: false };
   const auth = betterAuth(options);
   await auth.handler(new Request(`${ORIGIN}/api/auth/ok`));
