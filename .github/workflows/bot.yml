@@ -1,0 +1,101 @@
+name: Bot builds
+
+on:
+  pull_request:
+    paths:
+      - "crates/commy-bot/**"
+      - ".github/workflows/bot.yml"
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: commy-bot ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            artifact: commy-bot-windows-x64
+            targets: x86_64-pc-windows-msvc
+          - name: macOS universal
+            os: macos-15-intel
+            artifact: commy-bot-macos-universal
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - name: Linux x64
+            os: ubuntu-22.04
+            artifact: commy-bot-linux-x64
+            targets: x86_64-unknown-linux-gnu
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.targets }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: bot-${{ matrix.artifact }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build
+        env:
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" == *-* ]]; then
+            export COMMY_DEFAULT_RELAY=https://relay-staging.commy.chat:8443
+          fi
+          echo "Relay: ${COMMY_DEFAULT_RELAY:-https://relay.commy.chat:8443}"
+          mkdir -p bin
+          IFS=, read -ra targets <<< "$TARGETS"
+          for target in "${targets[@]}"; do
+            cargo build --release --locked -p commy-bot --target "$target"
+          done
+          case "$RUNNER_OS" in
+            Windows) cp "target/${targets[0]}/release/commy-bot.exe" bin/ ;;
+            macOS)
+              lipo -create -output bin/commy-bot \
+                target/aarch64-apple-darwin/release/commy-bot \
+                target/x86_64-apple-darwin/release/commy-bot
+              lipo -info bin/commy-bot
+              ;;
+            Linux) cp "target/${targets[0]}/release/commy-bot" bin/ ;;
+          esac
+
+      - name: Smoke test
+        run: |
+          data="$RUNNER_TEMP/commy-bot-smoke"
+          ./bin/commy-bot* --data "$data" init Smoke
+          ./bin/commy-bot* --data "$data" servers
+
+      - name: Package
+        env:
+          ARTIFACT: ${{ matrix.artifact }}
+        run: |
+          mkdir -p dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a -tzip "dist/$ARTIFACT.zip" ./bin/commy-bot.exe
+          else
+            chmod +x bin/commy-bot
+            tar -czf "dist/$ARTIFACT.tar.gz" -C bin commy-bot
+          fi
+          ls -la dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: ${{ github.ref_type == 'tag' && 90 || 7 }}
