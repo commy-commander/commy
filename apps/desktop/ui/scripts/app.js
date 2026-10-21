@@ -1871,6 +1871,22 @@ function selectSettingsTab(id, tab) {
   if (tab === "voice") prepareAvatarStage();
 }
 
+function hideEmptyNavGroups(layer) {
+  let group = null;
+  let shown = false;
+  const settle = () => group && group.classList.toggle("hidden", !shown);
+  for (const item of layer.querySelector(".settings-nav-inner").children) {
+    if (item.classList.contains("settings-nav-group") || item.classList.contains("settings-nav-sep")) {
+      settle();
+      group = item.classList.contains("settings-nav-group") ? item : null;
+      shown = false;
+    } else if (item.classList.contains("settings-tab") && !item.classList.contains("hidden")) {
+      shown = true;
+    }
+  }
+  settle();
+}
+
 function openSettingsLayerId() {
   const open = document.querySelector(".settings-layer:not(.hidden)");
   return open ? open.id : null;
@@ -17006,6 +17022,7 @@ function openServerSettings(tab) {
   const allowed = {
     invites: canInvites,
     overview: true,
+    discovery: true,
     channels: server.can_manage_channels,
     roles: server.can_manage_roles,
     emoji: canEmoji,
@@ -17023,6 +17040,7 @@ function openServerSettings(tab) {
   renderStickerSettings(server);
   renderEmoticonSettings(server);
   renderSoundboardSettings(server);
+  hideEmptyNavGroups(layer);
   let current = tab || (layer.classList.contains("hidden") ? "overview" : layer.dataset.tab);
   if (!allowed[current]) current = "overview";
 
