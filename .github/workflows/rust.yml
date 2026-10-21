@@ -76,8 +76,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-check
-        with:
-          cache-key: ubuntu-22.04
 
   windows:
     name: Windows check
@@ -87,8 +85,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-check
-        with:
-          cache-key: windows-latest
 
   macos:
     name: macOS check
@@ -98,5 +94,3 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-check
-        with:
-          cache-key: macos-15-intel
