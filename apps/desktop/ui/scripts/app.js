@@ -18262,6 +18262,12 @@ function showSignIn() {
   }
   $("signin-server-edit").classList.add("hidden");
   syncServerNote();
+  if (!account.signed_in && account.pending_code) {
+    signInUrl = account.pending_url;
+    $("signin-code").textContent = account.pending_code;
+    $("signin-start").classList.add("hidden");
+    $("signin-wait").classList.remove("hidden");
+  }
   showModal("modal-signin");
 }
 
@@ -18295,7 +18301,7 @@ async function onAccountChanged() {
     toast(`Signed in as ${(account.user && account.user.name) || "you"}`);
     if (account.needs_account_folder) await openAccountFolder();
     else await continueBoot();
-  } else if (!account.signed_in && was) {
+  } else if (!account.signed_in && (was || account.pending_code)) {
     showSignIn();
   } else if (account.signed_in && !$("modal-signin").classList.contains("hidden")) {
     await openAccounts();

@@ -11,6 +11,7 @@ use crate::invite_link::{normalize_origin, DEFAULT_ACCOUNT_SERVER};
 use crate::state::App;
 
 const FILE: &str = "account.json";
+const PENDING_SIGN_IN_FILE: &str = "sign-in-pending.json";
 pub const MAX_ACCOUNTS: usize = 5;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -517,6 +518,7 @@ pub struct AccountView {
     server_from_env: bool,
     device_linked: bool,
     pending_code: Option<String>,
+    pending_url: Option<String>,
     server_gifs: bool,
     server_games: bool,
     server_emojis: bool,
@@ -539,7 +541,10 @@ struct OtherAccount {
 
 fn view(app: &App) -> AccountView {
     let unclaimed_profile = unclaimed_profile(app);
-    let pending_code = app.sign_in.lock().unwrap().as_ref().map(|p| p.user_code.clone());
+    let (pending_code, pending_url) = match app.sign_in.lock().unwrap().as_ref() {
+        Some(p) => (Some(p.user_code.clone()), Some(p.url.clone())),
+        None => (None, None),
+    };
     let state = app.account.lock().unwrap();
     let server = effective_server();
     let signed_in = is_signed_in(&state);
@@ -553,6 +558,7 @@ fn view(app: &App) -> AccountView {
         server,
         device_linked: state.device_linked,
         pending_code,
+        pending_url,
         server_gifs: state.server_offers("gifs"),
         server_games: state.server_offers("games"),
         server_emojis: state.server_offers("emojis"),
@@ -605,7 +611,70 @@ pub fn set_account_server(app: tauri::State<'_, App>, server: Option<String>) ->
 
 pub struct PendingSignIn {
     pub user_code: String,
+    url: String,
     cancel: tokio::sync::watch::Sender<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct SavedSignIn {
+    server: String,
+    device_code: String,
+    user_code: String,
+    verification_url: String,
+    interval: u64,
+    expires_at: i64,
+}
+
+impl SavedSignIn {
+    fn remaining_secs(&self, now: i64) -> Option<u64> {
+        let left = self.expires_at - now;
+        (left > 0).then_some(left as u64)
+    }
+}
+
+fn save_pending_sign_in(app: &App, saved: &SavedSignIn) {
+    let Some(dir) = app.base_dir() else { return };
+    if let Err(e) = crate::persist::write_secret_json(&dir.join(PENDING_SIGN_IN_FILE), saved) {
+        tracing::warn!("could not remember the sign-in in progress: {e}");
+    }
+}
+
+fn forget_pending_sign_in(app: &App) {
+    if let Some(dir) = app.base_dir() {
+        let _ = std::fs::remove_file(dir.join(PENDING_SIGN_IN_FILE));
+    }
+}
+
+fn watch_sign_in(app: &App, user_code: &str, url: &str) -> tokio::sync::watch::Receiver<bool> {
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let pending = PendingSignIn { user_code: user_code.to_string(), url: url.to_string(), cancel: cancel_tx };
+    if let Some(old) = app.sign_in.lock().unwrap().replace(pending) {
+        let _ = old.cancel.send(true);
+    }
+    cancel_rx
+}
+
+pub async fn resume_sign_in(handle: AppHandle) {
+    let app = handle.state::<App>();
+    let Some(dir) = app.base_dir().cloned() else { return };
+    let Some(saved) = crate::persist::read_json::<SavedSignIn>(&dir.join(PENDING_SIGN_IN_FILE)) else { return };
+    let left = saved.remaining_secs(chrono::Utc::now().timestamp());
+    if is_signed_in(&app.account.lock().unwrap()) || saved.server != effective_server() || left.is_none() {
+        forget_pending_sign_in(&app);
+        return;
+    }
+    let Ok(doc) = discover(&app.http, &saved.server).await else { return };
+    let cancel = watch_sign_in(&app, &saved.user_code, &saved.verification_url);
+    let _ = handle.emit("account-changed", ());
+    let code = DeviceCodeResponse {
+        device_code: saved.device_code,
+        user_code: saved.user_code,
+        verification_uri: saved.verification_url,
+        verification_uri_complete: None,
+        expires_in: left.unwrap_or_default(),
+        interval: saved.interval,
+    };
+    poll_for_token(handle.clone(), saved.server, doc, code, cancel).await;
 }
 
 #[derive(Serialize)]
@@ -660,10 +729,18 @@ pub async fn account_begin_sign_in(app: tauri::State<'_, App>, handle: AppHandle
     if !(verification_url.starts_with(&format!("{server}/"))) {
         return Err("The account server sent an unexpected approval address".into());
     }
-    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    if let Some(old) = app.sign_in.lock().unwrap().replace(PendingSignIn { user_code: code.user_code.clone(), cancel: cancel_tx }) {
-        let _ = old.cancel.send(true);
-    }
+    let cancel_rx = watch_sign_in(&app, &code.user_code, &verification_url);
+    save_pending_sign_in(
+        &app,
+        &SavedSignIn {
+            server: server.clone(),
+            device_code: code.device_code.clone(),
+            user_code: code.user_code.clone(),
+            verification_url: verification_url.clone(),
+            interval: code.interval,
+            expires_at: chrono::Utc::now().timestamp() + code.expires_in.min(1800) as i64,
+        },
+    );
     let _ = crate::browser::open(&handle, &verification_url);
     let start = SignInStart { user_code: code.user_code.clone(), verification_url, expires_in: code.expires_in };
     tauri::async_runtime::spawn(poll_for_token(handle.clone(), server, doc, code, cancel_rx));
@@ -675,6 +752,7 @@ pub fn account_cancel_sign_in(app: tauri::State<'_, App>) {
     if let Some(pending) = app.sign_in.lock().unwrap().take() {
         let _ = pending.cancel.send(true);
     }
+    forget_pending_sign_in(&app);
 }
 
 #[derive(Deserialize)]
@@ -741,6 +819,7 @@ async fn poll_for_token(
         }
     };
     app.sign_in.lock().unwrap().take();
+    forget_pending_sign_in(&app);
     let Some(token) = token else { return };
     match finish_sign_in(&handle, &server, &doc, &token).await {
         Ok(()) => {
@@ -1047,6 +1126,34 @@ pub async fn verify_saved_session(handle: AppHandle) {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    fn saved_sign_in(expires_at: i64) -> SavedSignIn {
+        SavedSignIn {
+            server: "https://commy.chat".into(),
+            device_code: "device".into(),
+            user_code: "WDJB-MJHT".into(),
+            verification_url: "https://commy.chat/device?user_code=WDJBMJHT".into(),
+            interval: 5,
+            expires_at,
+        }
+    }
+
+    #[test]
+    fn a_saved_sign_in_resumes_only_before_it_expires() {
+        assert_eq!(saved_sign_in(1_000).remaining_secs(400), Some(600));
+        assert_eq!(saved_sign_in(1_000).remaining_secs(1_000), None);
+        assert_eq!(saved_sign_in(1_000).remaining_secs(1_500), None);
+    }
+
+    #[test]
+    fn a_saved_sign_in_round_trips_through_its_file() {
+        let dir = std::env::temp_dir().join(format!("commy-sign-in-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(PENDING_SIGN_IN_FILE);
+        crate::persist::write_secret_json(&path, &saved_sign_in(42)).unwrap();
+        assert_eq!(crate::persist::read_json::<SavedSignIn>(&path), Some(saved_sign_in(42)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn signatures_verify_against_the_node_id() {

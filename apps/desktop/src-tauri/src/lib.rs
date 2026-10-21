@@ -8332,6 +8332,7 @@ pub fn run() {
                 invite_link::register_scheme();
                 invite_link::start(&handle, &dir, launch_link);
                 *app.account.lock().unwrap() = account::load(&dir);
+                tauri::async_runtime::spawn(account::resume_sign_in(handle.clone()));
                 account_folder::set_aside_unowned_data(&dir);
                 if let Some(folder) = account::ready_folder(&app) {
                     open_account(&handle, folder);
@@ -8602,6 +8603,13 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 liveness::say_goodbye(&handle.state::<App>());
                 catchup::save_unsaved(&handle.state::<App>());
+            }
+            if let tauri::RunEvent::Resumed = event {
+                entry_list::on_resumed(handle);
+            }
+            #[cfg(mobile)]
+            if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Resumed, .. } = &event {
+                entry_list::on_resumed(handle);
             }
             invite_link::on_run_event(handle, &event)
         });
