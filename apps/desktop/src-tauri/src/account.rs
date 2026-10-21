@@ -11,6 +11,7 @@ use crate::invite_link::{normalize_origin, DEFAULT_ACCOUNT_SERVER};
 use crate::state::App;
 
 const FILE: &str = "account.json";
+pub const MAX_ACCOUNTS: usize = 5;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AccountState {
@@ -26,6 +27,23 @@ pub struct AccountState {
     pub device_linked: bool,
     #[serde(default)]
     pub features: Option<ServerFeatures>,
+    #[serde(default)]
+    pub others: Vec<SavedAccount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SavedAccount {
+    pub server: String,
+    pub token: String,
+    pub user: AccountUser,
+    #[serde(default)]
+    pub features: Option<ServerFeatures>,
+}
+
+impl SavedAccount {
+    fn is(&self, server: &str, id: &str) -> bool {
+        self.server == server && self.user.id == id
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -61,6 +79,51 @@ impl AccountState {
         self.features = None;
     }
 
+    fn current(&self) -> Option<SavedAccount> {
+        Some(SavedAccount {
+            server: self.signed_in_server.clone()?,
+            token: self.token.clone()?,
+            user: self.user.clone()?,
+            features: self.features,
+        })
+    }
+
+    fn keep_previous(&mut self, next_server: &str, next_id: &str) {
+        let previous = self.current();
+        self.others.retain(|o| !o.is(next_server, next_id));
+        if let Some(previous) = previous.filter(|p| !p.is(next_server, next_id)) {
+            self.others.retain(|o| !o.is(&previous.server, &previous.user.id));
+            self.others.insert(0, previous);
+        }
+        self.others.truncate(MAX_ACCOUNTS - 1);
+    }
+
+    fn become_account(&mut self, saved: SavedAccount) {
+        self.server = (saved.server != DEFAULT_ACCOUNT_SERVER).then(|| saved.server.clone());
+        self.signed_in_server = Some(saved.server);
+        self.token = Some(saved.token);
+        self.user = Some(saved.user);
+        self.features = saved.features;
+        self.device_linked = false;
+    }
+
+    fn switch_to(&mut self, server: &str, id: &str) -> bool {
+        let Some(at) = self.others.iter().position(|o| o.is(server, id) && switchable(&o.server)) else { return false };
+        let saved = self.others.remove(at);
+        self.keep_previous(server, id);
+        self.become_account(saved);
+        true
+    }
+
+    fn sign_out_current(&mut self) -> bool {
+        self.clear_session();
+        self.device_linked = false;
+        let Some(at) = self.others.iter().position(|o| switchable(&o.server)) else { return false };
+        let next = self.others.remove(at);
+        self.become_account(next);
+        true
+    }
+
     pub fn server_offers(&self, kind: &str) -> bool {
         is_signed_in(self)
             && match (self.features, kind) {
@@ -87,6 +150,10 @@ static CHOSEN_SERVER: Mutex<Option<String>> = Mutex::new(None);
 
 static ENV_SERVER: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("COMMY_AUTH_URL").ok().and_then(|s| normalize_origin(&s)));
+
+fn switchable(server: &str) -> bool {
+    ENV_SERVER.as_deref().is_none_or(|env| env == server)
+}
 
 pub fn effective_server() -> String {
     if let Some(env) = ENV_SERVER.clone() {
@@ -457,6 +524,17 @@ pub struct AccountView {
     server_media: bool,
     unclaimed_profile: Option<account_folder::UnclaimedProfile>,
     needs_account_folder: bool,
+    others: Vec<OtherAccount>,
+    max_accounts: usize,
+}
+
+#[derive(Serialize)]
+struct OtherAccount {
+    id: String,
+    name: String,
+    email: String,
+    server: String,
+    server_host: String,
 }
 
 fn view(app: &App) -> AccountView {
@@ -482,6 +560,19 @@ fn view(app: &App) -> AccountView {
         server_media: state.server_offers("media"),
         unclaimed_profile,
         needs_account_folder: signed_in && app.data_dir().is_none(),
+        others: state
+            .others
+            .iter()
+            .filter(|o| signed_in && switchable(&o.server))
+            .map(|o| OtherAccount {
+                id: o.user.id.clone(),
+                name: o.user.name.clone(),
+                email: o.user.email.clone(),
+                server_host: host_of(&o.server),
+                server: o.server.clone(),
+            })
+            .collect(),
+        max_accounts: MAX_ACCOUNTS,
     }
 }
 
@@ -546,6 +637,12 @@ fn default_interval() -> u64 {
 
 #[tauri::command]
 pub async fn account_begin_sign_in(app: tauri::State<'_, App>, handle: AppHandle) -> Result<SignInStart, String> {
+    {
+        let state = app.account.lock().unwrap();
+        if is_signed_in(&state) && state.others.len() + 1 >= MAX_ACCOUNTS {
+            return Err(format!("This computer keeps up to {MAX_ACCOUNTS} accounts. Sign out of one first."));
+        }
+    }
     let server = effective_server();
     let doc = discover(&app.http, &server).await?;
     let res = app
@@ -701,6 +798,7 @@ async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token
     };
     {
         let mut state = app.account.lock().unwrap();
+        state.keep_previous(server, &user.id);
         state.signed_in_server = Some(server.to_string());
         state.token = Some(token.to_string());
         state.user = Some(user);
@@ -778,18 +876,70 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
             let _ = app.http.post(&doc.endpoints.sign_out).bearer_auth(token).send().await;
         }
     }
-    {
+    let switched = {
         let mut state = app.account.lock().unwrap();
-        state.clear_session();
-        state.device_linked = false;
+        let switched = state.sign_out_current();
         store(&app, &state);
-    }
+        *CHOSEN_SERVER.lock().unwrap() = state.server.clone();
+        switched
+    };
     if let Some(dir) = app.data_dir() {
         account_folder::forget_key(dir);
+    }
+    if switched || app.data_dir().is_some() {
         restart_signed_in_as_someone_else(&handle);
     }
     let _ = handle.emit("account-changed", ());
     Ok(view(&app))
+}
+
+#[tauri::command]
+pub async fn account_switch(app: tauri::State<'_, App>, handle: AppHandle, server: String, id: String) -> Result<AccountView, String> {
+    let saved = app.account.lock().unwrap().others.iter().find(|o| o.is(&server, &id)).cloned();
+    let saved = saved.ok_or("That account is no longer on this computer.")?;
+    if !switchable(&saved.server) {
+        return Err(format!("This copy of Commy only uses {}.", host_of(&effective_server())));
+    }
+    if let Ok(doc) = discover(&app.http, &saved.server).await {
+        if let Ok(res) = app.http.get(&doc.endpoints.session).bearer_auth(&saved.token).send().await {
+            let valid = res.status().is_success() && res.json::<Option<SessionResponse>>().await.ok().flatten().is_some();
+            if !valid {
+                forget_other(&app, &saved);
+                return Err(format!("{} was signed out. Add it again to switch to it.", saved.user.email));
+            }
+        }
+    }
+    {
+        let mut state = app.account.lock().unwrap();
+        if !state.switch_to(&server, &id) {
+            return Err("That account is no longer on this computer.".into());
+        }
+        store(&app, &state);
+        *CHOSEN_SERVER.lock().unwrap() = state.server.clone();
+    }
+    restart_signed_in_as_someone_else(&handle)
+}
+
+#[tauri::command]
+pub async fn account_sign_out_other(app: tauri::State<'_, App>, server: String, id: String) -> Result<AccountView, String> {
+    let saved = app.account.lock().unwrap().others.iter().find(|o| o.is(&server, &id)).cloned();
+    let Some(saved) = saved else { return Ok(view(&app)) };
+    forget_other(&app, &saved);
+    if let Ok(doc) = discover(&app.http, &saved.server).await {
+        let _ = app.http.post(&doc.endpoints.sign_out).bearer_auth(&saved.token).send().await;
+    }
+    Ok(view(&app))
+}
+
+fn forget_other(app: &App, saved: &SavedAccount) {
+    {
+        let mut state = app.account.lock().unwrap();
+        state.others.retain(|o| !o.is(&saved.server, &saved.user.id));
+        store(app, &state);
+    }
+    if let Some(base) = app.base_dir() {
+        account_folder::forget_key(&account_folder::folder(base, &saved.server, &saved.user.id));
+    }
 }
 
 #[tauri::command]
@@ -1008,6 +1158,83 @@ mod tests {
         assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, Some(&a)), AfterSignIn::Restart);
         assert_eq!(after_sign_in(Opening::Ready(b), None), AfterSignIn::OpenFolder);
         assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, None), AfterSignIn::OpenFolder);
+    }
+
+    fn signed_in_as(id: &str) -> AccountState {
+        let mut state = AccountState::default();
+        state.become_account(saved(id));
+        state
+    }
+
+    fn saved(id: &str) -> SavedAccount {
+        SavedAccount {
+            server: effective_server(),
+            token: format!("token-{id}"),
+            user: AccountUser { id: id.into(), name: id.into(), email: format!("{id}@example.test") },
+            features: None,
+        }
+    }
+
+    fn others(state: &AccountState) -> Vec<&str> {
+        state.others.iter().map(|o| o.user.id.as_str()).collect()
+    }
+
+    #[test]
+    fn adding_an_account_keeps_the_one_you_were_using() {
+        let mut state = signed_in_as("main");
+        state.keep_previous(&effective_server(), "second");
+        state.become_account(saved("second"));
+        assert_eq!(state.user.as_ref().unwrap().id, "second");
+        assert_eq!(others(&state), ["main"]);
+        assert_eq!(state.others[0].token, "token-main");
+
+        state.keep_previous(&effective_server(), "second");
+        assert_eq!(others(&state), ["main"], "signing in again as the same account adds nothing");
+        state.keep_previous(&effective_server(), "main");
+        assert_eq!(others(&state), ["second"], "an account is never both open and in the list");
+    }
+
+    #[test]
+    fn switching_swaps_the_open_account_with_the_chosen_one() {
+        let mut state = signed_in_as("main");
+        state.others = vec![saved("second"), saved("third")];
+        assert!(state.switch_to(&effective_server(), "third"));
+        assert_eq!(state.user.as_ref().unwrap().id, "third");
+        assert_eq!(state.token.as_deref(), Some("token-third"));
+        assert!(!state.device_linked);
+        assert_eq!(others(&state), ["main", "second"]);
+        assert!(!state.switch_to(&effective_server(), "nobody"));
+        assert!(!state.switch_to("https://other.example", "main"), "an account is matched by server and id");
+    }
+
+    #[test]
+    fn signing_out_opens_the_most_recent_other_account_or_the_sign_in_screen() {
+        let mut state = signed_in_as("main");
+        state.others = vec![saved("second")];
+        assert!(state.sign_out_current());
+        assert_eq!(state.user.as_ref().unwrap().id, "second");
+        assert!(state.others.is_empty(), "the signed-out account is not kept");
+        assert!(!state.sign_out_current());
+        assert!(!is_signed_in(&state));
+    }
+
+    #[test]
+    fn this_computer_keeps_a_limited_number_of_accounts() {
+        let mut state = signed_in_as("a0");
+        for n in 1..=MAX_ACCOUNTS + 2 {
+            let id = format!("a{n}");
+            state.keep_previous(&effective_server(), &id);
+            state.become_account(saved(&id));
+        }
+        assert_eq!(state.others.len(), MAX_ACCOUNTS - 1);
+        assert_eq!(state.others[0].user.id, format!("a{}", MAX_ACCOUNTS + 1));
+    }
+
+    #[test]
+    fn saved_accounts_from_before_the_switcher_still_load() {
+        let old = serde_json::json!({ "token": "t", "signed_in_server": "https://commy.chat", "user": { "id": "u", "name": "n", "email": "e" } });
+        let state: AccountState = serde_json::from_value(old).unwrap();
+        assert!(state.others.is_empty());
     }
 
     #[test]

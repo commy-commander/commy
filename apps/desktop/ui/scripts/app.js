@@ -1512,12 +1512,20 @@ async function mockInvoke(cmd, args = {}) {
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
-    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false, unclaimed_profile: null, needs_account_folder: /[?&]claim\b/.test(location.search) });
+    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false, unclaimed_profile: null, needs_account_folder: /[?&]claim\b/.test(location.search), others: [{ id: "u2", name: "Nova", email: "nova@example.test", server: "https://commy.chat", server_host: "commy.chat" }], max_accounts: 5 });
     case "account_open_folder": mock.account.unclaimed_profile = { username: "ferris", display_name: "Ferris", servers: 3 }; return mock.account;
     case "account_claim_profile": mock.account.unclaimed_profile = null; mock.account.needs_account_folder = false; return mock.account;
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
+    case "account_switch": {
+      const next = mock.account.others.find(o => o.id === args.id);
+      mock.account.others = [{ ...mock.account.user, server: mock.account.server, server_host: mock.account.server_host }, ...mock.account.others.filter(o => o !== next)];
+      mock.account.user = { id: next.id, name: next.name, email: next.email };
+      location.reload();
+      return mock.account;
+    }
+    case "account_sign_out_other": mock.account.others = mock.account.others.filter(o => o.id !== args.id); return mock.account;
     case "set_account_server": return mock.account;
     case "set_user_voice": {
       mock.voice.user_volumes = mock.voice.user_volumes || {};
@@ -4180,6 +4188,7 @@ function renderProfilePopover() {
     btn.classList.toggle("active", btn.dataset.presence === (user.presence || "online"));
   }
   renderStatusExpiry();
+  $("pp-switch-account").classList.toggle("hidden", !accountRows(account).length);
 }
 
 async function saveOwnProfile(changes) {
@@ -14822,13 +14831,13 @@ function wireEvents() {
   $("claim-keep").onclick = () => answerClaim(true);
   $("claim-fresh").onclick = () => answerClaim(false);
   $("claim-retry").onclick = () => openAccountFolder();
-  $("acct-sign-out").onclick = async () => {
-    if (!confirm("Sign out of your Commy account on this device? Commy restarts at the sign-in screen, and your servers and messages stay locked on this computer until you sign back in.")) return;
-    try {
-      account = await invoke("account_sign_out");
-    } catch (e) {
-      toast(String(e));
-    }
+  $("acct-sign-out").onclick = signOutOfCurrent;
+  $("pp-switch-account").onclick = openAccounts;
+  $("account-add").onclick = () => showSignIn();
+  $("account-add-icon").replaceChildren(svgIcon("plus", 18));
+  $("signin-back").onclick = async () => {
+    await invoke("account_cancel_sign_in").catch(() => {});
+    await openAccounts();
   };
   $("username-save").onclick = async () => {
     const username = $("username-input").value.trim();
@@ -18117,8 +18126,14 @@ function showSignIn() {
     select.insertBefore(new Option(account.server_host, account.server), select.options[1]);
   }
   select.value = custom ? account.server : "default";
-  select.disabled = Boolean(account.server_from_env);
+  select.disabled = Boolean(account.server_from_env) || account.signed_in;
   select.title = account.server_from_env ? "Set by COMMY_AUTH_URL" : "";
+  $("signin-back").classList.toggle("hidden", !account.signed_in);
+  for (const [id, key] of [["signin-title", "signin.title"], ["signin-intro", "signin.intro"]]) {
+    const node = $(id);
+    node.dataset.i18n = account.signed_in ? key.replace("signin.", "signin.add.") : key;
+    node.textContent = t(node.dataset.i18n);
+  }
   $("signin-server-edit").classList.add("hidden");
   syncServerNote();
   showModal("modal-signin");
@@ -18156,6 +18171,8 @@ async function onAccountChanged() {
     else await continueBoot();
   } else if (!account.signed_in && was) {
     showSignIn();
+  } else if (account.signed_in && !$("modal-signin").classList.contains("hidden")) {
+    await openAccounts();
   }
   if (!$("user-settings").classList.contains("hidden")) renderAccountSettings();
 }
@@ -18177,6 +18194,93 @@ async function saveAccountBanner(data) {
     toast(data ? "Banner saved" : "Banner removed");
   } catch (err) {
     toast(String(err));
+  }
+}
+
+async function openAccounts() {
+  closeFloating();
+  try {
+    account = await invoke("account_status");
+  } catch {}
+  showAccountNote("");
+  renderAccounts();
+  showModal("modal-accounts");
+}
+
+function showAccountNote(message, isError = false) {
+  const note = $("account-note");
+  note.textContent = message || (canAddAccount(account) ? "" : t("accounts.limit", { count: account.max_accounts }));
+  note.classList.toggle("error", Boolean(message) && isError);
+}
+
+function renderAccounts() {
+  const list = $("account-list");
+  list.replaceChildren();
+  for (const row of accountRows(account)) {
+    const name = row.name || row.email;
+    const item = el("div", "account-row" + (row.current ? " current" : ""));
+    item.setAttribute("role", "listitem");
+    const pick = el("button", "account-pick");
+    if (row.current) pick.setAttribute("aria-current", "true");
+    const avatar = row.current && state.user ? makeAvatar(state.user.id, name, "avatar account-avatar") : el("div", "avatar account-avatar", initials(name || "?"));
+    if (!(row.current && state.user)) avatar.style.setProperty("--tint", personTint(row.id));
+    const text = el("span", "account-text");
+    text.append(el("span", "account-name", name), el("span", "account-email", accountLine(row, account)));
+    const check = el("span", "account-check");
+    check.title = t("accounts.current");
+    check.appendChild(svgIcon("check", 18));
+    pick.append(avatar, text, check);
+    pick.onclick = () => {
+      if (!row.current) switchAccount(row);
+    };
+    const out = el("button", "btn-link account-sign-out", t("accounts.signOut"));
+    out.onclick = () => (row.current ? signOutOfCurrent() : signOutOfOther(row));
+    item.append(pick, out);
+    list.appendChild(item);
+  }
+  $("account-add").disabled = !canAddAccount(account);
+}
+
+function setAccountsBusy(busy) {
+  for (const button of $("modal-accounts").querySelectorAll("button")) button.disabled = busy;
+  if (!busy) $("account-add").disabled = !canAddAccount(account);
+}
+
+async function switchAccount(row) {
+  setAccountsBusy(true);
+  try {
+    account = await invoke("account_switch", { server: row.server, id: row.id });
+  } catch (e) {
+    try {
+      account = await invoke("account_status");
+    } catch {}
+    renderAccounts();
+    showAccountNote(String(e), true);
+  } finally {
+    setAccountsBusy(false);
+  }
+}
+
+async function signOutOfCurrent() {
+  if (!confirm(signOutPrompt(account, t))) return;
+  try {
+    account = await invoke("account_sign_out");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function signOutOfOther(row) {
+  if (!confirm(t("accounts.signOut.other", { name: row.name || row.email }))) return;
+  setAccountsBusy(true);
+  try {
+    account = await invoke("account_sign_out_other", { server: row.server, id: row.id });
+    renderAccounts();
+    showAccountNote("");
+  } catch (e) {
+    showAccountNote(String(e), true);
+  } finally {
+    setAccountsBusy(false);
   }
 }
 

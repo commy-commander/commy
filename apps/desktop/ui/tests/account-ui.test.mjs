@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine } = require("../scripts/account-ui.js");
+const { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt } = require("../scripts/account-ui.js");
 const LOCALE_EN = require("../scripts/locales/en.js");
 
 function memoryStorage(entries = {}) {
@@ -55,4 +55,39 @@ test("the unclaimed profile reads as one line", () => {
   assert.equal(unclaimedProfileLine({ username: "ferris", display_name: null, servers: 1 }, t), "ferris · 1 server");
   assert.equal(unclaimedProfileLine({ username: "", display_name: null, servers: 0 }, t), "Unnamed profile · 0 servers");
   assert.equal(unclaimedProfileLine(null, t), "");
+});
+
+const signedIn = others => ({
+  signed_in: true,
+  user: { id: "a", name: "Main", email: "main@example.test" },
+  server: "https://commy.chat",
+  server_host: "commy.chat",
+  others,
+  max_accounts: 3,
+});
+const other = (id, server = "https://commy.chat") => ({ id, name: id, email: `${id}@example.test`, server, server_host: new URL(server).host });
+
+test("the account list starts with the account in use", () => {
+  const rows = accountRows(signedIn([other("b"), other("c")]));
+  assert.deepEqual(rows.map(r => [r.id, r.current]), [["a", true], ["b", false], ["c", false]]);
+  assert.deepEqual(accountRows({ signed_in: false, others: [] }), []);
+  assert.deepEqual(accountRows({ signed_in: true, user: { id: "a" } }), [], "a client without the switcher shows no list");
+});
+
+test("accounts can be added up to the limit", () => {
+  assert.equal(canAddAccount(signedIn([])), true);
+  assert.equal(canAddAccount(signedIn([other("b")])), true);
+  assert.equal(canAddAccount(signedIn([other("b"), other("c")])), false);
+  assert.equal(canAddAccount({ signed_in: false }), false);
+});
+
+test("an account on another server names it", () => {
+  const account = signedIn([]);
+  assert.equal(accountLine(other("b"), account), "b@example.test");
+  assert.equal(accountLine(other("b", "https://chat.example.org"), account), "b@example.test · chat.example.org");
+});
+
+test("signing out says where Commy goes next", () => {
+  assert.match(signOutPrompt(signedIn([other("b")]), t), /restarts into b,/);
+  assert.match(signOutPrompt(signedIn([]), t), /sign-in screen/);
 });
