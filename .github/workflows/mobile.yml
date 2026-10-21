@@ -124,13 +124,13 @@ jobs:
       - name: Build for the simulator
         working-directory: apps/desktop/src-tauri
         run: |
-          npx tauri ios build \
-            --ci --debug --target aarch64-sim
+          npx tauri ios build --ci --debug --target aarch64-sim \
+            || echo "::notice::Archiving needs a signing team; the next step checks that the simulator app built"
 
       - name: Collect the app
         run: |
-          app="$(find apps/desktop/src-tauri/gen/apple/build -name '*.app' -type d | head -n 1)"
-          [ -n "$app" ] || { echo "no .app was built"; exit 1; }
+          app="$(find ~/Library/Developer/Xcode/DerivedData -path '*/Build/Products/debug-iphonesimulator/*.app' -prune -type d | head -n 1)"
+          [ -n "$app" ] || { echo "no simulator app was built"; exit 1; }
           mkdir -p dist
           ditto -c -k --keepParent "$app" dist/Commy-simulator.zip
           ls -la dist
