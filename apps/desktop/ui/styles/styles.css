@@ -6698,7 +6698,7 @@ body.mobile-app .desktop-only { display: none !important; }
 .vp-hand.on:hover { background: var(--header-primary); color: var(--bg-darkest); }
 .vp-hand.spent { visibility: hidden; }
 .vp-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.vp-actions.solo { grid-template-columns: 1fr; }
+#vp-activities { grid-column: 1 / -1; }
 .vp-activities.vp-share.active { background: var(--red); color: #fff; }
 .vp-activities.vp-share.active:hover { background: var(--red); }
 .ap-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--text-normal); cursor: pointer; }
