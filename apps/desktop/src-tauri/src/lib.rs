@@ -8085,6 +8085,7 @@ pub fn run() {
             if let Some(dir) = data_dir {
                 if let Err(why) = local_key::unlock(&dir) {
                     tracing::error!("local files are encrypted and their key is unavailable: {why}");
+                    #[cfg(desktop)]
                     rfd::MessageDialog::new()
                         .set_level(rfd::MessageLevel::Error)
                         .set_title("Commy cannot open your data")
