@@ -210,9 +210,13 @@ jobs:
     name: Stream Deck plugin
     uses: ./.github/workflows/streamdeck.yml
 
+  bot:
+    name: Bot builds
+    uses: ./.github/workflows/bot.yml
+
   publish:
     name: Publish release
-    needs: [build, macos-universal, streamdeck]
+    needs: [build, macos-universal, streamdeck, bot]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
@@ -286,6 +290,7 @@ jobs:
           subject-path: |
             dist/Commy_*
             dist/commy-soundboard.streamDeckPlugin
+            dist/commy-bot-*
             dist/SHA256SUMS.txt
 
       - name: Create release
@@ -305,6 +310,7 @@ jobs:
           | macOS 11+ (Apple Silicon and Intel) | `*_universal.dmg` |
           | Linux x64 | `*_amd64.AppImage` or `*_amd64.deb` |
           | Stream Deck 7.1+ (Windows and macOS) | `commy-soundboard.streamDeckPlugin` |
+          | Bots (`commy-bot`, see the [bot guide](https://github.com/commy-commander/commy/blob/main/crates/commy-bot/README.md)) | `commy-bot-windows-x64.zip`, `commy-bot-macos-universal.tar.gz` or `commy-bot-linux-x64.tar.gz` |
 
           These builds are not code signed yet. On Windows choose **More info > Run anyway**
           in SmartScreen. On macOS right click Commy.app and choose **Open** the first time,

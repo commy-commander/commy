@@ -93,7 +93,9 @@ toasts, are Windows only for now.
 
 Releases are on the [Releases page](https://github.com/commy-commander/commy/releases)
 and at [commy.chat](https://commy.chat). Release candidates (`-rc`) are
-pre-releases for testing and connect only to the staging servers.
+pre-releases for testing and connect only to the staging servers. Each release
+also carries `commy-bot` for Windows, macOS and Linux, for running bots; see the
+[bot guide](crates/commy-bot/README.md).
 
 ### Verifying a download
 
@@ -151,6 +153,12 @@ deploy                  Self-hosting stack and deploy pipeline
   read it.
 - Files, avatars, emoji and soundboard clips move as content-addressed blobs;
   chat messages carry only the hash.
+- What the app keeps on disk (messages, direct messages, keys, the sign-in
+  token, cached pictures) is encrypted with AES-256-GCM under a key that
+  Windows (DPAPI) or the macOS Keychain holds for your user account. If that
+  key is ever lost, the unreadable files are moved to an `unreadable` folder
+  instead of being deleted, and a signed-in account can get its identity and
+  server list back from another device signed in to it.
 - Voice and screen shares use direct media connections between members. The
   account server never sees messages, files, voice, video or which servers an
   account belongs to. What it does hold is listed in

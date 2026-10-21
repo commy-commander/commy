@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const {
-  botPermissions, botAbilityText, botCommandsFor, serverBots, canSeeBotsPage, cleanBotName, botSetupCommands, newBots, BOT_PORTING_URL,
+  botPermissions, botAbilityText, botCommandsFor, serverBots, canSeeBotsPage, cleanBotName, botSetupCommands, newBots, BOT_PORTING_URL, BOT_DOWNLOAD_URL,
 } = require("../scripts/bots.js");
 
 const server = {
@@ -62,6 +62,7 @@ test("setup commands use a safe bot name and the invite", () => {
   assert.equal(botSetupCommands("Tidy", "").create, "commy-bot init Tidy");
   assert.equal(botSetupCommands("Tidy", "").join, "commy-bot join INVITE-CODE");
   assert.ok(BOT_PORTING_URL.endsWith("#porting-a-bot"));
+  assert.ok(BOT_DOWNLOAD_URL.endsWith("/releases/latest"));
 });
 
 test("new bots are the ones not seen when the sheet opened", () => {

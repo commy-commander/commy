@@ -40,13 +40,13 @@ struct LocalRecord {
 }
 
 pub(crate) fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
-    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+    serde_json::from_str(&commy_core::at_rest::read_to_string(path).ok()?).ok()
 }
 
 pub(crate) fn write<T: Serialize>(path: &Path, value: &T) {
     let Ok(json) = serde_json::to_string_pretty(value) else { return };
     let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, json).is_ok() {
+    if commy_core::at_rest::write(&tmp, json.as_bytes()).is_ok() {
         let _ = std::fs::remove_file(path);
         let _ = std::fs::rename(&tmp, path);
     }
@@ -99,7 +99,7 @@ pub fn record_leave(app: &App, id: ServerId) {
 
 fn read_identity(dir: &Path) -> Option<String> {
     use base64::Engine;
-    let bytes = std::fs::read(dir.join(IDENTITY_FILE)).ok()?;
+    let bytes = commy_core::at_rest::read(&dir.join(IDENTITY_FILE)).ok()?;
     Some(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 

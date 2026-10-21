@@ -3,8 +3,11 @@ use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
+
+use crate::at_rest;
+pub use crate::at_rest::write_private;
 
 pub const IDENTITY_FILE: &str = "identity.key";
 
@@ -100,14 +103,14 @@ impl fmt::Debug for Signature {
 
 pub fn load_or_create(dir: &Path) -> io::Result<Identity> {
     let path = dir.join(IDENTITY_FILE);
-    match std::fs::read(&path) {
+    match at_rest::read(&path) {
         Ok(bytes) => {
             let parsed = std::str::from_utf8(&bytes).ok().and_then(|s| from_hex::<32>(s.trim()));
             if let Some(secret) = parsed {
                 return Ok(Identity::from_bytes(&secret));
             }
         }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) if matches!(e.kind(), io::ErrorKind::NotFound | io::ErrorKind::InvalidData) => {}
         Err(e) => return Err(e),
     }
     let identity = Identity::generate();
@@ -128,18 +131,6 @@ fn write_secret_atomically(dir: &Path, path: &Path, contents: &str) -> io::Resul
     result
 }
 
-pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
-}
 
 pub(crate) fn to_hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";

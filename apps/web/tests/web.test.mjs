@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { contentSecurityPolicy, injectWebShell, relayOrigins } from "../shell.mjs";
+import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_DEFAULTS, webDefault, webSignInUrl, webUnlockText, webReplyLine } = require("../ui/web-commands.js");
+const { WEB_DEFAULTS, webDefault, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
 
 const repo = join(import.meta.dirname, "..", "..", "..");
 const read = (...path) => readFileSync(join(repo, ...path), "utf8");
@@ -60,7 +60,7 @@ test("the page may only talk to its own site and the relay, and loads nothing fr
 });
 
 test("the bridge loads before the app and the policy lands in the head", () => {
-  const html = injectWebShell(read("apps", "desktop", "ui", "index.html"), relayOrigins("https://relay.commy.chat:8443"));
+  const html = injectWebShell(read("apps", "desktop", "ui", "index.html"), { relays: ["https://relay.commy.chat:8443"] });
   const bridge = html.indexOf("scripts/web-bridge.js");
   const commands = html.indexOf("scripts/web-commands.js");
   assert.ok(commands > 0 && commands < bridge && bridge < html.indexOf('src="scripts/app.js"'));
@@ -76,4 +76,35 @@ test("the bridge keeps its helpers private, so it cannot replace a function the 
 
 test("a local test relay is reached over plain http and ws", () => {
   assert.deepEqual(relayOrigins("http://localhost:3340"), ["http://localhost:3340", "ws://localhost:3340"]);
+});
+
+test("a page served under a path gets a base, so its relative scripts and styles still load", () => {
+  const index = read("apps", "desktop", "ui", "index.html");
+  const html = injectWebShell(index, { relays: ["https://relay.commy.chat:8443"], base: "/web/" });
+  const baseAt = html.indexOf('<base href="/web/" />');
+  assert.ok(baseAt > html.indexOf("<head>"));
+  assert.ok(baseAt < html.indexOf('rel="icon"') && baseAt < html.indexOf('href="styles/styles.css"'));
+  assert.doesNotMatch(injectWebShell(index, { relays: ["https://relay.commy.chat:8443"] }), /<base /);
+});
+
+test("the page allows every relay it may be pointed at and names the first as its relay", () => {
+  const relays = webRelayList(" https://relay.commy.chat:8443/, https://relay-staging.commy.chat:8443 ", "https://fallback.example");
+  assert.deepEqual(relays, ["https://relay.commy.chat:8443", "https://relay-staging.commy.chat:8443"]);
+  const html = injectWebShell(read("apps", "desktop", "ui", "index.html"), { relays });
+  assert.match(html, /connect-src 'self' https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/relay-staging\.commy\.chat:8443 wss:\/\/relay-staging\.commy\.chat:8443;/);
+  assert.match(html, /<meta name="commy-relays" content="https:\/\/relay\.commy\.chat:8443" \/>/);
+  assert.deepEqual(webRelayList("", "https://fallback.example"), ["https://fallback.example"]);
+});
+
+test("the backend gets the relay the page names, or its built-in one when the page names none", () => {
+  const page = content => ({ querySelector: () => (content === null ? null : { getAttribute: () => content }) });
+  assert.equal(webRelays(page("https://relay-staging.commy.chat:8443")), "https://relay-staging.commy.chat:8443");
+  assert.equal(webRelays(page(" ")), undefined);
+  assert.equal(webRelays(page(null)), undefined);
+});
+
+test("every image the bridge shows ships with the app", () => {
+  const images = [...read("apps", "web", "ui", "web-bridge.js").matchAll(/src="(images\/[^"]+)"/g)].map(m => m[1]);
+  assert.ok(images.length > 0);
+  for (const image of images) assert.ok(existsSync(join(repo, "apps", "desktop", "ui", image)), image);
 });

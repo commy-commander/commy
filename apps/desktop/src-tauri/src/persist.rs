@@ -1,5 +1,6 @@
 use crate::state::VoiceSettings;
 use anyhow::{Context, Result};
+use commy_core::at_rest;
 use commy_core::{DmStore, ServerId, ServerState, Snapshot, UserProfile};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -16,7 +17,7 @@ fn write_json_bytes(path: &Path, json: &[u8]) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, json)?;
+    at_rest::write(&tmp, json)?;
     remove_target_windows_rename_cannot_replace(path)?;
     fs::rename(&tmp, path).context("atomic rename failed")?;
     Ok(())
@@ -30,6 +31,10 @@ fn remove_target_windows_rename_cannot_replace(path: &Path) -> std::io::Result<(
 }
 
 pub(crate) fn write_secret(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_private_bytes(path, &at_rest::seal(bytes))
+}
+
+pub(crate) fn write_private_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -65,7 +70,15 @@ fn write_secret_bytes(path: &Path, json: &[u8]) -> Result<()> {
 }
 
 pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
-    let bytes = fs::read(path).ok()?;
+    let bytes = match at_rest::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("ignoring unreadable state file {}: {e}", path.display());
+            }
+            return None;
+        }
+    };
     match serde_json::from_slice(&bytes) {
         Ok(value) => Some(value),
         Err(e) => {
@@ -125,7 +138,7 @@ pub fn load_storage(dir: &Path) -> Option<crate::storage::StorageSettings> {
 
 pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
     let path = dir.join("node.key");
-    if let Ok(hex) = fs::read_to_string(&path) {
+    if let Ok(hex) = at_rest::read_to_string(&path) {
         if let Ok(bytes) = data_encoding::HEXLOWER.decode(hex.trim().as_bytes()) {
             if let Ok(key) = <[u8; 32]>::try_from(bytes.as_slice()) {
                 return Some(key);

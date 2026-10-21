@@ -17,6 +17,7 @@ mod igdb;
 mod instance;
 mod invite_link;
 mod link_preview;
+mod local_key;
 mod liveness;
 mod outbox;
 mod overlay;
@@ -1583,7 +1584,7 @@ fn cache_shared_image(app: &App, blob: &str, bytes: &[u8]) {
 
 async fn expression_bytes(app: &App, blob: &str) -> CmdResult<Vec<u8>> {
     let image = commy_core::server::ImageRef::parse(blob).ok_or("bad reference")?;
-    if let Some(bytes) = server_image_path(app, &image.blob).and_then(|p| std::fs::read(p).ok()) {
+    if let Some(bytes) = server_image_path(app, &image.blob).and_then(|p| commy_core::at_rest::read(&p).ok()) {
         return Ok(bytes);
     }
     let bytes = fetch_shared_image(app, &image, expressions::MAX_SOUND_BYTES as u64).await?;
@@ -4219,7 +4220,7 @@ pub(crate) fn picture_data_url(bytes: &[u8]) -> String {
 pub(crate) async fn server_image_bytes(app: &App, image: &str) -> CmdResult<Vec<u8>> {
     let image = commy_core::server::ImageRef::parse(image).ok_or("bad image reference")?;
     let path = server_image_path(app, &image.blob);
-    if let Some(bytes) = path.as_ref().and_then(|p| std::fs::read(p).ok()) {
+    if let Some(bytes) = path.as_ref().and_then(|p| commy_core::at_rest::read(p).ok()) {
         return Ok(bytes);
     }
     let bytes = fetch_shared_image(app, &image, MAX_SERVER_IMAGE_BYTES as u64).await?;
@@ -5653,7 +5654,7 @@ fn write_blob_cache(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()>
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(path, bytes)
+    commy_core::at_rest::write(path, bytes)
 }
 
 fn decode_upload(data: &str) -> CmdResult<Vec<u8>> {
@@ -6667,7 +6668,7 @@ async fn restore_server_images(app: &tauri::State<'_, App>, node: &CommyNode) {
     let Some(dir) = app.data_dir().map(|d| d.join(SERVER_IMAGE_DIR)) else { return };
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
-        if let Ok(bytes) = std::fs::read(entry.path()) {
+        if let Ok(bytes) = commy_core::at_rest::read(&entry.path()) {
             let _ = node.add_blob(bytes).await;
         }
     }
@@ -6768,7 +6769,7 @@ async fn store_profile_image(
         return Err(not_image.into());
     }
     if let Some(dir) = app.data_dir() {
-        std::fs::write(dir.join(file), &bytes).map_err(err_to_string)?;
+        commy_core::at_rest::write(&dir.join(file), &bytes).map_err(err_to_string)?;
     }
     let net = app.net.lock().await;
     let node = net.as_ref().ok_or("network is not ready yet")?;
@@ -6790,7 +6791,7 @@ async fn restore_avatar_blob(app: &tauri::State<'_, App>, node: &CommyNode) {
             continue;
         }
         let Some(path) = app.data_dir().map(|d| d.join(file)) else { continue };
-        match std::fs::read(&path) {
+        match commy_core::at_rest::read(&path) {
             Ok(bytes) => {
                 if let Err(e) = node.add_blob(bytes).await {
                     tracing::warn!("could not restore {what} blob: {e}");
@@ -8071,6 +8072,17 @@ pub fn run() {
                 .or_else(|| tauri_app.path().app_data_dir().ok());
 
             if let Some(dir) = data_dir {
+                if let Err(why) = local_key::unlock(&dir) {
+                    tracing::error!("local files are encrypted and their key is unavailable: {why}");
+                    rfd::MessageDialog::new()
+                        .set_level(rfd::MessageLevel::Error)
+                        .set_title("Commy cannot open your data")
+                        .set_description(format!(
+                            "Your messages and keys on this computer are encrypted, and Commy could not get their key from your system keychain ({why}). Allow Commy to use it, then start Commy again."
+                        ))
+                        .show();
+                    std::process::exit(1);
+                }
                 let _ = app.data_dir.set(dir.clone());
                 invite_link::register_scheme();
                 invite_link::start(&handle, &dir, launch_link);
