@@ -55,6 +55,59 @@ pub struct UserProfile {
 }
 
 pub const MAX_ABOUT_CHARS: usize = 190;
+pub const MAX_STATUS_CHARS: usize = 64;
+pub const MAX_PROFILE_EMOJIS: usize = 10;
+
+fn emoji_spans(text: &str) -> Vec<(usize, usize, usize)> {
+    crate::server::image_tokens(text)
+        .into_iter()
+        .filter_map(|(start, end, _)| {
+            let (name, _) = crate::server::parse_emoji_token(&text[start..end])?;
+            Some((start, end, name.chars().count() + 2))
+        })
+        .collect()
+}
+
+pub fn rich_len(text: &str) -> usize {
+    let spans = emoji_spans(text);
+    let raw: usize = spans.iter().map(|(start, end, _)| text[*start..*end].chars().count()).sum();
+    let shown: usize = spans.iter().map(|(_, _, shown)| shown).sum();
+    text.chars().count() - raw + shown
+}
+
+pub fn rich_text_fits(text: &str, max_chars: usize) -> bool {
+    rich_len(text) <= max_chars && emoji_spans(text).len() <= MAX_PROFILE_EMOJIS
+}
+
+pub fn truncate_rich(text: &str, max_chars: usize) -> String {
+    let spans = emoji_spans(text);
+    let mut out = String::new();
+    let mut used = 0;
+    let mut pos = 0;
+    for (start, end, shown) in spans.iter().copied().chain(std::iter::once((text.len(), text.len(), 0))) {
+        for c in text[pos..start].chars() {
+            if used == max_chars {
+                return out;
+            }
+            out.push(c);
+            used += 1;
+        }
+        if start == text.len() {
+            break;
+        }
+        if used + shown > max_chars {
+            return out;
+        }
+        out.push_str(&text[start..end]);
+        used += shown;
+        pos = end;
+    }
+    out
+}
+
+pub fn valid_status_emoji(raw: &str) -> bool {
+    is_emoji_like(raw) || crate::server::parse_emoji_token(raw).is_some()
+}
 pub const MAX_PRONOUNS_CHARS: usize = 24;
 
 pub fn clean_pronouns(raw: &str) -> Option<String> {
@@ -248,6 +301,23 @@ mod tests {
         assert!(is_emoji_like("🇺🇸"));
         assert!(!is_emoji_like("a"));
         assert!(!is_emoji_like("🐸 hi"));
+    }
+
+    #[test]
+    fn custom_emojis_count_as_their_short_name() {
+        let token = format!("<:wave:{}@{}>", "a".repeat(64), "b".repeat(64));
+        let text = format!("hi {token}!");
+        assert_eq!(rich_len(&text), "hi :wave:!".chars().count());
+        assert!(rich_text_fits(&text, 10));
+        assert!(!rich_text_fits(&text, 9));
+        assert!(!rich_text_fits(&token.repeat(MAX_PROFILE_EMOJIS + 1), 1000));
+        assert_eq!(truncate_rich(&text, 8), "hi ");
+        assert_eq!(truncate_rich(&text, 9), format!("hi {token}"));
+        assert_eq!(truncate_rich(&text, 10), text);
+        assert_eq!(truncate_rich("plain text", 5), "plain");
+        assert!(valid_status_emoji(&token));
+        assert!(valid_status_emoji("🐸"));
+        assert!(!valid_status_emoji(&format!("{token} hi")));
     }
 
     #[test]

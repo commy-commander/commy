@@ -757,6 +757,10 @@ async fn carry_expressions(app: &App, content: String, local: &std::collections:
     out
 }
 
+async fn carry_profile_emojis(app: &App, text: String) -> String {
+    carry_expressions(app, text, &std::collections::HashSet::new()).await
+}
+
 fn signed_fits_one_gossip_frame(signed: &Message) -> bool {
     let wire = WirePayload::Event(ServerEvent::MessageCreate { message: signed.clone() });
     commy_net::protocol::gossip_size(&wire) <= commy_net::protocol::MAX_GOSSIP_BYTES
@@ -3374,16 +3378,21 @@ async fn update_profile(
     let status_emoji = match status_emoji.map(|e| e.trim().to_string()) {
         None => None,
         Some(e) if e.is_empty() => Some(None),
-        Some(e) if commy_core::user::is_emoji_like(&e) => Some(Some(e)),
+        Some(e) if commy_core::user::valid_status_emoji(&e) => Some(Some(carry_profile_emojis(&app, e).await)),
         Some(_) => return Err("status emoji must be a single emoji".into()),
     };
     let clean = |s: Option<String>| {
         s.map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && s.len() <= 64)
+            .filter(|s| !s.is_empty() && commy_core::user::rich_text_fits(s, commy_core::user::MAX_STATUS_CHARS))
     };
+    let custom_status = match clean(custom_status) {
+        Some(status) => Some(carry_profile_emojis(&app, status).await),
+        None => None,
+    };
+    let display_name = clean(display_name).filter(|name| name.len() <= 64);
     let profile = edit_profile(&app, |profile| {
-        profile.display_name = clean(display_name);
-        profile.custom_status = clean(custom_status);
+        profile.display_name = display_name;
+        profile.custom_status = custom_status;
         if presence != profile.presence {
             profile.presence_until = None;
         }
@@ -4152,9 +4161,14 @@ async fn set_overlay_settings(
 #[tauri::command]
 async fn set_about(app: tauri::State<'_, App>, handle: tauri::AppHandle, about: String) -> CmdResult<UserProfile> {
     let about = about.trim().to_string();
-    if about.chars().count() > commy_core::user::MAX_ABOUT_CHARS {
-        return Err(format!("About Me can be up to {} characters", commy_core::user::MAX_ABOUT_CHARS));
+    if !commy_core::user::rich_text_fits(&about, commy_core::user::MAX_ABOUT_CHARS) {
+        return Err(format!(
+            "About Me can be up to {} characters and {} custom emojis",
+            commy_core::user::MAX_ABOUT_CHARS,
+            commy_core::user::MAX_PROFILE_EMOJIS
+        ));
     }
+    let about = carry_profile_emojis(&app, about).await;
     let profile = edit_profile(&app, |profile| profile.about = (!about.is_empty()).then_some(about))?;
     publish_profile(&app, &handle, &profile).await;
     Ok(profile)

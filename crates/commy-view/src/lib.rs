@@ -406,7 +406,7 @@ impl ServerView {
                 continue;
             };
             if member.about.is_none() {
-                member.about = contact.about.as_deref().map(|a| truncate(a, commy_core::user::MAX_ABOUT_CHARS));
+                member.about = contact.about.as_deref().map(|a| commy_core::user::truncate_rich(a, commy_core::user::MAX_ABOUT_CHARS));
             }
             if member.banner.is_none() {
                 member.banner = contact.banner.clone().filter(|b| commy_core::user::valid_banner(b));
@@ -499,12 +499,12 @@ impl ServerView {
                     status_emoji: p
                         .status_emoji
                         .clone()
-                        .filter(|e| commy_core::user::is_emoji_like(e)),
+                        .filter(|e| commy_core::user::valid_status_emoji(e)),
                     activity: p
                         .activity
                         .clone()
                         .filter(|_| p.presence.is_visible_online()),
-                    about: p.about.as_deref().map(|a| truncate(a, commy_core::user::MAX_ABOUT_CHARS)),
+                    about: p.about.as_deref().map(|a| commy_core::user::truncate_rich(a, commy_core::user::MAX_ABOUT_CHARS)),
                     pronouns: state.server.pronouns.get(&p.id).cloned(),
                     activity_cover: p
                         .activity_cover
