@@ -383,6 +383,8 @@ pub struct Server {
     pub onboarding: Option<crate::onboarding::Onboarding>,
     #[serde(default)]
     pub defaults_version: u32,
+    #[serde(default)]
+    pub activities_enabled: bool,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -460,6 +462,7 @@ impl Server {
             emoticons_shareable: false,
             onboarding: None,
             defaults_version: MEMBER_DEFAULTS_VERSION,
+            activities_enabled: false,
         }
     }
 

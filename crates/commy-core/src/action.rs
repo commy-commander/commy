@@ -144,6 +144,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
         E::ExpressionSettings { .. } => "expressions".into(),
         E::SoundSharingSet { .. } => "sound_sharing".into(),
+        E::ActivitiesSet { .. } => "activities".into(),
         E::ExpressionSharingSet { .. } => "expression_sharing".into(),
         E::StickerAdd { sticker, .. } => format!("sticker:{}", sticker.name),
         E::StickerRemove { name, .. } => format!("sticker:{name}"),
@@ -321,6 +322,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::AfkTimeoutSet { .. }
         | E::ExpressionSettings { .. }
         | E::SoundSharingSet { .. }
+        | E::ActivitiesSet { .. }
         | E::ExpressionSharingSet { .. } => allows(Permissions::MANAGE_SERVER),
         E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => {
@@ -919,6 +921,19 @@ mod tests {
         other_key.identity = Some(Identity::generate().public());
         let swap = SignedEvent::sign(sid, keyed, 1, ServerEvent::ProfileUpdate { profile: other_key }, &identity_for(keyed));
         assert_eq!(state.apply_signed(&swap), Err(StoreError::IdentityMismatch));
+    }
+
+    #[test]
+    fn activities_are_off_until_a_manager_turns_them_on() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let user = join(&mut state, "user");
+        assert!(!state.server.activities_enabled);
+        let on = ServerEvent::ActivitiesSet { server: sid, enabled: true };
+        assert!(authorized(&state.server, owner, &on));
+        assert!(!authorized(&state.server, user, &on));
+        assert_eq!(state.apply(on), Ok(true));
+        assert!(state.server.activities_enabled);
     }
 
     #[test]
