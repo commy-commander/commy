@@ -5928,15 +5928,33 @@ struct StickerHit {
     title: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StickerPage {
+    results: Vec<StickerHit>,
+    #[serde(default)]
+    more: bool,
+}
+
 #[tauri::command]
-async fn sticker_search(app: tauri::State<'_, App>, query: String) -> CmdResult<Option<Vec<StickerHit>>> {
+async fn sticker_search(
+    app: tauri::State<'_, App>,
+    query: String,
+    from: Option<String>,
+    page: Option<u32>,
+) -> CmdResult<Option<StickerPage>> {
     let query = safety::truncate(query.trim(), 100);
-    let hits = account::server_search::<StickerHit>(&app, "stickers", &query).await?;
-    Ok(hits.map(|hits| {
-        hits.into_iter()
+    let from = if from.as_deref() == Some("gifs") { "gifs" } else { "stickers" };
+    let page = page.unwrap_or(1).clamp(1, 20).to_string();
+    let params = [("q", query.as_str()), ("from", from), ("page", page.as_str())];
+    let found: Option<StickerPage> = account::server_search_with(&app, "stickers", &params).await?;
+    Ok(found.map(|found| StickerPage {
+        results: found
+            .results
+            .into_iter()
             .filter(|s| catalog_source(&s.url) == Some("KLIPY") && catalog_source(&s.preview) == Some("KLIPY"))
             .map(|s| StickerHit { id: safety::truncate(&s.id, 120), title: safety::truncate(&s.title, 200), ..s })
-            .collect()
+            .collect(),
+        more: found.more,
     }))
 }
 

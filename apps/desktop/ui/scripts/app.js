@@ -587,15 +587,19 @@ function mockEmojiCatalog(query = "", category = null, page = 0) {
   return { results: matches.slice(start, start + 60).map(({ id, title, url, animated }) => ({ id, title, url, animated })), more: matches.length > start + 60, categories };
 }
 
-function mockStickerSearch(query = "") {
-  const names = ["Happy Dance", "Sleepy Cat", "Thumbs Up", "Love You", "Party Time", "Good Morning", "So Sad", "Wow", "High Five", "Bye Bye", "Hugs", "LOL"];
+function mockStickerSearch(query = "", from = "stickers") {
+  const gifs = from === "gifs";
+  const names = gifs
+    ? ["Mic Drop", "Slow Clap", "Facepalm", "Dancing", "Mind Blown", "Eye Roll", "Nodding", "Shrug", "Cheers", "Sleepy", "Excited", "Nope"]
+    : ["Happy Dance", "Sleepy Cat", "Thumbs Up", "Love You", "Party Time", "Good Morning", "So Sad", "Wow", "High Five", "Bye Bye", "Hugs", "LOL"];
   const q = String(query || "").toLowerCase().trim();
-  return names
+  const results = names
     .map((title, i) => {
-      const url = mockEmojiFace((i * 53 + 20) % 360, ["M40 84 Q64 108 88 84", "M48 82 Q64 98 80 82"][i % 2], 8);
-      return { id: `mock-${i}`, title, preview: url, url, ratio: 1 };
+      const url = mockEmojiFace((i * 53 + (gifs ? 200 : 20)) % 360, ["M40 84 Q64 108 88 84", "M48 82 Q64 98 80 82"][i % 2], 8);
+      return { id: `mock-${from}-${i}`, title, preview: url, url, ratio: 1 };
     })
     .filter(s => !q || s.title.toLowerCase().includes(q));
+  return { results, more: false };
 }
 
 function mockTemplates() {
@@ -1300,7 +1304,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "search_emoji_catalog": return mockEmojiCatalog(args.query, args.category, args.page);
     case "fetch_catalog_image": return args.url;
-    case "sticker_search": return mockStickerSearch(args.query);
+    case "sticker_search": return mockStickerSearch(args.query, args.from);
     case "store_catalog_sticker": {
       const blob = `ggs${Object.keys(mock.expressions || {}).length}@mock`;
       mock.expressions = { ...(mock.expressions || {}), [blob]: `data:image/png;base64,${args.data}` };
@@ -10487,7 +10491,10 @@ const CATALOG_PICKER = {
   },
   klipy: {
     label: "KLIPY", slots: 9, cls: "sticker-tile catalog-sticker", external: false,
-    search: async q => (await invoke("sticker_search", { query: q })) || [],
+    search: async q => {
+      const page = await invoke("sticker_search", { query: q, from: "stickers", page: 1 });
+      return page ? page.results : [];
+    },
     use: (item, slot) => useCatalogSticker(item, slot),
   },
 };
@@ -10758,7 +10765,7 @@ function renderStickerSettings(server) {
   $("sticker-share-row").classList.toggle("readonly", !server.can_manage_server);
   $("sticker-upload").classList.toggle("hidden", !server.can_add_stickers);
   $("sticker-upload").disabled = stickers.length >= MAX_STICKERS;
-  $("sticker-browse").classList.toggle("hidden", !server.can_add_stickers || !account.server_emojis);
+  $("sticker-browse").classList.toggle("hidden", !server.can_add_stickers || !syncCatalogBrowse());
   $("sticker-browse").disabled = stickers.length >= MAX_STICKERS;
   renderRoleAccess(server, "stickers");
   renderImageExpressions(server, {
@@ -16390,7 +16397,19 @@ function openAddExpression(kind) {
   else openCatalog(kind);
 }
 
-const catalog = { kind: "emojis", query: "", category: null, page: 0, results: [], picked: null, seq: 0, timer: null, busy: false };
+const catalog = { kind: "emojis", source: "emoji.gg", query: "", category: null, page: 0, results: [], picked: null, seq: 0, timer: null, busy: false };
+const KLIPY_CATALOG_CHIPS = [{ id: null, name: "Stickers" }, { id: "gifs", name: "GIFs" }];
+
+function catalogSource(kind) {
+  if (kind === "stickers" && account.server_stickers) return "KLIPY";
+  return account.server_emojis ? "emoji.gg" : null;
+}
+
+function syncCatalogBrowse() {
+  const source = catalogSource("stickers");
+  $("sticker-browse").textContent = `Browse ${source || "KLIPY"}`;
+  return source;
+}
 const CATALOG_SIZES = {
   emojis: { size: 128, maxGif: 256 * 1024, command: "add_emoji", max: MAX_EMOJIS, list: "emojis" },
   stickers: { size: 320, maxGif: 512 * 1024, command: "add_sticker", max: MAX_STICKERS, list: "stickers" },
@@ -16400,20 +16419,22 @@ function openCatalog(kind, { upload = false } = {}) {
   const server = state.currentServer;
   if (!server) return;
   closeFloating();
-  Object.assign(catalog, { kind, query: "", category: null, page: 0, results: [], picked: null, busy: false });
+  const source = catalogSource(kind);
+  Object.assign(catalog, { kind, source, query: "", category: null, page: 0, results: [], picked: null, busy: false });
   $("catalog-title").textContent = kind === "stickers" ? "Add a sticker" : "Add an emoji";
   $("catalog-search").value = "";
-  $("catalog-search").placeholder = kind === "stickers" ? "Search emoji.gg for a sticker" : "Search emoji.gg";
+  $("catalog-search").placeholder = source === "KLIPY" ? "Search KLIPY stickers and GIFs" : "Search emoji.gg";
+  $("catalog-attrib-source").textContent = source || "emoji.gg";
+  $("catalog-chips").replaceChildren();
   renderCatalogPick();
   showModal("modal-catalog");
-  if (account.server_emojis) {
+  if (source) {
     $("catalog-search").disabled = false;
     $("catalog-search").focus();
     loadCatalog();
   } else {
     $("catalog-search").disabled = true;
-    $("catalog-chips").replaceChildren();
-    $("catalog-grid").replaceChildren(el("div", "catalog-note", "Sign in to an account server with emoji search to browse emoji.gg. You can still upload an image."));
+    $("catalog-grid").replaceChildren(el("div", "catalog-note", "Sign in to an account server with image search to browse. You can still upload an image."));
   }
   if (upload) uploadToCatalog();
 }
@@ -16421,11 +16442,16 @@ function openCatalog(kind, { upload = false } = {}) {
 async function loadCatalog(append = false) {
   const seq = ++catalog.seq;
   const grid = $("catalog-grid");
-  if (!append) grid.replaceChildren(el("div", "catalog-note", "Loading emoji.gg"));
+  if (!append) grid.replaceChildren(el("div", "catalog-note", `Loading ${catalog.source}`));
   try {
-    const page = await invoke("search_emoji_catalog", { query: catalog.query, category: catalog.category, page: catalog.page });
+    const klipy = catalog.source === "KLIPY";
+    const page = klipy
+      ? (await invoke("sticker_search", { query: catalog.query, from: catalog.category || "stickers", page: catalog.page + 1 })) || { results: [] }
+      : await invoke("search_emoji_catalog", { query: catalog.query, category: catalog.category, page: catalog.page });
     if (seq !== catalog.seq) return;
-    if (!$("catalog-chips").childElementCount) renderCatalogChips(page.categories || []);
+    if (!$("catalog-chips").childElementCount) {
+      renderCatalogChips(klipy ? KLIPY_CATALOG_CHIPS : [{ id: null, name: "Popular" }, ...(page.categories || [])]);
+    }
     catalog.results = append ? catalog.results.concat(page.results) : page.results;
     renderCatalogGrid(Boolean(page.more));
   } catch (e) {
@@ -16436,7 +16462,7 @@ async function loadCatalog(append = false) {
 function renderCatalogChips(categories) {
   const row = $("catalog-chips");
   row.replaceChildren();
-  for (const c of [{ id: null, name: "Popular" }, ...categories]) {
+  for (const c of categories) {
     const chip = el("button", "catalog-chip" + (c.id === catalog.category ? " active" : ""), c.name);
     chip.type = "button";
     chip.onclick = () => {
@@ -16460,7 +16486,7 @@ function renderCatalogGrid(more) {
     img.loading = "lazy";
     img.alt = item.title;
     img.draggable = false;
-    img.src = viaAccountServer(item.url);
+    img.src = viaAccountServer(item.preview || item.url);
     img.onerror = () => tile.classList.add("missing");
     tile.appendChild(img);
     if (item.animated) tile.appendChild(el("span", "catalog-gif", "GIF"));
@@ -16472,7 +16498,7 @@ function renderCatalogGrid(more) {
     };
     grid.appendChild(tile);
   }
-  if (!catalog.results.length) grid.appendChild(el("div", "catalog-note", "Nothing on emoji.gg matches that"));
+  if (!catalog.results.length) grid.appendChild(el("div", "catalog-note", `Nothing on ${catalog.source} matches that`));
   if (more) {
     const next = el("button", "btn-secondary btn-small catalog-more", "Load More");
     next.onclick = () => {

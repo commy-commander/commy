@@ -45,6 +45,7 @@ const IGDB_GAP_MS = 1000 / IGDB_MAX_REQUESTS_PER_SECOND + IGDB_GAP_MARGIN_MS;
 const TOKEN_REFRESH_EARLY_SECS = 60;
 const MAX_QUERY = 100;
 const MAX_STICKER_BYTES = 512 * 1024;
+const KLIPY_MAX_PAGE = 20;
 const STICKER_FORMATS = ["webp", "gif"];
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
@@ -314,6 +315,7 @@ async function requireSession(ctx) {
 export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetch = (...args) => globalThis.fetch(...args) }) => {
   const gifCache = createCache();
   const stickerCache = createCache();
+  const gifStickerCache = createCache();
   const gameCache = createCache();
   const imageCache = createImageCache();
   let igdbToken = null;
@@ -361,8 +363,9 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
   }
 
   const KLIPY_KINDS = {
-    gifs: { cache: gifCache, what: "GIF search", service: "The GIF service", formats: "gif", results: klipyResults },
-    stickers: { cache: stickerCache, what: "Sticker search", service: "The sticker service", formats: "webp,gif", results: klipyStickerResults },
+    gifs: { path: "gifs", cache: gifCache, what: "GIF search", service: "The GIF service", formats: "gif", results: klipyResults },
+    stickers: { path: "stickers", cache: stickerCache, what: "Sticker search", service: "The sticker service", formats: "webp,gif", results: klipyStickerResults },
+    gifStickers: { path: "gifs", cache: gifStickerCache, what: "Sticker search", service: "The sticker service", formats: "webp,gif", results: klipyStickerResults },
   };
 
   async function klipySearch(ctx, kind) {
@@ -370,14 +373,15 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
     if (!klipyKey) throw unavailable(spec.what);
     const session = await requireSession(ctx);
     const q = cleanQuery(ctx.query?.q);
-    const key = q.toLowerCase();
+    const page = Math.max(1, Math.min(KLIPY_MAX_PAGE, Math.trunc(Number(ctx.query?.page) || 1)));
+    const key = `${page}:${q.toLowerCase()}`;
     const cached = spec.cache.get(key);
-    if (cached) return ctx.json({ results: cached, provider: "klipy" });
+    if (cached) return ctx.json({ ...cached, provider: "klipy" });
 
-    const url = new URL(`${KLIPY_API}/${encodeURIComponent(klipyKey)}/${kind}/${q ? "search" : "trending"}`);
+    const url = new URL(`${KLIPY_API}/${encodeURIComponent(klipyKey)}/${spec.path}/${q ? "search" : "trending"}`);
     if (q) url.searchParams.set("q", q);
     url.searchParams.set("per_page", "24");
-    url.searchParams.set("page", "1");
+    url.searchParams.set("page", String(page));
     url.searchParams.set("content_filter", "medium");
     url.searchParams.set("format_filter", spec.formats);
     url.searchParams.set("customer_id", customerId(secret, session.user.id));
@@ -390,9 +394,9 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
       console.warn(`[auth] ${spec.what} failed: ${maskKlipyKey(err.message)}`);
       throw new APIError("BAD_GATEWAY", { message: `${spec.service} is not answering right now` });
     }
-    const results = spec.results(body);
-    spec.cache.set(key, results);
-    return ctx.json({ results, provider: "klipy" });
+    const found = { results: spec.results(body), more: page < KLIPY_MAX_PAGE && Boolean(body?.data?.has_next) };
+    spec.cache.set(key, found);
+    return ctx.json({ ...found, provider: "klipy" });
   }
 
   function paced(task) {
@@ -461,8 +465,11 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
 
       searchCommyStickers: createAuthEndpoint(
         "/commy/stickers/search",
-        { method: "GET", query: z.object({ q: z.string().optional() }) },
-        async (ctx) => klipySearch(ctx, "stickers"),
+        {
+          method: "GET",
+          query: z.object({ q: z.string().optional(), from: z.string().optional(), page: z.string().optional() }),
+        },
+        async (ctx) => klipySearch(ctx, ctx.query?.from === "gifs" ? "gifStickers" : "stickers"),
       ),
 
       searchCommyEmojis: createAuthEndpoint(
