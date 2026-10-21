@@ -1,5 +1,5 @@
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use aes_gcm::aead::{Aead, Payload};
@@ -9,9 +9,33 @@ pub const MAGIC: &[u8] = b"commy-sealed-v1\n";
 const NONCE_BYTES: usize = 12;
 
 static DEVICE_KEY: OnceLock<[u8; 32]> = OnceLock::new();
+static FOLDER_KEY: OnceLock<(PathBuf, [u8; 32])> = OnceLock::new();
 
 pub fn install(key: [u8; 32]) -> bool {
     DEVICE_KEY.set(key).is_ok()
+}
+
+pub fn install_folder(dir: &Path, key: [u8; 32]) -> bool {
+    FOLDER_KEY.set((dir.to_path_buf(), key)).is_ok()
+}
+
+fn key_for(path: &Path) -> Option<&'static [u8; 32]> {
+    match FOLDER_KEY.get() {
+        Some((dir, key)) if path.starts_with(dir) => Some(key),
+        _ => DEVICE_KEY.get(),
+    }
+}
+
+pub fn reseal_for_folder(path: &Path, folder_key: &[u8; 32]) -> io::Result<bool> {
+    let bytes = std::fs::read(path)?;
+    if is_sealed(&bytes) && open_with(Some(folder_key), bytes.clone()).is_ok() {
+        return Ok(false);
+    }
+    let plain = open_with(DEVICE_KEY.get(), bytes)?;
+    let tmp = path.with_extension("reseal.tmp");
+    std::fs::write(&tmp, seal_with(folder_key, &plain))?;
+    std::fs::rename(&tmp, path)?;
+    Ok(true)
 }
 
 pub fn installed() -> bool {
@@ -47,19 +71,15 @@ pub fn open_with(key: Option<&[u8; 32]>, bytes: Vec<u8>) -> io::Result<Vec<u8>> 
     cipher.decrypt(&Nonce::from(nonce), Payload { msg: body, aad: MAGIC }).map_err(|_| locked())
 }
 
-pub fn seal(plain: &[u8]) -> Vec<u8> {
-    match DEVICE_KEY.get() {
+pub fn seal(path: &Path, plain: &[u8]) -> Vec<u8> {
+    match key_for(path) {
         Some(key) => seal_with(key, plain),
         None => plain.to_vec(),
     }
 }
 
-pub fn open(bytes: Vec<u8>) -> io::Result<Vec<u8>> {
-    open_with(DEVICE_KEY.get(), bytes)
-}
-
 pub fn read(path: &Path) -> io::Result<Vec<u8>> {
-    open(std::fs::read(path)?)
+    open_with(key_for(path), std::fs::read(path)?)
 }
 
 pub fn read_to_string(path: &Path) -> io::Result<String> {
@@ -67,7 +87,7 @@ pub fn read_to_string(path: &Path) -> io::Result<String> {
 }
 
 pub fn write(path: &Path, plain: &[u8]) -> io::Result<()> {
-    std::fs::write(path, seal(plain))
+    std::fs::write(path, seal(path, plain))
 }
 
 pub fn write_private(path: &Path, plain: &[u8]) -> io::Result<()> {
@@ -79,7 +99,7 @@ pub fn write_private(path: &Path, plain: &[u8]) -> io::Result<()> {
         options.mode(0o600);
     }
     let mut file = options.open(path)?;
-    file.write_all(&seal(plain))?;
+    file.write_all(&seal(path, plain))?;
     file.sync_all()
 }
 
@@ -108,6 +128,30 @@ mod tests {
     fn plain_files_from_older_versions_still_read() {
         assert_eq!(open_with(Some(&KEY), b"{\"a\":1}".to_vec()).unwrap(), b"{\"a\":1}");
         assert_eq!(open_with(None, b"plain".to_vec()).unwrap(), b"plain");
+    }
+
+    #[test]
+    fn files_in_the_open_folder_use_its_key_and_others_do_not() {
+        let base = std::env::temp_dir().join(format!("commy-at-rest-folder-{}", std::process::id()));
+        let folder = base.join("accounts").join("a");
+        std::fs::create_dir_all(&folder).unwrap();
+        let folder_key = [9u8; 32];
+        std::fs::write(folder.join("old.json"), b"older").unwrap();
+        assert!(install_folder(&folder, folder_key));
+        assert!(!install_folder(&folder, [1; 32]), "one folder per process");
+
+        write(&folder.join("dms.json"), b"secret").unwrap();
+        let raw = std::fs::read(folder.join("dms.json")).unwrap();
+        assert_eq!(open_with(Some(&folder_key), raw).unwrap(), b"secret");
+        assert_eq!(read(&folder.join("dms.json")).unwrap(), b"secret");
+
+        write(&base.join("account.json"), b"shared").unwrap();
+        assert_eq!(std::fs::read(base.join("account.json")).unwrap(), b"shared", "outside the folder only the device key applies");
+
+        assert!(reseal_for_folder(&folder.join("old.json"), &folder_key).unwrap());
+        assert!(!reseal_for_folder(&folder.join("old.json"), &folder_key).unwrap());
+        assert_eq!(read(&folder.join("old.json")).unwrap(), b"older");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

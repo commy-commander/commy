@@ -31,7 +31,7 @@ fn remove_target_windows_rename_cannot_replace(path: &Path) -> std::io::Result<(
 }
 
 pub(crate) fn write_secret(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    write_private_bytes(path, &at_rest::seal(bytes))
+    write_private_bytes(path, &at_rest::seal(path, bytes))
 }
 
 pub(crate) fn write_private_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
