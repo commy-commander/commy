@@ -138,6 +138,20 @@ pub fn load_or_create_node_key(dir: &Path) -> Option<[u8; 32]> {
     Some(key)
 }
 
+pub fn load_node_port(dir: &Path) -> Option<u16> {
+    let text = fs::read_to_string(dir.join("node.port")).ok()?;
+    text.trim().parse().ok().filter(|port| *port != 0)
+}
+
+pub fn save_node_port(dir: &Path, port: u16) {
+    if load_node_port(dir) == Some(port) {
+        return;
+    }
+    if let Err(e) = fs::create_dir_all(dir).and_then(|_| fs::write(dir.join("node.port"), port.to_string())) {
+        tracing::warn!("could not remember the network port: {e}");
+    }
+}
+
 pub fn save_awaiting(dir: &Path, servers: &HashSet<ServerId>) -> Result<()> {
     write_json(&dir.join("awaiting-snapshot.json"), servers)
 }
@@ -265,6 +279,21 @@ mod tests {
         fs::create_dir_all(dir.join("servers")).unwrap();
         fs::write(dir.join("servers").join("bad.json"), b"{not json").unwrap();
         assert!(load_servers(&dir).is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_network_port_is_remembered_between_launches() {
+        let dir = temp_dir("nodeport");
+        assert_eq!(load_node_port(&dir), None);
+        save_node_port(&dir, 41234);
+        assert_eq!(load_node_port(&dir), Some(41234));
+        save_node_port(&dir, 41235);
+        assert_eq!(load_node_port(&dir), Some(41235));
+        fs::write(dir.join("node.port"), "garbage").unwrap();
+        assert_eq!(load_node_port(&dir), None);
+        fs::write(dir.join("node.port"), "0").unwrap();
+        assert_eq!(load_node_port(&dir), None);
         fs::remove_dir_all(&dir).ok();
     }
 
