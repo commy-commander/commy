@@ -631,6 +631,19 @@ pub fn queue_dm(app: &App, partner: UserId, id: MessageId) {
     }
 }
 
+pub fn dm_delivered(app: &App, partner: UserId, id: MessageId) {
+    let (done, drained) = {
+        let mut outbox = app.outbox.lock().unwrap();
+        (outbox.dm_done(partner, id), !outbox.has_dms(partner))
+    };
+    if drained {
+        app.dm_backoff.lock().unwrap().succeeded(partner);
+    }
+    if done {
+        app.persist_outbox();
+    }
+}
+
 pub fn wake_dm(app: &App, partner: UserId) {
     if !app.outbox.lock().unwrap().has_dms(partner) {
         return;
