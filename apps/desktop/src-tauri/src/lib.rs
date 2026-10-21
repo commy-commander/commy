@@ -4112,7 +4112,7 @@ fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
         let visible = !app.overlay_visible.load(std::sync::atomic::Ordering::Relaxed);
         tracing::info!("overlay hotkey: {}", if visible { "show" } else { "hide" });
         app.overlay_visible.store(visible, std::sync::atomic::Ordering::Relaxed);
-        overlay::apply(handle, &settings, visible);
+        overlay::refresh(handle);
     } else if hotkey_id(&settings.chat_hotkey) == Some(id) {
         let settings = app.update_voice(|voice| voice.overlay.show_chat = !voice.overlay.show_chat).overlay;
         let _ = handle.emit_to(overlay::LABEL, "overlay-config", &settings);
@@ -4148,8 +4148,23 @@ async fn set_overlay_settings(
         app.overlay_visible.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     register_hotkeys(&handle, &voice);
-    overlay::apply(&handle, &settings, app.overlay_visible.load(std::sync::atomic::Ordering::Relaxed));
+    overlay::refresh(&handle);
     Ok(settings)
+}
+
+#[tauri::command]
+fn preview_overlay(app: tauri::State<'_, App>, handle: tauri::AppHandle) {
+    use std::sync::atomic::Ordering::Relaxed;
+    if !app.voice.lock().unwrap().overlay.enabled {
+        return;
+    }
+    app.overlay_preview.store(true, Relaxed);
+    overlay::refresh(&handle);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+        handle.state::<App>().overlay_preview.store(false, Relaxed);
+        overlay::refresh(&handle);
+    });
 }
 
 #[tauri::command]
@@ -6874,6 +6889,10 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
                 *app.last_game.lock().unwrap() = Some((pid, game.to_string()));
             }
         }
+        let in_game = seen.as_deref().is_some_and(|text| text.starts_with("Playing "));
+        if app.game_in_front.swap(in_game, std::sync::atomic::Ordering::Relaxed) != in_game {
+            overlay::refresh(&handle);
+        }
         let seen = if enabled { seen } else { None };
         let stable = if !enabled || seen_last_poll == seen {
             seen.clone()
@@ -8025,7 +8044,7 @@ pub fn run() {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     let voice = handle.state::<App>().voice.lock().unwrap().clone();
                     register_hotkeys(&handle, &voice);
-                    overlay::apply(&handle, &voice.overlay, true);
+                    overlay::refresh(&handle);
                 });
             }
             updater::init(&handle);
@@ -8328,6 +8347,7 @@ pub fn run() {
             mic_level,
             send_typing,
             set_overlay_settings,
+            preview_overlay,
             set_game_tags,
             set_rules,
             set_automod,

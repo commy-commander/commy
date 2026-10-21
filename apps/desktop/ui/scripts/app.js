@@ -1385,6 +1385,7 @@ async function mockInvoke(cmd, args = {}) {
     case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, show_everyone: false, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11" });
     case "set_overlay_settings": mock.overlay = args.settings; return mock.overlay;
     case "overlay_hotkey_problems": return [];
+    case "preview_overlay": return null;
     case "get_integrations": return mock.integrations || { igdb_client_id: "", igdb_configured: false };
     case "get_stream_deck": return mock.streamDeck || (mock.streamDeck = { enabled: false, status: "off", decks: [] });
     case "set_stream_deck_enabled":
@@ -15435,6 +15436,7 @@ function wireEvents() {
   });
   $("overlay-test").addEventListener("click", async () => {
     await saveOverlaySettings({});
+    await invoke("preview_overlay");
     setTimeout(() => emitToOverlay("overlay-test", null), 500);
   });
   $("overlay-everyone").addEventListener("change", e => saveOverlaySettings({ show_everyone: e.target.checked }));
