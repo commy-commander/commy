@@ -32,7 +32,21 @@ VPS. It needs no open ports; it connects out like the desktop app.
 
 ## Set up
 
-Build it from this repository:
+Download `commy-bot` from the [latest release](https://github.com/commy-commander/commy/releases/latest):
+
+| Platform | File |
+|----------|------|
+| Windows x64 | `commy-bot-windows-x64.zip` |
+| macOS (Apple Silicon and Intel) | `commy-bot-macos-universal.tar.gz` |
+| Linux x64 | `commy-bot-linux-x64.tar.gz` |
+
+Unpack it into a folder and run the commands below from a terminal in that
+folder. In PowerShell, type `.\commy-bot` instead of `commy-bot`; on macOS and
+Linux, type `./commy-bot`. On macOS, clear the download quarantine once with
+`xattr -d com.apple.quarantine commy-bot`. Check the file against
+`SHA256SUMS.txt` from the same release.
+
+Or build it from this repository:
 
 ```sh
 cargo build --release -p commy-bot

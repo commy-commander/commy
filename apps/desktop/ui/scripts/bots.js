@@ -2,6 +2,7 @@
 
 const BOT_GUIDE_URL = "https://github.com/commy-commander/commy/blob/main/crates/commy-bot/README.md";
 const BOT_PORTING_URL = `${BOT_GUIDE_URL}#porting-a-bot`;
+const BOT_DOWNLOAD_URL = "https://github.com/commy-commander/commy/releases/latest";
 const BOT_DEFAULT_NAME = "Helper";
 const MAX_BOT_NAME_CHARS = 32;
 
@@ -95,6 +96,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     BOT_GUIDE_URL,
     BOT_PORTING_URL,
+    BOT_DOWNLOAD_URL,
     BOT_DEFAULT_NAME,
     MAX_BOT_NAME_CHARS,
     botPermissions,

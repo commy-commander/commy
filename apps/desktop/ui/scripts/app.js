@@ -17837,6 +17837,7 @@ function wireBots() {
   $("bots-add").onclick = openAddBot;
   wireExternalLink($("bots-guide"), BOT_GUIDE_URL);
   wireExternalLink($("add-bot-guide"), BOT_GUIDE_URL);
+  wireExternalLink($("add-bot-download"), BOT_DOWNLOAD_URL);
   wireExternalLink($("add-bot-porting"), BOT_PORTING_URL);
   $("add-bot-invite-copy").onclick = () => addBot.invite && copyText(addBot.invite, "Invite code copied");
   $("add-bot-name").addEventListener("input", paintAddBotCommands);

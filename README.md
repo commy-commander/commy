@@ -93,7 +93,9 @@ toasts, are Windows only for now.
 
 Releases are on the [Releases page](https://github.com/commy-commander/commy/releases)
 and at [commy.chat](https://commy.chat). Release candidates (`-rc`) are
-pre-releases for testing and connect only to the staging servers.
+pre-releases for testing and connect only to the staging servers. Each release
+also carries `commy-bot` for Windows, macOS and Linux, for running bots; see the
+[bot guide](crates/commy-bot/README.md).
 
 ### Verifying a download
 
