@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+#[cfg(desktop)]
 use tauri_plugin_updater::UpdaterExt;
 
 pub const VERSION: Option<&str> = option_env!("COMMY_VERSION");
@@ -16,6 +17,7 @@ const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(mobile, allow(dead_code))]
 pub enum Phase {
     #[default]
     Idle,
@@ -44,6 +46,7 @@ pub struct UpdateStatus {
 pub struct Updates {
     status: Mutex<UpdateStatus>,
     busy: AtomicBool,
+    #[cfg(desktop)]
     pending: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
 }
 
@@ -88,6 +91,9 @@ pub fn pick_release<'a>(
 }
 
 fn install_blocker(handle: &AppHandle) -> Option<&'static str> {
+    if cfg!(mobile) {
+        return Some("store");
+    }
     #[cfg(windows)]
     {
         let installed = std::env::current_exe()
@@ -209,8 +215,18 @@ async fn run_check(handle: &AppHandle) -> Result<(), String> {
         });
         return Ok(());
     }
+    install(handle, manifest, current, found, page).await
+}
+
+#[cfg(mobile)]
+async fn install(_handle: &AppHandle, _manifest: &str, _current: semver::Version, _found: String, _page: String) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(desktop)]
+async fn install(handle: &AppHandle, manifest: &str, current: semver::Version, found: String, page: String) -> Result<(), String> {
     let url = manifest.parse().map_err(|e| format!("bad manifest link: {e}"))?;
-    let newer_than = current.clone();
+    let newer_than = current;
     let update = handle
         .updater_builder()
         .endpoints(vec![url])
@@ -281,9 +297,12 @@ pub fn restart(handle: &AppHandle) -> Result<(), String> {
     if phase != Phase::Ready {
         return Err("No update is ready yet.".into());
     }
-    let pending = handle.state::<Updates>().pending.lock().unwrap().take();
-    if let Some((update, bytes)) = pending {
-        update.install(&bytes).map_err(|e| e.to_string())?;
+    #[cfg(desktop)]
+    {
+        let pending = handle.state::<Updates>().pending.lock().unwrap().take();
+        if let Some((update, bytes)) = pending {
+            update.install(&bytes).map_err(|e| e.to_string())?;
+        }
     }
     handle.restart();
 }

@@ -220,6 +220,34 @@ the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at the version in
 `auth/docker-compose.dev.yml` runs a local account server with a mail catcher
 and Redis.
 
+### Phone apps (early)
+
+Android and iOS build from the same crate and UI. The UI switches to a phone
+layout below 700px wide; add `?mobile` to the preview URL to also hide the
+desktop-only settings. The native projects are generated, not committed:
+
+```sh
+cd apps/desktop/src-tauri
+
+npm ci
+
+# Android (needs Android Studio's SDK and NDK, NDK_HOME set)
+npx tauri android init
+npx tauri icon ../mobile/app-icon.png
+node ../mobile/android-manifest.mjs
+npx tauri android dev
+
+# iOS (macOS with Xcode)
+npx tauri ios init
+npx tauri icon ../mobile/app-icon.png
+npx tauri ios dev
+```
+
+The "Mobile builds" workflow builds a debug APK on every change to native or
+phone files; the iOS simulator app builds only when the workflow is run by
+hand. Screen sharing, the overlay, hotkeys, the tray and Stream Deck
+are desktop only.
+
 ## Self-hosting
 
 You do not need to host anything to use Commy. If you want your own account

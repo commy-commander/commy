@@ -1,7 +1,13 @@
+#![cfg_attr(mobile, allow(dead_code))]
+
 use tauri::image::Image;
+#[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+#[cfg(desktop)]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager};
+#[cfg(desktop)]
+use tauri::Emitter;
+use tauri::{AppHandle, Manager};
 
 pub const TRAY_ID: &str = "commy-tray";
 
@@ -140,12 +146,19 @@ pub fn overlay(count: u32) -> Image<'static> {
 
 pub fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        #[cfg(desktop)]
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
 }
 
+#[cfg(mobile)]
+pub fn build(_app: &AppHandle) -> tauri::Result<()> {
+    Ok(())
+}
+
+#[cfg(desktop)]
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Commy", true, None::<&str>)?;
     let mute = MenuItem::with_id(app, "mute", "Mute / Unmute", true, None::<&str>)?;
@@ -181,6 +194,10 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(mobile)]
+pub fn refresh_icon(_app: &AppHandle) {}
+
+#[cfg(desktop)]
 pub fn refresh_icon(app: &AppHandle) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_icon(icon(UNREAD.load(std::sync::atomic::Ordering::Relaxed)));
@@ -189,6 +206,9 @@ pub fn refresh_icon(app: &AppHandle) {
 
 pub fn set_unread(app: &AppHandle, count: u32) {
     UNREAD.store(count, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(mobile)]
+    let _ = app;
+    #[cfg(desktop)]
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_icon(icon(count));
         let tip = match count {
@@ -198,12 +218,13 @@ pub fn set_unread(app: &AppHandle, count: u32) {
         };
         let _ = tray.set_tooltip(Some(tip));
     }
+    #[cfg(desktop)]
     if let Some(window) = app.get_webview_window("main") {
         #[cfg(windows)]
         {
             let _ = window.set_overlay_icon((count > 0).then(|| overlay(count)));
         }
-        #[cfg(not(windows))]
+        #[cfg(all(desktop, not(windows)))]
         {
             let _ = window.set_badge_count((count > 0).then_some(count as i64));
         }

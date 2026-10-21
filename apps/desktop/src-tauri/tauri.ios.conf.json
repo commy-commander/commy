@@ -1,0 +1,8 @@
+{
+  "identifier": "chat.commy.mobile",
+  "bundle": {
+    "iOS": {
+      "frameworks": ["SystemConfiguration"]
+    }
+  }
+}

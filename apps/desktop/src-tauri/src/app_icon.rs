@@ -1,3 +1,5 @@
+#![cfg_attr(mobile, allow(dead_code))]
+
 use image::{imageops, Rgba, RgbaImage};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -106,6 +108,7 @@ pub fn apply(handle: &tauri::AppHandle, dir: Option<&Path>, app_choice: &str, tr
     if let Ok(mut current) = CURRENT.write() {
         *current = Some((app_icon.clone(), tray_icon));
     }
+    #[cfg(desktop)]
     if let Some(window) = tauri::Manager::get_webview_window(handle, "main") {
         let (w, h) = app_icon.dimensions();
         let _ = window.set_icon(tauri::image::Image::new_owned(app_icon.into_raw(), w, h));

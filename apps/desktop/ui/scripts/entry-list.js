@@ -111,4 +111,9 @@ if (IS_TAURI) {
     showModal("modal-entry-key");
   });
   refreshEntryStatus();
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState !== "visible") return;
+    const status = await invoke("entry_list_status").catch(() => null);
+    if (status && status.state === "error") renderEntryStatus(await invoke("entry_list_sync").catch(() => status));
+  });
 }

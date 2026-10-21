@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>Commy</title>
   <link rel="icon" href="images/commy_v3.png" />
   <link rel="stylesheet" href="styles/styles.css" />
@@ -104,7 +104,7 @@
         </div>
         <div class="vp-actions" id="vp-actions">
           <button class="vp-activities" id="vp-activities" title="Start something together with everyone in the channel"></button>
-          <button class="vp-activities vp-share" id="share-btn" title="Share Your Screen"></button>
+          <button class="vp-activities vp-share desktop-only" id="share-btn" title="Share Your Screen"></button>
         </div>
         <button class="vp-game-share hidden" id="vp-game-share"></button>
       </section>
@@ -113,6 +113,9 @@
 
     <main class="main">
       <header class="chat-header">
+        <button class="icon-btn phone-back" id="phone-back" title="Back" aria-label="Back">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z"/></svg>
+        </button>
         <span class="hash" id="chat-hash">#</span>
         <span id="channel-name">welcome</span>
         <span class="presence-dot inline hidden" id="chat-presence"></span>
@@ -1176,14 +1179,14 @@
         <button class="settings-tab" data-tab="privacy" data-i18n="settings.tab.privacy">Privacy &amp; Safety</button>
         <div class="settings-nav-group" data-i18n="settings.group.voice">Voice &amp; Video</div>
         <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">Voice &amp; Camera</button>
-        <button class="settings-tab" data-tab="overlay" data-i18n="settings.tab.overlay">Game Overlay</button>
+        <button class="settings-tab desktop-only" data-tab="overlay" data-i18n="settings.tab.overlay">Game Overlay</button>
         <div class="settings-nav-group" data-i18n="settings.group.app">App Settings</div>
         <button class="settings-tab" data-tab="appearance" data-i18n="settings.tab.appearance">Appearance</button>
         <button class="settings-tab" data-tab="accessibility" data-i18n="settings.tab.accessibility">Accessibility</button>
         <button class="settings-tab" data-tab="notifications" data-i18n="settings.tab.notifications">Notifications</button>
         <button class="settings-tab" data-tab="integrations" data-i18n="settings.tab.integrations">Integrations</button>
         <button class="settings-tab" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
-        <button class="settings-tab" data-tab="updates" data-i18n="settings.tab.updates">Updates</button>
+        <button class="settings-tab desktop-only" data-tab="updates" data-i18n="settings.tab.updates">Updates</button>
       </div>
     </nav>
     <div class="settings-content">
@@ -1492,14 +1495,14 @@
               <button class="btn-secondary btn-small" id="tts-preview">Preview</button>
             </div>
           </div>
-          <label class="settings-card setting-row">
+          <label class="settings-card setting-row desktop-only">
             <div>
               <div class="setting-title">Close to tray</div>
               <div class="setting-sub">Closing the window keeps Commy running in the system tray so calls and messages keep working. Quit from the tray icon.</div>
             </div>
             <input type="checkbox" id="close-to-tray-toggle" class="switch" />
           </label>
-          <label class="settings-card setting-row">
+          <label class="settings-card setting-row desktop-only">
             <div>
               <div class="setting-title">Start with my computer</div>
               <div class="setting-sub">Commy opens quietly in the system tray when you sign in to your computer, so friends can reach you right away.</div>
@@ -1571,7 +1574,7 @@
               <button class="btn-primary btn-small" id="gif-key-save">Save</button>
             </div>
           </div>
-          <div class="settings-card integration-card" id="stream-deck-card">
+          <div class="settings-card integration-card desktop-only" id="stream-deck-card">
             <div class="integration-head">
               <div class="integration-logo integration-logo-deck">
                 <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="3"/><rect x="5.5" y="7" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="7" width="3.5" height="3.5" rx=".8"/><rect x="15" y="7" width="3.5" height="3.5" rx=".8"/><rect x="5.5" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="15" y="13.5" width="3.5" height="3.5" rx=".8"/></svg>
@@ -1800,8 +1803,8 @@
             </div>
             <input type="checkbox" id="compact-toggle" class="switch" />
           </label>
-          <h2 class="settings-subhead" data-i18n="appearance.shortcuts">Keyboard Shortcuts</h2>
-          <div class="settings-card shortcut-card">
+          <h2 class="settings-subhead desktop-only" data-i18n="appearance.shortcuts">Keyboard Shortcuts</h2>
+          <div class="settings-card shortcut-card desktop-only">
             <div class="shortcut-row">
               <div>
                 <div class="setting-title" data-i18n="appearance.switcher">Quick Switcher</div>
@@ -1817,13 +1820,13 @@
               <kbd class="shortcut-key" data-shortcut="F">Ctrl+F</kbd>
             </div>
           </div>
-          <h2 class="settings-subhead" data-i18n="appearance.appIcon">App Icon</h2>
-          <div class="settings-card icon-card">
+          <h2 class="settings-subhead desktop-only" data-i18n="appearance.appIcon">App Icon</h2>
+          <div class="settings-card icon-card desktop-only">
             <div class="setting-sub" data-i18n="appearance.appIcon.sub">Shown in your taskbar or dock while Commy is running.</div>
             <div class="icon-grid" id="app-icon-grid" role="radiogroup" aria-label="App icon"></div>
           </div>
-          <h2 class="settings-subhead" data-i18n="appearance.trayIcon">Tray Icon</h2>
-          <div class="settings-card icon-card">
+          <h2 class="settings-subhead desktop-only" data-i18n="appearance.trayIcon">Tray Icon</h2>
+          <div class="settings-card icon-card desktop-only">
             <div class="setting-sub" data-i18n="appearance.trayIcon.sub">Shown in the system tray, with your unread count on it.</div>
             <div class="icon-grid" id="tray-icon-grid" role="radiogroup" aria-label="Tray icon"></div>
           </div>
@@ -1876,7 +1879,7 @@
         <button class="settings-close" id="settings-close" title="Close" data-i18n-title="settings.close">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z"/></svg>
         </button>
-        <span class="settings-close-key">ESC</span>
+        <span class="settings-close-key desktop-only">ESC</span>
       </div>
     </div>
   </div>
@@ -2022,7 +2025,7 @@
         <button class="settings-close" id="channel-settings-close" title="Close">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z"/></svg>
         </button>
-        <span class="settings-close-key">ESC</span>
+        <span class="settings-close-key desktop-only">ESC</span>
       </div>
     </div>
   </div>
@@ -2434,7 +2437,7 @@
         <button class="settings-close" id="server-settings-close" title="Close">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.4 4.2 12 10.6 5.6 4.2 4.2 5.6 10.6 12l-6.4 6.4 1.4 1.4 6.4-6.4 6.4 6.4 1.4-1.4-6.4-6.4 6.4-6.4z"/></svg>
         </button>
-        <span class="settings-close-key">ESC</span>
+        <span class="settings-close-key desktop-only">ESC</span>
       </div>
     </div>
   </div>
@@ -2680,6 +2683,7 @@
   <script src="scripts/starfield.js"></script>
   <script src="scripts/app-icons.js"></script>
   <script src="scripts/layout.js"></script>
+  <script src="scripts/phone.js"></script>
   <script src="scripts/tint.js"></script>
   <script src="scripts/i18n.js"></script>
   <script src="scripts/locales/en.js"></script>

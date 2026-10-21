@@ -347,6 +347,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
             }
             Err(e) => {
                 set_status(handle, "error", e.clone(), 0, load_key(&dir, &s.server, &s.account).is_some());
+                retry_after_failure(handle);
                 return Err(e);
             }
         };
@@ -439,6 +440,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
 }
 
 async fn finish(handle: &AppHandle, state: &str, detail: &str, servers: usize, has_key: bool) -> Result<(), String> {
+    FAILED_TRIES.store(0, Ordering::SeqCst);
     set_status(handle, state, detail, servers, has_key);
     if state == "synced" {
         crate::read_state::schedule(handle);
@@ -448,6 +450,27 @@ async fn finish(handle: &AppHandle, state: &str, detail: &str, servers: usize, h
 }
 
 const KEY_WAIT_RETRY: std::time::Duration = std::time::Duration::from_secs(120);
+const FAILURE_RETRY_SECS: [u64; 3] = [15, 60, 300];
+
+static FAILED_TRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static FAILURE_RETRY_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn failure_retry_delay(tries: usize) -> std::time::Duration {
+    std::time::Duration::from_secs(FAILURE_RETRY_SECS[tries.min(FAILURE_RETRY_SECS.len() - 1)])
+}
+
+fn retry_after_failure(handle: &AppHandle) {
+    if FAILURE_RETRY_PENDING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let delay = failure_retry_delay(FAILED_TRIES.fetch_add(1, Ordering::SeqCst));
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(delay).await;
+        FAILURE_RETRY_PENDING.store(false, Ordering::SeqCst);
+        schedule(&handle);
+    });
+}
 
 struct KeyWait(std::sync::atomic::AtomicBool);
 
@@ -566,8 +589,24 @@ async fn join_missing(handle: &AppHandle, app: &App, merged: &EntryList, local: 
     }
 }
 
+#[cfg(desktop)]
 fn device_name() -> String {
     std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "Commy desktop".into())
+}
+
+#[cfg(target_os = "android")]
+fn device_name() -> String {
+    ["ro.product.marketname", "ro.product.model"]
+        .iter()
+        .filter_map(|prop| std::process::Command::new("getprop").arg(prop).output().ok())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .find(|name| !name.is_empty())
+        .unwrap_or_else(|| "Android phone or tablet".into())
+}
+
+#[cfg(target_os = "ios")]
+fn device_name() -> String {
+    "iPhone or iPad".into()
 }
 
 fn ask_other_devices(handle: &AppHandle) {
@@ -959,6 +998,12 @@ mod tests {
         assert_eq!(take_identity_step(&app, &dir, IdentityStep::OwnIdentity, &shared).await, AfterStep::StayOut);
         assert_eq!(file_key(&dir), ours.public());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_syncs_back_off_and_then_hold_steady() {
+        let secs: Vec<u64> = (0..5).map(|n| failure_retry_delay(n).as_secs()).collect();
+        assert_eq!(secs, [15, 60, 300, 300, 300]);
     }
 
     #[test]

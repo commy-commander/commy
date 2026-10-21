@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Commy uses the microphone for voice chat.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Commy uses the camera for video calls.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Commy lets you share photos and videos in chat.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Commy connects straight to friends on the same network when it can.</string>
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>audio</string>
+  </array>
+</dict>
+</plist>

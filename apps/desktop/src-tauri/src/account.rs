@@ -664,7 +664,7 @@ pub async fn account_begin_sign_in(app: tauri::State<'_, App>, handle: AppHandle
     if let Some(old) = app.sign_in.lock().unwrap().replace(PendingSignIn { user_code: code.user_code.clone(), cancel: cancel_tx }) {
         let _ = old.cancel.send(true);
     }
-    let _ = open::that(&verification_url);
+    let _ = crate::browser::open(&handle, &verification_url);
     let start = SignInStart { user_code: code.user_code.clone(), verification_url, expires_in: code.expires_in };
     tauri::async_runtime::spawn(poll_for_token(handle.clone(), server, doc, code, cancel_rx));
     Ok(start)

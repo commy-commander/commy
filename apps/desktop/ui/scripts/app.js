@@ -1356,6 +1356,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "fetch_expression": return (mock.expressions || {})[args.blob] || null;
     case "pick_sound": return null;
+    case "is_mobile_app": return new URLSearchParams(location.search).has("mobile");
     case "set_role_access": {
       const srv = mock.servers[args.serverId];
       const chat = EVERYONE_CHAT_ACCESS.find(spec => spec.key === args.access);
@@ -1866,6 +1867,7 @@ function openSettingsLayer(id, tab) {
   $(id).classList.remove("hidden");
   selectSettingsTab(id, tab);
   for (const range of $(id).querySelectorAll('input[type="range"]')) syncRangeFill(range);
+  if (isPhoneWidth(window.innerWidth)) history.pushState({ pane: phonePane(), settings: true }, "");
 }
 
 function syncRangeFill(range) {
@@ -1882,12 +1884,14 @@ function selectSettingsTab(id, tab) {
   const layer = $(id);
   for (const btn of layer.querySelectorAll(".settings-tab[data-tab]")) {
     btn.classList.toggle("active", btn.dataset.tab === tab);
+    if (btn.dataset.tab === tab && isPhoneWidth(window.innerWidth)) btn.scrollIntoView({ block: "nearest", inline: "center" });
   }
   for (const page of layer.querySelectorAll(".settings-page")) {
     page.classList.toggle("hidden", page.dataset.page !== tab);
   }
   layer.querySelector(".settings-content").scrollTop = 0;
   layer.dataset.tab = tab;
+  settingsPhoneView(layer, "page");
   if (tab === "voice") prepareAvatarStage();
 }
 
@@ -3781,6 +3785,7 @@ async function openNotificationTarget(target) {
       const thread = (await invoke("list_dm_threads")).find(t => t.user === a);
       await selectDm(a, thread ? thread.name : "Direct Message");
     }
+    phoneShowChat();
   } catch (e) {
     toast(String(e));
   }
@@ -6225,6 +6230,7 @@ async function jumpToMessage(id) {
     toast("That message is no longer on this device");
     return;
   }
+  phoneShowChat();
   row.scrollIntoView({ behavior: "smooth", block: "center" });
   row.classList.remove("flash");
   void row.offsetWidth;
@@ -9016,7 +9022,7 @@ async function openFullProfile(member) {
     row.appendChild(el("span", null, s.name));
     row.onclick = () => {
       hideModals();
-      selectServer(s.id);
+      selectServer(s.id).then(phoneShowChat);
     };
     return row;
   }));
@@ -12915,6 +12921,99 @@ function applyMembersLayout() {
   btn.title = collapsed ? "Show Members" : "Hide Members";
 }
 
+function phonePane() {
+  return $("app").dataset.pane || "list";
+}
+
+function setPhonePane(pane, { fromHistory = false } = {}) {
+  const was = phonePane();
+  if (was === pane) return;
+  $("app").dataset.pane = pane;
+  if (!fromHistory && phonePaneGoesDeeper(was, pane)) history.pushState({ pane }, "");
+}
+
+function phoneStep(action) {
+  if (!isPhoneWidth(window.innerWidth)) return false;
+  const from = phonePane();
+  const to = phonePaneAfter(from, action);
+  if (!phonePaneGoesDeeper(from, to) && history.state && history.state.pane) history.back();
+  else setPhonePane(to);
+  return true;
+}
+
+function phoneShowChat() {
+  if (!isPhoneWidth(window.innerWidth)) return;
+  const pane = phonePane();
+  if (pane === "people") phoneStep("back");
+  else if (pane === "list") phoneStep("open");
+}
+
+function settingsPhoneView(layer, view) {
+  layer.dataset.phoneView = view;
+  const title = layer.querySelector(".settings-phone-title");
+  if (!title) return;
+  const active = layer.querySelector(".settings-tab.active");
+  const heading = layer.querySelector(".settings-nav-title");
+  title.textContent = view === "page" && active ? active.textContent : heading ? heading.textContent : layer.getAttribute("aria-label");
+}
+
+function showSettingsMenuOnPhone(id) {
+  if (isPhoneWidth(window.innerWidth) && !$(id).classList.contains("hidden")) settingsPhoneView($(id), "menu");
+}
+
+function onPhoneHistory(e) {
+  const entry = e.state || {};
+  const layer = document.querySelector(".settings-layer:not(.hidden)");
+  if (layer && !entry.settings) closeSettingsLayers();
+  else if (layer && !entry.page) settingsPhoneView(layer, "menu");
+  setPhonePane(entry.pane || "list", { fromHistory: true });
+}
+
+function wireSettingsPhoneBars() {
+  for (const layer of document.querySelectorAll(".settings-layer")) {
+    const bar = el("div", "settings-phone-bar");
+    const back = el("button", "icon-btn settings-phone-back");
+    back.title = "Back";
+    back.setAttribute("aria-label", "Back");
+    back.appendChild(svgIcon("chevronLeft", 22));
+    back.onclick = () => {
+      if (history.state && history.state.page) history.back();
+      else settingsPhoneView(layer, "menu");
+    };
+    const close = el("button", "icon-btn settings-phone-close");
+    close.title = "Close";
+    close.setAttribute("aria-label", "Close");
+    close.appendChild(svgIcon("close", 20));
+    close.onclick = () => {
+      const depth = history.state && history.state.settings ? (history.state.page ? 2 : 1) : 0;
+      layer.querySelector(".settings-close").click();
+      if (depth) history.go(-depth);
+    };
+    bar.append(back, el("span", "settings-phone-title"), close);
+    layer.prepend(bar);
+    layer.querySelector(".settings-nav").addEventListener("click", e => {
+      const tab = e.target.closest(".settings-tab[data-tab]");
+      if (tab && isPhoneWidth(window.innerWidth)) history.pushState({ pane: phonePane(), settings: true, page: true }, "");
+    }, true);
+  }
+}
+
+function wirePhoneLayout() {
+  $("app").dataset.pane = "list";
+  window.addEventListener("popstate", onPhoneHistory);
+  wireSettingsPhoneBars();
+  $("phone-back").onclick = () => phoneStep("back");
+  $("channel-list").addEventListener("click", e => {
+    const row = e.target.closest(".channel");
+    if (row && rowOpensConversation([...row.classList], Boolean(e.target.closest("button")))) phoneStep("open");
+  });
+}
+
+async function markMobileApp() {
+  const mobile = await invoke("is_mobile_app").catch(() => false);
+  document.body.classList.toggle("mobile-app", Boolean(mobile));
+}
+
 function setViewMode(mode) {
   closeDiscover();
   state.view = mode;
@@ -13180,9 +13279,9 @@ function buildWelcomeHome() {
 }
 
 async function renderDmThreads() {
+  const threads = await invoke("list_dm_threads");
   const list = $("channel-list");
   list.innerHTML = "";
-  const threads = await invoke("list_dm_threads");
   state.dmThreads = threads;
   list.appendChild(savedSidebarRow());
   const query = $("dm-search").value.trim().toLowerCase();
@@ -13516,7 +13615,7 @@ function renderDmProfile(userId, name) {
     const row = el("button", "dm-profile-server");
     row.appendChild(el("span", "server-chip", initials(server.name)));
     row.appendChild(el("span", null, server.name));
-    row.onclick = () => selectServer(server.id);
+    row.onclick = () => selectServer(server.id).then(phoneShowChat);
     list.appendChild(row);
   }
   if (!servers.length) list.appendChild(el("div", "dm-preview", "No servers in common right now"));
@@ -13673,6 +13772,7 @@ async function messageUser(userId, name) {
     const thread = await invoke("open_dm", { userId });
     state.currentDm = { user: thread.user, name: thread.name };
     await enterDmMode();
+    phoneShowChat();
   } catch (e) {
     toast(String(e));
   }
@@ -14367,9 +14467,20 @@ async function sendGif(url) {
   }
 }
 
+async function askForMicrophoneOnPhones() {
+  if (!document.body.classList.contains("mobile-app") || !navigator.mediaDevices) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    stream.getTracks().forEach(track => track.stop());
+  } catch {
+    toast("Commy needs the microphone for voice. You can allow it in your phone's settings.");
+  }
+}
+
 async function toggleVoice(channel) {
   if (!state.currentServer) return;
   const leaving = state.voiceChannelId === channel.id;
+  if (!leaving) await askForMicrophoneOnPhones();
   try {
     await invoke("set_voice_channel", {
       serverId: state.currentServer.id,
@@ -14954,7 +15065,10 @@ function wireEvents() {
     toast("Invite copied to clipboard");
   };
 
-  $("settings-btn").onclick = () => openUserSettings("voice");
+  $("settings-btn").onclick = () => {
+    openUserSettings("voice");
+    showSettingsMenuOnPhone("user-settings");
+  };
   $("settings-close").onclick = closeSettingsLayers;
   $("server-settings-close").onclick = closeSettingsLayers;
   for (const layer of document.querySelectorAll(".settings-layer")) {
@@ -15009,7 +15123,10 @@ function wireEvents() {
     }
   });
 
-  $("server-settings-btn").onclick = () => openServerSettings();
+  $("server-settings-btn").onclick = async () => {
+    await openServerSettings();
+    showSettingsMenuOnPhone("server-settings");
+  };
   $("emoji-upload").onclick = uploadEmoji;
   $("emoji-browse").onclick = () => openCatalog("emojis");
   $("sticker-browse").onclick = () => openCatalog("stickers");
@@ -16121,6 +16238,7 @@ function wireEvents() {
     }
   });
   $("members-btn").onclick = () => {
+    if (phoneStep("people")) return;
     const collapsed = membersCollapsed(readMembersPref(), window.innerWidth);
     try {
       localStorage.setItem("commy.members.collapsed", collapsed ? "0" : "1");
@@ -16130,6 +16248,12 @@ function wireEvents() {
   window.addEventListener("resize", applyMembersLayout);
   applyMembersLayout();
   $("dm-profile-btn").onclick = () => {
+    if (isPhoneWidth(window.innerWidth)) {
+      state.showDmProfile = true;
+      if (state.currentDm) renderDmProfile(state.currentDm.user, state.currentDm.name);
+      phoneStep("people");
+      return;
+    }
     state.showDmProfile = !state.showDmProfile;
     if (state.currentDm) renderDmProfile(state.currentDm.user, state.currentDm.name);
   };
@@ -18001,9 +18125,11 @@ function wireActivityPing() {
 }
 
 async function boot() {
+  await markMobileApp();
   wireAccessibility();
   wireEvents();
   wireSaved();
+  wirePhoneLayout();
   wireTimeoutModal();
   wireModerationModal();
   wireActivityPing();
