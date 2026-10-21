@@ -19,14 +19,19 @@ export const FEATURES = [
   "android.hardware.microphone",
 ];
 
-export const SERVICES = [
-  { name: ".CallService", types: "microphone|mediaPlayback" },
+export const COMPONENTS = [
+  {
+    name: ".CallService",
+    xml: `<service android:name=".CallService" android:exported="false" android:foregroundServiceType="microphone|mediaPlayback" />`,
+  },
+  {
+    name: ".RelaunchActivity",
+    xml: `<activity android:name=".RelaunchActivity" android:process=":relaunch" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" />`,
+  },
 ];
 
 const usesPermission = name => `<uses-permission android:name="${name}" />`;
 const usesFeature = name => `<uses-feature android:name="${name}" android:required="false" />`;
-const service = ({ name, types }) =>
-  `<service android:name="${name}" android:exported="false" android:foregroundServiceType="${types}" />`;
 
 function insertBefore(xml, marker, lines, indent) {
   const anchor = xml.indexOf(marker);
@@ -43,8 +48,8 @@ export function withCommyNeeds(xml) {
   ];
   let out = xml;
   if (missing.length) out = insertBefore(out, "<application", [...missing, ""], "    ");
-  const services = SERVICES.filter(s => !out.includes(`"${s.name}"`)).map(service);
-  if (services.length) out = insertBefore(out, "</application>", services, "        ");
+  const components = COMPONENTS.filter(c => !out.includes(`"${c.name}"`)).map(c => c.xml);
+  if (components.length) out = insertBefore(out, "</application>", components, "        ");
   return out;
 }
 
@@ -60,6 +65,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   mkdirSync(sourcesTo, { recursive: true });
   const sources = readdirSync(sourcesFrom).filter(name => name.endsWith(".kt"));
   for (const name of sources) copyFileSync(`${sourcesFrom}${name}`, `${sourcesTo}${name}`);
-  console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications and the call service");
+  console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call service and relaunching");
   console.log(`Copied ${sources.join(", ")} into the Android project`);
 }

@@ -652,6 +652,9 @@ async fn ask(handle: &AppHandle) -> Result<Asked, String> {
     let s = session(&app).ok_or("Sign in first")?;
     let me = app.node_hex.lock().unwrap().clone().ok_or("Still connecting")?;
     let endpoint = app.net.lock().await.as_ref().map(|n| n.endpoint()).ok_or("Still connecting")?;
+    if !crate::account::ensure_linked(&app).await {
+        return Err("This device isn't linked to your account yet. Check your connection, then press Sync now.".into());
+    }
     let others: Vec<String> = account_devices(&app, &s).await?.into_iter().filter(|d| *d != me).collect();
     if others.is_empty() {
         return Err("No other device is linked to your account. Enter your recovery code instead.".into());

@@ -29,6 +29,7 @@ mod picker;
 mod pins;
 mod profile_images;
 mod read_state;
+mod relaunch;
 mod safety;
 mod saved;
 mod search;
@@ -8254,7 +8255,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(call_service::init());
+    let builder = builder.plugin(call_service::init()).plugin(relaunch::init());
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
