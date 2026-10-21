@@ -11287,7 +11287,7 @@ async function toggleSoundboardPop() {
   }
   $("sb-muted").classList.toggle("hidden", soundboardPrefs().enabled);
   pop.classList.remove("hidden");
-  placePopup(pop, $("vp-soundboard"), "below");
+  placePopup(pop, $("vp-soundboard"), "above");
 }
 
 const EVERYONE_CANDIDATES = [
@@ -12352,11 +12352,9 @@ function renderInlineVideo(att) {
 
 function renderShareButton() {
   const btn = $("share-btn");
-  const inVoice = Boolean(state.voiceChannelId);
   btn.classList.toggle("active", state.sharing);
   btn.title = state.sharing ? "Stop sharing your screen" : "Share your screen";
   btn.replaceChildren(svgIcon("screen", 16), el("span", null, state.sharing ? "Stop Sharing" : "Share Screen"));
-  $("vp-soundboard").classList.toggle("hidden", !inVoice);
   renderVoicePanel();
 }
 
@@ -12578,7 +12576,6 @@ function renderVoicePanelActivity() {
   const run = activityUi.run;
   const vs = state.voiceServer;
   btn.classList.toggle("hidden", !vs || Boolean(vs.call) || (!run && !voiceServerAllowsActivities()));
-  $("vp-actions").classList.toggle("solo", btn.classList.contains("hidden"));
   btn.classList.toggle("running", Boolean(run));
   const info = run ? activityKindInfo(run.activity) : null;
   btn.replaceChildren(svgIcon(info ? info.icon : "gamepad", 16), el("span", null, run ? `Open ${activityName(run.activity)}` : "Activities"));
@@ -15228,7 +15225,7 @@ function wireEvents() {
   });
   $("sound-open-toggle").addEventListener("change", saveExpressionSettings);
 
-  $("vp-soundboard").replaceChildren(svgIcon("soundboard", 18));
+  $("vp-soundboard").replaceChildren(svgIcon("soundboard", 16), el("span", null, "Soundboard"));
   $("vp-soundboard").onclick = toggleSoundboardPop;
   $("soundboard-toggle").addEventListener("change", e => {
     saveSoundboardPrefs({ ...soundboardPrefs(), enabled: e.target.checked });
