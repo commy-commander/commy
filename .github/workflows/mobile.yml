@@ -63,7 +63,7 @@ jobs:
         run: |
           npm ci
           npx tauri android init --ci
-          npx tauri icon icons/icon.png
+          npx tauri icon ../mobile/app-icon.png
           node ../mobile/android-manifest.mjs
 
       - name: Build
@@ -117,7 +117,7 @@ jobs:
         run: |
           npm ci
           npx tauri ios init --ci
-          npx tauri icon icons/icon.png
+          npx tauri icon ../mobile/app-icon.png
           grep -q "SystemConfiguration.framework" gen/apple/project.yml
 
       - name: Build for the simulator

@@ -7890,12 +7890,12 @@ async fn run_media_loop(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info,iroh=warn,iroh_net=warn".into()),
         )
-        .init();
+        .try_init();
 
     instance::apply_test_build_data_dir();
 
