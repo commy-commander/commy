@@ -658,6 +658,18 @@ impl CommyNode {
         mpsc::UnboundedReceiver<MediaChannel>,
         mpsc::UnboundedReceiver<IncomingDm>,
     )> {
+        Self::spawn_on_port(secret, None).await
+    }
+
+    pub async fn spawn_on_port(
+        secret: Option<[u8; 32]>,
+        port: Option<u16>,
+    ) -> Result<(
+        Self,
+        mpsc::UnboundedReceiver<NetEvent>,
+        mpsc::UnboundedReceiver<MediaChannel>,
+        mpsc::UnboundedReceiver<IncomingDm>,
+    )> {
         let relays = match crate::relays::relay_map(&crate::relays::own_relays()) {
             Ok(map) => Some(map),
             Err(e) => {
@@ -666,7 +678,7 @@ impl CommyNode {
             }
         };
         let fallback = relays.as_ref().map(crate::relays::fallback_relays).unwrap_or_default();
-        let spawned = Self::spawn_with(secret, relays).await?;
+        let spawned = Self::spawn_inner(secret, relays, port).await?;
         if !fallback.is_empty() {
             n0_future::task::spawn(crate::relays::fall_back_when_unreachable(spawned.0.endpoint(), fallback));
         }
@@ -682,6 +694,19 @@ impl CommyNode {
         mpsc::UnboundedReceiver<MediaChannel>,
         mpsc::UnboundedReceiver<IncomingDm>,
     )> {
+        Self::spawn_inner(secret, relays, None).await
+    }
+
+    async fn spawn_inner(
+        secret: Option<[u8; 32]>,
+        relays: Option<iroh::RelayMap>,
+        port: Option<u16>,
+    ) -> Result<(
+        Self,
+        mpsc::UnboundedReceiver<NetEvent>,
+        mpsc::UnboundedReceiver<MediaChannel>,
+        mpsc::UnboundedReceiver<IncomingDm>,
+    )> {
         let (media_tx, media_rx) = mpsc::unbounded_channel();
         let (dm_tx, dm_rx) = mpsc::unbounded_channel();
         let (entry_key_tx, entry_key_rx) = mpsc::unbounded_channel();
@@ -689,20 +714,38 @@ impl CommyNode {
         let lookup = MemoryLookup::new();
         let relay_mode = relays.map_or_else(iroh::endpoint::default_relay_mode, iroh::RelayMode::Custom);
         let relays = relay_mode.relay_map().urls();
-        #[cfg(not(wasm_browser))]
-        let builder = Endpoint::builder(iroh::endpoint::presets::N0);
-        #[cfg(wasm_browser)]
-        let builder = Endpoint::builder(iroh::endpoint::presets::Minimal);
-        let transport = iroh::endpoint::QuicTransportConfig::builder()
-            .default_path_max_idle_timeout(PATH_IDLE_TIMEOUT)
-            .default_path_keep_alive_interval(PATH_KEEP_ALIVE)
-            .build();
-        let builder = builder.address_lookup(lookup.clone()).transport_config(transport);
-        let mut builder = builder.relay_mode(relay_mode);
-        if let Some(bytes) = secret {
-            builder = builder.secret_key(iroh::SecretKey::from_bytes(&bytes));
-        }
-        let endpoint = builder.bind().await.context("failed to build iroh node")?;
+        let build = |port: Option<u16>| -> Result<iroh::endpoint::Builder> {
+            #[cfg(not(wasm_browser))]
+            let builder = Endpoint::builder(iroh::endpoint::presets::N0);
+            #[cfg(wasm_browser)]
+            let builder = Endpoint::builder(iroh::endpoint::presets::Minimal);
+            let transport = iroh::endpoint::QuicTransportConfig::builder()
+                .default_path_max_idle_timeout(PATH_IDLE_TIMEOUT)
+                .default_path_keep_alive_interval(PATH_KEEP_ALIVE)
+                .build();
+            let builder = builder.address_lookup(lookup.clone()).transport_config(transport);
+            let mut builder = builder.relay_mode(relay_mode.clone());
+            if let Some(bytes) = secret {
+                builder = builder.secret_key(iroh::SecretKey::from_bytes(&bytes));
+            }
+            #[cfg(not(wasm_browser))]
+            if let Some(port) = port.filter(|p| *p != 0) {
+                builder = builder
+                    .bind_addr(std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, port)))?
+                    .bind_addr(std::net::SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port)))?;
+            }
+            #[cfg(wasm_browser)]
+            let _ = port;
+            Ok(builder)
+        };
+        let endpoint = match build(port)?.bind().await {
+            Ok(endpoint) => endpoint,
+            Err(e) if port.is_some() => {
+                tracing::warn!("could not keep the previous network port, picking a new one: {e:#}");
+                build(None)?.bind().await.context("failed to build iroh node")?
+            }
+            Err(e) => return Err(e).context("failed to build iroh node"),
+        };
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let catchup_store = StoreSlot::default();
         let media_gate = GateSlot::default();
@@ -772,20 +815,75 @@ impl CommyNode {
         let envelope = envelope.clone();
         async move {
             let node_id = node_id?;
-            let connection = match endpoint.connect(node_id, DM_ALPN).await {
+            let connection = match dial(&endpoint, node_id, DM_ALPN).await {
                 Ok(connection) => connection,
                 Err(e) => {
                     let Some(legacy) = LegacyDmEnvelope::downgrade(&envelope) else {
                         return Err(e).context("peer is unreachable");
                     };
-                    let connection = endpoint
-                        .connect(node_id, LEGACY_DM_ALPN)
+                    let connection = dial(&endpoint, node_id, LEGACY_DM_ALPN)
                         .await
                         .context("peer is unreachable")?;
                     return confirm_dm(connection, &legacy).await;
                 }
             };
             confirm_dm(connection, &envelope).await
+        }
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub fn bound_port(&self) -> Option<u16> {
+        let sockets = self.router.endpoint().bound_sockets();
+        sockets
+            .iter()
+            .find(|addr| addr.is_ipv4())
+            .or(sockets.first())
+            .map(|addr| addr.port())
+    }
+}
+
+const REDIAL_AT: [Duration; 4] = [
+    Duration::from_millis(500),
+    Duration::from_millis(1000),
+    Duration::from_millis(2000),
+    Duration::from_millis(4000),
+];
+
+async fn dial(
+    endpoint: &Endpoint,
+    node_id: EndpointId,
+    alpn: &'static [u8],
+) -> Result<Connection, iroh::endpoint::ConnectError> {
+    race_dials(|| endpoint.connect(node_id, alpn), &REDIAL_AT).await
+}
+
+async fn race_dials<F, Fut, T, E>(mut attempt: F, redial_at: &[Duration]) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+{
+    let started = n0_future::time::Instant::now();
+    let mut attempts = futures_util::stream::FuturesUnordered::new();
+    attempts.push(attempt());
+    let mut redials = redial_at.iter();
+    let mut next = redials.next();
+    loop {
+        let redial = async {
+            match next {
+                Some(at) => n0_future::time::sleep_until(started + *at).await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            outcome = attempts.next() => match outcome {
+                Some(Ok(value)) => return Ok(value),
+                Some(Err(e)) if attempts.is_empty() => return Err(e),
+                Some(Err(_)) | None => {}
+            },
+            _ = redial => {
+                attempts.push(attempt());
+                next = redials.next();
+            }
         }
     }
 }
@@ -1168,6 +1266,63 @@ mod tests {
         let foreign = EndpointAddr::from_parts(id, [iroh::TransportAddr::Relay(theirs), direct]);
         let kept = reachable_from_browser(foreign, std::slice::from_ref(&ours));
         assert_eq!(kept.addrs.into_iter().collect::<Vec<_>>(), vec![iroh::TransportAddr::Relay(ours)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_dial_is_joined_by_a_fresh_one() {
+        use std::pin::Pin;
+        let started = n0_future::time::Instant::now();
+        let mut calls = 0;
+        let result: Result<u32, &str> = race_dials(
+            || -> Pin<Box<dyn Future<Output = Result<u32, &str>>>> {
+                calls += 1;
+                match calls {
+                    1 => Box::pin(std::future::pending()),
+                    n => Box::pin(std::future::ready(Ok(n))),
+                }
+            },
+            &REDIAL_AT,
+        )
+        .await;
+        assert_eq!(result, Ok(2));
+        assert_eq!(started.elapsed(), REDIAL_AT[0]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_dial_that_fails_outright_does_not_wait_for_redials() {
+        use std::pin::Pin;
+        let started = n0_future::time::Instant::now();
+        let result: Result<u32, &str> = race_dials(
+            || -> Pin<Box<dyn Future<Output = Result<u32, &str>>>> { Box::pin(std::future::ready(Err("no address"))) },
+            &REDIAL_AT,
+        )
+        .await;
+        assert_eq!(result, Err("no address"));
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_late_failure_waits_for_the_dials_still_running() {
+        use std::pin::Pin;
+        let mut calls = 0;
+        let result: Result<u32, &str> = race_dials(
+            || -> Pin<Box<dyn Future<Output = Result<u32, &str>>>> {
+                calls += 1;
+                match calls {
+                    1 => Box::pin(async {
+                        n0_future::time::sleep(Duration::from_millis(700)).await;
+                        Err("timed out")
+                    }),
+                    _ => Box::pin(async {
+                        n0_future::time::sleep(Duration::from_millis(400)).await;
+                        Ok(7)
+                    }),
+                }
+            },
+            &REDIAL_AT[..1],
+        )
+        .await;
+        assert_eq!(result, Ok(7));
     }
 
     #[test]

@@ -7925,12 +7925,16 @@ pub fn run() {
             let node_key = app
                 .data_dir()
                 .and_then(|dir| persist::load_or_create_node_key(dir));
+            let node_port = app.data_dir().and_then(|dir| persist::load_node_port(dir));
 
             tauri::async_runtime::spawn(doorbell::run(handle.clone()));
             tauri::async_runtime::spawn(async move {
-                match CommyNode::spawn(node_key).await {
+                match CommyNode::spawn_on_port(node_key, node_port).await {
                     Ok((mut node, events, media, dms)) => {
                         let app = handle.state::<App>();
+                        if let (Some(dir), Some(port)) = (app.data_dir(), node.bound_port()) {
+                            persist::save_node_port(dir, port);
+                        }
                         let hex = node.node_id_hex();
                         if let Some(asks) = node.take_entry_key_requests() {
                             tauri::async_runtime::spawn(entry_list::run_entry_key_requests(handle.clone(), asks));
