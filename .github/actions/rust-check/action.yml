@@ -1,0 +1,38 @@
+name: Rust check
+description: Install the toolchain and compile the workspace, running the tests on Linux
+inputs:
+  cache-key:
+    description: Cache key for this runner
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install Linux build dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+          libasound2-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxrandr-dev \
+          libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
+          libxdo-dev libssl-dev clang cmake
+
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      with:
+        toolchain: stable
+
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        key: ${{ inputs.cache-key }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
+    - name: cargo check
+      if: runner.os != 'Linux'
+      shell: bash
+      run: cargo check --workspace --all-targets --locked
+
+    - name: cargo test
+      if: runner.os == 'Linux'
+      shell: bash
+      run: cargo test --workspace --locked
