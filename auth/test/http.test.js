@@ -5,6 +5,7 @@ import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { sealedAtRest } from "../src/at-rest.js";
 import { toNodeHandler } from "better-auth/node";
 import { buildAuthOptions } from "../src/auth.js";
 import { loadConfig } from "../src/config.js";
@@ -35,9 +36,9 @@ before(async () => {
   process.on("unhandledRejection", recordUnhandled);
   process.on("uncaughtException", recordUnhandled);
   const options = buildAuthOptions(loadConfig(ENV), { pool: null, send: async () => {} });
-  options.database = memoryAdapter({
+  options.database = sealedAtRest(memoryAdapter({
     user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [],
-  });
+  }), options.secret);
   options.rateLimit = { enabled: false };
   server = await listen(toNodeHandler(betterAuth(options)));
   port = server.address().port;

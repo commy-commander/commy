@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { discoveryDocument, featureSummary, loadConfig } from "../src/config.js";
 import {
@@ -101,7 +102,7 @@ function makeAuth(extraEnv = {}) {
   const log = [];
   const options = buildAuthOptions(loadConfig({ ...ENV, ...extraEnv }), { pool: null, send: async () => {}, fetch: fakeFetch(log) });
   const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [] };
-  options.database = memoryAdapter(db);
+  options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   const auth = betterAuth(options);
   const call = async (method, path, { body, cookie, query } = {}) => {

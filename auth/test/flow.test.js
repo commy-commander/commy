@@ -3,6 +3,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { before, test } from "node:test";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { loadConfig } from "../src/config.js";
 
@@ -24,7 +25,7 @@ before(() => {
   });
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
   db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [], twoFactor: [], passkey: [] };
-  options.database = memoryAdapter(db);
+  options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   auth = betterAuth(options);
 });
