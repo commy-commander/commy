@@ -1705,6 +1705,7 @@ async function mockInvoke(cmd, args = {}) {
     case "note_user_activity": return null;
     case "get_attachment_video": throw "this feature needs the desktop app";
     case "get_attachment_preview":
+    case "get_profile_image":
       if (mock.avatars && mock.avatars[args.blob]) return mock.avatars[args.blob];
       throw "this feature needs the desktop app";
     default: throw `unknown command ${cmd}`;
@@ -2045,7 +2046,7 @@ function cachedLoad(cache, key, load) {
 }
 
 function loadAvatarImage(blob, provider) {
-  return cachedLoad(avatarImages, blob, () => invoke("get_attachment_preview", { blob, provider, mime: "image/jpeg" }));
+  return cachedLoad(avatarImages, blob, () => invoke("get_profile_image", { blob, provider }));
 }
 
 function paintAvatar(node, userId, name) {
@@ -5244,10 +5245,10 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     head.appendChild(author);
     decorateAuthor(author, message.author_id);
     head.appendChild(el("span", "msg-time", formatTime(message.created_at)));
-    if (pending) head.appendChild(pendingMark());
     if (message.pinned) head.appendChild(pinnedMark());
     if (message.tts) head.appendChild(ttsMark());
     if (held) head.appendChild(heldMark(message.held));
+    if (pending) head.appendChild(pendingMark());
     body.appendChild(head);
   }
   if (message.pinned) row.classList.add("pinned");
@@ -16174,14 +16175,16 @@ function wireEvents() {
         toast("New direct message");
       }
     });
-    window.__TAURI__.event.listen("dm-sent", async event => {
-      if (state.view !== "dm") return;
-      if (state.currentDm && event.payload === state.currentDm.user) {
-        await selectDm(state.currentDm.user, state.currentDm.name);
-      } else {
-        await renderDmThreads();
-      }
-    });
+    for (const name of ["dm-sending", "dm-sent"]) {
+      window.__TAURI__.event.listen(name, async event => {
+        if (state.view !== "dm") return;
+        if (state.currentDm && event.payload === state.currentDm.user) {
+          await selectDm(state.currentDm.user, state.currentDm.name);
+        } else {
+          await renderDmThreads();
+        }
+      });
+    }
     window.__TAURI__.event.listen("afk-disconnected", async () => {
       toast("You were disconnected from voice for inactivity");
       state.voiceChannelId = null;

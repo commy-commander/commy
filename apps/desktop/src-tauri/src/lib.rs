@@ -21,6 +21,7 @@ mod outbox;
 mod overlay;
 mod persist;
 mod pins;
+mod profile_images;
 mod read_state;
 mod safety;
 mod saved;
@@ -2602,8 +2603,27 @@ async fn post_dm(
     handle: &tauri::AppHandle,
     me: &UserProfile,
     partner: UserId,
-    mut message: DmMessage,
+    message: DmMessage,
 ) -> CmdResult<Option<DmMessageView>> {
+    post_dm_with(handle, me, partner, message, |envelope| async move {
+        outbox::try_send_dm(app, partner, &envelope).await
+    })
+    .await
+}
+
+async fn post_dm_with<A, F, Fut>(
+    access: &A,
+    me: &UserProfile,
+    partner: UserId,
+    mut message: DmMessage,
+    send: F,
+) -> CmdResult<Option<DmMessageView>>
+where
+    A: catchup::AppAccess,
+    F: FnOnce(DmEnvelope) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let app = access.app();
     let _signing = app.signing.read().await;
     sign_dm(app, &mut message)?;
     if !app.dms.lock().unwrap().apply(partner, message.clone()) {
@@ -2611,23 +2631,25 @@ async fn post_dm(
     }
     let envelope = DmEnvelope::new(message.clone(), app.profile_for(me, partner));
     let waiting = app.outbox.lock().unwrap().has_dms(partner);
-    let delivered = !waiting && outbox::try_send_dm(app, partner, &envelope).await;
+    outbox::queue_dm(app, partner, message.id);
+    app.persist_dms();
+    access.emit("dm-sending", partner.to_string().into());
+    let delivered = !waiting && send(envelope).await;
+    if delivered {
+        outbox::dm_delivered(app, partner, message.id);
+    } else if waiting {
+        outbox::wake_dm(app, partner);
+    }
 
     let view = {
         let dms = app.dms.lock().unwrap();
         message.is_post().then(|| dm_message_view(&message, me.id, &dms, !delivered))
     };
-    if !delivered {
-        outbox::queue_dm(app, partner, message.id);
-        if waiting {
-            outbox::wake_dm(app, partner);
-        }
-    }
     if app.safety.lock().unwrap().accepted.insert(partner) {
         app.persist_safety();
     }
     app.persist_dms();
-    let _ = handle.emit("dm-changed", partner.to_string());
+    access.emit("dm-changed", partner.to_string().into());
     Ok(view)
 }
 
@@ -3607,6 +3629,91 @@ mod edit_tests {
         let over = message.edit_event(sid, "x".repeat(longest + 1), now, &identity);
         assert!(gossip(&over) <= commy_net::protocol::MAX_GOSSIP_BYTES);
         assert_eq!(state.apply(over), Err(StoreError::TooLarge));
+    }
+}
+
+#[cfg(test)]
+mod dm_send_tests {
+    use super::*;
+    use crate::catchup::TestHandle;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    fn signed_in() -> (Arc<App>, UserProfile) {
+        let app = Arc::new(App::default());
+        let identity = Identity::generate();
+        let mut me = UserProfile::new("me");
+        me.identity = Some(identity.public());
+        *app.profile.lock().unwrap() = Some(me.clone());
+        *app.identity.lock().unwrap() = Some(identity);
+        (app, me)
+    }
+
+    fn event_names(handle: &TestHandle) -> Vec<String> {
+        handle.take_events().into_iter().map(|(name, _)| name).collect()
+    }
+
+    #[tokio::test]
+    async fn a_dm_shows_as_waiting_while_the_friend_is_still_being_reached() {
+        let (app, me) = signed_in();
+        let handle = TestHandle::new(app.clone());
+        let partner = UserId::new();
+        let message = DmMessage::new(me.id, partner, "are you there?");
+        let id = message.id;
+
+        let view = post_dm_with(&handle, &me, partner, message, |envelope: DmEnvelope| {
+            assert_eq!(envelope.message.id, id);
+            assert!(app.outbox.lock().unwrap().pending_dms(partner).contains(&id));
+            assert!(app.dms.lock().unwrap().post(partner, id).is_some());
+            assert_eq!(event_names(&handle), vec!["dm-sending"]);
+            async { true }
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(!view.pending);
+        assert!(!app.outbox.lock().unwrap().has_dms(partner));
+        assert!(app.dm_backoff.lock().unwrap().due(partner, Instant::now()));
+        assert_eq!(event_names(&handle), vec!["dm-changed"]);
+    }
+
+    #[tokio::test]
+    async fn a_dm_to_an_offline_friend_stays_waiting_in_the_outbox() {
+        let (app, me) = signed_in();
+        let handle = TestHandle::new(app.clone());
+        let partner = UserId::new();
+        let message = DmMessage::new(me.id, partner, "see you later");
+        let id = message.id;
+
+        let view = post_dm_with(&handle, &me, partner, message, |_| async { false }).await.unwrap().unwrap();
+
+        assert!(view.pending);
+        assert_eq!(app.outbox.lock().unwrap().dm_queue(partner), vec![id]);
+        assert!(!app.dm_backoff.lock().unwrap().due(partner, Instant::now()));
+        assert_eq!(event_names(&handle), vec!["dm-sending", "dm-changed"]);
+    }
+
+    #[tokio::test]
+    async fn a_dm_behind_waiting_ones_queues_without_jumping_ahead() {
+        let (app, me) = signed_in();
+        let handle = TestHandle::new(app.clone());
+        let partner = UserId::new();
+        let first = DmMessage::new(me.id, partner, "first");
+        let first_id = first.id;
+        post_dm_with(&handle, &me, partner, first, |_| async { false }).await.unwrap();
+        handle.take_events();
+
+        let second = DmMessage::new(me.id, partner, "second");
+        let second_id = second.id;
+        let view = post_dm_with(&handle, &me, partner, second, |_| async { panic!("sent ahead of the queue") })
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(view.pending);
+        assert_eq!(app.outbox.lock().unwrap().dm_queue(partner), vec![first_id, second_id]);
+        assert_eq!(event_names(&handle), vec!["dm-sending", "dm-changed"]);
     }
 }
 
@@ -6524,6 +6631,8 @@ async fn run_blob_restore(handle: tauri::AppHandle) {
         restore_avatar_blob(&app, node).await;
         restore_server_images(&app, node).await;
     }
+    drop(net);
+    profile_images::prune(&app);
 }
 
 async fn restore_server_images(app: &tauri::State<'_, App>, node: &CommyNode) {
@@ -7123,6 +7232,50 @@ async fn get_attachment_preview(
     Ok(data_url(&mime, &bytes))
 }
 
+fn servers_showing_profile_image(app: &App, blob: &str) -> Vec<ServerId> {
+    let servers = app.servers.lock().unwrap();
+    servers
+        .values()
+        .filter(|state| state.profiles.values().any(|p| profile_images::image_blobs(p).iter().any(|b| b == blob)))
+        .map(|state| state.server.id)
+        .collect()
+}
+
+pub(crate) async fn profile_image_bytes(app: &App, blob: &str, provider: Option<&str>) -> CmdResult<Vec<u8>> {
+    if let Some(bytes) = profile_images::cached(app, blob) {
+        return Ok(bytes);
+    }
+    let (fetcher, sources) = {
+        let net = app.net.lock().await;
+        let node = net.as_ref().ok_or("network is not ready yet")?;
+        let neighbors = servers_showing_profile_image(app, blob).into_iter().flat_map(|s| node.neighbors(s)).collect();
+        (node.blob_fetcher(), image_sources(provider.unwrap_or_default(), neighbors))
+    };
+    let max = profile_images::MAX_PROFILE_IMAGE_BYTES as u64;
+    let mut attempts: Vec<Option<&str>> = sources.iter().filter(|s| !s.is_empty()).map(|s| Some(s.as_str())).collect();
+    if attempts.is_empty() {
+        attempts.push(None);
+    }
+    let mut failure = String::from("nobody who has it is online");
+    for source in attempts {
+        match fetcher.fetch(blob, source, max).await {
+            Ok(bytes) if is_jpeg_or_png(&bytes) => {
+                profile_images::keep_if_wanted(app, blob, &bytes);
+                return Ok(bytes);
+            }
+            Ok(_) => failure = "not a profile picture".to_string(),
+            Err(e) => failure = err_to_string(e),
+        }
+    }
+    Err(failure)
+}
+
+#[tauri::command]
+async fn get_profile_image(app: tauri::State<'_, App>, blob: String, provider: Option<String>) -> CmdResult<String> {
+    let bytes = profile_image_bytes(&app, &blob, provider.as_deref()).await?;
+    Ok(picture_data_url(&bytes))
+}
+
 #[tauri::command]
 fn get_voice_settings(app: tauri::State<App>) -> VoiceSettings {
     app.voice.lock().unwrap().clone()
@@ -7419,6 +7572,10 @@ async fn run_net_loop(
                 let holdable = catchup::holdable(&event);
                 let kept = (holdable || action.is_some()).then(|| event.clone());
                 let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
+                let profile_changed = match &event {
+                    ServerEvent::ProfileUpdate { profile } | ServerEvent::MemberJoin { profile, .. } => Some(profile.id),
+                    _ => None,
+                };
                 let presence = outbox::online_user(&event);
                 let speaker = liveness::speaker(&event, action.as_ref());
                 let (applied, was_online, new_message, pinned) = {
@@ -7463,6 +7620,12 @@ async fn run_net_loop(
                         }
                         if let Some(event) = &new_emoji {
                             prefetch_emoji(&handle, event);
+                        }
+                        if let Some(user) = profile_changed {
+                            let stored = app.servers.lock().unwrap().get(&server).and_then(|s| s.profiles.get(&user).cloned());
+                            if let Some(profile) = stored {
+                                profile_images::prefetch(&handle, &profile);
+                            }
                         }
                         if moderation {
                             refresh_forced_voice(&app, &handle);
@@ -7693,6 +7856,7 @@ async fn run_dm_loop(
 ) {
     while let Some(dm) = incoming.recv().await {
         let app = handle.state::<App>();
+        let sender = dm.envelope.message.from;
         match outbox::receive_dm(&handle, dm) {
             outbox::Received::Report { from, content } => receive_report(&app, &handle, from, &content),
             outbox::Received::Reply { to, signal } => {
@@ -7700,7 +7864,13 @@ async fn run_dm_loop(
             }
             outbox::Received::Call { from, call, signal } => calls::on_signal(&app, &handle, from, call, signal).await,
             outbox::Received::GroupInvite { from, ticket } => join_group(&app, &handle, from, &ticket).await,
-            outbox::Received::Dropped | outbox::Received::Taken => {}
+            outbox::Received::Taken => {
+                let contact = app.dms.lock().unwrap().contacts.get(&sender).cloned();
+                if let Some(profile) = contact {
+                    profile_images::prefetch(&handle, &profile);
+                }
+            }
+            outbox::Received::Dropped => {}
         }
     }
 }
@@ -8301,6 +8471,7 @@ pub fn run() {
             start_mic_test,
             stop_mic_test,
             get_attachment_preview,
+            get_profile_image,
             get_storage_settings,
             set_history_window,
             get_attachment_video,
