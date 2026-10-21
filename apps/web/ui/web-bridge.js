@@ -152,6 +152,11 @@
       window.location.assign(webSignInUrl(window.location.origin));
       return new Promise(() => {});
     }
+    if (cmd === "account_sign_out") {
+      await backend(cmd, args);
+      window.location.reload();
+      return new Promise(() => {});
+    }
     if (cmd === "get_user") {
       await untilUnlocked();
       if (typeof hideModals === "function") hideModals();

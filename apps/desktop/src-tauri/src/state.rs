@@ -170,6 +170,7 @@ pub struct App {
     pub processor: std::sync::Arc<Mutex<VoiceProcessor>>,
     pub net: tokio::sync::Mutex<Option<CommyNode>>,
     pub node_hex: Mutex<Option<String>>,
+    pub base_dir: OnceLock<PathBuf>,
     pub data_dir: OnceLock<PathBuf>,
     pub voice_session: Mutex<Option<VoiceSession>>,
     pub dm_call: Mutex<Option<crate::calls::DmCall>>,
@@ -229,6 +230,7 @@ impl Default for App {
             processor: std::sync::Arc::new(Mutex::new(VoiceProcessor::new())),
             net: tokio::sync::Mutex::new(None),
             node_hex: Mutex::new(None),
+            base_dir: OnceLock::new(),
             data_dir: OnceLock::new(),
             voice_session: Mutex::new(None),
             dm_call: Mutex::new(None),
@@ -289,6 +291,10 @@ impl Default for App {
 impl App {
     pub fn data_dir(&self) -> Option<&PathBuf> {
         self.data_dir.get()
+    }
+
+    pub fn base_dir(&self) -> Option<&PathBuf> {
+        self.base_dir.get()
     }
 
     pub fn identity(&self) -> Option<Identity> {
