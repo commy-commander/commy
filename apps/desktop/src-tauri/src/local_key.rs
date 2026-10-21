@@ -1,36 +1,11 @@
+use crate::account_folder;
 use commy_core::at_rest;
 use std::path::{Path, PathBuf};
 
 const KEY_FILE: &str = "device-data.key";
 const SET_ASIDE_DIR: &str = "unreadable";
 
-const STORED_FILES: &[&str] = &[
-    "account.json",
-    "avatar.img",
-    "awaiting-snapshot.json",
-    "deleted-servers.json",
-    "directory.json",
-    "dms.json",
-    "doorbell.json",
-    "entry-key.json",
-    "entry-list.json",
-    "identity.key",
-    "integrations.json",
-    "invites.json",
-    "node.key",
-    "outbox.json",
-    "pins.json",
-    "profile-banner.img",
-    "profile.json",
-    "read-state.json",
-    "safety.json",
-    "saved.json",
-    "storage.json",
-    "stream-deck.json",
-    "voice.json",
-];
-
-const STORED_DIRS: &[&str] = &["servers", crate::profile_images::PROFILE_IMAGE_DIR, crate::SERVER_IMAGE_DIR];
+const SHARED_FILES: &[&str] = &["account.json"];
 
 #[derive(Debug)]
 enum KeyProblem {
@@ -83,8 +58,18 @@ fn keep_running_unsealed_if_nothing_is_sealed(dir: &Path, why: String) -> Result
 
 fn stored_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> =
-        STORED_FILES.iter().map(|name| dir.join(name)).filter(|path| path.is_file()).collect();
-    for sub in STORED_DIRS {
+        SHARED_FILES.iter().map(|name| dir.join(name)).filter(|path| path.is_file()).collect();
+    files.extend(account_files(dir));
+    for account in account_folder::folders(dir) {
+        files.extend(account_files(&account));
+    }
+    files
+}
+
+fn account_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> =
+        account_folder::SEALED_FILES.iter().map(|name| dir.join(name)).filter(|path| path.is_file()).collect();
+    for sub in account_folder::SEALED_DIRS {
         let Ok(entries) = std::fs::read_dir(dir.join(sub)) else {
             continue;
         };
@@ -325,6 +310,29 @@ mod tests {
         assert_eq!(std::fs::read(dir.join("node.port")).unwrap(), b"4242", "files read by other processes stay plain");
         assert_eq!(seal_older_files(&dir, &key), 0);
         assert_eq!(prepare(&dir, &FileKey).unwrap(), Some(key), "the same key comes back on the next start");
+    }
+
+    #[test]
+    fn every_account_folder_is_sealed_and_set_aside_with_the_key() {
+        let dir = temp_dir("accounts");
+        let account = account_folder::folder(&dir, "https://commy.chat", "user-a");
+        std::fs::create_dir_all(account.join("servers")).unwrap();
+        std::fs::write(account.join("dms.json"), b"{}").unwrap();
+        std::fs::write(account.join("servers").join("a.json"), b"{}").unwrap();
+        std::fs::write(account.join("node.port"), b"4242").unwrap();
+
+        let key = prepare(&dir, &FileKey).unwrap().unwrap();
+        assert_eq!(seal_older_files(&dir, &key), 2);
+        assert_eq!(open(&account.join("dms.json"), &key), b"{}");
+        assert_eq!(std::fs::read(account.join("node.port")).unwrap(), b"4242");
+
+        std::fs::write(dir.join(KEY_FILE), "not a key").unwrap();
+        prepare(&dir, &FileKey).unwrap().unwrap();
+        assert!(!account.join("dms.json").exists());
+        let aside = std::fs::read_dir(dir.join(SET_ASIDE_DIR)).unwrap().flatten().next().unwrap().path();
+        let relative = account.strip_prefix(&dir).unwrap();
+        assert!(aside.join(relative).join("dms.json").exists());
+        assert!(aside.join(relative).join("servers").join("a.json").exists());
     }
 
     #[test]

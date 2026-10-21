@@ -62,6 +62,16 @@ const LOCALE_ES = {
   "signin.server.use": "Usar",
   "signin.server.note": "Los servidores propios funcionan por su cuenta, aunque commy.chat esté caído. Puedes crear una cuenta allí en la página que se abre.",
   "signin.server.warning": "Añade solo un servidor que conozcas y en el que confíes. Gestiona tu inicio de sesión y ve tu correo y tu nombre visible.",
+  "claim.title": "¿Es este tu perfil?",
+  "claim.intro": "Este ordenador tiene un perfil de Commy de antes de que cada cuenta tuviera su propio espacio. Quédatelo solo si es de {email}.",
+  "claim.keep": "Sí, es mío",
+  "claim.fresh": "No, empezar de cero",
+  "claim.retry": "Reintentar",
+  "claim.problem": "Commy aún no ha podido abrir tu cuenta",
+  "claim.note": "Si empiezas de cero, ese perfil se queda en este ordenador para la cuenta a la que pertenece.",
+  "claim.unnamed": "Perfil sin nombre",
+  "claim.servers.one": "1 servidor",
+  "claim.servers.many": "{count} servidores",
 };
 
 if (typeof registerLocale === "function") registerLocale("es", LOCALE_ES);

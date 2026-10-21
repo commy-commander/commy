@@ -459,6 +459,22 @@
       <div class="signin-server-note" id="signin-server-note" data-i18n="signin.server.note">Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.</div>
     </div>
 
+    <div class="modal modal-signin hidden" id="modal-claim">
+      <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
+      <h2 id="claim-title" data-i18n="claim.title">Is this your profile?</h2>
+      <p id="claim-intro"></p>
+      <div class="claim-profile" id="claim-profile"></div>
+      <div class="claim-actions" id="claim-choices">
+        <button class="btn-primary" id="claim-keep" data-i18n="claim.keep">Yes, it's mine</button>
+        <button class="btn-secondary" id="claim-fresh" data-i18n="claim.fresh">No, start fresh</button>
+      </div>
+      <div class="claim-actions hidden" id="claim-retry-row">
+        <button class="btn-primary" id="claim-retry" data-i18n="claim.retry">Try again</button>
+      </div>
+      <div class="signin-note" id="claim-note" data-i18n="claim.note">Starting fresh leaves that profile on this computer for the account it belongs to.</div>
+      <div class="signin-error hidden" id="claim-error"></div>
+    </div>
+
     <div class="modal hidden" id="modal-username">
       <h2>Welcome to Commy</h2>
       <p>Pick the username people will see. You can set a display name and avatar later.</p>
@@ -2665,6 +2681,7 @@
   <script src="scripts/camera-pipeline.js"></script>
   <script src="scripts/avatar-rig.js"></script>
   <script src="scripts/camera-avatar.js"></script>
+  <script src="scripts/account-ui.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
   <script src="scripts/entry-list.js"></script>

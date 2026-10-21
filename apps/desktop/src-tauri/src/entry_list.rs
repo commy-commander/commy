@@ -300,8 +300,9 @@ struct DeviceRow {
     node_id: String,
 }
 
-async fn account_devices(app: &App, s: &Session) -> Result<Vec<String>, String> {
+pub(crate) async fn account_devices(app: &App, s: &Session) -> Result<Vec<String>, String> {
     let res = reach(account_api(app, s, reqwest::Method::GET, "devices")).await?;
+    answered(&res)?;
     let list: DeviceList = res.json().await.map_err(|_| "Could not list your devices".to_string())?;
     Ok(list.devices.into_iter().map(|d| d.node_id).collect())
 }

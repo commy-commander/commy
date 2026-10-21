@@ -6,6 +6,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::account_folder;
 use crate::invite_link::{normalize_origin, DEFAULT_ACCOUNT_SERVER};
 use crate::state::App;
 
@@ -106,7 +107,7 @@ pub fn load(dir: &Path) -> AccountState {
 }
 
 fn store(app: &App, state: &AccountState) {
-    let Some(dir) = app.data_dir() else { return };
+    let Some(dir) = app.base_dir() else { return };
     if let Err(e) = crate::persist::write_secret_json(&path(dir), state) {
         tracing::warn!("could not save the account: {e}");
     }
@@ -114,6 +115,53 @@ fn store(app: &App, state: &AccountState) {
 
 pub fn is_signed_in(state: &AccountState) -> bool {
     state.token.is_some() && state.user.is_some() && state.signed_in_server.as_deref() == Some(effective_server().as_str())
+}
+
+fn signed_in_folder(app: &App) -> Option<(PathBuf, String, String)> {
+    let state = app.account.lock().unwrap();
+    if !is_signed_in(&state) {
+        return None;
+    }
+    Some((app.base_dir()?.clone(), state.signed_in_server.clone()?, state.user.as_ref()?.id.clone()))
+}
+
+pub fn ready_folder(app: &App) -> Option<PathBuf> {
+    let (base, server, account) = signed_in_folder(app)?;
+    match account_folder::choose(&base, &server, &account) {
+        account_folder::Opening::Ready(dir) => Some(dir),
+        account_folder::Opening::AskAboutUnclaimed => None,
+    }
+}
+
+static MAY_CLAIM: Mutex<Option<String>> = Mutex::new(None);
+
+fn may_claim(unclaimed_node: Option<&str>, linked_devices: &[String]) -> bool {
+    unclaimed_node.is_some_and(|node| linked_devices.iter().any(|device| device.eq_ignore_ascii_case(node)))
+}
+
+fn claim_allowed(account: &str) -> bool {
+    MAY_CLAIM.lock().unwrap().as_deref() == Some(account)
+}
+
+fn unclaimed_profile(app: &App) -> Option<account_folder::UnclaimedProfile> {
+    if app.data_dir().is_some() {
+        return None;
+    }
+    let (base, server, account) = signed_in_folder(app)?;
+    if !claim_allowed(&account) {
+        return None;
+    }
+    match account_folder::choose(&base, &server, &account) {
+        account_folder::Opening::AskAboutUnclaimed => account_folder::unclaimed(&base),
+        account_folder::Opening::Ready(_) => None,
+    }
+}
+
+fn restart_signed_in_as_someone_else(handle: &AppHandle) -> ! {
+    if let Some(base) = handle.state::<App>().base_dir() {
+        account_folder::show_window_on_next_start(base);
+    }
+    handle.restart()
 }
 
 pub fn require_account(app: &App) -> Result<(), String> {
@@ -319,9 +367,12 @@ pub struct AccountView {
     server_emojis: bool,
     server_stickers: bool,
     server_media: bool,
+    unclaimed_profile: Option<account_folder::UnclaimedProfile>,
+    needs_account_folder: bool,
 }
 
 fn view(app: &App) -> AccountView {
+    let unclaimed_profile = unclaimed_profile(app);
     let pending_code = app.sign_in.lock().unwrap().as_ref().map(|p| p.user_code.clone());
     let state = app.account.lock().unwrap();
     let server = effective_server();
@@ -341,6 +392,8 @@ fn view(app: &App) -> AccountView {
         server_emojis: state.server_offers("emojis"),
         server_stickers: state.server_offers("stickers"),
         server_media: state.server_offers("media"),
+        unclaimed_profile,
+        needs_account_folder: signed_in && app.data_dir().is_none(),
     }
 }
 
@@ -504,7 +557,7 @@ async fn poll_for_token(
     };
     app.sign_in.lock().unwrap().take();
     let Some(token) = token else { return };
-    match finish_sign_in(&app, &server, &doc, &token).await {
+    match finish_sign_in(&handle, &server, &doc, &token).await {
         Ok(()) => {
             let _ = handle.emit("account-changed", ());
             crate::entry_list::schedule(&handle);
@@ -533,7 +586,8 @@ struct ChallengeResponse {
     message: String,
 }
 
-async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
+async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
+    let app = handle.state::<App>();
     let res = app
         .http
         .get(&doc.endpoints.session)
@@ -547,28 +601,58 @@ async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -
         name: crate::safety::truncate(&session.user.name, 64),
         email: crate::safety::truncate(&session.user.email, 120),
     };
+    let base = app.base_dir().cloned().ok_or("This install has no data folder")?;
+    let opening = account_folder::choose(&base, server, &user.id);
+    let linking = match &opening {
+        account_folder::Opening::Ready(dir) => Some(dir.clone()),
+        account_folder::Opening::AskAboutUnclaimed => None,
+    };
+    let next = after_sign_in(opening, app.data_dir().map(|d| d.as_path()));
     app.igdb.lock().await.resolved.clear();
-    let device_linked = link_device(app, server, doc, token).await.map_err(|e| {
-        tracing::warn!("device link failed: {e}");
-        e
-    });
+    let device_linked = match &linking {
+        Some(dir) => link_device(&app, dir, server, doc, token).await.map_err(|e| {
+            tracing::warn!("device link failed: {e}");
+            e
+        }),
+        None => Ok(()),
+    };
     {
         let mut state = app.account.lock().unwrap();
         state.signed_in_server = Some(server.to_string());
         state.token = Some(token.to_string());
         state.user = Some(user);
-        state.device_linked = device_linked.is_ok();
+        state.device_linked = device_linked.is_ok() && linking.is_some();
         state.features = doc.features;
-        store(app, &state);
+        store(&app, &state);
+    }
+    match next {
+        AfterSignIn::Restart => restart_signed_in_as_someone_else(handle),
+        AfterSignIn::Open(dir) => crate::open_account(handle, dir),
+        AfterSignIn::KeepOpen | AfterSignIn::Ask => {}
     }
     device_linked.map(|_| ())
 }
 
-async fn link_device(app: &App, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
-    let secret = app
-        .data_dir()
-        .and_then(|d| crate::persist::load_or_create_node_key(d))
-        .ok_or("This install has no node key yet")?;
+#[derive(Debug, PartialEq)]
+enum AfterSignIn {
+    Open(PathBuf),
+    KeepOpen,
+    Ask,
+    Restart,
+}
+
+fn after_sign_in(opening: account_folder::Opening, open: Option<&Path>) -> AfterSignIn {
+    match (opening, open) {
+        (account_folder::Opening::Ready(dir), Some(open)) if dir == open => AfterSignIn::KeepOpen,
+        (account_folder::Opening::Ready(dir), None) => AfterSignIn::Open(dir),
+        (account_folder::Opening::AskAboutUnclaimed, None) => AfterSignIn::Ask,
+        _ => AfterSignIn::Restart,
+    }
+}
+
+async fn link_device(app: &App, dir: &Path, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|_| "Could not create this account's folder".to_string())?;
+    let secret = crate::persist::load_or_create_node_key(dir).ok_or("This install has no node key yet")?;
     let node_id = node_id_of(&SigningKey::from_bytes(&secret));
     let res = app
         .http
@@ -615,8 +699,70 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
         state.device_linked = false;
         store(&app, &state);
     }
+    if app.data_dir().is_some() {
+        restart_signed_in_as_someone_else(&handle);
+    }
     let _ = handle.emit("account-changed", ());
     Ok(view(&app))
+}
+
+#[tauri::command]
+pub async fn account_resolve_unclaimed(app: tauri::State<'_, App>, handle: AppHandle) -> Result<AccountView, String> {
+    if app.data_dir().is_some() {
+        return Ok(view(&app));
+    }
+    let (base, server, account) = signed_in_folder(&app).ok_or("Sign in first")?;
+    if account_folder::choose(&base, &server, &account) == account_folder::Opening::AskAboutUnclaimed {
+        let unclaimed_node =
+            account_folder::unclaimed_node_secret(&base).map(|secret| node_id_of(&SigningKey::from_bytes(&secret)));
+        let session = crate::entry_list::session(&app).ok_or("Sign in first")?;
+        let linked = crate::entry_list::account_devices(&app, &session)
+            .await
+            .map_err(|e| format!("Could not check this computer with your account server. {e}"))?;
+        if may_claim(unclaimed_node.as_deref(), &linked) {
+            *MAY_CLAIM.lock().unwrap() = Some(account);
+            return Ok(view(&app));
+        }
+    }
+    open_folder(&app, &handle, &base, &server, &account, false).await
+}
+
+#[tauri::command]
+pub async fn account_claim_profile(app: tauri::State<'_, App>, handle: AppHandle, keep: bool) -> Result<AccountView, String> {
+    if app.data_dir().is_some() {
+        return Ok(view(&app));
+    }
+    let (base, server, account) = signed_in_folder(&app).ok_or("Sign in first")?;
+    if keep && !claim_allowed(&account) {
+        return Err("That profile was never used with this account on this computer, so it stays put.".into());
+    }
+    open_folder(&app, &handle, &base, &server, &account, keep).await
+}
+
+async fn open_folder(
+    app: &App,
+    handle: &AppHandle,
+    base: &Path,
+    server: &str,
+    account: &str,
+    keep: bool,
+) -> Result<AccountView, String> {
+    let dir = account_folder::claim(base, server, account, keep)
+        .map_err(|e| format!("Could not set up this account's folder: {e}"))?;
+    *MAY_CLAIM.lock().unwrap() = None;
+    let token = app.account.lock().unwrap().token.clone().ok_or("Sign in first")?;
+    let linked = match discover(&app.http, server).await {
+        Ok(doc) => link_device(app, &dir, server, &doc, &token).await.is_ok(),
+        Err(_) => false,
+    };
+    {
+        let mut state = app.account.lock().unwrap();
+        state.device_linked = linked;
+        store(app, &state);
+    }
+    crate::open_account(handle, dir);
+    let _ = handle.emit("account-changed", ());
+    Ok(view(app))
 }
 
 pub async fn verify_saved_session(handle: AppHandle) {
@@ -758,6 +904,28 @@ mod tests {
         with["features"] = serde_json::json!({ "gifs": true, "games": false });
         let new: Discovery = serde_json::from_value(with).unwrap();
         assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false }));
+    }
+
+    #[test]
+    fn signing_in_as_someone_else_never_keeps_the_open_account() {
+        use account_folder::Opening;
+        let a = PathBuf::from("accounts").join("a");
+        let b = PathBuf::from("accounts").join("b");
+        assert_eq!(after_sign_in(Opening::Ready(a.clone()), Some(&a)), AfterSignIn::KeepOpen);
+        assert_eq!(after_sign_in(Opening::Ready(b.clone()), Some(&a)), AfterSignIn::Restart);
+        assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, Some(&a)), AfterSignIn::Restart);
+        assert_eq!(after_sign_in(Opening::Ready(b.clone()), None), AfterSignIn::Open(b));
+        assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, None), AfterSignIn::Ask);
+    }
+
+    #[test]
+    fn only_an_account_already_linked_to_the_old_profile_may_take_it() {
+        let linked = vec!["AB12".to_string(), "cd34".to_string()];
+        assert!(may_claim(Some("ab12"), &linked));
+        assert!(may_claim(Some("CD34"), &linked));
+        assert!(!may_claim(Some("ef56"), &linked));
+        assert!(!may_claim(None, &linked));
+        assert!(!may_claim(Some("ab12"), &[]));
     }
 
     #[test]

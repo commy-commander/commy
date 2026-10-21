@@ -1512,7 +1512,9 @@ async function mockInvoke(cmd, args = {}) {
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
-    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false });
+    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false, unclaimed_profile: null, needs_account_folder: /[?&]claim\b/.test(location.search) });
+    case "account_resolve_unclaimed": mock.account.unclaimed_profile = { username: "ferris", display_name: "Ferris", servers: 3 }; return mock.account;
+    case "account_claim_profile": mock.account.unclaimed_profile = null; mock.account.needs_account_folder = false; return mock.account;
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
@@ -14817,8 +14819,11 @@ function wireEvents() {
       showSignInError(String(e));
     }
   };
+  $("claim-keep").onclick = () => answerClaim(true);
+  $("claim-fresh").onclick = () => answerClaim(false);
+  $("claim-retry").onclick = () => openAccountFolder();
   $("acct-sign-out").onclick = async () => {
-    if (!confirm("Sign out of your Commy account on this device?")) return;
+    if (!confirm("Sign out of your Commy account on this device? Commy restarts at the sign-in screen, and your servers and messages stay locked on this computer until you sign back in.")) return;
     try {
       account = await invoke("account_sign_out");
     } catch (e) {
@@ -17997,10 +18002,55 @@ async function boot() {
     showSignIn();
     return;
   }
+  if (account.needs_account_folder) {
+    await openAccountFolder();
+    return;
+  }
   await continueBoot();
 }
 
+async function openAccountFolder() {
+  try {
+    account = await invoke("account_resolve_unclaimed");
+  } catch (e) {
+    paintClaim(String(e));
+    return;
+  }
+  if (account.unclaimed_profile) showClaim();
+  else await continueBoot();
+}
+
+function paintClaim(problem) {
+  for (const id of ["claim-intro", "claim-profile", "claim-choices", "claim-note"]) $(id).classList.toggle("hidden", Boolean(problem));
+  $("claim-retry-row").classList.toggle("hidden", !problem);
+  $("claim-title").textContent = t(problem ? "claim.problem" : "claim.title");
+  $("claim-error").textContent = problem || "";
+  $("claim-error").classList.toggle("hidden", !problem);
+  showModal("modal-claim");
+}
+
+function showClaim() {
+  const email = (account.user && account.user.email) || "";
+  $("claim-intro").textContent = t("claim.intro", { email });
+  $("claim-profile").textContent = unclaimedProfileLine(account.unclaimed_profile, t);
+  paintClaim("");
+}
+
+async function answerClaim(keep) {
+  $("claim-keep").disabled = $("claim-fresh").disabled = true;
+  try {
+    account = await invoke("account_claim_profile", { keep });
+    await continueBoot();
+  } catch (e) {
+    $("claim-error").textContent = String(e);
+    $("claim-error").classList.remove("hidden");
+  } finally {
+    $("claim-keep").disabled = $("claim-fresh").disabled = false;
+  }
+}
+
 async function continueBoot() {
+  try { claimUiState(localStorage, account.user && account.user.id); } catch {}
   state.user = await invoke("get_user");
   if (!state.user) {
     showModal("modal-username");
@@ -18089,7 +18139,8 @@ async function onAccountChanged() {
   await loadAccount();
   if (account.signed_in && !was) {
     toast(`Signed in as ${(account.user && account.user.name) || "you"}`);
-    await continueBoot();
+    if (account.needs_account_folder) await openAccountFolder();
+    else await continueBoot();
   } else if (!account.signed_in && was) {
     showSignIn();
   }
