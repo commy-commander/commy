@@ -8604,6 +8604,13 @@ pub fn run() {
                 liveness::say_goodbye(&handle.state::<App>());
                 catchup::save_unsaved(&handle.state::<App>());
             }
+            if let tauri::RunEvent::Resumed = event {
+                entry_list::on_resumed(handle);
+            }
+            #[cfg(mobile)]
+            if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Resumed, .. } = &event {
+                entry_list::on_resumed(handle);
+            }
             invite_link::on_run_event(handle, &event)
         });
 }

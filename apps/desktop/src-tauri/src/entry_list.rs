@@ -205,6 +205,16 @@ pub fn entry_list_status() -> EntryStatus {
     STATUS.lock().unwrap().clone().unwrap_or_else(|| EntryStatus { state: "off".into(), ..Default::default() })
 }
 
+fn worth_retrying_on_resume(status: &EntryStatus) -> bool {
+    matches!(status.state.as_str(), "error" | "waiting")
+}
+
+pub fn on_resumed(handle: &AppHandle) {
+    if worth_retrying_on_resume(&entry_list_status()) {
+        schedule(handle);
+    }
+}
+
 pub(crate) struct Session {
     pub(crate) server: String,
     pub(crate) token: String,
@@ -998,6 +1008,15 @@ mod tests {
         assert_eq!(take_identity_step(&app, &dir, IdentityStep::OwnIdentity, &shared).await, AfterStep::StayOut);
         assert_eq!(file_key(&dir), ours.public());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_unfinished_syncs_retry_when_the_app_comes_back() {
+        let status = |state: &str| EntryStatus { state: state.into(), ..Default::default() };
+        assert!(worth_retrying_on_resume(&status("error")));
+        assert!(worth_retrying_on_resume(&status("waiting")));
+        assert!(!worth_retrying_on_resume(&status("synced")));
+        assert!(!worth_retrying_on_resume(&status("off")));
     }
 
     #[test]
