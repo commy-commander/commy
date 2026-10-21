@@ -4,6 +4,7 @@ use crate::invites::TrackedInvite;
 use crate::automod::{AutoMod, Hold};
 use crate::channel_key::ChannelKeys;
 use crate::command::{BotCommand, CommandUse};
+use crate::devices::{self, Device, Devices};
 use crate::event::ServerEvent;
 use crate::identity::{IdentityKey, Signature};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
@@ -110,6 +111,7 @@ pub struct ServerState {
     pub cameras: HashMap<UserId, ChannelId>,
     pub hands: HashMap<UserId, ChannelId>,
     pub activities: HashMap<ChannelId, crate::activity::Activity>,
+    devices: Devices,
     deleted_messages: HashSet<MessageId>,
     tombstones: HashMap<MessageId, Vec<StoredProof>>,
     unapplied: Option<HashMap<UserId, BTreeSet<UnappliedKey>>>,
@@ -198,6 +200,7 @@ impl ServerState {
             cameras: HashMap::new(),
             hands: HashMap::new(),
             activities: HashMap::new(),
+            devices: Devices::default(),
             deleted_messages: Default::default(),
             tombstones: HashMap::new(),
             unapplied: None,
@@ -943,6 +946,7 @@ impl ServerState {
                 let before = self.server.members.len();
                 self.server.members.retain(|m| m.user != user);
                 self.drop_voice_presence(user);
+                self.devices.forget(user);
                 self.bots.remove(&user);
                 self.bot_commands.remove(&user);
                 Ok(self.server.members.len() != before)
@@ -1127,6 +1131,10 @@ impl ServerState {
             ServerEvent::ActivitiesSet { server, enabled } => {
                 self.same_server(server)?;
                 Ok(replace(&mut self.server.activities_enabled, enabled))
+            }
+            ServerEvent::DeviceAnnounce { server, user, node, voice, .. } => {
+                self.same_server(server)?;
+                self.note_device(user, node, voice)
             }
             ServerEvent::ServerDelete { server } => {
                 self.same_server(server)?;
@@ -1556,6 +1564,7 @@ impl ServerState {
                 self.server.banned.push(user);
                 self.server.members.retain(|m| m.user != user);
                 self.drop_voice_presence(user);
+                self.devices.forget(user);
                 self.screen_shares.remove(&user);
                 self.bots.remove(&user);
                 self.bot_commands.remove(&user);
@@ -2207,12 +2216,44 @@ impl ServerState {
         if !self.server.is_current_member(user) {
             return false;
         }
-        let node_ok = self
-            .profiles
-            .get(&user)
-            .and_then(|p| p.node.as_deref())
-            .is_some_and(|node| node.eq_ignore_ascii_case(node_hex));
-        node_ok && self.server.can_view(channel, user) && (!voice || self.voice_states.get(&user) == Some(&channel))
+        self.is_device_of(user, node_hex)
+            && self.server.can_view(channel, user)
+            && (!voice || self.voice_states.get(&user) == Some(&channel))
+    }
+
+    pub fn is_device_of(&self, user: UserId, node_hex: &str) -> bool {
+        let announced = self.profiles.get(&user).and_then(|p| p.node.as_deref());
+        announced.is_some_and(|node| node.eq_ignore_ascii_case(node_hex)) || self.devices.has(user, node_hex)
+    }
+
+    pub fn devices_of(&self, user: UserId) -> &[Device] {
+        self.devices.of(user)
+    }
+
+    pub fn voice_device(&self, user: UserId) -> Option<&str> {
+        self.voice_states.get(&user).and_then(|room| self.devices.in_voice(user, *room))
+    }
+
+    pub fn voice_node(&self, user: UserId) -> Option<String> {
+        self.voice_device(user).map(str::to_string).or_else(|| self.profiles.get(&user).and_then(|p| p.node.clone()))
+    }
+
+    fn note_device(&mut self, user: UserId, node: String, voice: Option<ChannelId>) -> Result<bool, StoreError> {
+        if !self.server.is_current_member(user) {
+            return Ok(false);
+        }
+        let Some(node) = devices::node_key(&node) else { return Ok(false) };
+        if let Some(room) = voice {
+            match self.server.channel(room) {
+                Some(c) if c.kind.is_voice() => {}
+                Some(_) => return Ok(false),
+                None => return Err(StoreError::UnknownChannel),
+            }
+        }
+        if self.devices.of(user).is_empty() && self.devices.users() >= MAX_LIVE_ENTRIES {
+            return Err(StoreError::Limit);
+        }
+        Ok(self.devices.note(user, node, voice))
     }
 
     fn pin_identity(&self, profile: &mut UserProfile) -> Result<(), StoreError> {
@@ -5427,6 +5468,53 @@ mod tests {
         assert!(!state.media_peer_ok(owner, &node, voice, false), "owner is on another node");
         state.apply(ServerEvent::MemberBan { server: sid, user: member }).unwrap();
         assert!(!state.media_peer_ok(member, &node, voice, false));
+    }
+
+    #[test]
+    fn every_announced_device_of_a_member_may_carry_their_media() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let voice = state.server.channels[1].id;
+        let member = join(&mut state, "friend");
+        let (desktop, tablet) = ("ab".repeat(32), "cd".repeat(32));
+        state.profiles.get_mut(&member).unwrap().node = Some(desktop.clone());
+        let announce = |node: &str, voice| ServerEvent::DeviceAnnounce { server: sid, user: member, node: node.into(), voice, since: None };
+        assert_eq!(state.apply(announce(&tablet.to_uppercase(), None)), Ok(true));
+        assert_eq!(state.apply(announce(&tablet, None)), Ok(false), "the same device, said twice");
+        assert!(state.media_peer_ok(member, &tablet, voice, false));
+        assert!(state.media_peer_ok(member, &desktop, voice, false), "the announced profile node still counts");
+        assert!(!state.media_peer_ok(member, &"ef".repeat(32), voice, false));
+
+        let in_voice = ServerEvent::VoiceState { user: member, channel: Some(voice), muted: false, deafened: false, since: None };
+        state.apply(in_voice).unwrap();
+        assert_eq!(state.voice_node(member), Some(desktop.clone()), "no device said it is in voice");
+        state.apply(announce(&tablet, Some(voice))).unwrap();
+        assert_eq!(state.voice_node(member), Some(tablet.clone()));
+        assert!(state.media_peer_ok(member, &tablet, voice, true));
+
+        let text = state.server.channels[0].id;
+        assert_eq!(state.apply(announce(&tablet, Some(text))), Ok(false), "voice happens in voice channels");
+        assert_eq!(state.apply(announce("not a node", None)), Ok(false));
+        let stranger = UserId::new();
+        let theirs = ServerEvent::DeviceAnnounce { server: sid, user: stranger, node: "12".repeat(32), voice: None, since: None };
+        assert_eq!(state.apply(theirs), Ok(false), "strangers have no devices here");
+
+        state.apply(ServerEvent::MemberLeave { server: sid, user: member }).unwrap();
+        assert!(state.devices_of(member).is_empty());
+    }
+
+    #[test]
+    fn only_the_account_key_can_announce_its_devices() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let member = join(&mut state, "friend");
+        let event = ServerEvent::DeviceAnnounce { server: sid, user: member, node: "cd".repeat(32), voice: None, since: None };
+        assert_eq!(state.apply_unsigned(event.clone()), Err(StoreError::Unsigned));
+        let forged = crate::SignedEvent::sign(sid, owner, 1_000, event.clone(), &identity_for(owner));
+        assert_eq!(state.apply_signed(&forged), Err(StoreError::NotAllowed));
+        let own = crate::SignedEvent::sign(sid, member, 1_000, event, &identity_for(member));
+        assert_eq!(state.apply_signed(&own), Ok(true));
+        assert!(!state.holds_signed_action(&format!("device:{member}:{}", "cd".repeat(32))), "devices are live, never relayed");
     }
 
     fn timeout(state: &ServerState, user: UserId, by: UserId, at: DateTime<Utc>, secs: i64) -> ServerEvent {

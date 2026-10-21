@@ -355,6 +355,13 @@ pub enum ServerEvent {
         server: ServerId,
         enabled: bool,
     },
+    DeviceAnnounce {
+        server: ServerId,
+        user: UserId,
+        node: String,
+        voice: Option<ChannelId>,
+        since: Option<i64>,
+    },
 }
 
 #[cfg(test)]
@@ -432,6 +439,8 @@ mod tests {
         let input = crate::activity::ActivityInput::Join;
         assert_eq!(wire_tag(ServerEvent::ActivityInput { server, channel, seq: 1, input, by: user }), 82);
         assert_eq!(wire_tag(ServerEvent::ActivitiesSet { server, enabled: true }), 83);
+        let device = ServerEvent::DeviceAnnounce { server, user, node: "n".into(), voice: Some(channel), since: Some(1) };
+        assert_eq!(wire_tag(device), 84);
     }
 
     #[test]

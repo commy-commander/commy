@@ -34,6 +34,7 @@ pub struct VoiceSession {
     pub deafened: Arc<AtomicBool>,
     pub mic_broadcast: broadcast::Sender<(u32, Arc<Vec<u8>>)>,
     pub last_activity: Arc<std::sync::atomic::AtomicI64>,
+    pub joined_ms: i64,
     me: UserId,
     own_silence: Arc<AtomicI64>,
     timeouts: HashMap<UserId, i64>,
@@ -177,6 +178,7 @@ impl VoiceSession {
             deafened: Arc::new(AtomicBool::new(deafened)),
             mic_broadcast,
             last_activity,
+            joined_ms: chrono::Utc::now().timestamp_millis(),
             me,
             own_silence,
             timeouts: HashMap::new(),
@@ -243,6 +245,11 @@ impl VoiceSession {
             silence.store(until(*user), Ordering::Relaxed);
         }
         self.timeouts = timeouts;
+    }
+
+    pub fn peer_node(&self, user: UserId) -> Option<String> {
+        let (connection, _) = self.links.get(&user)?;
+        Some(data_encoding::HEXLOWER.encode(connection.remote_id().as_bytes()))
     }
 
     pub fn live_peers(&self) -> Vec<UserId> {
