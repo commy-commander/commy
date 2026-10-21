@@ -5,7 +5,8 @@ on:
     branches: [main]
     paths: &mobile-paths
       - "crates/**"
-      - "apps/desktop/**"
+      - "apps/desktop/src-tauri/**"
+      - "apps/desktop/mobile/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/mobile.yml"
