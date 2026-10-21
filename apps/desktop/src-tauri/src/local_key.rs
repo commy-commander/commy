@@ -230,8 +230,19 @@ mod dpapi {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(test, target_os = "macos"))]
 const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
+
+#[cfg(any(test, target_os = "macos"))]
+fn from_keychain(found: Result<Vec<u8>, (i32, String)>) -> Result<Option<[u8; 32]>, KeyProblem> {
+    match found {
+        Ok(bytes) => <[u8; 32]>::try_from(bytes.as_slice())
+            .map(Some)
+            .map_err(|_| KeyProblem::Lost("the keychain item has the wrong length".into())),
+        Err((KEYCHAIN_ITEM_NOT_FOUND, _)) => Ok(None),
+        Err((_, why)) => Err(KeyProblem::Unavailable(format!("the keychain refused: {why}"))),
+    }
+}
 
 #[cfg(target_os = "macos")]
 fn keychain_account(dir: &Path) -> String {
@@ -249,13 +260,10 @@ fn os_key_store() -> KeychainKey {
 #[cfg(target_os = "macos")]
 impl KeyStore for KeychainKey {
     fn read(&self, dir: &Path) -> Result<Option<[u8; 32]>, KeyProblem> {
-        match security_framework::passwords::get_generic_password(crate::toast::APP_ID, &keychain_account(dir)) {
-            Ok(bytes) => <[u8; 32]>::try_from(bytes.as_slice())
-                .map(Some)
-                .map_err(|_| KeyProblem::Lost("the keychain item has the wrong length".into())),
-            Err(e) if e.code() == KEYCHAIN_ITEM_NOT_FOUND => Ok(None),
-            Err(e) => Err(KeyProblem::Unavailable(format!("the keychain refused: {e}"))),
-        }
+        from_keychain(
+            security_framework::passwords::get_generic_password(crate::toast::APP_ID, &keychain_account(dir))
+                .map_err(|e| (e.code(), e.to_string())),
+        )
     }
 
     fn store(&self, dir: &Path, key: &[u8; 32]) -> Result<(), String> {
@@ -373,6 +381,145 @@ mod tests {
         std::fs::write(dir.join("account.json"), at_rest::seal_with(&[4; 32], b"{}")).unwrap();
         assert_eq!(prepare(&dir, &Refusing).unwrap_err(), "locked");
         assert!(dir.join("account.json").exists(), "nothing is moved while the keychain may come back");
+    }
+
+    struct Fake {
+        answer: fn() -> Result<Option<[u8; 32]>, KeyProblem>,
+        accepts: bool,
+        stored: std::cell::Cell<Option<[u8; 32]>>,
+    }
+
+    impl Fake {
+        fn new(answer: fn() -> Result<Option<[u8; 32]>, KeyProblem>, accepts: bool) -> Self {
+            Fake { answer, accepts, stored: std::cell::Cell::new(None) }
+        }
+    }
+
+    impl KeyStore for Fake {
+        fn read(&self, _: &Path) -> Result<Option<[u8; 32]>, KeyProblem> {
+            match self.stored.get() {
+                Some(key) => Ok(Some(key)),
+                None => (self.answer)(),
+            }
+        }
+        fn store(&self, _: &Path, key: &[u8; 32]) -> Result<(), String> {
+            if !self.accepts {
+                return Err("the keychain refused".into());
+            }
+            self.stored.set(Some(*key));
+            Ok(())
+        }
+    }
+
+    fn set_aside_runs(dir: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir.join(SET_ASIDE_DIR))
+            .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_key_the_os_cannot_open_sets_every_sealed_file_aside_once_and_starts_fresh() {
+        let dir = temp_dir("os-lost");
+        let old = [11u8; 32];
+        std::fs::write(dir.join("dms.json"), at_rest::seal_with(&old, b"{}")).unwrap();
+        std::fs::write(dir.join("node.key"), at_rest::seal_with(&old, b"aa")).unwrap();
+        std::fs::create_dir_all(dir.join("servers")).unwrap();
+        std::fs::write(dir.join("servers").join("s.json"), at_rest::seal_with(&old, b"{}")).unwrap();
+        std::fs::write(dir.join("profile.json"), b"{}").unwrap();
+        std::fs::write(dir.join("node.port"), b"4242").unwrap();
+
+        let keys = Fake::new(|| Err(KeyProblem::Lost("Windows could not unprotect it".into())), true);
+        let key = prepare(&dir, &keys).unwrap().unwrap();
+        assert_ne!(key, old);
+        assert_eq!(keys.stored.get(), Some(key), "the new key is handed to the OS");
+
+        let runs = set_aside_runs(&dir);
+        assert_eq!(runs.len(), 1);
+        for (name, plain) in [("dms.json", &b"{}"[..]), ("node.key", b"aa"), ("servers/s.json", b"{}")] {
+            assert!(!dir.join(name).exists(), "{name} left in place");
+            assert_eq!(open(&runs[0].join(name), &old), plain, "{name} kept aside intact for the old key");
+        }
+        assert_eq!(seal_older_files(&dir, &key), 1, "plain files are kept and sealed with the new key");
+        assert_eq!(open(&dir.join("profile.json"), &key), b"{}");
+        assert_eq!(std::fs::read(dir.join("node.port")).unwrap(), b"4242");
+
+        assert_eq!(prepare(&dir, &keys).unwrap(), Some(key));
+        assert_eq!(set_aside_runs(&dir).len(), 1, "the next start moves nothing again");
+    }
+
+    #[test]
+    fn files_no_key_can_open_read_as_missing_and_are_replaced() {
+        let dir = temp_dir("unopenable");
+        let other = [12u8; 32];
+        std::fs::write(dir.join("node.key"), at_rest::seal_with(&other, b"00")).unwrap();
+        std::fs::write(dir.join("identity.key"), at_rest::seal_with(&other, b"00")).unwrap();
+        std::fs::write(dir.join("dms.json"), at_rest::seal_with(&other, b"{}")).unwrap();
+
+        assert!(crate::persist::read_json::<serde_json::Value>(&dir.join("dms.json")).is_none());
+        let node = crate::persist::load_or_create_node_key(&dir).unwrap();
+        assert_eq!(crate::persist::load_or_create_node_key(&dir), Some(node));
+        let identity = commy_core::identity::load_or_create(&dir).unwrap();
+        assert_eq!(commy_core::identity::load_or_create(&dir).unwrap().public(), identity.public());
+    }
+
+    #[test]
+    fn a_keychain_that_will_not_store_a_new_key_keeps_plain_files_working() {
+        let dir = temp_dir("no-store");
+        std::fs::write(dir.join("dms.json"), b"{}").unwrap();
+        let keys = Fake::new(|| Ok(None), false);
+        assert_eq!(prepare(&dir, &keys).unwrap(), None);
+        assert_eq!(std::fs::read(dir.join("dms.json")).unwrap(), b"{}");
+        assert!(set_aside_runs(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_missing_key_and_a_keychain_that_will_not_store_sets_sealed_files_aside_and_runs_unsealed() {
+        let dir = temp_dir("missing-no-store");
+        std::fs::write(dir.join("account.json"), at_rest::seal_with(&[13; 32], b"{}")).unwrap();
+        std::fs::write(dir.join("dms.json"), b"{}").unwrap();
+        let keys = Fake::new(|| Ok(None), false);
+        assert_eq!(prepare(&dir, &keys).unwrap(), None);
+        assert!(!dir.join("account.json").exists());
+        assert!(set_aside_runs(&dir)[0].join("account.json").exists());
+        assert_eq!(std::fs::read(dir.join("dms.json")).unwrap(), b"{}");
+    }
+
+    #[test]
+    fn a_keychain_that_refuses_reads_stops_the_app_for_sealed_files_in_sub_folders_too() {
+        let dir = temp_dir("refusing-sub");
+        std::fs::create_dir_all(dir.join(crate::SERVER_IMAGE_DIR)).unwrap();
+        let image = dir.join(crate::SERVER_IMAGE_DIR).join("a.img");
+        std::fs::write(&image, at_rest::seal_with(&[14; 32], b"png")).unwrap();
+        let keys = Fake::new(|| Err(KeyProblem::Unavailable("the keychain refused: locked".into())), true);
+        assert_eq!(prepare(&dir, &keys).unwrap_err(), "the keychain refused: locked");
+        assert!(image.exists());
+        assert!(set_aside_runs(&dir).is_empty());
+        assert_eq!(keys.stored.get(), None, "no new key replaces one that may come back");
+    }
+
+    #[test]
+    fn keychain_answers_map_to_found_missing_lost_or_refused() {
+        assert_eq!(from_keychain(Ok(vec![6; 32])).unwrap(), Some([6; 32]));
+        assert_eq!(from_keychain(Err((KEYCHAIN_ITEM_NOT_FOUND, "not found".into()))).unwrap(), None);
+        assert!(matches!(from_keychain(Ok(vec![6; 16])), Err(KeyProblem::Lost(_))));
+        assert!(matches!(
+            from_keychain(Err((-25293, "user canceled".into()))),
+            Err(KeyProblem::Unavailable(why)) if why.contains("user canceled")
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_reports_a_key_file_it_cannot_unprotect_as_lost() {
+        let dir = temp_dir("dpapi-lost");
+        assert!(matches!(WindowsKey.read(&dir), Ok(None)));
+        std::fs::write(dir.join(KEY_FILE), b"not protected").unwrap();
+        assert!(matches!(WindowsKey.read(&dir), Err(KeyProblem::Lost(_))));
+        std::fs::write(dir.join(KEY_FILE), dpapi::protect(&[5; 16]).unwrap()).unwrap();
+        assert!(matches!(WindowsKey.read(&dir), Err(KeyProblem::Lost(_))));
+        std::fs::remove_file(dir.join(KEY_FILE)).unwrap();
+        WindowsKey.store(&dir, &[5; 32]).unwrap();
+        assert!(matches!(WindowsKey.read(&dir), Ok(Some(key)) if key == [5; 32]));
     }
 
     #[cfg(windows)]
