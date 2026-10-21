@@ -1,4 +1,5 @@
 mod account;
+mod account_folder;
 mod app_icon;
 mod browser;
 mod activity;
@@ -7973,6 +7974,247 @@ async fn run_media_loop(
     }
 }
 
+pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
+    let app = handle.state::<App>();
+    if app.data_dir.set(dir.clone()).is_err() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!("could not create the account folder: {e}");
+    }
+    if let Some(mut profile) = persist::load_profile(&dir) {
+        profile.activity = None;
+        profile.activity_cover = None;
+        profile.activity_since = None;
+        *app.profile.lock().unwrap() = Some(profile);
+    }
+    if let Some(dms) = persist::load_dms(&dir) {
+        *app.dms.lock().unwrap() = dms;
+    }
+    if let Some(creds) = persist::load_integrations(&dir) {
+        *app.igdb_creds.lock().unwrap() = creds;
+    }
+    stream_deck::load(&app, &handle);
+    if let Some(storage) = persist::load_storage(&dir) {
+        *app.storage.lock().unwrap() = storage;
+    }
+    *app.listings.lock().unwrap() = directory::load(&dir);
+    match persist::load_safety(&dir) {
+        Some(safety) => *app.safety.lock().unwrap() = safety,
+        None => {
+            let partners = app.dms.lock().unwrap().partners();
+            app.safety.lock().unwrap().accepted.extend(partners);
+        }
+    }
+    if let Some(voice) = persist::load_voice(&dir) {
+        voice.apply_to(&mut app.processor.lock().unwrap());
+        let (app_choice, tray_choice) = (voice.app_icon.clone(), voice.tray_icon.clone());
+        *app.voice.lock().unwrap() = voice;
+        app_icon::apply(&handle, Some(dir.as_path()), &app_choice, &tray_choice);
+    }
+    {
+        let mut servers = app.servers.lock().unwrap();
+        for state in persist::load_servers(&dir) {
+            servers.insert(state.server.id, state);
+        }
+    }
+    *app.deleted.lock().unwrap() = deleted::DeletedServers::load(&dir, chrono::Utc::now().timestamp_millis());
+    let mut awaiting = persist::load_awaiting(&dir);
+    {
+        let servers = app.servers.lock().unwrap();
+        awaiting.retain(|id| servers.contains_key(id));
+    }
+    *app.awaiting_snapshot.lock().unwrap() = awaiting;
+    let mut queue = outbox::Outbox::load(&dir);
+    let now = chrono::Utc::now();
+    let pruned = app.servers.lock().unwrap().values().fold(false, |acc, s| queue.prune(s, now) | acc);
+    *app.outbox.lock().unwrap() = queue;
+    if pruned {
+        app.persist_outbox();
+    }
+    let mut bell = doorbell::Doorbell::load(&dir);
+    {
+        let servers = app.servers.lock().unwrap();
+        bell.retain_servers(|id| servers.contains_key(id));
+    }
+    *app.doorbell.lock().unwrap() = bell;
+    {
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let voice = handle.state::<App>().voice.lock().unwrap().clone();
+            register_hotkeys(&handle, &voice);
+            overlay::refresh(&handle);
+        });
+    }
+    let handle = handle.clone();
+    let signed_in = account::is_signed_in(&app.account.lock().unwrap());
+    let key_file = app.data_dir().map(|dir| dir.join(commy_core::identity::IDENTITY_FILE));
+    if signed_in && key_file.as_ref().is_some_and(|path| !path.exists()) {
+        app.mark_key_unsettled();
+    }
+    if let Err(e) = app.reload_identity() {
+        tracing::error!("identity key unavailable: {e}");
+    }
+    if app.hold_unsettled_key(signed_in, KEY_SETTLE_MAX) {
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(KEY_SETTLE_MAX).await;
+            settle::settle_key(&handle).await;
+        });
+    }
+
+    let node_key = app
+        .data_dir()
+        .and_then(|dir| persist::load_or_create_node_key(dir));
+    let node_port = app.data_dir().and_then(|dir| persist::load_node_port(dir));
+
+    tauri::async_runtime::spawn(doorbell::run(handle.clone()));
+    tauri::async_runtime::spawn(directory::keep_listings_current(handle.clone()));
+    tauri::async_runtime::spawn(async move {
+        match CommyNode::spawn_on_port(node_key, node_port).await {
+            Ok((mut node, events, media, dms)) => {
+                let app = handle.state::<App>();
+                if let (Some(dir), Some(port)) = (app.data_dir(), node.bound_port()) {
+                    persist::save_node_port(dir, port);
+                }
+                let hex = node.node_id_hex();
+                if let Some(asks) = node.take_entry_key_requests() {
+                    tauri::async_runtime::spawn(entry_list::run_entry_key_requests(handle.clone(), asks));
+                }
+                if let Some(asks) = node.take_mirror_requests() {
+                    tauri::async_runtime::spawn(mirror::run_mirror_requests(handle.clone(), asks));
+                }
+
+                let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+                let stored_invites = app
+                    .data_dir()
+                    .map(|d| persist::load_invites(d))
+                    .unwrap_or_default();
+                catchup::mark_joined_placeholders(&app, &stored_invites, node.node_id_bytes());
+                catchup::release_own_servers(&app, &stored_invites);
+                let awaiting = app.awaiting_snapshot.lock().unwrap().clone();
+                let to_restore: Vec<(ServerId, String, bool)> = {
+                    let servers = app.servers.lock().unwrap();
+                    servers
+                        .values()
+                        .map(|s| {
+                            let id = s.server.id;
+                            let rejoin = awaiting.contains(&id) && stored_invites.contains_key(&id);
+                            (id, s.server.name.clone(), Some(s.server.owner) == me && !rejoin)
+                        })
+                        .collect()
+                };
+                for (id, name, owned) in to_restore {
+                    if owned {
+                        match node.host_server(id, &name, app.own_key_for_tickets()).await {
+                            Ok(ticket) => {
+                                app.invites.lock().unwrap().insert(id, ticket.encode());
+                            }
+                            Err(e) => tracing::warn!("re-host failed for {name}: {e}"),
+                        }
+                    } else if let Some(raw) = stored_invites.get(&id) {
+                        match ServerTicket::decode(raw) {
+                            Ok(ticket) => {
+                                if let Err(e) = node.rejoin_server(&ticket).await {
+                                    tracing::warn!("rejoin failed for {name}: {e}");
+                                }
+                                app.invites.lock().unwrap().insert(id, raw.clone());
+                            }
+                            Err(e) => tracing::warn!("stored invite corrupt for {name}: {e}"),
+                        }
+                    }
+                }
+                app.persist_invites();
+                let retired = app.deleted.lock().unwrap().to_rejoin();
+                for (id, gone) in retired {
+                    let rejoined = match gone.ticket.as_deref().map(ServerTicket::decode) {
+                        Some(Ok(ticket)) => node.rejoin_server(&ticket).await,
+                        Some(Err(e)) => Err(e.into()),
+                        None => node.host_server(id, &gone.name, app.own_key_for_tickets()).await.map(|_| ()),
+                    };
+                    if let Err(e) = rejoined {
+                        tracing::debug!("could not stay on a deleted server to pass on its deletion: {e}");
+                    }
+                }
+
+                let afk_channels: Vec<(ServerId, ServerEvent)> = {
+                    let mut servers = app.servers.lock().unwrap();
+                    servers
+                        .values_mut()
+                        .filter(|s| Some(s.server.owner) == me && s.server.afk_channel().is_none())
+                        .map(|state| {
+                            let sid = state.server.id;
+                            let position = state.server.channels.len() as u32;
+                            let channel = Channel::new("AFK", ChannelKind::Voice, position);
+                            let event = ServerEvent::ChannelCreate { server: sid, channel };
+                            let _ = state.apply(event.clone());
+                            (sid, event)
+                        })
+                        .collect()
+                };
+                for (sid, event) in afk_channels {
+                    if let Err(e) = node.broadcast(sid, app.wire_for(sid, event)).await {
+                        tracing::debug!("afk channel announce pending: {e}");
+                    }
+                    app.persist_server(sid);
+                }
+
+                *app.node_hex.lock().unwrap() = Some(hex.clone());
+                let me = {
+                    let mut profile = app.profile.lock().unwrap();
+                    if let Some(p) = profile.as_mut() {
+                        p.node = Some(hex);
+                    }
+                    profile.clone()
+                };
+                app.persist_profile();
+                if let Some(me) = me {
+                    let mut servers = app.servers.lock().unwrap();
+                    for state in servers.values_mut() {
+                        let sid = state.server.id;
+                        let _ = state.apply(ServerEvent::MemberJoin {
+                            server: sid,
+                            profile: me.clone(),
+                        });
+                    }
+                }
+                node.set_catchup_store(catchup::store(&handle));
+                node.set_media_gate(media_gate(&handle));
+                *app.net.lock().await = Some(node);
+                tracing::info!("iroh node online");
+
+                tauri::async_runtime::spawn(run_media_loop(handle.clone(), media));
+                tauri::async_runtime::spawn(run_dm_loop(handle.clone(), dms));
+                tauri::async_runtime::spawn(run_afk_watchdog(handle.clone()));
+                tauri::async_runtime::spawn(run_voice_redialer(handle.clone()));
+                tauri::async_runtime::spawn(run_status_expiry(handle.clone()));
+                tauri::async_runtime::spawn(run_event_reminders(handle.clone()));
+                {
+                    let handle = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        account::verify_saved_session(handle.clone()).await;
+                        entry_list::schedule(&handle);
+                    });
+                }
+                tauri::async_runtime::spawn(read_state::run(handle.clone()));
+                tauri::async_runtime::spawn(run_share_heartbeat(handle.clone()));
+                tauri::async_runtime::spawn(liveness::run(handle.clone()));
+                tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
+                tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
+                tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
+                tauri::async_runtime::spawn(channel_lock::run(handle.clone()));
+                tauri::async_runtime::spawn(wake::run_watchdog(handle.clone()));
+                tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
+                tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
+                tauri::async_runtime::spawn(outbox::run_dm_outbox(handle.clone()));
+                run_net_loop(handle.clone(), events).await;
+            }
+            Err(e) => tracing::error!("P2P stack failed to start: {e}"),
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt()
@@ -8046,20 +8288,16 @@ pub fn run() {
                     let _ = window.set_title(&title);
                 }
             }
-            {
-                let handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    let voice = handle.state::<App>().voice.lock().unwrap().clone();
-                    register_hotkeys(&handle, &voice);
-                    overlay::refresh(&handle);
-                });
-            }
             updater::init(&handle);
             updater::start(&handle);
+            let data_dir = std::env::var("COMMY_DATA_DIR")
+                .ok()
+                .map(std::path::PathBuf::from)
+                .or_else(|| tauri_app.path().app_data_dir().ok());
+            let show_window = data_dir.as_deref().is_some_and(account_folder::take_show_window);
             match tray::build(&handle) {
                 Ok(()) => {
-                    if std::env::args().any(|arg| arg == "--minimized") {
+                    if !show_window && std::env::args().any(|arg| arg == "--minimized") {
                         if let Some(window) = tauri_app.get_webview_window("main") {
                             let _ = window.hide();
                         }
@@ -8077,11 +8315,6 @@ pub fn run() {
             toast::ensure_start_menu_shortcut();
             let app = tauri_app.state::<App>();
 
-            let data_dir = std::env::var("COMMY_DATA_DIR")
-                .ok()
-                .map(std::path::PathBuf::from)
-                .or_else(|| tauri_app.path().app_data_dir().ok());
-
             if let Some(dir) = data_dir {
                 if let Err(why) = local_key::unlock(&dir) {
                     tracing::error!("local files are encrypted and their key is unavailable: {why}");
@@ -8095,232 +8328,15 @@ pub fn run() {
                         .show();
                     std::process::exit(1);
                 }
-                let _ = app.data_dir.set(dir.clone());
+                let _ = app.base_dir.set(dir.clone());
                 invite_link::register_scheme();
                 invite_link::start(&handle, &dir, launch_link);
-                if let Some(mut profile) = persist::load_profile(&dir) {
-                    profile.activity = None;
-                    profile.activity_cover = None;
-                    profile.activity_since = None;
-                    *app.profile.lock().unwrap() = Some(profile);
-                }
-                if let Some(dms) = persist::load_dms(&dir) {
-                    *app.dms.lock().unwrap() = dms;
-                }
                 *app.account.lock().unwrap() = account::load(&dir);
-                if let Some(creds) = persist::load_integrations(&dir) {
-                    *app.igdb_creds.lock().unwrap() = creds;
+                account_folder::set_aside_unowned_data(&dir);
+                if let Some(folder) = account::ready_folder(&app) {
+                    open_account(&handle, folder);
                 }
-                stream_deck::load(&app, &handle);
-                if let Some(storage) = persist::load_storage(&dir) {
-                    *app.storage.lock().unwrap() = storage;
-                }
-                *app.listings.lock().unwrap() = directory::load(&dir);
-                match persist::load_safety(&dir) {
-                    Some(safety) => *app.safety.lock().unwrap() = safety,
-                    None => {
-                        let partners = app.dms.lock().unwrap().partners();
-                        app.safety.lock().unwrap().accepted.extend(partners);
-                    }
-                }
-                if let Some(voice) = persist::load_voice(&dir) {
-                    voice.apply_to(&mut app.processor.lock().unwrap());
-                    let (app_choice, tray_choice) = (voice.app_icon.clone(), voice.tray_icon.clone());
-                    *app.voice.lock().unwrap() = voice;
-                    app_icon::apply(&handle, Some(dir.as_path()), &app_choice, &tray_choice);
-                }
-                {
-                    let mut servers = app.servers.lock().unwrap();
-                    for state in persist::load_servers(&dir) {
-                        servers.insert(state.server.id, state);
-                    }
-                }
-                *app.deleted.lock().unwrap() = deleted::DeletedServers::load(&dir, chrono::Utc::now().timestamp_millis());
-                let mut awaiting = persist::load_awaiting(&dir);
-                {
-                    let servers = app.servers.lock().unwrap();
-                    awaiting.retain(|id| servers.contains_key(id));
-                }
-                *app.awaiting_snapshot.lock().unwrap() = awaiting;
-                let mut queue = outbox::Outbox::load(&dir);
-                let now = chrono::Utc::now();
-                let pruned = app.servers.lock().unwrap().values().fold(false, |acc, s| queue.prune(s, now) | acc);
-                *app.outbox.lock().unwrap() = queue;
-                if pruned {
-                    app.persist_outbox();
-                }
-                let mut bell = doorbell::Doorbell::load(&dir);
-                {
-                    let servers = app.servers.lock().unwrap();
-                    bell.retain_servers(|id| servers.contains_key(id));
-                }
-                *app.doorbell.lock().unwrap() = bell;
             }
-            let signed_in = account::is_signed_in(&app.account.lock().unwrap());
-            let key_file = app.data_dir().map(|dir| dir.join(commy_core::identity::IDENTITY_FILE));
-            if signed_in && key_file.as_ref().is_some_and(|path| !path.exists()) {
-                app.mark_key_unsettled();
-            }
-            if let Err(e) = app.reload_identity() {
-                tracing::error!("identity key unavailable: {e}");
-            }
-            if app.hold_unsettled_key(signed_in, KEY_SETTLE_MAX) {
-                let handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(KEY_SETTLE_MAX).await;
-                    settle::settle_key(&handle).await;
-                });
-            }
-
-            let node_key = app
-                .data_dir()
-                .and_then(|dir| persist::load_or_create_node_key(dir));
-            let node_port = app.data_dir().and_then(|dir| persist::load_node_port(dir));
-
-            tauri::async_runtime::spawn(doorbell::run(handle.clone()));
-            tauri::async_runtime::spawn(directory::keep_listings_current(handle.clone()));
-            tauri::async_runtime::spawn(async move {
-                match CommyNode::spawn_on_port(node_key, node_port).await {
-                    Ok((mut node, events, media, dms)) => {
-                        let app = handle.state::<App>();
-                        if let (Some(dir), Some(port)) = (app.data_dir(), node.bound_port()) {
-                            persist::save_node_port(dir, port);
-                        }
-                        let hex = node.node_id_hex();
-                        if let Some(asks) = node.take_entry_key_requests() {
-                            tauri::async_runtime::spawn(entry_list::run_entry_key_requests(handle.clone(), asks));
-                        }
-                        if let Some(asks) = node.take_mirror_requests() {
-                            tauri::async_runtime::spawn(mirror::run_mirror_requests(handle.clone(), asks));
-                        }
-
-                        let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-                        let stored_invites = app
-                            .data_dir()
-                            .map(|d| persist::load_invites(d))
-                            .unwrap_or_default();
-                        catchup::mark_joined_placeholders(&app, &stored_invites, node.node_id_bytes());
-                        catchup::release_own_servers(&app, &stored_invites);
-                        let awaiting = app.awaiting_snapshot.lock().unwrap().clone();
-                        let to_restore: Vec<(ServerId, String, bool)> = {
-                            let servers = app.servers.lock().unwrap();
-                            servers
-                                .values()
-                                .map(|s| {
-                                    let id = s.server.id;
-                                    let rejoin = awaiting.contains(&id) && stored_invites.contains_key(&id);
-                                    (id, s.server.name.clone(), Some(s.server.owner) == me && !rejoin)
-                                })
-                                .collect()
-                        };
-                        for (id, name, owned) in to_restore {
-                            if owned {
-                                match node.host_server(id, &name, app.own_key_for_tickets()).await {
-                                    Ok(ticket) => {
-                                        app.invites.lock().unwrap().insert(id, ticket.encode());
-                                    }
-                                    Err(e) => tracing::warn!("re-host failed for {name}: {e}"),
-                                }
-                            } else if let Some(raw) = stored_invites.get(&id) {
-                                match ServerTicket::decode(raw) {
-                                    Ok(ticket) => {
-                                        if let Err(e) = node.rejoin_server(&ticket).await {
-                                            tracing::warn!("rejoin failed for {name}: {e}");
-                                        }
-                                        app.invites.lock().unwrap().insert(id, raw.clone());
-                                    }
-                                    Err(e) => tracing::warn!("stored invite corrupt for {name}: {e}"),
-                                }
-                            }
-                        }
-                        app.persist_invites();
-                        let retired = app.deleted.lock().unwrap().to_rejoin();
-                        for (id, gone) in retired {
-                            let rejoined = match gone.ticket.as_deref().map(ServerTicket::decode) {
-                                Some(Ok(ticket)) => node.rejoin_server(&ticket).await,
-                                Some(Err(e)) => Err(e.into()),
-                                None => node.host_server(id, &gone.name, app.own_key_for_tickets()).await.map(|_| ()),
-                            };
-                            if let Err(e) = rejoined {
-                                tracing::debug!("could not stay on a deleted server to pass on its deletion: {e}");
-                            }
-                        }
-
-                        let afk_channels: Vec<(ServerId, ServerEvent)> = {
-                            let mut servers = app.servers.lock().unwrap();
-                            servers
-                                .values_mut()
-                                .filter(|s| Some(s.server.owner) == me && s.server.afk_channel().is_none())
-                                .map(|state| {
-                                    let sid = state.server.id;
-                                    let position = state.server.channels.len() as u32;
-                                    let channel = Channel::new("AFK", ChannelKind::Voice, position);
-                                    let event = ServerEvent::ChannelCreate { server: sid, channel };
-                                    let _ = state.apply(event.clone());
-                                    (sid, event)
-                                })
-                                .collect()
-                        };
-                        for (sid, event) in afk_channels {
-                            if let Err(e) = node.broadcast(sid, app.wire_for(sid, event)).await {
-                                tracing::debug!("afk channel announce pending: {e}");
-                            }
-                            app.persist_server(sid);
-                        }
-
-                        *app.node_hex.lock().unwrap() = Some(hex.clone());
-                        let me = {
-                            let mut profile = app.profile.lock().unwrap();
-                            if let Some(p) = profile.as_mut() {
-                                p.node = Some(hex);
-                            }
-                            profile.clone()
-                        };
-                        app.persist_profile();
-                        if let Some(me) = me {
-                            let mut servers = app.servers.lock().unwrap();
-                            for state in servers.values_mut() {
-                                let sid = state.server.id;
-                                let _ = state.apply(ServerEvent::MemberJoin {
-                                    server: sid,
-                                    profile: me.clone(),
-                                });
-                            }
-                        }
-                        node.set_catchup_store(catchup::store(&handle));
-                        node.set_media_gate(media_gate(&handle));
-                        *app.net.lock().await = Some(node);
-                        tracing::info!("iroh node online");
-
-                        tauri::async_runtime::spawn(run_media_loop(handle.clone(), media));
-                        tauri::async_runtime::spawn(run_dm_loop(handle.clone(), dms));
-                        tauri::async_runtime::spawn(run_afk_watchdog(handle.clone()));
-                        tauri::async_runtime::spawn(run_voice_redialer(handle.clone()));
-                        tauri::async_runtime::spawn(run_status_expiry(handle.clone()));
-                        tauri::async_runtime::spawn(run_event_reminders(handle.clone()));
-                        {
-                            let handle = handle.clone();
-                            tauri::async_runtime::spawn(async move {
-                                account::verify_saved_session(handle.clone()).await;
-                                entry_list::schedule(&handle);
-                            });
-                        }
-                        tauri::async_runtime::spawn(read_state::run(handle.clone()));
-                        tauri::async_runtime::spawn(run_share_heartbeat(handle.clone()));
-                        tauri::async_runtime::spawn(liveness::run(handle.clone()));
-                        tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
-                        tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
-                        tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
-                        tauri::async_runtime::spawn(channel_lock::run(handle.clone()));
-                        tauri::async_runtime::spawn(wake::run_watchdog(handle.clone()));
-                        tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
-                        tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
-                        tauri::async_runtime::spawn(outbox::run_dm_outbox(handle.clone()));
-                        run_net_loop(handle.clone(), events).await;
-                    }
-                    Err(e) => tracing::error!("P2P stack failed to start: {e}"),
-                }
-            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -8331,6 +8347,10 @@ pub fn run() {
             account::account_begin_sign_in,
             account::account_cancel_sign_in,
             account::account_sign_out,
+            account::account_switch,
+            account::account_sign_out_other,
+            account::account_claim_profile,
+            account::account_open_folder,
             voice_stats,
             set_server_afk_timeout,
             list_friends,

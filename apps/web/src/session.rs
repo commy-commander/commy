@@ -194,12 +194,21 @@ impl Session {
         self.status.borrow().account.clone().ok_or_else(|| "Sign in first".to_string())
     }
 
-    fn device_secret(&self) -> [u8; 32] {
-        if let Some(secret) = account::parse_device_secret(self.host.load(account::DEVICE_SECRET_KEY).as_deref()) {
+    fn device_secret(&self, account: &AccountUser) -> [u8; 32] {
+        let key = account::device_secret_key(&account.id);
+        if let Some(secret) = account::parse_device_secret(self.host.load(&key).as_deref()) {
             return secret;
         }
-        let secret = CommyNode::generate_secret();
-        self.host.save(account::DEVICE_SECRET_KEY, &data_encoding::HEXLOWER.encode(&secret));
+        let shared = self.host.load(account::DEVICE_SECRET_KEY);
+        let ours = account::shared_secret_belongs_to(self.host.load(account::ENTRY_KEY_KEY).as_deref(), &account.id);
+        let secret = match account::parse_device_secret(shared.as_deref()) {
+            Some(secret) if ours => secret,
+            _ => CommyNode::generate_secret(),
+        };
+        if ours {
+            self.host.remove(account::DEVICE_SECRET_KEY);
+        }
+        self.host.save(&key, &data_encoding::HEXLOWER.encode(&secret));
         secret
     }
 
@@ -217,7 +226,7 @@ impl Session {
                 return Ok(self.unlock_view());
             }
         };
-        let secret = self.device_secret();
+        let secret = self.device_secret(&account);
         self.start_node(secret).await?;
         self.link_device(secret).await?;
         let reply = self.request("GET", account::VAULT_PATH, None).await?;

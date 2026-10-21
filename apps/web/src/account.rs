@@ -114,6 +114,16 @@ pub fn entry_key_record(account: &str, key: &SealKey) -> String {
     serde_json::to_string(&StoredKey { account: account.into(), key: key.to_text() }).expect("key record serializes")
 }
 
+pub fn device_secret_key(account: &str) -> String {
+    format!("{DEVICE_SECRET_KEY}.{account}")
+}
+
+pub fn shared_secret_belongs_to(entry_key_record: Option<&str>, account: &str) -> bool {
+    entry_key_record
+        .and_then(|raw| serde_json::from_str::<StoredKey>(raw).ok())
+        .is_some_and(|stored| stored.account == account)
+}
+
 pub fn parse_device_secret(raw: Option<&str>) -> Option<[u8; 32]> {
     let bytes = data_encoding::HEXLOWER_PERMISSIVE.decode(raw?.trim().as_bytes()).ok()?;
     bytes.try_into().ok()
@@ -172,6 +182,17 @@ mod tests {
         assert_eq!(stored_entry_key(Some(&record), "u1").map(|k| k.to_text()), Some(key.to_text()));
         assert!(stored_entry_key(Some(&record), "u2").is_none());
         assert!(stored_entry_key(None, "u1").is_none());
+    }
+
+    #[test]
+    fn each_account_has_its_own_browser_key() {
+        assert_ne!(device_secret_key("u1"), device_secret_key("u2"));
+        assert_ne!(device_secret_key("u1"), DEVICE_SECRET_KEY);
+        let record = entry_key_record("u1", &SealKey::generate());
+        assert!(shared_secret_belongs_to(Some(&record), "u1"));
+        assert!(!shared_secret_belongs_to(Some(&record), "u2"));
+        assert!(!shared_secret_belongs_to(None, "u1"));
+        assert!(!shared_secret_belongs_to(Some("junk"), "u1"));
     }
 
     #[test]

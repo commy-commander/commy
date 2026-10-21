@@ -15,6 +15,7 @@ import { commyInvites } from "./invites.js";
 import { commyMedia } from "./media.js";
 import { commyPasswords, commySecurityNotices, commyTwoFactorEverywhere, noticeWhenALoginIsLinked } from "./security.js";
 import { commyVault } from "./vault.js";
+import { commyFolderLock } from "./folder-lock.js";
 import { createMailer } from "./mailer.js";
 import { redisRateLimitStorage } from "./rate-limit.js";
 
@@ -54,6 +55,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     commyDirectory(),
     commyMedia({ secret: config.secret, klipyKey: config.klipyKey, igdb: config.igdb, fetch }),
     commyVault(),
+    commyFolderLock({ secret: config.secret }),
     twoFactor({ issuer: config.instanceName, allowPasswordless: true }),
     commyTwoFactorEverywhere({ baseURL: config.baseURL }),
     passkey({ rpID: new URL(config.baseURL).hostname, rpName: config.instanceName, origin: config.baseURL }),

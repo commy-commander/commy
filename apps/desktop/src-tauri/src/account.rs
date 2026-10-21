@@ -6,10 +6,12 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::account_folder;
 use crate::invite_link::{normalize_origin, DEFAULT_ACCOUNT_SERVER};
 use crate::state::App;
 
 const FILE: &str = "account.json";
+pub const MAX_ACCOUNTS: usize = 5;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AccountState {
@@ -25,6 +27,23 @@ pub struct AccountState {
     pub device_linked: bool,
     #[serde(default)]
     pub features: Option<ServerFeatures>,
+    #[serde(default)]
+    pub others: Vec<SavedAccount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SavedAccount {
+    pub server: String,
+    pub token: String,
+    pub user: AccountUser,
+    #[serde(default)]
+    pub features: Option<ServerFeatures>,
+}
+
+impl SavedAccount {
+    fn is(&self, server: &str, id: &str) -> bool {
+        self.server == server && self.user.id == id
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,6 +60,8 @@ pub struct ServerFeatures {
     pub vault: bool,
     #[serde(default)]
     pub stickers: bool,
+    #[serde(default, alias = "folderLock")]
+    pub folder_lock: bool,
 }
 
 impl AccountState {
@@ -56,6 +77,51 @@ impl AccountState {
         self.user = None;
         self.signed_in_server = None;
         self.features = None;
+    }
+
+    fn current(&self) -> Option<SavedAccount> {
+        Some(SavedAccount {
+            server: self.signed_in_server.clone()?,
+            token: self.token.clone()?,
+            user: self.user.clone()?,
+            features: self.features,
+        })
+    }
+
+    fn keep_previous(&mut self, next_server: &str, next_id: &str) {
+        let previous = self.current();
+        self.others.retain(|o| !o.is(next_server, next_id));
+        if let Some(previous) = previous.filter(|p| !p.is(next_server, next_id)) {
+            self.others.retain(|o| !o.is(&previous.server, &previous.user.id));
+            self.others.insert(0, previous);
+        }
+        self.others.truncate(MAX_ACCOUNTS - 1);
+    }
+
+    fn become_account(&mut self, saved: SavedAccount) {
+        self.server = (saved.server != DEFAULT_ACCOUNT_SERVER).then(|| saved.server.clone());
+        self.signed_in_server = Some(saved.server);
+        self.token = Some(saved.token);
+        self.user = Some(saved.user);
+        self.features = saved.features;
+        self.device_linked = false;
+    }
+
+    fn switch_to(&mut self, server: &str, id: &str) -> bool {
+        let Some(at) = self.others.iter().position(|o| o.is(server, id) && switchable(&o.server)) else { return false };
+        let saved = self.others.remove(at);
+        self.keep_previous(server, id);
+        self.become_account(saved);
+        true
+    }
+
+    fn sign_out_current(&mut self) -> bool {
+        self.clear_session();
+        self.device_linked = false;
+        let Some(at) = self.others.iter().position(|o| switchable(&o.server)) else { return false };
+        let next = self.others.remove(at);
+        self.become_account(next);
+        true
     }
 
     pub fn server_offers(&self, kind: &str) -> bool {
@@ -85,6 +151,10 @@ static CHOSEN_SERVER: Mutex<Option<String>> = Mutex::new(None);
 static ENV_SERVER: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("COMMY_AUTH_URL").ok().and_then(|s| normalize_origin(&s)));
 
+fn switchable(server: &str) -> bool {
+    ENV_SERVER.as_deref().is_none_or(|env| env == server)
+}
+
 pub fn effective_server() -> String {
     if let Some(env) = ENV_SERVER.clone() {
         return env;
@@ -106,7 +176,7 @@ pub fn load(dir: &Path) -> AccountState {
 }
 
 fn store(app: &App, state: &AccountState) {
-    let Some(dir) = app.data_dir() else { return };
+    let Some(dir) = app.base_dir() else { return };
     if let Err(e) = crate::persist::write_secret_json(&path(dir), state) {
         tracing::warn!("could not save the account: {e}");
     }
@@ -114,6 +184,139 @@ fn store(app: &App, state: &AccountState) {
 
 pub fn is_signed_in(state: &AccountState) -> bool {
     state.token.is_some() && state.user.is_some() && state.signed_in_server.as_deref() == Some(effective_server().as_str())
+}
+
+fn signed_in_folder(app: &App) -> Option<(PathBuf, String, String)> {
+    let state = app.account.lock().unwrap();
+    if !is_signed_in(&state) {
+        return None;
+    }
+    Some((app.base_dir()?.clone(), state.signed_in_server.clone()?, state.user.as_ref()?.id.clone()))
+}
+
+pub fn ready_folder(app: &App) -> Option<PathBuf> {
+    let (base, server, account) = signed_in_folder(app)?;
+    let account_folder::Opening::Ready(dir) = account_folder::choose(&base, &server, &account) else { return None };
+    match quick_unlock(app, &dir) {
+        Unlock::Key(key) => {
+            use_folder_key(&dir, &key);
+            Some(dir)
+        }
+        Unlock::DeviceKeyOnly => Some(dir),
+        Unlock::AskServer => None,
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum Unlock {
+    Key([u8; 32]),
+    DeviceKeyOnly,
+    AskServer,
+}
+
+fn quick_unlock(app: &App, dir: &Path) -> Unlock {
+    let server_locks = app.account.lock().unwrap().features.is_some_and(|f| f.folder_lock);
+    unlock_step(account_folder::cached_key(dir), account_folder::is_locked(dir), server_locks)
+}
+
+fn unlock_step(cached: Option<[u8; 32]>, locked: bool, server_locks: bool) -> Unlock {
+    match cached {
+        Some(key) => Unlock::Key(key),
+        None if locked || server_locks => Unlock::AskServer,
+        None => Unlock::DeviceKeyOnly,
+    }
+}
+
+fn use_folder_key(dir: &Path, key: &[u8; 32]) {
+    commy_core::at_rest::install_folder(dir, *key);
+    if let Err(e) = account_folder::finish_resealing(dir, key) {
+        tracing::warn!("could not finish moving this account's files to its key: {e}");
+    }
+}
+
+#[derive(Deserialize)]
+struct FolderKeyResponse {
+    key: String,
+}
+
+async fn server_folder_key(app: &App, server: &str, token: &str, lock_id: &str) -> Result<String, String> {
+    let host = host_of(server);
+    let res = app
+        .http
+        .post(format!("{server}/api/auth/commy/folder-key"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "lockId": lock_id }))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|_| format!("Could not reach {host} to unlock this account on this computer."))?;
+    match res.status().as_u16() {
+        200 => {}
+        401 => return Err(format!("Sign in to {host} again to unlock this account.")),
+        _ => return Err(format!("{host} could not unlock this account right now.")),
+    }
+    let body: FolderKeyResponse = res.json().await.map_err(|_| format!("{host} sent an unexpected reply"))?;
+    Ok(body.key)
+}
+
+async fn unlock_folder(app: &App, dir: &Path, server: &str, token: &str) -> Result<Option<[u8; 32]>, String> {
+    match quick_unlock(app, dir) {
+        Unlock::Key(key) => return Ok(Some(key)),
+        Unlock::DeviceKeyOnly => return Ok(None),
+        Unlock::AskServer => {}
+    }
+    std::fs::create_dir_all(dir).map_err(|_| "Could not create this account's folder".to_string())?;
+    let key = match account_folder::read_lock(dir) {
+        Some(lock) => {
+            let server_key = server_folder_key(app, server, token, &lock.lock_id).await?;
+            account_folder::unwrap(&server_key, &lock)
+                .ok_or("Your account server's key does not open this account's data on this computer.")?
+        }
+        None if account_folder::is_locked(dir) => {
+            return Err("This account's lock on this computer cannot be read.".into());
+        }
+        None => {
+            let lock_id = account_folder::new_lock_id();
+            let server_key = server_folder_key(app, server, token, &lock_id).await?;
+            let key = commy_net::CommyNode::generate_secret();
+            let lock = account_folder::wrap(&server_key, &lock_id, &key).ok_or("Your account server sent an unusable key.")?;
+            account_folder::lock(dir, &lock, &key).map_err(|e| format!("Could not lock this account's data: {e}"))?;
+            key
+        }
+    };
+    account_folder::remember_key(dir, &key);
+    Ok(Some(key))
+}
+
+static MAY_CLAIM: Mutex<Option<String>> = Mutex::new(None);
+
+fn may_claim(unclaimed_node: Option<&str>, linked_devices: &[String]) -> bool {
+    unclaimed_node.is_some_and(|node| linked_devices.iter().any(|device| device.eq_ignore_ascii_case(node)))
+}
+
+fn claim_allowed(account: &str) -> bool {
+    MAY_CLAIM.lock().unwrap().as_deref() == Some(account)
+}
+
+fn unclaimed_profile(app: &App) -> Option<account_folder::UnclaimedProfile> {
+    if app.data_dir().is_some() {
+        return None;
+    }
+    let (base, server, account) = signed_in_folder(app)?;
+    if !claim_allowed(&account) {
+        return None;
+    }
+    match account_folder::choose(&base, &server, &account) {
+        account_folder::Opening::AskAboutUnclaimed => account_folder::unclaimed(&base),
+        account_folder::Opening::Ready(_) => None,
+    }
+}
+
+fn restart_signed_in_as_someone_else(handle: &AppHandle) -> ! {
+    if let Some(base) = handle.state::<App>().base_dir() {
+        account_folder::show_window_on_next_start(base);
+    }
+    handle.restart()
 }
 
 pub fn require_account(app: &App) -> Result<(), String> {
@@ -319,9 +522,23 @@ pub struct AccountView {
     server_emojis: bool,
     server_stickers: bool,
     server_media: bool,
+    unclaimed_profile: Option<account_folder::UnclaimedProfile>,
+    needs_account_folder: bool,
+    others: Vec<OtherAccount>,
+    max_accounts: usize,
+}
+
+#[derive(Serialize)]
+struct OtherAccount {
+    id: String,
+    name: String,
+    email: String,
+    server: String,
+    server_host: String,
 }
 
 fn view(app: &App) -> AccountView {
+    let unclaimed_profile = unclaimed_profile(app);
     let pending_code = app.sign_in.lock().unwrap().as_ref().map(|p| p.user_code.clone());
     let state = app.account.lock().unwrap();
     let server = effective_server();
@@ -341,6 +558,21 @@ fn view(app: &App) -> AccountView {
         server_emojis: state.server_offers("emojis"),
         server_stickers: state.server_offers("stickers"),
         server_media: state.server_offers("media"),
+        unclaimed_profile,
+        needs_account_folder: signed_in && app.data_dir().is_none(),
+        others: state
+            .others
+            .iter()
+            .filter(|o| signed_in && switchable(&o.server))
+            .map(|o| OtherAccount {
+                id: o.user.id.clone(),
+                name: o.user.name.clone(),
+                email: o.user.email.clone(),
+                server_host: host_of(&o.server),
+                server: o.server.clone(),
+            })
+            .collect(),
+        max_accounts: MAX_ACCOUNTS,
     }
 }
 
@@ -405,6 +637,12 @@ fn default_interval() -> u64 {
 
 #[tauri::command]
 pub async fn account_begin_sign_in(app: tauri::State<'_, App>, handle: AppHandle) -> Result<SignInStart, String> {
+    {
+        let state = app.account.lock().unwrap();
+        if is_signed_in(&state) && state.others.len() + 1 >= MAX_ACCOUNTS {
+            return Err(format!("This computer keeps up to {MAX_ACCOUNTS} accounts. Sign out of one first."));
+        }
+    }
     let server = effective_server();
     let doc = discover(&app.http, &server).await?;
     let res = app
@@ -504,7 +742,7 @@ async fn poll_for_token(
     };
     app.sign_in.lock().unwrap().take();
     let Some(token) = token else { return };
-    match finish_sign_in(&app, &server, &doc, &token).await {
+    match finish_sign_in(&handle, &server, &doc, &token).await {
         Ok(()) => {
             let _ = handle.emit("account-changed", ());
             crate::entry_list::schedule(&handle);
@@ -533,7 +771,8 @@ struct ChallengeResponse {
     message: String,
 }
 
-async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
+async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
+    let app = handle.state::<App>();
     let res = app
         .http
         .get(&doc.endpoints.session)
@@ -547,28 +786,56 @@ async fn finish_sign_in(app: &App, server: &str, doc: &Discovery, token: &str) -
         name: crate::safety::truncate(&session.user.name, 64),
         email: crate::safety::truncate(&session.user.email, 120),
     };
+    let base = app.base_dir().cloned().ok_or("This install has no data folder")?;
+    let next = after_sign_in(account_folder::choose(&base, server, &user.id), app.data_dir().map(|d| d.as_path()));
     app.igdb.lock().await.resolved.clear();
-    let device_linked = link_device(app, server, doc, token).await.map_err(|e| {
-        tracing::warn!("device link failed: {e}");
-        e
-    });
+    let device_linked = match (&next, app.data_dir()) {
+        (AfterSignIn::KeepOpen, Some(dir)) => link_device(&app, dir, server, doc, token).await.map_err(|e| {
+            tracing::warn!("device link failed: {e}");
+            e
+        }),
+        _ => Ok(()),
+    };
     {
         let mut state = app.account.lock().unwrap();
+        state.keep_previous(server, &user.id);
         state.signed_in_server = Some(server.to_string());
         state.token = Some(token.to_string());
         state.user = Some(user);
-        state.device_linked = device_linked.is_ok();
+        state.device_linked = device_linked.is_ok() && next == AfterSignIn::KeepOpen;
         state.features = doc.features;
-        store(app, &state);
+        store(&app, &state);
+    }
+    match (&next, app.data_dir()) {
+        (AfterSignIn::Restart, _) => restart_signed_in_as_someone_else(handle),
+        (AfterSignIn::KeepOpen, Some(dir)) if account_folder::is_locked(dir) => {
+            if let Err(e) = unlock_folder(&app, dir, server, token).await {
+                tracing::warn!("could not keep this account unlocked for the next start: {e}");
+            }
+        }
+        _ => {}
     }
     device_linked.map(|_| ())
 }
 
-async fn link_device(app: &App, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
-    let secret = app
-        .data_dir()
-        .and_then(|d| crate::persist::load_or_create_node_key(d))
-        .ok_or("This install has no node key yet")?;
+#[derive(Debug, PartialEq)]
+enum AfterSignIn {
+    KeepOpen,
+    OpenFolder,
+    Restart,
+}
+
+fn after_sign_in(opening: account_folder::Opening, open: Option<&Path>) -> AfterSignIn {
+    match (opening, open) {
+        (account_folder::Opening::Ready(dir), Some(open)) if dir == open => AfterSignIn::KeepOpen,
+        (_, None) => AfterSignIn::OpenFolder,
+        _ => AfterSignIn::Restart,
+    }
+}
+
+async fn link_device(app: &App, dir: &Path, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|_| "Could not create this account's folder".to_string())?;
+    let secret = crate::persist::load_or_create_node_key(dir).ok_or("This install has no node key yet")?;
     let node_id = node_id_of(&SigningKey::from_bytes(&secret));
     let res = app
         .http
@@ -609,14 +876,132 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
             let _ = app.http.post(&doc.endpoints.sign_out).bearer_auth(token).send().await;
         }
     }
-    {
+    let switched = {
         let mut state = app.account.lock().unwrap();
-        state.clear_session();
-        state.device_linked = false;
+        let switched = state.sign_out_current();
         store(&app, &state);
+        *CHOSEN_SERVER.lock().unwrap() = state.server.clone();
+        switched
+    };
+    if let Some(dir) = app.data_dir() {
+        account_folder::forget_key(dir);
+    }
+    if switched || app.data_dir().is_some() {
+        restart_signed_in_as_someone_else(&handle);
     }
     let _ = handle.emit("account-changed", ());
     Ok(view(&app))
+}
+
+#[tauri::command]
+pub async fn account_switch(app: tauri::State<'_, App>, handle: AppHandle, server: String, id: String) -> Result<AccountView, String> {
+    let saved = app.account.lock().unwrap().others.iter().find(|o| o.is(&server, &id)).cloned();
+    let saved = saved.ok_or("That account is no longer on this computer.")?;
+    if !switchable(&saved.server) {
+        return Err(format!("This copy of Commy only uses {}.", host_of(&effective_server())));
+    }
+    if let Ok(doc) = discover(&app.http, &saved.server).await {
+        if let Ok(res) = app.http.get(&doc.endpoints.session).bearer_auth(&saved.token).send().await {
+            let valid = res.status().is_success() && res.json::<Option<SessionResponse>>().await.ok().flatten().is_some();
+            if !valid {
+                forget_other(&app, &saved);
+                return Err(format!("{} was signed out. Add it again to switch to it.", saved.user.email));
+            }
+        }
+    }
+    {
+        let mut state = app.account.lock().unwrap();
+        if !state.switch_to(&server, &id) {
+            return Err("That account is no longer on this computer.".into());
+        }
+        store(&app, &state);
+        *CHOSEN_SERVER.lock().unwrap() = state.server.clone();
+    }
+    restart_signed_in_as_someone_else(&handle)
+}
+
+#[tauri::command]
+pub async fn account_sign_out_other(app: tauri::State<'_, App>, server: String, id: String) -> Result<AccountView, String> {
+    let saved = app.account.lock().unwrap().others.iter().find(|o| o.is(&server, &id)).cloned();
+    let Some(saved) = saved else { return Ok(view(&app)) };
+    forget_other(&app, &saved);
+    if let Ok(doc) = discover(&app.http, &saved.server).await {
+        let _ = app.http.post(&doc.endpoints.sign_out).bearer_auth(&saved.token).send().await;
+    }
+    Ok(view(&app))
+}
+
+fn forget_other(app: &App, saved: &SavedAccount) {
+    {
+        let mut state = app.account.lock().unwrap();
+        state.others.retain(|o| !o.is(&saved.server, &saved.user.id));
+        store(app, &state);
+    }
+    if let Some(base) = app.base_dir() {
+        account_folder::forget_key(&account_folder::folder(base, &saved.server, &saved.user.id));
+    }
+}
+
+#[tauri::command]
+pub async fn account_open_folder(app: tauri::State<'_, App>, handle: AppHandle) -> Result<AccountView, String> {
+    if app.data_dir().is_some() {
+        return Ok(view(&app));
+    }
+    let (base, server, account) = signed_in_folder(&app).ok_or("Sign in first")?;
+    if account_folder::choose(&base, &server, &account) == account_folder::Opening::AskAboutUnclaimed {
+        let unclaimed_node =
+            account_folder::unclaimed_node_secret(&base).map(|secret| node_id_of(&SigningKey::from_bytes(&secret)));
+        let session = crate::entry_list::session(&app).ok_or("Sign in first")?;
+        let linked = crate::entry_list::account_devices(&app, &session)
+            .await
+            .map_err(|e| format!("Could not check this computer with your account server. {e}"))?;
+        if may_claim(unclaimed_node.as_deref(), &linked) {
+            *MAY_CLAIM.lock().unwrap() = Some(account);
+            return Ok(view(&app));
+        }
+    }
+    open_folder(&app, &handle, &base, &server, &account, false).await
+}
+
+#[tauri::command]
+pub async fn account_claim_profile(app: tauri::State<'_, App>, handle: AppHandle, keep: bool) -> Result<AccountView, String> {
+    if app.data_dir().is_some() {
+        return Ok(view(&app));
+    }
+    let (base, server, account) = signed_in_folder(&app).ok_or("Sign in first")?;
+    if keep && !claim_allowed(&account) {
+        return Err("That profile was never used with this account on this computer, so it stays put.".into());
+    }
+    open_folder(&app, &handle, &base, &server, &account, keep).await
+}
+
+async fn open_folder(
+    app: &App,
+    handle: &AppHandle,
+    base: &Path,
+    server: &str,
+    account: &str,
+    keep: bool,
+) -> Result<AccountView, String> {
+    let dir = account_folder::claim(base, server, account, keep)
+        .map_err(|e| format!("Could not set up this account's folder: {e}"))?;
+    *MAY_CLAIM.lock().unwrap() = None;
+    let token = app.account.lock().unwrap().token.clone().ok_or("Sign in first")?;
+    if let Some(key) = unlock_folder(app, &dir, server, &token).await? {
+        use_folder_key(&dir, &key);
+    }
+    let linked = match discover(&app.http, server).await {
+        Ok(doc) => link_device(app, &dir, server, &doc, &token).await.is_ok(),
+        Err(_) => false,
+    };
+    {
+        let mut state = app.account.lock().unwrap();
+        state.device_linked = linked;
+        store(app, &state);
+    }
+    crate::open_account(handle, dir);
+    let _ = handle.emit("account-changed", ());
+    Ok(view(app))
 }
 
 pub async fn verify_saved_session(handle: AppHandle) {
@@ -651,6 +1036,9 @@ pub async fn verify_saved_session(handle: AppHandle) {
         let mut state = app.account.lock().unwrap();
         state.clear_session();
         store(&app, &state);
+    }
+    if let Some(dir) = app.data_dir() {
+        account_folder::forget_key(dir);
     }
     let _ = handle.emit("account-changed", ());
 }
@@ -735,7 +1123,7 @@ mod tests {
         };
         assert!(state.server_offers("gifs") && state.server_offers("games"));
         assert!(!state.server_offers("media"));
-        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false, stickers: true });
+        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false, stickers: true, folder_lock: false });
         assert!(state.server_offers("gifs"));
         assert!(state.server_offers("stickers"));
         assert!(state.server_offers("emojis"));
@@ -757,7 +1145,115 @@ mod tests {
         let mut with = base;
         with["features"] = serde_json::json!({ "gifs": true, "games": false });
         let new: Discovery = serde_json::from_value(with).unwrap();
-        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false }));
+        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false, folder_lock: false }));
+    }
+
+    #[test]
+    fn signing_in_as_someone_else_never_keeps_the_open_account() {
+        use account_folder::Opening;
+        let a = PathBuf::from("accounts").join("a");
+        let b = PathBuf::from("accounts").join("b");
+        assert_eq!(after_sign_in(Opening::Ready(a.clone()), Some(&a)), AfterSignIn::KeepOpen);
+        assert_eq!(after_sign_in(Opening::Ready(b.clone()), Some(&a)), AfterSignIn::Restart);
+        assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, Some(&a)), AfterSignIn::Restart);
+        assert_eq!(after_sign_in(Opening::Ready(b), None), AfterSignIn::OpenFolder);
+        assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, None), AfterSignIn::OpenFolder);
+    }
+
+    fn signed_in_as(id: &str) -> AccountState {
+        let mut state = AccountState::default();
+        state.become_account(saved(id));
+        state
+    }
+
+    fn saved(id: &str) -> SavedAccount {
+        SavedAccount {
+            server: effective_server(),
+            token: format!("token-{id}"),
+            user: AccountUser { id: id.into(), name: id.into(), email: format!("{id}@example.test") },
+            features: None,
+        }
+    }
+
+    fn others(state: &AccountState) -> Vec<&str> {
+        state.others.iter().map(|o| o.user.id.as_str()).collect()
+    }
+
+    #[test]
+    fn adding_an_account_keeps_the_one_you_were_using() {
+        let mut state = signed_in_as("main");
+        state.keep_previous(&effective_server(), "second");
+        state.become_account(saved("second"));
+        assert_eq!(state.user.as_ref().unwrap().id, "second");
+        assert_eq!(others(&state), ["main"]);
+        assert_eq!(state.others[0].token, "token-main");
+
+        state.keep_previous(&effective_server(), "second");
+        assert_eq!(others(&state), ["main"], "signing in again as the same account adds nothing");
+        state.keep_previous(&effective_server(), "main");
+        assert_eq!(others(&state), ["second"], "an account is never both open and in the list");
+    }
+
+    #[test]
+    fn switching_swaps_the_open_account_with_the_chosen_one() {
+        let mut state = signed_in_as("main");
+        state.others = vec![saved("second"), saved("third")];
+        assert!(state.switch_to(&effective_server(), "third"));
+        assert_eq!(state.user.as_ref().unwrap().id, "third");
+        assert_eq!(state.token.as_deref(), Some("token-third"));
+        assert!(!state.device_linked);
+        assert_eq!(others(&state), ["main", "second"]);
+        assert!(!state.switch_to(&effective_server(), "nobody"));
+        assert!(!state.switch_to("https://other.example", "main"), "an account is matched by server and id");
+    }
+
+    #[test]
+    fn signing_out_opens_the_most_recent_other_account_or_the_sign_in_screen() {
+        let mut state = signed_in_as("main");
+        state.others = vec![saved("second")];
+        assert!(state.sign_out_current());
+        assert_eq!(state.user.as_ref().unwrap().id, "second");
+        assert!(state.others.is_empty(), "the signed-out account is not kept");
+        assert!(!state.sign_out_current());
+        assert!(!is_signed_in(&state));
+    }
+
+    #[test]
+    fn this_computer_keeps_a_limited_number_of_accounts() {
+        let mut state = signed_in_as("a0");
+        for n in 1..=MAX_ACCOUNTS + 2 {
+            let id = format!("a{n}");
+            state.keep_previous(&effective_server(), &id);
+            state.become_account(saved(&id));
+        }
+        assert_eq!(state.others.len(), MAX_ACCOUNTS - 1);
+        assert_eq!(state.others[0].user.id, format!("a{}", MAX_ACCOUNTS + 1));
+    }
+
+    #[test]
+    fn saved_accounts_from_before_the_switcher_still_load() {
+        let old = serde_json::json!({ "token": "t", "signed_in_server": "https://commy.chat", "user": { "id": "u", "name": "n", "email": "e" } });
+        let state: AccountState = serde_json::from_value(old).unwrap();
+        assert!(state.others.is_empty());
+    }
+
+    #[test]
+    fn a_locked_folder_needs_the_server_unless_this_session_already_unlocked_it() {
+        let key = [3u8; 32];
+        assert_eq!(unlock_step(Some(key), true, true), Unlock::Key(key));
+        assert_eq!(unlock_step(None, true, false), Unlock::AskServer, "a locked folder never falls back to the device key");
+        assert_eq!(unlock_step(None, false, true), Unlock::AskServer);
+        assert_eq!(unlock_step(None, false, false), Unlock::DeviceKeyOnly);
+    }
+
+    #[test]
+    fn only_an_account_already_linked_to_the_old_profile_may_take_it() {
+        let linked = vec!["AB12".to_string(), "cd34".to_string()];
+        assert!(may_claim(Some("ab12"), &linked));
+        assert!(may_claim(Some("CD34"), &linked));
+        assert!(!may_claim(Some("ef56"), &linked));
+        assert!(!may_claim(None, &linked));
+        assert!(!may_claim(Some("ab12"), &[]));
     }
 
     #[test]

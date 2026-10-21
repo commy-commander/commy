@@ -433,8 +433,8 @@
   <div class="modal-backdrop hidden" id="modal-backdrop">
     <div class="modal modal-signin hidden" id="modal-signin">
       <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
-      <h2 data-i18n="signin.title">Sign in to Commy</h2>
-      <p data-i18n="signin.intro">A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
+      <h2 id="signin-title" data-i18n="signin.title">Sign in to Commy</h2>
+      <p id="signin-intro" data-i18n="signin.intro">A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
       <div class="signin-start" id="signin-start">
         <button class="btn-primary signin-go" id="signin-go" data-i18n="signin.go">Sign in with your browser</button>
         <div class="signin-note" data-i18n="signin.note">Your browser opens to sign in or create an account. Come back here once you approve.</div>
@@ -449,6 +449,7 @@
         </div>
       </div>
       <div class="signin-error hidden" id="signin-error"></div>
+      <button class="btn-link signin-back hidden" id="signin-back" data-i18n="signin.back">Back to your accounts</button>
       <label class="signin-server"><span data-i18n="signin.server">Account server</span>
         <select id="signin-server-select" class="compact-select">
           <option value="default" data-i18n="signin.server.default">commy.chat (free Commy service)</option>
@@ -460,6 +461,30 @@
         <button class="btn-secondary btn-small" id="signin-server-save" data-i18n="signin.server.use">Use</button>
       </div>
       <div class="signin-server-note" id="signin-server-note" data-i18n="signin.server.note">Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.</div>
+    </div>
+
+    <div class="modal modal-signin hidden" id="modal-claim">
+      <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
+      <h2 id="claim-title" data-i18n="claim.title">Is this your profile?</h2>
+      <p id="claim-intro"></p>
+      <div class="claim-profile" id="claim-profile"></div>
+      <div class="claim-actions" id="claim-choices">
+        <button class="btn-primary" id="claim-keep" data-i18n="claim.keep">Yes, it's mine</button>
+        <button class="btn-secondary" id="claim-fresh" data-i18n="claim.fresh">No, start fresh</button>
+      </div>
+      <div class="claim-actions hidden" id="claim-retry-row">
+        <button class="btn-primary" id="claim-retry" data-i18n="claim.retry">Try again</button>
+      </div>
+      <div class="signin-note" id="claim-note" data-i18n="claim.note">Starting fresh leaves that profile on this computer for the account it belongs to.</div>
+      <div class="signin-error hidden" id="claim-error"></div>
+    </div>
+
+    <div class="modal modal-accounts hidden" id="modal-accounts">
+      <h2 data-i18n="accounts.title">Accounts on this computer</h2>
+      <p data-i18n="accounts.intro">Switching restarts Commy into the other account. Only the account you are using is online.</p>
+      <div class="account-list" id="account-list" role="list"></div>
+      <button class="account-add" id="account-add"><span class="account-add-icon" id="account-add-icon"></span><span data-i18n="accounts.add">Add account</span></button>
+      <div class="signin-note account-note" id="account-note" aria-live="polite"></div>
     </div>
 
     <div class="modal hidden" id="modal-username">
@@ -2463,6 +2488,7 @@
       </div>
       <div class="pp-divider"></div>
       <button class="pp-link" id="pp-edit-profile">Edit Profile</button>
+      <button class="pp-link hidden" id="pp-switch-account" data-i18n="accounts.switch">Switch Account</button>
     </div>
   </div>
 
@@ -2669,6 +2695,7 @@
   <script src="scripts/camera-pipeline.js"></script>
   <script src="scripts/avatar-rig.js"></script>
   <script src="scripts/camera-avatar.js"></script>
+  <script src="scripts/account-ui.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
   <script src="scripts/entry-list.js"></script>
