@@ -60,6 +60,49 @@ pub(crate) fn load_key(dir: &Path, server: &str, account: &str) -> Option<SealKe
     SealKey::from_text(&stored.key).ok()
 }
 
+fn stray_key_path(base: &Path, server: &str, account: &str) -> PathBuf {
+    base.join(format!("entry-key-{}.json", crate::account_folder::folder_name(server, account)))
+}
+
+fn set_aside_foreign_key(base: &Path, dir: &Path, server: &str, account: &str) {
+    let Some(stored) = read::<StoredKey>(&dir.join(KEY_FILE)) else { return };
+    if stored.server == server && stored.account == account {
+        return;
+    }
+    let to = stray_key_path(base, &stored.server, &stored.account);
+    if !to.exists() {
+        if let Err(e) = crate::persist::write_secret_json(&to, &stored) {
+            tracing::warn!("could not set aside another account's entry key: {e}");
+            return;
+        }
+    }
+    let _ = std::fs::remove_file(dir.join(KEY_FILE));
+}
+
+fn salvaged_key(base: &Path, server: &str, account: &str, shared: Option<&str>) -> Option<SealKey> {
+    let mut places = vec![stray_key_path(base, server, account)];
+    places.extend(crate::account_folder::folders(base).into_iter().map(|folder| folder.join(KEY_FILE)));
+    places
+        .iter()
+        .filter_map(|path| read::<StoredKey>(path))
+        .filter(|stored| stored.server == server && stored.account == account)
+        .filter_map(|stored| SealKey::from_text(&stored.key).ok())
+        .find(|key| shared.is_none_or(|data| EntryList::open(key, data).is_ok()))
+}
+
+fn own_key(base: Option<&Path>, dir: &Path, s: &Session, shared: Option<&str>) -> Option<SealKey> {
+    if let Some(base) = base {
+        set_aside_foreign_key(base, dir, &s.server, &s.account);
+    }
+    if let Some(key) = load_key(dir, &s.server, &s.account) {
+        return Some(key);
+    }
+    let key = salvaged_key(base?, &s.server, &s.account, shared)?;
+    tracing::info!("found this account's entry key from before accounts had their own folders");
+    save_key(dir, &s.server, &s.account, &key);
+    Some(key)
+}
+
 fn save_key(dir: &Path, server: &str, account: &str, key: &SealKey) {
     let stored = StoredKey { server: server.into(), account: account.into(), key: key.to_text() };
     if let Err(e) = crate::persist::write_secret_json(&dir.join(KEY_FILE), &stored) {
@@ -361,7 +404,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
                 return Err(e);
             }
         };
-        let key = load_key(&dir, &s.server, &s.account);
+        let key = own_key(app.base_dir().map(|b| b.as_path()), &dir, &s, item.data.as_deref());
         let local = local_list(&app, &dir);
 
         let (key, shared) = match (key, item.data.as_deref()) {
@@ -1123,5 +1166,68 @@ mod tests {
         assert_eq!(load_key(&dir, "https://commy.chat", "acct-2"), None);
         assert_eq!(load_key(&dir, "https://other.example", "acct-1"), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn session_for(account: &str) -> Session {
+        Session { server: "https://commy.chat".into(), token: "t".into(), account: account.into() }
+    }
+
+    fn scratch_base(name: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("commy-salvage-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    fn open_folder(base: &Path, account: &str) -> PathBuf {
+        let dir = crate::account_folder::folder(base, "https://commy.chat", account);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_key_left_in_the_old_profile_reaches_the_account_it_names() {
+        let base = scratch_base("unclaimed");
+        let unclaimed = base.join("accounts").join("unclaimed");
+        std::fs::create_dir_all(&unclaimed).unwrap();
+        let key = SealKey::generate();
+        save_key(&unclaimed, "https://commy.chat", "acct-1", &key);
+
+        let other = open_folder(&base, "acct-2");
+        assert_eq!(own_key(Some(&base), &other, &session_for("acct-2"), None), None);
+
+        let dir = open_folder(&base, "acct-1");
+        let sealed = EntryList::default().seal(&key);
+        assert_eq!(own_key(Some(&base), &dir, &session_for("acct-1"), Some(&sealed)), Some(key.clone()));
+        assert_eq!(load_key(&dir, "https://commy.chat", "acct-1"), Some(key));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_found_key_must_open_the_accounts_server_list() {
+        let base = scratch_base("check");
+        let unclaimed = base.join("accounts").join("unclaimed");
+        std::fs::create_dir_all(&unclaimed).unwrap();
+        save_key(&unclaimed, "https://commy.chat", "acct-1", &SealKey::generate());
+        let dir = open_folder(&base, "acct-1");
+        let sealed = EntryList::default().seal(&SealKey::generate());
+        assert_eq!(own_key(Some(&base), &dir, &session_for("acct-1"), Some(&sealed)), None);
+        assert_eq!(load_key(&dir, "https://commy.chat", "acct-1"), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn another_accounts_key_is_set_aside_for_it_instead_of_overwritten() {
+        let base = scratch_base("foreign");
+        let key = SealKey::generate();
+        let claimed = open_folder(&base, "acct-2");
+        save_key(&claimed, "https://commy.chat", "acct-1", &key);
+        assert_eq!(own_key(Some(&base), &claimed, &session_for("acct-2"), None), None);
+        assert!(!claimed.join(KEY_FILE).exists());
+        save_key(&claimed, "https://commy.chat", "acct-2", &SealKey::generate());
+
+        let dir = open_folder(&base, "acct-1");
+        assert_eq!(own_key(Some(&base), &dir, &session_for("acct-1"), None), Some(key));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
