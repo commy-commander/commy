@@ -989,8 +989,19 @@
       </div>
     </div>
 
-    <div class="modal hidden" id="modal-timeout">
+    <div class="modal modal-moderate hidden" id="modal-moderate">
+      <h2 id="moderate-title">Kick member</h2>
+      <div class="mod-who" id="moderate-who"></div>
+      <p id="moderate-text"></p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="moderate-cancel">Cancel</button>
+        <button class="btn-danger" id="moderate-go">Kick</button>
+      </div>
+    </div>
+
+    <div class="modal modal-moderate hidden" id="modal-timeout">
       <h2 id="timeout-title">Time out member</h2>
+      <div class="mod-who" id="timeout-who"></div>
       <p>They can still read channels and listen in voice, but cannot send messages, react, edit or talk until it ends.</p>
       <div class="timeout-choices" id="timeout-choices" role="radiogroup" aria-label="How long"></div>
       <label class="field-label">Custom length in minutes

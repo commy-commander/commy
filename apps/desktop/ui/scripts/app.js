@@ -9761,32 +9761,110 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
       }
       item("Disconnect from Voice", () => moveVoiceMember(member, null), "danger");
     }
-    if (server.can_kick) {
-      item(`Kick ${member.name}`, async () => {
-        if (!confirm(`Kick ${member.name} from ${server.name}?`)) return;
-        try {
-          await invoke("kick_member", { serverId: server.id, userId: member.id });
-          await refreshCurrentServer();
-          toast(`Kicked ${member.name}`);
-        } catch (e) {
-          toast(String(e));
-        }
-      }, "danger");
-    }
-    if (server.can_ban) {
-      item(`Ban ${member.name}`, async () => {
-        if (!confirm(`Ban ${member.name} from ${server.name}? They are removed and cannot rejoin until unbanned.`)) return;
-        try {
-          await invoke("ban_member", { serverId: server.id, userId: member.id });
-          await refreshCurrentServer();
-          toast(`Banned ${member.name}`);
-        } catch (e) {
-          toast(String(e));
-        }
-      }, "danger");
-    }
+    if (server.can_kick) item(`Kick ${member.name}`, () => confirmKick(member), "danger");
+    if (server.can_ban) item(`Ban ${member.name}`, () => confirmBan(member), "danger");
   }
   placeMenuAt(menu, x, y);
+}
+
+let moderateRun = null;
+
+function modWho(target, member) {
+  target.replaceChildren(makeAvatar(member.id, member.name, "avatar avatar-sm"), el("span", null, member.name));
+}
+
+function askModeration({ title, member, text, label, run }) {
+  closeFloating();
+  $("moderate-title").textContent = title;
+  modWho($("moderate-who"), member);
+  $("moderate-text").textContent = text;
+  $("moderate-go").textContent = label;
+  moderateRun = run;
+  showModal("modal-moderate");
+}
+
+function confirmKick(member) {
+  const server = state.currentServer;
+  if (!server) return;
+  askModeration({
+    title: `Kick ${member.name}`,
+    member,
+    text: `They are removed from ${server.name} and can rejoin with a new invite.`,
+    label: "Kick",
+    run: async () => {
+      await invoke("kick_member", { serverId: server.id, userId: member.id });
+      await refreshCurrentServer();
+      toast(`Kicked ${member.name}`);
+    },
+  });
+}
+
+function confirmBan(member) {
+  const server = state.currentServer;
+  if (!server) return;
+  askModeration({
+    title: `Ban ${member.name}`,
+    member,
+    text: `They are removed from ${server.name} and cannot rejoin until you unban them.`,
+    label: "Ban",
+    run: async () => {
+      await invoke("ban_member", { serverId: server.id, userId: member.id });
+      await refreshCurrentServer();
+      toast(`Banned ${member.name}`);
+    },
+  });
+}
+
+function wireModerationModal() {
+  $("moderate-cancel").onclick = () => {
+    hideModals();
+    moderateRun = null;
+  };
+  $("moderate-go").onclick = async () => {
+    const run = moderateRun;
+    moderateRun = null;
+    hideModals();
+    if (!run) return;
+    try {
+      await run();
+      if (!$("server-settings").classList.contains("hidden")) openServerSettings();
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+}
+
+function openMemberRowMenu(member, anchor) {
+  const server = state.currentServer;
+  if (!server) return;
+  closeFloating();
+  const menu = $("member-menu");
+  menu.replaceChildren(el("div", "ctx-title", member.name));
+  const { item, sep } = contextMenuBuilder(menu);
+  const isSelf = state.user && member.id === state.user.id;
+  const isOwner = member.id === server.owner;
+  let any = false;
+  if (canTimeOut(server, member, state.user && state.user.id)) {
+    const active = timeoutActive(member.timeout_until);
+    item(active ? "Remove timeout" : "Time out...", async () => {
+      if (active) {
+        await clearMemberTimeout(member);
+        openServerSettings();
+      } else {
+        openTimeoutPicker(member);
+      }
+    });
+    any = true;
+  }
+  if (!isSelf && !isOwner && (server.can_kick || server.can_ban)) {
+    if (any) sep();
+    if (server.can_kick) item("Kick...", () => confirmKick(member), "danger");
+    if (server.can_ban) item("Ban...", () => confirmBan(member), "danger");
+  }
+  const rect = anchor.getBoundingClientRect();
+  placeMenuAt(menu, rect.left, rect.bottom + 4);
+  const width = menu.getBoundingClientRect().width;
+  menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
 }
 
 async function setStageSpeaker(channel, member, action) {
@@ -9899,6 +9977,7 @@ function openTimeoutPicker(member) {
   closeFloating();
   timeoutTarget = { serverId: server.id, member, seconds: TIMEOUT_CHOICES[1].seconds };
   $("timeout-title").textContent = `Time out ${member.name}`;
+  modWho($("timeout-who"), member);
   $("timeout-custom").value = "";
   renderTimeoutChoices();
   showModal("modal-timeout");
@@ -9938,6 +10017,7 @@ async function confirmTimeout() {
     await invoke("time_out_member", { serverId, userId: member.id, seconds });
     await refreshCurrentServer();
     toast(timeoutSummary(member.name, seconds));
+    if (!$("server-settings").classList.contains("hidden")) openServerSettings();
   } catch (e) {
     toast(String(e));
   }
@@ -17492,32 +17572,19 @@ function renderMemberSettings(server) {
     top.appendChild(who);
     const isSelf = state.user && member.id === state.user.id;
     const isOwner = member.id === server.owner;
-    if (canTimeOut(server, member, state.user && state.user.id)) {
-      const active = timeoutActive(member.timeout_until);
-      const timeOut = el("button", (active ? "btn-secondary" : "btn-danger") + " btn-small", timeoutActionLabel(member));
-      timeOut.onclick = async () => {
-        if (active) {
-          await clearMemberTimeout(member);
-          openServerSettings();
-        } else {
-          openTimeoutPicker(member);
-        }
+    if (timeoutActive(member.timeout_until)) who.appendChild(timeoutBadge(member.timeout_until));
+    const moderable = canTimeOut(server, member, state.user && state.user.id) || (!isSelf && !isOwner && (server.can_kick || server.can_ban));
+    if (moderable) {
+      const more = el("button", "icon-btn row-more");
+      more.title = `Actions for ${member.name}`;
+      more.setAttribute("aria-label", more.title);
+      more.setAttribute("aria-haspopup", "menu");
+      more.appendChild(svgIcon("more", 18));
+      more.onclick = e => {
+        e.stopPropagation();
+        openMemberRowMenu(member, more);
       };
-      top.appendChild(timeOut);
-    }
-    if (server.can_kick && !isSelf && !isOwner) {
-      const kick = el("button", "btn-danger btn-small", "Kick");
-      kick.onclick = async () => {
-        if (!confirm(`Kick ${member.name} from the server?`)) return;
-        try {
-          await invoke("kick_member", { serverId: server.id, userId: member.id });
-          await refreshCurrentServer();
-          openServerSettings();
-        } catch (e) {
-          toast(String(e));
-        }
-      };
-      top.appendChild(kick);
+      top.appendChild(more);
     }
     row.appendChild(top);
 
@@ -17827,6 +17894,7 @@ async function boot() {
   wireEvents();
   wireSaved();
   wireTimeoutModal();
+  wireModerationModal();
   wireActivityPing();
   wireBots();
   if (IS_TAURI) {

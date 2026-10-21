@@ -1421,6 +1421,12 @@ input[type="range"]::-webkit-slider-thumb {
 .role-chip:hover { background: var(--bg-hover); }
 
 .manage-member-row { flex-direction: column; align-items: stretch; gap: 8px; }
+.row-more { width: 32px; height: 32px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--text-muted); }
+.row-more:hover { background: var(--bg-hover); color: var(--header-primary); }
+.manage-member-row .manage-row-label .timeout-badge { margin-left: 2px; }
+.mod-who { display: flex; align-items: center; gap: 10px; background: var(--bg-dark); border-radius: var(--radius); padding: 10px 12px; font-size: 14px; font-weight: 600; color: var(--header-primary); margin: 4px 0 12px; }
+.modal-moderate p { margin: 0 0 14px; color: var(--text-muted); line-height: 1.45; }
+.modal-moderate .modal-actions .btn-danger { min-width: 96px; }
 .manage-member-row .row-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .role-chips { display: flex; flex-wrap: wrap; gap: 4px; padding-left: 32px; }
 .role-chips .role-chip { margin-left: 0; padding: 3px 10px; font-size: 12px; font-weight: 500; }
