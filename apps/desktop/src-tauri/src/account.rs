@@ -317,7 +317,7 @@ fn restart_signed_in_as_someone_else(handle: &AppHandle) -> ! {
     if let Some(base) = handle.state::<App>().base_dir() {
         account_folder::show_window_on_next_start(base);
     }
-    handle.restart()
+    crate::relaunch::restart(handle)
 }
 
 pub fn require_account(app: &App) -> Result<(), String> {
@@ -944,6 +944,29 @@ async fn link_device(app: &App, dir: &Path, server: &str, doc: &Discovery, token
     }
 }
 
+pub async fn ensure_linked(app: &App) -> bool {
+    let (token, server, linked) = {
+        let state = app.account.lock().unwrap();
+        (state.token.clone(), state.signed_in_server.clone(), state.device_linked)
+    };
+    if linked {
+        return true;
+    }
+    let (Some(token), Some(server), Some(dir)) = (token, server, app.data_dir().cloned()) else { return false };
+    let Ok(doc) = discover(&app.http, &server).await else { return false };
+    if let Err(e) = link_device(app, &dir, &server, &doc, &token).await {
+        tracing::warn!("could not link this device to the account yet: {e}");
+        return false;
+    }
+    let mut state = app.account.lock().unwrap();
+    if state.signed_in_server.as_deref() != Some(server.as_str()) || state.token.as_deref() != Some(token.as_str()) {
+        return false;
+    }
+    state.device_linked = true;
+    store(app, &state);
+    true
+}
+
 #[tauri::command]
 pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> Result<AccountView, String> {
     let (token, server) = {
@@ -1070,7 +1093,13 @@ async fn open_folder(
         use_folder_key(&dir, &key);
     }
     let linked = match discover(&app.http, server).await {
-        Ok(doc) => link_device(app, &dir, server, &doc, &token).await.is_ok(),
+        Ok(doc) => match link_device(app, &dir, server, &doc, &token).await {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("could not link this device to the account yet: {e}");
+                false
+            }
+        },
         Err(_) => false,
     };
     {

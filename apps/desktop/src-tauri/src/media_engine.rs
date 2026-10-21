@@ -46,6 +46,7 @@ pub struct VoiceSession {
     on_speaking: SpeakingSink,
     mic_tx: mpsc::UnboundedSender<Vec<i16>>,
     _seq_task: JoinHandle<()>,
+    _keep_running: crate::call_service::CallKeeper,
 }
 
 #[derive(Debug, Clone)]
@@ -190,6 +191,7 @@ impl VoiceSession {
             on_speaking,
             mic_tx,
             _seq_task: seq_task,
+            _keep_running: crate::call_service::CallKeeper::hold(),
         }
     }
 
