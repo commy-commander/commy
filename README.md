@@ -234,7 +234,7 @@ npm ci
 # Android (needs Android Studio's SDK and NDK, NDK_HOME set)
 npx tauri android init
 npx tauri icon ../mobile/app-icon.png
-node ../mobile/android-manifest.mjs
+node ../mobile/android-project.mjs
 npx tauri android dev
 
 # iOS (macOS with Xcode)

@@ -4,6 +4,7 @@ mod app_icon;
 mod browser;
 mod activity;
 mod afk;
+mod call_service;
 mod calls;
 mod entry_list;
 mod catchup;
@@ -8252,6 +8253,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(call_service::init());
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())

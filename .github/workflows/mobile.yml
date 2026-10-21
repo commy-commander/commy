@@ -65,7 +65,7 @@ jobs:
           npm ci
           npx tauri android init --ci
           npx tauri icon ../mobile/app-icon.png
-          node ../mobile/android-manifest.mjs
+          node ../mobile/android-project.mjs
 
       - name: Build
         working-directory: apps/desktop/src-tauri
