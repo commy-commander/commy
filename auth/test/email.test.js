@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { loadConfig } from "../src/config.js";
 
@@ -21,7 +22,7 @@ beforeEach(() => {
   });
   outbox = [];
   const options = buildAuthOptions(config, { pool: null, send: async (mail) => outbox.push(mail) });
-  options.database = memoryAdapter({
+  options.database = sealedAtRest(memoryAdapter({
     user: [],
     session: [],
     account: [],
@@ -31,7 +32,7 @@ beforeEach(() => {
     deviceRequest: [],
     invite: [], inviteBackground: [],
     doorbellRing: [],
-  });
+  }), options.secret);
   options.rateLimit = { enabled: false };
   auth = betterAuth(options);
 });

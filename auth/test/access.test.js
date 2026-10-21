@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { sealedAtRest } from "../src/at-rest.js";
 import { ACCESS_COOKIE, accessToken, hasAccess } from "../src/access.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { featureSummary, loadConfig } from "../src/config.js";
@@ -17,7 +18,7 @@ function makeAuth(env = {}) {
   });
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
   const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [] };
-  options.database = memoryAdapter(db);
+  options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   return { auth: betterAuth(options), db, config };
 }

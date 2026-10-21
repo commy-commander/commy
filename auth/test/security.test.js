@@ -3,19 +3,22 @@ import { beforeEach, test } from "node:test";
 import { createHmac } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { createSealer, sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { loadConfig } from "../src/config.js";
 import { noticeWhenALoginIsLinked, safeReturnPath } from "../src/security.js";
 
 const ORIGIN = "http://localhost:3001";
 const PASSWORD = "correct horse battery";
+const SECRET = "test-secret-".repeat(4);
+const storedEmail = (row) => createSealer(SECRET).open("user", "email", row.email);
 let auth;
 let db;
 let outbox;
 
 beforeEach(() => {
   const config = loadConfig({
-    BETTER_AUTH_SECRET: "test-secret-".repeat(4),
+    BETTER_AUTH_SECRET: SECRET,
     DATABASE_URL: "postgres://unused",
     BETTER_AUTH_URL: ORIGIN,
     SMTP_HOST: "smtp.invalid",
@@ -37,7 +40,7 @@ beforeEach(() => {
     twoFactor: [],
     passkey: [],
   };
-  options.database = memoryAdapter(db);
+  options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   auth = betterAuth(options);
 });
@@ -130,7 +133,7 @@ test("the last way to sign in cannot be unlinked", async () => {
 
 test("unlinking a social login keeps the password and sends a notice", async () => {
   const cookie = await verifiedAccount("both@example.test");
-  const user = db.user.find((u) => u.email === "both@example.test");
+  const user = db.user.find((u) => storedEmail(u) === "both@example.test");
   db.account.push({ id: "acc-google", userId: user.id, providerId: "google", accountId: "g-1", createdAt: new Date(), updatedAt: new Date() });
   const google = (await call("GET", "/list-accounts", { cookie })).json.find((a) => a.providerId === "google");
   const r = await call("POST", "/unlink-account", { cookie, body: { accountId: google.id } });
@@ -180,17 +183,17 @@ test("changing email is confirmed from the old inbox, then the new one", async (
   assert.equal(outbox.length, 1);
   assert.equal(outbox[0].to, "old@example.test");
   assert.match(outbox[0].body, /new@example\.test/);
-  assert.equal(db.user[0].email, "old@example.test");
+  assert.equal(storedEmail(db.user[0]), "old@example.test");
 
   const confirmed = await call("GET", outbox[0].url, { cookie });
   assert.equal(confirmed.status, 302);
   assert.equal(outbox.length, 2);
   assert.equal(outbox[1].to, "new@example.test");
-  assert.equal(db.user[0].email, "old@example.test", "nothing changes until the new address answers");
+  assert.equal(storedEmail(db.user[0]), "old@example.test", "nothing changes until the new address answers");
 
   const verified = await call("GET", outbox[1].url, { cookie });
   assert.equal(verified.status, 302);
-  assert.equal(db.user[0].email, "new@example.test");
+  assert.equal(storedEmail(db.user[0]), "new@example.test");
   assert.equal(db.user[0].emailVerified, true);
 });
 

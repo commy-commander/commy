@@ -2,8 +2,11 @@ import { betterAuth } from "better-auth";
 import { passkey } from "@better-auth/passkey";
 import { bearer, captcha, deviceAuthorization, magicLink, twoFactor } from "better-auth/plugins";
 import { APIError } from "better-auth/api";
+import { kyselyAdapter } from "@better-auth/kysely-adapter";
+import { Kysely, PostgresDialect } from "kysely";
 import pg from "pg";
 import { hasAccess } from "./access.js";
+import { sealedAtRest } from "./at-rest.js";
 import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
 import { commyDirectory } from "./directory.js";
@@ -26,6 +29,10 @@ export function socialProviders(config) {
     if (client) providers[name] = { clientId: client.clientId, clientSecret: client.clientSecret, disableSignUp: !config.allowSignup };
   }
   return providers;
+}
+
+export function postgresDatabase(pool) {
+  return kyselyAdapter(new Kysely({ dialect: new PostgresDialect({ pool }) }), { type: "postgres", transaction: true });
 }
 
 export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
@@ -96,7 +103,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     basePath: config.basePath,
     secret: config.secret,
     trustedOrigins: config.trustedOrigins,
-    database: pool,
+    database: pool ? sealedAtRest(postgresDatabase(pool), config.secret) : undefined,
     emailAndPassword: {
       enabled: true,
       disableSignUp: !config.allowSignup,
@@ -128,6 +135,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
           url,
         }),
     },
+    verification: { storeIdentifier: "hashed" },
     socialProviders: socialProviders(config),
     user: {
       changeEmail: {
