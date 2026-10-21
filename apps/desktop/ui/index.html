@@ -1954,19 +1954,25 @@
   <div class="settings-layer hidden" id="server-settings" role="dialog" aria-label="Server Settings">
     <nav class="settings-nav">
       <div class="settings-nav-inner">
-        <div class="settings-nav-group" id="server-settings-title">Server</div>
+        <div class="settings-nav-title" id="server-settings-title">Server</div>
+        <div class="settings-nav-group">General</div>
         <button class="settings-tab" data-tab="overview" id="tab-overview">Overview</button>
         <button class="settings-tab" data-tab="channels" id="tab-channels">Channels</button>
+        <div class="settings-nav-group">People</div>
+        <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
         <button class="settings-tab" data-tab="roles" id="tab-roles">Roles</button>
-        <button class="settings-tab" data-tab="rules" id="tab-rules">Rules</button>
+        <button class="settings-tab" data-tab="invites" id="tab-invites">Invites</button>
+        <div class="settings-nav-group">Community</div>
+        <button class="settings-tab" data-tab="discovery" id="tab-discovery">Discovery</button>
         <button class="settings-tab" data-tab="onboarding" id="tab-onboarding">Onboarding</button>
-        <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
+        <button class="settings-tab" data-tab="rules" id="tab-rules">Rules</button>
+        <div class="settings-nav-group">Expressions</div>
         <button class="settings-tab" data-tab="emoji" id="tab-emoji">Emoji</button>
         <button class="settings-tab" data-tab="stickers" id="tab-stickers">Stickers</button>
         <button class="settings-tab" data-tab="emoticons" id="tab-emoticons">Emoticons</button>
         <button class="settings-tab" data-tab="soundboard" id="tab-soundboard">Soundboard</button>
-        <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
-        <button class="settings-tab" data-tab="invites" id="tab-invites">Invites</button>
+        <div class="settings-nav-group">Moderation</div>
+        <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
         <button class="settings-tab" data-tab="reports" id="tab-reports">Reports</button>
         <button class="settings-tab" data-tab="audit" id="tab-audit">Audit Log</button>
         <div class="settings-nav-sep"></div>
@@ -1991,40 +1997,6 @@
                 </div>
               </label>
               <div class="setting-sub" id="overview-readonly">Only members with Manage Server can change these settings.</div>
-            </div>
-          </div>
-          <label class="settings-card setting-row" id="server-public-row">
-            <div>
-              <div class="setting-title">Public server</div>
-              <div class="setting-sub">Anyone with an invite is welcome. Invite links to this server can be set to never expire.</div>
-            </div>
-            <input type="checkbox" id="server-public-toggle" class="switch" />
-          </label>
-          <h2 class="settings-subhead">Server discovery</h2>
-          <div class="settings-card discovery-card" id="discovery-card">
-            <div class="setting-sub" id="discovery-hint"></div>
-            <label class="field-label">Description
-              <textarea id="discovery-description" rows="4" maxlength="300" placeholder="What is this server about, and who is it for?"></textarea>
-            </label>
-            <div class="discovery-row">
-              <label class="field-label discovery-category">Category
-                <select id="discovery-category" class="compact-select"></select>
-              </label>
-              <span class="expr-count" id="discovery-count">0 / 300</span>
-            </div>
-            <div class="discovery-actions">
-              <button class="btn-primary btn-small" id="discovery-list">List in Discover</button>
-              <button class="btn-primary btn-small hidden" id="discovery-update">Update Listing</button>
-              <button class="btn-link danger hidden" id="discovery-unlist">Unlist</button>
-            </div>
-          </div>
-          <h2 class="settings-subhead">Games</h2>
-          <div class="settings-card">
-            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name.</div>
-            <div class="tag-editor" id="game-tag-editor">
-              <div class="tag-chips" id="game-tag-chips"></div>
-              <input id="game-tag-input" type="text" maxlength="32" autocomplete="off" placeholder="Add a game and press Enter" />
-              <div class="game-search hidden" id="game-search"></div>
             </div>
           </div>
           <h2 class="settings-subhead">Banner</h2>
@@ -2084,6 +2056,44 @@
                 <div class="setting-sub">Removes it for every member, along with your copy of its messages, channels and roles. This cannot be undone.</div>
               </div>
               <button class="btn-danger btn-small" id="server-delete-open">Delete Server</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="discovery">
+          <h1>Discovery</h1>
+          <label class="settings-card setting-row" id="server-public-row">
+            <div>
+              <div class="setting-title">Public server</div>
+              <div class="setting-sub">Anyone with an invite is welcome. Invite links to this server can be set to never expire.</div>
+            </div>
+            <input type="checkbox" id="server-public-toggle" class="switch" />
+          </label>
+          <h2 class="settings-subhead">Discover listing</h2>
+          <div class="settings-card discovery-card" id="discovery-card">
+            <div class="setting-sub" id="discovery-hint"></div>
+            <label class="field-label">Description
+              <textarea id="discovery-description" rows="4" maxlength="300" placeholder="What is this server about, and who is it for?"></textarea>
+            </label>
+            <div class="discovery-row">
+              <label class="field-label discovery-category">Category
+                <select id="discovery-category" class="compact-select"></select>
+              </label>
+              <span class="expr-count" id="discovery-count">0 / 300</span>
+            </div>
+            <div class="discovery-actions">
+              <button class="btn-primary btn-small" id="discovery-list">List in Discover</button>
+              <button class="btn-primary btn-small hidden" id="discovery-update">Update Listing</button>
+              <button class="btn-link danger hidden" id="discovery-unlist">Unlist</button>
+            </div>
+          </div>
+          <h2 class="settings-subhead">Games</h2>
+          <div class="settings-card">
+            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name.</div>
+            <div class="tag-editor" id="game-tag-editor">
+              <div class="tag-chips" id="game-tag-chips"></div>
+              <input id="game-tag-input" type="text" maxlength="32" autocomplete="off" placeholder="Add a game and press Enter" />
+              <div class="game-search hidden" id="game-search"></div>
             </div>
           </div>
         </section>

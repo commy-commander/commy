@@ -1517,6 +1517,7 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 .settings-nav-inner {
   width: 218px;
+  align-self: flex-start;
   padding: 60px 6px 60px 20px;
   display: flex;
   flex-direction: column;
@@ -1535,6 +1536,18 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   text-overflow: ellipsis;
 }
 .settings-nav-group:first-child { margin-top: 0; }
+.settings-nav-title {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  color: var(--header-primary);
+  padding: 0 10px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-nav-title + .settings-nav-group { margin-top: 8px; }
 .settings-tab {
   background: none;
   border: none;
@@ -1553,6 +1566,7 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .settings-tab.danger { color: var(--red); }
 .settings-tab.danger:hover { background: rgba(242, 63, 67, .1); }
 .settings-nav-sep { height: 1px; background: var(--bg-active); margin: 10px 10px; }
+.settings-nav-inner > * { flex-shrink: 0; }
 
 .settings-content {
   flex: 1 1 800px;
