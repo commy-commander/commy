@@ -2857,6 +2857,7 @@ async fn apply_and_broadcast(
     }
     outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
+    directory::server_changed(app, sid);
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
 }
@@ -7615,6 +7616,7 @@ async fn run_net_loop(
                             continue;
                         }
                         app.persist_server(server);
+                        directory::server_changed(&app, server);
                         if let Some(user) = new_owner {
                             announce_new_owner(&app, &handle, server, user);
                         }
@@ -8098,6 +8100,7 @@ pub fn run() {
             let node_port = app.data_dir().and_then(|dir| persist::load_node_port(dir));
 
             tauri::async_runtime::spawn(doorbell::run(handle.clone()));
+            tauri::async_runtime::spawn(directory::keep_listings_current(handle.clone()));
             tauri::async_runtime::spawn(async move {
                 match CommyNode::spawn_on_port(node_key, node_port).await {
                     Ok((mut node, events, media, dms)) => {
