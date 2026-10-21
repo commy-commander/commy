@@ -13215,9 +13215,9 @@ function buildWelcomeHome() {
 }
 
 async function renderDmThreads() {
+  const threads = await invoke("list_dm_threads");
   const list = $("channel-list");
   list.innerHTML = "";
-  const threads = await invoke("list_dm_threads");
   state.dmThreads = threads;
   list.appendChild(savedSidebarRow());
   const query = $("dm-search").value.trim().toLowerCase();

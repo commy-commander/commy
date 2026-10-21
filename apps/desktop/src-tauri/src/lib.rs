@@ -82,7 +82,7 @@ fn ui_ready() {
 }
 
 #[tauri::command]
-fn init_user(app: tauri::State<App>, username: String) -> CmdResult<UserProfile> {
+fn init_user(app: tauri::State<App>, handle: tauri::AppHandle, username: String) -> CmdResult<UserProfile> {
     let username = username.trim();
     if username.is_empty() || username.len() > 32 {
         return Err("username must be 1 to 32 characters".into());
@@ -92,6 +92,7 @@ fn init_user(app: tauri::State<App>, username: String) -> CmdResult<UserProfile>
     profile.identity = app.identity().map(|i| i.public());
     *app.profile.lock().unwrap() = Some(profile.clone());
     app.persist_profile();
+    entry_list::schedule(&handle);
     Ok(profile)
 }
 

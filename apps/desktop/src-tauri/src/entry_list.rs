@@ -565,8 +565,24 @@ async fn join_missing(handle: &AppHandle, app: &App, merged: &EntryList, local: 
     }
 }
 
+#[cfg(desktop)]
 fn device_name() -> String {
     std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "Commy desktop".into())
+}
+
+#[cfg(target_os = "android")]
+fn device_name() -> String {
+    ["ro.product.marketname", "ro.product.model"]
+        .iter()
+        .filter_map(|prop| std::process::Command::new("getprop").arg(prop).output().ok())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .find(|name| !name.is_empty())
+        .unwrap_or_else(|| "Android phone or tablet".into())
+}
+
+#[cfg(target_os = "ios")]
+fn device_name() -> String {
+    "iPhone or iPad".into()
 }
 
 fn ask_other_devices(handle: &AppHandle) {
