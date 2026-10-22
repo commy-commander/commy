@@ -17,6 +17,8 @@ pub const SERVICE_SENDER: [u8; 32] = [0; 32];
 pub const OLDER_EPOCH_MS: i64 = 14 * DAY_MS;
 pub const RETENTION_MS: i64 = 90 * DAY_MS;
 pub const FRESH_TAIL: u32 = 200;
+pub const STATE_TAIL: u32 = 1_000;
+pub const SNAPSHOT_BYTES: usize = 48 * 1024;
 pub const BACKFILL_PER_CHANNEL: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -146,19 +148,29 @@ pub fn event_of(payload: &WirePayload) -> Option<(&ServerEvent, Option<Action>)>
     }
 }
 
+pub fn lane_of_payload(payload: &WirePayload) -> Option<Lane> {
+    match payload {
+        WirePayload::SyncResponse { .. } => Some(Lane::State),
+        _ => lane_of(event_of(payload)?.0),
+    }
+}
+
 pub fn encode_entry(payload: &WirePayload) -> Option<Vec<u8>> {
-    let (event, _) = event_of(payload)?;
-    lane_of(event)?;
+    lane_of_payload(payload)?;
     postcard::to_stdvec(&Entry { version: PROTOCOL_VERSION, payload: payload.clone() }).ok()
 }
 
-pub fn decode_entry(plain: &[u8], lane: Lane) -> Option<(ServerEvent, Option<Action>)> {
+pub fn decode_entry(plain: &[u8], lane: Lane) -> Option<WirePayload> {
     let entry: Entry = postcard::from_bytes(plain).ok()?;
     if entry.version != PROTOCOL_VERSION {
         return None;
     }
-    let (event, action) = event_of(&entry.payload)?;
-    (lane_of(event) == Some(lane)).then(|| (event.clone(), action))
+    (lane_of_payload(&entry.payload) == Some(lane)).then_some(entry.payload)
+}
+
+pub fn bootstrap(server: ServerId, key: KeyId, secret: &ChannelSecret) -> Want {
+    let scope = KeyScope::Community;
+    Want { lane: Lane::State, scope, key, keys: stream_for(secret, server, scope, Lane::State), writes: false }
 }
 
 pub fn backfill_messages(state: &ServerState, channel: ChannelId, seen: &HashSet<MessageId>, now_ms: i64) -> Vec<WirePayload> {
@@ -289,13 +301,25 @@ mod tests {
     }
 
     #[test]
+    fn a_key_alone_finds_the_server_state_stream() {
+        let (mut state, _, owner) = fixture();
+        let ring = settle(&mut state, owner);
+        let (key, secret) = ring.newest_in(&state, KeyScope::Community).unwrap();
+        let start = bootstrap(state.server.id, key, secret);
+        let wants = wanted(&state, owner, &ring, |_| Keyring::default(), now());
+        let lasting = wants.iter().find(|w| w.lane == Lane::State && w.writes).unwrap();
+        assert_eq!(start.keys.id, lasting.keys.id);
+        assert!(!start.writes);
+    }
+
+    #[test]
     fn only_lasting_events_are_stored_and_they_come_back_on_their_lane() {
         let (state, channel, owner) = fixture();
         let server = state.server.id;
         let message = post(&state, channel, owner, "hello");
         let payload = WirePayload::Event(ServerEvent::MessageCreate { message: message.clone() });
         let plain = encode_entry(&payload).unwrap();
-        assert_eq!(decode_entry(&plain, Lane::Channel(channel)), Some((ServerEvent::MessageCreate { message }, None)));
+        assert_eq!(decode_entry(&plain, Lane::Channel(channel)), Some(payload.clone()));
         assert_eq!(decode_entry(&plain, Lane::State), None);
         assert_eq!(decode_entry(&plain, Lane::Channel(ChannelId::new())), None);
         assert_eq!(decode_entry(b"junk", Lane::State), None);
@@ -303,7 +327,12 @@ mod tests {
         let rename = ServerEvent::ServerRename { server, name: "new".into() };
         let signed = commy_core::action::SignedEvent::sign(server, owner, 5, rename.clone(), &identity_for(owner));
         let plain = encode_entry(&WirePayload::Signed(signed.clone())).unwrap();
-        assert_eq!(decode_entry(&plain, Lane::State), Some((rename, Some(signed.action))));
+        assert_eq!(decode_entry(&plain, Lane::State), Some(WirePayload::Signed(signed.clone())));
+
+        let snapshot = crate::protocol::build_sync_response(&state, 10, owner);
+        let plain = encode_entry(&snapshot).unwrap();
+        assert_eq!(decode_entry(&plain, Lane::State), Some(snapshot));
+        assert_eq!(decode_entry(&plain, Lane::Channel(channel)), None);
 
         let typing = WirePayload::Event(ServerEvent::TypingStart { channel, user: owner });
         assert_eq!(encode_entry(&typing), None);

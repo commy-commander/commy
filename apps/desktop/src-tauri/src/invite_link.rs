@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 use crate::account::host_of;
+use crate::community_sync::SharedKey;
 use crate::state::App;
 
 pub const DEFAULT_ACCOUNT_SERVER: &str = match option_env!("COMMY_DEFAULT_ACCOUNT_SERVER") {
@@ -381,27 +382,7 @@ struct SealedInvite {
     #[serde(rename = "p", default, skip_serializing_if = "std::ops::Not::not")]
     permanent: bool,
     #[serde(rename = "k", default, skip_serializing_if = "Option::is_none")]
-    community: Option<CommunityKey>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct CommunityKey {
-    #[serde(rename = "i")]
-    id: String,
-    #[serde(rename = "s")]
-    secret: String,
-}
-
-impl CommunityKey {
-    fn of(id: KeyId, secret: &ChannelSecret) -> Self {
-        Self { id: id.to_hex(), secret: data_encoding::BASE64URL_NOPAD.encode(secret.bytes()) }
-    }
-
-    fn open(&self) -> Option<(KeyId, ChannelSecret)> {
-        let id: [u8; 16] = data_encoding::HEXLOWER_PERMISSIVE.decode(self.id.as_bytes()).ok()?.try_into().ok()?;
-        let secret: [u8; 32] = data_encoding::BASE64URL_NOPAD.decode(self.secret.as_bytes()).ok()?.try_into().ok()?;
-        Some((KeyId(id), ChannelSecret::from_bytes(secret)))
-    }
+    community: Option<SharedKey>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -420,7 +401,7 @@ fn seal_ticket_with(key: &SealKey, raw: &str, name: &str, expiry: SealedExpiry, 
         SealedExpiry::At(t) => (Some(t.timestamp()), false),
         SealedExpiry::Never => (None, true),
     };
-    let community = community.map(|(id, secret)| CommunityKey::of(id, secret));
+    let community = community.map(|(id, secret)| SharedKey::of(id, secret));
     let invite = SealedInvite { ticket: raw.to_string(), name: name.to_string(), expires, permanent, community };
     let payload = serde_json::to_vec(&invite).expect("invite serialization cannot fail");
     key.seal(Purpose::Invite, &payload)

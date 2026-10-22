@@ -918,6 +918,27 @@ pub fn snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
     Some(payload)
 }
 
+pub fn service_snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
+    if app.awaits_snapshot(server) || !app.key_settled() {
+        return None;
+    }
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id)?;
+    let identity = app.identity()?;
+    let budget = commy_net::community_streams::SNAPSHOT_BYTES;
+    let mut payload = commy_net::protocol::build_sync_response_within(app.servers.lock().unwrap().get(&server)?, 0, me, budget);
+    commy_net::protocol::sign_sync_response(&mut payload, Utc::now().timestamp_millis(), &identity);
+    Some(payload)
+}
+
+pub fn learn_service_profiles(handle: &tauri::AppHandle, server: ServerId, payload: &WirePayload) {
+    if !snapshot_vouched(handle.app(), server, payload, commy_net::community_streams::RETENTION_MS) {
+        return;
+    }
+    if let WirePayload::SyncResponse { profiles, .. } = payload {
+        AppStore(handle.clone()).apply_profiles(server, profiles.clone());
+    }
+}
+
 pub fn sync_replies(app: &App, server: ServerId) -> Vec<WirePayload> {
     let Some(me) = app.profile.lock().unwrap().clone() else { return Vec::new() };
     if !app.servers.lock().unwrap().contains_key(&server) {
@@ -934,11 +955,19 @@ pub fn await_snapshot(app: &App, server: ServerId, me: UserProfile) -> Vec<WireP
 }
 
 pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WirePayload) -> bool {
+    apply_snapshot_within(access, server, payload, SNAPSHOT_MAX_AGE_MS)
+}
+
+pub fn apply_service_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WirePayload) -> bool {
+    apply_snapshot_within(access, server, payload, commy_net::community_streams::RETENTION_MS)
+}
+
+fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: WirePayload, max_age_ms: i64) -> bool {
     let app = access.app();
     if !app.awaits_snapshot(server) {
         return false;
     }
-    if !snapshot_vouched(app, server, &payload) {
+    if !snapshot_vouched(app, server, &payload, max_age_ms) {
         tracing::warn!("dropping a snapshot of {server} that its owner did not sign");
         return false;
     }
@@ -1046,7 +1075,7 @@ pub fn apply_snapshot<A: AppAccess>(access: &A, server: ServerId, payload: WireP
     true
 }
 
-fn snapshot_vouched(app: &App, server: ServerId, payload: &WirePayload) -> bool {
+fn snapshot_vouched(app: &App, server: ServerId, payload: &WirePayload, max_age_ms: i64) -> bool {
     let WirePayload::SyncResponse { server: remote, by, at, .. } = payload else { return false };
     if remote.id != server {
         return false;
@@ -1055,7 +1084,7 @@ fn snapshot_vouched(app: &App, server: ServerId, payload: &WirePayload) -> bool 
     if *by != owner || remote.owner != owner {
         return false;
     }
-    if (Utc::now().timestamp_millis() - *at).abs() > SNAPSHOT_MAX_AGE_MS {
+    if (Utc::now().timestamp_millis() - *at).abs() > max_age_ms {
         return false;
     }
     commy_net::protocol::verify_sync_response(payload, &key)
