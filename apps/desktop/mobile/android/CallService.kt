@@ -19,16 +19,19 @@ import androidx.core.content.ContextCompat
 class CallService : Service() {
   private var wakeLock: PowerManager.WakeLock? = null
   private var wifiLock: WifiManager.WifiLock? = null
+  private val headset by lazy { HeadsetRoute(this) }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), serviceType())
     holdLocks()
+    headset.start()
     return START_NOT_STICKY
   }
 
   override fun onDestroy() {
+    headset.stop()
     wakeLock?.takeIf { it.isHeld }?.release()
     wifiLock?.takeIf { it.isHeld }?.release()
     wakeLock = null
