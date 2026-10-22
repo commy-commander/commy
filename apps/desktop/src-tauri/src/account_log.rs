@@ -56,7 +56,12 @@ pub enum Record {
     Read { marks: BTreeMap<String, ReadMark> },
     Saved { ops: Vec<SavedOp> },
     Prefs { set: BTreeMap<String, PrefPiece> },
-    DmPartner { profile: UserProfile, at: i64 },
+    DmPartner {
+        profile: UserProfile,
+        at: i64,
+        #[serde(default)]
+        accepted: bool,
+    },
     CommunityKey {
         server: ServerId,
         key: SharedKey,
@@ -91,6 +96,8 @@ pub struct SyncState {
     #[serde(default)]
     pub partners: BTreeMap<UserId, i64>,
     #[serde(default)]
+    pub accepted_partners: std::collections::BTreeSet<UserId>,
+    #[serde(default)]
     pub dm_cursors: BTreeMap<String, u64>,
     #[serde(default)]
     pub community: BTreeMap<ServerId, (SharedKey, i64)>,
@@ -109,7 +116,7 @@ pub enum Change {
     Read(BTreeMap<String, ReadMark>),
     Saved(Vec<SavedOp>),
     Prefs(BTreeMap<String, PrefPiece>),
-    Partner(Box<UserProfile>),
+    Partner(Box<UserProfile>, bool),
     CommunityKey(ServerId),
 }
 
@@ -118,6 +125,40 @@ impl SyncState {
         if self.stream != stream {
             *self = SyncState { stream: stream.to_string(), prefs: std::mem::take(&mut self.prefs), dm_cursors: std::mem::take(&mut self.dm_cursors), ..Default::default() };
         }
+    }
+
+    pub fn log_restarted(&mut self) {
+        let kept = std::mem::take(self);
+        *self = SyncState {
+            stream: kept.stream,
+            prefs: kept.prefs,
+            dm_cursors: kept.dm_cursors,
+            community: kept.community,
+            owners: kept.owners,
+            outbox: kept.outbox,
+            next_id: kept.next_id,
+            ..Default::default()
+        };
+    }
+
+    pub fn should_note(&self, partner: UserId, accepted: bool, now: i64) -> bool {
+        self.partners.get(&partner).is_none_or(|at| now - at > PARTNER_RENOTE_MS)
+            || (accepted && !self.accepted_partners.contains(&partner))
+    }
+
+    pub fn entry_at(&mut self, seq: u64) {
+        if seq <= self.after {
+            self.log_restarted();
+        }
+        self.after = seq;
+    }
+
+    pub fn caught_up_at(&mut self, seq: u64) -> bool {
+        if seq < self.after {
+            self.log_restarted();
+        }
+        self.after = seq;
+        !std::mem::replace(&mut self.seeded, true)
     }
 
     pub fn fold(&mut self, record: Record) -> Change {
@@ -153,13 +194,19 @@ impl SyncState {
                 }
                 if taken.is_empty() { Change::Nothing } else { Change::Prefs(taken) }
             }
-            Record::DmPartner { profile, at } if profile.identity.is_some() => {
+            Record::DmPartner { profile, at, accepted } if profile.identity.is_some() => {
                 let newer = self.partners.get(&profile.id).is_none_or(|seen| at > *seen);
-                if !newer {
+                let newly_accepted = accepted && !self.accepted_partners.contains(&profile.id);
+                if !newer && !newly_accepted {
                     return Change::Nothing;
                 }
-                self.partners.insert(profile.id, at);
-                Change::Partner(Box::new(profile))
+                let seen = self.partners.entry(profile.id).or_insert(at);
+                *seen = (*seen).max(at);
+                if accepted {
+                    self.accepted_partners.insert(profile.id);
+                }
+                let accepted = self.accepted_partners.contains(&profile.id);
+                Change::Partner(Box::new(profile), accepted)
             }
             Record::CommunityKey { server, key, at, owner } => {
                 let mut changed = false;
@@ -383,7 +430,7 @@ async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver
             SyncEvent::Entry { stream: from, seq, plain, .. } if from == stream => {
                 let record = serde_json::from_slice::<Record>(&plain).unwrap_or(Record::Unknown);
                 let change = with_state(&app, |state| {
-                    state.after = seq;
+                    state.entry_at(seq);
                     state.fold(record)
                 });
                 if let Some(change) = change {
@@ -397,17 +444,13 @@ async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver
                 with_state(&app, |state| state.after = seq);
             }
             SyncEvent::CaughtUp { stream: from, seq } if from == stream => {
-                let first = with_state(&app, |state| {
-                    state.after = seq;
-                    !std::mem::replace(&mut state.seeded, true)
-                })
-                .unwrap_or(false);
+                let first = with_state(&app, |state| state.caught_up_at(seq)).unwrap_or(false);
                 persist(&app);
                 let was = LIVE.lock().unwrap().as_mut().map(|l| std::mem::replace(&mut l.caught_up, true));
-                if was == Some(false) {
-                    if first {
-                        seed(&handle);
-                    }
+                if first {
+                    seed(&handle);
+                }
+                if first || was == Some(false) {
                     schedule_servers(&handle);
                     flush_soon();
                 }
@@ -439,7 +482,7 @@ fn apply(handle: &AppHandle, change: Change) {
         Change::Prefs(set) => {
             let _ = handle.emit("sync-prefs-changed", set);
         }
-        Change::Partner(profile) => crate::dm_sync::adopt_partner(handle, *profile),
+        Change::Partner(profile, accepted) => crate::dm_sync::adopt_partner(handle, *profile, accepted),
         Change::CommunityKey(server) => {
             crate::community_sync::adopt_owner(handle, server);
             crate::community_sync::refresh_soon(handle);
@@ -466,6 +509,14 @@ fn seed(handle: &AppHandle) {
         }
         if !state.prefs.is_empty() {
             state.enqueue(Record::Prefs { set: state.prefs.clone() }, None);
+        }
+        let keys: Vec<Record> = state
+            .community
+            .iter()
+            .map(|(server, (key, at))| Record::CommunityKey { server: *server, key: key.clone(), at: *at, owner: state.owners.get(server).copied() })
+            .collect();
+        for record in keys {
+            state.enqueue(record, None);
         }
     });
     persist(&app);
@@ -517,19 +568,19 @@ pub fn queue(app: &App, record: Record) {
     }
 }
 
-pub fn note_partner(app: &App, mut profile: UserProfile) {
+pub fn note_partner(app: &App, mut profile: UserProfile, accepted: bool) {
     if profile.identity.is_none() {
         return;
     }
     let now = now_ms();
-    let fresh = with_state(app, |state| state.partners.get(&profile.id).is_none_or(|at| now - at > PARTNER_RENOTE_MS)).unwrap_or(false);
+    let fresh = with_state(app, |state| state.should_note(profile.id, accepted, now)).unwrap_or(false);
     if !fresh {
         return;
     }
     profile.activity = None;
     profile.activity_cover = None;
     profile.activity_since = None;
-    queue(app, Record::DmPartner { profile, at: now });
+    queue(app, Record::DmPartner { profile, at: now, accepted });
 }
 
 pub fn community_key(app: &App, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
@@ -640,6 +691,37 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use commy_core::ServerId;
     use commy_net::entry_list::Entry;
+
+    #[test]
+    fn a_log_that_lost_its_history_is_filled_again() {
+        let mut state = SyncState { stream: "s".into(), ..Default::default() };
+        state.entry_at(1);
+        state.entry_at(2);
+        assert!(state.caught_up_at(2), "the first catch-up fills the log");
+        let friend = UserId::new();
+        state.partners.insert(friend, 5);
+        state.saved.insert("m".into(), 5);
+        state.servers.servers.insert(ServerId::new(), entry("a", 1));
+        state.prefs.insert("notify.level".into(), PrefPiece { value: "all".into(), at: 1 });
+        state.dm_cursors.insert("dm".into(), 7);
+        state.enqueue(Record::Read { marks: BTreeMap::from([("c".to_string(), mark(1))]) }, None);
+        assert!(!state.caught_up_at(2), "an ordinary reconnect does not");
+
+        state.entry_at(3);
+        assert!(!state.partners.is_empty(), "a new entry is not a restart");
+        state.entry_at(1);
+        assert!(state.partners.is_empty() && state.saved.is_empty() && state.servers.servers.is_empty());
+        assert_eq!((state.stream.as_str(), state.after, state.seeded), ("s", 1, false));
+        assert_eq!(state.prefs.len(), 1);
+        assert_eq!(state.dm_cursors["dm"], 7);
+        assert_eq!(state.outbox.len(), 1, "unsent entries still go out");
+        assert!(state.caught_up_at(1), "and the device fills the log again");
+
+        state.partners.insert(friend, 5);
+        assert!(!state.caught_up_at(4));
+        assert!(state.caught_up_at(0), "an emptied log is filled again");
+        assert!(state.partners.is_empty());
+    }
 
     #[test]
     fn the_newest_community_key_wins_and_its_echo_stays_quiet() {
@@ -772,10 +854,19 @@ mod tests {
     fn partners_need_an_identity_and_are_noted_once_per_change() {
         let mut state = SyncState::default();
         let mut friend = UserProfile::new("friend");
-        assert_eq!(state.fold(Record::DmPartner { profile: friend.clone(), at: 1 }), Change::Nothing);
+        assert_eq!(state.fold(Record::DmPartner { profile: friend.clone(), at: 1, accepted: false }), Change::Nothing);
         friend.identity = Some(commy_core::Identity::generate().public());
-        assert!(matches!(state.fold(Record::DmPartner { profile: friend.clone(), at: 1 }), Change::Partner(_)));
-        assert_eq!(state.fold(Record::DmPartner { profile: friend, at: 1 }), Change::Nothing);
+        assert!(matches!(state.fold(Record::DmPartner { profile: friend.clone(), at: 1, accepted: false }), Change::Partner(..)));
+        assert_eq!(state.fold(Record::DmPartner { profile: friend.clone(), at: 1, accepted: false }), Change::Nothing);
+        assert!(state.should_note(friend.id, true, 2), "accepting later is noted again");
+        assert!(!state.should_note(friend.id, false, 2));
+        assert_eq!(state.fold(Record::DmPartner { profile: friend.clone(), at: 2, accepted: true }), Change::Partner(Box::new(friend.clone()), true));
+        assert!(!state.should_note(friend.id, true, 3));
+        assert_eq!(state.fold(Record::DmPartner { profile: friend.clone(), at: 1, accepted: true }), Change::Nothing);
+        assert_eq!(state.fold(Record::DmPartner { profile: friend.clone(), at: 9, accepted: false }), Change::Partner(Box::new(friend.clone()), true), "a later note keeps the acceptance");
+        assert!(state.should_note(friend.id, false, 9 + PARTNER_RENOTE_MS + 1));
+        let older_build: Record = serde_json::from_value(serde_json::json!({ "k": "dm_partner", "profile": friend, "at": 1 })).unwrap();
+        assert!(matches!(older_build, Record::DmPartner { accepted: false, .. }));
     }
 
     #[test]
