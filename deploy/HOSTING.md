@@ -304,6 +304,40 @@ Redis to start. If Redis is configured but unreachable, sign-in keeps working;
 doorbell calls fail until it is back, rate limits are off meanwhile (the edge
 proxy keeps its own), and `/healthz` reports `"redis":false`.
 
+## Sync service
+
+The stack can run a sync service (`sync`, from `crates/commy-sync-server`) at
+`wss://<DOMAIN>/sync`. It keeps ordered logs of entries that the apps seal
+end to end before sending, and hands each new entry to every device following
+that log. It cannot open an entry, and it never learns which account, Commy
+server or channel a log belongs to.
+
+- **How apps find it:** set `SYNC_URL=wss://<DOMAIN>/sync` in `.env`. The
+  discovery document then lists it under `endpoints.sync` and shows
+  `"sync":true` under `features`. Without `SYNC_URL` apps do not use it.
+- **How a device gets in:** every log is named by a stream id that the apps
+  derive, together with a write key and a read token, from a secret only its
+  members hold. The service checks that the stream id matches the write key and
+  read token it is shown, and that each new entry is signed by that write key.
+  It takes no account, session or cookie.
+- **What it stores:** in the `commy_sync` database (created on first start in
+  the stack's Postgres): for each log, its random stream id, the number of
+  entries so far and the time of the last one; for each entry, its number,
+  arrival time, a random retry nonce and the sealed bytes, padded to one of a
+  few fixed sizes so lengths say little.
+- **How long:** `SYNC_RETENTION_DAYS` (365 by default, `0` keeps everything).
+  An hourly sweep deletes older entries, and a log with no entries left is
+  forgotten.
+- **What it never sees:** what an entry says, who wrote it, which account or
+  Commy server a log belongs to, or which logs one person follows. It stores no
+  IP address. Addresses are used in memory for rate limits only, under a keyed
+  hash with a secret that changes on every restart. The edge proxy never logs
+  `/sync`.
+- **Setting it up:** `docker compose up -d sync`, then add `SYNC_URL` and
+  recreate auth: `docker compose up -d --no-deps auth`. The service answers
+  `GET /sync/healthz`. It logs only totals (connections, live logs, opens and
+  appends per 10 minutes).
+
 ## iroh relay
 
 The stack runs its own [iroh](https://iroh.computer) relay at
@@ -370,6 +404,11 @@ who holds the `.env` can still read it all. Rows written by an older auth
 server stay readable to the new one and are encrypted ten minutes after it
 starts, once the container it replaced has stopped.
 
+The sync service database (`commy_sync`) holds only random stream ids, entry
+numbers, times, retry nonces and sealed, padded entries. The operator can see
+how many logs exist and how busy each one is, not whose they are or what they
+say.
+
 Redis holds the message doorbell (random tokens and blinded message ids with
 the time they arrived, deleted when an app takes them or after 14 days) and
 rate-limit counters under keyed hashes of IP address and path, which expire
@@ -377,7 +416,7 @@ with their window. Without Redis the doorbell lives in the database and the
 counters in memory. No IP address is written anywhere. The single server
 Caddyfile writes no access logs. The shared edge proxy (`edge/`) writes JSON
 access logs to `/var/log/commy-caddy`, except for invite pages, invite
-lookups and doorbell calls, which are never logged. The auth server logs no
+lookups, doorbell calls and the sync service, which are never logged. The auth server logs no
 emails, links or tokens.
 
 ## Abuse controls
@@ -386,6 +425,10 @@ emails, links or tokens.
   links and password resets 5 per 10 minutes, device codes 10 per minute,
   doorbell rings 300 and takes 600 per minute. Counted in Redis when the
   stack has one, so they hold across restarts and auth instances.
+- Sync service, per IP: 256 open connections, 5 new entries a second (bursts
+  of 60) and 64 MB of entries a day (`SYNC_CONNECTIONS_PER_ADDRESS`,
+  `SYNC_DAILY_BYTES_PER_ADDRESS`); per log, 20 entries a second; 16 logs per
+  connection. Entries must be padded and at most 64 KB.
 - Optional Turnstile bot check and `ALLOW_SIGNUP=false` (see above).
 - Device codes expire after 10 minutes and must be approved by a signed-in user.
 - Behind another proxy or CDN (for example Cloudflare), rate limits only see
@@ -398,6 +441,7 @@ docker compose ps                                   # health of every service
 git pull && docker compose up -d --build         # update to the latest release
 docker compose exec postgres pg_dump -U commy commy_auth > backup.sql
 docker compose exec -T postgres psql -U commy commy_auth < backup.sql
+docker compose exec postgres pg_dump -U commy commy_sync > sync-backup.sql
 ```
 
 To have the server update itself whenever GitHub publishes new images, or to run

@@ -1,0 +1,8 @@
+.git
+target
+**/node_modules
+apps/desktop/ui
+apps/desktop/src-tauri/gen
+apps/streamdeck
+auth
+deploy

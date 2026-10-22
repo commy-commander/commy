@@ -11,7 +11,7 @@ services:
     working_dir: /repo/deploy
     environment:
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-commy}
-      AGENT_SERVICES: auth web
+      AGENT_SERVICES: ${AGENT_SERVICES:-auth web}
       AGENT_INTERVAL: ${AGENT_INTERVAL:-60}
       AGENT_HEALTH_TIMEOUT: ${AGENT_HEALTH_TIMEOUT:-180}
       AGENT_VERIFY: ${AGENT_VERIFY:-auto}

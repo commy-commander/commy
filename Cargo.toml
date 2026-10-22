@@ -9,6 +9,8 @@ members = [
     "crates/commy-view",
     "apps/desktop/src-tauri",
     "apps/web",
+    "crates/commy-sync",
+    "crates/commy-sync-server",
 ]
 
 [workspace.package]
@@ -39,6 +41,7 @@ commy-net = { path = "crates/commy-net" }
 commy-view = { path = "crates/commy-view" }
 commy-audio = { path = "crates/commy-audio" }
 commy-media = { path = "crates/commy-media" }
+commy-sync = { path = "crates/commy-sync" }
 
 [profile.release]
 lto = true

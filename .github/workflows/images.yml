@@ -4,9 +4,15 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths: ["auth/**", "deploy/**", ".github/workflows/images.yml"]
+    paths: &image-paths
+      - "auth/**"
+      - "deploy/**"
+      - "crates/commy-sync/**"
+      - "crates/commy-sync-server/**"
+      - ".dockerignore"
+      - ".github/workflows/images.yml"
   pull_request:
-    paths: ["auth/**", "deploy/**", ".github/workflows/images.yml"]
+    paths: *image-paths
   workflow_dispatch:
 
 permissions:
@@ -48,6 +54,33 @@ jobs:
       - run: npm test
         working-directory: auth
 
+  sync-tests:
+    name: Sync service tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: commy
+          POSTGRES_PASSWORD: commy
+          POSTGRES_DB: commy
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U commy" --health-interval 3s --health-retries 20
+    env:
+      SYNC_POSTGRES_TEST_URL: postgres://commy:commy@127.0.0.1:5432
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: sync
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test --locked -p commy-sync -p commy-sync-server --features commy-sync/client
+
   agent-tests:
     name: Deploy agent tests
     runs-on: ubuntu-latest
@@ -70,9 +103,25 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver: docker
+
+      - name: Build the sync service image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: crates/commy-sync-server/Dockerfile
+          load: true
+          tags: localhost:5000/commy-sync:candidate
+
       - name: Build images into a local registry
         run: |
           docker run -d --name registry -p 5000:5000 registry:2
+          for env in staging dev; do
+            docker tag localhost:5000/commy-sync:candidate "localhost:5000/commy-sync:$env"
+            docker push -q "localhost:5000/commy-sync:$env"
+          done
           docker build -q -t "localhost:5000/commy-auth:candidate" auth
           docker pull -q ghcr.io/commy-commander/commy-web:dev
           docker tag ghcr.io/commy-commander/commy-web:dev localhost:5000/commy-web:candidate
@@ -107,6 +156,20 @@ jobs:
             sleep 5
           done
           for url in $urls; do echo "ok   - $url"; done
+          for host in staging.commy.localhost dev.commy.localhost; do
+            deadline=$(( $(date +%s) + 300 ))
+            until [ "$(curl -sk -m 5 -o /dev/null -w '%{http_code}' --resolve "$host:443:127.0.0.1" "https://$host/sync/healthz" || true)" = 200 ]; do
+              if [ "$(date +%s)" -ge "$deadline" ]; then echo "FAIL - https://$host/sync/healthz is not answering"; exit 1; fi
+              sleep 5
+            done
+            echo "ok   - https://$host/sync/healthz"
+            curl -sk -m 5 --resolve "$host:443:127.0.0.1" "https://$host/.well-known/commy-auth.json" | grep -q "\"sync\":\"wss://$host/sync\"" \
+              && echo "ok   - $host advertises its sync service" || { echo "FAIL - $host does not advertise wss://$host/sync"; exit 1; }
+          done
+          if curl -sk -m 5 --resolve commy.localhost:443:127.0.0.1 https://commy.localhost/.well-known/commy-auth.json | grep -q '"sync":"'; then
+            echo "FAIL - prod advertises a sync service before it is turned on"; exit 1
+          fi
+          echo "ok   - prod does not advertise a sync service"
           robots="$(curl -sk -m 5 -D - -o /dev/null --resolve staging.commy.localhost:443:127.0.0.1 https://staging.commy.localhost/ | grep -i x-robots-tag || true)"
           [ -n "$robots" ] && echo "ok   - staging is noindex" || { echo "FAIL - staging is missing X-Robots-Tag"; exit 1; }
 
@@ -124,6 +187,14 @@ jobs:
           probe commy-edge-caddy-1 commy-prod-auth reachable || status=1
           probe commy-edge-caddy-1 commy-staging-auth reachable || status=1
           probe commy-edge-caddy-1 commy-dev-auth reachable || status=1
+          sync_probe() {
+            if docker exec "$1" wget -qO- -T 5 "http://$2:3002/healthz" >/dev/null 2>&1; then got=reachable; else got=unreachable; fi
+            if [ "$got" = "$3" ]; then echo "ok   - $1 -> $2 is $got"; else echo "FAIL - $1 -> $2 is $got, expected $3"; return 1; fi
+          }
+          sync_probe commy-dev-auth-1 commy-staging-sync unreachable || status=1
+          sync_probe commy-staging-auth-1 commy-dev-sync unreachable || status=1
+          sync_probe commy-edge-caddy-1 commy-staging-sync reachable || status=1
+          sync_probe commy-edge-caddy-1 commy-dev-sync reachable || status=1
           exit $status
 
       - name: Logs on failure
@@ -137,6 +208,43 @@ jobs:
             (cd "/srv/commy-$env/deploy" && sudo docker compose ps -a && sudo docker compose logs --tail 40)
           done
           (cd /srv/commy-prod/deploy/edge && sudo docker compose logs --tail 40)
+
+  sync-image:
+    name: sync image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/commy-sync
+          labels: |
+            org.opencontainers.image.licenses=AGPL-3.0-only
+
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: crates/commy-sync-server/Dockerfile
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || format('type=image,name=ghcr.io/{0}/commy-sync,push-by-digest=true,name-canonical=true,push=true', github.repository_owner) }}
+          cache-from: type=gha,scope=sync
+          cache-to: type=gha,mode=max,scope=sync
 
   image:
     name: ${{ matrix.service }} image
@@ -180,7 +288,7 @@ jobs:
 
   publish:
     name: Publish ${{ matrix.service }}
-    needs: [auth-tests, agent-tests, stack-e2e, image]
+    needs: [auth-tests, sync-tests, agent-tests, stack-e2e, image, sync-image]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     concurrency:
@@ -192,7 +300,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [auth]
+        service: [auth, sync]
     steps:
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -214,7 +322,7 @@ jobs:
       - name: Tag the tested image
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
-          IMAGE: ghcr.io/${{ github.repository_owner }}/commy-${{ matrix.service }}@${{ needs.image.outputs[format('{0}-digest', matrix.service)] }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/commy-${{ matrix.service }}@${{ matrix.service == 'sync' && needs.sync-image.outputs.digest || needs.image.outputs.auth-digest }}
           GH_TOKEN: ${{ github.token }}
         run: |
           newest=true

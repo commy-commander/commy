@@ -18,6 +18,11 @@
 		reverse_proxy auth:3001
 	}
 
+	@sync path /sync /sync/*
+	handle @sync {
+		reverse_proxy sync:3002
+	}
+
 	handle {
 		reverse_proxy web:3000
 	}

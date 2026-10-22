@@ -103,6 +103,11 @@ export function loadConfig(env = process.env) {
   const igdb = oauthClient(env, "IGDB", warnings, "the separate IGDB app") ?? twitch;
   const klipyKey = (env.KLIPY_API_KEY ?? "").trim() || null;
 
+  const syncUrl = (env.SYNC_URL ?? "").trim().replace(/\/+$/, "") || null;
+  if (syncUrl && !/^wss?:\/\/[^/\s]+\/\S*$/.test(`${syncUrl}/`)) {
+    throw new Error("Invalid auth server configuration:\n- SYNC_URL must be the sync service's WebSocket address, for example wss://commy.chat/sync");
+  }
+
   const turnstile =
     env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
       ? { siteKey: env.TURNSTILE_SITE_KEY, secretKey: env.TURNSTILE_SECRET_KEY }
@@ -122,6 +127,7 @@ export function loadConfig(env = process.env) {
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
     invitesMaxPermanent: Number(env.INVITES_MAX_PERMANENT) > 0 ? Math.floor(Number(env.INVITES_MAX_PERMANENT)) : undefined,
     doorbell: env.DOORBELL !== "false",
+    syncUrl,
     redisUrl: (env.REDIS_URL ?? "").trim() || null,
     google,
     twitch,
@@ -143,6 +149,7 @@ export function featureSummary(config) {
     `gifs=${on(config.klipyKey)}`,
     `games=${on(config.igdb)}${config.igdb && config.igdb === config.twitch ? " (twitch app)" : ""}`,
     `doorbell=${on(config.doorbell)}`,
+    `sync=${on(config.syncUrl)}`,
     `redis=${on(config.redisUrl)}`,
     `signup=${on(config.allowSignup)}`,
     `access_code=${on(config.accessCode)}`,
@@ -194,6 +201,7 @@ export function discoveryDocument(config) {
       folderKey: `${api}/commy/folder-key`,
       doorbellRing: `${api}/commy/doorbell/ring`,
       doorbellTake: `${api}/commy/doorbell/take`,
+      sync: config.syncUrl,
     },
     features: {
       gifs: Boolean(config.klipyKey),
@@ -206,6 +214,7 @@ export function discoveryDocument(config) {
       doorbell: Boolean(config.doorbell),
       twoFactor: true,
       changeEmail: Boolean(config.smtp),
+      sync: Boolean(config.syncUrl),
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,

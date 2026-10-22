@@ -21,6 +21,9 @@
 	@doorbell path /api/auth/commy/doorbell/*
 	log_skip @doorbell
 
+	@sync path /sync /sync/*
+	log_skip @sync
+
 	@secrets path /api/auth/verify-email* /api/auth/magic-link/* /api/auth/reset-password/* /api/auth/callback/* /account/reset-password* /device*
 	log_skip @secrets
 
@@ -39,6 +42,13 @@
 		reverse_proxy {args[0]}-auth:3001 {
 			header_up X-Forwarded-For {client_ip}
 			lb_try_duration 15s
+		}
+	}
+
+	handle @sync {
+		reverse_proxy {args[0]}-sync:3002 {
+			header_up X-Forwarded-For {client_ip}
+			lb_try_duration 5s
 		}
 	}
 
