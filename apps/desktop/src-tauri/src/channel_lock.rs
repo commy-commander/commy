@@ -44,6 +44,7 @@ pub async fn tend_scope(app: &App, handle: &tauri::AppHandle, sid: ServerId, sco
         crate::outbox::broadcast_local(app, sid, event).await;
     }
     app.persist_server(sid);
+    crate::community_sync::refresh_soon(handle);
     let _ = handle.emit("server-event", &sid.to_string());
 }
 

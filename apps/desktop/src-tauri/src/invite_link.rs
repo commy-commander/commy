@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_net::sealed::{self, Purpose, SealKey};
 use commy_net::ServerTicket;
 use reqwest::Url;
@@ -329,6 +330,9 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
     let (raw, sealed_expiry) = open_ticket(&body.ticket, parsed.key.as_deref())?;
     let ticket = ServerTicket::decode(&raw).map_err(|_| "The invite server sent an invalid invite".to_string())?;
     app.doorbell.lock().unwrap().note_invite_origin(ticket.server_id, parsed.origin.clone());
+    if let Some((id, secret)) = parsed.key.as_deref().and_then(|key| community_key_in(&body.ticket, key)) {
+        crate::community_sync::remember_invite_key(ticket.server_id, id, secret);
+    }
     let server_expiry = body.expires_at.as_deref().and_then(parse_time);
     let expires_at = effective_expiry(server_expiry, sealed_expiry, Utc::now())?;
     let account = crate::account::effective_server();
@@ -376,6 +380,28 @@ struct SealedInvite {
     expires: Option<i64>,
     #[serde(rename = "p", default, skip_serializing_if = "std::ops::Not::not")]
     permanent: bool,
+    #[serde(rename = "k", default, skip_serializing_if = "Option::is_none")]
+    community: Option<CommunityKey>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CommunityKey {
+    #[serde(rename = "i")]
+    id: String,
+    #[serde(rename = "s")]
+    secret: String,
+}
+
+impl CommunityKey {
+    fn of(id: KeyId, secret: &ChannelSecret) -> Self {
+        Self { id: id.to_hex(), secret: data_encoding::BASE64URL_NOPAD.encode(secret.bytes()) }
+    }
+
+    fn open(&self) -> Option<(KeyId, ChannelSecret)> {
+        let id: [u8; 16] = data_encoding::HEXLOWER_PERMISSIVE.decode(self.id.as_bytes()).ok()?.try_into().ok()?;
+        let secret: [u8; 32] = data_encoding::BASE64URL_NOPAD.decode(self.secret.as_bytes()).ok()?.try_into().ok()?;
+        Some((KeyId(id), ChannelSecret::from_bytes(secret)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -384,14 +410,25 @@ enum SealedExpiry {
     Never,
 }
 
+#[cfg(test)]
 fn seal_ticket(key: &SealKey, raw: &str, name: &str, expiry: SealedExpiry) -> String {
+    seal_ticket_with(key, raw, name, expiry, None)
+}
+
+fn seal_ticket_with(key: &SealKey, raw: &str, name: &str, expiry: SealedExpiry, community: Option<(KeyId, &ChannelSecret)>) -> String {
     let (expires, permanent) = match expiry {
         SealedExpiry::At(t) => (Some(t.timestamp()), false),
         SealedExpiry::Never => (None, true),
     };
-    let invite = SealedInvite { ticket: raw.to_string(), name: name.to_string(), expires, permanent };
+    let community = community.map(|(id, secret)| CommunityKey::of(id, secret));
+    let invite = SealedInvite { ticket: raw.to_string(), name: name.to_string(), expires, permanent, community };
     let payload = serde_json::to_vec(&invite).expect("invite serialization cannot fail");
     key.seal(Purpose::Invite, &payload)
+}
+
+fn community_key_in(stored: &str, key: &str) -> Option<(KeyId, ChannelSecret)> {
+    let bytes = SealKey::from_text(key).ok()?.open(Purpose::Invite, stored.trim()).ok()?;
+    serde_json::from_slice::<SealedInvite>(&bytes).ok()?.community?.open()
 }
 
 fn open_ticket(stored: &str, key: Option<&str>) -> Result<(String, Option<SealedExpiry>), String> {
@@ -502,6 +539,7 @@ pub(crate) async fn create(
         }
     };
     let background = sealed_background(app, id, &key).await;
+    let community = crate::community_sync::invite_key(app, id);
     let needs_account = expiry == Expiry::Never || name.is_some() || background.is_some();
     let token = needs_account.then(|| signed_in_token(app)).flatten();
     if name.is_some() && token.is_none() {
@@ -510,7 +548,7 @@ pub(crate) async fn create(
     let background = background.filter(|_| token.is_some());
     let revoke_key = SealKey::generate().to_text();
     let mut body = serde_json::json!({
-        "ticket": seal_ticket(&key, &raw, &ticket.server_name, sealed_expiry),
+        "ticket": seal_ticket_with(&key, &raw, &ticket.server_name, sealed_expiry, community.as_ref().map(|(id, secret)| (*id, secret))),
         "expiresIn": expiry.as_str(),
         "revokeHash": revoke_hash(&revoke_key),
     });
@@ -869,6 +907,20 @@ mod tests {
         assert_eq!(effective_expiry(Some(before), expiry, before - chrono::Duration::hours(1)), Ok(Some(before)));
         assert_eq!(effective_expiry(None, Some(SealedExpiry::Never), later), Ok(None));
         assert_eq!(effective_expiry(Some(at), None, before), Ok(Some(at)));
+    }
+
+    #[test]
+    fn a_sealed_invite_can_carry_the_community_key() {
+        let text = test_key();
+        let key = SealKey::from_text(&text).unwrap();
+        let (id, secret) = (KeyId::random(), ChannelSecret::random());
+        let sealed = seal_ticket_with(&key, "commyticket", "Pixel Pioneers", SealedExpiry::Never, Some((id, &secret)));
+        assert!(!sealed.contains(&data_encoding::BASE64URL_NOPAD.encode(secret.bytes())));
+        assert_eq!(open_ticket(&sealed, Some(&text)).unwrap(), ("commyticket".into(), Some(SealedExpiry::Never)));
+        assert_eq!(community_key_in(&sealed, &text), Some((id, secret)));
+        assert_eq!(community_key_in(&sealed, &SealKey::generate().to_text()), None);
+        let plain = seal_ticket(&key, "commyticket", "Pixel Pioneers", SealedExpiry::Never);
+        assert_eq!(community_key_in(&plain, &text), None);
     }
 
     #[test]

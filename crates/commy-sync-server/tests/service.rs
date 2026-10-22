@@ -161,7 +161,7 @@ async fn the_service_refuses_what_it_cannot_check() {
     let other = StreamSecret::random().keys();
     let mut socket = raw(&url).await;
 
-    send(&mut socket, &ClientFrame::Open { stream: keys.id, write: Bytes(other.write_public()), read: Bytes(keys.read_token()), after: 0 }).await;
+    send(&mut socket, &ClientFrame::Open { stream: keys.id, write: Bytes(other.write_public()), read: Bytes(keys.read_token()), after: 0, tail: None }).await;
     assert_eq!(receive(&mut socket).await, ServerFrame::stream_error(ErrorCode::BadStream, keys.id));
 
     let nonce = [1u8; APPEND_NONCE_BYTES];

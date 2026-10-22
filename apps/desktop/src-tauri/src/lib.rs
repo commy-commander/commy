@@ -10,6 +10,7 @@ mod calls;
 mod entry_list;
 mod catchup;
 mod channel_lock;
+mod community_sync;
 mod deleted;
 mod devices;
 mod dm_sync;
@@ -7480,7 +7481,16 @@ async fn set_deafened(app: tauri::State<'_, App>, handle: tauri::AppHandle, deaf
 }
 
 async fn broadcast_event(app: &App, server: ServerId, event: ServerEvent) {
-    broadcast(app, server, app.wire_for(server, event)).await;
+    let payload = app.wire_for(server, event);
+    match &payload {
+        WirePayload::Event(ServerEvent::MemberJoin { profile, .. }) => community_sync::announce_profile(server, profile, &payload),
+        WirePayload::Signed(signed) => match &signed.event {
+            ServerEvent::MemberJoin { profile, .. } => community_sync::announce_profile(server, profile, &payload),
+            _ => community_sync::publish(server, &payload),
+        },
+        _ => community_sync::publish(server, &payload),
+    }
+    broadcast(app, server, payload).await;
 }
 
 fn remote_action_ok(app: &App, server: ServerId, event: &ServerEvent, action: Option<commy_core::Action>) -> bool {
@@ -7613,13 +7623,14 @@ async fn run_net_loop(
                     ServerEvent::ProfileUpdate { profile } | ServerEvent::MemberJoin { profile, .. } => Some(profile.id),
                     _ => None,
                 };
-                let presence = outbox::online_user(&event);
+                let replayed = sender == commy_net::community_streams::SERVICE_SENDER;
+                let presence = outbox::online_user(&event).filter(|_| !replayed);
                 let device_presence = match &event {
                     ServerEvent::PresenceUpdate { user, presence } => Some((*user, *presence)),
                     _ => None,
                 };
                 let device_news = matches!(event, ServerEvent::DeviceAnnounce { .. }).then(|| event.clone());
-                let speaker = liveness::speaker(&event, action.as_ref());
+                let speaker = liveness::speaker(&event, action.as_ref()).filter(|_| !replayed);
                 let (applied, was_online, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
                     match servers.get_mut(&server) {
@@ -7627,7 +7638,15 @@ async fn run_net_loop(
                             let was_online = presence.map(|(user, _)| {
                                 state.profiles.get(&user).is_some_and(|p| p.presence.is_visible_online())
                             });
+                            let shown = profile_changed
+                                .filter(|_| replayed)
+                                .map(|user| state.profiles.get(&user).map_or(Presence::Offline, |p| p.presence));
                             let (mut applied, new_message, pinned) = catchup::apply_live(state, event, action);
+                            if let (Some(user), Some(shown)) = (profile_changed, shown) {
+                                if let Some(profile) = state.profiles.get_mut(&user) {
+                                    profile.presence = shown;
+                                }
+                            }
                             if let (Ok(_), Some((user, said))) = (&applied, device_presence) {
                                 let now = std::time::Instant::now();
                                 if liveness::settle_device_presence(&app, state, user, &sender, said, now) {
@@ -8213,6 +8232,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
                 tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
                 tauri::async_runtime::spawn(channel_lock::run(handle.clone()));
+                tauri::async_runtime::spawn(community_sync::run(handle.clone()));
                 tauri::async_runtime::spawn(wake::run_watchdog(handle.clone()));
                 tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
                 tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
@@ -8228,6 +8248,7 @@ fn on_resumed(handle: &tauri::AppHandle) {
     entry_list::on_resumed(handle);
     account_log::nudge();
     dm_sync::nudge();
+    community_sync::nudge();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
