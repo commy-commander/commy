@@ -59,6 +59,19 @@ jobs:
           echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
           (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
 
+      - name: Keep the debug signing key
+        env:
+          ANDROID_DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+        run: |
+          if [ -n "$ANDROID_DEBUG_KEYSTORE" ]; then
+            mkdir -p ~/.android
+            printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore
+            echo "ANDROID_DEBUG_KEYSTORE_FILE=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
+            echo "Signing with the debug key from ANDROID_DEBUG_KEYSTORE"
+          else
+            echo "ANDROID_DEBUG_KEYSTORE is not set, so this APK gets a new debug key"
+          fi
+
       - name: Generate the Android project
         working-directory: apps/desktop/src-tauri
         env:
@@ -68,18 +81,6 @@ jobs:
           npx tauri android init --ci
           npx tauri icon ../mobile/app-icon.png
           node ../mobile/android-project.mjs
-
-      - name: Keep the debug signing key
-        env:
-          ANDROID_DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
-        run: |
-          if [ -n "$ANDROID_DEBUG_KEYSTORE" ]; then
-            mkdir -p ~/.android
-            printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore
-            echo "Signing with the debug key from ANDROID_DEBUG_KEYSTORE"
-          else
-            echo "ANDROID_DEBUG_KEYSTORE is not set, so this APK gets a new debug key"
-          fi
 
       - name: Build
         working-directory: apps/desktop/src-tauri
@@ -94,6 +95,17 @@ jobs:
           [ -n "$apk" ] || { echo "no APK was built"; exit 1; }
           cp "$apk" dist/Commy-debug.apk
           ls -la dist
+
+      - name: Check the APK is signed with the kept key
+        if: env.ANDROID_DEBUG_KEYSTORE_FILE != ''
+        run: |
+          want="$(keytool -list -v -keystore "$ANDROID_DEBUG_KEYSTORE_FILE" -storepass android -alias androiddebugkey | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f')"
+          certs="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs dist/Commy-debug.apk)"
+          printf '%s\n' "$certs" | grep 'SHA-256' || true
+          got="$(printf '%s\n' "$certs" | sed -n 's/^.*certificate SHA-256 digest: //p' | sort -u)"
+          echo "kept key: $want"
+          echo "APK:      $got"
+          [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::The APK is not signed with the key from ANDROID_DEBUG_KEYSTORE"; exit 1; }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

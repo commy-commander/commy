@@ -81,6 +81,30 @@ export function withCommyDependencies(gradle) {
   return `${gradle.slice(0, at)}${lines}${gradle.slice(at)}`;
 }
 
+export const DEBUG_KEY = { storePassword: "android", keyAlias: "androiddebugkey", keyPassword: "android" };
+
+const kotlinString = text => `"${String(text).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\$/g, "\\$")}"`;
+
+export function withDebugSigning(gradle, storeFile) {
+  if (!storeFile) return gradle;
+  if (gradle.includes("signingConfigs {")) return gradle;
+  const block = gradle.match(/^([ \t]*)buildTypes \{/m);
+  if (!block) throw new Error("app/build.gradle.kts has no buildTypes block");
+  const indent = block[1];
+  const inner = `${indent}    `;
+  const lines = [
+    `${indent}signingConfigs {`,
+    `${inner}getByName("debug") {`,
+    `${inner}    storeFile = file(${kotlinString(storeFile)})`,
+    `${inner}    storePassword = ${kotlinString(DEBUG_KEY.storePassword)}`,
+    `${inner}    keyAlias = ${kotlinString(DEBUG_KEY.keyAlias)}`,
+    `${inner}    keyPassword = ${kotlinString(DEBUG_KEY.keyPassword)}`,
+    `${inner}}`,
+    `${indent}}`,
+  ].join("\n");
+  return `${gradle.slice(0, block.index)}${lines}\n${gradle.slice(block.index)}`;
+}
+
 export function applicationId(gradle) {
   return gradle.match(/applicationId\s*=\s*"([^"]+)"/)?.[1] ?? null;
 }
@@ -135,8 +159,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const sources = readdirSync(sourcesFrom).filter(name => name.endsWith(".kt"));
   for (const name of sources) copyFileSync(`${sourcesFrom}${name}`, `${sourcesTo}${name}`);
   const gradle = readFileSync(gradlePath, "utf8");
-  const withDependencies = withCommyDependencies(gradle);
+  const withDependencies = withDebugSigning(withCommyDependencies(gradle), process.env.ANDROID_DEBUG_KEYSTORE_FILE);
   if (withDependencies !== gradle) writeFileSync(gradlePath, withDependencies);
+  console.log(process.env.ANDROID_DEBUG_KEYSTORE_FILE ? "Debug builds sign with the kept debug key" : "ANDROID_DEBUG_KEYSTORE_FILE is not set, so debug builds sign with a new key");
   console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call service, relaunching and invite links");
   console.log(`Copied ${sources.join(", ")} into the Android project`);
   const googleServices = readGoogleServices(process.env.GOOGLE_SERVICES_JSON);
