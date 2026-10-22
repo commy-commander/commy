@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withCommyNeeds, withCommyDependencies, applicationId, firebaseValues, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES } from "./android-project.mjs";
+import { withCommyNeeds, withCommyDependencies, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -116,4 +116,9 @@ test("GOOGLE_SERVICES_JSON may be the file itself, its base64 or a path", () => 
   assert.equal(readGoogleServices("C:\\keys\\google-services.json", path => `read ${path}`), "read C:\\keys\\google-services.json");
   assert.equal(readGoogleServices("  ", noFile), null);
   assert.equal(readGoogleServices(undefined, noFile), null);
+});
+
+test("the Android packages in the Firebase file can be listed to explain a mismatch", () => {
+  assert.deepEqual(firebasePackages(JSON.stringify(googleServices)), ["other.app", "chat.commy.mobile"]);
+  assert.deepEqual(firebasePackages({}), []);
 });

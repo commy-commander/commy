@@ -78,6 +78,11 @@ export function applicationId(gradle) {
 const FIREBASE_STRINGS = ["google_app_id", "gcm_defaultSenderId", "google_api_key", "project_id"];
 const escapeXml = text => String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "\\'");
 
+export function firebasePackages(googleServices) {
+  const config = typeof googleServices === "string" ? JSON.parse(googleServices) : googleServices;
+  return (config.client ?? []).map(c => c.client_info?.android_client_info?.package_name).filter(Boolean);
+}
+
 export function firebaseValues(googleServices, packageName) {
   const config = typeof googleServices === "string" ? JSON.parse(googleServices) : googleServices;
   const client = (config.client ?? []).find(c => c.client_info?.android_client_info?.package_name === packageName);
@@ -125,12 +130,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call service and relaunching");
   console.log(`Copied ${sources.join(", ")} into the Android project`);
   const googleServices = readGoogleServices(process.env.GOOGLE_SERVICES_JSON);
-  const firebase = googleServices && firebaseValues(googleServices, applicationId(withDependencies));
+  const packageName = applicationId(withDependencies);
+  const firebase = googleServices && firebaseValues(googleServices, packageName);
   if (firebase) {
     writeFileSync(firebasePath, firebase);
-    console.log("Push wake-ups are on: wrote the Firebase settings");
+    console.log(`Push wake-ups are on: wrote the Firebase settings for ${packageName}`);
   } else {
     rmSync(firebasePath, { force: true });
-    console.log(googleServices ? "GOOGLE_SERVICES_JSON has no Android app for this package, so push wake-ups are off" : "GOOGLE_SERVICES_JSON is not set, so push wake-ups are off");
+    if (!googleServices) console.log("GOOGLE_SERVICES_JSON is not set, so push wake-ups are off");
+    else {
+      const found = firebasePackages(googleServices);
+      console.log(`GOOGLE_SERVICES_JSON has Android apps for ${found.join(", ") || "no package"}, but this build is ${packageName ?? "an unknown package"}, so push wake-ups are off`);
+    }
   }
 }
