@@ -91,11 +91,30 @@ services:
       IGDB_CLIENT_ID: ${IGDB_CLIENT_ID:-}
       IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET:-}
       DOORBELL: ${DOORBELL:-true}
+      SYNC_URL: ${SYNC_URL:-}
       REDIS_URL: ${REDIS_URL-redis://redis:6379}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+    networks: [edge, db]
+    logging: *logging
+
+  sync:
+    <<: *hardened
+    mem_limit: ${SYNC_MEM_LIMIT:-384m}
+    build:
+      context: ..
+      dockerfile: crates/commy-sync-server/Dockerfile
+    image: ${SYNC_IMAGE:-commy-sync:local}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://commy:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/commy_sync
+      SYNC_RETENTION_DAYS: ${SYNC_RETENTION_DAYS:-90}
+      RUST_LOG: ${SYNC_LOG:-info}
+    depends_on:
+      postgres:
         condition: service_healthy
     networks: [edge, db]
     logging: *logging

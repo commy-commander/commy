@@ -40,6 +40,22 @@ function rowsFor(db, token) {
   return db.doorbellRing.filter((row) => row.token === token);
 }
 
+test("discovery names the sync service only when SYNC_URL is set", () => {
+  const off = discoveryDocument(loadConfig(ENV));
+  assert.equal(off.features.sync, false);
+  assert.equal(off.endpoints.sync, null);
+  assert.match(featureSummary(loadConfig(ENV)), /sync=off/);
+  const config = loadConfig({ ...ENV, SYNC_URL: "wss://dev.commy.chat/sync/" });
+  const on = discoveryDocument(config);
+  assert.equal(on.features.sync, true);
+  assert.equal(on.endpoints.sync, "wss://dev.commy.chat/sync");
+  assert.match(featureSummary(config), /sync=on/);
+  assert.equal(discoveryDocument(loadConfig({ ...ENV, SYNC_URL: "  " })).endpoints.sync, null);
+  for (const bad of ["https://commy.chat/sync", "wss://", "commy.chat/sync", "wss://bad host/sync"]) {
+    assert.throws(() => loadConfig({ ...ENV, SYNC_URL: bad }), /SYNC_URL/, bad);
+  }
+});
+
 test("discovery advertises the doorbell and DOORBELL=false turns it off", async () => {
   const on = loadConfig(ENV);
   assert.equal(on.doorbell, true);

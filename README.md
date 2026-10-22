@@ -138,6 +138,11 @@ crates/commy-audio      Voice processing: noise cancellation, mute gate,
 crates/commy-media      Device I/O: microphone, playback mixing with jitter
                         buffers, screen and window capture
 crates/commy-bot        Headless member that enforces auto moderation
+crates/commy-sync       Sealed sync streams: key derivation, padding, wire
+                        format and a native client
+crates/commy-sync-server
+                        Sync service that orders and fans out sealed
+                        entries it cannot read
 auth                    Account server: Better Auth, Postgres, Redis
 deploy                  Self-hosting stack and deploy pipeline
 ```

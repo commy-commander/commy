@@ -149,7 +149,8 @@ With the domain's DNS on Cloudflare:
   `dev.commy.chat` as the application domains and an Allow policy for your email
   addresses. Testing the desktop app against staging also needs a second
   application with a Bypass policy (include: Everyone) covering
-  `staging.commy.chat/api/auth` and `staging.commy.chat/.well-known/commy-auth.json`,
+  `staging.commy.chat/api/auth`, `staging.commy.chat/.well-known/commy-auth.json`
+  and `staging.commy.chat/sync`,
   since the app cannot complete the Access login and discovers the account server
   through that document first. The approval page the app opens in the browser stays
   behind Access, which is fine because a browser can complete the login.
@@ -176,6 +177,35 @@ With the domain's DNS on Cloudflare:
 
 The edge Caddy trusts `CF-Connecting-IP` from Cloudflare's ranges, so logs and
 the auth server's rate limits see the visitor's real address.
+
+## Turning on the sync service
+
+New environments from `setup-vps.sh` run it on staging and dev already. On an
+environment set up before it existed, add to that environment's `deploy/.env`
+(dev shown; staging uses `commy-sync:staging` and `staging.commy.chat`):
+
+```bash
+SYNC_IMAGE=ghcr.io/commy-commander/commy-sync:dev
+AGENT_SERVICES=auth web sync
+SYNC_URL=wss://dev.commy.chat/sync
+```
+
+Then pull the checkout and start it, one service at a time:
+
+```bash
+cd /srv/commy-dev && git pull
+cd deploy
+docker compose up -d --no-deps agent
+docker compose up -d --no-deps sync
+docker compose up -d --no-deps auth
+cd /srv/commy-prod/deploy/edge && docker compose up -d --force-recreate caddy
+```
+
+`https://dev.commy.chat/sync/healthz` then answers `{"ok":true,...}` and the
+discovery document lists `endpoints.sync`. Behind Cloudflare Access, add
+`dev.commy.chat/sync` (and the staging one) to the Bypass application, since
+the apps cannot complete the Access login. Production stays off until its
+`.env` gets the same three lines.
 
 ## Hardening the server
 

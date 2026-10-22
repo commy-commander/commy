@@ -47,7 +47,11 @@ POSTGRES_PASSWORD=$(openssl rand -hex 24)
 BETTER_AUTH_SECRET=$(openssl rand -base64 32)
 WEB_IMAGE=$IMAGES/commy-web:$env
 AUTH_IMAGE=$IMAGES/commy-auth:$env
+SYNC_IMAGE=$IMAGES/commy-sync:$env
 EOF
+		if [ "$env" != prod ]; then
+			printf 'AGENT_SERVICES=auth web sync\nSYNC_URL=wss://%s/sync\n' "$(host_for "$env")" >>"$envfile"
+		fi
 		if [ "$env" = dev ]; then echo "AGENT_INTERVAL=10" >>"$envfile"; fi
 		if [ -n "${AGENT_VERIFY:-}" ]; then echo "AGENT_VERIFY=$AGENT_VERIFY" >>"$envfile"; fi
 		chmod 600 "$envfile"

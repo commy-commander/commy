@@ -1,0 +1,32 @@
+[package]
+name = "commy-sync"
+description = "End-to-end encrypted sync streams for Commy: stream keys, sealing, the wire format and a native client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+client = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:rustls", "dep:webpki-roots", "dep:tracing"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+data-encoding = { workspace = true }
+aes-gcm = { workspace = true }
+thiserror = { workspace = true }
+ed25519-dalek = "2"
+sha2 = "0.11"
+hmac = "0.13"
+rand = "0.8"
+tokio = { version = "1", features = ["sync", "time", "macros", "rt", "net"], optional = true }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+tracing = { workspace = true, optional = true }
+webpki-roots = { version = "1", optional = true }
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
