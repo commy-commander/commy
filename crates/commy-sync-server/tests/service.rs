@@ -266,3 +266,26 @@ async fn a_rate_limited_append_is_retried_until_it_lands() {
     assert_eq!(seqs, vec![1, 2, 3, 4, 5]);
     assert!(started.elapsed() >= Duration::from_millis(500), "the limit held the later appends back");
 }
+
+#[tokio::test]
+async fn a_nudge_reconnects_at_once_instead_of_waiting_out_the_back_off() {
+    let parked = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = parked.local_addr().unwrap();
+    drop(parked);
+    let (client, mut events) = SyncClient::spawn(format!("ws://{address}/sync"));
+    client.follow(StreamSecret::random().keys(), 0);
+    tokio::time::sleep(Duration::from_secs(13)).await;
+
+    let config = Config::from_env(|_| None).unwrap();
+    let listener = tokio::net::TcpListener::bind(address).await.unwrap();
+    tokio::spawn(serve(listener, Service::new(Store::memory(), &config)));
+    client.nudge();
+    let connected = async {
+        while let Some(event) = events.recv().await {
+            if event == SyncEvent::Connected {
+                return;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(3), connected).await.expect("connected right after the nudge");
+}

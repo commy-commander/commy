@@ -8222,6 +8222,12 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
     });
 }
 
+fn on_resumed(handle: &tauri::AppHandle) {
+    entry_list::on_resumed(handle);
+    account_log::nudge();
+    dm_sync::nudge();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt()
@@ -8616,11 +8622,11 @@ pub fn run() {
                 catchup::save_unsaved(&handle.state::<App>());
             }
             if let tauri::RunEvent::Resumed = event {
-                entry_list::on_resumed(handle);
+                on_resumed(handle);
             }
             #[cfg(mobile)]
             if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Resumed, .. } = &event {
-                entry_list::on_resumed(handle);
+                on_resumed(handle);
             }
             invite_link::on_run_event(handle, &event)
         });

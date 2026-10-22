@@ -112,6 +112,12 @@ impl Pool {
         }
     }
 
+    pub fn nudge(&self) {
+        for slot in &self.slots {
+            slot.client.nudge();
+        }
+    }
+
     pub fn client_for(&self, stream: StreamId) -> Option<SyncClient> {
         self.home.get(&stream).map(|at| self.slots[*at].client.clone())
     }

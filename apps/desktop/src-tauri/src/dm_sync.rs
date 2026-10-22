@@ -42,6 +42,12 @@ struct Live {
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 
+pub fn nudge() {
+    if let Some(live) = LIVE.lock().unwrap().as_ref() {
+        live.pool.nudge();
+    }
+}
+
 pub fn syncable(message: &DmMessage) -> bool {
     matches!(message.action, DmAction::Post | DmAction::Edit { .. } | DmAction::Delete { .. } | DmAction::React { .. })
         && !message.content.starts_with(safety::REPORT_PREFIX)
