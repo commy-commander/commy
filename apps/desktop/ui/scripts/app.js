@@ -4210,10 +4210,14 @@ function placePopup(popup, anchor, prefer = "above") {
   popup.style.left = `${Math.max(8, left)}px`;
 }
 
+function closeContextMenus() {
+  for (const menu of document.querySelectorAll(".ctx-menu:not(.hidden)")) menu.classList.add("hidden");
+}
+
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -13142,6 +13146,7 @@ function setViewMode(mode) {
 }
 
 async function selectServer(serverId) {
+  closeContextMenus();
   const previous = state.currentServer && state.currentServer.id;
   try {
     state.currentServer = await invoke("get_server", { serverId });
@@ -13889,6 +13894,7 @@ async function sendDm() {
 }
 
 async function selectChannel(channel) {
+  closeContextMenus();
   const switched = Boolean(channel) && (!state.currentChannel || channel.id !== state.currentChannel.id);
   if (state.currentChannel && (!channel || channel.id !== state.currentChannel.id)) state.previousChannel = state.currentChannel;
   state.currentChannel = channel;
@@ -15754,11 +15760,14 @@ function wireEvents() {
   };
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
     if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #threads-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
+  });
+  window.addEventListener("blur", () => {
+    if (!$("remind-pop").contains(document.activeElement)) closeContextMenus();
   });
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
