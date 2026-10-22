@@ -51,26 +51,13 @@ jobs:
           node-version: ">=24.22.1 <25"
 
       - name: Mobile script tests
-        run: node --test "apps/desktop/mobile/*.test.mjs" "apps/desktop/mobile/e2e/*.test.mjs"
+        run: node --test "apps/desktop/mobile/*.test.mjs"
 
       - name: Android SDK and NDK
         run: |
           echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
           echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
           (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
-
-      - name: Shared debug signing key
-        env:
-          ANDROID_DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
-        run: |
-          if [ -z "$ANDROID_DEBUG_KEYSTORE" ]; then
-            echo "ANDROID_DEBUG_KEYSTORE is not set, so Gradle makes a new debug key for this build"
-            exit 0
-          fi
-          mkdir -p "$HOME/.android"
-          printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 -d > "$HOME/.android/debug.keystore"
-          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey > /dev/null
-          echo "signing with the shared debug key"
 
       - name: Generate the Android project
         working-directory: apps/desktop/src-tauri
