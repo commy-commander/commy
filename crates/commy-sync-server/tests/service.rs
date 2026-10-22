@@ -331,7 +331,7 @@ async fn a_ring_wakes_the_rung_persons_phones_once_per_gap() {
     assert_eq!(woken, ["fcm:bob-phone", "fcm:bob-tablet"], "only the rung person's devices wake");
 
     assert_eq!(post(&address, "/sync/wake/ring", &ring).await, 204);
-    assert!(tokio::time::timeout(Duration::from_millis(500), pushes.recv()).await.is_err(), "a second ring within the gap wakes nobody");
+    assert!(tokio::time::timeout(Duration::from_millis(500), pushes.recv()).await.is_err(), "a second ring within the gap waits for the gap to end");
 
     let forget = serde_json::to_value(WakeForget { tag: alice.clone(), push: "fcm:alice-phone".into() }).unwrap();
     assert_eq!(post(&address, "/sync/wake/forget", &forget).await, 204);

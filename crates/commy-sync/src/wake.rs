@@ -6,7 +6,7 @@ pub const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 pub const MAX_DAYS_AHEAD: i64 = 2;
 pub const MAX_RING_TAGS: usize = 8;
 pub const MAX_PUSH_TOKEN: usize = 4096;
-pub const PUSH_GAP_SECS: u64 = 120;
+pub const PUSH_GAP_SECS: u64 = 15;
 
 pub type WakeTag = Bytes<32>;
 

@@ -10,6 +10,8 @@ const SCOPE: &str = "https://www.googleapis.com/auth/firebase.messaging";
 const ASSERTION_SECS: u64 = 3600;
 const RENEW_BEFORE: Duration = Duration::from_secs(300);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const WAKE_TTL: &str = "3600s";
+const WAKE_COLLAPSE_KEY: &str = "wake";
 
 #[derive(Deserialize)]
 struct ServiceAccount {
@@ -135,7 +137,7 @@ pub fn message(token: &str) -> serde_json::Value {
         "message": {
             "token": token,
             "data": { "wake": "1" },
-            "android": { "priority": "high", "ttl": "120s" },
+            "android": { "priority": "high", "ttl": WAKE_TTL, "collapse_key": WAKE_COLLAPSE_KEY },
         }
     })
 }
@@ -158,6 +160,13 @@ mod tests {
         assert_eq!(m["message"]["data"], serde_json::json!({ "wake": "1" }));
         assert_eq!(m["message"]["android"]["priority"], "high");
         assert!(m["message"].get("notification").is_none(), "no visible text ever comes from the push");
+    }
+
+    #[test]
+    fn a_phone_that_is_offline_for_a_while_still_gets_one_wake_when_it_returns() {
+        let m = message("tok");
+        assert_eq!(m["message"]["android"]["ttl"], "3600s");
+        assert_eq!(m["message"]["android"]["collapse_key"], "wake", "queued wakes collapse into one");
     }
 
     #[test]
