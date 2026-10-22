@@ -325,7 +325,7 @@ server or channel a log belongs to.
   entries so far and the time of the last one; for each entry, its number,
   arrival time, a random retry nonce and the sealed bytes, padded to one of a
   few fixed sizes so lengths say little.
-- **How long:** `SYNC_RETENTION_DAYS` (365 by default, `0` keeps everything).
+- **How long:** `SYNC_RETENTION_DAYS` (90 by default, `0` keeps everything).
   An hourly sweep deletes older entries, and a log with no entries left is
   forgotten.
 - **What it never sees:** what an entry says, who wrote it, which account or

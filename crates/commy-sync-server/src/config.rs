@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use crate::limits::Limits;
 
 pub const DEFAULT_PORT: u16 = 3002;
-pub const DEFAULT_RETENTION_DAYS: u32 = 365;
+pub const DEFAULT_RETENTION_DAYS: u32 = 90;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -70,13 +70,13 @@ mod tests {
     }
 
     #[test]
-    fn defaults_keep_a_year_in_memory_behind_a_proxy() {
+    fn defaults_keep_ninety_days_in_memory_behind_a_proxy() {
         let c = config(&[]).unwrap();
         assert_eq!(c.listen.port(), DEFAULT_PORT);
         assert_eq!(c.database_url, None);
-        assert_eq!(c.retention_days, 365);
+        assert_eq!(c.retention_days, 90);
         assert!(c.trust_proxy);
-        assert_eq!(c.summary(), "port=3002 store=memory retention=365d trust_proxy=true");
+        assert_eq!(c.summary(), "port=3002 store=memory retention=90d trust_proxy=true");
     }
 
     #[test]
