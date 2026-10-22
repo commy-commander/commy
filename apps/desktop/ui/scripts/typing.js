@@ -31,13 +31,17 @@ class TypingTracker {
   }
 }
 
+function othersCount(count) {
+  return count === 1 ? "1 other" : `${count} others`;
+}
+
 function typingLine(names) {
   const list = (names || []).filter(Boolean);
   if (!list.length) return "";
   if (list.length === 1) return `${list[0]} is typing`;
   if (list.length === 2) return `${list[0]} and ${list[1]} are typing`;
   if (list.length === MAX_TYPING_NAMES) return `${list[0]}, ${list[1]} and ${list[2]} are typing`;
-  if (list.length <= 5) return `${list.slice(0, MAX_TYPING_NAMES).join(", ")} and ${list.length - MAX_TYPING_NAMES} others are typing`;
+  if (list.length <= 5) return `${list.slice(0, MAX_TYPING_NAMES).join(", ")} and ${othersCount(list.length - MAX_TYPING_NAMES)} are typing`;
   return "Several people are typing";
 }
 

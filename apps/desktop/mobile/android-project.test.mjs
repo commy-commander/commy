@@ -91,7 +91,7 @@ const googleServices = {
   project_info: { project_number: "123456", project_id: "commy-test" },
   client: [
     { client_info: { mobilesdk_app_id: "1:123456:android:other", android_client_info: { package_name: "other.app" } }, api_key: [{ current_key: "other-key" }] },
-    { client_info: { mobilesdk_app_id: "1:123456:android:abc", android_client_info: { package_name: "chat.commy.mobile" } }, api_key: [{ current_key: "AIza<&>" }] },
+    { client_info: { mobilesdk_app_id: "1:123456:android:abc", android_client_info: { package_name: "chat.commy.mobile" } }, api_key: [{ current_key: "AIza<&>\\'" }] },
   ],
 };
 
@@ -100,7 +100,7 @@ test("Firebase settings come from the client for this package and are kept by th
   assert.match(xml, /<string name="google_app_id" translatable="false">1:123456:android:abc<\/string>/);
   assert.match(xml, /<string name="gcm_defaultSenderId" translatable="false">123456<\/string>/);
   assert.match(xml, /<string name="project_id" translatable="false">commy-test<\/string>/);
-  assert.match(xml, /AIza&lt;&amp;&gt;/);
+  assert.ok(xml.includes("AIza&lt;&amp;&gt;\\\\\\'</string>"));
   assert.ok(!xml.includes("other-key"));
   assert.match(xml, /tools:keep="@string\/google_app_id,/);
 });
