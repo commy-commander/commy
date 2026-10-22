@@ -117,6 +117,7 @@ pub fn router(service: Arc<Service>) -> Router {
         .route("/sync/healthz", get(health))
         .route("/sync/wake", get(wake::info))
         .route("/sync/wake/register", post(wake::register).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
+        .route("/sync/wake/forget", post(wake::forget).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/ring", post(wake::ring).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/healthz", get(health))
         .with_state(service)

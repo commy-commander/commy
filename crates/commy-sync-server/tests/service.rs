@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use commy_sync::stream::{StreamSecret, APPEND_NONCE_BYTES};
-use commy_sync::wake::{wake_day, WakeRegister, WakeRing, WakeTag, MAX_RING_TAGS};
+use commy_sync::wake::{wake_day, WakeForget, WakeRegister, WakeRing, WakeTag, MAX_RING_TAGS};
 use commy_sync::wire::{Blob, Bytes, ClientFrame, ErrorCode, ServerFrame, MAX_STREAMS_PER_CONNECTION};
 use commy_sync::{SyncClient, SyncEvent};
 use commy_sync_server::config::Config;
@@ -332,6 +332,12 @@ async fn a_ring_wakes_the_rung_persons_phones_once_per_gap() {
 
     assert_eq!(post(&address, "/sync/wake/ring", &ring).await, 204);
     assert!(tokio::time::timeout(Duration::from_millis(500), pushes.recv()).await.is_err(), "a second ring within the gap wakes nobody");
+
+    let forget = serde_json::to_value(WakeForget { tag: alice.clone(), push: "fcm:alice-phone".into() }).unwrap();
+    assert_eq!(post(&address, "/sync/wake/forget", &forget).await, 204);
+    let ring_alice = serde_json::to_value(WakeRing { tags: vec![alice.clone()] }).unwrap();
+    assert_eq!(post(&address, "/sync/wake/ring", &ring_alice).await, 204);
+    assert!(tokio::time::timeout(Duration::from_millis(500), pushes.recv()).await.is_err(), "a forgotten tag wakes nobody");
 
     let too_many = serde_json::to_value(WakeRing { tags: vec![bob; MAX_RING_TAGS + 1] }).unwrap();
     assert_eq!(post(&address, "/sync/wake/ring", &too_many).await, 400);

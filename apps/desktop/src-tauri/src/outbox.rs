@@ -515,6 +515,9 @@ pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) ->
     }
     if let Some(payload) = &stored {
         crate::community_sync::publish(server, payload);
+        if let ServerEvent::MessageCreate { message } = &event {
+            crate::server_wake::ring(app, server, message);
+        }
     }
     delivered
 }
