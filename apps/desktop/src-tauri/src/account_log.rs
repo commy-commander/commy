@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use commy_core::channel_key::{ChannelSecret, KeyId};
-use commy_core::{ServerId, UserId, UserProfile};
+use commy_core::{IdentityKey, ServerId, UserId, UserProfile};
 use commy_net::entry_list::EntryList;
 use commy_net::sync_streams;
 use commy_sync::{AppendError, StreamId, SyncEvent};
@@ -62,7 +62,13 @@ pub enum Record {
         #[serde(default)]
         accepted: bool,
     },
-    CommunityKey { server: ServerId, key: SharedKey, at: i64 },
+    CommunityKey {
+        server: ServerId,
+        key: SharedKey,
+        at: i64,
+        #[serde(default)]
+        owner: Option<(UserId, IdentityKey)>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -96,6 +102,8 @@ pub struct SyncState {
     #[serde(default)]
     pub community: BTreeMap<ServerId, (SharedKey, i64)>,
     #[serde(default)]
+    pub owners: BTreeMap<ServerId, (UserId, IdentityKey)>,
+    #[serde(default)]
     pub outbox: Vec<Queued>,
     #[serde(default)]
     pub next_id: u64,
@@ -109,7 +117,7 @@ pub enum Change {
     Saved(Vec<SavedOp>),
     Prefs(BTreeMap<String, PrefPiece>),
     Partner(Box<UserProfile>, bool),
-    CommunityKey,
+    CommunityKey(ServerId),
 }
 
 impl SyncState {
@@ -126,6 +134,7 @@ impl SyncState {
             prefs: kept.prefs,
             dm_cursors: kept.dm_cursors,
             community: kept.community,
+            owners: kept.owners,
             outbox: kept.outbox,
             next_id: kept.next_id,
             ..Default::default()
@@ -199,14 +208,18 @@ impl SyncState {
                 let accepted = self.accepted_partners.contains(&profile.id);
                 Change::Partner(Box::new(profile), accepted)
             }
-            Record::CommunityKey { server, key, at } => {
-                let known = self.community.get(&server);
-                if known.is_some_and(|(_, seen)| at <= *seen) {
-                    return Change::Nothing;
+            Record::CommunityKey { server, key, at, owner } => {
+                let mut changed = false;
+                if let Some(owner) = owner.filter(|owner| self.owners.get(&server) != Some(owner)) {
+                    self.owners.insert(server, owner);
+                    changed = true;
                 }
-                let same = known.is_some_and(|(held, _)| *held == key);
-                self.community.insert(server, (key, at));
-                if same { Change::Nothing } else { Change::CommunityKey }
+                let known = self.community.get(&server);
+                if known.is_none_or(|(_, seen)| at > *seen) {
+                    changed |= known.is_none_or(|(held, _)| *held != key);
+                    self.community.insert(server, (key, at));
+                }
+                if changed { Change::CommunityKey(server) } else { Change::Nothing }
             }
             _ => Change::Nothing,
         }
@@ -470,7 +483,10 @@ fn apply(handle: &AppHandle, change: Change) {
             let _ = handle.emit("sync-prefs-changed", set);
         }
         Change::Partner(profile, accepted) => crate::dm_sync::adopt_partner(handle, *profile, accepted),
-        Change::CommunityKey => crate::community_sync::refresh_soon(handle),
+        Change::CommunityKey(server) => {
+            crate::community_sync::adopt_owner(handle, server);
+            crate::community_sync::refresh_soon(handle);
+        }
     }
 }
 
@@ -494,7 +510,11 @@ fn seed(handle: &AppHandle) {
         if !state.prefs.is_empty() {
             state.enqueue(Record::Prefs { set: state.prefs.clone() }, None);
         }
-        let keys: Vec<Record> = state.community.iter().map(|(server, (key, at))| Record::CommunityKey { server: *server, key: key.clone(), at: *at }).collect();
+        let keys: Vec<Record> = state
+            .community
+            .iter()
+            .map(|(server, (key, at))| Record::CommunityKey { server: *server, key: key.clone(), at: *at, owner: state.owners.get(server).copied() })
+            .collect();
         for record in keys {
             state.enqueue(record, None);
         }
@@ -571,8 +591,12 @@ pub fn shared_community_key(app: &App, server: ServerId) -> Option<KeyId> {
     with_state(app, |state| state.community.get(&server).and_then(|(key, _)| key.open()).map(|(id, _)| id)).flatten()
 }
 
-pub fn share_community_key(app: &App, server: ServerId, key: KeyId, secret: &ChannelSecret) {
-    queue(app, Record::CommunityKey { server, key: SharedKey::of(key, secret), at: now_ms() });
+pub fn shared_owner(app: &App, server: ServerId) -> Option<(UserId, IdentityKey)> {
+    with_state(app, |state| state.owners.get(&server).copied()).flatten()
+}
+
+pub fn share_community_key(app: &App, server: ServerId, key: KeyId, secret: &ChannelSecret, owner: Option<(UserId, IdentityKey)>) {
+    queue(app, Record::CommunityKey { server, key: SharedKey::of(key, secret), at: now_ms(), owner });
 }
 
 pub const PARTNER_RENOTE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -705,16 +729,24 @@ mod tests {
         let server = ServerId::new();
         let first = SharedKey::of(KeyId::random(), &ChannelSecret::random());
         let second = SharedKey::of(KeyId::random(), &ChannelSecret::random());
-        assert_eq!(state.fold(Record::CommunityKey { server, key: first.clone(), at: 1 }), Change::CommunityKey);
-        assert_eq!(state.fold(Record::CommunityKey { server, key: first.clone(), at: 1 }), Change::Nothing);
-        assert_eq!(state.fold(Record::CommunityKey { server, key: second.clone(), at: 0 }), Change::Nothing);
-        assert_eq!(state.fold(Record::CommunityKey { server, key: first, at: 2 }), Change::Nothing);
-        assert_eq!(state.fold(Record::CommunityKey { server, key: second.clone(), at: 3 }), Change::CommunityKey);
+        let key = |key: &SharedKey, at| Record::CommunityKey { server, key: key.clone(), at, owner: None };
+        assert_eq!(state.fold(key(&first, 1)), Change::CommunityKey(server));
+        assert_eq!(state.fold(key(&first, 1)), Change::Nothing);
+        assert_eq!(state.fold(key(&second, 0)), Change::Nothing);
+        assert_eq!(state.fold(key(&first, 2)), Change::Nothing);
+        assert_eq!(state.fold(key(&second, 3)), Change::CommunityKey(server));
         assert_eq!(state.community.get(&server).map(|(key, _)| key), Some(&second));
+        let owner = (UserId::new(), commy_core::Identity::generate().public());
+        let vouched = Record::CommunityKey { server, key: second.clone(), at: 3, owner: Some(owner) };
+        assert_eq!(state.fold(vouched.clone()), Change::CommunityKey(server), "an older device learns who owns the server");
+        assert_eq!(state.fold(vouched), Change::Nothing);
+        assert_eq!(state.owners.get(&server), Some(&owner));
         let json = serde_json::to_string(&state).unwrap();
         assert_eq!(serde_json::from_str::<SyncState>(&json).unwrap(), state);
-        let record = serde_json::to_string(&Record::CommunityKey { server, key: second, at: 3 }).unwrap();
+        let record = serde_json::to_string(&key(&second, 3)).unwrap();
         assert!(record.contains("\"k\":\"community_key\""));
+        let without_owner = record.replace(",\"owner\":null", "");
+        assert_eq!(serde_json::from_str::<Record>(&without_owner).unwrap(), key(&second, 3));
     }
 
     fn entry(name: &str, minute: i64) -> Entry {

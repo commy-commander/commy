@@ -13,7 +13,7 @@ use commy_net::{NetEvent, WirePayload};
 use commy_sync::{AppendError, StreamId, SyncClient, SyncEvent};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 
 use crate::state::App;
@@ -83,6 +83,7 @@ struct Community {
 }
 
 struct Live {
+    handle: AppHandle,
     url: String,
     dir: PathBuf,
     me: UserId,
@@ -95,6 +96,7 @@ struct Live {
     snapshots: HashMap<ServerId, WirePayload>,
     parked: HashMap<ServerId, VecDeque<WirePayload>>,
     published: HashMap<ServerId, i64>,
+    retried: HashSet<MessageId>,
     echoes: VecDeque<[u8; 32]>,
     announced: HashMap<ServerId, [u8; 32]>,
     cursors: Cursors,
@@ -231,6 +233,7 @@ async fn tend(handle: &AppHandle) {
         let task = tauri::async_runtime::spawn(listen(handle.clone(), received));
         let cursors = load(&dir);
         *LIVE.lock().unwrap() = Some(Live {
+            handle: handle.clone(),
             url,
             dir,
             me,
@@ -243,6 +246,7 @@ async fn tend(handle: &AppHandle) {
             snapshots: HashMap::new(),
             parked: HashMap::new(),
             published: HashMap::new(),
+            retried: HashSet::new(),
             echoes: VecDeque::new(),
             announced: HashMap::new(),
             cursors,
@@ -253,6 +257,44 @@ async fn tend(handle: &AppHandle) {
     share_keys(&app);
     release_parked(handle);
     publish_snapshots(handle);
+    store_pending(handle);
+}
+
+fn store_pending(handle: &AppHandle) {
+    let app = handle.state::<App>();
+    let ready: Vec<ServerId> = {
+        let guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_ref() else { return };
+        live.communities.iter().filter(|(_, c)| c.wants.values().any(|w| matches!(w.lane, Lane::Channel(_)) && w.writes)).map(|(sid, _)| *sid).collect()
+    };
+    for server in ready {
+        let pending = app.outbox.lock().unwrap().pending_ids(server);
+        let fresh: Vec<MessageId> = {
+            let mut guard = LIVE.lock().unwrap();
+            let Some(live) = guard.as_mut() else { return };
+            pending.into_iter().filter(|id| live.retried.insert(*id)).collect()
+        };
+        if fresh.is_empty() {
+            continue;
+        }
+        let messages: Vec<commy_core::Message> = {
+            let servers = app.servers.lock().unwrap();
+            let Some(state) = servers.get(&server) else { continue };
+            fresh.iter().filter_map(|id| state.message(*id).cloned()).collect()
+        };
+        for message in messages {
+            publish(server, &WirePayload::Event(ServerEvent::MessageCreate { message }));
+        }
+    }
+}
+
+fn stored(handle: &AppHandle, server: ServerId, message: MessageId) {
+    let app = handle.state::<App>();
+    let cleared = app.outbox.lock().unwrap().clear_delivered(server, [message]);
+    if cleared {
+        app.persist_outbox();
+        let _ = handle.emit("server-event", server.to_string());
+    }
 }
 
 fn given_key(app: &App, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
@@ -263,6 +305,8 @@ fn share_keys(app: &App) {
     let holder = crate::channel_lock::holder_of(app);
     let sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().filter(|sid| !app.awaits_snapshot(*sid)).collect();
     let stored: HashMap<ServerId, KeyId> = sids.iter().filter_map(|sid| Some((*sid, crate::account_log::shared_community_key(app, *sid)?))).collect();
+    let owners: HashMap<ServerId, (UserId, commy_core::IdentityKey)> = sids.iter().filter_map(|sid| Some((*sid, app.vouched_ticket(*sid)?.owner?))).collect();
+    let unvouched: HashSet<ServerId> = owners.keys().copied().filter(|sid| crate::account_log::shared_owner(app, *sid).is_none()).collect();
     let due: Vec<(ServerId, KeyId, ChannelSecret)> = {
         let servers = app.servers.lock().unwrap();
         sids.iter()
@@ -274,15 +318,30 @@ fn share_keys(app: &App) {
                 let at = |id: KeyId| held.iter().find(|(record, _)| record.id == id).map(|(record, _)| record.at);
                 let behind = match stored.get(sid) {
                     None => true,
-                    Some(id) => *id != newest && at(*id).zip(at(newest)).is_some_and(|(old, new)| old < new),
+                    Some(id) if *id == newest => unvouched.contains(sid),
+                    Some(id) => at(*id).zip(at(newest)).is_some_and(|(old, new)| old < new),
                 };
                 behind.then(|| (*sid, newest, secret.clone()))
             })
             .collect()
     };
     for (sid, key, secret) in due {
-        crate::account_log::share_community_key(app, sid, key, &secret);
+        tracing::info!("sharing the key of {sid} with your other devices");
+        crate::account_log::share_community_key(app, sid, key, &secret, owners.get(&sid).copied());
     }
+}
+
+pub fn adopt_owner(handle: &AppHandle, server: ServerId) {
+    let app = handle.state::<App>();
+    let Some(owner) = crate::account_log::shared_owner(&app, server) else { return };
+    let Some(raw) = app.invites.lock().unwrap().get(&server).cloned() else { return };
+    let Ok(mut ticket) = commy_net::ServerTicket::decode(&raw) else { return };
+    if ticket.owner.is_some() {
+        return;
+    }
+    ticket.owner = Some(owner);
+    app.invites.lock().unwrap().insert(server, ticket.encode());
+    app.persist_invites();
 }
 
 fn wanted_now(app: &App, me: UserId) -> HashMap<ServerId, Vec<Want>> {
@@ -358,6 +417,7 @@ fn refresh(handle: &AppHandle) {
             continue;
         }
         if fresh {
+            tracing::info!("following {} sync streams for {sid}", group.len());
             fresh_communities.push((sid, group));
         } else {
             follow_group(&mut community.pool, group);
@@ -400,20 +460,30 @@ pub fn publish(server: ServerId, payload: &WirePayload) {
     let Some(lane) = streams::lane_of_payload(payload) else { return };
     let key_event = streams::event_of(payload).is_none_or(|(event, _)| streams::is_key_event(event));
     let Some(plain) = streams::encode_entry(payload) else { return };
-    let sends = {
+    let message = match streams::event_of(payload) {
+        Some((ServerEvent::MessageCreate { message }, _)) => Some(message.id),
+        _ => None,
+    };
+    let (sends, handle) = {
         let mut guard = LIVE.lock().unwrap();
         let Some(live) = guard.as_mut() else { return };
         let sends = targets(live, server, lane, key_event);
         if !sends.is_empty() {
             live.note_echo(digest(&plain));
         }
-        sends
+        (sends, live.handle.clone())
     };
     for (stream, client) in sends {
         let plain = plain.clone();
+        let handle = handle.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = sync_link::append(client, stream, plain).await {
-                tracing::debug!("could not add a server change to the sync service: {e}");
+            match sync_link::append(client, stream, plain).await {
+                Ok(_) => {
+                    if let Some(message) = message {
+                        stored(&handle, server, message);
+                    }
+                }
+                Err(e) => tracing::debug!("could not add a server change to the sync service: {e}"),
             }
         });
     }
@@ -532,6 +602,7 @@ fn park(server: ServerId, payload: WirePayload) {
 fn adopt_snapshot(handle: &AppHandle, server: ServerId) {
     let Some(snapshot) = LIVE.lock().unwrap().as_mut().and_then(|live| live.snapshots.remove(&server)) else { return };
     if crate::catchup::apply_service_snapshot(handle, server, snapshot) {
+        tracing::info!("took the owner's copy of {server} from the sync service");
         release_parked(handle);
         refresh_soon(handle);
     }
@@ -593,14 +664,18 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
         let Some(live) = guard.as_mut() else { return };
         let Some((server, want)) = live.route(stream) else { return };
         live.cursors.advance(stream, seq);
-        live.caught_up.insert(stream);
+        let first = live.caught_up.insert(stream);
+        let held = live.snapshots.contains_key(&server);
         let due = want.writes && !live.cursors.backfilled.contains(&stream.to_hex()) && !live.backfilling.contains(&stream);
-        (server, want, due, live.me)
+        (server, want, due, live.me, first && !held)
     };
     save_soon();
-    let (server, want, due, me) = found;
+    let (server, want, due, me, empty) = found;
     let app = handle.state::<App>();
     if app.awaits_snapshot(server) {
+        if empty {
+            tracing::info!("{server} waits for its owner's copy on the sync service");
+        }
         adopt_snapshot(handle, server);
         return;
     }
