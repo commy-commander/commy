@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt } = require("../scripts/account-ui.js");
+const { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, accountChangeStep } = require("../scripts/account-ui.js");
 const LOCALE_EN = require("../scripts/locales/en.js");
 
 function memoryStorage(entries = {}) {
@@ -90,4 +90,17 @@ test("an account on another server names it", () => {
 test("signing out says where Commy goes next", () => {
   assert.match(signOutPrompt(signedIn([other("b")]), t), /restarts into b,/);
   assert.match(signOutPrompt(signedIn([]), t), /sign-in screen/);
+});
+
+test("a first sign-in opens the account, and later changes never cover it with the account list", () => {
+  const signedIn = { signed_in: true, user: { id: "u1" } };
+  assert.equal(accountChangeStep(false, signedIn, false), "open");
+  assert.equal(accountChangeStep(true, signedIn, false), null);
+  assert.equal(accountChangeStep(true, signedIn, true), "accounts");
+});
+
+test("signing out or a waiting sign-in code shows the sign-in screen", () => {
+  assert.equal(accountChangeStep(true, { signed_in: false }, false), "sign-in");
+  assert.equal(accountChangeStep(false, { signed_in: false, pending_code: "ABCD" }, false), "sign-in");
+  assert.equal(accountChangeStep(false, { signed_in: false }, false), null);
 });

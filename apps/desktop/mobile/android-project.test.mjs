@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withCommyNeeds, withCommyDependencies, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES } from "./android-project.mjs";
+import { withCommyNeeds, withCommyDependencies, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -8,6 +8,15 @@ const generated = `<?xml version="1.0" encoding="utf-8"?>
 
     <application
         android:label="@string/app_name">
+        <activity
+            android:launchMode="singleTask"
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
 `;
@@ -121,4 +130,18 @@ test("GOOGLE_SERVICES_JSON may be the file itself, its base64 or a path", () => 
 test("the Android packages in the Firebase file can be listed to explain a mismatch", () => {
   assert.deepEqual(firebasePackages(JSON.stringify(googleServices)), ["other.app", "chat.commy.mobile"]);
   assert.deepEqual(firebasePackages({}), []);
+});
+
+test("invite links open the main screen, once, through the commy scheme", () => {
+  const out = withCommyNeeds(withCommyNeeds(generated));
+  assert.equal(out.split(INVITE_LINKS).length - 1, 1);
+  const main = out.indexOf('".MainActivity"');
+  const filter = out.indexOf(INVITE_LINKS);
+  assert.ok(filter > main && filter < out.indexOf("</activity>", main));
+  assert.match(INVITE_LINKS, /android.intent.category.BROWSABLE/);
+  assert.match(INVITE_LINKS, /android:scheme="commy" android:host="i"/);
+});
+
+test("a manifest without the main screen is refused", () => {
+  assert.throws(() => withCommyNeeds(generated.replace('android:name=".MainActivity"', 'android:name=".Other"')), /MainActivity/);
 });

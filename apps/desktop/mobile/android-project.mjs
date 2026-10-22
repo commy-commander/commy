@@ -37,8 +37,10 @@ export const COMPONENTS = [
 const usesPermission = name => `<uses-permission android:name="${name}" />`;
 const usesFeature = name => `<uses-feature android:name="${name}" android:required="false" />`;
 
-function insertBefore(xml, marker, lines, indent) {
-  const anchor = xml.indexOf(marker);
+export const INVITE_LINKS = `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="commy" android:host="i" /></intent-filter>`;
+
+function insertBefore(xml, marker, lines, indent, from = 0) {
+  const anchor = xml.indexOf(marker, from);
   if (anchor < 0) throw new Error(`AndroidManifest.xml has no ${marker} element`);
   const lineStart = xml.lastIndexOf("\n", anchor) + 1;
   const block = lines.map(line => (line ? `${indent}${line}\n` : "\n")).join("");
@@ -54,6 +56,11 @@ export function withCommyNeeds(xml) {
   if (missing.length) out = insertBefore(out, "<application", [...missing, ""], "    ");
   const components = COMPONENTS.filter(c => !out.includes(`"${c.name}"`)).map(c => c.xml);
   if (components.length) out = insertBefore(out, "</application>", components, "        ");
+  if (!out.includes('android:scheme="commy"')) {
+    const main = out.indexOf('android:name=".MainActivity"');
+    if (main < 0) throw new Error("AndroidManifest.xml has no MainActivity");
+    out = insertBefore(out, "</activity>", [INVITE_LINKS], "            ", main);
+  }
   return out;
 }
 
@@ -127,7 +134,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const gradle = readFileSync(gradlePath, "utf8");
   const withDependencies = withCommyDependencies(gradle);
   if (withDependencies !== gradle) writeFileSync(gradlePath, withDependencies);
-  console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call service and relaunching");
+  console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call service, relaunching and invite links");
   console.log(`Copied ${sources.join(", ")} into the Android project`);
   const googleServices = readGoogleServices(process.env.GOOGLE_SERVICES_JSON);
   const packageName = applicationId(withDependencies);
