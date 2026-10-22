@@ -22,6 +22,12 @@ pub struct WakeRegister {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WakeForget {
+    pub tag: WakeTag,
+    pub push: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WakeRing {
     pub tags: Vec<WakeTag>,
 }

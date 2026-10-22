@@ -42,6 +42,27 @@ function levelForServer(prefs, serverId) {
   return prefs.level || DEFAULT_NOTIFY_LEVEL;
 }
 
+const MENTION_FILTERS = ["suppressEveryone", "suppressRoles"];
+
+function filterOn(prefs, key, serverId) {
+  return Boolean(prefs && prefs[key] && prefs[key][serverId]);
+}
+
+function mentionReaches(prefs, serverId, { mentions, mentioned }) {
+  if (!Array.isArray(mentions)) return Boolean(mentioned);
+  return mentions.some(kind => kind === "name"
+    || (kind === "role" && !filterOn(prefs, "suppressRoles", serverId))
+    || (kind === "everyone" && !filterOn(prefs, "suppressEveryone", serverId)));
+}
+
+function withServerFilter(prefs, serverId, key, on) {
+  if (!MENTION_FILTERS.includes(key)) return prefs;
+  const held = { ...((prefs && prefs[key]) || {}) };
+  if (on) held[serverId] = true;
+  else delete held[serverId];
+  return { ...prefs, [key]: held };
+}
+
 const MUTE_CHOICES = [
   { id: "15m", label: "For 15 minutes", seconds: 15 * 60 },
   { id: "1h", label: "For 1 hour", seconds: 60 * 60 },
@@ -110,6 +131,6 @@ function caughtUpNotice({ count, author_name, channel_name, server_name, content
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted,
-    channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice,
+    channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, MENTION_FILTERS, filterOn, mentionReaches, withServerFilter,
   };
 }

@@ -1674,6 +1674,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
+    case "autostart_allowed": return true;
     case "tray_prompt_due": return !mock.voice.tray_prompt_seen;
     case "finish_tray_prompt": mock.autostart = args.autostart; mock.voice.close_to_tray = args.closeToTray; mock.voice.tray_prompt_seen = true; return mock.voice;
     case "get_autostart": return !!mock.autostart;
@@ -2360,7 +2361,40 @@ function plainServer() {
   return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
 }
 
+function paintTitlebar() {
+  if (!document.body.classList.contains("has-titlebar")) return;
+  const server = plainServer();
+  const icon = $("titlebar-icon");
+  $("titlebar-name").textContent = server ? server.name : "Commy";
+  if (server) {
+    paintServerIcon(icon, server);
+  } else {
+    icon.classList.remove("has-image");
+    const img = el("img");
+    img.src = "images/commy_v3_noback.png";
+    img.alt = "";
+    img.draggable = false;
+    icon.replaceChildren(img);
+  }
+}
+
+async function setupTitlebar() {
+  let custom = false;
+  try { custom = IS_TAURI && await invoke("has_custom_titlebar"); } catch {}
+  if (!custom) return;
+  document.body.classList.add("has-titlebar");
+  $("titlebar").classList.remove("hidden");
+  const act = action => invoke("window_action", { action }).catch(() => {});
+  $("tb-min").addEventListener("click", () => act("minimize"));
+  $("tb-max").addEventListener("click", () => act("toggle-maximize"));
+  $("tb-close").addEventListener("click", () => act("close"));
+  $("titlebar-drag").addEventListener("mousedown", e => { if (e.button === 0 && e.detail === 1) act("drag"); });
+  $("titlebar-drag").addEventListener("dblclick", () => act("toggle-maximize"));
+  paintTitlebar();
+}
+
 function syncWindowTitle() {
+  paintTitlebar();
   const server = plainServer();
   const name = server ? server.name : null;
   if (name === state.windowTitleServer) return;
@@ -2658,6 +2692,40 @@ function updateServerPrefs(serverId, change) {
     else delete prefs.muted[serverId];
   }
   saveNotifyPrefs(prefs);
+  syncUnreadBadge();
+}
+
+const LEVEL_WORDS = { all: "All messages", mentions: "Only @mentions", online: "Only while I am online", none: "Nothing" };
+
+let notifyServer = null;
+
+function renderServerNotify() {
+  if (!notifyServer) return;
+  const prefs = notifyPrefs();
+  const { level, muted } = serverPrefs(notifyServer.id);
+  $("server-notify-name").textContent = notifyServer.name;
+  $("server-notify-mute").checked = muted;
+  $("server-notify-default").textContent = `Your setting for every server: ${LEVEL_WORDS[prefs.level] || LEVEL_WORDS.all}`;
+  for (const btn of $("server-notify-levels").querySelectorAll(".notify-level")) {
+    const picked = btn.dataset.level === level;
+    btn.classList.toggle("picked", picked);
+    btn.setAttribute("aria-checked", String(picked));
+    btn.disabled = muted;
+  }
+  $("server-notify-everyone").checked = !filterOn(prefs, "suppressEveryone", notifyServer.id);
+  $("server-notify-roles").checked = !filterOn(prefs, "suppressRoles", notifyServer.id);
+  $("modal-server-notify").classList.toggle("muted", muted);
+}
+
+function openServerNotify(server) {
+  notifyServer = server;
+  renderServerNotify();
+  showModal("modal-server-notify");
+}
+
+function setServerFilter(key, on) {
+  if (!notifyServer) return;
+  saveNotifyPrefs(withServerFilter(notifyPrefs(), notifyServer.id, key, on));
   syncUnreadBadge();
 }
 
@@ -3370,6 +3438,7 @@ function applySyncedPrefs(set) {
   $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
   renderServerRail();
   if (state.currentServer) renderChannels();
+  if (!$("modal-server-notify").classList.contains("hidden")) renderServerNotify();
 }
 
 async function loadSyncedPrefs() {
@@ -3680,7 +3749,8 @@ function onMessageCreated(msg) {
   const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === msg.channel;
   const focusedOnIt = viewing && appFocused();
   const announcement = Boolean(msg.announcement);
-  const mentioned = typeof msg.mentioned === "boolean" ? msg.mentioned : messageMentionsMeIn(msg.server, msg.author, msg.content);
+  const prefs = notifyPrefs();
+  const mentioned = typeof msg.mentioned === "boolean" ? mentionReaches(prefs, msg.server, msg) : messageMentionsMeIn(msg.server, msg.author, msg.content);
   if (!focusedOnIt) {
     unread.channels.set(msg.channel, (unread.channels.get(msg.channel) || 0) + 1);
     unread.channelServer.set(msg.channel, msg.server);
@@ -3692,7 +3762,7 @@ function onMessageCreated(msg) {
     if (state.currentServer && state.currentServer.id === msg.server) renderChannels();
     else if (dmListShown() && isGroupServer(msg.server)) renderDmThreads();
   }
-  const level = levelForChannel(notifyPrefs(), msg.server, msg.channel, nowSecs());
+  const level = levelForChannel(prefs, msg.server, msg.channel, nowSecs());
   if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement })) {
     const notice = messageNotice(sensitiveNotice(msg, msg.channel, sensitiveConfirmed()), plainText);
     invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
@@ -3778,7 +3848,7 @@ function onMessagesCaughtUp(payload) {
     if (!Number.isInteger(count) || count <= 0) continue;
     const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === channel;
     const focusedOnIt = viewing && appFocused();
-    const mentioned = Boolean(info.mentioned) || mentionsMe(info.content);
+    const mentioned = mentionReaches(prefs, server, info) || mentionsMe(info.content);
     if (!focusedOnIt) {
       unread.channels.set(channel, (unread.channels.get(channel) || 0) + count);
       unread.channelServer.set(channel, server);
@@ -4140,10 +4210,14 @@ function placePopup(popup, anchor, prefer = "above") {
   popup.style.left = `${Math.max(8, left)}px`;
 }
 
+function closeContextMenus() {
+  for (const menu of document.querySelectorAll(".ctx-menu:not(.hidden)")) menu.classList.add("hidden");
+}
+
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -13072,6 +13146,7 @@ function setViewMode(mode) {
 }
 
 async function selectServer(serverId) {
+  closeContextMenus();
   const previous = state.currentServer && state.currentServer.id;
   try {
     state.currentServer = await invoke("get_server", { serverId });
@@ -13819,6 +13894,7 @@ async function sendDm() {
 }
 
 async function selectChannel(channel) {
+  closeContextMenus();
   const switched = Boolean(channel) && (!state.currentChannel || channel.id !== state.currentChannel.id);
   if (state.currentChannel && (!channel || channel.id !== state.currentChannel.id)) state.previousChannel = state.currentChannel;
   state.currentChannel = channel;
@@ -15684,11 +15760,14 @@ function wireEvents() {
   };
   $("emoji-pop-search").addEventListener("input", e => renderEmojiPop(e.target.value));
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
     if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #threads-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
+  });
+  window.addEventListener("blur", () => {
+    if (!$("remind-pop").contains(document.activeElement)) closeContextMenus();
   });
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
@@ -15800,6 +15879,26 @@ function wireEvents() {
     closeFloating();
     toast(muted ? `Muted ${menuServer.name}` : `Unmuted ${menuServer.name}`);
   };
+  $("sm-notify").onclick = () => {
+    const server = menuServer;
+    closeFloating();
+    if (server) openServerNotify(server);
+  };
+  for (const btn of $("server-notify-levels").querySelectorAll(".notify-level")) {
+    btn.onclick = () => {
+      if (!notifyServer) return;
+      updateServerPrefs(notifyServer.id, { level: btn.dataset.level });
+      renderServerNotify();
+    };
+  }
+  $("server-notify-mute").onchange = e => {
+    if (!notifyServer) return;
+    updateServerPrefs(notifyServer.id, { muted: e.target.checked });
+    renderServerNotify();
+  };
+  $("server-notify-everyone").onchange = e => setServerFilter("suppressEveryone", !e.target.checked);
+  $("server-notify-roles").onchange = e => setServerFilter("suppressRoles", !e.target.checked);
+  $("server-notify-done").onclick = hideModals;
   $("sm-read").onclick = () => {
     if (menuServer) markServerRead(menuServer.id);
     closeFloating();
@@ -17104,6 +17203,7 @@ function openUserSettings(tab) {
   renderTtsSettings();
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
   invoke("get_autostart").then(on => { $("autostart-toggle").checked = on; }).catch(() => {});
+  invoke("autostart_allowed").then(ok => { $("autostart-toggle").closest("label").classList.toggle("hidden", !ok); }).catch(() => {});
   $("output-vol").value = Math.round((state.voice.output_volume ?? 1) * 100);
   $("input-gain").value = Math.round((state.voice.input_gain ?? 1) * 100);
   $("output-vol-label").textContent = `${$("output-vol").value}%`;
@@ -18227,6 +18327,8 @@ async function answerClaim(keep) {
   }
 }
 
+setupTitlebar();
+
 async function continueBoot() {
   try { claimUiState(localStorage, account.user && account.user.id); } catch {}
   state.user = await invoke("get_user");
@@ -18253,7 +18355,10 @@ async function offerTrayPrompt() {
   let due = false;
   try { due = await invoke("tray_prompt_due"); } catch {}
   if (!due) return;
-  $("tray-autostart").checked = true;
+  let canStart = true;
+  try { canStart = await invoke("autostart_allowed"); } catch {}
+  $("tray-autostart").closest(".tray-opt").classList.toggle("hidden", !canStart);
+  $("tray-autostart").checked = canStart;
   $("tray-close").checked = true;
   showModal("modal-tray");
 }
@@ -18261,7 +18366,7 @@ async function offerTrayPrompt() {
 $("tray-done").addEventListener("click", async () => {
   try {
     state.voice = await invoke("finish_tray_prompt", {
-      autostart: $("tray-autostart").checked,
+      autostart: $("tray-autostart").checked && !$("tray-autostart").closest(".tray-opt").classList.contains("hidden"),
       closeToTray: $("tray-close").checked,
     });
   } catch {}
