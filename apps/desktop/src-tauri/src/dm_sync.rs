@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use commy_core::dm::{DmAction, DmMessage};
-use commy_core::{IdentityKey, UserId, UserProfile};
+use commy_core::{IdentityKey, MessageId, UserId, UserProfile};
 use commy_net::node::IncomingDm;
 use commy_net::sync_streams::{self, DmEntry};
 use commy_net::DmEnvelope;
@@ -23,6 +23,7 @@ const MAX_PARTNERS: usize = 40;
 const RECENT_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 const QUIET_AFTER_SECS: i64 = 10 * 60;
 const REFRESH_EVERY: Duration = Duration::from_secs(60 * 60);
+const HOLD_WAIT: Duration = Duration::from_secs(8);
 
 struct Partner {
     key: IdentityKey,
@@ -121,7 +122,7 @@ fn start(handle: &AppHandle) {
         return;
     };
     let me_key = identity.public();
-    {
+    let fresh = {
         let mut live = LIVE.lock().unwrap();
         let same = live.as_ref().is_some_and(|l| l.url == url && l.dir == dir && l.me == me && l.me_key == me_key);
         if !same {
@@ -142,8 +143,12 @@ fn start(handle: &AppHandle) {
                 task,
             });
         }
-    }
+        !same
+    };
     refresh(handle);
+    if fresh {
+        outbox::wake_all_dms(&app);
+    }
 }
 
 fn refresh(handle: &AppHandle) {
@@ -322,23 +327,41 @@ fn take_mine(handle: &AppHandle, partner: UserId, message: DmMessage) {
     }
 }
 
-pub fn publish(app: &App, partner: UserId, envelope: &DmEnvelope) {
+pub fn partner_follows(app: &App, partner: UserId) -> bool {
+    let since = now_ms() - RECENT_MS;
+    let queued = app.outbox.lock().unwrap().pending_dms(partner);
+    let dms = app.dms.lock().unwrap();
+    dms.conversation(partner)
+        .iter()
+        .any(|m| m.created_at.timestamp_millis() > since && (m.from == partner || !queued.contains(&m.id)))
+}
+
+pub fn waiting_dms(app: &App, partner: UserId) -> HashSet<MessageId> {
+    let follows = partner_follows(app, partner);
+    let outbox = app.outbox.lock().unwrap();
+    if follows {
+        outbox.unstored_dms(partner)
+    } else {
+        outbox.pending_dms(partner)
+    }
+}
+
+pub async fn publish(app: &App, partner: UserId, envelope: &DmEnvelope) -> bool {
     if !syncable(&envelope.message) || sync_link::url().is_none() || !account_log::is_live(app) {
-        return;
+        return false;
     }
     if let Some(profile) = partner_profile(app, partner) {
         account_log::note_partner(app, profile, true);
     }
-    let (Some(key), Some(identity)) = (partner_key(app, partner), app.identity()) else { return };
+    let (Some(key), Some(identity)) = (partner_key(app, partner), app.identity()) else { return false };
     let epoch = sync_streams::dm_epoch(Utc::now());
-    let Some(keys) = sync_streams::dm_stream(&identity, &key, &epoch) else { return };
+    let Some(keys) = sync_streams::dm_stream(&identity, &key, &epoch) else { return false };
     let stream = keys.id;
     let wake = rings(&envelope.message).then(|| keys.wake_tag(&partner.to_string(), push_wake::today()));
-    let http = app.http.clone();
     let mut new_partner = false;
     let client = {
         let mut guard = LIVE.lock().unwrap();
-        let Some(live) = guard.as_mut().filter(|l| l.me_key == identity.public()) else { return };
+        let Some(live) = guard.as_mut().filter(|l| l.me_key == identity.public()) else { return false };
         if !live.pool.follows(stream) {
             new_partner = true;
             let after = account_log::dm_cursor(app, &stream.to_hex());
@@ -352,16 +375,23 @@ pub fn publish(app: &App, partner: UserId, envelope: &DmEnvelope) {
         push_wake::register_again();
     }
     let plain = sync_streams::encode_dm(envelope);
-    tauri::async_runtime::spawn(async move {
-        match sync_link::append(client, stream, plain).await {
-            Ok(_) => {
-                if let Some(tag) = wake {
-                    push_wake::ring(http, vec![tag]).await;
-                }
+    match tokio::time::timeout(HOLD_WAIT, sync_link::append(client, stream, plain)).await {
+        Ok(Ok(_)) => {
+            if let Some(tag) = wake {
+                let http = app.http.clone();
+                tauri::async_runtime::spawn(push_wake::ring(http, vec![tag]));
             }
-            Err(e) => tracing::debug!("could not add a DM to the sync service: {e}"),
+            true
         }
-    });
+        Ok(Err(e)) => {
+            tracing::debug!("could not add a DM to the sync service: {e}");
+            false
+        }
+        Err(_) => {
+            tracing::debug!("the sync service did not take a DM in time");
+            false
+        }
+    }
 }
 
 fn talks_with(app: &App, partner: UserId) -> bool {
@@ -435,6 +465,44 @@ mod tests {
         assert!(!syncable(&DmMessage::new(a, b, format!("{}spam", safety::REPORT_PREFIX))));
         let signal = safety::FriendSignal::Request.encode();
         assert!(!syncable(&DmMessage::new(a, b, signal)));
+    }
+
+    #[test]
+    fn a_dm_the_service_holds_counts_as_sent_once_the_partner_follows_the_conversation() {
+        let app = App::default();
+        let (me, partner) = (UserId::new(), UserId::new());
+        let ours = DmMessage::new(me, partner, "are you around?");
+        let id = ours.id;
+        app.dms.lock().unwrap().apply(partner, ours);
+        app.outbox.lock().unwrap().add_dm(partner, id);
+        assert!(!partner_follows(&app, partner), "a first message can reach a stranger only directly");
+        assert!(app.outbox.lock().unwrap().dm_stored(partner, id));
+        assert_eq!(waiting_dms(&app, partner), HashSet::from([id]));
+
+        let mut old = DmMessage::new(partner, me, "long ago");
+        old.created_at = Utc::now() - chrono::Duration::milliseconds(RECENT_MS + 1000);
+        app.dms.lock().unwrap().apply(partner, old);
+        assert_eq!(waiting_dms(&app, partner), HashSet::from([id]), "they stopped following a quiet conversation");
+
+        app.dms.lock().unwrap().apply(partner, DmMessage::new(partner, me, "hi"));
+        assert!(partner_follows(&app, partner));
+        assert!(waiting_dms(&app, partner).is_empty());
+
+        let next = DmMessage::new(me, partner, "still there?");
+        let next_id = next.id;
+        app.dms.lock().unwrap().apply(partner, next);
+        app.outbox.lock().unwrap().add_dm(partner, next_id);
+        assert_eq!(waiting_dms(&app, partner), HashSet::from([next_id]), "not yet held by the service");
+        assert_eq!(app.outbox.lock().unwrap().dm_queue(partner), vec![id, next_id]);
+    }
+
+    #[test]
+    fn our_delivered_messages_show_the_partner_follows() {
+        let app = App::default();
+        let (me, partner) = (UserId::new(), UserId::new());
+        let delivered = DmMessage::new(me, partner, "got this one");
+        app.dms.lock().unwrap().apply(partner, delivered);
+        assert!(partner_follows(&app, partner));
     }
 
     #[test]
