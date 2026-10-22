@@ -3656,6 +3656,10 @@ function appFocused() {
   return document.visibilityState === "visible" && document.hasFocus();
 }
 
+function phoneShowing() {
+  return phoneInFront(document.body.classList.contains("mobile-app"), document.visibilityState);
+}
+
 function myMentionNames() {
   if (!state.user) return [];
   const me = state.view === "server" ? currentServerMember(state.user.id) : null;
@@ -3763,7 +3767,7 @@ function onMessageCreated(msg) {
     else if (dmListShown() && isGroupServer(msg.server)) renderDmThreads();
   }
   const level = levelForChannel(prefs, msg.server, msg.channel, nowSecs());
-  if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement })) {
+  if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: false, mentioned, announcement })) {
     const notice = messageNotice(sensitiveNotice(msg, msg.channel, sensitiveConfirmed()), plainText);
     invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
     playSound("message");
@@ -3857,7 +3861,7 @@ function onMessagesCaughtUp(payload) {
     }
     if (info.channel_name === undefined || isBlocked(info.author) || !isRecent(Number(info.at), now)) continue;
     const level = levelForChannel(prefs, server, channel, now);
-    if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement: Boolean(info.announcement) })) {
+    if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: false, mentioned, announcement: Boolean(info.announcement) })) {
       const notice = caughtUpNotice(sensitiveNotice({ ...info, count, server_name: payload.server_name }, channel, sensitiveConfirmed()), plainText);
       notices.push({ ...notice, target: `channel:${server}:${channel}` });
     }
@@ -3899,7 +3903,7 @@ function onDmReceived(dm) {
     syncUnreadBadge();
   }
   const prefs = notifyPrefs();
-  if (shouldNotify({ level: prefs.level, presence: state.user?.presence, focusedOnIt, isDm: true, mentioned: true })) {
+  if (shouldNotify({ level: prefs.level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: true, mentioned: true })) {
     const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "");
     invoke("notify", { title: dm.name, body, target: `dm:${dm.user}` }).catch(() => {});
     playSound("dm");
