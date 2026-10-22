@@ -968,7 +968,11 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
         return false;
     }
     if let Some(why) = snapshot_refusal(app, server, &payload, max_age_ms) {
-        tracing::warn!("dropping a snapshot of {server} that its owner did not sign: {why}");
+        if why == OWNER_UNKNOWN {
+            tracing::debug!("dropping a snapshot of {server}: {why}");
+        } else {
+            tracing::warn!("dropping a snapshot of {server} that its owner did not sign: {why}");
+        }
         return false;
     }
     let WirePayload::SyncResponse { server: mut remote_server, members, profiles, recent_messages, voice, at, .. } = payload else {
@@ -1075,6 +1079,8 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
     true
 }
 
+const OWNER_UNKNOWN: &str = "this device does not know the owner yet";
+
 fn snapshot_vouched(app: &App, server: ServerId, payload: &WirePayload, max_age_ms: i64) -> bool {
     snapshot_refusal(app, server, payload, max_age_ms).is_none()
 }
@@ -1084,7 +1090,7 @@ fn snapshot_refusal(app: &App, server: ServerId, payload: &WirePayload, max_age_
     if remote.id != server {
         return Some("another server");
     }
-    let Some((owner, key)) = app.ticket_owner(server) else { return Some("this device does not know the owner yet") };
+    let Some((owner, key)) = app.ticket_owner(server) else { return Some(OWNER_UNKNOWN) };
     if *by != owner || remote.owner != owner {
         return Some("signed by someone else");
     }

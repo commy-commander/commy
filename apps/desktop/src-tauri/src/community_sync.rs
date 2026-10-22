@@ -13,7 +13,7 @@ use commy_net::{NetEvent, WirePayload};
 use commy_sync::{AppendError, StreamId, SyncClient, SyncEvent};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 
 use crate::state::App;
@@ -83,6 +83,7 @@ struct Community {
 }
 
 struct Live {
+    handle: AppHandle,
     url: String,
     dir: PathBuf,
     me: UserId,
@@ -95,6 +96,7 @@ struct Live {
     snapshots: HashMap<ServerId, WirePayload>,
     parked: HashMap<ServerId, VecDeque<WirePayload>>,
     published: HashMap<ServerId, i64>,
+    retried: HashSet<MessageId>,
     echoes: VecDeque<[u8; 32]>,
     announced: HashMap<ServerId, [u8; 32]>,
     cursors: Cursors,
@@ -231,6 +233,7 @@ async fn tend(handle: &AppHandle) {
         let task = tauri::async_runtime::spawn(listen(handle.clone(), received));
         let cursors = load(&dir);
         *LIVE.lock().unwrap() = Some(Live {
+            handle: handle.clone(),
             url,
             dir,
             me,
@@ -243,6 +246,7 @@ async fn tend(handle: &AppHandle) {
             snapshots: HashMap::new(),
             parked: HashMap::new(),
             published: HashMap::new(),
+            retried: HashSet::new(),
             echoes: VecDeque::new(),
             announced: HashMap::new(),
             cursors,
@@ -253,6 +257,44 @@ async fn tend(handle: &AppHandle) {
     share_keys(&app);
     release_parked(handle);
     publish_snapshots(handle);
+    store_pending(handle);
+}
+
+fn store_pending(handle: &AppHandle) {
+    let app = handle.state::<App>();
+    let ready: Vec<ServerId> = {
+        let guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_ref() else { return };
+        live.communities.iter().filter(|(_, c)| c.wants.values().any(|w| matches!(w.lane, Lane::Channel(_)) && w.writes)).map(|(sid, _)| *sid).collect()
+    };
+    for server in ready {
+        let pending = app.outbox.lock().unwrap().pending_ids(server);
+        let fresh: Vec<MessageId> = {
+            let mut guard = LIVE.lock().unwrap();
+            let Some(live) = guard.as_mut() else { return };
+            pending.into_iter().filter(|id| live.retried.insert(*id)).collect()
+        };
+        if fresh.is_empty() {
+            continue;
+        }
+        let messages: Vec<commy_core::Message> = {
+            let servers = app.servers.lock().unwrap();
+            let Some(state) = servers.get(&server) else { continue };
+            fresh.iter().filter_map(|id| state.message(*id).cloned()).collect()
+        };
+        for message in messages {
+            publish(server, &WirePayload::Event(ServerEvent::MessageCreate { message }));
+        }
+    }
+}
+
+fn stored(handle: &AppHandle, server: ServerId, message: MessageId) {
+    let app = handle.state::<App>();
+    let cleared = app.outbox.lock().unwrap().clear_delivered(server, [message]);
+    if cleared {
+        app.persist_outbox();
+        let _ = handle.emit("server-event", server.to_string());
+    }
 }
 
 fn given_key(app: &App, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
@@ -418,20 +460,30 @@ pub fn publish(server: ServerId, payload: &WirePayload) {
     let Some(lane) = streams::lane_of_payload(payload) else { return };
     let key_event = streams::event_of(payload).is_none_or(|(event, _)| streams::is_key_event(event));
     let Some(plain) = streams::encode_entry(payload) else { return };
-    let sends = {
+    let message = match streams::event_of(payload) {
+        Some((ServerEvent::MessageCreate { message }, _)) => Some(message.id),
+        _ => None,
+    };
+    let (sends, handle) = {
         let mut guard = LIVE.lock().unwrap();
         let Some(live) = guard.as_mut() else { return };
         let sends = targets(live, server, lane, key_event);
         if !sends.is_empty() {
             live.note_echo(digest(&plain));
         }
-        sends
+        (sends, live.handle.clone())
     };
     for (stream, client) in sends {
         let plain = plain.clone();
+        let handle = handle.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = sync_link::append(client, stream, plain).await {
-                tracing::debug!("could not add a server change to the sync service: {e}");
+            match sync_link::append(client, stream, plain).await {
+                Ok(_) => {
+                    if let Some(message) = message {
+                        stored(&handle, server, message);
+                    }
+                }
+                Err(e) => tracing::debug!("could not add a server change to the sync service: {e}"),
             }
         });
     }
