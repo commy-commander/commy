@@ -7185,3 +7185,57 @@ button.role-chip { background: none; font-family: inherit; line-height: inherit;
   cursor: pointer;
 }
 .tray-opt .switch { flex: none; }
+
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-darkest);
+  z-index: 1000;
+}
+.titlebar-drag {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+}
+.titlebar-icon.server-icon, .titlebar-icon.server-icon:hover {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 9px;
+  flex: none;
+  cursor: default;
+  pointer-events: none;
+}
+.titlebar-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.titlebar-name {
+  font-family: var(--font-display, inherit);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--header-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.titlebar-controls { flex: none; display: flex; }
+.titlebar-btn {
+  width: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  cursor: default;
+}
+.titlebar-btn:hover { background: var(--bg-active); color: var(--header-primary); }
+.titlebar-close:hover { background: #ff4d4d; color: #fff; }
+body.has-titlebar .app { height: calc(100vh - 32px); margin-top: 32px; }

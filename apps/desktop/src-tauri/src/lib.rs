@@ -3478,6 +3478,39 @@ fn set_window_title(handle: tauri::AppHandle, server: Option<String>) {
 }
 
 #[tauri::command]
+fn has_custom_titlebar() -> bool {
+    cfg!(windows)
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn window_action(window: tauri::WebviewWindow, action: String) {
+    match action.as_str() {
+        "minimize" => {
+            let _ = window.minimize();
+        }
+        "toggle-maximize" => {
+            if window.is_maximized().unwrap_or(false) {
+                let _ = window.unmaximize();
+            } else {
+                let _ = window.maximize();
+            }
+        }
+        "close" => {
+            let _ = window.close();
+        }
+        "drag" => {
+            let _ = window.start_dragging();
+        }
+        _ => {}
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn window_action(_action: String) {}
+
+#[tauri::command]
 async fn set_status_expiry(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -8375,6 +8408,10 @@ pub fn run() {
                     let _ = window.set_title(&title);
                 }
             }
+            #[cfg(windows)]
+            if let Some(window) = tauri_app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+            }
             updater::init(&handle);
             updater::start(&handle);
             let data_dir = std::env::var("COMMY_DATA_DIR")
@@ -8447,6 +8484,8 @@ pub fn run() {
             friend_action,
             set_about,
             set_window_title,
+            has_custom_titlebar,
+            window_action,
             set_icons,
             choose_custom_icon,
             get_custom_icon,
