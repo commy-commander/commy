@@ -1,5 +1,7 @@
 use curve25519_dalek::montgomery::MontgomeryPoint;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::Sha256;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
@@ -45,7 +47,28 @@ impl Identity {
         let shared = MontgomeryPoint(their_point).mul_clamped(self.0.to_scalar_bytes()).to_bytes();
         (shared != [0u8; 32]).then_some(shared)
     }
+
+    pub fn pairwise_secret(&self, theirs: &IdentityKey, label: &str) -> Option<[u8; 32]> {
+        let ours = self.public();
+        if ours == *theirs {
+            return None;
+        }
+        let shared = self.agree(theirs.agreement_point()?)?;
+        let (low, high) = if ours < *theirs { (ours, *theirs) } else { (*theirs, ours) };
+        let mut extract = <Hmac<Sha256> as KeyInit>::new_from_slice(PAIRWISE_SALT).expect("HMAC takes any key length");
+        extract.update(&shared);
+        let prk = extract.finalize().into_bytes();
+        let mut expand = <Hmac<Sha256> as KeyInit>::new_from_slice(&prk).expect("HMAC takes any key length");
+        expand.update(label.as_bytes());
+        expand.update(&[0]);
+        expand.update(&low.0);
+        expand.update(&high.0);
+        expand.update(&[1]);
+        Some(expand.finalize().into_bytes().into())
+    }
 }
+
+const PAIRWISE_SALT: &[u8] = b"commy-pairwise/v1";
 
 impl fmt::Debug for Identity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -247,6 +270,18 @@ mod tests {
         let mut bad = sig;
         bad.0[0] ^= 1;
         assert!(!id.public().verify(b"hello", &bad));
+    }
+
+    #[test]
+    fn both_sides_of_a_pair_derive_the_same_secret() {
+        let alice = Identity::generate();
+        let bob = Identity::generate();
+        let carol = Identity::generate();
+        let ab = alice.pairwise_secret(&bob.public(), "commy-dm").unwrap();
+        assert_eq!(bob.pairwise_secret(&alice.public(), "commy-dm"), Some(ab));
+        assert_ne!(alice.pairwise_secret(&carol.public(), "commy-dm"), Some(ab));
+        assert_ne!(alice.pairwise_secret(&bob.public(), "commy-other"), Some(ab));
+        assert_eq!(alice.pairwise_secret(&alice.public(), "commy-dm"), None, "no pair with yourself");
     }
 
     #[test]

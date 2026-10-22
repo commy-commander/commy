@@ -10,6 +10,7 @@ cfg_aliases = "0.2"
 
 [dependencies]
 commy-core = { workspace = true }
+commy-sync = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 data-encoding = { workspace = true }

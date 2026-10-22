@@ -8,6 +8,7 @@ pub mod node;
 pub mod protocol;
 pub mod relays;
 pub mod sealed;
+pub mod sync_streams;
 pub mod ticket;
 pub mod wake;
 

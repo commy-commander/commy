@@ -141,6 +141,26 @@ fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
 }
 
+fn publish(app: &App, merged: &ReadState, changed: &[String]) {
+    let marks: BTreeMap<String, ReadMark> =
+        changed.iter().filter_map(|channel| merged.channels.get(channel).map(|mark| (channel.clone(), mark.clone()))).collect();
+    for record in crate::account_log::read_records(marks) {
+        crate::account_log::queue(app, record);
+    }
+}
+
+pub fn all_marks(app: &App) -> BTreeMap<String, ReadMark> {
+    local(app).channels
+}
+
+pub fn absorb_remote(handle: &AppHandle, marks: BTreeMap<String, ReadMark>) {
+    let app = handle.state::<App>();
+    let (merged, changed) = absorb(&app, marks);
+    if !changed.is_empty() {
+        let _ = handle.emit("read-state-changed", view_of(&app, &merged, Some(&changed)));
+    }
+}
+
 fn absorb(app: &App, marks: BTreeMap<String, ReadMark>) -> (ReadState, Vec<String>) {
     let before = local(app);
     let merged = ReadState::merge(&before, &ReadState { channels: marks });
@@ -158,10 +178,11 @@ pub fn read_state_load(app: tauri::State<'_, App>) -> ReadView {
 
 #[tauri::command]
 pub fn read_state_set(handle: AppHandle, app: tauri::State<'_, App>, channels: BTreeMap<String, ReadMark>, flush: bool) {
-    let (_, changed) = absorb(&app, channels);
+    let (merged, changed) = absorb(&app, channels);
     if changed.is_empty() {
         return;
     }
+    publish(&app, &merged, &changed);
     if flush {
         schedule(&handle);
     } else {
@@ -192,6 +213,7 @@ pub fn read_state_mark_read(
     let touched: Vec<String> = marks.keys().cloned().collect();
     let (merged, changed) = absorb(&app, marks);
     if !changed.is_empty() {
+        publish(&app, &merged, &changed);
         schedule(&handle);
     }
     Ok(view_of(&app, &merged, Some(&touched)))

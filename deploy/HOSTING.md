@@ -320,6 +320,12 @@ server or channel a log belongs to.
   members hold. The service checks that the stream id matches the write key and
   read token it is shown, and that each new entry is signed by that write key.
   It takes no account, session or cookie.
+- **What the apps keep there:** one log per account, sealed with the account's
+  server list key, for the server list, read positions, saved messages and
+  notification settings, so every signed-in device follows changes within
+  seconds; and one log per pair of people per month for direct messages, so a
+  DM reaches all of each person's devices. The apps still sync the server list
+  through the account server too, so older versions keep working.
 - **What it stores:** in the `commy_sync` database (created on first start in
   the stack's Postgres): for each log, its random stream id, the number of
   entries so far and the time of the last one; for each entry, its number,

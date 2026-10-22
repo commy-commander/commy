@@ -108,6 +108,18 @@ impl SavedStore {
         self.reminders.retain(|r| r.id != id);
         self.reminders.len() != before
     }
+
+    pub fn apply_ops(&mut self, ops: Vec<crate::account_log::SavedOp>) {
+        for op in ops {
+            self.saved.retain(|s| s.entry.message != op.message);
+            if let Some(mut kept) = op.saved {
+                kept.entry = kept.entry.trimmed();
+                self.saved.push(kept);
+            }
+        }
+        self.saved.sort_by(|a, b| b.saved_at.cmp(&a.saved_at).then_with(|| b.entry.message.cmp(&a.entry.message)));
+        self.saved.truncate(MAX_SAVED);
+    }
 }
 
 fn now_ms() -> i64 {
@@ -136,10 +148,30 @@ pub fn saved_list(app: tauri::State<'_, App>) -> Result<SavedStore, String> {
 
 #[tauri::command]
 pub fn saved_set(app: tauri::State<'_, App>, entry: Entry, saved: bool) -> Result<SavedStore, String> {
-    update(&app, |store| {
-        store.set_saved(entry, saved, now_ms());
+    let at = now_ms();
+    let message = entry.message.clone();
+    let store = update(&app, |store| {
+        store.set_saved(entry, saved, at);
         Ok(())
-    })
+    })?;
+    let kept = store.saved.iter().find(|s| s.entry.message == message).cloned();
+    let op = crate::account_log::SavedOp { message, at, saved: kept.filter(|_| saved) };
+    crate::account_log::queue(&app, crate::account_log::Record::Saved { ops: vec![op] });
+    Ok(store)
+}
+
+pub fn apply_remote(handle: &tauri::AppHandle, ops: Vec<crate::account_log::SavedOp>) {
+    use tauri::{Emitter, Manager};
+    let app = handle.state::<App>();
+    match update(&app, |store| {
+        store.apply_ops(ops);
+        Ok(())
+    }) {
+        Ok(store) => {
+            let _ = handle.emit("saved-changed", store);
+        }
+        Err(e) => tracing::debug!("saved messages from another device: {e}"),
+    }
 }
 
 #[tauri::command]
@@ -223,6 +255,21 @@ mod tests {
         assert!(store.cancel_reminder(&replaced));
         assert!(!store.cancel_reminder(&replaced));
         assert_eq!(store.reminders.len(), 1);
+    }
+
+    #[test]
+    fn changes_from_another_device_add_move_and_remove() {
+        use crate::account_log::SavedOp;
+        let mut store = SavedStore::default();
+        store.set_saved(entry("a"), true, 1);
+        let mut long = entry("b");
+        long.content = "x".repeat(MAX_TEXT * 2);
+        store.apply_ops(vec![
+            SavedOp { message: "b".into(), at: 5, saved: Some(SavedMessage { saved_at: 5, entry: long }) },
+            SavedOp { message: "a".into(), at: 6, saved: None },
+        ]);
+        assert_eq!(store.saved.iter().map(|s| s.entry.message.as_str()).collect::<Vec<_>>(), ["b"]);
+        assert!(store.saved[0].entry.content.chars().count() <= MAX_TEXT);
     }
 
     #[test]

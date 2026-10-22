@@ -375,6 +375,8 @@ struct Endpoints {
     link_challenge: String,
     #[serde(rename = "registerDevice")]
     register_device: String,
+    #[serde(default)]
+    sync: Option<String>,
 }
 
 impl Discovery {
@@ -391,6 +393,12 @@ impl Discovery {
             ]
             .iter()
             .all(|u| ok(u))
+    }
+}
+
+fn use_sync_service(handle: &AppHandle, server: &str, doc: &Discovery) {
+    if crate::sync_link::set_url(server, doc.endpoints.sync.as_deref()) {
+        crate::account_log::ensure(handle);
     }
 }
 
@@ -885,6 +893,7 @@ async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token
         state.features = doc.features;
         store(&app, &state);
     }
+    use_sync_service(handle, server, doc);
     match (&next, app.data_dir()) {
         (AfterSignIn::Restart, _) => restart_signed_in_as_someone_else(handle),
         (AfterSignIn::KeepOpen, Some(dir)) if account_folder::is_locked(dir) => {
@@ -1126,6 +1135,7 @@ pub async fn verify_saved_session(handle: AppHandle) {
     let Ok(res) = app.http.get(&doc.endpoints.session).bearer_auth(&token).send().await else { return };
     let valid = res.status().is_success() && res.json::<Option<SessionResponse>>().await.ok().flatten().is_some();
     if valid {
+        use_sync_service(&handle, &server, &doc);
         let changed = {
             let mut state = app.account.lock().unwrap();
             let changed = state.features != doc.features;
@@ -1145,6 +1155,8 @@ pub async fn verify_saved_session(handle: AppHandle) {
         state.clear_session();
         store(&app, &state);
     }
+    crate::sync_link::clear_url();
+    crate::account_log::stop();
     if let Some(dir) = app.data_dir() {
         account_folder::forget_key(dir);
     }
@@ -1219,6 +1231,7 @@ mod tests {
                 sign_out: format!("{api}/sign-out"),
                 link_challenge: format!("{api}/commy/devices/challenge"),
                 register_device: format!("{api}/commy/devices/register"),
+                sync: None,
             },
             features: None,
         }
@@ -1278,10 +1291,13 @@ mod tests {
         });
         let old: Discovery = serde_json::from_value(base.clone()).unwrap();
         assert_eq!(old.features, None);
+        assert_eq!(old.endpoints.sync, None);
         let mut with = base;
         with["features"] = serde_json::json!({ "gifs": true, "games": false });
+        with["endpoints"]["sync"] = serde_json::json!("wss://chat.example.org/sync");
         let new: Discovery = serde_json::from_value(with).unwrap();
         assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false, folder_lock: false }));
+        assert_eq!(new.endpoints.sync.as_deref(), Some("wss://chat.example.org/sync"));
     }
 
     #[test]

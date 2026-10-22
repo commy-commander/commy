@@ -29,6 +29,7 @@ pub const SEALED_FILES: &[&str] = &[
     "saved.json",
     "storage.json",
     "stream-deck.json",
+    "sync-state.json",
     "voice.json",
 ];
 
