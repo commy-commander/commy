@@ -198,6 +198,10 @@ fn encoded<T: Serialize>(item: &T) -> usize {
 }
 
 pub fn build_sync_response(state: &ServerState, per_channel: usize, by: UserId) -> WirePayload {
+    build_sync_response_within(state, per_channel, by, MAX_GOSSIP_BYTES)
+}
+
+pub fn build_sync_response_within(state: &ServerState, per_channel: usize, by: UserId, budget: usize) -> WirePayload {
     let mut server = state.server.clone();
     server.emojis.clear();
     server.stickers.clear();
@@ -245,8 +249,9 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize, by: UserId) 
         at: i64::MAX,
         sig: Signature([0xff; 64]),
     };
-    let mut size = gossip_size(&build(&server, &members, &profiles, &messages));
-    let fits = |size: usize| size <= MAX_GOSSIP_BYTES;
+    let first = build(&server, &members, &profiles, &messages);
+    let mut size = gossip_size(&first).min(encoded(&first) + 64);
+    let fits = |size: usize| size <= budget;
     let mut authored: std::collections::HashMap<UserId, usize> = std::collections::HashMap::new();
     for m in &messages {
         *authored.entry(m.author).or_default() += 1;
@@ -310,6 +315,24 @@ mod tests {
     use super::*;
     use crate::test_support::{fixture, join, post};
     use commy_core::{Message, Server, ServerState, UserId};
+
+    #[test]
+    fn a_larger_budget_keeps_every_profile() {
+        let (mut state, _, owner) = fixture();
+        for i in 0..120 {
+            join(&mut state, &format!("member-{i}"));
+        }
+        let profiles = |p: &WirePayload| match p {
+            WirePayload::SyncResponse { profiles, .. } => profiles.len(),
+            _ => 0,
+        };
+        let gossip = build_sync_response(&state, 0, owner);
+        let service = build_sync_response_within(&state, 0, owner, 48 * 1024);
+        assert!(gossip_size(&gossip) <= MAX_GOSSIP_BYTES);
+        assert!(profiles(&gossip) < state.profiles.len());
+        assert_eq!(profiles(&service), state.profiles.len());
+        assert!(gossip_size(&service) <= 48 * 1024);
+    }
 
     #[test]
     fn identical_events_encode_differently() {

@@ -4,13 +4,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use commy_core::{UserId, UserProfile};
+use commy_core::channel_key::{ChannelSecret, KeyId};
+use commy_core::{ServerId, UserId, UserProfile};
 use commy_net::entry_list::EntryList;
 use commy_net::sync_streams;
 use commy_sync::{AppendError, StreamId, SyncEvent};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::community_sync::SharedKey;
 use crate::entry_list;
 use crate::read_state::ReadMark;
 use crate::saved::SavedMessage;
@@ -55,6 +57,7 @@ pub enum Record {
     Saved { ops: Vec<SavedOp> },
     Prefs { set: BTreeMap<String, PrefPiece> },
     DmPartner { profile: UserProfile, at: i64 },
+    CommunityKey { server: ServerId, key: SharedKey, at: i64 },
     #[serde(other)]
     Unknown,
 }
@@ -84,6 +87,8 @@ pub struct SyncState {
     #[serde(default)]
     pub dm_cursors: BTreeMap<String, u64>,
     #[serde(default)]
+    pub community: BTreeMap<ServerId, (SharedKey, i64)>,
+    #[serde(default)]
     pub outbox: Vec<Queued>,
     #[serde(default)]
     pub next_id: u64,
@@ -97,6 +102,7 @@ pub enum Change {
     Saved(Vec<SavedOp>),
     Prefs(BTreeMap<String, PrefPiece>),
     Partner(Box<UserProfile>),
+    CommunityKey,
 }
 
 impl SyncState {
@@ -146,6 +152,15 @@ impl SyncState {
                 }
                 self.partners.insert(profile.id, at);
                 Change::Partner(Box::new(profile))
+            }
+            Record::CommunityKey { server, key, at } => {
+                let known = self.community.get(&server);
+                if known.is_some_and(|(_, seen)| at <= *seen) {
+                    return Change::Nothing;
+                }
+                let same = known.is_some_and(|(held, _)| *held == key);
+                self.community.insert(server, (key, at));
+                if same { Change::Nothing } else { Change::CommunityKey }
             }
             _ => Change::Nothing,
         }
@@ -413,6 +428,7 @@ fn apply(handle: &AppHandle, change: Change) {
             let _ = handle.emit("sync-prefs-changed", set);
         }
         Change::Partner(profile) => crate::dm_sync::adopt_partner(handle, *profile),
+        Change::CommunityKey => crate::community_sync::refresh_soon(handle),
     }
 }
 
@@ -499,6 +515,18 @@ pub fn note_partner(app: &App, mut profile: UserProfile) {
     profile.activity_cover = None;
     profile.activity_since = None;
     queue(app, Record::DmPartner { profile, at: now });
+}
+
+pub fn community_key(app: &App, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
+    with_state(app, |state| state.community.get(&server).and_then(|(key, _)| key.open())).flatten()
+}
+
+pub fn shared_community_key(app: &App, server: ServerId) -> Option<KeyId> {
+    with_state(app, |state| state.community.get(&server).and_then(|(key, _)| key.open()).map(|(id, _)| id)).flatten()
+}
+
+pub fn share_community_key(app: &App, server: ServerId, key: KeyId, secret: &ChannelSecret) {
+    queue(app, Record::CommunityKey { server, key: SharedKey::of(key, secret), at: now_ms() });
 }
 
 pub const PARTNER_RENOTE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -593,6 +621,24 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use commy_core::ServerId;
     use commy_net::entry_list::Entry;
+
+    #[test]
+    fn the_newest_community_key_wins_and_its_echo_stays_quiet() {
+        let mut state = SyncState::default();
+        let server = ServerId::new();
+        let first = SharedKey::of(KeyId::random(), &ChannelSecret::random());
+        let second = SharedKey::of(KeyId::random(), &ChannelSecret::random());
+        assert_eq!(state.fold(Record::CommunityKey { server, key: first.clone(), at: 1 }), Change::CommunityKey);
+        assert_eq!(state.fold(Record::CommunityKey { server, key: first.clone(), at: 1 }), Change::Nothing);
+        assert_eq!(state.fold(Record::CommunityKey { server, key: second.clone(), at: 0 }), Change::Nothing);
+        assert_eq!(state.fold(Record::CommunityKey { server, key: first, at: 2 }), Change::Nothing);
+        assert_eq!(state.fold(Record::CommunityKey { server, key: second.clone(), at: 3 }), Change::CommunityKey);
+        assert_eq!(state.community.get(&server).map(|(key, _)| key), Some(&second));
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(serde_json::from_str::<SyncState>(&json).unwrap(), state);
+        let record = serde_json::to_string(&Record::CommunityKey { server, key: second, at: 3 }).unwrap();
+        assert!(record.contains("\"k\":\"community_key\""));
+    }
 
     fn entry(name: &str, minute: i64) -> Entry {
         Entry { name: name.into(), ticket: format!("ticket-{name}"), since: Utc.timestamp_opt(1_760_000_000 + minute * 60, 0).unwrap() }
