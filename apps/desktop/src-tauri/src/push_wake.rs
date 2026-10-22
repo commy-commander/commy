@@ -48,8 +48,10 @@ pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>) {
     tokio::time::sleep(Duration::from_millis(delay)).await;
     for chunk in tags.chunks(MAX_RING_TAGS) {
         let body = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect() };
-        if let Err(e) = http.post(format!("{base}/ring")).json(&body).send().await {
-            tracing::debug!("could not ring a wake-up: {e}");
+        match http.post(format!("{base}/ring")).json(&body).send().await {
+            Ok(res) if res.status().is_success() => tracing::info!("rang {} wake-up tags", chunk.len()),
+            Ok(res) => tracing::info!("the sync service refused a wake-up ring: {}", res.status()),
+            Err(e) => tracing::info!("could not ring a wake-up: {e}"),
         }
     }
 }
@@ -111,25 +113,36 @@ async fn register_now(handle: &AppHandle, push: String, base: String) {
     let wanted = dm_sync::wake_tags(&app, &days_from(today));
     let needed = still_needed(&push, &base, today, wanted);
     let http = app.http.clone();
+    let mut registered = 0;
     for (tag, day) in needed {
         let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
         tokio::time::sleep(Duration::from_millis(gap)).await;
         let body = WakeRegister { tag: Bytes(tag), push: push.clone(), until: day };
         match http.post(format!("{base}/register")).json(&body).send().await.map(|res| res.status()) {
-            Ok(status) if status.is_success() => note(&push, |r| {
-                r.tags.insert((tag, day));
-            }),
+            Ok(status) if status.is_success() => {
+                registered += 1;
+                note(&push, |r| {
+                    r.tags.insert((tag, day));
+                });
+            }
             Ok(StatusCode::NOT_FOUND) => {
+                tracing::info!("the sync service does not offer wake-ups");
                 note(&push, |r| r.off_on = Some(today));
                 return;
             }
-            Ok(StatusCode::TOO_MANY_REQUESTS) => return,
-            Ok(status) => tracing::debug!("the sync service refused a wake-up registration: {status}"),
+            Ok(StatusCode::TOO_MANY_REQUESTS) => {
+                tracing::info!("wake-up registration paused after {registered}: too many at once");
+                return;
+            }
+            Ok(status) => tracing::info!("the sync service refused a wake-up registration: {status}"),
             Err(e) => {
-                tracing::debug!("could not register for wake-ups: {e}");
+                tracing::info!("could not register for wake-ups: {e}");
                 return;
             }
         }
+    }
+    if registered > 0 {
+        tracing::info!("registered {registered} wake-up tags");
     }
 }
 
