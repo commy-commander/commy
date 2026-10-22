@@ -4,14 +4,14 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::Utc;
-use commy_sync::wake::{wake_day, WakeRegister, WakeRing, MAX_DAYS_AHEAD, MAX_RING_TAGS};
+use commy_sync::wake::{wake_day, WakeForget, WakeRegister, WakeRing, MAX_DAYS_AHEAD, MAX_RING_TAGS};
 use commy_sync::wire::Bytes;
 use rand::Rng;
 use reqwest::StatusCode;
 use tauri::{AppHandle, Manager};
 
 use crate::state::App;
-use crate::{dm_sync, sync_link};
+use crate::{dm_sync, server_wake, sync_link};
 
 const RING_DELAY_MS: std::ops::Range<u64> = 1_000..4_000;
 const REGISTER_GAP_MS: std::ops::Range<u64> = 300..1_500;
@@ -101,6 +101,12 @@ fn still_needed(push: &str, base: &str, today: i64, wanted: Vec<([u8; 32], i64)>
     wanted.into_iter().filter(|tag| !registered.tags.contains(tag)).collect()
 }
 
+fn no_longer_wanted(push: &str, today: i64, wanted: &[([u8; 32], i64)]) -> Vec<([u8; 32], i64)> {
+    let guard = REGISTERED.lock().unwrap();
+    let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return Vec::new() };
+    registered.tags.iter().filter(|tag| tag.1 >= today && !wanted.contains(tag)).copied().collect()
+}
+
 fn note(push: &str, update: impl FnOnce(&mut Registered)) {
     if let Some(registered) = REGISTERED.lock().unwrap().as_mut().filter(|r| r.push == push) {
         update(registered);
@@ -110,9 +116,13 @@ fn note(push: &str, update: impl FnOnce(&mut Registered)) {
 async fn register_now(handle: &AppHandle, push: String, base: String) {
     let app = handle.state::<App>();
     let today = today();
-    let wanted = dm_sync::wake_tags(&app, &days_from(today));
+    let days = days_from(today);
+    let mut wanted = dm_sync::wake_tags(&app, &days);
+    wanted.extend(server_wake::wake_tags(&app, &days));
+    let stale = no_longer_wanted(&push, today, &wanted);
     let needed = still_needed(&push, &base, today, wanted);
     let http = app.http.clone();
+    forget(&http, &push, &base, stale).await;
     let mut registered = 0;
     for (tag, day) in needed {
         let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
@@ -143,6 +153,34 @@ async fn register_now(handle: &AppHandle, push: String, base: String) {
     }
     if registered > 0 {
         tracing::info!("registered {registered} wake-up tags");
+    }
+}
+
+async fn forget(http: &reqwest::Client, push: &str, base: &str, stale: Vec<([u8; 32], i64)>) {
+    let mut forgotten = 0;
+    for (tag, day) in stale {
+        let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
+        tokio::time::sleep(Duration::from_millis(gap)).await;
+        let body = WakeForget { tag: Bytes(tag), push: push.to_string() };
+        match http.post(format!("{base}/forget")).json(&body).send().await.map(|res| res.status()) {
+            Ok(status) if status.is_success() || status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED => {
+                forgotten += 1;
+                note(push, |r| {
+                    r.tags.remove(&(tag, day));
+                });
+            }
+            Ok(status) => {
+                tracing::info!("the sync service did not drop a wake-up tag: {status}");
+                return;
+            }
+            Err(e) => {
+                tracing::info!("could not drop a wake-up tag: {e}");
+                return;
+            }
+        }
+    }
+    if forgotten > 0 {
+        tracing::info!("dropped {forgotten} wake-up tags no longer wanted");
     }
 }
 
@@ -219,5 +257,12 @@ mod tests {
         note("fcm:a", |r| r.off_on = Some(20_000));
         assert!(still_needed("fcm:a", "https://x/sync/wake", 20_000, wanted.clone()).is_empty(), "a service without wake-ups is not asked again that day");
         assert_eq!(still_needed("fcm:b", "https://x/sync/wake", 20_000, wanted.clone()), wanted, "a new token starts over");
+        note("fcm:b", |r| {
+            r.tags.insert(([1; 32], 20_000));
+            r.tags.insert(([3; 32], 20_001));
+            r.tags.insert(([4; 32], 19_999));
+        });
+        assert_eq!(no_longer_wanted("fcm:b", 20_000, &wanted), vec![([3; 32], 20_001)], "settings that changed drop their tags");
+        assert!(no_longer_wanted("fcm:a", 20_000, &wanted).is_empty());
     }
 }

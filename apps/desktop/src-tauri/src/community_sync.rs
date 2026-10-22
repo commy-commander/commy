@@ -414,6 +414,7 @@ fn refresh(handle: &AppHandle) {
             }
         });
     }
+    crate::push_wake::register(handle);
 }
 
 fn follow_group(pool: &mut Pool, group: Vec<(Lane, commy_sync::StreamKeys, u64)>) {
@@ -467,6 +468,34 @@ pub fn publish(server: ServerId, payload: &WirePayload) {
             }
         });
     }
+}
+
+fn wake_point(want: &Want) -> Option<Option<commy_core::ChannelId>> {
+    if !want.writes {
+        return None;
+    }
+    match (want.scope, want.lane) {
+        (KeyScope::Community, Lane::State) => Some(None),
+        (KeyScope::Channel(channel), _) => Some(Some(channel)),
+        _ => None,
+    }
+}
+
+pub fn wake_keys(server: ServerId, private: Option<commy_core::ChannelId>) -> Option<commy_sync::StreamKeys> {
+    let guard = LIVE.lock().unwrap();
+    let community = guard.as_ref()?.communities.get(&server)?;
+    community.wants.values().find(|want| wake_point(want) == Some(private)).map(|want| want.keys.clone())
+}
+
+pub fn wake_points() -> Vec<(ServerId, Option<commy_core::ChannelId>, commy_sync::StreamKeys)> {
+    let guard = LIVE.lock().unwrap();
+    let Some(live) = guard.as_ref() else { return Vec::new() };
+    live.communities
+        .iter()
+        .flat_map(|(server, community)| {
+            community.wants.values().filter_map(|want| wake_point(want).map(|channel| (*server, channel, want.keys.clone())))
+        })
+        .collect()
 }
 
 pub fn announce_profile(server: ServerId, profile: &UserProfile, payload: &WirePayload) {

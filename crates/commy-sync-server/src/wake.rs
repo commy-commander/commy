@@ -7,7 +7,7 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use commy_sync::wake::{push_target, register_until_ok, wake_day, WakeRegister, WakeRing, MAX_RING_TAGS, PUSH_GAP_SECS};
+use commy_sync::wake::{push_target, register_until_ok, wake_day, WakeForget, WakeRegister, WakeRing, MAX_RING_TAGS, PUSH_GAP_SECS};
 use tokio::sync::mpsc;
 
 use crate::fcm::{Delivery, Fcm};
@@ -110,6 +110,30 @@ pub async fn register(
         Ok(false) => StatusCode::CONFLICT.into_response(),
         Err(e) => {
             tracing::warn!("sync: could not keep a wake registration: {e}");
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
+    }
+}
+
+pub async fn forget(
+    State(service): State<Arc<Service>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(request): Json<WakeForget>,
+) -> Response {
+    if !service.wakes.enabled() {
+        return (StatusCode::NOT_FOUND, "wake-ups are off").into_response();
+    }
+    if limited(&service, peer, &headers) {
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    }
+    if push_target(&request.push).is_none() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match service.store.forget_wake(&request.tag.0, &request.push).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::warn!("sync: could not drop a wake registration: {e}");
             StatusCode::SERVICE_UNAVAILABLE.into_response()
         }
     }

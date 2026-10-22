@@ -37,6 +37,7 @@ mod relaunch;
 mod safety;
 mod saved;
 mod search;
+mod server_wake;
 mod settle;
 mod state;
 mod storage;
