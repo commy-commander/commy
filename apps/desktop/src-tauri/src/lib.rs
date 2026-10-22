@@ -7921,7 +7921,12 @@ fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
 
 #[tauri::command]
 fn tray_prompt_due(app: tauri::State<App>) -> bool {
-    cfg!(desktop) && !instance::TEST_BUILD && !app.voice.lock().unwrap().tray_prompt_seen
+    cfg!(desktop) && !app.voice.lock().unwrap().tray_prompt_seen
+}
+
+#[tauri::command]
+fn autostart_allowed() -> bool {
+    cfg!(desktop) && instance::autostart_allowed_here()
 }
 
 #[tauri::command]
@@ -7932,7 +7937,7 @@ fn finish_tray_prompt(
     close_to_tray: bool,
 ) -> VoiceSettings {
     #[cfg(desktop)]
-    if !instance::TEST_BUILD {
+    if instance::autostart_allowed_here() {
         let _ = set_autostart(handle, autostart);
     }
     #[cfg(mobile)]
@@ -7967,6 +7972,9 @@ fn get_autostart(handle: tauri::AppHandle) -> bool {
 fn set_autostart(handle: tauri::AppHandle, enabled: bool) -> CmdResult<bool> {
     use tauri_plugin_autostart::ManagerExt;
     let launcher = handle.autolaunch();
+    if enabled && !instance::autostart_allowed_here() {
+        return Ok(false);
+    }
     if enabled {
         launcher.enable().map_err(|e| e.to_string())?;
     } else {
@@ -8661,6 +8669,7 @@ pub fn run() {
             set_unread,
             set_close_to_tray,
             tray_prompt_due,
+            autostart_allowed,
             finish_tray_prompt,
             get_autostart,
             set_autostart,
