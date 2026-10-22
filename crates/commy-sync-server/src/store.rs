@@ -11,7 +11,11 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS sync_entries (stream BYTEA NOT NULL, seq BIGINT NOT NULL, nonce BYTEA NOT NULL, at BIGINT NOT NULL, body BYTEA NOT NULL, PRIMARY KEY (stream, seq))",
     "CREATE UNIQUE INDEX IF NOT EXISTS sync_entries_nonce ON sync_entries (stream, nonce)",
     "CREATE INDEX IF NOT EXISTS sync_entries_at ON sync_entries (at)",
+    "CREATE TABLE IF NOT EXISTS sync_wakes (tag BYTEA NOT NULL, push TEXT NOT NULL, until_day BIGINT NOT NULL, PRIMARY KEY (tag, push))",
+    "CREATE INDEX IF NOT EXISTS sync_wakes_until ON sync_wakes (until_day)",
 ];
+
+pub const MAX_PUSHES_PER_TAG: usize = 16;
 
 const UNIQUE_VIOLATION: &str = "23505";
 const INVALID_CATALOG_NAME: &str = "3D000";
@@ -71,6 +75,37 @@ impl Store {
         }
     }
 
+    pub async fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64) -> Result<bool, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.register_wake(tag, push, until, today)),
+            Store::Postgres(p) => p.register_wake(tag, push, until, today).await,
+        }
+    }
+
+    pub async fn wake_targets(&self, tags: &[[u8; 32]], today: i64) -> Result<Vec<String>, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.wake_targets(tags, today)),
+            Store::Postgres(p) => p.wake_targets(tags, today).await,
+        }
+    }
+
+    pub async fn forget_push(&self, push: &str) -> Result<(), StoreError> {
+        match self {
+            Store::Memory(m) => {
+                m.forget_push(push);
+                Ok(())
+            }
+            Store::Postgres(p) => p.forget_push(push).await,
+        }
+    }
+
+    pub async fn prune_wakes(&self, today: i64) -> Result<u64, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.prune_wakes(today)),
+            Store::Postgres(p) => p.prune_wakes(today).await,
+        }
+    }
+
     pub async fn ping(&self) -> bool {
         match self {
             Store::Memory(_) => true,
@@ -89,9 +124,54 @@ struct MemoryStream {
 #[derive(Default)]
 pub struct MemoryStore {
     streams: Mutex<HashMap<StreamId, MemoryStream>>,
+    wakes: Mutex<HashMap<[u8; 32], HashMap<String, i64>>>,
 }
 
 impl MemoryStore {
+    fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64) -> bool {
+        let mut wakes = self.wakes.lock().unwrap();
+        let pushes = wakes.entry(*tag).or_default();
+        pushes.retain(|_, kept| *kept >= today);
+        if !pushes.contains_key(push) && pushes.len() >= MAX_PUSHES_PER_TAG {
+            return false;
+        }
+        let kept = pushes.entry(push.to_string()).or_insert(until);
+        *kept = (*kept).max(until);
+        true
+    }
+
+    fn wake_targets(&self, tags: &[[u8; 32]], today: i64) -> Vec<String> {
+        let wakes = self.wakes.lock().unwrap();
+        let mut out: Vec<String> = tags
+            .iter()
+            .filter_map(|tag| wakes.get(tag))
+            .flat_map(|pushes| pushes.iter().filter(|(_, until)| **until >= today).map(|(push, _)| push.clone()))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    fn forget_push(&self, push: &str) {
+        let mut wakes = self.wakes.lock().unwrap();
+        for pushes in wakes.values_mut() {
+            pushes.remove(push);
+        }
+        wakes.retain(|_, pushes| !pushes.is_empty());
+    }
+
+    fn prune_wakes(&self, today: i64) -> u64 {
+        let mut wakes = self.wakes.lock().unwrap();
+        let mut removed = 0u64;
+        for pushes in wakes.values_mut() {
+            let had = pushes.len();
+            pushes.retain(|_, until| *until >= today);
+            removed += (had - pushes.len()) as u64;
+        }
+        wakes.retain(|_, pushes| !pushes.is_empty());
+        removed
+    }
+
     fn append(&self, stream: &StreamId, nonce: &[u8; APPEND_NONCE_BYTES], body: &[u8], at: i64) -> Appended {
         let mut streams = self.streams.lock().unwrap();
         let s = streams.entry(*stream).or_default();
@@ -238,6 +318,48 @@ impl PgStore {
         Ok(row.map_or(0, |row| row.get::<i64, _>(0) as u64))
     }
 
+    async fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64) -> Result<bool, StoreError> {
+        let others: i64 = sqlx::query("SELECT count(*) FROM sync_wakes WHERE tag = $1 AND push <> $2 AND until_day >= $3")
+            .bind(&tag[..])
+            .bind(push)
+            .bind(today)
+            .fetch_one(&self.pool)
+            .await?
+            .get(0);
+        if others as usize >= MAX_PUSHES_PER_TAG {
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO sync_wakes (tag, push, until_day) VALUES ($1, $2, $3) \
+             ON CONFLICT (tag, push) DO UPDATE SET until_day = GREATEST(sync_wakes.until_day, EXCLUDED.until_day)",
+        )
+        .bind(&tag[..])
+        .bind(push)
+        .bind(until)
+        .execute(&self.pool)
+        .await?;
+        Ok(true)
+    }
+
+    async fn wake_targets(&self, tags: &[[u8; 32]], today: i64) -> Result<Vec<String>, StoreError> {
+        let tags: Vec<Vec<u8>> = tags.iter().map(|t| t.to_vec()).collect();
+        let rows = sqlx::query("SELECT DISTINCT push FROM sync_wakes WHERE tag = ANY($1) AND until_day >= $2 ORDER BY push")
+            .bind(&tags)
+            .bind(today)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(|row| row.get(0)).collect())
+    }
+
+    async fn forget_push(&self, push: &str) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM sync_wakes WHERE push = $1").bind(push).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    async fn prune_wakes(&self, today: i64) -> Result<u64, StoreError> {
+        Ok(sqlx::query("DELETE FROM sync_wakes WHERE until_day < $1").bind(today).execute(&self.pool).await?.rows_affected())
+    }
+
     async fn prune(&self, before: i64) -> Result<u64, StoreError> {
         let removed = sqlx::query("DELETE FROM sync_entries WHERE at < $1").bind(before).execute(&self.pool).await?.rows_affected();
         sqlx::query("DELETE FROM sync_streams s WHERE s.last_at < $1 AND NOT EXISTS (SELECT 1 FROM sync_entries e WHERE e.stream = s.id)")
@@ -282,6 +404,28 @@ mod tests {
         assert_eq!(store.prune(10_000).await.unwrap(), 3);
         assert_eq!(store.head(&b).await.unwrap(), 0, "an emptied, idle stream is forgotten");
         assert!(store.ping().await);
+
+        exercise_wakes(store).await;
+    }
+
+    async fn exercise_wakes(store: &Store) {
+        let (tag, other) = ([1u8; 32], [2u8; 32]);
+        assert!(store.wake_targets(&[tag], 100).await.unwrap().is_empty());
+        assert!(store.register_wake(&tag, "fcm:a", 101, 100).await.unwrap());
+        assert!(store.register_wake(&tag, "fcm:b", 100, 100).await.unwrap());
+        assert!(store.register_wake(&other, "fcm:a", 101, 100).await.unwrap());
+        assert!(store.register_wake(&tag, "fcm:a", 100, 100).await.unwrap(), "a shorter renewal keeps the longer one");
+        assert_eq!(store.wake_targets(&[tag, other], 100).await.unwrap(), vec!["fcm:a", "fcm:b"], "each phone once");
+        assert_eq!(store.wake_targets(&[tag], 101).await.unwrap(), vec!["fcm:a"], "expired registrations are not woken");
+        for n in 0..MAX_PUSHES_PER_TAG {
+            assert!(store.register_wake(&[9; 32], &format!("fcm:p{n}"), 100, 100).await.unwrap());
+        }
+        assert!(!store.register_wake(&[9; 32], "fcm:extra", 100, 100).await.unwrap(), "a tag takes a bounded number of phones");
+        assert!(store.register_wake(&[9; 32], "fcm:p0", 101, 100).await.unwrap(), "renewing is always allowed");
+        store.forget_push("fcm:a").await.unwrap();
+        assert_eq!(store.wake_targets(&[tag, other], 100).await.unwrap(), vec!["fcm:b"]);
+        assert_eq!(store.prune_wakes(101).await.unwrap(), MAX_PUSHES_PER_TAG as u64);
+        assert!(store.wake_targets(&[tag], 100).await.unwrap().is_empty());
     }
 
     #[tokio::test]

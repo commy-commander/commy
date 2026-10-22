@@ -112,6 +112,7 @@ services:
     environment:
       DATABASE_URL: postgres://commy:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/commy_sync
       SYNC_RETENTION_DAYS: ${SYNC_RETENTION_DAYS:-90}
+      FCM_SERVICE_ACCOUNT: ${FCM_SERVICE_ACCOUNT:-}
       RUST_LOG: ${SYNC_LOG:-info}
     depends_on:
       postgres:

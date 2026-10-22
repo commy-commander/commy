@@ -339,10 +339,23 @@ server or channel a log belongs to.
   IP address. Addresses are used in memory for rate limits only, under a keyed
   hash with a secret that changes on every restart. The edge proxy never logs
   `/sync`.
+- **Waking phones (optional):** with `FCM_SERVICE_ACCOUNT` set to a Firebase
+  service account key (the JSON, or its base64), the service can wake the
+  Android app with an empty push when something new arrives. A phone registers
+  short-lived wake tags (`POST /sync/wake/register`), each derived from a log's
+  secret, the person it wakes and the day, so a tag cannot be tied to a stream
+  id and changes daily. A device that writes to a log rings its members' tags
+  (`POST /sync/wake/ring`) in a separate request. The service then sends one
+  push with no content to each phone registered on those tags, at most one
+  every 2 minutes per phone. It stores each tag with the push token and the
+  last day it is valid (2 days ahead at most), and drops tokens Google reports
+  as gone. It keeps no record of who rang, but an operator watching live
+  traffic could pair the address that rang with the phone it woke. Without the
+  key, `GET /sync/wake` answers 404 and apps do not register.
 - **Setting it up:** `docker compose up -d sync`, then add `SYNC_URL` and
   recreate auth: `docker compose up -d --no-deps auth`. The service answers
   `GET /sync/healthz`. It logs only totals (connections, live logs, opens and
-  appends per 10 minutes).
+  appends per 10 minutes, and wake-ups when they are on).
 
 ## iroh relay
 
@@ -411,9 +424,11 @@ server stay readable to the new one and are encrypted ten minutes after it
 starts, once the container it replaced has stopped.
 
 The sync service database (`commy_sync`) holds only random stream ids, entry
-numbers, times, retry nonces and sealed, padded entries. The operator can see
-how many logs exist and how busy each one is, not whose they are or what they
-say.
+numbers, times, retry nonces and sealed, padded entries, plus wake tags with
+push tokens when wake-ups are on. The operator can see how many logs exist and
+how busy each one is, not whose they are or what they say. With wake-ups on,
+the operator can also see how many tags a phone has registered and when they
+are rung, not which logs or people they stand for.
 
 Redis holds the message doorbell (random tokens and blinded message ids with
 the time they arrived, deleted when an app takes them or after 14 days) and
@@ -434,7 +449,9 @@ emails, links or tokens.
 - Sync service, per IP: 256 open connections, 5 new entries a second (bursts
   of 60) and 64 MB of entries a day (`SYNC_CONNECTIONS_PER_ADDRESS`,
   `SYNC_DAILY_BYTES_PER_ADDRESS`); per log, 20 entries a second; 16 logs per
-  connection. Entries must be padded and at most 64 KB.
+  connection. Entries must be padded and at most 64 KB. Wake registrations
+  and rings share 1 a second per IP (bursts of 120), 16 phones per tag and 8
+  tags per ring.
 - Optional Turnstile bot check and `ALLOW_SIGNUP=false` (see above).
 - Device codes expire after 10 minutes and must be approved by a signed-in user.
 - Behind another proxy or CDN (for example Cloudflare), rate limits only see

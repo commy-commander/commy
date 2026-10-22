@@ -1,5 +1,7 @@
 use commy_sync_server::config::Config;
+use commy_sync_server::fcm::Fcm;
 use commy_sync_server::store::Store;
+use commy_sync_server::wake::Pusher;
 use commy_sync_server::{serve, spawn_housekeeping, Service};
 
 #[tokio::main]
@@ -17,7 +19,11 @@ async fn main() -> anyhow::Result<()> {
             Store::memory()
         }
     };
-    let service = Service::new(store, &config);
+    let pusher = match &config.fcm_service_account {
+        Some(account) => Pusher::Fcm(Box::new(Fcm::from_config(account).map_err(|e| anyhow::anyhow!("invalid FCM_SERVICE_ACCOUNT: {e}"))?)),
+        None => Pusher::Off,
+    };
+    let service = Service::with_pusher(store, &config, pusher);
     spawn_housekeeping(service.clone());
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!("sync service listening: {}", config.summary());

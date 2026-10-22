@@ -3,19 +3,20 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use commy_core::dm::{DmAction, DmMessage};
 use commy_core::{IdentityKey, UserId, UserProfile};
 use commy_net::node::IncomingDm;
 use commy_net::sync_streams::{self, DmEntry};
 use commy_net::DmEnvelope;
+use commy_sync::wake::DAY_MS;
 use commy_sync::{StreamId, SyncEvent};
 use tauri::{AppHandle, Manager};
 
 use crate::catchup::AppAccess;
 use crate::state::App;
 use crate::sync_link::{self, Pool};
-use crate::{account_log, outbox, safety};
+use crate::{account_log, outbox, push_wake, safety};
 
 const EPOCHS: u32 = 3;
 const MAX_PARTNERS: usize = 40;
@@ -195,6 +196,32 @@ fn refresh(handle: &AppHandle) {
         }
         live.pool.follow_together(group);
     }
+    drop(guard);
+    push_wake::register(handle);
+}
+
+pub fn wake_tags(app: &App, days: &[i64]) -> Vec<([u8; 32], i64)> {
+    let (Some(identity), Some(me)) = (app.identity(), app.profile.lock().unwrap().as_ref().map(|p| p.id)) else { return Vec::new() };
+    let partners: Vec<IdentityKey> = match LIVE.lock().unwrap().as_ref() {
+        Some(live) if live.me_key == identity.public() => live.partners.values().map(|p| p.key).collect(),
+        _ => return Vec::new(),
+    };
+    let who = me.to_string();
+    let mut tags = Vec::new();
+    for day in days {
+        let Some(start) = DateTime::from_timestamp_millis(day * DAY_MS) else { continue };
+        let epoch = sync_streams::dm_epoch(start);
+        for key in &partners {
+            if let Some(keys) = sync_streams::dm_stream(&identity, key, &epoch) {
+                tags.push((keys.wake_tag(&who, *day), *day));
+            }
+        }
+    }
+    tags
+}
+
+pub fn rings(message: &DmMessage) -> bool {
+    matches!(message.action, DmAction::Post)
 }
 
 async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver<SyncEvent>) {
@@ -306,6 +333,8 @@ pub fn publish(app: &App, partner: UserId, envelope: &DmEnvelope) {
     let epoch = sync_streams::dm_epoch(Utc::now());
     let Some(keys) = sync_streams::dm_stream(&identity, &key, &epoch) else { return };
     let stream = keys.id;
+    let wake = rings(&envelope.message).then(|| keys.wake_tag(&partner.to_string(), push_wake::today()));
+    let http = app.http.clone();
     let client = {
         let mut guard = LIVE.lock().unwrap();
         let Some(live) = guard.as_mut().filter(|l| l.me_key == identity.public()) else { return };
@@ -319,8 +348,13 @@ pub fn publish(app: &App, partner: UserId, envelope: &DmEnvelope) {
     };
     let plain = sync_streams::encode_dm(envelope);
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = sync_link::append(client, stream, plain).await {
-            tracing::debug!("could not add a DM to the sync service: {e}");
+        match sync_link::append(client, stream, plain).await {
+            Ok(_) => {
+                if let Some(tag) = wake {
+                    push_wake::ring(http, vec![tag]).await;
+                }
+            }
+            Err(e) => tracing::debug!("could not add a DM to the sync service: {e}"),
         }
     });
 }
@@ -394,6 +428,16 @@ mod tests {
         let picked = pick_partners(&BTreeMap::new(), &many, now);
         assert_eq!(picked.len(), MAX_PARTNERS);
         assert_eq!(picked[0], many[0].0);
+    }
+
+    #[test]
+    fn only_new_messages_wake_the_partners_phone() {
+        let (a, b) = (UserId::new(), UserId::new());
+        let target = commy_core::MessageId::new();
+        assert!(rings(&DmMessage::new(a, b, "hello")));
+        assert!(!rings(&DmMessage::acting(a, b, DmAction::Edit { target }, "hello!")));
+        assert!(!rings(&DmMessage::acting(a, b, DmAction::React { target, emoji: "🔥".into(), active: true }, "")));
+        assert!(!rings(&DmMessage::acting(a, b, DmAction::Delete { target }, "")));
     }
 
     #[test]

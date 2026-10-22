@@ -9,6 +9,7 @@ const DERIVE_SALT: &[u8] = b"commy-sync/v1";
 const STREAM_ID_DOMAIN: &[u8] = b"commy-sync-stream-id/v1";
 const APPEND_DOMAIN: &[u8] = b"commy-sync-append/v1";
 const SEAL_DOMAIN: &[u8] = b"commy-sync-seal/v1";
+const WAKE_DOMAIN: &[u8] = b"commy-sync-wake/v1";
 
 pub const NONCE_BYTES: usize = 12;
 pub const TAG_BYTES: usize = 16;
@@ -163,6 +164,16 @@ impl StreamKeys {
             .decrypt(&nonce, Payload { msg: sealed, aad: &self.aad() })
             .map_err(|_| SealError::WrongKey)?;
         unpad(&padded).ok_or(SealError::WrongKey)
+    }
+
+    pub fn wake_tag(&self, who: &str, day: i64) -> [u8; 32] {
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.seal).expect("HMAC takes any key length");
+        mac.update(WAKE_DOMAIN);
+        mac.update(&self.id.0);
+        mac.update(&(who.len() as u64).to_be_bytes());
+        mac.update(who.as_bytes());
+        mac.update(&day.to_be_bytes());
+        mac.finalize().into_bytes().into()
     }
 
     fn aad(&self) -> Vec<u8> {

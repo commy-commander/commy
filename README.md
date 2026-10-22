@@ -250,7 +250,11 @@ npx tauri ios dev
 
 The "Mobile builds" workflow builds a debug APK on every change to native or
 phone files; the iOS simulator app builds only when the workflow is run by
-hand. Screen sharing, the overlay, hotkeys, the tray and Stream Deck
+hand. To let the sync service wake the Android app with an empty push, set
+`GOOGLE_SERVICES_JSON` to your Firebase project's `google-services.json` (its
+contents, its base64 or a path) before running `android-project.mjs`; the workflow reads it
+from the secret of the same name. Without it the app builds without push
+wake-ups. Screen sharing, the overlay, hotkeys, the tray and Stream Deck
 are desktop only.
 
 ## Self-hosting
