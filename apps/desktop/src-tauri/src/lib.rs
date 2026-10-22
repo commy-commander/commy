@@ -3482,6 +3482,7 @@ fn has_custom_titlebar() -> bool {
     cfg!(windows)
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 fn window_action(window: tauri::WebviewWindow, action: String) {
     match action.as_str() {
@@ -3505,10 +3506,9 @@ fn window_action(window: tauri::WebviewWindow, action: String) {
     }
 }
 
+#[cfg(mobile)]
 #[tauri::command]
-fn window_maximized(window: tauri::WebviewWindow) -> bool {
-    window.is_maximized().unwrap_or(false)
-}
+fn window_action(_action: String) {}
 
 #[tauri::command]
 async fn set_status_expiry(
@@ -8486,7 +8486,6 @@ pub fn run() {
             set_window_title,
             has_custom_titlebar,
             window_action,
-            window_maximized,
             set_icons,
             choose_custom_icon,
             get_custom_icon,
