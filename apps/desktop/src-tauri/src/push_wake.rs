@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -26,6 +26,7 @@ struct Registered {
 static TOKEN: Mutex<Option<String>> = Mutex::new(None);
 static REGISTERED: Mutex<Option<Registered>> = Mutex::new(None);
 static REGISTERING: AtomicBool = AtomicBool::new(false);
+static HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 pub fn wake_url(sync_url: &str) -> Option<String> {
     let (scheme, rest) = match sync_url.strip_prefix("wss://") {
@@ -70,7 +71,14 @@ pub fn set_token(handle: &AppHandle, token: Option<String>) {
     }
 }
 
+pub fn register_again() {
+    if let Some(handle) = HANDLE.get() {
+        register(handle);
+    }
+}
+
 pub fn register(handle: &AppHandle) {
+    let _ = HANDLE.set(handle.clone());
     let Some(token) = TOKEN.lock().unwrap().clone() else { return };
     let Some(base) = sync_link::url().as_deref().and_then(wake_url) else { return };
     if REGISTERING.swap(true, Ordering::SeqCst) {
