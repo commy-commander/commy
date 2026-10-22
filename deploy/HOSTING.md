@@ -349,8 +349,9 @@ server or channel a log belongs to.
   push with no content to each phone registered on those tags, at most one
   every 2 minutes per phone. It stores each tag with the push token and the
   last day it is valid (2 days ahead at most), and drops tokens Google reports
-  as gone. Without the key, `GET /sync/wake` answers 404 and apps do not
-  register.
+  as gone. It keeps no record of who rang, but an operator watching live
+  traffic could pair the address that rang with the phone it woke. Without the
+  key, `GET /sync/wake` answers 404 and apps do not register.
 - **Setting it up:** `docker compose up -d sync`, then add `SYNC_URL` and
   recreate auth: `docker compose up -d --no-deps auth`. The service answers
   `GET /sync/healthz`. It logs only totals (connections, live logs, opens and

@@ -1018,6 +1018,7 @@ dependencies = [
  "image 0.25.10",
  "mime_guess",
  "open",
+ "rand 0.8.8",
  "reqwest 0.12.28",
  "rfd 0.17.2",
  "security-framework",

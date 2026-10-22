@@ -61,6 +61,8 @@ jobs:
 
       - name: Generate the Android project
         working-directory: apps/desktop/src-tauri
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           npm ci
           npx tauri android init --ci
