@@ -37,6 +37,8 @@ pub struct Cursors {
     pub after: BTreeMap<String, u64>,
     #[serde(default)]
     pub backfilled: BTreeSet<String>,
+    #[serde(default)]
+    pub announced: BTreeMap<String, String>,
 }
 
 impl Cursors {
@@ -54,6 +56,17 @@ impl Cursors {
     pub fn keep_only(&mut self, streams: &HashSet<String>) {
         self.after.retain(|stream, _| streams.contains(stream));
         self.backfilled.retain(|stream| streams.contains(stream));
+        self.announced.retain(|stream, _| streams.contains(stream));
+    }
+
+    pub fn announce(&mut self, stream: StreamId, profile: &str) -> bool {
+        self.announced.insert(stream.to_hex(), profile.to_string()).as_deref() != Some(profile)
+    }
+
+    pub fn unannounce(&mut self, stream: StreamId, profile: &str) {
+        if self.announced.get(&stream.to_hex()).is_some_and(|known| known == profile) {
+            self.announced.remove(&stream.to_hex());
+        }
     }
 }
 
@@ -78,7 +91,6 @@ struct Live {
     published: HashMap<ServerId, i64>,
     retried: HashSet<MessageId>,
     echoes: VecDeque<[u8; 32]>,
-    announced: HashMap<ServerId, [u8; 32]>,
     cursors: Cursors,
     task: tauri::async_runtime::JoinHandle<()>,
 }
@@ -228,7 +240,6 @@ async fn tend(handle: &AppHandle) {
             published: HashMap::new(),
             retried: HashSet::new(),
             echoes: VecDeque::new(),
-            announced: HashMap::new(),
             cursors,
             task,
         });
@@ -357,6 +368,7 @@ fn refresh(handle: &AppHandle) {
     let Some(me) = LIVE.lock().unwrap().as_ref().map(|l| l.me) else { return };
     let mut wanted = wanted_now(&app, me);
     let mut fresh_communities = Vec::new();
+    let mut promoted = Vec::new();
     let mut guard = LIVE.lock().unwrap();
     let Some(live) = guard.as_mut() else { return };
     let gone: Vec<ServerId> = live.communities.keys().filter(|sid| !wanted.contains_key(sid)).copied().collect();
@@ -387,6 +399,9 @@ fn refresh(handle: &AppHandle) {
         for want in wants {
             let stream = want.keys.id;
             if let Some(held) = community.wants.get_mut(&stream) {
+                if want.writes && !held.writes && held.lane == Lane::State && live.caught_up.contains(&stream) {
+                    promoted.push(sid);
+                }
                 held.writes = want.writes;
                 continue;
             }
@@ -404,6 +419,9 @@ fn refresh(handle: &AppHandle) {
         }
     }
     drop(guard);
+    for sid in promoted {
+        announce_me(handle, sid);
+    }
     for (sid, group) in fresh_communities {
         let spread = Duration::from_millis(std::hash::BuildHasher::hash_one(&std::collections::hash_map::RandomState::new(), sid) % FIRST_OPEN_SPREAD_MS);
         tauri::async_runtime::spawn(async move {
@@ -469,18 +487,57 @@ pub fn publish(server: ServerId, payload: &WirePayload) {
     }
 }
 
-pub fn announce_profile(server: ServerId, profile: &UserProfile, payload: &WirePayload) {
+pub fn profile_digest(profile: &UserProfile) -> Option<String> {
     let mut lasting = profile.clone();
     lasting.presence = Default::default();
-    let Ok(bytes) = serde_json::to_vec(&lasting) else { return };
-    let digest = digest(&bytes);
-    let changed = LIVE.lock().unwrap().as_mut().is_some_and(|live| {
-        let known = live.communities.get(&server).is_some_and(|c| c.wants.values().any(|w| w.lane == Lane::State));
-        known && live.announced.insert(server, digest) != Some(digest)
-    });
-    if changed {
-        publish(server, payload);
+    let bytes = serde_json::to_vec(&lasting).ok()?;
+    Some(digest(&bytes).iter().map(|b| format!("{b:02x}")).collect())
+}
+
+pub fn announce_profile(server: ServerId, profile: &UserProfile, payload: &WirePayload) {
+    let Some(profile) = profile_digest(profile) else { return };
+    let Some(plain) = streams::encode_entry(payload) else { return };
+    let sends = {
+        let mut guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_mut() else { return };
+        let fresh: Vec<_> = targets(live, server, Lane::State, false)
+            .into_iter()
+            .filter(|(stream, _)| live.cursors.announce(*stream, &profile))
+            .collect();
+        if !fresh.is_empty() {
+            live.note_echo(digest(&plain));
+        }
+        fresh
+    };
+    if sends.is_empty() {
+        return;
     }
+    save_soon();
+    for (stream, client) in sends {
+        let (plain, profile) = (plain.clone(), profile.clone());
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = sync_link::append(client, stream, plain).await {
+                tracing::debug!("could not tell the sync service where this device is: {e}");
+                if let Some(live) = LIVE.lock().unwrap().as_mut() {
+                    live.cursors.unannounce(stream, &profile);
+                }
+                save_soon();
+            }
+        });
+    }
+}
+
+fn announce_me(handle: &AppHandle, server: ServerId) {
+    let app = handle.state::<App>();
+    let Some(me) = app.profile.lock().unwrap().clone() else { return };
+    let mut profile = app.announced(me);
+    {
+        let servers = app.servers.lock().unwrap();
+        let Some(state) = servers.get(&server).filter(|s| s.server.is_current_member(profile.id) && !s.is_deleted()) else { return };
+        crate::devices::point_at_voice(state, &mut profile);
+    }
+    let payload = app.wire_for(server, ServerEvent::MemberJoin { server, profile: profile.clone() });
+    announce_profile(server, &profile, &payload);
 }
 
 async fn listen(handle: AppHandle, mut events: mpsc::UnboundedReceiver<SyncEvent>) {
@@ -643,10 +700,11 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
         let first = live.caught_up.insert(stream);
         let held = live.snapshots.contains_key(&server);
         let due = want.writes && !live.cursors.backfilled.contains(&stream.to_hex()) && !live.backfilling.contains(&stream);
-        (server, want, due, live.me, first && !held)
+        (server, want, due, live.me, first, held)
     };
     save_soon();
-    let (server, want, due, me, empty) = found;
+    let (server, want, due, me, first, held) = found;
+    let empty = first && !held;
     let app = handle.state::<App>();
     if app.awaits_snapshot(server) {
         if empty {
@@ -656,6 +714,9 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
         return;
     }
     if want.lane == Lane::State && want.writes {
+        if first {
+            announce_me(handle, server);
+        }
         publish_snapshots(handle);
     }
     if !due {
@@ -749,6 +810,33 @@ mod tests {
         let json = serde_json::to_string(&cursors).unwrap();
         assert_eq!(serde_json::from_str::<Cursors>(&json).unwrap(), cursors);
         assert_eq!(serde_json::from_str::<Cursors>("{}").unwrap(), Cursors::default());
+    }
+
+    #[test]
+    fn a_device_tells_each_stream_where_it_is_once_until_that_changes() {
+        let mut cursors = Cursors::default();
+        let a = commy_sync::StreamSecret::random().keys().id;
+        let b = commy_sync::StreamSecret::random().keys().id;
+        let mut me = UserProfile::new("me");
+        me.node = Some("ab".repeat(32));
+        let here = profile_digest(&me).unwrap();
+        me.presence = commy_core::Presence::Idle;
+        assert_eq!(profile_digest(&me).unwrap(), here, "presence is not news");
+        assert!(cursors.announce(a, &here));
+        assert!(!cursors.announce(a, &here), "the same place twice is quiet");
+        assert!(cursors.announce(b, &here), "a new key's stream hears it again");
+        me.node = Some("cd".repeat(32));
+        let moved = profile_digest(&me).unwrap();
+        assert_ne!(moved, here, "a reinstalled device has a new node");
+        assert!(cursors.announce(a, &moved));
+        cursors.unannounce(a, &here);
+        assert!(!cursors.announce(a, &moved), "a stale failure keeps the newer note");
+        cursors.unannounce(a, &moved);
+        assert!(cursors.announce(a, &moved), "a failed send is tried again");
+        let json = serde_json::to_string(&cursors).unwrap();
+        assert_eq!(serde_json::from_str::<Cursors>(&json).unwrap(), cursors);
+        cursors.keep_only(&HashSet::from([b.to_hex()]));
+        assert_eq!(cursors.announced.len(), 1);
     }
 
     #[test]
