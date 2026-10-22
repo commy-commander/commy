@@ -25,7 +25,7 @@ pub use mirror::{MirrorAsk, MirrorRequest, MirroredServer, MIRROR_ALPN};
 pub use media::{MediaHello, MediaPacket, MEDIA_ALPN};
 #[cfg(not(wasm_browser))]
 pub use node::BlobFetcher;
-pub use node::{link_path, CommyNode, LinkPath, MediaChannel, MediaDialer, NetEvent, SharedCatchupStore, MEDIA_DIAL_TIMEOUT};
+pub use node::{link_path, CommyNode, GossipRedialer, LinkPath, MediaChannel, MediaDialer, NetEvent, SharedCatchupStore, MEDIA_DIAL_TIMEOUT};
 pub use protocol::{Envelope, WirePayload, PROTOCOL_VERSION};
 pub use sealed::{SealError, SealKey};
 pub use ticket::{ServerTicket, TicketError};

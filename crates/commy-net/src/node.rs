@@ -490,6 +490,7 @@ impl CatchupAcceptor {
 struct TopicHandle {
     sender: GossipSender,
     neighbors: tokio::sync::watch::Receiver<BTreeSet<[u8; 32]>>,
+    heard: Arc<Mutex<n0_future::time::Instant>>,
     reader: n0_future::task::AbortHandle,
 }
 
@@ -539,6 +540,35 @@ pub const MEDIA_DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone)]
 pub struct MediaDialer {
     endpoint: Endpoint,
+}
+
+const GOSSIP_REDIAL_TIMEOUT: Duration = Duration::from_secs(10);
+
+const REPLACED_LINK_LINGER: Duration = Duration::from_secs(5);
+
+#[derive(Clone)]
+pub struct GossipRedialer {
+    endpoint: Endpoint,
+    gossip: Gossip,
+    links: Arc<Mutex<HashMap<EndpointId, Connection>>>,
+}
+
+impl GossipRedialer {
+    pub async fn reconnect(&self, peer: [u8; 32]) -> Result<()> {
+        let node_id = EndpointId::from_bytes(&peer).context("invalid node key")?;
+        let connection = n0_future::time::timeout(GOSSIP_REDIAL_TIMEOUT, dial(&self.endpoint, node_id, iroh_gossip::ALPN))
+            .await
+            .map_err(|_| anyhow::anyhow!("that device could not be reached"))??;
+        self.gossip.handle_connection(connection.clone()).await?;
+        let replaced = self.links.lock().unwrap_or_else(|e| e.into_inner()).insert(node_id, connection);
+        if let Some(old) = replaced {
+            n0_future::task::spawn(async move {
+                n0_future::time::sleep(REPLACED_LINK_LINGER).await;
+                old.close(0u32.into(), b"replaced");
+            });
+        }
+        Ok(())
+    }
 }
 
 impl MediaDialer {
@@ -632,6 +662,7 @@ pub struct CommyNode {
     lookup: MemoryLookup,
     relays: Vec<RelayUrl>,
     topics: HashMap<ServerId, TopicHandle>,
+    gossip_links: Arc<Mutex<HashMap<EndpointId, Connection>>>,
     events_tx: mpsc::UnboundedSender<NetEvent>,
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
     mirror_requests: Option<mpsc::UnboundedReceiver<crate::mirror::MirrorAsk>>,
@@ -781,6 +812,7 @@ impl CommyNode {
                 lookup,
                 relays,
                 topics: HashMap::new(),
+                gossip_links: Arc::default(),
                 events_tx,
                 entry_key_requests: Some(entry_key_rx),
                 mirror_requests: Some(mirror_rx),
@@ -1033,6 +1065,18 @@ impl CommyNode {
             .unwrap_or(0)
     }
 
+    pub fn quiet_neighbors(&self, server_id: ServerId, longer_than: Duration) -> Vec<[u8; 32]> {
+        let Some(handle) = self.topics.get(&server_id) else { return Vec::new() };
+        if handle.heard.lock().unwrap_or_else(|e| e.into_inner()).elapsed() < longer_than {
+            return Vec::new();
+        }
+        handle.neighbors.borrow().iter().copied().collect()
+    }
+
+    pub fn gossip_redialer(&self) -> GossipRedialer {
+        GossipRedialer { endpoint: self.endpoint(), gossip: self.gossip.clone(), links: self.gossip_links.clone() }
+    }
+
     pub fn neighbors(&self, server_id: ServerId) -> Vec<[u8; 32]> {
         self.topics
             .get(&server_id)
@@ -1057,11 +1101,16 @@ impl CommyNode {
         let events_tx = self.events_tx.clone();
         let our_id = self.node_id_bytes();
         let (neighbors_tx, neighbors_rx) = tokio::sync::watch::channel(BTreeSet::new());
+        let heard = Arc::new(Mutex::new(n0_future::time::Instant::now()));
+        let heard_here = heard.clone();
         let reader = n0_future::task::spawn(async move {
             while let Some(item) = stream.next().await {
                 let Ok(event) = item else {
                     continue;
                 };
+                if matches!(event, GossipEvent::Received(_) | GossipEvent::NeighborUp(_)) {
+                    *heard_here.lock().unwrap_or_else(|e| e.into_inner()) = n0_future::time::Instant::now();
+                }
                 let msg = match event {
                     GossipEvent::Received(msg) => msg,
                     membership => {
@@ -1121,6 +1170,7 @@ impl CommyNode {
             TopicHandle {
                 sender,
                 neighbors: neighbors_rx,
+                heard,
                 reader: reader.abort_handle(),
             },
         );

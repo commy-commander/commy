@@ -3068,6 +3068,7 @@ const MESH_HEAL_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
 
 async fn run_mesh_healer(handle: tauri::AppHandle) {
     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    let mut refreshed: std::collections::HashMap<ServerId, std::time::Instant> = std::collections::HashMap::new();
     loop {
         let app = handle.state::<App>();
         if wake::is_resting(&app) {
@@ -3090,11 +3091,21 @@ async fn run_mesh_healer(handle: tauri::AppHandle) {
                 })
                 .collect()
         };
+        let mut quiet = Vec::new();
+        let mut redialer = None;
         {
             let net = app.net.lock().await;
             if let Some(node) = net.as_ref() {
                 for (sid, peers) in targets {
-                    if peers.is_empty() || node.neighbor_count(sid) > 0 {
+                    if peers.is_empty() {
+                        continue;
+                    }
+                    if node.neighbor_count(sid) > 0 {
+                        let silent = node.quiet_neighbors(sid, liveness::EXPIRE);
+                        if !silent.is_empty() && refreshed.get(&sid).is_none_or(|at| at.elapsed() >= liveness::EXPIRE) {
+                            refreshed.insert(sid, std::time::Instant::now());
+                            quiet.push((sid, silent));
+                        }
                         continue;
                     }
                     let dial = node.join_peers(sid, &peers);
@@ -3105,8 +3116,23 @@ async fn run_mesh_healer(handle: tauri::AppHandle) {
                         Err(_) => tracing::debug!("re-dial for {sid} is still in progress"),
                     }
                 }
+                redialer = Some(node.gossip_redialer());
             }
         }
+        if let Some(redialer) = redialer {
+            for (sid, silent) in quiet {
+                tracing::info!("heard nothing on {sid} for a while, reconnecting {} neighbors", silent.len());
+                for peer in silent {
+                    let redialer = redialer.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = redialer.reconnect(peer).await {
+                            tracing::debug!("could not reconnect a quiet neighbor of {sid}: {e}");
+                        }
+                    });
+                }
+            }
+        }
+        refreshed.retain(|_, at| at.elapsed() < liveness::EXPIRE * 2);
         tokio::time::sleep(MESH_HEAL_EVERY).await;
     }
 }
