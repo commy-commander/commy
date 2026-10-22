@@ -5311,7 +5311,9 @@ async fn ban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server
             return Err("you cannot ban that member".into());
         }
     }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberBan { server: sid, user }).await
+    apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberBan { server: sid, user }).await?;
+    channel_lock::tend_server(&app, &handle, sid).await;
+    Ok(())
 }
 
 fn timeout_event(sid: ServerId, user: UserId, by: UserId, seconds: Option<u32>) -> CmdResult<ServerEvent> {

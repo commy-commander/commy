@@ -1,4 +1,4 @@
-use commy_core::channel_key::{self, KeyTask, Keyring};
+use commy_core::channel_key::{self, ChannelSecret, KeyId, KeyScope, Keyring};
 use commy_core::{Attachment, ChannelId, Identity, Message, Permissions, ServerEvent, ServerState, UserId};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -96,34 +96,53 @@ impl KeyHolder {
     }
 
     pub fn key_events(&self, state: &ServerState, channel: ChannelId) -> Vec<ServerEvent> {
-        let Some((me, _)) = &self.me else { return Vec::new() };
-        let Ok(mut ring) = self.ring(state, channel) else { return Vec::new() };
-        let server = state.server.id;
-        match channel_key::key_task(state, channel, *me, &ring) {
-            Some(KeyTask::Rotate { links }) => {
-                let record = ring.rotate(server, channel, &links, chrono::Utc::now().timestamp_millis());
-                let key = record.id;
-                let mut events = vec![ServerEvent::ChannelKeyAdd { server, channel, key: record }];
-                events.extend(ring.grant_events(state, channel, key, &state.server.readers_of(channel)));
-                events
-            }
-            Some(KeyTask::Grant { key, to }) => ring.grant_events(state, channel, key, &to),
+        self.scope_events(state, KeyScope::Channel(channel))
+    }
+
+    pub fn scope_events(&self, state: &ServerState, scope: KeyScope) -> Vec<ServerEvent> {
+        let Some((me, identity)) = &self.me else { return Vec::new() };
+        let mut ring = Keyring::unlock_scope(state, scope, *me, identity);
+        match task_for(state, scope, *me, &ring) {
+            Some(task) => ring.task_events(state, scope, task, chrono::Utc::now().timestamp_millis()),
             None => Vec::new(),
         }
     }
 
     pub fn channels_with_work(&self, state: &ServerState) -> Vec<ChannelId> {
-        let Some((me, identity)) = &self.me else { return Vec::new() };
-        state
-            .server
-            .channels
-            .iter()
-            .filter(|c| c.is_private())
-            .map(|c| c.id)
-            .filter(|channel| {
-                let ring = Keyring::unlock(state, *channel, *me, identity);
-                channel_key::key_task(state, *channel, *me, &ring).is_some()
+        self.scopes_with_work(state)
+            .into_iter()
+            .filter_map(|scope| match scope {
+                KeyScope::Channel(channel) => Some(channel),
+                KeyScope::Community => None,
             })
             .collect()
+    }
+
+    pub fn scopes_with_work(&self, state: &ServerState) -> Vec<KeyScope> {
+        let Some((me, identity)) = &self.me else { return Vec::new() };
+        let private = state.server.channels.iter().filter(|c| c.is_private()).map(|c| KeyScope::Channel(c.id));
+        std::iter::once(KeyScope::Community)
+            .chain(private)
+            .filter(|scope| {
+                let ring = Keyring::unlock_scope(state, *scope, *me, identity);
+                task_for(state, *scope, *me, &ring).is_some()
+            })
+            .collect()
+    }
+
+    pub fn community_ring(&self, state: &ServerState, invited: Option<(KeyId, ChannelSecret)>) -> Option<Keyring> {
+        let (me, identity) = self.me.as_ref()?;
+        let mut ring = Keyring::unlock_community(state, *me, identity);
+        if let Some((id, secret)) = invited {
+            ring.admit(state, KeyScope::Community, id, secret);
+        }
+        Some(ring)
+    }
+}
+
+fn task_for(state: &ServerState, scope: KeyScope, me: UserId, ring: &Keyring) -> Option<channel_key::KeyTask> {
+    match scope {
+        KeyScope::Channel(channel) => channel_key::key_task(state, channel, me, ring),
+        KeyScope::Community => channel_key::community_key_task(state, me, ring),
     }
 }

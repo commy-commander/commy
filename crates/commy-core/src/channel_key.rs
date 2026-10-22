@@ -2,6 +2,8 @@ use crate::event::ServerEvent;
 use crate::identity::{to_hex, Identity, IdentityKey};
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 use crate::message::{Attachment, Message};
+use crate::permissions::Permissions;
+use crate::server::Server;
 use crate::store::ServerState;
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
@@ -15,6 +17,8 @@ use std::fmt;
 
 const GRANT_DOMAIN: &str = "commy-channel-grant/v1";
 const LINK_DOMAIN: &str = "commy-channel-link/v1";
+const COMMUNITY_GRANT_DOMAIN: &str = "commy-community-grant/v1";
+const COMMUNITY_LINK_DOMAIN: &str = "commy-community-link/v1";
 const BODY_DOMAIN: &str = "commy-channel-body/v1";
 const SEALED_PREFIX: &str = "commy-sealed:v1:";
 const TAG_BYTES: usize = 16;
@@ -42,12 +46,62 @@ impl fmt::Debug for KeyId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyScope {
+    Channel(ChannelId),
+    Community,
+}
+
+impl From<ChannelId> for KeyScope {
+    fn from(channel: ChannelId) -> Self {
+        KeyScope::Channel(channel)
+    }
+}
+
+impl KeyScope {
+    fn grant_info(self, server: ServerId, user: UserId, key: KeyId, ephemeral: [u8; 32], point: [u8; 32]) -> Vec<u8> {
+        match self {
+            KeyScope::Channel(channel) => encode(&(GRANT_DOMAIN, server, channel, user, key, ephemeral, point)),
+            KeyScope::Community => encode(&(COMMUNITY_GRANT_DOMAIN, server, user, key, ephemeral, point)),
+        }
+    }
+
+    fn link_aad(self, server: ServerId, from: KeyId, prev: KeyId) -> Vec<u8> {
+        match self {
+            KeyScope::Channel(channel) => encode(&(LINK_DOMAIN, server, channel, from, prev)),
+            KeyScope::Community => encode(&(COMMUNITY_LINK_DOMAIN, server, from, prev)),
+        }
+    }
+
+    fn add_event(self, server: ServerId, key: KeyRecord) -> ServerEvent {
+        match self {
+            KeyScope::Channel(channel) => ServerEvent::ChannelKeyAdd { server, channel, key },
+            KeyScope::Community => ServerEvent::CommunityKeyAdd { server, key },
+        }
+    }
+
+    fn grant_event(self, server: ServerId, user: UserId, grant: SealedKey) -> ServerEvent {
+        match self {
+            KeyScope::Channel(channel) => ServerEvent::ChannelKeyGrant { server, channel, user, grant },
+            KeyScope::Community => ServerEvent::CommunityKeyGrant { server, user, grant },
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct ChannelSecret([u8; 32]);
 
 impl ChannelSecret {
     pub fn random() -> Self {
         Self(rand::random())
+    }
+
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn bytes(&self) -> &[u8; 32] {
+        &self.0
     }
 
     fn from_plain(bytes: Vec<u8>) -> Option<Self> {
@@ -115,14 +169,10 @@ fn wrapping_key(shared: &[u8; 32], info: &[u8]) -> [u8; 32] {
     expand.finalize().into_bytes().into()
 }
 
-fn grant_info(server: ServerId, channel: ChannelId, user: UserId, key: KeyId, ephemeral: [u8; 32], point: [u8; 32]) -> Vec<u8> {
-    encode(&(GRANT_DOMAIN, server, channel, user, key, ephemeral, point))
-}
-
 impl SealedKey {
     pub fn seal(
         server: ServerId,
-        channel: ChannelId,
+        scope: impl Into<KeyScope>,
         user: UserId,
         recipient: &IdentityKey,
         key: KeyId,
@@ -135,15 +185,15 @@ impl SealedKey {
         if shared == [0u8; 32] {
             return None;
         }
-        let wrap = wrapping_key(&shared, &grant_info(server, channel, user, key, ephemeral, point));
+        let wrap = wrapping_key(&shared, &scope.into().grant_info(server, user, key, ephemeral, point));
         let nonce = rand::random();
         Some(Self { key, ephemeral, nonce, sealed: seal(&wrap, nonce, &[], &secret.0) })
     }
 
-    pub fn open(&self, server: ServerId, channel: ChannelId, me: UserId, identity: &Identity) -> Option<ChannelSecret> {
+    pub fn open(&self, server: ServerId, scope: impl Into<KeyScope>, me: UserId, identity: &Identity) -> Option<ChannelSecret> {
         let point = identity.public().agreement_point()?;
         let shared = identity.agree(self.ephemeral)?;
-        let wrap = wrapping_key(&shared, &grant_info(server, channel, me, self.key, self.ephemeral, point));
+        let wrap = wrapping_key(&shared, &scope.into().grant_info(server, me, self.key, self.ephemeral, point));
         unseal(&wrap, self.nonce, &[], &self.sealed).and_then(ChannelSecret::from_plain)
     }
 
@@ -152,20 +202,15 @@ impl SealedKey {
     }
 }
 
-fn link_aad(server: ServerId, channel: ChannelId, from: KeyId, prev: KeyId) -> Vec<u8> {
-    encode(&(LINK_DOMAIN, server, channel, from, prev))
-}
-
 impl KeyLink {
-    fn seal(server: ServerId, channel: ChannelId, from: KeyId, secret: &ChannelSecret, prev: KeyId, prev_secret: &ChannelSecret) -> Self {
+    fn seal(server: ServerId, scope: KeyScope, from: KeyId, secret: &ChannelSecret, prev: KeyId, prev_secret: &ChannelSecret) -> Self {
         let nonce = rand::random();
-        let sealed = seal(&secret.0, nonce, &link_aad(server, channel, from, prev), &prev_secret.0);
+        let sealed = seal(&secret.0, nonce, &scope.link_aad(server, from, prev), &prev_secret.0);
         Self { prev, nonce, sealed }
     }
 
-    fn open(&self, server: ServerId, channel: ChannelId, from: KeyId, secret: &ChannelSecret) -> Option<ChannelSecret> {
-        unseal(&secret.0, self.nonce, &link_aad(server, channel, from, self.prev), &self.sealed)
-            .and_then(ChannelSecret::from_plain)
+    fn open(&self, server: ServerId, scope: KeyScope, from: KeyId, secret: &ChannelSecret) -> Option<ChannelSecret> {
+        unseal(&secret.0, self.nonce, &scope.link_aad(server, from, self.prev), &self.sealed).and_then(ChannelSecret::from_plain)
     }
 }
 
@@ -237,19 +282,37 @@ pub struct Keyring {
 
 impl Keyring {
     pub fn unlock(state: &ServerState, channel: ChannelId, me: UserId, identity: &Identity) -> Self {
+        Self::unlock_scope(state, KeyScope::Channel(channel), me, identity)
+    }
+
+    pub fn unlock_community(state: &ServerState, me: UserId, identity: &Identity) -> Self {
+        Self::unlock_scope(state, KeyScope::Community, me, identity)
+    }
+
+    pub fn unlock_scope(state: &ServerState, scope: KeyScope, me: UserId, identity: &Identity) -> Self {
         let mut ring = Self::default();
-        let Some(keys) = state.channel_keys(channel) else { return ring };
+        let Some(keys) = state.key_chain(scope) else { return ring };
         let server = state.server.id;
         if let Some(grant) = keys.grant_for(me) {
-            if let Some(secret) = grant.open(server, channel, me, identity) {
+            if let Some(secret) = grant.open(server, scope, me, identity) {
                 ring.secrets.insert(grant.key, secret);
             }
         }
-        ring.follow_links(server, channel, keys);
+        ring.follow_links(server, scope, keys);
         ring
     }
 
-    fn follow_links(&mut self, server: ServerId, channel: ChannelId, keys: &ChannelKeys) {
+    pub fn admit(&mut self, state: &ServerState, scope: KeyScope, id: KeyId, secret: ChannelSecret) {
+        if self.secrets.contains_key(&id) {
+            return;
+        }
+        self.secrets.insert(id, secret);
+        if let Some(keys) = state.key_chain(scope) {
+            self.follow_links(state.server.id, scope, keys);
+        }
+    }
+
+    fn follow_links(&mut self, server: ServerId, scope: KeyScope, keys: &ChannelKeys) {
         let mut unvisited: Vec<KeyId> = self.secrets.keys().copied().collect();
         while let Some(id) = unvisited.pop() {
             let (Some(record), Some(secret)) = (keys.record(id), self.secrets.get(&id).cloned()) else { continue };
@@ -257,7 +320,7 @@ impl Keyring {
                 if self.secrets.contains_key(&link.prev) {
                     continue;
                 }
-                if let Some(prev) = link.open(server, channel, id, &secret) {
+                if let Some(prev) = link.open(server, scope, id, &secret) {
                     self.secrets.insert(link.prev, prev);
                     unvisited.push(link.prev);
                 }
@@ -274,32 +337,67 @@ impl Keyring {
     }
 
     pub fn sending_key(&self, state: &ServerState, channel: ChannelId) -> Option<(KeyId, &ChannelSecret)> {
-        let newest = state.channel_keys(channel)?.newest()?.id;
+        self.newest_in(state, KeyScope::Channel(channel))
+    }
+
+    pub fn newest_in(&self, state: &ServerState, scope: KeyScope) -> Option<(KeyId, &ChannelSecret)> {
+        let newest = state.key_chain(scope)?.newest()?.id;
         self.secret(newest).map(|secret| (newest, secret))
     }
 
-    pub fn rotate(&mut self, server: ServerId, channel: ChannelId, links: &[KeyId], at: i64) -> KeyRecord {
+    pub fn held_records<'a>(&'a self, state: &'a ServerState, scope: KeyScope) -> Vec<(&'a KeyRecord, &'a ChannelSecret)> {
+        let Some(keys) = state.key_chain(scope) else { return Vec::new() };
+        let mut held: Vec<(&KeyRecord, &ChannelSecret)> =
+            keys.keys.iter().filter_map(|record| Some((record, self.secret(record.id)?))).collect();
+        held.sort_by_key(|(record, _)| std::cmp::Reverse((record.at, record.id)));
+        held
+    }
+
+    pub fn rotate(&mut self, server: ServerId, scope: impl Into<KeyScope>, links: &[KeyId], at: i64) -> KeyRecord {
+        let scope = scope.into();
         let id = KeyId::random();
         let secret = ChannelSecret::random();
         let links = links
             .iter()
             .take(MAX_LINKS)
-            .filter_map(|prev| self.secret(*prev).map(|s| KeyLink::seal(server, channel, id, &secret, *prev, s)))
+            .filter_map(|prev| self.secret(*prev).map(|s| KeyLink::seal(server, scope, id, &secret, *prev, s)))
             .collect();
         self.secrets.insert(id, secret);
         KeyRecord { id, at, links }
     }
 
-    pub fn grant_events(&self, state: &ServerState, channel: ChannelId, key: KeyId, to: &[UserId]) -> Vec<ServerEvent> {
+    pub fn grant_events(&self, state: &ServerState, scope: impl Into<KeyScope>, key: KeyId, to: &[UserId]) -> Vec<ServerEvent> {
+        let scope = scope.into();
         let Some(secret) = self.secret(key) else { return Vec::new() };
         let server = state.server.id;
         to.iter()
             .filter_map(|user| {
                 let recipient = state.identity_of(*user)?;
-                let grant = SealedKey::seal(server, channel, *user, &recipient, key, secret)?;
-                Some(ServerEvent::ChannelKeyGrant { server, channel, user: *user, grant })
+                let grant = SealedKey::seal(server, scope, *user, &recipient, key, secret)?;
+                Some(scope.grant_event(server, *user, grant))
             })
             .collect()
+    }
+
+    pub fn task_events(&mut self, state: &ServerState, scope: KeyScope, task: KeyTask, at: i64) -> Vec<ServerEvent> {
+        let server = state.server.id;
+        match task {
+            KeyTask::Rotate { links } => {
+                let record = self.rotate(server, scope, &links, at);
+                let key = record.id;
+                let mut events = vec![scope.add_event(server, record)];
+                events.extend(self.grant_events(state, scope, key, &recipients(state, scope)));
+                events
+            }
+            KeyTask::Grant { key, to } => self.grant_events(state, scope, key, &to),
+        }
+    }
+}
+
+fn recipients(state: &ServerState, scope: KeyScope) -> Vec<UserId> {
+    match scope {
+        KeyScope::Channel(channel) => state.server.readers_of(channel),
+        KeyScope::Community => state.server.members.iter().map(|m| m.user).filter(|u| state.server.is_current_member(*u)).collect(),
     }
 }
 
@@ -334,6 +432,43 @@ pub fn key_task(state: &ServerState, channel: ChannelId, me: UserId, ring: &Keyr
     }
     let to: Vec<UserId> = server
         .readers_of(channel)
+        .into_iter()
+        .filter(|u| state.identity_of(*u).is_some() && keys.grant_for(*u).map(|g| g.key) != Some(newest))
+        .collect();
+    (!to.is_empty()).then_some(KeyTask::Grant { key: newest, to })
+}
+
+pub fn may_rotate_community(server: &Server, user: UserId) -> bool {
+    let perms = server.permissions_for(user);
+    server.is_current_member(user)
+        && (user == server.owner
+            || perms.allows(Permissions::MANAGE_SERVER)
+            || perms.allows(Permissions::BAN_MEMBERS)
+            || perms.allows(Permissions::KICK_MEMBERS))
+}
+
+pub fn community_key_task(state: &ServerState, me: UserId, ring: &Keyring) -> Option<KeyTask> {
+    let server = &state.server;
+    if !server.is_current_member(me) {
+        return None;
+    }
+    let rotates = may_rotate_community(server, me);
+    let keys = state.community_keys();
+    let heads = keys.heads();
+    if heads.is_empty() {
+        return rotates.then_some(KeyTask::Rotate { links: Vec::new() });
+    }
+    let held: Vec<KeyId> = heads.iter().copied().filter(|k| ring.holds(*k)).collect();
+    let exposed = keys.grants.iter().any(|(user, g)| heads.contains(&g.key) && server.banned.contains(user));
+    let forked = heads.len() > 1 && held.len() == heads.len();
+    if rotates && (exposed || forked) && !held.is_empty() {
+        return Some(KeyTask::Rotate { links: held });
+    }
+    let newest = keys.newest()?.id;
+    if !ring.holds(newest) {
+        return None;
+    }
+    let to: Vec<UserId> = recipients(state, KeyScope::Community)
         .into_iter()
         .filter(|u| state.identity_of(*u).is_some() && keys.grant_for(*u).map(|g| g.key) != Some(newest))
         .collect();
@@ -655,5 +790,185 @@ mod tests {
         assert!(read_message(server, &moved, &ring).is_none());
         let plain = post(&state, channel, owner, "open");
         assert_eq!(read_message(server, &plain, &Keyring::default()).unwrap().content, "open");
+    }
+
+    fn tend_community(state: &mut ServerState, me: UserId) -> Option<KeyTask> {
+        let mut ring = Keyring::unlock_community(state, me, &identity_for(me));
+        let task = community_key_task(state, me, &ring)?;
+        for event in ring.task_events(state, KeyScope::Community, task.clone(), chrono::Utc::now().timestamp_millis()) {
+            assert!(crate::action::authorized(&state.server, me, &event), "{event:?}");
+            state.apply(event).unwrap();
+        }
+        Some(task)
+    }
+
+    fn settle_community(state: &mut ServerState, me: UserId) -> Keyring {
+        for _ in 0..4 {
+            if tend_community(state, me).is_none() {
+                return Keyring::unlock_community(state, me, &identity_for(me));
+            }
+        }
+        panic!("community key work did not settle");
+    }
+
+    fn community_secret(state: &ServerState, user: UserId) -> Option<KeyId> {
+        Keyring::unlock_community(state, user, &identity_for(user)).newest_in(state, KeyScope::Community).map(|(id, _)| id)
+    }
+
+    #[test]
+    fn the_owner_creates_one_community_key_and_every_member_gets_it() {
+        let (mut state, _, owner) = fixture();
+        let a = join(&mut state, "a");
+        let b = join(&mut state, "b");
+        assert_eq!(community_key_task(&state, a, &Keyring::default()), None, "plain members never start a chain");
+        assert!(matches!(community_key_task(&state, owner, &Keyring::default()), Some(KeyTask::Rotate { .. })));
+        settle_community(&mut state, owner);
+        let newest = state.community_keys().newest().unwrap().id;
+        for user in [owner, a, b] {
+            assert_eq!(community_secret(&state, user), Some(newest));
+        }
+        let stranger = UserId::new();
+        assert_eq!(community_secret(&state, stranger), None);
+    }
+
+    #[test]
+    fn any_member_holding_the_key_grants_it_to_a_newcomer() {
+        let (mut state, _, owner) = fixture();
+        let member = join(&mut state, "member");
+        settle_community(&mut state, owner);
+        let newcomer = join(&mut state, "newcomer");
+        let ring = Keyring::unlock_community(&state, member, &identity_for(member));
+        assert_eq!(community_key_task(&state, member, &ring), Some(KeyTask::Grant { key: state.community_keys().newest().unwrap().id, to: vec![newcomer] }));
+        settle_community(&mut state, member);
+        assert!(community_secret(&state, newcomer).is_some());
+    }
+
+    #[test]
+    fn a_ban_rotates_the_community_key_and_keeps_history_for_the_rest() {
+        let (mut state, _, owner) = fixture();
+        let server = state.server.id;
+        let banned = join(&mut state, "banned");
+        let stays = join(&mut state, "stays");
+        settle_community(&mut state, owner);
+        let before = state.community_keys().newest().unwrap().id;
+        state.apply(ServerEvent::MemberBan { server, user: banned }).unwrap();
+        let ring = Keyring::unlock_community(&state, stays, &identity_for(stays));
+        assert_eq!(community_key_task(&state, stays, &ring), None, "plain members wait for a moderator");
+        let ring = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        assert_eq!(community_key_task(&state, owner, &ring), Some(KeyTask::Rotate { links: vec![before] }));
+        settle_community(&mut state, owner);
+        let after = state.community_keys().newest().unwrap().id;
+        assert_ne!(after, before);
+        assert_eq!(community_secret(&state, stays), Some(after));
+        assert!(Keyring::unlock_community(&state, stays, &identity_for(stays)).holds(before), "earlier keys stay readable");
+        assert_eq!(community_secret(&state, banned), None, "the banned member cannot open the new key");
+        let regrant = ServerEvent::CommunityKeyGrant { server, user: banned, grant: state.community_keys().grant_for(stays).unwrap().clone() };
+        assert!(!crate::action::authorized(&state.server, owner, &regrant));
+        assert_eq!(state.apply(regrant), Ok(false));
+    }
+
+    #[test]
+    fn leaving_does_not_rotate_the_community_key() {
+        let (mut state, _, owner) = fixture();
+        let server = state.server.id;
+        let leaver = join(&mut state, "leaver");
+        settle_community(&mut state, owner);
+        state.apply(ServerEvent::MemberLeave { server, user: leaver }).unwrap();
+        let ring = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        assert_eq!(community_key_task(&state, owner, &ring), None);
+    }
+
+    #[test]
+    fn only_moderators_add_community_keys_and_members_grant_them() {
+        let (mut state, _, owner) = fixture();
+        let server = state.server.id;
+        let member = join(&mut state, "member");
+        let add = ServerEvent::CommunityKeyAdd { server, key: Keyring::default().rotate(server, KeyScope::Community, &[], 1) };
+        assert!(crate::action::authorized(&state.server, owner, &add));
+        assert!(!crate::action::authorized(&state.server, member, &add));
+        let kicker = join(&mut state, "kicker");
+        let role = Role {
+            id: RoleId::new(),
+            name: "kick".into(),
+            color: None,
+            permissions: Permissions::KICK_MEMBERS,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        };
+        let id = role.id;
+        state.apply(ServerEvent::RoleCreate { server, role }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server, user: kicker, role: id }).unwrap();
+        assert!(crate::action::authorized(&state.server, kicker, &add));
+        let ring = settle_community(&mut state, owner);
+        let key = state.community_keys().newest().unwrap().id;
+        let grants = ring.grant_events(&state, KeyScope::Community, key, &[member]);
+        assert!(crate::action::authorized(&state.server, member, &grants[0]));
+        assert!(!crate::action::authorized(&state.server, UserId::new(), &grants[0]), "outsiders cannot hand out keys");
+    }
+
+    #[test]
+    fn community_grants_and_channel_grants_are_kept_apart() {
+        let (state, channel, owner) = fixture();
+        let server = state.server.id;
+        let key = KeyId::random();
+        let secret = ChannelSecret::random();
+        let grant = SealedKey::seal(server, KeyScope::Community, owner, &identity_for(owner).public(), key, &secret).unwrap();
+        assert_eq!(grant.open(server, KeyScope::Community, owner, &identity_for(owner)), Some(secret.clone()));
+        assert_eq!(grant.open(server, channel, owner, &identity_for(owner)), None);
+        assert_eq!(grant.open(ServerId::new(), KeyScope::Community, owner, &identity_for(owner)), None);
+    }
+
+    #[test]
+    fn a_key_from_an_invite_opens_the_history_behind_it() {
+        let (mut state, _, owner) = fixture();
+        let server = state.server.id;
+        let banned = join(&mut state, "banned");
+        settle_community(&mut state, owner);
+        let first = state.community_keys().newest().unwrap().id;
+        state.apply(ServerEvent::MemberBan { server, user: banned }).unwrap();
+        let owner_ring = settle_community(&mut state, owner);
+        let (newest, secret) = owner_ring.newest_in(&state, KeyScope::Community).map(|(id, s)| (id, s.clone())).unwrap();
+        let mut joiner = Keyring::default();
+        joiner.admit(&state, KeyScope::Community, newest, secret);
+        assert!(joiner.holds(newest) && joiner.holds(first));
+        let held: Vec<KeyId> = joiner.held_records(&state, KeyScope::Community).iter().map(|(r, _)| r.id).collect();
+        assert_eq!(held, vec![newest, first], "newest first");
+    }
+
+    #[test]
+    fn signed_community_key_events_apply_like_any_other_action() {
+        let (mut state, _, owner) = fixture();
+        let server = state.server.id;
+        let member = join(&mut state, "member");
+        let mut ring = Keyring::default();
+        let task = community_key_task(&state, owner, &ring).unwrap();
+        let at = chrono::Utc::now().timestamp_millis();
+        for event in ring.task_events(&state, KeyScope::Community, task, at) {
+            let signed = crate::action::SignedEvent::sign(server, owner, at, event, &identity_for(owner));
+            assert_eq!(state.apply_signed(&signed), Ok(true));
+        }
+        assert!(community_secret(&state, member).is_some());
+        let forged = crate::action::SignedEvent::sign(
+            server,
+            member,
+            at + 1,
+            ServerEvent::CommunityKeyAdd { server, key: Keyring::default().rotate(server, KeyScope::Community, &[], at + 1) },
+            &identity_for(member),
+        );
+        assert!(state.apply_signed(&forged).is_err());
+    }
+
+    #[test]
+    fn community_keys_survive_a_snapshot() {
+        let (mut state, _, owner) = fixture();
+        join(&mut state, "member");
+        settle_community(&mut state, owner);
+        let restored = ServerState::from_snapshot(serde_json::from_str(&serde_json::to_string(&state.snapshot()).unwrap()).unwrap());
+        assert_eq!(restored.community_keys(), state.community_keys());
+        assert!(community_secret(&restored, owner).is_some());
     }
 }

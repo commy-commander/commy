@@ -362,6 +362,15 @@ pub enum ServerEvent {
         voice: Option<ChannelId>,
         since: Option<i64>,
     },
+    CommunityKeyAdd {
+        server: ServerId,
+        key: crate::channel_key::KeyRecord,
+    },
+    CommunityKeyGrant {
+        server: ServerId,
+        user: UserId,
+        grant: crate::channel_key::SealedKey,
+    },
 }
 
 #[cfg(test)]
