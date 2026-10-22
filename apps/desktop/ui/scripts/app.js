@@ -2360,7 +2360,40 @@ function plainServer() {
   return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
 }
 
+function paintTitlebar() {
+  if (!document.body.classList.contains("has-titlebar")) return;
+  const server = plainServer();
+  const icon = $("titlebar-icon");
+  $("titlebar-name").textContent = server ? server.name : "Commy";
+  if (server) {
+    paintServerIcon(icon, server);
+  } else {
+    icon.classList.remove("has-image");
+    const img = el("img");
+    img.src = "images/commy_v3_noback.png";
+    img.alt = "";
+    img.draggable = false;
+    icon.replaceChildren(img);
+  }
+}
+
+async function setupTitlebar() {
+  let custom = false;
+  try { custom = IS_TAURI && await invoke("has_custom_titlebar"); } catch {}
+  if (!custom) return;
+  document.body.classList.add("has-titlebar");
+  $("titlebar").classList.remove("hidden");
+  const act = action => invoke("window_action", { action }).catch(() => {});
+  $("tb-min").addEventListener("click", () => act("minimize"));
+  $("tb-max").addEventListener("click", () => act("toggle-maximize"));
+  $("tb-close").addEventListener("click", () => act("close"));
+  $("titlebar-drag").addEventListener("mousedown", e => { if (e.button === 0 && e.detail === 1) act("drag"); });
+  $("titlebar-drag").addEventListener("dblclick", () => act("toggle-maximize"));
+  paintTitlebar();
+}
+
 function syncWindowTitle() {
+  paintTitlebar();
   const server = plainServer();
   const name = server ? server.name : null;
   if (name === state.windowTitleServer) return;
@@ -18226,6 +18259,8 @@ async function answerClaim(keep) {
     $("claim-keep").disabled = $("claim-fresh").disabled = false;
   }
 }
+
+setupTitlebar();
 
 async function continueBoot() {
   try { claimUiState(localStorage, account.user && account.user.id); } catch {}

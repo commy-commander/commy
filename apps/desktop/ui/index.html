@@ -8,6 +8,17 @@
   <link rel="stylesheet" href="styles/styles.css" />
 </head>
 <body>
+  <div id="titlebar" class="titlebar hidden">
+    <div class="titlebar-drag" id="titlebar-drag">
+      <span class="titlebar-icon server-icon" id="titlebar-icon"></span>
+      <span class="titlebar-name" id="titlebar-name">Commy</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="titlebar-btn" id="tb-min" aria-label="Minimize"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5.5h10" stroke="currentColor" stroke-width="1" fill="none"/></svg></button>
+      <button class="titlebar-btn" id="tb-max" aria-label="Maximize"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" stroke="currentColor" stroke-width="1" fill="none"/></svg></button>
+      <button class="titlebar-btn titlebar-close" id="tb-close" aria-label="Close"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1" fill="none"/></svg></button>
+    </div>
+  </div>
   <div id="app" class="app">
     <nav class="rail" id="rail">
       <button class="rail-btn rail-home" id="home-btn" title="Direct Messages" data-i18n-title="nav.dms">
