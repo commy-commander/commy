@@ -14966,9 +14966,13 @@ function wireEvents() {
   $("claim-retry").onclick = () => openAccountFolder();
   $("acct-sign-out").onclick = signOutOfCurrent;
   $("pp-switch-account").onclick = openAccounts;
-  $("account-add").onclick = () => showSignIn();
+  $("account-add").onclick = () => {
+    addingAccount = true;
+    showSignIn();
+  };
   $("account-add-icon").replaceChildren(svgIcon("plus", 18));
   $("signin-back").onclick = async () => {
+    addingAccount = false;
     await invoke("account_cancel_sign_in").catch(() => {});
     await openAccounts();
   };
@@ -18340,16 +18344,26 @@ function showSignInError(message) {
   $("signin-wait").classList.add("hidden");
 }
 
-async function onAccountChanged() {
+let addingAccount = false;
+let accountChanges = Promise.resolve();
+
+function onAccountChanged() {
+  accountChanges = accountChanges.then(applyAccountChange, applyAccountChange);
+  return accountChanges;
+}
+
+async function applyAccountChange() {
   const was = account.signed_in;
   await loadAccount();
-  if (account.signed_in && !was) {
+  const step = accountChangeStep(was, account, addingAccount && !$("modal-signin").classList.contains("hidden"));
+  if (step) addingAccount = false;
+  if (step === "open") {
     toast(`Signed in as ${(account.user && account.user.name) || "you"}`);
     if (account.needs_account_folder) await openAccountFolder();
     else await continueBoot();
-  } else if (!account.signed_in && (was || account.pending_code)) {
+  } else if (step === "sign-in") {
     showSignIn();
-  } else if (account.signed_in && !$("modal-signin").classList.contains("hidden")) {
+  } else if (step === "accounts") {
     await openAccounts();
   }
   if (!$("user-settings").classList.contains("hidden")) renderAccountSettings();

@@ -49,6 +49,13 @@ function signOutPrompt(account, t) {
   return next ? t("accounts.signOut.next", { name: next.name || next.email }) : t("accounts.signOut.last");
 }
 
+function accountChangeStep(was, account, addingAccount) {
+  if (account.signed_in && !was) return "open";
+  if (!account.signed_in && (was || account.pending_code)) return "sign-in";
+  if (account.signed_in && addingAccount) return "accounts";
+  return null;
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt };
+  module.exports = { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, accountChangeStep };
 }

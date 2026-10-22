@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -16,7 +17,11 @@ import com.google.firebase.messaging.RemoteMessage
 
 class WakeService : FirebaseMessagingService() {
   override fun onMessageReceived(message: RemoteMessage) {
-    if (message.data["wake"] != "1" || inForeground() || !mayNotify()) return
+    if (message.data["wake"] != "1") return
+    val foreground = inForeground()
+    val allowed = mayNotify()
+    Log.i(TAG, "wake-up push received, foreground=$foreground, notifications allowed=$allowed")
+    if (foreground || !allowed) return
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val channel = NotificationChannel(CHANNEL_ID, "New messages", NotificationManager.IMPORTANCE_DEFAULT)
       channel.description = "Shown when something new is waiting while Commy is closed"
@@ -50,5 +55,6 @@ class WakeService : FirebaseMessagingService() {
   companion object {
     const val NOTIFICATION_ID = 7303
     private const val CHANNEL_ID = "messages"
+    private const val TAG = "CommyWake"
   }
 }
