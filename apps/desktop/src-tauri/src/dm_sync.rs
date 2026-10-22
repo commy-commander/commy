@@ -327,7 +327,7 @@ pub fn publish(app: &App, partner: UserId, envelope: &DmEnvelope) {
         return;
     }
     if let Some(profile) = partner_profile(app, partner) {
-        account_log::note_partner(app, profile);
+        account_log::note_partner(app, profile, true);
     }
     let (Some(key), Some(identity)) = (partner_key(app, partner), app.identity()) else { return };
     let epoch = sync_streams::dm_epoch(Utc::now());
@@ -359,29 +359,44 @@ pub fn publish(app: &App, partner: UserId, envelope: &DmEnvelope) {
     });
 }
 
+fn talks_with(app: &App, partner: UserId) -> bool {
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let sent = me.is_some_and(|me| app.dms.lock().unwrap().has_sent_to(me, partner));
+    let safety = app.safety.lock().unwrap();
+    !safety.is_blocked(partner) && (sent || safety.accepted.contains(&partner) || safety.friends.contains(&partner))
+}
+
 pub fn noticed(handle: &AppHandle, partner: UserId) {
     let app = handle.state::<App>();
     if sync_link::url().is_none() || last_message_ms(&app, partner).is_none() {
         return;
     }
     if let Some(profile) = partner_profile(&app, partner) {
-        account_log::note_partner(&app, profile);
+        account_log::note_partner(&app, profile, talks_with(&app, partner));
     }
     ensure(handle);
 }
 
-pub fn adopt_partner(handle: &AppHandle, profile: UserProfile) {
+pub fn adopt_partner(handle: &AppHandle, profile: UserProfile, accepted: bool) {
     let app = handle.state::<App>();
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     if Some(profile.id) == me {
         return;
     }
+    let partner = profile.id;
     let changed = {
         let mut dms = app.dms.lock().unwrap();
-        !dms.contacts.contains_key(&profile.id) && dms.remember_contact(profile)
+        !dms.contacts.contains_key(&partner) && dms.remember_contact(profile)
     };
     if changed {
         app.persist_dms();
+    }
+    let accepted = {
+        let mut safety = app.safety.lock().unwrap();
+        accepted && !safety.is_blocked(partner) && safety.accepted.insert(partner)
+    };
+    if accepted {
+        app.persist_safety();
     }
     ensure(handle);
 }
@@ -393,7 +408,7 @@ pub fn seed(handle: &AppHandle) {
     for user in partners {
         if last_message_ms(&app, user).is_some_and(|at| now - at < RECENT_MS) {
             if let Some(profile) = partner_profile(&app, user) {
-                account_log::note_partner(&app, profile);
+                account_log::note_partner(&app, profile, talks_with(&app, user));
             }
         }
     }
