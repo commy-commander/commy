@@ -347,9 +347,10 @@ impl Keyring {
 
     pub fn held_records<'a>(&'a self, state: &'a ServerState, scope: KeyScope) -> Vec<(&'a KeyRecord, &'a ChannelSecret)> {
         let Some(keys) = state.key_chain(scope) else { return Vec::new() };
+        let heads = keys.heads();
         let mut held: Vec<(&KeyRecord, &ChannelSecret)> =
             keys.keys.iter().filter_map(|record| Some((record, self.secret(record.id)?))).collect();
-        held.sort_by_key(|(record, _)| std::cmp::Reverse((record.at, record.id)));
+        held.sort_by_key(|(record, _)| std::cmp::Reverse((record.at, heads.contains(&record.id), record.id)));
         held
     }
 
@@ -793,9 +794,13 @@ mod tests {
     }
 
     fn tend_community(state: &mut ServerState, me: UserId) -> Option<KeyTask> {
+        tend_community_at(state, me, chrono::Utc::now().timestamp_millis())
+    }
+
+    fn tend_community_at(state: &mut ServerState, me: UserId, at: i64) -> Option<KeyTask> {
         let mut ring = Keyring::unlock_community(state, me, &identity_for(me));
         let task = community_key_task(state, me, &ring)?;
-        for event in ring.task_events(state, KeyScope::Community, task.clone(), chrono::Utc::now().timestamp_millis()) {
+        for event in ring.task_events(state, KeyScope::Community, task.clone(), at) {
             assert!(crate::action::authorized(&state.server, me, &event), "{event:?}");
             state.apply(event).unwrap();
         }
@@ -803,8 +808,12 @@ mod tests {
     }
 
     fn settle_community(state: &mut ServerState, me: UserId) -> Keyring {
+        settle_community_at(state, me, chrono::Utc::now().timestamp_millis())
+    }
+
+    fn settle_community_at(state: &mut ServerState, me: UserId, at: i64) -> Keyring {
         for _ in 0..4 {
-            if tend_community(state, me).is_none() {
+            if tend_community_at(state, me, at).is_none() {
                 return Keyring::unlock_community(state, me, &identity_for(me));
             }
         }
@@ -937,6 +946,23 @@ mod tests {
         assert!(joiner.holds(newest) && joiner.holds(first));
         let held: Vec<KeyId> = joiner.held_records(&state, KeyScope::Community).iter().map(|(r, _)| r.id).collect();
         assert_eq!(held, vec![newest, first], "newest first");
+    }
+
+    #[test]
+    fn keys_made_in_the_same_millisecond_still_list_newest_first() {
+        for _ in 0..16 {
+            let (mut state, _, owner) = fixture();
+            let server = state.server.id;
+            let banned = join(&mut state, "banned");
+            settle_community_at(&mut state, owner, 1);
+            let first = state.community_keys().newest().unwrap().id;
+            state.apply(ServerEvent::MemberBan { server, user: banned }).unwrap();
+            let ring = settle_community_at(&mut state, owner, 1);
+            let newest = state.community_keys().newest().unwrap().id;
+            assert_ne!(newest, first);
+            let held: Vec<KeyId> = ring.held_records(&state, KeyScope::Community).iter().map(|(r, _)| r.id).collect();
+            assert_eq!(held, vec![newest, first]);
+        }
     }
 
     #[test]
