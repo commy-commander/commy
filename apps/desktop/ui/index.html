@@ -861,6 +861,28 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-tray" role="dialog" aria-label="Stay reachable">
+      <h2>Stay reachable</h2>
+      <p>Commy can wait quietly in your system tray so friends reach you even when the window is closed. You can change both any time in Settings.</p>
+      <label class="tray-opt">
+        <div>
+          <div class="setting-title">Start with my computer</div>
+          <div class="setting-sub">Opens hidden in the tray when you sign in, ready for messages and calls.</div>
+        </div>
+        <input type="checkbox" id="tray-autostart" class="switch" checked />
+      </label>
+      <label class="tray-opt">
+        <div>
+          <div class="setting-title">Keep running when I close the window</div>
+          <div class="setting-sub">Closing sends Commy to the tray. Quit from the tray icon.</div>
+        </div>
+        <input type="checkbox" id="tray-close" class="switch" checked />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-primary" id="tray-done">Continue</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-choose-roles">
       <h2>Choose Roles</h2>
       <p>Pick the roles that fit you. They show next to your name in this server, and you can change them any time from Roles at the top of the channel list.</p>
@@ -1497,15 +1519,15 @@
           </div>
           <label class="settings-card setting-row desktop-only">
             <div>
-              <div class="setting-title">Close to tray</div>
-              <div class="setting-sub">Closing the window keeps Commy running in the system tray so calls and messages keep working. Quit from the tray icon.</div>
+              <div class="setting-title">Keep running in the tray</div>
+              <div class="setting-sub">Closing the window keeps Commy running in the system tray so messages, notifications and calls keep arriving. Quit from the tray icon.</div>
             </div>
             <input type="checkbox" id="close-to-tray-toggle" class="switch" />
           </label>
           <label class="settings-card setting-row desktop-only">
             <div>
               <div class="setting-title">Start with my computer</div>
-              <div class="setting-sub">Commy opens quietly in the system tray when you sign in to your computer, so friends can reach you right away.</div>
+              <div class="setting-sub">Commy opens hidden in the system tray when you sign in to your computer, so you keep getting message notifications without opening the window.</div>
             </div>
             <input type="checkbox" id="autostart-toggle" class="switch" />
           </label>

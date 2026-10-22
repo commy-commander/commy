@@ -166,7 +166,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit Commy", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &mute, &separator, &quit])?;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("Commy")
+        .tooltip("Commy - running in the background")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -212,7 +212,7 @@ pub fn set_unread(app: &AppHandle, count: u32) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_icon(icon(count));
         let tip = match count {
-            0 => "Commy".to_string(),
+            0 => "Commy - running in the background".to_string(),
             1 => "Commy - 1 unread".to_string(),
             n => format!("Commy - {n} unread"),
         };
