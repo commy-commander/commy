@@ -1,4 +1,5 @@
 pub mod stream;
+pub mod wake;
 pub mod wire;
 
 #[cfg(feature = "client")]

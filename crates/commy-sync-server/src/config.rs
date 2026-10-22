@@ -12,6 +12,7 @@ pub struct Config {
     pub retention_days: u32,
     pub trust_proxy: bool,
     pub limits: Limits,
+    pub fcm_service_account: Option<String>,
 }
 
 impl Config {
@@ -45,16 +46,18 @@ impl Config {
             retention_days,
             trust_proxy: env("SYNC_TRUST_PROXY").is_none_or(|v| v.trim() != "false"),
             limits,
+            fcm_service_account: env("FCM_SERVICE_ACCOUNT").filter(|v| !v.trim().is_empty()),
         })
     }
 
     pub fn summary(&self) -> String {
         format!(
-            "port={} store={} retention={} trust_proxy={}",
+            "port={} store={} retention={} trust_proxy={} wake={}",
             self.listen.port(),
             if self.database_url.is_some() { "postgres" } else { "memory" },
             if self.retention_days == 0 { "forever".to_string() } else { format!("{}d", self.retention_days) },
             self.trust_proxy,
+            if self.fcm_service_account.is_some() { "fcm" } else { "off" },
         )
     }
 }
@@ -76,7 +79,7 @@ mod tests {
         assert_eq!(c.database_url, None);
         assert_eq!(c.retention_days, 90);
         assert!(c.trust_proxy);
-        assert_eq!(c.summary(), "port=3002 store=memory retention=90d trust_proxy=true");
+        assert_eq!(c.summary(), "port=3002 store=memory retention=90d trust_proxy=true wake=off");
     }
 
     #[test]

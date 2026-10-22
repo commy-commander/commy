@@ -21,6 +21,7 @@ pub struct Limits {
     pub appends: Rate,
     pub opens: Rate,
     pub stream_appends: Rate,
+    pub wakes: Rate,
     pub daily_bytes_per_address: u64,
 }
 
@@ -31,6 +32,7 @@ impl Default for Limits {
             appends: Rate { burst: 60.0, per_second: 5.0 },
             opens: Rate { burst: 200.0, per_second: 20.0 },
             stream_appends: Rate { burst: 100.0, per_second: 20.0 },
+            wakes: Rate { burst: 120.0, per_second: 1.0 },
             daily_bytes_per_address: 64 * 1024 * 1024,
         }
     }
@@ -68,6 +70,7 @@ struct Address {
     connections: usize,
     appends: Bucket,
     opens: Bucket,
+    wakes: Bucket,
     day_started: Instant,
     day_bytes: u64,
     seen: Instant,
@@ -113,6 +116,7 @@ impl Limiter {
             connections: 0,
             appends: Bucket::full(limits.appends, now),
             opens: Bucket::full(limits.opens, now),
+            wakes: Bucket::full(limits.wakes, now),
             day_started: now,
             day_bytes: 0,
             seen: now,
@@ -145,6 +149,13 @@ impl Limiter {
         let mut books = self.books.lock().unwrap();
         let rate = self.limits.opens;
         self.address(&mut books, key, now).opens.take(rate, now).map_err(Refusal::Wait)
+    }
+
+    pub fn wake(&self, key: AddressKey) -> Result<(), Refusal> {
+        let now = Instant::now();
+        let mut books = self.books.lock().unwrap();
+        let rate = self.limits.wakes;
+        self.address(&mut books, key, now).wakes.take(rate, now).map_err(Refusal::Wait)
     }
 
     pub fn append(&self, key: AddressKey, stream: &[u8; 32], bytes: usize) -> Result<(), Refusal> {
@@ -196,6 +207,7 @@ mod tests {
             appends: Rate { burst: 3.0, per_second: 1.0 },
             opens: Rate { burst: 2.0, per_second: 1.0 },
             stream_appends: Rate { burst: 100.0, per_second: 100.0 },
+            wakes: Rate { burst: 2.0, per_second: 1.0 },
             daily_bytes_per_address: 10_000,
         }
     }
