@@ -90,7 +90,7 @@ async fn handle(service: &Arc<Service>, key: AddressKey, frame: ClientFrame, ope
         ClientFrame::Ping => {
             let _ = out.send(ServerFrame::Pong).await;
         }
-        ClientFrame::Open { stream, write, read, after } => {
+        ClientFrame::Open { stream, write, read, after, tail } => {
             if StreamId::of(&write.0, &read.0) != stream {
                 let _ = out.send(ServerFrame::stream_error(ErrorCode::BadStream, stream)).await;
                 return;
@@ -111,7 +111,7 @@ async fn handle(service: &Arc<Service>, key: AddressKey, frame: ClientFrame, ope
                 return;
             }
             service.stats.opened();
-            let follower = tokio::spawn(follow(service.clone(), stream, after, out.clone()));
+            let follower = tokio::spawn(follow(service.clone(), stream, after, tail, out.clone()));
             open.insert(stream, OpenStream { write: write.0, follower });
         }
         ClientFrame::Close { stream } => {
@@ -155,7 +155,15 @@ async fn handle(service: &Arc<Service>, key: AddressKey, frame: ClientFrame, ope
     }
 }
 
-async fn follow(service: Arc<Service>, stream: StreamId, after: u64, out: mpsc::Sender<ServerFrame>) {
+pub(crate) fn start_after(after: u64, tail: Option<u32>, head: u64) -> u64 {
+    match tail {
+        Some(tail) if after == 0 => head.saturating_sub(u64::from(tail)),
+        _ if after > head => 0,
+        _ => after,
+    }
+}
+
+async fn follow(service: Arc<Service>, stream: StreamId, after: u64, tail: Option<u32>, out: mpsc::Sender<ServerFrame>) {
     let mut live = service.hub.subscribe(stream);
     let head = match service.store.head(&stream).await {
         Ok(head) => head,
@@ -165,7 +173,7 @@ async fn follow(service: Arc<Service>, stream: StreamId, after: u64, out: mpsc::
             return;
         }
     };
-    let mut sent = if after > head { 0 } else { after };
+    let mut sent = start_after(after, tail, head);
     if out.send(ServerFrame::Opened { stream, head }).await.is_err() {
         return;
     }
@@ -235,6 +243,15 @@ fn split_by_size(page: Vec<WireEntry>) -> Vec<Vec<WireEntry>> {
 mod tests {
     use super::*;
     use commy_sync::wire::Blob;
+
+    #[test]
+    fn a_tail_starts_a_fresh_reader_near_the_head() {
+        assert_eq!(start_after(0, None, 500), 0);
+        assert_eq!(start_after(0, Some(200), 500), 300);
+        assert_eq!(start_after(0, Some(200), 50), 0);
+        assert_eq!(start_after(420, Some(200), 500), 420, "a cursor wins over a tail");
+        assert_eq!(start_after(900, None, 500), 0, "a stream that went back is read again");
+    }
 
     #[test]
     fn only_padded_bodies_are_accepted() {

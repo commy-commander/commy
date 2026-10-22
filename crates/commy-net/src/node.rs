@@ -1141,6 +1141,10 @@ impl CommyNode {
         Ok(count)
     }
 
+    pub fn local_events(&self) -> mpsc::UnboundedSender<NetEvent> {
+        self.events_tx.clone()
+    }
+
     pub async fn broadcast(&self, server_id: ServerId, payload: WirePayload) -> Result<()> {
         let handle = self
             .topics

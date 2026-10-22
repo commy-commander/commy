@@ -10,6 +10,7 @@ const SHOW_WINDOW_FILE: &str = "show-window-on-start";
 pub const SEALED_FILES: &[&str] = &[
     "avatar.img",
     "awaiting-snapshot.json",
+    "community-sync.json",
     "deleted-servers.json",
     "directory.json",
     "dms.json",
