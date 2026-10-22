@@ -52,6 +52,19 @@ pub fn window_title(test_build: bool, label: Option<&str>) -> Option<String> {
     }
 }
 
+pub fn autostart_allowed(test_build: bool, label: Option<&str>, data_dir: Option<&str>) -> bool {
+    let set = |v: Option<&str>| v.is_some_and(|s| !s.trim().is_empty());
+    !test_build && !set(label) && !set(data_dir)
+}
+
+pub fn autostart_allowed_here() -> bool {
+    autostart_allowed(
+        TEST_BUILD,
+        std::env::var("COMMY_INSTANCE_LABEL").ok().as_deref(),
+        std::env::var("COMMY_DATA_DIR").ok().as_deref(),
+    )
+}
+
 pub fn server_window_title(base: &str, server: Option<&str>) -> String {
     let name: String = server.unwrap_or("").chars().filter(|c| !c.is_control()).take(80).collect();
     let name = name.trim();
@@ -112,5 +125,14 @@ mod tests {
         assert_eq!(window_title(true, None).as_deref(), Some("Commy (test build)"));
         assert_eq!(window_title(false, Some("A")).as_deref(), Some("Commy (A)"));
         assert_eq!(window_title(true, Some("B")).as_deref(), Some("Commy (test build, B)"));
+    }
+
+    #[test]
+    fn autostart_is_refused_for_test_builds_and_labelled_or_custom_data_instances() {
+        assert!(autostart_allowed(false, None, None));
+        assert!(autostart_allowed(false, Some(" "), Some("")));
+        assert!(!autostart_allowed(true, None, None));
+        assert!(!autostart_allowed(false, Some("bench"), None));
+        assert!(!autostart_allowed(false, None, Some("C:\\bench")));
     }
 }

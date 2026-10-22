@@ -1674,6 +1674,7 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
+    case "autostart_allowed": return true;
     case "tray_prompt_due": return !mock.voice.tray_prompt_seen;
     case "finish_tray_prompt": mock.autostart = args.autostart; mock.voice.close_to_tray = args.closeToTray; mock.voice.tray_prompt_seen = true; return mock.voice;
     case "get_autostart": return !!mock.autostart;
@@ -17100,6 +17101,7 @@ function openUserSettings(tab) {
   renderTtsSettings();
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
   invoke("get_autostart").then(on => { $("autostart-toggle").checked = on; }).catch(() => {});
+  invoke("autostart_allowed").then(ok => { $("autostart-toggle").closest("label").classList.toggle("hidden", !ok); }).catch(() => {});
   $("output-vol").value = Math.round((state.voice.output_volume ?? 1) * 100);
   $("input-gain").value = Math.round((state.voice.input_gain ?? 1) * 100);
   $("output-vol-label").textContent = `${$("output-vol").value}%`;
@@ -18249,7 +18251,10 @@ async function offerTrayPrompt() {
   let due = false;
   try { due = await invoke("tray_prompt_due"); } catch {}
   if (!due) return;
-  $("tray-autostart").checked = true;
+  let canStart = true;
+  try { canStart = await invoke("autostart_allowed"); } catch {}
+  $("tray-autostart").closest(".tray-opt").classList.toggle("hidden", !canStart);
+  $("tray-autostart").checked = canStart;
   $("tray-close").checked = true;
   showModal("modal-tray");
 }
@@ -18257,7 +18262,7 @@ async function offerTrayPrompt() {
 $("tray-done").addEventListener("click", async () => {
   try {
     state.voice = await invoke("finish_tray_prompt", {
-      autostart: $("tray-autostart").checked,
+      autostart: $("tray-autostart").checked && !$("tray-autostart").closest(".tray-opt").classList.contains("hidden"),
       closeToTray: $("tray-close").checked,
     });
   } catch {}
