@@ -1,0 +1,16 @@
+name: Alert list
+on:
+  push:
+    branches: [claude/alert-list-tmp]
+permissions:
+  contents: read
+  security-events: read
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/code-scanning/alerts?state=open&per_page=100" \
+            --jq '.[] | [.number, .rule.id, .rule.security_severity_level // .rule.severity, .most_recent_instance.location.path + ":" + (.most_recent_instance.location.start_line|tostring), .most_recent_instance.analysis_key + " " + .most_recent_instance.category, (.most_recent_instance.message.text | gsub("\n";" ") | .[0:140])] | @tsv'
