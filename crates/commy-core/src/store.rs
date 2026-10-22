@@ -2,7 +2,7 @@ use crate::action::{self, Action, SignedEvent};
 use crate::audit::{AuditEntry, AuditKind};
 use crate::invites::TrackedInvite;
 use crate::automod::{AutoMod, Hold};
-use crate::channel_key::ChannelKeys;
+use crate::channel_key::{ChannelKeys, KeyScope};
 use crate::command::{BotCommand, CommandUse};
 use crate::devices::{self, Device, Devices};
 use crate::event::ServerEvent;
@@ -121,6 +121,7 @@ pub struct ServerState {
     local_floor: Option<DateTime<Utc>>,
     reaction_marks: HashMap<MessageId, Vec<ReactionMark>>,
     channel_keys: HashMap<ChannelId, ChannelKeys>,
+    community_keys: ChannelKeys,
     automod: AutoMod,
     bots: BTreeSet<UserId>,
     bot_commands: BTreeMap<UserId, Vec<BotCommand>>,
@@ -161,6 +162,8 @@ pub struct Snapshot {
     pub reaction_marks: Vec<(MessageId, ReactionMark)>,
     #[serde(default)]
     pub channel_keys: Vec<(ChannelId, ChannelKeys)>,
+    #[serde(default)]
+    pub community_keys: ChannelKeys,
     #[serde(default)]
     pub automod: AutoMod,
     #[serde(default)]
@@ -210,6 +213,7 @@ impl ServerState {
             local_floor: None,
             reaction_marks: HashMap::new(),
             channel_keys: HashMap::new(),
+            community_keys: ChannelKeys::default(),
             automod: AutoMod::default(),
             bots: BTreeSet::new(),
             bot_commands: BTreeMap::new(),
@@ -250,6 +254,7 @@ impl ServerState {
                 .flat_map(|(id, marks)| marks.iter().map(|m| (*id, m.clone())))
                 .collect(),
             channel_keys: self.channel_keys.iter().map(|(c, k)| (*c, k.clone())).collect(),
+            community_keys: self.community_keys.clone(),
             automod: self.automod.clone(),
             bots: self.bots.iter().copied().collect(),
             bot_commands: self.bot_commands.iter().map(|(bot, list)| (*bot, list.clone())).collect(),
@@ -302,6 +307,7 @@ impl ServerState {
             .into_iter()
             .filter(|(channel, _)| state.server.channel(*channel).is_some())
             .collect();
+        state.community_keys = snapshot.community_keys;
         state.action_times = snapshot.action_times.into_iter().collect();
         state.action_floor = snapshot.action_floor;
         state.automod = snapshot.automod;
@@ -440,6 +446,17 @@ impl ServerState {
 
     pub fn channel_keys(&self, channel: ChannelId) -> Option<&ChannelKeys> {
         self.channel_keys.get(&channel)
+    }
+
+    pub fn community_keys(&self) -> &ChannelKeys {
+        &self.community_keys
+    }
+
+    pub fn key_chain(&self, scope: KeyScope) -> Option<&ChannelKeys> {
+        match scope {
+            KeyScope::Channel(channel) => self.channel_keys(channel),
+            KeyScope::Community => Some(&self.community_keys),
+        }
     }
 
     pub fn identity_of(&self, user: UserId) -> Option<IdentityKey> {
@@ -1736,6 +1753,17 @@ impl ServerState {
                     return Err(StoreError::UnknownChannel);
                 }
                 self.channel_keys.entry(channel).or_default().set_grant(user, grant, MAX_PROFILES).ok_or(StoreError::Limit)
+            }
+            ServerEvent::CommunityKeyAdd { server, key } => {
+                self.same_server(server)?;
+                Ok(self.community_keys.add_key(key))
+            }
+            ServerEvent::CommunityKeyGrant { server, user, grant } => {
+                self.same_server(server)?;
+                if self.server.banned.contains(&user) {
+                    return Ok(false);
+                }
+                self.community_keys.set_grant(user, grant, MAX_PROFILES).ok_or(StoreError::Limit)
             }
             ServerEvent::PollVote { server, channel, message, user, choices } => {
                 self.same_server(server)?;

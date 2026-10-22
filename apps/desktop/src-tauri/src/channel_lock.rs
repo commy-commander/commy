@@ -1,4 +1,5 @@
 use crate::state::App;
+use commy_core::channel_key::KeyScope;
 use commy_core::{ChannelId, ServerId, ServerState, UserId};
 pub use commy_view::keys::KeyHolder;
 use std::collections::HashMap;
@@ -13,6 +14,10 @@ pub fn holder_of(app: &App) -> KeyHolder {
 }
 
 pub async fn tend_channel(app: &App, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId) {
+    tend_scope(app, handle, sid, KeyScope::Channel(channel)).await;
+}
+
+pub async fn tend_scope(app: &App, handle: &tauri::AppHandle, sid: ServerId, scope: KeyScope) {
     if !app.key_settled() || app.awaits_snapshot(sid) {
         return;
     }
@@ -21,7 +26,7 @@ pub async fn tend_channel(app: &App, handle: &tauri::AppHandle, sid: ServerId, c
     let events = {
         let mut servers = app.servers.lock().unwrap();
         let Some(state) = servers.get_mut(&sid) else { return };
-        let events = holder.key_events(state, channel);
+        let events = holder.scope_events(state, scope);
         let mut applied = Vec::new();
         for event in events {
             let Some(signed) = app.sign_event(sid, event.clone()) else { break };
@@ -42,28 +47,32 @@ pub async fn tend_channel(app: &App, handle: &tauri::AppHandle, sid: ServerId, c
     let _ = handle.emit("server-event", &sid.to_string());
 }
 
-fn channels_with_work(app: &App, sid: ServerId) -> Vec<ChannelId> {
+fn scopes_with_work(app: &App, sid: ServerId) -> Vec<KeyScope> {
     let holder = holder_of(app);
     let servers = app.servers.lock().unwrap();
-    servers.get(&sid).map(|state| holder.channels_with_work(state)).unwrap_or_default()
+    servers.get(&sid).map(|state| holder.scopes_with_work(state)).unwrap_or_default()
 }
 
 pub async fn tend_server(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
-    for channel in channels_with_work(app, sid) {
-        tend_channel(app, handle, sid, channel).await;
+    for scope in scopes_with_work(app, sid) {
+        tend_scope(app, handle, sid, scope).await;
     }
 }
 
-fn patience(state: &ServerState, me: UserId, channel: ChannelId) -> Duration {
+fn patience(state: &ServerState, me: UserId, scope: KeyScope) -> Duration {
     if state.server.owner == me {
         return Duration::ZERO;
     }
-    let mixed = me.0.as_u128() ^ channel.0.as_u128();
+    let place = match scope {
+        KeyScope::Channel(channel) => channel.0.as_u128(),
+        KeyScope::Community => state.server.id.0.as_u128(),
+    };
+    let mixed = me.0.as_u128() ^ place;
     Duration::from_millis(1000 + (mixed % 5000) as u64)
 }
 
 pub async fn run(handle: tauri::AppHandle) {
-    let mut noticed: HashMap<(ServerId, ChannelId), Instant> = HashMap::new();
+    let mut noticed: HashMap<(ServerId, KeyScope), Instant> = HashMap::new();
     loop {
         tokio::time::sleep(TEND_EVERY).await;
         let app = handle.state::<App>();
@@ -76,19 +85,19 @@ pub async fn run(handle: tauri::AppHandle) {
         let mut pending = HashMap::new();
         let mut due = Vec::new();
         for sid in sids {
-            for channel in channels_with_work(&app, sid) {
-                let since = *noticed.get(&(sid, channel)).unwrap_or(&now);
-                let wait = app.servers.lock().unwrap().get(&sid).map(|s| patience(s, me, channel)).unwrap_or_default();
+            for scope in scopes_with_work(&app, sid) {
+                let since = *noticed.get(&(sid, scope)).unwrap_or(&now);
+                let wait = app.servers.lock().unwrap().get(&sid).map(|s| patience(s, me, scope)).unwrap_or_default();
                 if now.duration_since(since) >= wait {
-                    due.push((sid, channel));
+                    due.push((sid, scope));
                 } else {
-                    pending.insert((sid, channel), since);
+                    pending.insert((sid, scope), since);
                 }
             }
         }
         noticed = pending;
-        for (sid, channel) in due {
-            tend_channel(&app, &handle, sid, channel).await;
+        for (sid, scope) in due {
+            tend_scope(&app, &handle, sid, scope).await;
         }
     }
 }
@@ -110,6 +119,28 @@ mod tests {
             state.apply(ServerEvent::MemberJoin { server: state.server.id, profile }).unwrap();
         }
         (id, identity)
+    }
+
+    #[test]
+    fn every_server_gets_a_community_key_from_its_owner() {
+        let owner_identity = Identity::generate();
+        let mut owner_profile = UserProfile::new("owner");
+        owner_profile.identity = Some(owner_identity.public());
+        let owner = owner_profile.id;
+        let mut state = ServerState::new(Server::new("s", owner));
+        state.profiles.insert(owner, owner_profile);
+        let (member, member_identity) = member(&mut state, "member");
+        let holder = KeyHolder::as_user(owner, owner_identity);
+        assert_eq!(holder.scopes_with_work(&state), vec![KeyScope::Community]);
+        assert!(holder.channels_with_work(&state).is_empty());
+        for event in holder.scope_events(&state, KeyScope::Community) {
+            state.apply(event).unwrap();
+        }
+        assert!(holder.scopes_with_work(&state).is_empty());
+        let newest = state.community_keys().newest().unwrap().id;
+        let ring = KeyHolder::as_user(member, member_identity).community_ring(&state, None).unwrap();
+        assert!(ring.holds(newest));
+        assert!(KeyHolder::as_user(member, Identity::generate()).community_ring(&state, None).is_some_and(|r| !r.holds(newest)));
     }
 
     #[test]

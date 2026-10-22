@@ -130,6 +130,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ForumPost { message, .. } => format!("forum.post:{message}"),
         E::ChannelKeyAdd { channel, key, .. } => format!("channel.key:{channel}:{}", key.id.to_hex()),
         E::ChannelKeyGrant { channel, user, .. } => format!("channel.grant:{channel}:{user}"),
+        E::CommunityKeyAdd { key, .. } => format!("community.key:{}", key.id.to_hex()),
+        E::CommunityKeyGrant { user, .. } => format!("community.grant:{user}"),
         E::AfkChannelSet { .. } => "afk_channel".into(),
         E::AfkTimeoutSet { .. } => "afk_timeout".into(),
         E::ServerRename { .. } => "name".into(),
@@ -201,8 +203,8 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 14] = [
-        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "bot_commands:", "invite:", "channel.key:", "channel.grant:", "timeout:", "vote:", "poll:",
+    const OMITTED: [&str; 16] = [
+        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "bot_commands:", "invite:", "channel.key:", "channel.grant:", "community.key:", "community.grant:", "timeout:", "vote:", "poll:",
     ];
     const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
     SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
@@ -306,6 +308,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::ChannelKeyAdd { channel, .. } | E::ChannelKeyGrant { channel, .. } => {
             member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)
         }
+        E::CommunityKeyAdd { .. } => crate::channel_key::may_rotate_community(server, by),
+        E::CommunityKeyGrant { user, .. } => server.is_current_member(by) && !server.banned.contains(user),
         E::ChannelCreate { .. }
         | E::ChannelDelete { .. }
         | E::ChannelUpdate { .. }
