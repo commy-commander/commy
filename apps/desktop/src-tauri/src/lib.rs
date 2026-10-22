@@ -37,6 +37,7 @@ mod relaunch;
 mod safety;
 mod saved;
 mod search;
+mod server_wake;
 mod settle;
 mod state;
 mod storage;
@@ -2531,7 +2532,7 @@ fn get_dm_messages(app: tauri::State<App>, user_id: String) -> CmdResult<Vec<DmM
         .as_ref()
         .map(|p| p.id)
         .ok_or("set a username first")?;
-    let pending = app.outbox.lock().unwrap().pending_dms(partner);
+    let pending = dm_sync::waiting_dms(&app, partner);
     let dms = app.dms.lock().unwrap();
     Ok(dms
         .posts(partner)
@@ -2611,21 +2612,25 @@ where
         return Err(if message.is_post() { "message not sent" } else { "nothing to change" }.into());
     }
     let envelope = DmEnvelope::new(message.clone(), app.profile_for(me, partner));
-    dm_sync::publish(app, partner, &envelope);
     let waiting = app.outbox.lock().unwrap().has_dms(partner);
     outbox::queue_dm(app, partner, message.id);
     app.persist_dms();
     access.emit("dm-sending", partner.to_string().into());
-    let delivered = !waiting && send(envelope).await;
+    let stored = dm_sync::publish(app, partner, &envelope).await;
+    if stored {
+        outbox::dm_held(app, partner, message.id);
+    }
+    let held = stored && dm_sync::partner_follows(app, partner);
+    let delivered = !held && !waiting && send(envelope).await;
     if delivered {
         outbox::dm_delivered(app, partner, message.id);
-    } else if waiting {
+    } else if waiting || held {
         outbox::wake_dm(app, partner);
     }
 
     let view = {
         let dms = app.dms.lock().unwrap();
-        message.is_post().then(|| dm_message_view(&message, me.id, &dms, !delivered))
+        message.is_post().then(|| dm_message_view(&message, me.id, &dms, !delivered && !held))
     };
     if app.safety.lock().unwrap().accepted.insert(partner) {
         app.persist_safety();
@@ -3476,6 +3481,39 @@ fn set_window_title(handle: tauri::AppHandle, server: Option<String>) {
         let _ = window.set_title(&instance::server_window_title(&base, server.as_deref()));
     }
 }
+
+#[tauri::command]
+fn has_custom_titlebar() -> bool {
+    cfg!(windows)
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn window_action(window: tauri::WebviewWindow, action: String) {
+    match action.as_str() {
+        "minimize" => {
+            let _ = window.minimize();
+        }
+        "toggle-maximize" => {
+            if window.is_maximized().unwrap_or(false) {
+                let _ = window.unmaximize();
+            } else {
+                let _ = window.maximize();
+            }
+        }
+        "close" => {
+            let _ = window.close();
+        }
+        "drag" => {
+            let _ = window.start_dragging();
+        }
+        _ => {}
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn window_action(_action: String) {}
 
 #[tauri::command]
 async fn set_status_expiry(
@@ -7851,6 +7889,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
         let mut names = app.profile.lock().unwrap().as_ref().map(catchup::mention_names).unwrap_or_default();
         names.extend(view::nickname_of(state, me));
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mentions = state.server.mentions_of(message.author, &message.content, me, &names);
         serde_json::json!({
             "server": sid.to_string(),
             "server_name": state.server.name,
@@ -7860,7 +7899,8 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "sensitive": state.server.channel(message.channel).is_some_and(|c| c.sensitive),
             "author": message.author.to_string(),
             "author_name": view::known_name_of(state, message.author).unwrap_or_else(|| "Someone".into()),
-            "mentioned": state.server.mentioned_by(message.author, &message.content, me, &names),
+            "mentioned": mentions.any(),
+            "mentions": mentions.kinds(),
             "content": message.content,
             "has_attachments": message.files().next().is_some(),
             "voice_message": commy_core::message::only_a_voice_message(&message.content, message.attachments.iter()),
@@ -7888,7 +7928,12 @@ fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
 
 #[tauri::command]
 fn tray_prompt_due(app: tauri::State<App>) -> bool {
-    cfg!(desktop) && !instance::TEST_BUILD && !app.voice.lock().unwrap().tray_prompt_seen
+    cfg!(desktop) && !app.voice.lock().unwrap().tray_prompt_seen
+}
+
+#[tauri::command]
+fn autostart_allowed() -> bool {
+    cfg!(desktop) && instance::autostart_allowed_here()
 }
 
 #[tauri::command]
@@ -7899,7 +7944,7 @@ fn finish_tray_prompt(
     close_to_tray: bool,
 ) -> VoiceSettings {
     #[cfg(desktop)]
-    if !instance::TEST_BUILD {
+    if instance::autostart_allowed_here() {
         let _ = set_autostart(handle, autostart);
     }
     #[cfg(mobile)]
@@ -7934,6 +7979,9 @@ fn get_autostart(handle: tauri::AppHandle) -> bool {
 fn set_autostart(handle: tauri::AppHandle, enabled: bool) -> CmdResult<bool> {
     use tauri_plugin_autostart::ManagerExt;
     let launcher = handle.autolaunch();
+    if enabled && !instance::autostart_allowed_here() {
+        return Ok(false);
+    }
     if enabled {
         launcher.enable().map_err(|e| e.to_string())?;
     } else {
@@ -8375,6 +8423,10 @@ pub fn run() {
                     let _ = window.set_title(&title);
                 }
             }
+            #[cfg(windows)]
+            if let Some(window) = tauri_app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+            }
             updater::init(&handle);
             updater::start(&handle);
             let data_dir = std::env::var("COMMY_DATA_DIR")
@@ -8447,6 +8499,8 @@ pub fn run() {
             friend_action,
             set_about,
             set_window_title,
+            has_custom_titlebar,
+            window_action,
             set_icons,
             choose_custom_icon,
             get_custom_icon,
@@ -8622,6 +8676,7 @@ pub fn run() {
             set_unread,
             set_close_to_tray,
             tray_prompt_due,
+            autostart_allowed,
             finish_tray_prompt,
             get_autostart,
             set_autostart,

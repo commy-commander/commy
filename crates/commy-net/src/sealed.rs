@@ -1,7 +1,7 @@
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use data_encoding::BASE64URL_NOPAD;
-use rand::RngCore;
+use rand::Rng;
 
 pub const SEALED_PREFIX: &str = "sealed1.";
 const NONCE_LEN: usize = 12;
@@ -50,14 +50,11 @@ impl std::fmt::Debug for SealKey {
 
 impl SealKey {
     pub fn generate() -> Self {
-        let mut key = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut key);
-        Self(key)
+        Self(rand::rngs::OsRng.gen())
     }
 
     pub fn generate_short() -> (Self, String) {
-        let mut seed = [0u8; SHORT_KEY_BYTES];
-        rand::rngs::OsRng.fill_bytes(&mut seed);
+        let seed: [u8; SHORT_KEY_BYTES] = rand::rngs::OsRng.gen();
         let text = BASE64URL_NOPAD.encode(&seed);
         (Self::stretch(&seed), text)
     }
@@ -94,8 +91,7 @@ impl SealKey {
     }
 
     pub fn seal(&self, purpose: Purpose, plaintext: &[u8]) -> String {
-        let mut nonce = [0u8; NONCE_LEN];
-        rand::rngs::OsRng.fill_bytes(&mut nonce);
+        let nonce: [u8; NONCE_LEN] = rand::rngs::OsRng.gen();
         let cipher = Aes256Gcm::new_from_slice(&self.0).expect("32 byte key");
         let ciphertext = cipher
             .encrypt(

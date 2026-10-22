@@ -34,6 +34,8 @@ pub struct Outbox {
     queued: HashMap<ServerId, Vec<ServerEvent>>,
     #[serde(default)]
     dms: HashMap<UserId, Vec<MessageId>>,
+    #[serde(default)]
+    dms_stored: HashMap<UserId, Vec<MessageId>>,
 }
 
 pub fn is_transient(event: &ServerEvent) -> bool {
@@ -196,11 +198,32 @@ impl Outbox {
         self.dms.get(&partner).map(|list| list.iter().copied().collect()).unwrap_or_default()
     }
 
+    pub fn unstored_dms(&self, partner: UserId) -> HashSet<MessageId> {
+        let mut pending = self.pending_dms(partner);
+        if let Some(stored) = self.dms_stored.get(&partner) {
+            pending.retain(|id| !stored.contains(id));
+        }
+        pending
+    }
+
+    pub fn is_dm_stored(&self, partner: UserId, id: MessageId) -> bool {
+        self.dms_stored.get(&partner).is_some_and(|list| list.contains(&id))
+    }
+
+    pub fn dm_stored(&mut self, partner: UserId, id: MessageId) -> bool {
+        if !self.dms.get(&partner).is_some_and(|list| list.contains(&id)) || self.is_dm_stored(partner, id) {
+            return false;
+        }
+        self.dms_stored.entry(partner).or_default().push(id);
+        true
+    }
+
     pub fn dm_partners(&self) -> Vec<UserId> {
         self.dms.iter().filter(|(_, list)| !list.is_empty()).map(|(user, _)| *user).collect()
     }
 
     pub fn dm_done(&mut self, partner: UserId, id: MessageId) -> bool {
+        retain_list(&mut self.dms_stored, partner, |m| *m != id);
         retain_list(&mut self.dms, partner, |m| *m != id)
     }
 }
@@ -492,6 +515,9 @@ pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) ->
     }
     if let Some(payload) = &stored {
         crate::community_sync::publish(server, payload);
+        if let ServerEvent::MessageCreate { message } = &event {
+            crate::server_wake::ring(app, server, message);
+        }
     }
     delivered
 }
@@ -642,6 +668,12 @@ pub fn queue_dm(app: &App, partner: UserId, id: MessageId) {
     }
 }
 
+pub fn dm_held(app: &App, partner: UserId, id: MessageId) {
+    if app.outbox.lock().unwrap().dm_stored(partner, id) {
+        app.persist_outbox();
+    }
+}
+
 pub fn dm_delivered(app: &App, partner: UserId, id: MessageId) {
     let (done, drained) = {
         let mut outbox = app.outbox.lock().unwrap();
@@ -728,6 +760,7 @@ where
     }
     let mut changed = false;
     let mut failed = false;
+    let mut unstored = false;
     let queue = app.outbox.lock().unwrap().dm_queue(partner);
     for id in queue {
         let found = app.dms.lock().unwrap().conversation(partner).iter().find(|m| m.id == id).cloned();
@@ -742,9 +775,22 @@ where
         };
         message.sign(&node, &identity);
         let envelope = DmEnvelope::new(message, app.profile_for(&me, partner));
+        if !unstored && !app.outbox.lock().unwrap().is_dm_stored(partner, id) {
+            if crate::dm_sync::publish(app, partner, &envelope).await {
+                changed |= app.outbox.lock().unwrap().dm_stored(partner, id);
+            } else {
+                unstored = true;
+            }
+        }
+        if failed {
+            if unstored {
+                break;
+            }
+            continue;
+        }
         if !send(envelope).await {
             failed = true;
-            break;
+            continue;
         }
         changed |= app.outbox.lock().unwrap().dm_done(partner, id);
     }
@@ -934,6 +980,34 @@ mod tests {
         assert!(outbox.prune(&state, chrono::Utc::now()));
         assert_eq!(outbox.pending_ids(sid), HashSet::from([message.id]));
         assert!(!outbox.prune(&state, chrono::Utc::now()));
+    }
+
+    #[test]
+    fn dms_the_service_holds_stay_queued_for_direct_delivery() {
+        let mut outbox = Outbox::default();
+        let partner = UserId::new();
+        let (first, second) = (MessageId::new(), MessageId::new());
+        outbox.add_dm(partner, first);
+        outbox.add_dm(partner, second);
+        assert!(!outbox.dm_stored(partner, MessageId::new()), "only queued messages are marked");
+        assert!(outbox.dm_stored(partner, first));
+        assert!(!outbox.dm_stored(partner, first));
+        assert!(outbox.is_dm_stored(partner, first));
+        assert_eq!(outbox.unstored_dms(partner), HashSet::from([second]));
+        assert_eq!(outbox.dm_queue(partner), vec![first, second]);
+
+        let dir = temp_dir("held");
+        outbox.save(&dir).unwrap();
+        assert_eq!(Outbox::load(&dir), outbox);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(outbox.dm_done(partner, first));
+        assert!(!outbox.is_dm_stored(partner, first));
+        assert_eq!(outbox, {
+            let mut only = Outbox::default();
+            only.add_dm(partner, second);
+            only
+        });
     }
 
     #[test]

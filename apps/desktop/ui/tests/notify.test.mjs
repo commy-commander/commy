@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -147,4 +147,27 @@ test("channel choices are stored per server and cleaned up when they return to t
   assert.deepEqual(prefs.channels, {});
   assert.equal(prefs.level, "all");
   assert.deepEqual(MUTE_CHOICES.map(c => c.seconds), [900, 3600, 28800, 86400, null]);
+});
+
+test("a server can ignore @everyone and @here or role mentions while @you always counts", () => {
+  let prefs = { servers: {} };
+  const everyone = { mentions: ["everyone"], mentioned: true };
+  const role = { mentions: ["role"], mentioned: true };
+  const both = { mentions: ["role", "everyone"], mentioned: true };
+  const named = { mentions: ["name", "everyone"], mentioned: true };
+  assert.equal(mentionReaches(prefs, "s1", everyone), true);
+  prefs = withServerFilter(prefs, "s1", "suppressEveryone", true);
+  assert.equal(filterOn(prefs, "suppressEveryone", "s1"), true);
+  assert.equal(mentionReaches(prefs, "s1", everyone), false);
+  assert.equal(mentionReaches(prefs, "s2", everyone), true, "other servers keep their own setting");
+  assert.equal(mentionReaches(prefs, "s1", both), true, "a role you hold still reaches you");
+  prefs = withServerFilter(prefs, "s1", "suppressRoles", true);
+  assert.equal(mentionReaches(prefs, "s1", role), false);
+  assert.equal(mentionReaches(prefs, "s1", both), false);
+  assert.equal(mentionReaches(prefs, "s1", named), true);
+  assert.equal(mentionReaches(prefs, "s1", { mentions: [], mentioned: false }), false);
+  assert.equal(mentionReaches(prefs, "s1", { mentioned: true }), true, "older builds only say whether you were mentioned");
+  prefs = withServerFilter(prefs, "s1", "suppressEveryone", false);
+  assert.deepEqual(prefs.suppressEveryone, {});
+  assert.equal(withServerFilter(prefs, "s1", "level", true), prefs, "only the mention filters are set here");
 });

@@ -89,6 +89,16 @@ impl Store {
         }
     }
 
+    pub async fn forget_wake(&self, tag: &[u8; 32], push: &str) -> Result<(), StoreError> {
+        match self {
+            Store::Memory(m) => {
+                m.forget_wake(tag, push);
+                Ok(())
+            }
+            Store::Postgres(p) => p.forget_wake(tag, push).await,
+        }
+    }
+
     pub async fn forget_push(&self, push: &str) -> Result<(), StoreError> {
         match self {
             Store::Memory(m) => {
@@ -150,6 +160,16 @@ impl MemoryStore {
         out.sort();
         out.dedup();
         out
+    }
+
+    fn forget_wake(&self, tag: &[u8; 32], push: &str) {
+        let mut wakes = self.wakes.lock().unwrap();
+        if let Some(pushes) = wakes.get_mut(tag) {
+            pushes.remove(push);
+            if pushes.is_empty() {
+                wakes.remove(tag);
+            }
+        }
     }
 
     fn forget_push(&self, push: &str) {
@@ -349,6 +369,11 @@ impl PgStore {
             .fetch_all(&self.pool)
             .await?;
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
+    }
+
+    async fn forget_wake(&self, tag: &[u8; 32], push: &str) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM sync_wakes WHERE tag = $1 AND push = $2").bind(&tag[..]).bind(push).execute(&self.pool).await?;
+        Ok(())
     }
 
     async fn forget_push(&self, push: &str) -> Result<(), StoreError> {

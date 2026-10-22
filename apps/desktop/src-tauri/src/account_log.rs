@@ -481,6 +481,7 @@ fn apply(handle: &AppHandle, change: Change) {
         Change::Saved(ops) => crate::saved::apply_remote(handle, ops),
         Change::Prefs(set) => {
             let _ = handle.emit("sync-prefs-changed", set);
+            crate::push_wake::register(handle);
         }
         Change::Partner(profile, accepted) => crate::dm_sync::adopt_partner(handle, *profile, accepted),
         Change::CommunityKey(server) => {
@@ -612,6 +613,10 @@ pub fn set_dm_cursor(app: &App, stream: String, seq: u64, save: bool) {
     }
 }
 
+pub fn pref_values(app: &App) -> BTreeMap<String, serde_json::Value> {
+    with_state(app, |state| state.prefs.iter().map(|(key, piece)| (key.clone(), piece.value.clone())).collect()).unwrap_or_default()
+}
+
 pub fn partners(app: &App) -> BTreeMap<UserId, i64> {
     with_state(app, |state| state.partners.clone()).unwrap_or_default()
 }
@@ -672,7 +677,7 @@ pub fn sync_prefs_load(app: tauri::State<'_, App>) -> BTreeMap<String, PrefPiece
 }
 
 #[tauri::command]
-pub fn sync_prefs_set(app: tauri::State<'_, App>, changes: BTreeMap<String, serde_json::Value>) {
+pub fn sync_prefs_set(app: tauri::State<'_, App>, handle: AppHandle, changes: BTreeMap<String, serde_json::Value>) {
     let at = now_ms();
     let set: BTreeMap<String, PrefPiece> = changes
         .into_iter()
@@ -682,6 +687,7 @@ pub fn sync_prefs_set(app: tauri::State<'_, App>, changes: BTreeMap<String, serd
         .collect();
     if !set.is_empty() {
         queue(&app, Record::Prefs { set });
+        crate::push_wake::register(&handle);
     }
 }
 

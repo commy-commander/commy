@@ -86,7 +86,7 @@ export function applicationId(gradle) {
 }
 
 const FIREBASE_STRINGS = ["google_app_id", "gcm_defaultSenderId", "google_api_key", "project_id"];
-const escapeXml = text => String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "\\'");
+const escapeXml = text => String(text).replace(/\\/g, "\\\\").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "\\'");
 
 export function firebasePackages(googleServices) {
   const config = typeof googleServices === "string" ? JSON.parse(googleServices) : googleServices;
