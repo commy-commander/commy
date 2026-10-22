@@ -967,8 +967,8 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
     if !app.awaits_snapshot(server) {
         return false;
     }
-    if !snapshot_vouched(app, server, &payload, max_age_ms) {
-        tracing::warn!("dropping a snapshot of {server} that its owner did not sign");
+    if let Some(why) = snapshot_refusal(app, server, &payload, max_age_ms) {
+        tracing::warn!("dropping a snapshot of {server} that its owner did not sign: {why}");
         return false;
     }
     let WirePayload::SyncResponse { server: mut remote_server, members, profiles, recent_messages, voice, at, .. } = payload else {
@@ -1076,18 +1076,22 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
 }
 
 fn snapshot_vouched(app: &App, server: ServerId, payload: &WirePayload, max_age_ms: i64) -> bool {
-    let WirePayload::SyncResponse { server: remote, by, at, .. } = payload else { return false };
+    snapshot_refusal(app, server, payload, max_age_ms).is_none()
+}
+
+fn snapshot_refusal(app: &App, server: ServerId, payload: &WirePayload, max_age_ms: i64) -> Option<&'static str> {
+    let WirePayload::SyncResponse { server: remote, by, at, .. } = payload else { return Some("not a snapshot") };
     if remote.id != server {
-        return false;
+        return Some("another server");
     }
-    let Some((owner, key)) = app.ticket_owner(server) else { return false };
+    let Some((owner, key)) = app.ticket_owner(server) else { return Some("this device does not know the owner yet") };
     if *by != owner || remote.owner != owner {
-        return false;
+        return Some("signed by someone else");
     }
     if (Utc::now().timestamp_millis() - *at).abs() > max_age_ms {
-        return false;
+        return Some("too old");
     }
-    commy_net::protocol::verify_sync_response(payload, &key)
+    (!commy_net::protocol::verify_sync_response(payload, &key)).then_some("bad signature")
 }
 
 fn member_of(m: commy_net::protocol::SyncMember) -> commy_core::Member {
