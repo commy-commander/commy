@@ -217,8 +217,9 @@ mod tests {
         let wakes = Wakes::new(Pusher::Off);
         let start = Instant::now();
         assert_eq!(wakes.plan("fcm:a", start), Plan::Now);
-        assert_eq!(wakes.plan("fcm:a", start + Duration::from_secs(30)), Plan::After(PUSH_GAP - Duration::from_secs(30)));
-        assert_eq!(wakes.plan("fcm:a", start + Duration::from_secs(60)), Plan::AlreadyQueued, "one held push covers every ring in the gap");
+        let early = PUSH_GAP / 3;
+        assert_eq!(wakes.plan("fcm:a", start + early), Plan::After(PUSH_GAP - early));
+        assert_eq!(wakes.plan("fcm:a", start + PUSH_GAP / 2), Plan::AlreadyQueued, "one held push covers every ring in the gap");
     }
 
     #[test]
@@ -226,12 +227,12 @@ mod tests {
         let wakes = Wakes::new(Pusher::Off);
         let start = Instant::now();
         assert_eq!(wakes.plan("fcm:a", start), Plan::Now);
-        assert_eq!(wakes.plan("fcm:a", start + Duration::from_secs(10)), Plan::After(PUSH_GAP - Duration::from_secs(10)));
+        let early = PUSH_GAP / 3;
+        assert_eq!(wakes.plan("fcm:a", start + early), Plan::After(PUSH_GAP - early));
         let sent = start + PUSH_GAP;
         wakes.release_queued("fcm:a", sent);
-        assert_eq!(wakes.plan("fcm:a", sent + Duration::from_secs(5)), Plan::After(PUSH_GAP - Duration::from_secs(5)));
+        assert_eq!(wakes.plan("fcm:a", sent + early), Plan::After(PUSH_GAP - early));
     }
-
     #[tokio::test]
     async fn a_delivered_push_is_sent_once() {
         let (pushed, mut pushes) = tokio::sync::mpsc::unbounded_channel();

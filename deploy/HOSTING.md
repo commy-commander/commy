@@ -347,7 +347,9 @@ server or channel a log belongs to.
   id and changes daily. A device that writes to a log rings its members' tags
   (`POST /sync/wake/ring`) in a separate request. The service then sends one
   push with no content to each phone registered on those tags, at most one
-  every 2 minutes per phone. It stores each tag with the push token and the
+  every 15 seconds per phone; rings inside that window are folded into one
+  push sent when it ends. Google keeps an undelivered push for up to an hour
+  and only the newest one per phone. It stores each tag with the push token and the
   last day it is valid (2 days ahead at most), and drops tokens Google reports
   as gone. It keeps no record of who rang, but an operator watching live
   traffic could pair the address that rang with the phone it woke. Without the
