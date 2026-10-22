@@ -7886,6 +7886,30 @@ fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
     app.update_voice(|voice| voice.close_to_tray = enabled)
 }
 
+#[tauri::command]
+fn tray_prompt_due(app: tauri::State<App>) -> bool {
+    cfg!(desktop) && !instance::TEST_BUILD && !app.voice.lock().unwrap().tray_prompt_seen
+}
+
+#[tauri::command]
+fn finish_tray_prompt(
+    app: tauri::State<App>,
+    handle: tauri::AppHandle,
+    autostart: bool,
+    close_to_tray: bool,
+) -> VoiceSettings {
+    #[cfg(desktop)]
+    if !instance::TEST_BUILD {
+        let _ = set_autostart(handle, autostart);
+    }
+    #[cfg(mobile)]
+    let _ = (&handle, autostart);
+    app.update_voice(|voice| {
+        voice.tray_prompt_seen = true;
+        voice.close_to_tray = close_to_tray;
+    })
+}
+
 #[cfg(mobile)]
 #[tauri::command]
 fn get_autostart() -> bool {
@@ -8323,6 +8347,23 @@ pub fn run() {
                 if to_tray {
                     api.prevent_close();
                     let _ = window.hide();
+                    let first = {
+                        let app = window.state::<App>();
+                        let mut seen = false;
+                        app.update_voice(|voice| {
+                            seen = voice.tray_hint_seen;
+                            voice.tray_hint_seen = true;
+                        });
+                        !seen
+                    };
+                    if first {
+                        let _ = toast::show(
+                            window.app_handle(),
+                            "Commy is still running",
+                            "It lives in the system tray so messages and calls keep arriving. Quit from the tray icon.",
+                            None,
+                        );
+                    }
                 }
             }
         })
@@ -8580,6 +8621,8 @@ pub fn run() {
             notify,
             set_unread,
             set_close_to_tray,
+            tray_prompt_due,
+            finish_tray_prompt,
             get_autostart,
             set_autostart,
             set_auto_update,

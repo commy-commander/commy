@@ -48,6 +48,10 @@ pub struct VoiceSettings {
     pub output_device: Option<String>,
     #[serde(default = "default_true")]
     pub close_to_tray: bool,
+    #[serde(default)]
+    pub tray_prompt_seen: bool,
+    #[serde(default)]
+    pub tray_hint_seen: bool,
     #[serde(default = "default_app_icon")]
     pub app_icon: String,
     #[serde(default = "default_tray_icon")]
@@ -141,6 +145,8 @@ impl Default for VoiceSettings {
             input_device: None,
             output_device: None,
             close_to_tray: true,
+            tray_prompt_seen: false,
+            tray_hint_seen: false,
             app_icon: default_app_icon(),
             tray_icon: default_tray_icon(),
             pronouns: None,

@@ -7172,3 +7172,16 @@ button.role-chip { background: none; font-family: inherit; line-height: inherit;
   to { transform: none; opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .modal { animation: none; } }
+
+.tray-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  background: var(--bg-darkest);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+.tray-opt .switch { flex: none; }

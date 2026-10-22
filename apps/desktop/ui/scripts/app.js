@@ -1674,6 +1674,8 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
+    case "tray_prompt_due": return !mock.voice.tray_prompt_seen;
+    case "finish_tray_prompt": mock.autostart = args.autostart; mock.voice.close_to_tray = args.closeToTray; mock.voice.tray_prompt_seen = true; return mock.voice;
     case "get_autostart": return !!mock.autostart;
     case "set_autostart": mock.autostart = args.enabled; return mock.autostart;
     case "stop_camera": mock.cameraOn = false; return null;
@@ -14987,6 +14989,7 @@ function wireEvents() {
       await loadSaved();
       if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
+      await offerTrayPrompt();
     } catch (e) {
       toast(String(e));
     }
@@ -18243,7 +18246,27 @@ async function continueBoot() {
   if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
   await primeFriendPresence();
+  await offerTrayPrompt();
 }
+
+async function offerTrayPrompt() {
+  let due = false;
+  try { due = await invoke("tray_prompt_due"); } catch {}
+  if (!due) return;
+  $("tray-autostart").checked = true;
+  $("tray-close").checked = true;
+  showModal("modal-tray");
+}
+
+$("tray-done").addEventListener("click", async () => {
+  try {
+    state.voice = await invoke("finish_tray_prompt", {
+      autostart: $("tray-autostart").checked,
+      closeToTray: $("tray-close").checked,
+    });
+  } catch {}
+  hideModals();
+});
 
 let account = { signed_in: false, server_host: "" };
 
