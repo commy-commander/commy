@@ -52,6 +52,43 @@ pub fn mentions_everyone(content: &str) -> bool {
     names_mentioned(content, &[EVERYONE, HERE])
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Mentions {
+    pub name: bool,
+    pub role: bool,
+    pub everyone: bool,
+}
+
+impl Mentions {
+    pub fn by_name(name: bool) -> Self {
+        Self {
+            name,
+            ..Self::default()
+        }
+    }
+
+    pub fn any(self) -> bool {
+        self.name || self.role || self.everyone
+    }
+
+    pub fn merge(&mut self, other: Mentions) {
+        self.name |= other.name;
+        self.role |= other.role;
+        self.everyone |= other.everyone;
+    }
+
+    pub fn kinds(self) -> Vec<&'static str> {
+        [
+            (self.name, "name"),
+            (self.role, "role"),
+            (self.everyone, "everyone"),
+        ]
+        .into_iter()
+        .filter_map(|(on, kind)| on.then_some(kind))
+        .collect()
+    }
+}
+
 impl Server {
     pub fn can_mention_everyone(&self, user: UserId) -> bool {
         self.permissions_for(user).can_mention_everyone()
@@ -61,6 +98,25 @@ impl Server {
         self.roles.iter().any(|r| r.id == role && r.mentionable) || self.can_mention_everyone(user)
     }
 
+    pub fn mentions_of(
+        &self,
+        author: UserId,
+        content: &str,
+        viewer: UserId,
+        names: &[&str],
+    ) -> Mentions {
+        let role = self.member(viewer).is_some_and(|member| {
+            role_tokens(content)
+                .into_iter()
+                .any(|role| member.roles.contains(&role) && self.can_mention_role(author, role))
+        });
+        Mentions {
+            name: names_mentioned(content, names),
+            role,
+            everyone: mentions_everyone(content) && self.can_mention_everyone(author),
+        }
+    }
+
     pub fn mentioned_by(
         &self,
         author: UserId,
@@ -68,18 +124,7 @@ impl Server {
         viewer: UserId,
         names: &[&str],
     ) -> bool {
-        if names_mentioned(content, names) {
-            return true;
-        }
-        if mentions_everyone(content) && self.can_mention_everyone(author) {
-            return true;
-        }
-        let Some(member) = self.member(viewer) else {
-            return false;
-        };
-        role_tokens(content)
-            .into_iter()
-            .any(|role| member.roles.contains(&role) && self.can_mention_role(author, role))
+        self.mentions_of(author, content, viewer, names).any()
     }
 }
 
@@ -154,6 +199,24 @@ mod tests {
         assert!(mentions_everyone("@everyone look"));
         assert!(mentions_everyone("ping @HERE"));
         assert!(!mentions_everyone("@everyone_else"));
+    }
+
+    #[test]
+    fn mentions_say_whether_they_came_by_name_role_or_everyone() {
+        let (mut state, _, owner) = fixture();
+        let viewer = join(&mut state, "viewer");
+        let crew = add_role(&mut state, "crew", Permissions::NONE, true);
+        give(&mut state, viewer, crew);
+        let of = |content: &str| state.server.mentions_of(owner, content, viewer, &["viewer"]);
+        assert_eq!(of("@viewer hi"), Mentions::by_name(true));
+        assert_eq!(of("hello"), Mentions::default());
+        let both = of(&format!("@here {}", role_token(crew)));
+        assert!(both.role && both.everyone && !both.name);
+        assert_eq!(both.kinds(), vec!["role", "everyone"]);
+        let mut seen = Mentions::by_name(true);
+        seen.merge(of("@everyone"));
+        assert_eq!(seen.kinds(), vec!["name", "everyone"]);
+        assert!(!Mentions::default().any());
     }
 
     #[test]

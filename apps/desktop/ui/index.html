@@ -727,6 +727,46 @@
       </div>
     </div>
 
+    <div class="modal modal-notify hidden" id="modal-server-notify" role="dialog" aria-labelledby="server-notify-title">
+      <div class="notify-head">
+        <h2 id="server-notify-title">Notification Settings</h2>
+        <p id="server-notify-name"></p>
+      </div>
+      <label class="notify-row">
+        <div>
+          <div class="setting-title" id="server-notify-mute-title">Mute server</div>
+          <div class="setting-sub">No notifications, sounds or unread pills from this server until you turn it back on.</div>
+        </div>
+        <input type="checkbox" id="server-notify-mute" class="switch" />
+      </label>
+      <div class="notify-label">Notify me about</div>
+      <div class="notify-levels" id="server-notify-levels" role="radiogroup" aria-label="Notify me about">
+        <button type="button" class="notify-level" role="radio" data-level="all"><span class="notify-mark" aria-hidden="true"></span><span><span class="notify-level-name">All messages</span><span class="notify-level-sub">Every new message in channels you can see</span></span></button>
+        <button type="button" class="notify-level" role="radio" data-level="mentions"><span class="notify-mark" aria-hidden="true"></span><span><span class="notify-level-name">Only @mentions</span><span class="notify-level-sub">Messages that name you, plus the mentions you allow below</span></span></button>
+        <button type="button" class="notify-level" role="radio" data-level="online"><span class="notify-mark" aria-hidden="true"></span><span><span class="notify-level-name">Only while I am online</span><span class="notify-level-sub">Everything while you show as Online, nothing otherwise</span></span></button>
+        <button type="button" class="notify-level" role="radio" data-level="none"><span class="notify-mark" aria-hidden="true"></span><span><span class="notify-level-name">Nothing</span><span class="notify-level-sub">Unread pills only, no notifications or sounds</span></span></button>
+        <button type="button" class="notify-level" role="radio" data-level="default"><span class="notify-mark" aria-hidden="true"></span><span><span class="notify-level-name">Use my default</span><span class="notify-level-sub" id="server-notify-default"></span></span></button>
+      </div>
+      <div class="notify-label">Mentions that reach you</div>
+      <label class="notify-row">
+        <div>
+          <div class="setting-title">@everyone and @here</div>
+          <div class="setting-sub">Off means they read like ordinary messages here.</div>
+        </div>
+        <input type="checkbox" id="server-notify-everyone" class="switch" />
+      </label>
+      <label class="notify-row">
+        <div>
+          <div class="setting-title">Roles you hold</div>
+          <div class="setting-sub">Off means a ping to one of your roles reads like an ordinary message.</div>
+        </div>
+        <input type="checkbox" id="server-notify-roles" class="switch" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-primary" id="server-notify-done">Done</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-leave-server">
       <h2 id="leave-server-title">Leave Server</h2>
       <p id="leave-server-body">Are you sure you want to leave? You will not be able to rejoin unless you are invited again, and your copy of its history is removed from this device.</p>
@@ -2604,6 +2644,7 @@
     <button class="ctx-radio" data-level="online">Only while I am online</button>
     <button class="ctx-radio" data-level="none">Nothing</button>
     <button class="ctx-check" id="sm-mute">Mute Server</button>
+    <button id="sm-notify">Notification Settings</button>
     <div class="ctx-sep"></div>
     <button id="sm-invite">Invite People</button>
     <button id="sm-pins">Pinned Messages</button>

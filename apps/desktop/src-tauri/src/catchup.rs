@@ -65,7 +65,7 @@ pub struct Fresh {
     pub has_attachments: bool,
     pub voice_message: bool,
     pub at: i64,
-    pub mentioned: bool,
+    pub mentions: Mentions,
 }
 
 impl Fresh {
@@ -77,7 +77,7 @@ impl Fresh {
             has_attachments: message.files().next().is_some(),
             voice_message: commy_core::message::only_a_voice_message(&message.content, message.attachments.iter()),
             at: message.created_at.timestamp(),
-            mentioned: mentions(&message.content, names),
+            mentions: Mentions::by_name(mentions(&message.content, names)),
         }
     }
 }
@@ -86,14 +86,14 @@ impl Fresh {
 pub struct FreshChannel {
     pub count: u32,
     pub latest: Fresh,
-    pub mentioned: bool,
+    pub mentions: Mentions,
 }
 
 pub fn mentions(content: &str, names: &[&str]) -> bool {
     names_mentioned(content, names)
 }
 
-pub use commy_core::mention::names_mentioned;
+pub use commy_core::mention::{names_mentioned, Mentions};
 
 pub fn mention_names(profile: &commy_core::UserProfile) -> Vec<String> {
     [Some(profile.username.clone()), profile.display_name.clone()].into_iter().flatten().collect()
@@ -231,14 +231,14 @@ impl Catchup {
             match channels.get_mut(&message.channel) {
                 Some(channel) => {
                     channel.count += 1;
-                    channel.mentioned |= message.mentioned;
+                    channel.mentions.merge(message.mentions);
                     if message.at >= channel.latest.at {
                         channel.latest = message;
                     }
                 }
                 None => {
-                    let mentioned = message.mentioned;
-                    channels.insert(message.channel, FreshChannel { count: 1, latest: message, mentioned });
+                    let mentions = message.mentions;
+                    channels.insert(message.channel, FreshChannel { count: 1, latest: message, mentions });
                 }
             }
         }
@@ -374,9 +374,10 @@ impl Unread {
             return Fresh::of(&Message { content: String::new(), ..message.clone() }, &names);
         };
         let mut fresh = Fresh::of(&opened, &names);
-        fresh.mentioned = self
+        fresh.mentions = self
             .me
-            .is_some_and(|me| state.server.mentioned_by(opened.author, &opened.content, me, &names));
+            .map(|me| state.server.mentions_of(opened.author, &opened.content, me, &names))
+            .unwrap_or_default();
         fresh
     }
 
@@ -472,7 +473,8 @@ pub fn caught_up_payload(server: ServerId, fresh: &HashMap<ChannelId, FreshChann
             let found = state.and_then(|s| s.server.channel(*channel));
             let value = serde_json::json!({
                 "count": fresh.count,
-                "mentioned": fresh.mentioned,
+                "mentioned": fresh.mentions.any(),
+                "mentions": fresh.mentions.kinds(),
                 "channel_name": found.map(|c| c.name.clone()).unwrap_or_default(),
                 "announcement": found.is_some_and(|c| c.kind == commy_core::ChannelKind::Announcement),
                 "sensitive": found.is_some_and(|c| c.sensitive),
@@ -1357,20 +1359,21 @@ mod tests {
             has_attachments: false,
             voice_message: false,
             at,
-            mentioned: mentions(content, &["me"]),
+            mentions: Mentions::by_name(mentions(content, &["me"])),
         };
         catchup.note_applied(sid, [fresh(a, "@me later", 20), fresh(b, "other", 5), fresh(a, "earlier", 10)]);
         catchup.note_applied(sid, []);
         let changes = catchup.take_changes(sid);
         assert!(changes.changed);
-        assert_eq!(changes.fresh[&a], FreshChannel { count: 2, latest: fresh(a, "@me later", 20), mentioned: true });
-        assert_eq!(changes.fresh[&b], FreshChannel { count: 1, latest: fresh(b, "other", 5), mentioned: false });
+        assert_eq!(changes.fresh[&a], FreshChannel { count: 2, latest: fresh(a, "@me later", 20), mentions: Mentions::by_name(true) });
+        assert_eq!(changes.fresh[&b], FreshChannel { count: 1, latest: fresh(b, "other", 5), mentions: Mentions::default() });
         assert_eq!(catchup.take_changes(sid), Changes::default());
 
         let payload = caught_up_payload(sid, &changes.fresh, None);
         assert_eq!(payload["server"], sid.to_string());
         let in_a = &payload["channels"][a.to_string()];
         assert_eq!((in_a["count"].as_u64(), in_a["mentioned"].as_bool()), (Some(2), Some(true)));
+        assert_eq!(in_a["mentions"], serde_json::json!(["name"]));
         assert_eq!((in_a["content"].as_str(), in_a["at"].as_i64()), (Some("@me later"), Some(20)));
         assert_eq!(in_a["author_name"], "Someone", "no state to name the author");
         assert_eq!(payload["channels"][b.to_string()]["count"], 1);
@@ -1571,7 +1574,7 @@ mod tests {
         assert!(app.servers.lock().unwrap()[&sid].has_message(theirs.id));
         let caught_up = {
             let servers = app.servers.lock().unwrap();
-            let fresh = FreshChannel { count: 1, latest: Fresh::of(&theirs, &[]), mentioned: false };
+            let fresh = FreshChannel { count: 1, latest: Fresh::of(&theirs, &[]), mentions: Mentions::default() };
             caught_up_payload(sid, &HashMap::from([(channel, fresh)]), servers.get(&sid))
         };
         assert_eq!(caught_up["channels"][channel.to_string()]["author_name"], friend.profile.visible_name());
@@ -1694,7 +1697,7 @@ mod tests {
         assert!(state.has_message(message.id));
         assert_eq!(state.identity_of(absent.id()), Some(absent.identity.public()));
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 0);
-        let fresh = FreshChannel { count: 1, latest: Fresh::of(&message, &[]), mentioned: false };
+        let fresh = FreshChannel { count: 1, latest: Fresh::of(&message, &[]), mentions: Mentions::default() };
         let caught_up = caught_up_payload(sid, &HashMap::from([(channel, fresh)]), Some(&state));
         assert!(handle.take_events().contains(&("messages-caught-up".into(), caught_up)));
 
@@ -1752,7 +1755,7 @@ mod tests {
         assert_eq!(app.catchup.lock().unwrap().held_count(sid), 1);
         let caught_up = {
             let servers = app.servers.lock().unwrap();
-            let fresh = FreshChannel { count: 1, latest: Fresh::of(&by_a, &[]), mentioned: false };
+            let fresh = FreshChannel { count: 1, latest: Fresh::of(&by_a, &[]), mentions: Mentions::default() };
             caught_up_payload(sid, &HashMap::from([(channel, fresh)]), servers.get(&sid))
         };
         assert!(handle.take_events().contains(&("messages-caught-up".into(), caught_up)));

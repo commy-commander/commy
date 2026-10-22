@@ -2695,6 +2695,40 @@ function updateServerPrefs(serverId, change) {
   syncUnreadBadge();
 }
 
+const LEVEL_WORDS = { all: "All messages", mentions: "Only @mentions", online: "Only while I am online", none: "Nothing" };
+
+let notifyServer = null;
+
+function renderServerNotify() {
+  if (!notifyServer) return;
+  const prefs = notifyPrefs();
+  const { level, muted } = serverPrefs(notifyServer.id);
+  $("server-notify-name").textContent = notifyServer.name;
+  $("server-notify-mute").checked = muted;
+  $("server-notify-default").textContent = `Your setting for every server: ${LEVEL_WORDS[prefs.level] || LEVEL_WORDS.all}`;
+  for (const btn of $("server-notify-levels").querySelectorAll(".notify-level")) {
+    const picked = btn.dataset.level === level;
+    btn.classList.toggle("picked", picked);
+    btn.setAttribute("aria-checked", String(picked));
+    btn.disabled = muted;
+  }
+  $("server-notify-everyone").checked = !filterOn(prefs, "suppressEveryone", notifyServer.id);
+  $("server-notify-roles").checked = !filterOn(prefs, "suppressRoles", notifyServer.id);
+  $("modal-server-notify").classList.toggle("muted", muted);
+}
+
+function openServerNotify(server) {
+  notifyServer = server;
+  renderServerNotify();
+  showModal("modal-server-notify");
+}
+
+function setServerFilter(key, on) {
+  if (!notifyServer) return;
+  saveNotifyPrefs(withServerFilter(notifyPrefs(), notifyServer.id, key, on));
+  syncUnreadBadge();
+}
+
 function markServerRead(serverId) {
   for (const [channel, server] of [...unread.channelServer]) {
     if (server === serverId) {
@@ -3404,6 +3438,7 @@ function applySyncedPrefs(set) {
   $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
   renderServerRail();
   if (state.currentServer) renderChannels();
+  if (!$("modal-server-notify").classList.contains("hidden")) renderServerNotify();
 }
 
 async function loadSyncedPrefs() {
@@ -3714,7 +3749,8 @@ function onMessageCreated(msg) {
   const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === msg.channel;
   const focusedOnIt = viewing && appFocused();
   const announcement = Boolean(msg.announcement);
-  const mentioned = typeof msg.mentioned === "boolean" ? msg.mentioned : messageMentionsMeIn(msg.server, msg.author, msg.content);
+  const prefs = notifyPrefs();
+  const mentioned = typeof msg.mentioned === "boolean" ? mentionReaches(prefs, msg.server, msg) : messageMentionsMeIn(msg.server, msg.author, msg.content);
   if (!focusedOnIt) {
     unread.channels.set(msg.channel, (unread.channels.get(msg.channel) || 0) + 1);
     unread.channelServer.set(msg.channel, msg.server);
@@ -3726,7 +3762,7 @@ function onMessageCreated(msg) {
     if (state.currentServer && state.currentServer.id === msg.server) renderChannels();
     else if (dmListShown() && isGroupServer(msg.server)) renderDmThreads();
   }
-  const level = levelForChannel(notifyPrefs(), msg.server, msg.channel, nowSecs());
+  const level = levelForChannel(prefs, msg.server, msg.channel, nowSecs());
   if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, isDm: false, mentioned, announcement })) {
     const notice = messageNotice(sensitiveNotice(msg, msg.channel, sensitiveConfirmed()), plainText);
     invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
@@ -3812,7 +3848,7 @@ function onMessagesCaughtUp(payload) {
     if (!Number.isInteger(count) || count <= 0) continue;
     const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === channel;
     const focusedOnIt = viewing && appFocused();
-    const mentioned = Boolean(info.mentioned) || mentionsMe(info.content);
+    const mentioned = mentionReaches(prefs, server, info) || mentionsMe(info.content);
     if (!focusedOnIt) {
       unread.channels.set(channel, (unread.channels.get(channel) || 0) + count);
       unread.channelServer.set(channel, server);
@@ -15834,6 +15870,26 @@ function wireEvents() {
     closeFloating();
     toast(muted ? `Muted ${menuServer.name}` : `Unmuted ${menuServer.name}`);
   };
+  $("sm-notify").onclick = () => {
+    const server = menuServer;
+    closeFloating();
+    if (server) openServerNotify(server);
+  };
+  for (const btn of $("server-notify-levels").querySelectorAll(".notify-level")) {
+    btn.onclick = () => {
+      if (!notifyServer) return;
+      updateServerPrefs(notifyServer.id, { level: btn.dataset.level });
+      renderServerNotify();
+    };
+  }
+  $("server-notify-mute").onchange = e => {
+    if (!notifyServer) return;
+    updateServerPrefs(notifyServer.id, { muted: e.target.checked });
+    renderServerNotify();
+  };
+  $("server-notify-everyone").onchange = e => setServerFilter("suppressEveryone", !e.target.checked);
+  $("server-notify-roles").onchange = e => setServerFilter("suppressRoles", !e.target.checked);
+  $("server-notify-done").onclick = hideModals;
   $("sm-read").onclick = () => {
     if (menuServer) markServerRead(menuServer.id);
     closeFloating();
