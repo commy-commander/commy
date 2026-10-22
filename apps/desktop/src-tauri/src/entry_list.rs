@@ -134,9 +134,13 @@ fn set_profile_edited(app: &App, at: DateTime<Utc>) {
 }
 
 pub fn record_leave(app: &App, id: ServerId) {
+    record_leave_at(app, id, Utc::now());
+}
+
+fn record_leave_at(app: &App, id: ServerId, at: DateTime<Utc>) {
     update_record(app, |record| {
         record.joined.remove(&id);
-        record.left.insert(id, Utc::now());
+        record.left.insert(id, at);
     });
 }
 
@@ -478,6 +482,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
             }
         }
         join_missing(handle, &app, &merged, &local).await;
+        leave_departed(handle, &app, &merged, &local).await;
         if let Some(log) = &log {
             crate::account_log::publish_servers(&app, log, &merged);
         }
@@ -648,6 +653,26 @@ async fn join_missing(handle: &AppHandle, app: &App, merged: &EntryList, local: 
             Err(e) => tracing::warn!("could not join {} from your server list: {e}", entry.name),
         }
     }
+}
+
+pub fn departed(merged: &EntryList, local: &EntryList) -> Vec<(ServerId, DateTime<Utc>)> {
+    local
+        .servers
+        .iter()
+        .filter_map(|(id, entry)| merged.left.get(id).filter(|at| **at > entry.since).map(|at| (*id, *at)))
+        .collect()
+}
+
+async fn leave_departed(handle: &AppHandle, app: &App, merged: &EntryList, local: &EntryList) {
+    let gone = departed(merged, local);
+    if gone.is_empty() {
+        return;
+    }
+    for (id, at) in gone {
+        crate::leave_from_another_device(app, id).await;
+        record_leave_at(app, id, at);
+    }
+    let _ = handle.emit("servers-changed", ());
 }
 
 #[cfg(desktop)]
@@ -854,6 +879,27 @@ mod tests {
 
     fn entry(name: &str, since: DateTime<Utc>) -> Entry {
         Entry { name: name.into(), ticket: format!("commy{name}"), since }
+    }
+
+    #[test]
+    fn a_leave_on_another_device_leaves_here_unless_this_device_joined_since() {
+        let t0 = Utc::now();
+        let (gone, rejoined, kept) = (ServerId::new(), ServerId::new(), ServerId::new());
+        let local = EntryList {
+            servers: BTreeMap::from([
+                (gone, entry("gone", t0)),
+                (rejoined, entry("rejoined", t0 + Duration::seconds(10))),
+                (kept, entry("kept", t0)),
+            ]),
+            ..Default::default()
+        };
+        let elsewhere = EntryList {
+            left: BTreeMap::from([(gone, t0 + Duration::seconds(5)), (rejoined, t0 + Duration::seconds(5))]),
+            ..Default::default()
+        };
+        let merged = EntryList::merge(&elsewhere, &local);
+        assert_eq!(departed(&merged, &local), vec![(gone, t0 + Duration::seconds(5))]);
+        assert!(departed(&local, &local).is_empty());
     }
 
     #[test]

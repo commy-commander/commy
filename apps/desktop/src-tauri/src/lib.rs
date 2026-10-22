@@ -3310,6 +3310,12 @@ async fn leave_server(
     Ok(())
 }
 
+pub(crate) async fn leave_from_another_device(app: &App, sid: ServerId) {
+    end_voice_in(app, sid);
+    leave_server_topic(app, sid).await;
+    forget_server_locally(app, sid);
+}
+
 async fn leave_server_topic(app: &App, sid: ServerId) {
     let mut net = app.net.lock().await;
     if let Some(node) = net.as_mut() {
