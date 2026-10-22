@@ -6,7 +6,7 @@
   "description": "Self-hostable Better Auth server for Commy accounts and device linking",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24.22.1"
   },
   "scripts": {
     "start": "node src/server.js",
