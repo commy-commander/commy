@@ -33,7 +33,8 @@ test("the line reads naturally for one to many people", () => {
   assert.equal(typingLine(["ferris"]), "ferris is typing");
   assert.equal(typingLine(["ferris", "nova"]), "ferris and nova are typing");
   assert.equal(typingLine(["a", "b", "c"]), "a, b and c are typing");
-  assert.equal(typingLine(["a", "b", "c", "d"]), "a, b, c and 1 others are typing".replace("1 others", "1 others"));
+  assert.equal(typingLine(["a", "b", "c", "d"]), "a, b, c and 1 other are typing");
+  assert.equal(typingLine(["a", "b", "c", "d", "e"]), "a, b, c and 2 others are typing");
   assert.equal(typingLine(["a", "b", "c", "d", "e", "f"]), "Several people are typing");
   assert.equal(typingLine(["a", null, "b"]), "a and b are typing");
 });
