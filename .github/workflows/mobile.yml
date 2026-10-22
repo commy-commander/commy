@@ -51,7 +51,7 @@ jobs:
           node-version: ">=24.22.1 <25"
 
       - name: Mobile script tests
-        run: node --test "apps/desktop/mobile/*.test.mjs"
+        run: node --test "apps/desktop/mobile/*.test.mjs" "apps/desktop/mobile/e2e/*.test.mjs"
 
       - name: Android SDK and NDK
         run: |
