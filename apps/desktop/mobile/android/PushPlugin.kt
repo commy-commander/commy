@@ -17,6 +17,10 @@ import com.google.firebase.messaging.FirebaseMessaging
 
 @TauriPlugin
 class PushPlugin(private val activity: Activity) : Plugin(activity) {
+  override fun onResume() {
+    NotificationManagerCompat.from(activity).cancelAll()
+  }
+
   @Command
   fun token(invoke: Invoke) {
     NotificationManagerCompat.from(activity).cancel(WakeService.NOTIFICATION_ID)

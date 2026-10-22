@@ -331,7 +331,7 @@ async fn a_ring_wakes_the_rung_persons_phones_once_per_gap() {
     assert_eq!(woken, ["fcm:bob-phone", "fcm:bob-tablet"], "only the rung person's devices wake");
 
     assert_eq!(post(&address, "/sync/wake/ring", &ring).await, 204);
-    assert!(tokio::time::timeout(Duration::from_millis(500), pushes.recv()).await.is_err(), "a second ring within the gap wakes nobody");
+    assert!(tokio::time::timeout(Duration::from_millis(500), pushes.recv()).await.is_err(), "a second ring within the gap waits for the gap to end");
 
     let too_many = serde_json::to_value(WakeRing { tags: vec![bob; MAX_RING_TAGS + 1] }).unwrap();
     assert_eq!(post(&address, "/sync/wake/ring", &too_many).await, 400);
