@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withCommyNeeds, withCommyDependencies, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, MAX_SDK } from "./android-project.mjs";
+import { withCommyNeeds, withCommyDependencies, withDebugSigning, DEBUG_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, MAX_SDK } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -150,4 +150,38 @@ test("the old Bluetooth permission only applies where Android still needs it for
   const out = withCommyNeeds(generated);
   assert.match(out, /"android.permission.BLUETOOTH" android:maxSdkVersion="30"/);
   assert.equal(MAX_SDK["android.permission.BLUETOOTH"], 30);
+});
+
+const tauriGradle = `android {
+    namespace = "chat.commy.mobile"
+    buildTypes {
+        getByName("debug") {
+            isDebuggable = true
+        }
+    }
+}
+`;
+
+test("debug builds sign with the kept key when one is given, once", () => {
+  const out = withDebugSigning(withDebugSigning(tauriGradle, "/home/runner/.android/debug.keystore"), "/home/runner/.android/debug.keystore");
+  assert.equal(out.split("signingConfigs {").length - 1, 1);
+  assert.ok(out.indexOf("signingConfigs {") < out.indexOf("buildTypes {"));
+  assert.match(out, /^    signingConfigs \{\n        getByName\("debug"\) \{\n            storeFile = file\("\/home\/runner\/\.android\/debug\.keystore"\)$/m);
+  assert.ok(out.includes(`keyAlias = "${DEBUG_KEY.keyAlias}"`));
+  assert.ok(out.includes(`storePassword = "${DEBUG_KEY.storePassword}"`));
+  assert.ok(out.includes(`keyPassword = "${DEBUG_KEY.keyPassword}"`));
+});
+
+test("without a kept key the build file is left alone", () => {
+  assert.equal(withDebugSigning(tauriGradle, undefined), tauriGradle);
+  assert.equal(withDebugSigning(tauriGradle, ""), tauriGradle);
+});
+
+test("a key path is written as a Kotlin string that cannot break out", () => {
+  const out = withDebugSigning(tauriGradle, 'C:\\keys\\"$x".keystore');
+  assert.ok(out.includes('storeFile = file("C:\\\\keys\\\\\\"\\$x\\".keystore")'));
+});
+
+test("a build file without build types is refused when a key is given", () => {
+  assert.throws(() => withDebugSigning("android {\n}\n", "/k"));
 });
