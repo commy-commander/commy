@@ -254,8 +254,11 @@ hand. To let the sync service wake the Android app with an empty push, set
 `GOOGLE_SERVICES_JSON` to your Firebase project's `google-services.json` (its
 contents, its base64 or a path) before running `android-project.mjs`; the workflow reads it
 from the secret of the same name. Without it the app builds without push
-wake-ups. Screen sharing, the overlay, hotkeys, the tray and Stream Deck
-are desktop only.
+wake-ups. CI signs each debug APK with a fresh key, so installing a newer one
+means uninstalling the old one first; to keep one key, store a debug keystore
+(password and key password `android`, alias `androiddebugkey`) as base64 in the
+`ANDROID_DEBUG_KEYSTORE` secret. Screen sharing, the overlay, hotkeys, the
+tray and Stream Deck are desktop only.
 
 ## Self-hosting
 
