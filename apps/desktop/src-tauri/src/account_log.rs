@@ -311,6 +311,12 @@ pub fn stop() {
     crate::dm_sync::stop();
 }
 
+pub fn nudge() {
+    if let Some(live) = LIVE.lock().unwrap().as_ref() {
+        live.pool.nudge();
+    }
+}
+
 fn start(handle: &AppHandle) {
     let app = handle.state::<App>();
     let (Some(url), Some(s)) = (sync_link::url(), entry_list::session(&app)) else {

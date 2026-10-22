@@ -43,6 +43,7 @@ enum Command {
     Follow { keys: Box<StreamKeys>, after: u64 },
     Unfollow { stream: StreamId },
     Append { stream: StreamId, plain: Vec<u8>, reply: Reply },
+    Nudge,
 }
 
 #[derive(Clone)]
@@ -70,6 +71,10 @@ impl SyncClient {
         let (reply, answer) = oneshot::channel();
         self.commands.send(Command::Append { stream, plain, reply }).map_err(|_| AppendError::Stopped)?;
         answer.await.map_err(|_| AppendError::Stopped)?
+    }
+
+    pub fn nudge(&self) {
+        let _ = self.commands.send(Command::Nudge);
     }
 
     pub fn is_running(&self) -> bool {
@@ -139,6 +144,10 @@ impl Link {
                 tokio::select! {
                     _ = tokio::time::sleep_until(deadline) => break,
                     command = inbox.recv() => match command {
+                        Some(Command::Nudge) => {
+                            failures = 0;
+                            break;
+                        }
                         Some(command) => self.take(command, None).await,
                         None => return,
                     },
@@ -164,6 +173,11 @@ impl Link {
         loop {
             tokio::select! {
                 command = inbox.recv() => match command {
+                    Some(Command::Nudge) => {
+                        if gone_quiet(heard.elapsed()) || send(&mut socket, &ClientFrame::Ping).await.is_err() {
+                            return Ended::Lost;
+                        }
+                    }
                     Some(command) => {
                         self.take(command, Some(&mut socket)).await;
                     }
@@ -199,6 +213,7 @@ impl Link {
 
     async fn take(&mut self, command: Command, socket: Option<&mut Socket>) {
         match command {
+            Command::Nudge => {}
             Command::Follow { keys, after } => {
                 let after = self.streams.get(&keys.id).map_or(after, |f| f.after.max(after));
                 let open = ClientFrame::open(&keys, after);
@@ -327,6 +342,10 @@ impl Link {
     }
 }
 
+fn gone_quiet(silent: Duration) -> bool {
+    silent > Duration::from_secs(KEEPALIVE_SECS)
+}
+
 fn reconnect_delay(failures: usize) -> Duration {
     let base = RECONNECT_STEPS_MS[failures.min(RECONNECT_STEPS_MS.len() - 1)];
     let spread = rand::random::<u64>() % (base / 2 + 1);
@@ -372,5 +391,13 @@ mod tests {
         assert!(reconnect_delay(0) <= Duration::from_millis(750));
         assert!(reconnect_delay(50) >= Duration::from_secs(60));
         assert!(reconnect_delay(50) <= Duration::from_secs(90));
+    }
+
+    #[test]
+    fn a_nudge_drops_a_link_that_went_quiet_while_the_app_slept() {
+        assert!(!gone_quiet(Duration::from_secs(5)));
+        assert!(!gone_quiet(Duration::from_secs(KEEPALIVE_SECS)));
+        assert!(gone_quiet(Duration::from_secs(KEEPALIVE_SECS + 1)));
+        assert!(gone_quiet(Duration::from_secs(600)));
     }
 }
