@@ -263,6 +263,8 @@ fn share_keys(app: &App) {
     let holder = crate::channel_lock::holder_of(app);
     let sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().filter(|sid| !app.awaits_snapshot(*sid)).collect();
     let stored: HashMap<ServerId, KeyId> = sids.iter().filter_map(|sid| Some((*sid, crate::account_log::shared_community_key(app, *sid)?))).collect();
+    let owners: HashMap<ServerId, (UserId, commy_core::IdentityKey)> = sids.iter().filter_map(|sid| Some((*sid, app.vouched_ticket(*sid)?.owner?))).collect();
+    let unvouched: HashSet<ServerId> = owners.keys().copied().filter(|sid| crate::account_log::shared_owner(app, *sid).is_none()).collect();
     let due: Vec<(ServerId, KeyId, ChannelSecret)> = {
         let servers = app.servers.lock().unwrap();
         sids.iter()
@@ -274,15 +276,30 @@ fn share_keys(app: &App) {
                 let at = |id: KeyId| held.iter().find(|(record, _)| record.id == id).map(|(record, _)| record.at);
                 let behind = match stored.get(sid) {
                     None => true,
-                    Some(id) => *id != newest && at(*id).zip(at(newest)).is_some_and(|(old, new)| old < new),
+                    Some(id) if *id == newest => unvouched.contains(sid),
+                    Some(id) => at(*id).zip(at(newest)).is_some_and(|(old, new)| old < new),
                 };
                 behind.then(|| (*sid, newest, secret.clone()))
             })
             .collect()
     };
     for (sid, key, secret) in due {
-        crate::account_log::share_community_key(app, sid, key, &secret);
+        tracing::info!("sharing the key of {sid} with your other devices");
+        crate::account_log::share_community_key(app, sid, key, &secret, owners.get(&sid).copied());
     }
+}
+
+pub fn adopt_owner(handle: &AppHandle, server: ServerId) {
+    let app = handle.state::<App>();
+    let Some(owner) = crate::account_log::shared_owner(&app, server) else { return };
+    let Some(raw) = app.invites.lock().unwrap().get(&server).cloned() else { return };
+    let Ok(mut ticket) = commy_net::ServerTicket::decode(&raw) else { return };
+    if ticket.owner.is_some() {
+        return;
+    }
+    ticket.owner = Some(owner);
+    app.invites.lock().unwrap().insert(server, ticket.encode());
+    app.persist_invites();
 }
 
 fn wanted_now(app: &App, me: UserId) -> HashMap<ServerId, Vec<Want>> {
@@ -358,6 +375,7 @@ fn refresh(handle: &AppHandle) {
             continue;
         }
         if fresh {
+            tracing::info!("following {} sync streams for {sid}", group.len());
             fresh_communities.push((sid, group));
         } else {
             follow_group(&mut community.pool, group);
@@ -532,6 +550,7 @@ fn park(server: ServerId, payload: WirePayload) {
 fn adopt_snapshot(handle: &AppHandle, server: ServerId) {
     let Some(snapshot) = LIVE.lock().unwrap().as_mut().and_then(|live| live.snapshots.remove(&server)) else { return };
     if crate::catchup::apply_service_snapshot(handle, server, snapshot) {
+        tracing::info!("took the owner's copy of {server} from the sync service");
         release_parked(handle);
         refresh_soon(handle);
     }
@@ -593,14 +612,18 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
         let Some(live) = guard.as_mut() else { return };
         let Some((server, want)) = live.route(stream) else { return };
         live.cursors.advance(stream, seq);
-        live.caught_up.insert(stream);
+        let first = live.caught_up.insert(stream);
+        let held = live.snapshots.contains_key(&server);
         let due = want.writes && !live.cursors.backfilled.contains(&stream.to_hex()) && !live.backfilling.contains(&stream);
-        (server, want, due, live.me)
+        (server, want, due, live.me, first && !held)
     };
     save_soon();
-    let (server, want, due, me) = found;
+    let (server, want, due, me, empty) = found;
     let app = handle.state::<App>();
     if app.awaits_snapshot(server) {
+        if empty {
+            tracing::info!("{server} waits for its owner's copy on the sync service");
+        }
         adopt_snapshot(handle, server);
         return;
     }
