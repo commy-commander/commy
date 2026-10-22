@@ -1,14 +1,19 @@
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use n0_future::time::{self, Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::Instant;
-use tokio_tungstenite::tungstenite::Message;
 
 use crate::stream::{SealError, StreamId, StreamKeys, APPEND_NONCE_BYTES};
-use crate::wire::{ClientFrame, ErrorCode, ServerFrame, KEEPALIVE_SECS, MAX_FRAME_BYTES};
+use crate::wire::{ClientFrame, ErrorCode, ServerFrame, KEEPALIVE_SECS};
+
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+#[path = "client/native.rs"]
+mod socket;
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+#[path = "client/browser.rs"]
+mod socket;
+
+use socket::{Incoming, Socket};
 
 const RECONNECT_STEPS_MS: [u64; 6] = [500, 2_000, 5_000, 10_000, 30_000, 60_000];
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -55,7 +60,7 @@ impl SyncClient {
     pub fn spawn(url: impl Into<String>) -> (SyncClient, mpsc::UnboundedReceiver<SyncEvent>) {
         let (commands, inbox) = mpsc::unbounded_channel();
         let (events, received) = mpsc::unbounded_channel();
-        tokio::spawn(Link::new(url.into(), events).run(inbox));
+        n0_future::task::spawn(Link::new(url.into(), events).run(inbox));
         (SyncClient { commands }, received)
     }
 
@@ -112,8 +117,6 @@ struct Link {
     reopen: HashMap<StreamId, Instant>,
 }
 
-type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 enum Ended {
     Lost,
     Stopped,
@@ -134,7 +137,7 @@ impl Link {
                 }
                 continue;
             }
-            match connect(&self.url).await {
+            match Socket::connect(&self.url).await {
                 Ok(socket) => {
                     failures = 0;
                     let _ = self.events.send(SyncEvent::Connected);
@@ -153,7 +156,7 @@ impl Link {
             let deadline = Instant::now() + wait;
             loop {
                 tokio::select! {
-                    _ = tokio::time::sleep_until(deadline) => break,
+                    _ = time::sleep_until(deadline) => break,
                     command = inbox.recv() => match command {
                         Some(Command::Nudge) => {
                             failures = 0;
@@ -177,10 +180,10 @@ impl Link {
         if self.flush_pending(&mut socket).await.is_err() {
             return Ended::Lost;
         }
-        let mut keepalive = tokio::time::interval(Duration::from_secs(KEEPALIVE_SECS));
+        let mut keepalive = time::interval(Duration::from_secs(KEEPALIVE_SECS));
         keepalive.tick().await;
         let mut heard = Instant::now();
-        let mut retry = tokio::time::interval(Duration::from_millis(500));
+        let mut retry = time::interval(Duration::from_millis(500));
         loop {
             tokio::select! {
                 command = inbox.recv() => match command {
@@ -193,19 +196,19 @@ impl Link {
                         self.take(command, Some(&mut socket)).await;
                     }
                     None => {
-                        let _ = socket.close(None).await;
+                        socket.close().await;
                         return Ended::Stopped;
                     }
                 },
                 message = socket.next() => {
                     heard = Instant::now();
                     match message {
-                        Some(Ok(Message::Text(text))) => match serde_json::from_str::<ServerFrame>(&text) {
+                        Incoming::Text(text) => match serde_json::from_str::<ServerFrame>(&text) {
                             Ok(frame) => self.handle(frame),
                             Err(e) => tracing::debug!("sync service sent an unknown frame: {e}"),
                         },
-                        Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Binary(_) | Message::Frame(_))) => {}
-                        Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return Ended::Lost,
+                        Incoming::Other => {}
+                        Incoming::Closed => return Ended::Lost,
                     }
                 }
                 _ = keepalive.tick() => {
@@ -366,31 +369,7 @@ fn reconnect_delay(failures: usize) -> Duration {
 
 async fn send(socket: &mut Socket, frame: &ClientFrame) -> Result<(), ()> {
     let text = serde_json::to_string(frame).map_err(|_| ())?;
-    socket.send(Message::Text(text.into())).await.map_err(|_| ())
-}
-
-fn tls() -> tokio_tungstenite::Connector {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
-    let config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .expect("ring supports the default TLS versions")
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    tokio_tungstenite::Connector::Rustls(Arc::new(config))
-}
-
-async fn connect(url: &str) -> Result<Socket, String> {
-    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
-        .max_message_size(Some(MAX_FRAME_BYTES))
-        .max_frame_size(Some(MAX_FRAME_BYTES));
-    let connector = url.starts_with("wss://").then(tls);
-    let attempt = tokio_tungstenite::connect_async_tls_with_config(url, Some(config), false, connector);
-    let (socket, _) = tokio::time::timeout(CONNECT_TIMEOUT, attempt)
-        .await
-        .map_err(|_| "timed out".to_string())?
-        .map_err(|e| e.to_string())?;
-    Ok(socket)
+    socket.send(text).await
 }
 
 #[cfg(test)]

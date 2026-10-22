@@ -1,6 +1,7 @@
 pub mod account;
 pub mod client;
 pub mod store;
+pub mod sync_book;
 
 #[cfg(target_arch = "wasm32")]
 mod host;

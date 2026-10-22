@@ -23,6 +23,15 @@ direct messages and server settings still need the desktop app.
   own devices for a copy of each server; that request is signed with your
   account identity, so the account server alone cannot obtain messages.
   Missing history comes from other members through the usual catch-up.
+- When the account server names a sync service (`endpoints.sync` in
+  `/.well-known/commy-auth.json`, on the same site), the browser also follows
+  the same end-to-end encrypted streams as the desktop app, through
+  `commy-sync`'s client over the browser's WebSocket: your account log (server
+  list and community keys) and each server's state and text channel streams.
+  A server can then open from its owner's signed snapshot with none of your
+  devices online, and messages you send are also added to the channel's
+  stream. The stream keys come from your server list key and the community
+  keys; the page's session is never sent to the sync service.
 
 ## Build
 

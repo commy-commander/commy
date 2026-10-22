@@ -21,6 +21,8 @@ use crate::client::{Applied, Client};
 use crate::host::Host;
 use crate::store::WebStore;
 
+mod sync;
+
 const DEVICE_NAME: &str = "Web browser";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +62,7 @@ pub struct Session {
     status: RefCell<Status>,
     node: Mutex<Option<CommyNode>>,
     store: RefCell<Option<SharedCatchupStore>>,
+    sync: RefCell<Option<sync::Live>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -97,6 +100,7 @@ impl Session {
             }),
             node: Mutex::new(None),
             store: RefCell::new(None),
+            sync: RefCell::new(None),
         })
     }
 
@@ -121,6 +125,10 @@ impl Session {
                 to_json(&self.client.borrow().get_messages(server, channel, around)?)
             }
             "send_message" => self.send_message(args).await,
+            "web_nudge" => {
+                self.nudge_sync();
+                Ok(Value::Null)
+            }
             _ => Err(format!("{cmd} is not available in the web app yet")),
         }
     }
@@ -167,6 +175,7 @@ impl Session {
     }
 
     async fn sign_out(&self) -> Result<Value, String> {
+        self.stop_sync();
         let _ = self.request("POST", account::SIGN_OUT_PATH, Some(json!({}))).await;
         self.host.remove(account::ENTRY_KEY_KEY);
         self.account_status().await
@@ -236,8 +245,8 @@ impl Session {
         };
         self.status.borrow_mut().sealed = Some(sealed.clone());
         let stored = account::stored_entry_key(self.host.load(account::ENTRY_KEY_KEY).as_deref(), &account.id);
-        if let Some(list) = stored.and_then(|key| EntryList::open(&key, &sealed).ok()) {
-            self.finish(list)?;
+        if let Some((key, list)) = stored.and_then(|key| Some((key.clone(), EntryList::open(&key, &sealed).ok()?))) {
+            self.finish(list, key)?;
             return Ok(self.unlock_view());
         }
         self.set_unlock(Unlock::Locked, "Approve this browser on one of your Commy devices, or enter your recovery code.");
@@ -340,10 +349,10 @@ impl Session {
         let sealed = self.status.borrow().sealed.clone().ok_or("Your server list has not loaded yet")?;
         let list = EntryList::open(&key, &sealed)?;
         self.host.save(account::ENTRY_KEY_KEY, &account::entry_key_record(&account.id, &key));
-        self.finish(list)
+        self.finish(list, key)
     }
 
-    fn finish(self: &Rc<Self>, list: EntryList) -> Result<(), String> {
+    fn finish(self: &Rc<Self>, list: EntryList, key: SealKey) -> Result<(), String> {
         let identity = list.shared_identity().ok_or(
             "Your server list does not carry your identity yet. Update Commy on your computer and let it sync.",
         )?;
@@ -357,6 +366,7 @@ impl Session {
         }
         self.set_unlock(Unlock::Unlocked, "");
         spawn_local(self.clone().load_servers(tickets));
+        spawn_local(self.clone().start_sync(key, list));
         Ok(())
     }
 
@@ -409,6 +419,7 @@ impl Session {
         }
         if installed {
             self.emit("servers-changed", Value::Null);
+            self.refresh_sync();
             let node = self.node.lock().await;
             if let Some(node) = node.as_ref() {
                 for server in wanted.iter().filter(|s| node.is_joined(**s)) {
@@ -447,11 +458,14 @@ impl Session {
     async fn run_events(self: Rc<Self>, mut events: mpsc::UnboundedReceiver<NetEvent>) {
         while let Some(event) = events.recv().await {
             match event {
-                NetEvent::Event { server, event, action, .. } => self.on_live(server, event, action),
+                NetEvent::Event { server, event, action, .. } => {
+                    self.apply_event(server, event, action, true, true);
+                }
                 NetEvent::SyncReceived { server, payload } => {
                     let installed = self.client.borrow().install_owner_snapshot(server, payload).unwrap_or(false);
                     if installed {
                         self.emit("servers-changed", Value::Null);
+                        self.refresh_sync();
                         let node = self.node.lock().await;
                         if let Some(node) = node.as_ref() {
                             for peer in node.neighbors(server) {
@@ -478,16 +492,17 @@ impl Session {
         }
     }
 
-    fn on_live(&self, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>) {
+    fn apply_event(&self, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
         let applied = self.client.borrow().apply_live(server, event, action);
         if let Applied::Created(message) = &applied {
-            if let Some(payload) = self.client.borrow().message_created_payload(server, message) {
+            if let Some(payload) = self.client.borrow().message_created_payload(server, message).filter(|_| rings) {
                 self.emit("message-created", payload);
             }
         }
-        if applied != Applied::Nothing {
+        if applied != Applied::Nothing && shown {
             self.emit("server-event", json!(server.to_string()));
         }
+        applied
     }
 
     async fn run_changes(self: Rc<Self>, mut changed: mpsc::UnboundedReceiver<ServerId>) {
@@ -496,7 +511,7 @@ impl Session {
         }
     }
 
-    async fn send_message(&self, args: Args) -> Result<Value, String> {
+    async fn send_message(self: &Rc<Self>, args: Args) -> Result<Value, String> {
         let server: ServerId = parse(args.server_id.as_ref(), "server")?;
         let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
         let reply_to: Option<MessageId> = args.reply_to.as_ref().map(|r| parse(Some(r), "message")).transpose()?;
@@ -514,6 +529,7 @@ impl Session {
         if !delivered {
             self.client.borrow_mut().pending.insert(message.id);
         }
+        self.send_to_service(server, &message);
         self.emit("server-event", json!(server.to_string()));
         to_json(&view.with_pending(!delivered))
     }

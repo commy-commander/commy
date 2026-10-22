@@ -7,6 +7,7 @@ pub const DEVICES_PATH: &str = "/api/auth/commy/devices";
 pub const LINK_CHALLENGE_PATH: &str = "/api/auth/commy/devices/challenge";
 pub const LINK_REGISTER_PATH: &str = "/api/auth/commy/devices/register";
 pub const VAULT_PATH: &str = "/api/auth/commy/vault?name=servers";
+pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
 
 pub const DEVICE_SECRET_KEY: &str = "commy.device";
 pub const ENTRY_KEY_KEY: &str = "commy.entry-key";
@@ -99,6 +100,22 @@ pub fn vault_data(reply: &Reply) -> Result<Option<String>, String> {
     }
 }
 
+pub fn sync_url(reply: &Reply, origin: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Endpoints {
+        sync: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Discovery {
+        endpoints: Endpoints,
+    }
+    if !reply.ok() {
+        return None;
+    }
+    let discovery: Discovery = serde_json::from_str(&reply.body).ok()?;
+    commy_sync::endpoint::accepted_url(origin, discovery.endpoints.sync.as_deref())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredKey {
     account: String,
@@ -173,6 +190,16 @@ mod tests {
         assert_eq!(vault_data(&reply(200, r#"{"name":"servers","data":"sealed1.x","version":3}"#)), Ok(Some("sealed1.x".into())));
         assert_eq!(vault_data(&reply(200, r#"{"name":"servers","data":null,"version":0}"#)), Ok(None));
         assert!(vault_data(&reply(404, "")).is_err());
+    }
+
+    #[test]
+    fn finds_the_sync_service_only_on_this_site() {
+        let doc = |sync: &str| reply(200, &format!(r#"{{"endpoints":{{"sync":"{sync}","auth":"x"}},"features":{{}}}}"#));
+        assert_eq!(sync_url(&doc("wss://commy.chat/sync"), "https://commy.chat").as_deref(), Some("wss://commy.chat/sync"));
+        assert_eq!(sync_url(&doc("wss://elsewhere.example/sync"), "https://commy.chat"), None);
+        assert_eq!(sync_url(&doc("ws://commy.chat/sync"), "https://commy.chat"), None);
+        assert_eq!(sync_url(&reply(200, r#"{"endpoints":{}}"#), "https://commy.chat"), None);
+        assert_eq!(sync_url(&reply(404, ""), "https://commy.chat"), None);
     }
 
     #[test]

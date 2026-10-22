@@ -20,6 +20,7 @@ pub const FRESH_TAIL: u32 = 200;
 pub const STATE_TAIL: u32 = 1_000;
 pub const SNAPSHOT_BYTES: usize = 48 * 1024;
 pub const BACKFILL_PER_CHANNEL: usize = 100;
+pub const RINGS_FOR_SECS: i64 = 10 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Lane {
@@ -166,6 +167,10 @@ pub fn decode_entry(plain: &[u8], lane: Lane) -> Option<WirePayload> {
         return None;
     }
     (lane_of_payload(&entry.payload) == Some(lane)).then_some(entry.payload)
+}
+
+pub fn rings(live_now: bool, created_at: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> bool {
+    live_now && (now - created_at).num_seconds() < RINGS_FOR_SECS
 }
 
 pub fn bootstrap(server: ServerId, key: KeyId, secret: &ChannelSecret) -> Want {
@@ -367,5 +372,13 @@ mod tests {
             .collect();
         assert_eq!(picked.len(), BACKFILL_PER_CHANNEL - 3);
         assert_eq!(picked, ids[5..ids.len() - 3].to_vec(), "oldest first, without the ones already there");
+    }
+
+    #[test]
+    fn only_fresh_live_messages_ring() {
+        let now = chrono::Utc::now();
+        assert!(rings(true, now - chrono::Duration::seconds(5), now));
+        assert!(!rings(false, now - chrono::Duration::seconds(5), now));
+        assert!(!rings(true, now - chrono::Duration::hours(1), now));
     }
 }

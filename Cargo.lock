@@ -1096,9 +1096,9 @@ dependencies = [
  "aes-gcm 0.11.1",
  "data-encoding",
  "ed25519-dalek 2.2.0",
- "futures-util",
  "getrandom 0.2.17",
  "hmac 0.13.0",
+ "n0-future",
  "rand 0.8.8",
  "rustls",
  "serde",
@@ -1109,6 +1109,7 @@ dependencies = [
  "tokio-tungstenite 0.28.0",
  "tracing",
  "webpki-roots 1.0.9",
+ "ws_stream_wasm",
 ]
 
 [[package]]
@@ -1154,6 +1155,7 @@ dependencies = [
  "chrono",
  "commy-core",
  "commy-net",
+ "commy-sync",
  "commy-view",
  "console_error_panic_hook",
  "data-encoding",
