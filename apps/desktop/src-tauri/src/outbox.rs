@@ -478,9 +478,7 @@ pub fn may_send(app: &App, neighbors: usize, event: &ServerEvent) -> bool {
 pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) -> bool {
     crate::wake::unrest(app).await;
     let payload = (!held_for_key(app, &event)).then(|| app.wire_for(server, event.clone()));
-    if let Some(payload) = &payload {
-        crate::community_sync::publish(server, payload);
-    }
+    let stored = payload.clone();
     let delivered = match send_now(app, server, &event, payload).await {
         Ok(Ok(())) => true,
         Ok(Err(e)) => {
@@ -491,6 +489,9 @@ pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) ->
     };
     if app.outbox.lock().unwrap().note_local(server, &event, delivered) {
         app.persist_outbox();
+    }
+    if let Some(payload) = &stored {
+        crate::community_sync::publish(server, payload);
     }
     delivered
 }
