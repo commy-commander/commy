@@ -69,6 +69,18 @@ jobs:
           npx tauri icon ../mobile/app-icon.png
           node ../mobile/android-project.mjs
 
+      - name: Keep the debug signing key
+        env:
+          ANDROID_DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+        run: |
+          if [ -n "$ANDROID_DEBUG_KEYSTORE" ]; then
+            mkdir -p ~/.android
+            printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore
+            echo "Signing with the debug key from ANDROID_DEBUG_KEYSTORE"
+          else
+            echo "ANDROID_DEBUG_KEYSTORE is not set, so this APK gets a new debug key"
+          fi
+
       - name: Build
         working-directory: apps/desktop/src-tauri
         run: |
