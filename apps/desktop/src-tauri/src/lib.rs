@@ -2531,7 +2531,7 @@ fn get_dm_messages(app: tauri::State<App>, user_id: String) -> CmdResult<Vec<DmM
         .as_ref()
         .map(|p| p.id)
         .ok_or("set a username first")?;
-    let pending = app.outbox.lock().unwrap().pending_dms(partner);
+    let pending = dm_sync::waiting_dms(&app, partner);
     let dms = app.dms.lock().unwrap();
     Ok(dms
         .posts(partner)
@@ -2611,21 +2611,25 @@ where
         return Err(if message.is_post() { "message not sent" } else { "nothing to change" }.into());
     }
     let envelope = DmEnvelope::new(message.clone(), app.profile_for(me, partner));
-    dm_sync::publish(app, partner, &envelope);
     let waiting = app.outbox.lock().unwrap().has_dms(partner);
     outbox::queue_dm(app, partner, message.id);
     app.persist_dms();
     access.emit("dm-sending", partner.to_string().into());
-    let delivered = !waiting && send(envelope).await;
+    let stored = dm_sync::publish(app, partner, &envelope).await;
+    if stored {
+        outbox::dm_held(app, partner, message.id);
+    }
+    let held = stored && dm_sync::partner_follows(app, partner);
+    let delivered = !held && !waiting && send(envelope).await;
     if delivered {
         outbox::dm_delivered(app, partner, message.id);
-    } else if waiting {
+    } else if waiting || held {
         outbox::wake_dm(app, partner);
     }
 
     let view = {
         let dms = app.dms.lock().unwrap();
-        message.is_post().then(|| dm_message_view(&message, me.id, &dms, !delivered))
+        message.is_post().then(|| dm_message_view(&message, me.id, &dms, !delivered && !held))
     };
     if app.safety.lock().unwrap().accepted.insert(partner) {
         app.persist_safety();
