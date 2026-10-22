@@ -14,10 +14,10 @@ pub const TRAY_ID: &str = "commy-tray";
 pub const ICON_PNG: &[u8] = include_bytes!("../icons/icon.png");
 
 const BADGE_RGB: [u8; 3] = [255, 77, 77];
-const RING_RGB: [u8; 3] = [11, 13, 23];
+const RING_RGB: [u8; 3] = [255, 255, 255];
 
 pub fn draw_bubble(rgba: &mut [u8], width: u32, height: u32, cx: f32, cy: f32, radius: f32) {
-    let ring = (radius * 0.14).max(1.0);
+    let ring = (radius * 0.2).max(1.0);
     for y in 0..height {
         for x in 0..width {
             let dx = x as f32 + 0.5 - cx;
@@ -37,9 +37,20 @@ pub fn draw_bubble(rgba: &mut [u8], width: u32, height: u32, cx: f32, cy: f32, r
 
 pub fn draw_badge(rgba: &mut [u8], width: u32, height: u32) {
     let size = width.min(height) as f32;
-    let radius = size * 0.3;
-    let ring = radius * 0.14;
-    draw_bubble(rgba, width, height, width as f32 - radius - ring, height as f32 - radius - ring, radius);
+    let radius = size * 0.27;
+    let ring = radius * 0.2;
+    draw_bubble(rgba, width, height, width as f32 - radius - ring, radius + ring, radius);
+}
+
+fn round_off(rgba: &mut image::RgbaImage) {
+    let (w, h) = rgba.dimensions();
+    let radius = w.min(h) as f32 / 2.0;
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    for (x, y, px) in rgba.enumerate_pixels_mut() {
+        let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+        let keep = (radius - d).clamp(0.0, 1.0);
+        px[3] = (px[3] as f32 * keep).round() as u8;
+    }
 }
 
 fn blend(px: &mut [u8], rgb: [u8; 3], alpha: f32) {
@@ -56,7 +67,9 @@ fn base_icon() -> Option<image::RgbaImage> {
         Some(chosen) => chosen,
         None => image::load_from_memory(ICON_PNG).ok()?.to_rgba8(),
     };
-    Some(image::imageops::resize(&source, 64, 64, image::imageops::FilterType::Triangle))
+    let mut small = image::imageops::resize(&source, 64, 64, image::imageops::FilterType::Triangle);
+    round_off(&mut small);
+    Some(small)
 }
 
 pub fn icon(unread: bool) -> Option<Image<'static>> {
@@ -175,13 +188,21 @@ mod tests {
     }
 
     #[test]
-    fn badge_paints_a_solid_bubble_bottom_right_only() {
+    fn badge_paints_a_solid_bubble_top_right_only() {
         let (w, h) = (64u32, 64u32);
         let mut rgba = vec![0u8; (w * h * 4) as usize];
         draw_badge(&mut rgba, w, h);
         assert_eq!(px(&rgba, w, 4, 4), [0, 0, 0, 0], "top-left untouched");
         let r = BADGE_RGB;
-        assert_eq!(px(&rgba, w, w - 10, h - 10), [r[0], r[1], r[2], 255], "the bubble is solid and blank");
+        assert_eq!(px(&rgba, w, w - 14, 14), [r[0], r[1], r[2], 255], "the bubble is solid and blank, top right");
+        assert_eq!(px(&rgba, w, 4, h - 4), [0, 0, 0, 0], "bottom-left untouched");
+    }
+
+    #[test]
+    fn tray_icon_is_round() {
+        let icon = base_icon().expect("bundled icon decodes");
+        assert_eq!(icon.get_pixel(0, 0)[3], 0, "corner is transparent");
+        assert_eq!(icon.get_pixel(32, 32)[3], 255, "centre is opaque");
     }
 
     #[test]
