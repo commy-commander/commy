@@ -837,6 +837,8 @@ async function mockInvoke(cmd, args = {}) {
     case "search_dms": return mockSearchDms(args);
     case "get_pins": return mockPinViews(args.channelId || null);
     case "saved_list": return mockSavedStore();
+    case "sync_prefs_load": return {};
+    case "sync_prefs_set": return null;
     case "saved_set": {
       const store = mockSavedStore();
       store.saved = store.saved.filter(s => s.message !== args.entry.message);
@@ -3352,8 +3354,29 @@ function notifyPrefs() {
   }
 }
 
-function saveNotifyPrefs(prefs) {
+function saveNotifyPrefs(prefs, { fromSync = false } = {}) {
+  const before = fromSync ? null : notifyPrefs();
   try { localStorage.setItem(NOTIFY_KEY, JSON.stringify(prefs)); } catch {}
+  if (fromSync) return;
+  const changes = changedPieces(before, prefs);
+  if (Object.keys(changes).length) invoke("sync_prefs_set", { changes }).catch(() => {});
+}
+
+function applySyncedPrefs(set) {
+  saveNotifyPrefs(prefsWithPieces(notifyPrefs(), syncedValues(set)), { fromSync: true });
+  $("notify-level").value = notifyPrefs().level;
+  $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
+  renderServerRail();
+  if (state.currentServer) renderChannels();
+}
+
+async function loadSyncedPrefs() {
+  try {
+    const { prefs, publish } = startupPrefs(notifyPrefs(), await invoke("sync_prefs_load"));
+    saveNotifyPrefs(prefs, { fromSync: true });
+    applySyncedPrefs({});
+    if (Object.keys(publish).length) await invoke("sync_prefs_set", { changes: publish });
+  } catch {}
 }
 
 let friendOnline = createFriendOnlineTracker();
@@ -16540,6 +16563,9 @@ function wireEvents() {
     window.__TAURI__.event.listen("typing", event => onTyping(event.payload));
     window.__TAURI__.event.listen("messages-caught-up", event => onMessagesCaughtUp(event.payload));
     window.__TAURI__.event.listen("read-state-changed", event => applyReadView(event.payload));
+    window.__TAURI__.event.listen("sync-prefs-changed", event => applySyncedPrefs(event.payload));
+    window.__TAURI__.event.listen("saved-changed", event => applySavedStore(event.payload));
+    loadSyncedPrefs();
     window.__TAURI__.event.listen("dm-received", event => onDmReceived(event.payload));
     window.__TAURI__.event.listen("dm-call", event => onDmCall(event.payload));
     invoke("get_dm_call").then(call => call && onDmCall(call)).catch(() => {});

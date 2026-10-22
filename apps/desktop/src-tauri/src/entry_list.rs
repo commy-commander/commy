@@ -465,7 +465,11 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
         }
 
         let local = local_list(&app, &dir);
-        let merged = EntryList::merge(&shared, &local);
+        let log = crate::account_log::servers(&app);
+        let merged = match &log {
+            Some(log) => EntryList::merge(&EntryList::merge(&shared, log), &local),
+            None => EntryList::merge(&shared, &local),
+        };
         if merged.profile_at != local.profile_at && !same_shared_fields(merged.profile.as_ref(), local.profile.as_ref()) {
             if take_profile_edits(handle, &app, merged.profile.as_ref()) {
                 if let Some(at) = merged.profile_at {
@@ -474,6 +478,9 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
             }
         }
         join_missing(handle, &app, &merged, &local).await;
+        if let Some(log) = &log {
+            crate::account_log::publish_servers(&app, log, &merged);
+        }
 
         if merged == shared && item.data.is_some() {
             return finish(handle, "synced", "", merged.servers.len(), true).await;
@@ -497,6 +504,7 @@ async fn finish(handle: &AppHandle, state: &str, detail: &str, servers: usize, h
     set_status(handle, state, detail, servers, has_key);
     if state == "synced" {
         crate::read_state::schedule(handle);
+        crate::account_log::ensure(handle);
     }
     crate::settle::settle_key(handle).await;
     Ok(())

@@ -1,5 +1,6 @@
 mod account;
 mod account_folder;
+mod account_log;
 mod app_icon;
 mod browser;
 mod activity;
@@ -11,6 +12,7 @@ mod catchup;
 mod channel_lock;
 mod deleted;
 mod devices;
+mod dm_sync;
 mod directory;
 mod doorbell;
 mod expressions;
@@ -37,6 +39,7 @@ mod settle;
 mod state;
 mod storage;
 mod stream_deck;
+mod sync_link;
 mod templates;
 mod toast;
 mod tray;
@@ -2606,6 +2609,7 @@ where
         return Err(if message.is_post() { "message not sent" } else { "nothing to change" }.into());
     }
     let envelope = DmEnvelope::new(message.clone(), app.profile_for(me, partner));
+    dm_sync::publish(app, partner, &envelope);
     let waiting = app.outbox.lock().unwrap().has_dms(partner);
     outbox::queue_dm(app, partner, message.id);
     app.persist_dms();
@@ -7927,6 +7931,7 @@ async fn run_dm_loop(
             outbox::Received::Call { from, call, signal } => calls::on_signal(&app, &handle, from, call, signal).await,
             outbox::Received::GroupInvite { from, ticket } => join_group(&app, &handle, from, &ticket).await,
             outbox::Received::Taken => {
+                dm_sync::noticed(&handle, sender);
                 let contact = app.dms.lock().unwrap().contacts.get(&sender).cloned();
                 if let Some(profile) = contact {
                     profile_images::prefetch(&handle, &profile);
@@ -8348,6 +8353,8 @@ pub fn run() {
             doorbell::get_awaited,
             link_preview::prepare_link_preview,
             account::account_status,
+            account_log::sync_prefs_load,
+            account_log::sync_prefs_set,
             account::set_account_server,
             account::account_begin_sign_in,
             account::account_cancel_sign_in,

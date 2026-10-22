@@ -70,6 +70,10 @@ impl SealKey {
         Self(hash.finalize().into())
     }
 
+    pub fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
     pub fn to_text(&self) -> String {
         BASE64URL_NOPAD.encode(&self.0)
     }
