@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withCommyNeeds, withCommyDependencies, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS } from "./android-project.mjs";
+import { withCommyNeeds, withCommyDependencies, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, MAX_SDK } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -144,4 +144,10 @@ test("invite links open the main screen, once, through the commy scheme", () => 
 
 test("a manifest without the main screen is refused", () => {
   assert.throws(() => withCommyNeeds(generated.replace('android:name=".MainActivity"', 'android:name=".Other"')), /MainActivity/);
+});
+
+test("the old Bluetooth permission only applies where Android still needs it for headsets", () => {
+  const out = withCommyNeeds(generated);
+  assert.match(out, /"android.permission.BLUETOOTH" android:maxSdkVersion="30"/);
+  assert.equal(MAX_SDK["android.permission.BLUETOOTH"], 30);
 });

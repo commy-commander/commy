@@ -12,7 +12,10 @@ export const PERMISSIONS = [
   "android.permission.FOREGROUND_SERVICE_MICROPHONE",
   "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
   "android.permission.WAKE_LOCK",
+  "android.permission.BLUETOOTH",
 ];
+
+export const MAX_SDK = { "android.permission.BLUETOOTH": 30 };
 
 export const FEATURES = [
   "android.hardware.camera",
@@ -34,7 +37,7 @@ export const COMPONENTS = [
   },
 ];
 
-const usesPermission = name => `<uses-permission android:name="${name}" />`;
+const usesPermission = name => (MAX_SDK[name] ? `<uses-permission android:name="${name}" android:maxSdkVersion="${MAX_SDK[name]}" />` : `<uses-permission android:name="${name}" />`);
 const usesFeature = name => `<uses-feature android:name="${name}" android:required="false" />`;
 
 export const INVITE_LINKS = `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="commy" android:host="i" /></intent-filter>`;
