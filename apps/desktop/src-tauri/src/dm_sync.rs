@@ -335,10 +335,12 @@ pub fn publish(app: &App, partner: UserId, envelope: &DmEnvelope) {
     let stream = keys.id;
     let wake = rings(&envelope.message).then(|| keys.wake_tag(&partner.to_string(), push_wake::today()));
     let http = app.http.clone();
+    let mut new_partner = false;
     let client = {
         let mut guard = LIVE.lock().unwrap();
         let Some(live) = guard.as_mut().filter(|l| l.me_key == identity.public()) else { return };
         if !live.pool.follows(stream) {
+            new_partner = true;
             let after = account_log::dm_cursor(app, &stream.to_hex());
             live.partners.entry(partner).or_insert_with(|| Partner { key, streams: BTreeMap::new() }).streams.insert(epoch, stream);
             live.owners.insert(stream, partner);
@@ -346,6 +348,9 @@ pub fn publish(app: &App, partner: UserId, envelope: &DmEnvelope) {
         }
         live.pool.client_for(stream)
     };
+    if new_partner {
+        push_wake::register_again();
+    }
     let plain = sync_streams::encode_dm(envelope);
     tauri::async_runtime::spawn(async move {
         match sync_link::append(client, stream, plain).await {
