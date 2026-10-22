@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -170,4 +170,12 @@ test("a server can ignore @everyone and @here or role mentions while @you always
   prefs = withServerFilter(prefs, "s1", "suppressEveryone", false);
   assert.deepEqual(prefs.suppressEveryone, {});
   assert.equal(withServerFilter(prefs, "s1", "level", true), prefs, "only the mention filters are set here");
+});
+
+test("the phone app stays quiet while it is on screen and notifies once it is not", () => {
+  assert.equal(phoneInFront(true, "visible"), true);
+  assert.equal(phoneInFront(true, "hidden"), false);
+  assert.equal(phoneInFront(false, "visible"), false);
+  assert.equal(shouldNotify({ level: "all", presence: "online", focusedOnIt: false, phoneInFront: true, isDm: true, mentioned: true }), false);
+  assert.equal(shouldNotify({ level: "all", presence: "online", focusedOnIt: false, phoneInFront: false, isDm: true, mentioned: true }), true);
 });

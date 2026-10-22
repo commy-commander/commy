@@ -2,8 +2,8 @@ const DEFAULT_NOTIFY_LEVEL = "all";
 
 const RECENT_SECS = 15 * 60;
 
-function shouldNotify({ level, presence, focusedOnIt, isDm, mentioned, announcement }) {
-  if (presence === "do_not_disturb" || level === "none" || focusedOnIt) return false;
+function shouldNotify({ level, presence, focusedOnIt, phoneInFront, isDm, mentioned, announcement }) {
+  if (presence === "do_not_disturb" || level === "none" || focusedOnIt || phoneInFront) return false;
   if (isDm || level === "all") return true;
   if (level === "online") return presence === "online" || !presence;
   return level === "mentions" && Boolean(mentioned || announcement);
@@ -128,9 +128,13 @@ function caughtUpNotice({ count, author_name, channel_name, server_name, content
   };
 }
 
+function phoneInFront(mobileApp, visibility) {
+  return Boolean(mobileApp) && visibility === "visible";
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted,
-    channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, MENTION_FILTERS, filterOn, mentionReaches, withServerFilter,
+    channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, MENTION_FILTERS, filterOn, mentionReaches, withServerFilter, phoneInFront,
   };
 }
