@@ -68,7 +68,14 @@ pub type AppendNonce = Bytes<APPEND_NONCE_BYTES>;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ClientFrame {
-    Open { stream: StreamId, write: Bytes<32>, read: Bytes<32>, after: u64 },
+    Open {
+        stream: StreamId,
+        write: Bytes<32>,
+        read: Bytes<32>,
+        after: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tail: Option<u32>,
+    },
     Append { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
     Close { stream: StreamId },
     Ping,
@@ -76,7 +83,12 @@ pub enum ClientFrame {
 
 impl ClientFrame {
     pub fn open(keys: &StreamKeys, after: u64) -> Self {
-        ClientFrame::Open { stream: keys.id, write: Bytes(keys.write_public()), read: Bytes(keys.read_token()), after }
+        Self::open_tail(keys, after, None)
+    }
+
+    pub fn open_tail(keys: &StreamKeys, after: u64, tail: Option<u32>) -> Self {
+        let tail = tail.filter(|_| after == 0);
+        ClientFrame::Open { stream: keys.id, write: Bytes(keys.write_public()), read: Bytes(keys.read_token()), after, tail }
     }
 
     pub fn append(keys: &StreamKeys, nonce: [u8; APPEND_NONCE_BYTES], body: Vec<u8>) -> Self {
@@ -150,6 +162,7 @@ mod tests {
         let keys = StreamSecret::random().keys();
         let frames = [
             ClientFrame::open(&keys, 41),
+            ClientFrame::open_tail(&keys, 0, Some(50)),
             ClientFrame::append(&keys, [5; APPEND_NONCE_BYTES], vec![1, 2, 3]),
             ClientFrame::Close { stream: keys.id },
             ClientFrame::Ping,
@@ -162,6 +175,9 @@ mod tests {
         assert_eq!(json["t"], "open");
         assert_eq!(json["stream"], keys.id.to_hex());
         assert_eq!(json["after"], 41);
+        assert!(json.get("tail").is_none(), "older services see the frame they know");
+        assert_eq!(serde_json::to_value(ClientFrame::open_tail(&keys, 0, Some(200))).unwrap()["tail"], 200);
+        assert!(serde_json::to_value(ClientFrame::open_tail(&keys, 9, Some(200))).unwrap().get("tail").is_none(), "a cursor wins over a tail");
     }
 
     #[test]

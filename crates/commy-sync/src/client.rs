@@ -40,7 +40,7 @@ pub enum AppendError {
 type Reply = oneshot::Sender<Result<u64, AppendError>>;
 
 enum Command {
-    Follow { keys: Box<StreamKeys>, after: u64 },
+    Follow { keys: Box<StreamKeys>, after: u64, tail: Option<u32> },
     Unfollow { stream: StreamId },
     Append { stream: StreamId, plain: Vec<u8>, reply: Reply },
     Nudge,
@@ -60,7 +60,11 @@ impl SyncClient {
     }
 
     pub fn follow(&self, keys: StreamKeys, after: u64) {
-        let _ = self.commands.send(Command::Follow { keys: Box::new(keys), after });
+        self.follow_tail(keys, after, None);
+    }
+
+    pub fn follow_tail(&self, keys: StreamKeys, after: u64, tail: Option<u32>) {
+        let _ = self.commands.send(Command::Follow { keys: Box::new(keys), after, tail });
     }
 
     pub fn unfollow(&self, stream: StreamId) {
@@ -85,6 +89,13 @@ impl SyncClient {
 struct Followed {
     keys: StreamKeys,
     after: u64,
+    tail: Option<u32>,
+}
+
+impl Followed {
+    fn open(&self) -> ClientFrame {
+        ClientFrame::open_tail(&self.keys, self.after, self.tail)
+    }
 }
 
 struct Pending {
@@ -158,7 +169,7 @@ impl Link {
 
     async fn serve(&mut self, mut socket: Socket, inbox: &mut mpsc::UnboundedReceiver<Command>) -> Ended {
         for followed in self.streams.values() {
-            if send(&mut socket, &ClientFrame::open(&followed.keys, followed.after)).await.is_err() {
+            if send(&mut socket, &followed.open()).await.is_err() {
                 return Ended::Lost;
             }
         }
@@ -214,10 +225,11 @@ impl Link {
     async fn take(&mut self, command: Command, socket: Option<&mut Socket>) {
         match command {
             Command::Nudge => {}
-            Command::Follow { keys, after } => {
+            Command::Follow { keys, after, tail } => {
                 let after = self.streams.get(&keys.id).map_or(after, |f| f.after.max(after));
-                let open = ClientFrame::open(&keys, after);
-                self.streams.insert(keys.id, Followed { keys: *keys, after });
+                let followed = Followed { keys: *keys, after, tail };
+                let open = followed.open();
+                self.streams.insert(followed.keys.id, followed);
                 if let Some(socket) = socket {
                     let _ = send(socket, &open).await;
                 }
@@ -265,7 +277,7 @@ impl Link {
         for stream in due {
             self.reopen.remove(&stream);
             if let Some(followed) = self.streams.get(&stream) {
-                send(socket, &ClientFrame::open(&followed.keys, followed.after)).await?;
+                send(socket, &followed.open()).await?;
             }
         }
         for pending in self.pending.values_mut().filter(|p| p.not_before <= now) {

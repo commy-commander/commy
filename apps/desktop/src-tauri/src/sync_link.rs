@@ -63,7 +63,11 @@ pub struct Pool {
 impl Pool {
     pub fn new(url: &str) -> (Pool, mpsc::UnboundedReceiver<SyncEvent>) {
         let (events, received) = mpsc::unbounded_channel();
-        (Pool { url: url.to_string(), slots: Vec::new(), home: HashMap::new(), events }, received)
+        (Pool::with_events(url, events), received)
+    }
+
+    pub fn with_events(url: &str, events: mpsc::UnboundedSender<SyncEvent>) -> Pool {
+        Pool { url: url.to_string(), slots: Vec::new(), home: HashMap::new(), events }
     }
 
     pub fn follows(&self, stream: StreamId) -> bool {
@@ -88,6 +92,10 @@ impl Pool {
     }
 
     pub fn follow_together(&mut self, group: Vec<(StreamKeys, u64)>) {
+        self.follow_together_tail(group, None);
+    }
+
+    pub fn follow_together_tail(&mut self, group: Vec<(StreamKeys, u64)>, tail: Option<u32>) {
         let fresh: Vec<(StreamKeys, u64)> = group.into_iter().filter(|(keys, _)| !self.home.contains_key(&keys.id)).collect();
         if fresh.is_empty() {
             return;
@@ -97,7 +105,7 @@ impl Pool {
             let at = if self.slots[at].streams < MAX_STREAMS_PER_CONNECTION { at } else { self.slot_with_room(1) };
             self.home.insert(keys.id, at);
             self.slots[at].streams += 1;
-            self.slots[at].client.follow(keys, after);
+            self.slots[at].client.follow_tail(keys, after, tail);
         }
     }
 

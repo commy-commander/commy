@@ -7,7 +7,7 @@ use commy_core::{
     UserId, UserProfile,
 };
 use commy_net::node::IncomingDm;
-use commy_net::DmEnvelope;
+use commy_net::{DmEnvelope, WirePayload};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -477,7 +477,11 @@ pub fn may_send(app: &App, neighbors: usize, event: &ServerEvent) -> bool {
 
 pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) -> bool {
     crate::wake::unrest(app).await;
-    let delivered = match send_now(app, server, &event).await {
+    let payload = (!held_for_key(app, &event)).then(|| app.wire_for(server, event.clone()));
+    if let Some(payload) = &payload {
+        crate::community_sync::publish(server, payload);
+    }
+    let delivered = match send_now(app, server, &event, payload).await {
         Ok(Ok(())) => true,
         Ok(Err(e)) => {
             tracing::warn!("broadcast failed, keeping it for later: {e}");
@@ -491,11 +495,17 @@ pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) ->
     delivered
 }
 
-async fn send_now(app: &App, server: ServerId, event: &ServerEvent) -> Result<anyhow::Result<()>, &'static str> {
+async fn send_now(
+    app: &App,
+    server: ServerId,
+    event: &ServerEvent,
+    payload: Option<WirePayload>,
+) -> Result<anyhow::Result<()>, &'static str> {
     let net = app.net.lock().await;
     match net.as_ref() {
         Some(node) if may_send(app, node.neighbor_count(server), event) => {
-            Ok(node.broadcast(server, app.wire_for(server, event.clone())).await)
+            let payload = payload.unwrap_or_else(|| app.wire_for(server, event.clone()));
+            Ok(node.broadcast(server, payload).await)
         }
         Some(_) => Err("no neighbor is connected"),
         None => Err("network is not ready"),
@@ -514,7 +524,7 @@ pub async fn flush_queued(app: &App, server: ServerId) {
     let mut left = Vec::new();
     let mut events = events.into_iter();
     while let Some(entry) = events.next() {
-        if let Err(e) = send_now(app, server, &entry.1).await.unwrap_or_else(|why| Err(anyhow::anyhow!(why))) {
+        if let Err(e) = send_now(app, server, &entry.1, None).await.unwrap_or_else(|why| Err(anyhow::anyhow!(why))) {
             tracing::warn!("re-sending queued events stopped: {e}");
             left.push(entry);
             left.extend(events);
