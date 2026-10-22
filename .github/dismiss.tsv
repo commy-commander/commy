@@ -1,0 +1,34 @@
+8	used in tests	Fixed key inside the doorbell module's #[cfg(test)] tests; no shipped code uses it.
+9	used in tests	Fixed key inside the doorbell module's #[cfg(test)] tests; no shipped code uses it.
+10	used in tests	Fixed key inside the doorbell module's #[cfg(test)] tests; no shipped code uses it.
+52	used in tests	Fixed key inside local_key's #[cfg(test)] tests; real keys come from the OS keychain or OsRng.
+53	used in tests	Fixed key inside local_key's #[cfg(test)] tests; real keys come from the OS keychain or OsRng.
+54	used in tests	Fixed key inside local_key's #[cfg(test)] tests; real keys come from the OS keychain or OsRng.
+57	used in tests	Fixed key inside local_key's #[cfg(test)] tests; real keys come from the OS keychain or OsRng.
+58	used in tests	Fixed key inside local_key's #[cfg(test)] tests; real keys come from the OS keychain or OsRng.
+59	used in tests	Fixed key inside local_key's #[cfg(test)] tests; real keys come from the OS keychain or OsRng.
+60	used in tests	Fixed key inside local_key's #[cfg(test)] tests; real keys come from the OS keychain or OsRng.
+55	used in tests	Fixed key inside at_rest's #[cfg(test)] tests; no shipped code uses it.
+56	used in tests	Fixed key inside at_rest's #[cfg(test)] tests; no shipped code uses it.
+64	used in tests	Fixed key inside at_rest's #[cfg(test)] tests; no shipped code uses it.
+61	used in tests	Fixed key inside account_folder's #[cfg(test)] tests; real folder keys come from OsRng.
+62	used in tests	Fixed key inside account_folder's #[cfg(test)] tests; real folder keys come from OsRng.
+63	used in tests	Fixed key inside account_folder's #[cfg(test)] tests; real folder keys come from OsRng.
+66	used in tests	Fixed nonce inside commy-sync stream.rs #[cfg(test)] tests; sealing uses random nonces.
+67	used in tests	Fixed nonce inside commy-sync stream.rs #[cfg(test)] tests; sealing uses random nonces.
+68	used in tests	Fixed nonce inside commy-sync-server store.rs #[cfg(test)] tests.
+69	used in tests	Fixed nonce inside commy-sync-server store.rs #[cfg(test)] tests.
+70	used in tests	Fixed nonce inside commy-sync-server store.rs #[cfg(test)] tests.
+71	used in tests	Fixed nonce inside commy-sync-server store.rs #[cfg(test)] tests.
+72	used in tests	Fixed nonce inside commy-sync-server store.rs #[cfg(test)] tests.
+73	used in tests	Fixed nonce inside commy-sync-server store.rs #[cfg(test)] tests.
+74	used in tests	Fixed nonce in the commy-sync-server integration tests (tests/service.rs).
+75	used in tests	Fixed nonce in the commy-sync-server integration tests (tests/service.rs).
+76	used in tests	Fixed nonce inside commy-sync wire.rs #[cfg(test)] tests.
+77	used in tests	Fixed nonce inside commy-sync wire.rs #[cfg(test)] tests.
+5	used in tests	assert_eq! failure message in a catchup unit test; the value is a test user's display name, not a secret.
+65	false positive	Public HKDF domain-separation salt (RFC 5869 allows a fixed, non-secret salt). The secret is the random stream root key; changing it would break every existing stream.
+78	false positive	Public HKDF-extract domain-separation salt over an X25519 shared secret (RFC 5869). The salt is not a key and is not meant to be secret.
+2	false positive	The bearer token is sent to the account server it belongs to over HTTPS by reqwest; nothing writes it to a log. Errors are replaced with fixed strings.
+11	false positive	commy-bot init prints the bot's own new display name to the operator's terminal. A display name is public, not a credential.
+1	false positive	Pasted HTML is parsed with DOMParser into an inert document (no scripts, no loads); only an img src matching ^https?:// is read and put into a textarea as plain text.
