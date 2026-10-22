@@ -2,10 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
+use commy_core::channel_key::{ChannelSecret, KeyId, Keyring};
 use commy_core::{
     Action, ChannelId, ChannelKind, Identity, Message, MessageId, Permissions, ServerEvent, ServerId, ServerState,
     Snapshot, UserId, UserProfile,
 };
+use commy_net::community_streams::{self as streams, Lane, Want};
 use commy_net::protocol::{gossip_size, verify_sync_response, SyncMember, MAX_GOSSIP_BYTES};
 use commy_net::{ServerTicket, WirePayload};
 use commy_view::keys::KeyHolder;
@@ -155,21 +157,39 @@ impl Client {
     }
 
     pub fn install_owner_snapshot(&self, server: ServerId, payload: WirePayload) -> Result<bool, String> {
+        self.install_snapshot(server, payload, SNAPSHOT_MAX_AGE_MS, None)
+    }
+
+    pub fn install_service_snapshot(&self, server: ServerId, payload: WirePayload, joined_ms: Option<i64>) -> Result<bool, String> {
+        self.install_snapshot(server, payload, streams::RETENTION_MS, joined_ms)
+    }
+
+    pub fn vouched(&self, server: ServerId, payload: &WirePayload, max_age_ms: i64) -> Result<(), String> {
         let ticket = self.tickets.get(&server).ok_or("No invite for that server")?;
         let (owner, key) = ticket.owner.ok_or("That invite does not name its owner")?;
-        let WirePayload::SyncResponse { server: remote, by, at, .. } = &payload else {
-            return Ok(false);
+        let WirePayload::SyncResponse { server: remote, by, at, .. } = payload else {
+            return Err("That is not a server copy".into());
         };
-        let fresh = (Utc::now().timestamp_millis() - *at).abs() <= SNAPSHOT_MAX_AGE_MS;
-        if remote.id != server || *by != owner || remote.owner != owner || !fresh || !verify_sync_response(&payload, &key) {
+        let fresh = (Utc::now().timestamp_millis() - *at).abs() <= max_age_ms;
+        if remote.id != server || *by != owner || remote.owner != owner || !fresh || !verify_sync_response(payload, &key) {
             return Err("Ignored a server copy its owner did not sign".into());
         }
+        Ok(())
+    }
+
+    fn install_snapshot(&self, server: ServerId, payload: WirePayload, max_age_ms: i64, joined_ms: Option<i64>) -> Result<bool, String> {
+        if !matches!(payload, WirePayload::SyncResponse { .. }) {
+            return Ok(false);
+        }
+        self.vouched(server, &payload, max_age_ms)?;
         let WirePayload::SyncResponse { server: mut remote, members, profiles, recent_messages, at, .. } = payload else {
             return Ok(false);
         };
-        let me = self.me_id().ok_or("Your servers are not unlocked yet")?;
+        let me = self.profile().ok_or("Your servers are not unlocked yet")?;
         remote.members = members.into_iter().map(member_of).collect();
-        if !remote.is_member(me) {
+        let member = remote.is_member(me.id);
+        let before_i_joined = joined_ms.is_some_and(|joined| at < joined);
+        if remote.banned.contains(&me.id) || (!member && !before_i_joined) {
             return Err("You are not a member of that server yet".into());
         }
         let mut servers = self.servers.lock().unwrap();
@@ -181,11 +201,55 @@ impl Client {
         for profile in profiles {
             state.profiles.insert(profile.id, profile.as_seen_by_others());
         }
+        if !member && state.apply(ServerEvent::MemberJoin { server, profile: me }) != Ok(true) {
+            return Err("Could not join that server from its copy".into());
+        }
         for message in recent_messages {
             let _ = state.apply(ServerEvent::MessageCreate { message });
         }
         servers.insert(server, state);
         Ok(true)
+    }
+
+    pub fn learn_profiles(&self, server: ServerId, payload: &WirePayload) -> bool {
+        if self.vouched(server, payload, streams::RETENTION_MS).is_err() {
+            return false;
+        }
+        let WirePayload::SyncResponse { profiles, .. } = payload else { return false };
+        let mut servers = self.servers.lock().unwrap();
+        let Some(state) = servers.get_mut(&server) else { return false };
+        !commy_net::catchup::apply_profiles(state, profiles.clone()).is_empty()
+    }
+
+    pub fn forget(&mut self, server: ServerId) {
+        self.tickets.remove(&server);
+        self.servers.lock().unwrap().remove(&server);
+    }
+
+    pub fn sync_wants(&self, given: &HashMap<ServerId, (KeyId, ChannelSecret)>, now_ms: i64) -> HashMap<ServerId, Vec<Want>> {
+        let Some((me, identity)) = self.me.lock().unwrap().as_ref().map(|(profile, identity)| (profile.id, identity.clone())) else {
+            return HashMap::new();
+        };
+        let holder = KeyHolder::new(Some((me, identity.clone())));
+        let servers = self.servers.lock().unwrap();
+        self.tickets
+            .keys()
+            .filter_map(|sid| {
+                let given = given.get(sid).cloned();
+                let Some(state) = servers.get(sid) else {
+                    let (key, secret) = given?;
+                    return Some((*sid, vec![streams::bootstrap(*sid, key, &secret)]));
+                };
+                let community = holder.community_ring(state, given.clone())?;
+                let locked = |channel| Keyring::unlock(state, channel, me, &identity);
+                let mut wants = streams::wanted(state, me, &community, locked, now_ms);
+                let stranded = !wants.iter().any(|w| w.lane == Lane::State) && state.server.is_current_member(me) && !state.is_deleted();
+                if let Some((key, secret)) = given.filter(|_| stranded) {
+                    wants.push(streams::bootstrap(*sid, key, &secret));
+                }
+                (!wants.is_empty()).then_some((*sid, wants))
+            })
+            .collect()
     }
 
     pub fn message_created_payload(&self, server: ServerId, message: &Message) -> Option<serde_json::Value> {
@@ -379,5 +443,112 @@ mod tests {
         sign_sync_response(&mut payload, Utc::now().timestamp_millis(), &Identity::generate());
         assert!(w.client.install_owner_snapshot(w.server, payload).is_err());
         assert!(!w.client.has(w.server));
+    }
+
+    fn signed_snapshot(w: &World, at: i64) -> WirePayload {
+        let mut payload = build_sync_response(&w.state, 50, w.owner.0.id);
+        sign_sync_response(&mut payload, at, &w.owner.1);
+        payload
+    }
+
+    #[test]
+    fn a_service_snapshot_installs_a_listed_server_even_before_i_appear_in_it() {
+        let mut w = world();
+        let me = w.client.profile().unwrap();
+        w.state.server.members.retain(|m| m.user != me.id);
+        let owner_key = w.owner.1.public();
+        with_ticket(&mut w, owner_key);
+        let week_old = Utc::now().timestamp_millis() - 7 * 24 * 3600 * 1000;
+        assert!(w.client.install_owner_snapshot(w.server, signed_snapshot(&w, week_old)).is_err(), "too old for a live copy");
+        assert!(w.client.install_service_snapshot(w.server, signed_snapshot(&w, week_old), None).is_err(), "not in it and no later join");
+        let joined_after = Some(week_old + 1);
+        assert!(w.client.install_service_snapshot(w.server, signed_snapshot(&w, week_old), joined_after).unwrap());
+        assert!(w.client.servers.lock().unwrap()[&w.server].server.is_member(me.id));
+        assert_eq!(w.client.get_messages(w.server, w.channel, None).unwrap()[0].content, "hello");
+    }
+
+    #[test]
+    fn a_service_snapshot_past_retention_or_from_a_stranger_is_refused() {
+        let mut w = world();
+        let owner_key = w.owner.1.public();
+        with_ticket(&mut w, owner_key);
+        let ancient = Utc::now().timestamp_millis() - streams::RETENTION_MS - 60_000;
+        assert!(w.client.install_service_snapshot(w.server, signed_snapshot(&w, ancient), None).is_err());
+        let mut forged = build_sync_response(&w.state, 50, w.owner.0.id);
+        sign_sync_response(&mut forged, Utc::now().timestamp_millis(), &Identity::generate());
+        assert!(w.client.install_service_snapshot(w.server, forged, None).is_err());
+        assert!(!w.client.has(w.server));
+    }
+
+    #[test]
+    fn a_service_snapshot_that_bans_me_is_refused() {
+        let mut w = world();
+        let me = w.client.profile().unwrap();
+        w.state.server.members.retain(|m| m.user != me.id);
+        w.state.server.banned.push(me.id);
+        let owner_key = w.owner.1.public();
+        with_ticket(&mut w, owner_key);
+        let now = Utc::now().timestamp_millis();
+        assert!(w.client.install_service_snapshot(w.server, signed_snapshot(&w, now), Some(now + 1)).is_err());
+        assert!(!w.client.has(w.server));
+    }
+
+    #[test]
+    fn a_vouched_snapshot_teaches_profiles_of_an_installed_server() {
+        let mut w = world();
+        let owner_key = w.owner.1.public();
+        with_ticket(&mut w, owner_key);
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        let mut newcomer = UserProfile::new("newcomer");
+        newcomer.identity = Some(Identity::generate().public());
+        w.state.apply(ServerEvent::MemberJoin { server: w.server, profile: newcomer.clone() }).unwrap();
+        assert!(w.client.learn_profiles(w.server, &signed_snapshot(&w, Utc::now().timestamp_millis())));
+        assert!(w.client.servers.lock().unwrap()[&w.server].identity_of(newcomer.id).is_some());
+        let mut forged = build_sync_response(&w.state, 50, w.owner.0.id);
+        sign_sync_response(&mut forged, Utc::now().timestamp_millis(), &Identity::generate());
+        assert!(!w.client.learn_profiles(w.server, &forged));
+    }
+
+    fn community_key(w: &mut World) -> (KeyId, ChannelSecret) {
+        let (owner, identity) = (w.owner.0.id, w.owner.1.clone());
+        let ring = Keyring::unlock_community(&w.state, owner, &identity);
+        let task = commy_core::channel_key::community_key_task(&w.state, owner, &ring).unwrap();
+        let mut ring = ring;
+        for event in ring.task_events(&w.state, commy_core::channel_key::KeyScope::Community, task, Utc::now().timestamp_millis()) {
+            let signed = commy_core::action::SignedEvent::sign(w.server, owner, Utc::now().timestamp_millis(), event, &identity);
+            w.state.apply_signed(&signed).unwrap();
+        }
+        let ring = Keyring::unlock_community(&w.state, owner, &identity);
+        ring.newest_in(&w.state, commy_core::channel_key::KeyScope::Community).map(|(k, s)| (k, s.clone())).unwrap()
+    }
+
+    #[test]
+    fn a_listed_server_without_a_copy_bootstraps_from_its_state_stream() {
+        let mut w = world();
+        let owner_key = w.owner.1.public();
+        with_ticket(&mut w, owner_key);
+        let (key, secret) = community_key(&mut w);
+        assert!(w.client.sync_wants(&HashMap::new(), 0).is_empty(), "nothing to follow without a key or a copy");
+        let wants = w.client.sync_wants(&[(w.server, (key, secret))].into(), 0);
+        assert_eq!(wants[&w.server].len(), 1);
+        assert_eq!(wants[&w.server][0].lane, Lane::State);
+        assert!(!wants[&w.server][0].writes);
+    }
+
+    #[test]
+    fn an_installed_server_follows_its_state_and_every_text_channel() {
+        let mut w = world();
+        let owner_key = w.owner.1.public();
+        with_ticket(&mut w, owner_key);
+        let given = community_key(&mut w);
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        let now = Utc::now().timestamp_millis();
+        let wants = w.client.sync_wants(&[(w.server, given)].into(), now);
+        let lanes: Vec<Lane> = wants[&w.server].iter().map(|w| w.lane).collect();
+        assert!(lanes.contains(&Lane::State));
+        assert!(lanes.contains(&Lane::Channel(w.channel)));
+        assert!(wants[&w.server].iter().all(|w| w.writes));
+        w.client.forget(w.server);
+        assert!(w.client.sync_wants(&HashMap::new(), now).is_empty());
     }
 }

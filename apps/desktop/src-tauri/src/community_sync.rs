@@ -8,7 +8,8 @@ use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
 use commy_core::{MessageId, ServerEvent, ServerId, UserId, UserProfile};
 use commy_net::catchup::CatchupStore;
-use commy_net::community_streams::{self as streams, Lane, Want};
+use commy_net::community_streams::{self as streams, rings, Lane, Want};
+pub use commy_net::sync_streams::SharedKey;
 use commy_net::{NetEvent, WirePayload};
 use commy_sync::{AppendError, StreamId, SyncClient, SyncEvent};
 use serde::{Deserialize, Serialize};
@@ -26,30 +27,9 @@ const SAVE_DELAY: Duration = Duration::from_secs(5);
 const FIRST_OPEN_SPREAD_MS: u64 = 8_000;
 const MAX_ECHOES: usize = 512;
 const MAX_INVITED: usize = 32;
-const RINGS_FOR_SECS: i64 = 10 * 60;
 const MAX_BACKFILL_PER_STREAM: usize = 1_000;
 const MAX_PARKED: usize = 2_000;
 const SNAPSHOT_EVERY_MS: i64 = 6 * 60 * 60 * 1000;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SharedKey {
-    #[serde(rename = "i")]
-    id: String,
-    #[serde(rename = "s")]
-    secret: String,
-}
-
-impl SharedKey {
-    pub fn of(id: KeyId, secret: &ChannelSecret) -> Self {
-        Self { id: id.to_hex(), secret: data_encoding::BASE64URL_NOPAD.encode(secret.bytes()) }
-    }
-
-    pub fn open(&self) -> Option<(KeyId, ChannelSecret)> {
-        let id: [u8; 16] = data_encoding::HEXLOWER_PERMISSIVE.decode(self.id.as_bytes()).ok()?.try_into().ok()?;
-        let secret: [u8; 32] = data_encoding::BASE64URL_NOPAD.decode(self.secret.as_bytes()).ok()?.try_into().ok()?;
-        Some((KeyId(id), ChannelSecret::from_bytes(secret)))
-    }
-}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Cursors {
@@ -507,10 +487,6 @@ async fn listen(handle: AppHandle, mut events: mpsc::UnboundedReceiver<SyncEvent
     while let Some(event) = events.recv().await {
         on_event(&handle, event);
     }
-}
-
-pub fn rings(live_now: bool, created_at: chrono::DateTime<Utc>, now: chrono::DateTime<Utc>) -> bool {
-    live_now && (now - created_at).num_seconds() < RINGS_FOR_SECS
 }
 
 fn on_event(handle: &AppHandle, event: SyncEvent) {

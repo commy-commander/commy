@@ -1,6 +1,8 @@
 use chrono::{DateTime, Datelike, Months, Utc};
+use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::{Identity, IdentityKey, UserId};
 use commy_sync::{StreamKeys, StreamSecret};
+use serde::{Deserialize, Serialize};
 
 use crate::dm::DmEnvelope;
 use crate::sealed::SealKey;
@@ -8,6 +10,26 @@ use crate::sealed::SealKey;
 const ACCOUNT_LOG: &str = "commy-account-log";
 const DM_PAIR: &str = "commy-dm-stream/v1";
 const DM_EPOCH: &str = "commy-dm-epoch";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedKey {
+    #[serde(rename = "i")]
+    pub id: String,
+    #[serde(rename = "s")]
+    pub secret: String,
+}
+
+impl SharedKey {
+    pub fn of(id: KeyId, secret: &ChannelSecret) -> Self {
+        Self { id: id.to_hex(), secret: data_encoding::BASE64URL_NOPAD.encode(secret.bytes()) }
+    }
+
+    pub fn open(&self) -> Option<(KeyId, ChannelSecret)> {
+        let id: [u8; 16] = data_encoding::HEXLOWER_PERMISSIVE.decode(self.id.as_bytes()).ok()?.try_into().ok()?;
+        let secret: [u8; 32] = data_encoding::BASE64URL_NOPAD.decode(self.secret.as_bytes()).ok()?.try_into().ok()?;
+        Some((KeyId(id), ChannelSecret::from_bytes(secret)))
+    }
+}
 
 pub fn account_stream(key: &SealKey) -> StreamKeys {
     StreamSecret::derive(key.bytes(), ACCOUNT_LOG, b"").keys()
@@ -125,5 +147,19 @@ mod tests {
         let elsewhere = signed(&alice, &carol.0, "not for bob");
         assert_eq!(decode_dm(&encode_dm(&elsewhere), b, &bk, a, &ak), None);
         assert_eq!(decode_dm(b"junk", b, &bk, a, &ak), None);
+    }
+
+    #[test]
+    fn shared_community_keys_round_trip_and_refuse_damage() {
+        let key = KeyId::random();
+        let secret = ChannelSecret::random();
+        let shared = SharedKey::of(key, &secret);
+        let json = serde_json::to_string(&shared).unwrap();
+        assert!(json.contains("\"i\"") && json.contains("\"s\""));
+        let (back, opened) = serde_json::from_str::<SharedKey>(&json).unwrap().open().unwrap();
+        assert_eq!(back, key);
+        assert_eq!(opened.bytes(), secret.bytes());
+        assert!(SharedKey { id: "zz".into(), secret: shared.secret.clone() }.open().is_none());
+        assert!(SharedKey { id: shared.id.clone(), secret: "short".into() }.open().is_none());
     }
 }
