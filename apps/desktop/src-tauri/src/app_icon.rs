@@ -168,8 +168,8 @@ mod tests {
         let amber = preset("amber").unwrap();
         let mono = preset("mono").unwrap();
         let (w, h) = amber.dimensions();
-        let centre = (w / 2, h / 2);
-        assert_eq!(amber.get_pixel(centre.0, centre.1).0[..3], mono.get_pixel(centre.0, centre.1).0[..3]);
+        let shared = amber.pixels().zip(mono.pixels()).filter(|(a, m)| a[3] == 255 && a.0 == m.0).count();
+        assert!(shared as u32 > w * h / 20, "the star is the same on every tile, only the disc changes: {shared}");
     }
 
     #[test]
