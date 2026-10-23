@@ -407,6 +407,18 @@ impl Session {
     pub(super) async fn dm_command(self: &Rc<Self>, cmd: &str, args: Args) -> Result<Value, String> {
         match cmd {
             "list_dm_threads" => to_json(&self.threads()),
+            "create_group_dm" => {
+                let users = args.user_ids.unwrap_or_default();
+                if users.is_empty() {
+                    return Err("pick at least one person".into());
+                }
+                for user in &users {
+                    self.recipient(Some(user))?;
+                }
+                let server = self.start_group().await?;
+                self.invite_to_group(server, users).await?;
+                to_json(&self.client.borrow().summary(server).ok_or("the group is gone")?)
+            }
             "add_group_members" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 self.invite_to_group(server, args.user_ids.unwrap_or_default()).await.map(|_| Value::Null)
