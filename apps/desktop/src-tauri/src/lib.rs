@@ -5502,7 +5502,11 @@ async fn delete_server(
         state.apply_own(&notice).map_err(err_to_string)?;
         notice
     };
-    broadcast(&app, sid, WirePayload::Signed(notice.clone())).await;
+    let payload = WirePayload::Signed(notice.clone());
+    if !community_sync::publish_now(sid, &payload).await {
+        tracing::warn!("the sync service did not take the deletion notice; members hear it from each other");
+    }
+    broadcast(&app, sid, payload).await;
     retire_deleted_server(&app, &handle, sid, notice, true);
     Ok(())
 }
@@ -8261,7 +8265,9 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                         .collect()
                 };
                 for (sid, event) in afk_channels {
-                    if let Err(e) = node.broadcast(sid, app.wire_for(sid, event)).await {
+                    let payload = app.wire_for(sid, event);
+                    community_sync::publish(sid, &payload);
+                    if let Err(e) = node.broadcast(sid, payload).await {
                         tracing::debug!("afk channel announce pending: {e}");
                     }
                     app.persist_server(sid);

@@ -30,6 +30,10 @@ const MAX_INVITED: usize = 32;
 const MAX_BACKFILL_PER_STREAM: usize = 1_000;
 const MAX_PARKED: usize = 2_000;
 const SNAPSHOT_EVERY_MS: i64 = 6 * 60 * 60 * 1000;
+const MAX_UNSENT: usize = 500;
+const UNSENT_WITHOUT_SERVICE_MS: i64 = 10 * 60 * 1000;
+const PUBLISH_WAIT: Duration = Duration::from_secs(8);
+const UNSENT_FOR_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Cursors {
@@ -39,6 +43,24 @@ pub struct Cursors {
     pub backfilled: BTreeSet<String>,
     #[serde(default)]
     pub announced: BTreeMap<String, String>,
+    #[serde(default)]
+    pub unsent: Vec<Unsent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Unsent {
+    pub server: ServerId,
+    pub payload: WirePayload,
+    pub at: i64,
+}
+
+pub fn hold_unsent(unsent: &mut Vec<Unsent>, held: Unsent, now: i64) {
+    unsent.retain(|old| now - old.at < UNSENT_FOR_MS && !(old.server == held.server && old.payload == held.payload));
+    if now - held.at < UNSENT_FOR_MS {
+        unsent.push(held);
+    }
+    let excess = unsent.len().saturating_sub(MAX_UNSENT);
+    unsent.drain(..excess);
 }
 
 impl Cursors {
@@ -122,6 +144,7 @@ static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 static INVITED: Mutex<Vec<(ServerId, KeyId, ChannelSecret)>> = Mutex::new(Vec::new());
 static SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 static REFRESH_PENDING: AtomicBool = AtomicBool::new(false);
+static UNSENT: Mutex<Vec<Unsent>> = Mutex::new(Vec::new());
 
 fn digest(plain: &[u8]) -> [u8; 32] {
     Sha256::digest(plain).into()
@@ -168,15 +191,57 @@ fn save_soon() {
 
 fn save() {
     let snapshot = LIVE.lock().unwrap().as_ref().map(|live| (live.dir.clone(), live.cursors.clone()));
-    if let Some((dir, cursors)) = snapshot {
+    if let Some((dir, mut cursors)) = snapshot {
+        cursors.unsent = UNSENT.lock().unwrap().clone();
         crate::entry_list::write(&dir.join(FILE), &cursors);
     }
+}
+
+fn hold(held: Unsent) {
+    hold_unsent(&mut UNSENT.lock().unwrap(), held, now_ms());
+    save_soon();
+}
+
+fn worth_retrying(error: &AppendError) -> bool {
+    match error {
+        AppendError::NotFollowed | AppendError::Stopped => true,
+        AppendError::Refused(code) => code.is_retryable(),
+        AppendError::Seal(_) => false,
+    }
+}
+
+fn send_unsent() {
+    let due: Vec<Unsent> = {
+        let guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_ref() else { return };
+        let mut unsent = UNSENT.lock().unwrap();
+        let now = now_ms();
+        unsent.retain(|held| now - held.at < UNSENT_FOR_MS);
+        let (ready, waiting): (Vec<Unsent>, Vec<Unsent>) = std::mem::take(&mut *unsent)
+            .into_iter()
+            .partition(|held| {
+                let Some(lane) = streams::lane_of_payload(&held.payload) else { return true };
+                let key_event = streams::event_of(&held.payload).is_none_or(|(event, _)| streams::is_key_event(event));
+                !targets(live, held.server, lane, key_event).is_empty()
+            });
+        *unsent = waiting;
+        ready
+    };
+    if due.is_empty() {
+        return;
+    }
+    tracing::info!("sending {} server changes the sync service has not stored yet", due.len());
+    for held in due {
+        publish_held(held);
+    }
+    save_soon();
 }
 
 pub fn stop() {
     save();
     if let Some(old) = LIVE.lock().unwrap().take() {
         old.task.abort();
+        UNSENT.lock().unwrap().clear();
     }
 }
 
@@ -211,6 +276,7 @@ async fn tend(handle: &AppHandle) {
     let app = handle.state::<App>();
     let Some(url) = sync_link::url() else {
         stop();
+        UNSENT.lock().unwrap().retain(|held| now_ms() - held.at < UNSENT_WITHOUT_SERVICE_MS);
         return;
     };
     let (Some(dir), Some(me)) = (app.data_dir().cloned(), app.profile.lock().unwrap().as_ref().map(|p| p.id)) else { return };
@@ -223,7 +289,14 @@ async fn tend(handle: &AppHandle) {
         stop();
         let (events, received) = mpsc::unbounded_channel();
         let task = tauri::async_runtime::spawn(listen(handle.clone(), received));
-        let cursors = load(&dir);
+        let mut cursors = load(&dir);
+        {
+            let mut unsent = UNSENT.lock().unwrap();
+            let now = now_ms();
+            for held in std::mem::take(&mut cursors.unsent) {
+                hold_unsent(&mut unsent, held, now);
+            }
+        }
         *LIVE.lock().unwrap() = Some(Live {
             handle: handle.clone(),
             url,
@@ -249,6 +322,7 @@ async fn tend(handle: &AppHandle) {
     release_parked(handle);
     publish_snapshots(handle);
     store_pending(handle);
+    send_unsent();
 }
 
 fn store_pending(handle: &AppHandle) {
@@ -456,6 +530,11 @@ fn targets(live: &Live, server: ServerId, lane: Lane, key_event: bool) -> Vec<(S
 }
 
 pub fn publish(server: ServerId, payload: &WirePayload) {
+    publish_held(Unsent { server, payload: payload.clone(), at: now_ms() });
+}
+
+fn publish_held(held: Unsent) {
+    let (server, payload) = (held.server, &held.payload);
     let Some(lane) = streams::lane_of_payload(payload) else { return };
     let key_event = streams::event_of(payload).is_none_or(|(event, _)| streams::is_key_event(event));
     let Some(plain) = streams::encode_entry(payload) else { return };
@@ -463,29 +542,60 @@ pub fn publish(server: ServerId, payload: &WirePayload) {
         Some((ServerEvent::MessageCreate { message }, _)) => Some(message.id),
         _ => None,
     };
-    let (sends, handle) = {
+    let found = {
         let mut guard = LIVE.lock().unwrap();
-        let Some(live) = guard.as_mut() else { return };
-        let sends = targets(live, server, lane, key_event);
-        if !sends.is_empty() {
-            live.note_echo(digest(&plain));
-        }
-        (sends, live.handle.clone())
+        guard.as_mut().map(|live| {
+            let sends = targets(live, server, lane, key_event);
+            if !sends.is_empty() {
+                live.note_echo(digest(&plain));
+            }
+            (sends, live.handle.clone())
+        })
     };
-    for (stream, client) in sends {
-        let plain = plain.clone();
-        let handle = handle.clone();
-        tauri::async_runtime::spawn(async move {
-            match sync_link::append(client, stream, plain).await {
+    let Some((sends, handle)) = found.filter(|(sends, _)| !sends.is_empty()) else {
+        hold(held);
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        let mut retry = false;
+        for (stream, client) in sends {
+            match sync_link::append(client, stream, plain.clone()).await {
                 Ok(_) => {
                     if let Some(message) = message {
                         stored(&handle, server, message);
                     }
                 }
-                Err(e) => tracing::debug!("could not add a server change to the sync service: {e}"),
+                Err(e) => {
+                    tracing::debug!("could not add a server change to the sync service: {e}");
+                    retry |= worth_retrying(&e);
+                }
             }
-        });
+        }
+        if retry {
+            hold(held);
+        }
+    });
+}
+
+pub async fn publish_now(server: ServerId, payload: &WirePayload) -> bool {
+    let Some(lane) = streams::lane_of_payload(payload) else { return false };
+    let key_event = streams::event_of(payload).is_none_or(|(event, _)| streams::is_key_event(event));
+    let Some(plain) = streams::encode_entry(payload) else { return false };
+    let sends = {
+        let mut guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_mut() else { return false };
+        let sends = targets(live, server, lane, key_event);
+        if !sends.is_empty() {
+            live.note_echo(digest(&plain));
+        }
+        sends
+    };
+    let mut stored = !sends.is_empty();
+    for (stream, client) in sends {
+        let sent = tokio::time::timeout(PUBLISH_WAIT, sync_link::append(client, stream, plain.clone())).await;
+        stored &= matches!(sent, Ok(Ok(_)));
     }
+    stored
 }
 
 fn wake_point(want: &Want) -> Option<Option<commy_core::ChannelId>> {
@@ -822,6 +932,32 @@ async fn fill(stream: StreamId, payloads: Vec<WirePayload>) -> bool {
 mod tests {
     use super::*;
     use commy_core::{Identity, Message, Server, ServerState};
+
+    #[test]
+    fn changes_the_service_missed_wait_once_each_and_not_forever() {
+        let (a, b) = (ServerId::new(), ServerId::new());
+        let first = WirePayload::Event(ServerEvent::PublicSet { server: a, public: true });
+        let second = WirePayload::Event(ServerEvent::PublicSet { server: b, public: false });
+        let now = 10 * UNSENT_FOR_MS;
+        let mut unsent = Vec::new();
+        hold_unsent(&mut unsent, Unsent { server: a, payload: first.clone(), at: now - 10 }, now);
+        hold_unsent(&mut unsent, Unsent { server: a, payload: first.clone(), at: now }, now);
+        assert_eq!(unsent.len(), 1, "the same change waits once");
+        hold_unsent(&mut unsent, Unsent { server: b, payload: second.clone(), at: now - UNSENT_FOR_MS }, now);
+        assert_eq!(unsent.len(), 1, "a week-old change is dropped");
+        hold_unsent(&mut unsent, Unsent { server: b, payload: second, at: now + 10 }, now + UNSENT_FOR_MS);
+        assert_eq!(unsent.iter().map(|held| held.server).collect::<Vec<_>>(), vec![b], "older ones expire as new ones arrive");
+        for n in 0..MAX_UNSENT + 3 {
+            let payload = WirePayload::Event(ServerEvent::PublicSet { server: ServerId::new(), public: n % 2 == 0 });
+            hold_unsent(&mut unsent, Unsent { server: a, payload, at: now }, now);
+        }
+        assert_eq!(unsent.len(), MAX_UNSENT);
+        let mut cursors = Cursors { unsent: unsent.clone(), ..Cursors::default() };
+        let json = serde_json::to_string(&cursors).unwrap();
+        assert_eq!(serde_json::from_str::<Cursors>(&json).unwrap().unsent, unsent);
+        cursors.unsent.clear();
+        assert_eq!(serde_json::from_str::<Cursors>(r#"{"after":{}}"#).unwrap(), cursors);
+    }
 
     #[test]
     fn cursors_only_move_forward_and_forget_streams_we_left() {
