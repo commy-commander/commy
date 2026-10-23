@@ -158,7 +158,7 @@ mod tests {
             assert_eq!(icon.dimensions(), classic.dimensions());
             assert_eq!(icon.get_pixel(0, 0)[3], 0, "{name} corner is see-through");
             assert_eq!(icon.get_pixel(w / 2, h / 2)[3], 255, "{name} centre is solid");
-            assert_ne!(icon.get_pixel(w / 2, h / 2)[..3], icon.get_pixel(w / 2, h / 12)[..3], "{name} star sits at the centre");
+            assert_ne!(icon.get_pixel(w / 2, h / 2).0[..3], icon.get_pixel(w / 2, h / 12).0[..3], "{name} star sits at the centre");
         }
         assert!(preset("nope").is_none());
     }
@@ -169,7 +169,7 @@ mod tests {
         let mono = preset("mono").unwrap();
         let (w, h) = amber.dimensions();
         let centre = (w / 2, h / 2);
-        assert_eq!(amber.get_pixel(centre.0, centre.1)[..3], mono.get_pixel(centre.0, centre.1)[..3]);
+        assert_eq!(amber.get_pixel(centre.0, centre.1).0[..3], mono.get_pixel(centre.0, centre.1).0[..3]);
     }
 
     #[test]
