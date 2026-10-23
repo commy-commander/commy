@@ -1,125 +1,22 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use serde::{Deserialize, Serialize};
-
 use crate::state::App;
 
+pub use commy_view::saved::{Entry, SavedOp, SavedStore};
+#[cfg(test)]
+use commy_view::saved::{SavedMessage, MAX_SAVED, MAX_TEXT};
+
 const FILE: &str = "saved.json";
-pub const MAX_SAVED: usize = 500;
-pub const MAX_REMINDERS: usize = 200;
-const MAX_TEXT: usize = 400;
 
 static LOCK: Mutex<()> = Mutex::new(());
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Entry {
-    pub message: String,
-    #[serde(default)]
-    pub server: Option<String>,
-    #[serde(default)]
-    pub server_name: Option<String>,
-    #[serde(default)]
-    pub channel: Option<String>,
-    #[serde(default)]
-    pub channel_name: Option<String>,
-    #[serde(default)]
-    pub dm: Option<String>,
-    #[serde(default)]
-    pub dm_name: Option<String>,
-    #[serde(default)]
-    pub author_id: String,
-    #[serde(default)]
-    pub author_name: String,
-    #[serde(default)]
-    pub content: String,
-    #[serde(default)]
-    pub attachment: Option<String>,
-    #[serde(default)]
-    pub created_at: String,
+pub fn load(dir: &Path) -> SavedStore {
+    crate::persist::read_json(&dir.join(FILE)).unwrap_or_default()
 }
 
-impl Entry {
-    fn trimmed(mut self) -> Self {
-        self.content = crate::safety::truncate(&self.content, MAX_TEXT);
-        self
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SavedMessage {
-    pub saved_at: i64,
-    #[serde(flatten)]
-    pub entry: Entry,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Reminder {
-    pub id: String,
-    pub due: i64,
-    pub entry: Entry,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SavedStore {
-    #[serde(default)]
-    pub saved: Vec<SavedMessage>,
-    #[serde(default)]
-    pub reminders: Vec<Reminder>,
-}
-
-impl SavedStore {
-    pub fn load(dir: &Path) -> Self {
-        crate::persist::read_json(&dir.join(FILE)).unwrap_or_default()
-    }
-
-    pub fn save(&self, dir: &Path) -> Result<(), String> {
-        crate::persist::write_json(&dir.join(FILE), self).map_err(|e| format!("could not save messages: {e}"))
-    }
-
-    pub fn set_saved(&mut self, entry: Entry, saved: bool, now_ms: i64) -> bool {
-        let before = self.saved.len();
-        self.saved.retain(|s| s.entry.message != entry.message);
-        if !saved {
-            return self.saved.len() != before;
-        }
-        self.saved.push(SavedMessage { saved_at: now_ms, entry: entry.trimmed() });
-        self.saved.sort_by(|a, b| b.saved_at.cmp(&a.saved_at).then_with(|| b.entry.message.cmp(&a.entry.message)));
-        self.saved.truncate(MAX_SAVED);
-        true
-    }
-
-    pub fn set_reminder(&mut self, entry: Entry, due: i64, now_ms: i64) -> Result<String, String> {
-        if due <= now_ms {
-            return Err("pick a time that is still ahead".to_string());
-        }
-        self.reminders.retain(|r| r.entry.message != entry.message);
-        if self.reminders.len() >= MAX_REMINDERS {
-            return Err(format!("you can keep up to {MAX_REMINDERS} reminders"));
-        }
-        let id = format!("{}-{}", due, entry.message);
-        self.reminders.push(Reminder { id: id.clone(), due, entry: entry.trimmed() });
-        self.reminders.sort_by(|a, b| a.due.cmp(&b.due).then_with(|| a.id.cmp(&b.id)));
-        Ok(id)
-    }
-
-    pub fn cancel_reminder(&mut self, id: &str) -> bool {
-        let before = self.reminders.len();
-        self.reminders.retain(|r| r.id != id);
-        self.reminders.len() != before
-    }
-
-    pub fn apply_ops(&mut self, ops: Vec<crate::account_log::SavedOp>) {
-        for op in ops {
-            self.saved.retain(|s| s.entry.message != op.message);
-            if let Some(mut kept) = op.saved {
-                kept.entry = kept.entry.trimmed();
-                self.saved.push(kept);
-            }
-        }
-        self.saved.sort_by(|a, b| b.saved_at.cmp(&a.saved_at).then_with(|| b.entry.message.cmp(&a.entry.message)));
-        self.saved.truncate(MAX_SAVED);
-    }
+fn store(saved: &SavedStore, dir: &Path) -> Result<(), String> {
+    crate::persist::write_json(&dir.join(FILE), saved).map_err(|e| format!("could not save messages: {e}"))
 }
 
 fn now_ms() -> i64 {
@@ -133,17 +30,17 @@ fn dir_of(app: &App) -> Result<std::path::PathBuf, String> {
 fn update(app: &App, change: impl FnOnce(&mut SavedStore) -> Result<(), String>) -> Result<SavedStore, String> {
     let dir = dir_of(app)?;
     let _guard = LOCK.lock().unwrap();
-    let mut store = SavedStore::load(&dir);
-    change(&mut store)?;
-    store.save(&dir)?;
-    Ok(store)
+    let mut saved = load(&dir);
+    change(&mut saved)?;
+    store(&saved, &dir)?;
+    Ok(saved)
 }
 
 #[tauri::command]
 pub fn saved_list(app: tauri::State<'_, App>) -> Result<SavedStore, String> {
     let dir = dir_of(&app)?;
     let _guard = LOCK.lock().unwrap();
-    Ok(SavedStore::load(&dir))
+    Ok(load(&dir))
 }
 
 #[tauri::command]
@@ -155,12 +52,12 @@ pub fn saved_set(app: tauri::State<'_, App>, entry: Entry, saved: bool) -> Resul
         Ok(())
     })?;
     let kept = store.saved.iter().find(|s| s.entry.message == message).cloned();
-    let op = crate::account_log::SavedOp { message, at, saved: kept.filter(|_| saved) };
+    let op = SavedOp { message, at, saved: kept.filter(|_| saved) };
     crate::account_log::queue(&app, crate::account_log::Record::Saved { ops: vec![op] });
     Ok(store)
 }
 
-pub fn apply_remote(handle: &tauri::AppHandle, ops: Vec<crate::account_log::SavedOp>) {
+pub fn apply_remote(handle: &tauri::AppHandle, ops: Vec<SavedOp>) {
     use tauri::{Emitter, Manager};
     let app = handle.state::<App>();
     match update(&app, |store| {
@@ -222,9 +119,9 @@ mod tests {
         assert_eq!(store.saved.iter().map(|s| s.entry.message.as_str()).collect::<Vec<_>>(), ["a", "b"]);
         assert!(store.set_saved(entry("b"), false, 4));
         assert!(!store.set_saved(entry("b"), false, 5), "removing twice changes nothing");
-        store.save(&dir).unwrap();
-        assert_eq!(SavedStore::load(&dir), store);
-        assert_eq!(SavedStore::load(&dir.join("missing")), SavedStore::default());
+        super::store(&store, &dir).unwrap();
+        assert_eq!(load(&dir), store);
+        assert_eq!(load(&dir.join("missing")), SavedStore::default());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -259,7 +156,6 @@ mod tests {
 
     #[test]
     fn changes_from_another_device_add_move_and_remove() {
-        use crate::account_log::SavedOp;
         let mut store = SavedStore::default();
         store.set_saved(entry("a"), true, 1);
         let mut long = entry("b");
@@ -276,7 +172,7 @@ mod tests {
     fn a_saved_file_from_before_new_fields_still_loads() {
         let dir = temp_dir("compat");
         std::fs::write(dir.join(FILE), br#"{"saved":[{"saved_at":5,"message":"x","author_name":"ferris"}]}"#).unwrap();
-        let store = SavedStore::load(&dir);
+        let store = load(&dir);
         assert_eq!(store.saved.len(), 1);
         assert_eq!(store.saved[0].entry.author_name, "ferris");
         assert!(store.reminders.is_empty());

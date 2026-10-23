@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, Mutex};
 use wasm_bindgen_futures::spawn_local;
 
 use commy_view::act;
+use commy_view::pins::Pins;
 use commy_view::search::{Page, SearchQuery};
 
 use crate::account::{self, AccountUser, Reply};
@@ -76,6 +77,9 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 struct Args {
     server_id: Option<String>,
+    entry: Option<commy_view::saved::Entry>,
+    user_id: Option<String>,
+    saved: Option<bool>,
     channel_id: Option<String>,
     content: Option<String>,
     reply_to: Option<String>,
@@ -187,6 +191,20 @@ impl Session {
                 let page = args.offset.map_or(Page::newest(), Page::at);
                 to_json(&self.client.borrow().search(server, &query, page)?)
             }
+            "pins_load" => to_json(&self.pins()),
+            "pin_channel" => {
+                let (server, channel) = (args.server_id.unwrap_or_default(), args.channel_id.unwrap_or_default());
+                to_json(&self.change_pins(|pins| pins.set_channel(&server, &channel, args.pinned.unwrap_or(true)))?)
+            }
+            "pin_dm" => {
+                let user = args.user_id.unwrap_or_default();
+                to_json(&self.change_pins(|pins| pins.set_dm(&user, args.pinned.unwrap_or(true)))?)
+            }
+            "saved_list" => to_json(&self.saved()),
+            "saved_set" => {
+                let entry: commy_view::saved::Entry = args.entry.ok_or("Pick a message to save")?;
+                to_json(&self.set_saved(entry, args.saved.unwrap_or(true))?)
+            }
             "get_pins" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 let channel: Option<ChannelId> = args.channel_id.as_ref().map(|c| parse(Some(c), "channel")).transpose()?;
@@ -284,6 +302,20 @@ impl Session {
             status.detail = detail.into();
         }
         self.emit("web-unlock-changed", self.unlock_view());
+    }
+
+    fn pins(&self) -> Pins {
+        let Ok(account) = self.account() else { return Pins::default() };
+        self.host.load(&account::pins_key(&account.id)).and_then(|raw| serde_json::from_str(&raw).ok()).unwrap_or_default()
+    }
+
+    fn change_pins(&self, edit: impl FnOnce(&mut Pins) -> bool) -> Result<Pins, String> {
+        let account = self.account()?;
+        let mut pins = self.pins();
+        if edit(&mut pins) {
+            self.host.save(&account::pins_key(&account.id), &serde_json::to_string(&pins).map_err(|e| e.to_string())?);
+        }
+        Ok(pins)
     }
 
     fn account(&self) -> Result<AccountUser, String> {

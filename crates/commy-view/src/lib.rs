@@ -1,7 +1,9 @@
 pub mod act;
 pub mod keys;
 pub mod liveness;
+pub mod pins;
 pub mod reads;
+pub mod saved;
 pub mod search;
 pub mod voice_invite;
 

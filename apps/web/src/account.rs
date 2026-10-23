@@ -13,6 +13,7 @@ pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
 
 pub const DEVICE_SECRET_KEY: &str = "commy.device";
 pub const ENTRY_KEY_KEY: &str = "commy.entry-key";
+pub const PINS_KEY: &str = "commy.pins";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountUser {
@@ -151,6 +152,10 @@ pub fn stored_entry_key(raw: Option<&str>, account: &str) -> Option<SealKey> {
 
 pub fn entry_key_record(account: &str, key: &SealKey) -> String {
     serde_json::to_string(&StoredKey { account: account.into(), key: key.to_text() }).expect("key record serializes")
+}
+
+pub fn pins_key(account: &str) -> String {
+    format!("{PINS_KEY}.{account}")
 }
 
 pub fn device_secret_key(account: &str) -> String {

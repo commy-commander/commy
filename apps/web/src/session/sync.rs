@@ -11,13 +11,14 @@ use commy_net::{sync_streams, ServerTicket, WirePayload};
 use commy_sync::{Pool, StreamId, SyncClient, SyncEvent};
 use commy_view::liveness::{SERVICE_BEAT, SWEEP_EVERY};
 use commy_view::reads::{PrefPiece, ReadMark, ReadView};
+use commy_view::saved::{Entry, SavedOp, SavedStore};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
 use super::Session;
 use crate::client::Applied;
-use crate::sync_book::{prefs_record, read_record, Book, Change, Record};
+use crate::sync_book::{prefs_record, read_record, saved_record, Book, Change, Record};
 
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
 const MAX_MARKS_PER_RECORD: usize = 300;
@@ -290,6 +291,7 @@ impl Session {
                 }
             }
             Change::Prefs(set) => self.emit("sync-prefs-changed", json!(set)),
+            Change::Saved => self.emit("saved-changed", json!(self.saved())),
         }
     }
 
@@ -323,6 +325,27 @@ impl Session {
         if !taken.is_empty() {
             self.append_account(prefs_record(&taken));
         }
+    }
+
+    pub(super) fn saved(&self) -> SavedStore {
+        self.sync.borrow().as_ref().map(|live| live.book.saved().clone()).unwrap_or_default()
+    }
+
+    pub(super) fn set_saved(&self, entry: Entry, saved: bool) -> Result<SavedStore, String> {
+        let at = Utc::now().timestamp_millis();
+        let message = entry.message.clone();
+        let mut draft = SavedStore::default();
+        draft.set_saved(entry, saved, at);
+        let kept = draft.saved.into_iter().next().filter(|_| saved);
+        let op = SavedOp { message, at, saved: kept };
+        let taken = match self.sync.borrow_mut().as_mut() {
+            Some(live) => live.book.note_saved(vec![op]),
+            None => return Err("Your servers are not unlocked yet".into()),
+        };
+        if !taken.is_empty() {
+            self.append_account(saved_record(&taken));
+        }
+        Ok(self.saved())
     }
 
     fn append_account(&self, plain: Vec<u8>) {
