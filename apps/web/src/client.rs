@@ -198,26 +198,30 @@ impl Client {
     }
 
     pub fn apply_live(&self, server: ServerId, event: ServerEvent, action: Option<Action>) -> Applied {
-        self.apply_from(server, event, action, false)
+        self.apply_from(server, event, action, false, true)
     }
 
-    pub fn apply_stored(&self, server: ServerId, event: ServerEvent, action: Option<Action>) -> Applied {
-        self.apply_from(server, event, action, true)
+    pub fn apply_stored(&self, server: ServerId, event: ServerEvent, action: Option<Action>, fresh: bool) -> Applied {
+        self.apply_from(server, event, action, true, fresh)
     }
 
-    fn apply_from(&self, server: ServerId, event: ServerEvent, action: Option<Action>, stored: bool) -> Applied {
+    fn apply_from(&self, server: ServerId, event: ServerEvent, action: Option<Action>, stored: bool, fresh: bool) -> Applied {
         let keys = self.keys();
         let me = self.me_id();
         let mut servers = self.servers.lock().unwrap();
         let Some(state) = servers.get_mut(&server) else { return Applied::Nothing };
         let profile = match &event {
-            ServerEvent::ProfileUpdate { profile } | ServerEvent::MemberJoin { profile, .. } if stored => Some(profile.id),
+            ServerEvent::ProfileUpdate { profile } | ServerEvent::MemberJoin { profile, .. } if stored => {
+                Some((profile.id, fresh && profile.presence.is_visible_online()))
+            }
             _ => None,
         };
-        let shown = profile.map(|user| state.profiles.get(&user).map_or(Presence::Offline, |p| p.presence));
+        let shown = profile.map(|(user, _)| state.profiles.get(&user).map_or(Presence::Offline, |p| p.presence));
         let applied = commy_net::catchup::apply_live(state, event, action);
-        if let (Some(user), Some(shown)) = (profile, shown) {
-            if let Some(profile) = state.profiles.get_mut(&user) {
+        if let (Some((user, here_now)), Some(shown)) = (profile, shown) {
+            if here_now && applied.0 == Ok(true) {
+                self.liveness.lock().unwrap().heard_through_service(server, user, web_time::Instant::now());
+            } else if let Some(profile) = state.profiles.get_mut(&user) {
                 profile.presence = shown;
             }
         }
@@ -768,6 +772,29 @@ mod tests {
         let mut forged = build_sync_response(&w.state, 50, w.owner.0.id);
         sign_sync_response(&mut forged, Utc::now().timestamp_millis(), &Identity::generate());
         assert!(!w.client.learn_profiles(w.server, &forged));
+    }
+
+    #[test]
+    fn a_member_who_joins_while_we_watch_shows_online_and_one_replayed_from_history_does_not() {
+        let w = world();
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        let joiner = |name: &str| {
+            let identity = Identity::generate();
+            let mut profile = UserProfile::new(name);
+            profile.identity = Some(identity.public());
+            profile.presence = Presence::Online;
+            (profile, identity)
+        };
+        let ((old, old_key), (new, new_key)) = (joiner("from history"), joiner("just joined"));
+        for (profile, key, fresh) in [(&old, &old_key, false), (&new, &new_key, true)] {
+            let event = ServerEvent::MemberJoin { server: w.server, profile: profile.clone() };
+            let signed = SignedEvent::sign(w.server, profile.id, Utc::now().timestamp_millis(), event, key);
+            assert_eq!(w.client.apply_stored(w.server, signed.event, Some(signed.action), fresh), Applied::Changed);
+        }
+        assert!(!w.client.is_shown_online(w.server, old.id));
+        assert!(w.client.is_shown_online(w.server, new.id));
+        let soon = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).unwrap().as_millis() as i64;
+        assert!(w.client.sweep_presence(soon).is_empty(), "a fresh join counts as hearing from them");
     }
 
     fn community_key(w: &mut World) -> (KeyId, ChannelSecret) {

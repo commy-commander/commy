@@ -749,7 +749,7 @@ impl Session {
     }
 
     fn apply_stored(&self, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
-        let applied = self.client.borrow().apply_stored(server, event, action);
+        let applied = self.client.borrow().apply_stored(server, event, action, shown);
         self.after_apply(server, applied, rings, shown)
     }
 
