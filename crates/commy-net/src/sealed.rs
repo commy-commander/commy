@@ -17,6 +17,7 @@ pub enum Purpose {
     InviteBackground,
     ReadState,
     KeyHandoff,
+    EntryKeyEscrow,
 }
 
 impl Purpose {
@@ -27,6 +28,7 @@ impl Purpose {
             Purpose::InviteBackground => b"commy-invite-bg-v1",
             Purpose::ReadState => b"commy-read-state-v1",
             Purpose::KeyHandoff => b"commy-key-handoff-v1",
+            Purpose::EntryKeyEscrow => b"commy-entry-key-escrow-v1",
         }
     }
 }
