@@ -17,6 +17,10 @@ import com.google.firebase.messaging.FirebaseMessaging
 
 @TauriPlugin
 class PushPlugin(private val activity: Activity) : Plugin(activity) {
+  init {
+    NotificationManagerCompat.from(activity).cancelAll()
+  }
+
   override fun onResume() {
     NotificationManagerCompat.from(activity).cancelAll()
   }

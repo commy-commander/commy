@@ -19,6 +19,8 @@ use crate::{dm_sync, server_wake, sync_link};
 const RING_DELAY_MS: std::ops::Range<u64> = 1_000..4_000;
 const REGISTER_GAP_MS: std::ops::Range<u64> = 300..1_500;
 const KEPT_FILE: &str = "wake-tags.json";
+const SEND_RETRIES: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(10)];
+const RETRY_LATER: Duration = Duration::from_secs(60);
 
 type Tag = ([u8; 32], i64);
 
@@ -48,6 +50,7 @@ static TOKEN: Mutex<Option<String>> = Mutex::new(None);
 static REGISTERED: Mutex<Option<Registered>> = Mutex::new(None);
 static REGISTERING: AtomicBool = AtomicBool::new(false);
 static AGAIN: AtomicBool = AtomicBool::new(false);
+static RETRY_SOON: AtomicBool = AtomicBool::new(false);
 static HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 pub fn wake_url(sync_url: &str) -> Option<String> {
@@ -119,8 +122,12 @@ pub fn register(handle: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
             AGAIN.store(false, Ordering::SeqCst);
-            if let Some((push, base)) = target() {
-                register_now(&handle, push, base).await;
+            let done = match target() {
+                Some((push, base)) => register_now(&handle, push, base).await,
+                None => true,
+            };
+            if !done {
+                retry_later();
             }
             REGISTERING.store(false, Ordering::SeqCst);
             if !AGAIN.load(Ordering::SeqCst) || REGISTERING.swap(true, Ordering::SeqCst) {
@@ -197,15 +204,43 @@ fn note(push: &str, update: impl FnOnce(&mut Registered)) {
     }
 }
 
-async fn register_now(handle: &AppHandle, push: String, base: String) {
+fn retry_later() {
+    if RETRY_SOON.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tauri::async_runtime::spawn(async {
+        tokio::time::sleep(RETRY_LATER).await;
+        RETRY_SOON.store(false, Ordering::SeqCst);
+        register_again();
+    });
+}
+
+async fn post(http: &reqwest::Client, url: &str, body: &impl Serialize) -> Result<StatusCode, reqwest::Error> {
+    let mut waits = SEND_RETRIES.iter();
+    loop {
+        match http.post(url).json(body).send().await {
+            Ok(res) => return Ok(res.status()),
+            Err(e) => match waits.next() {
+                Some(wait) => {
+                    tracing::info!("retrying a wake-up request: {e}");
+                    tokio::time::sleep(*wait).await;
+                }
+                None => return Err(e),
+            },
+        }
+    }
+}
+
+async fn register_now(handle: &AppHandle, push: String, base: String) -> bool {
     let app = handle.state::<App>();
     let today = today();
     begin(&push, &base, || load_kept(&app, &push, &base));
-    sync_tags(&app, &push, &base, today).await;
+    let done = sync_tags(&app, &push, &base, today).await;
     save_kept(&app, &push, today);
+    done
 }
 
-async fn sync_tags(app: &App, push: &str, base: &str, today: i64) {
+async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
     let push = push.to_string();
     let days = days_from(today);
     let dm = dm_sync::wake_tags(app, &days);
@@ -219,13 +254,13 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) {
     });
     let needed = still_needed(&push, today, wanted);
     let http = app.http.clone();
-    forget(&http, &push, base, stale).await;
+    let forgotten = forget(&http, &push, base, stale).await;
     let mut registered = 0;
     for ((tag, day), source) in needed {
         let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
         tokio::time::sleep(Duration::from_millis(gap)).await;
         let body = WakeRegister { tag: Bytes(tag), push: push.clone(), until: day };
-        match http.post(format!("{base}/register")).json(&body).send().await.map(|res| res.status()) {
+        match post(&http, &format!("{base}/register"), &body).await {
             Ok(status) if status.is_success() => {
                 registered += 1;
                 note(&push, |r| {
@@ -235,31 +270,32 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) {
             Ok(StatusCode::NOT_FOUND) => {
                 tracing::info!("the sync service does not offer wake-ups");
                 note(&push, |r| r.off_on = Some(today));
-                return;
+                return true;
             }
             Ok(StatusCode::TOO_MANY_REQUESTS) => {
                 tracing::info!("wake-up registration paused after {registered}: too many at once");
-                return;
+                return false;
             }
             Ok(status) => tracing::info!("the sync service refused a wake-up registration: {status}"),
             Err(e) => {
                 tracing::info!("could not register for wake-ups: {e}");
-                return;
+                return false;
             }
         }
     }
     if registered > 0 {
         tracing::info!("registered {registered} wake-up tags");
     }
+    forgotten
 }
 
-async fn forget(http: &reqwest::Client, push: &str, base: &str, stale: Vec<Tag>) {
+async fn forget(http: &reqwest::Client, push: &str, base: &str, stale: Vec<Tag>) -> bool {
     let mut forgotten = 0;
     for (tag, day) in stale {
         let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
         tokio::time::sleep(Duration::from_millis(gap)).await;
         let body = WakeForget { tag: Bytes(tag), push: push.to_string() };
-        match http.post(format!("{base}/forget")).json(&body).send().await.map(|res| res.status()) {
+        match post(http, &format!("{base}/forget"), &body).await {
             Ok(status) if status.is_success() || status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED => {
                 forgotten += 1;
                 note(push, |r| {
@@ -269,17 +305,18 @@ async fn forget(http: &reqwest::Client, push: &str, base: &str, stale: Vec<Tag>)
             }
             Ok(status) => {
                 tracing::info!("the sync service did not drop a wake-up tag: {status}");
-                return;
+                return false;
             }
             Err(e) => {
                 tracing::info!("could not drop a wake-up tag: {e}");
-                return;
+                return false;
             }
         }
     }
     if forgotten > 0 {
         tracing::info!("dropped {forgotten} wake-up tags no longer wanted");
     }
+    true
 }
 
 #[cfg(target_os = "android")]
@@ -361,6 +398,24 @@ mod tests {
         assert_eq!(wake_url("wss://commy.chat:8443/sync/").as_deref(), Some("https://commy.chat:8443/sync/wake"));
         assert_eq!(wake_url("ws://localhost:3002/sync").as_deref(), Some("http://localhost:3002/sync/wake"));
         assert_eq!(wake_url("https://commy.chat/sync"), None);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_connection_is_tried_again() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/sync/wake/forget", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (first, _) = listener.accept().await.unwrap();
+            drop(first);
+            let (mut second, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            let _ = second.read(&mut request).await;
+            second.write_all(b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n").await.unwrap();
+        });
+        let http = reqwest::Client::new();
+        let status = post(&http, &url, &serde_json::json!({ "tag": "x" })).await.unwrap();
+        assert_eq!(status, StatusCode::NO_CONTENT);
     }
 
     #[test]
