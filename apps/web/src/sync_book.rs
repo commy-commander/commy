@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::ServerId;
@@ -7,6 +7,7 @@ use commy_net::entry_list::EntryList;
 use commy_net::sync_streams::SharedKey;
 use commy_net::{ServerTicket, WirePayload};
 use commy_sync::{StreamId, StreamKeys};
+use commy_view::reads::{PrefPiece, ReadMark, ReadState};
 use serde::Deserialize;
 
 pub const MAX_PARKED: usize = 2_000;
@@ -16,6 +17,8 @@ pub const MAX_PARKED: usize = 2_000;
 pub enum Record {
     Servers { list: Box<EntryList> },
     CommunityKey { server: ServerId, key: SharedKey, at: i64 },
+    Read { marks: BTreeMap<String, ReadMark> },
+    Prefs { set: BTreeMap<String, PrefPiece> },
     #[serde(other)]
     Unknown,
 }
@@ -26,11 +29,21 @@ impl Record {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub fn read_record(marks: &BTreeMap<String, ReadMark>) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "k": "read", "marks": marks })).expect("read marks encode")
+}
+
+pub fn prefs_record(set: &BTreeMap<String, PrefPiece>) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "k": "prefs", "set": set })).expect("prefs encode")
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Change {
     Nothing,
     Servers,
     Keys,
+    Read(Vec<String>),
+    Prefs(BTreeMap<String, PrefPiece>),
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -48,6 +61,8 @@ pub struct Book {
     live: HashSet<StreamId>,
     snapshots: HashMap<ServerId, (i64, WirePayload)>,
     parked: HashMap<ServerId, VecDeque<WirePayload>>,
+    reads: ReadState,
+    prefs: BTreeMap<String, PrefPiece>,
 }
 
 impl Book {
@@ -75,8 +90,37 @@ impl Book {
                 self.keys.insert(server, (key, at));
                 if same { Change::Nothing } else { Change::Keys }
             }
+            Record::Read { marks } => {
+                let changed = self.note_reads(marks);
+                if changed.is_empty() { Change::Nothing } else { Change::Read(changed) }
+            }
+            Record::Prefs { set } => {
+                let taken = self.note_prefs(set);
+                if taken.is_empty() { Change::Nothing } else { Change::Prefs(taken) }
+            }
             Record::Unknown => Change::Nothing,
         }
+    }
+
+    pub fn note_reads(&mut self, marks: BTreeMap<String, ReadMark>) -> Vec<String> {
+        let next = ReadState::merge(&self.reads, &ReadState { channels: marks });
+        let changed = next.changed_from(&self.reads);
+        self.reads = next;
+        changed
+    }
+
+    pub fn note_prefs(&mut self, set: BTreeMap<String, PrefPiece>) -> BTreeMap<String, PrefPiece> {
+        let taken: BTreeMap<String, PrefPiece> = set.into_iter().filter(|(key, piece)| piece.beats(self.prefs.get(key))).collect();
+        self.prefs.extend(taken.clone());
+        taken
+    }
+
+    pub fn reads(&self) -> &ReadState {
+        &self.reads
+    }
+
+    pub fn prefs(&self) -> &BTreeMap<String, PrefPiece> {
+        &self.prefs
     }
 
     pub fn tickets(&self) -> HashMap<ServerId, ServerTicket> {
@@ -204,8 +248,9 @@ mod tests {
         let list = EntryList { servers: [(server, entry(server, Utc::now()))].into(), ..Default::default() };
         let json = serde_json::json!({ "k": "servers", "list": list }).to_string();
         assert_eq!(Record::parse(json.as_bytes()), Record::Servers { list: Box::new(list) });
-        assert_eq!(Record::parse(br#"{"k":"read","marks":{}}"#), Record::Unknown);
-        assert_eq!(Record::parse(br#"{"k":"prefs","set":{}}"#), Record::Unknown);
+        assert_eq!(Record::parse(br#"{"k":"read","marks":{}}"#), Record::Read { marks: BTreeMap::new() });
+        assert_eq!(Record::parse(br#"{"k":"prefs","set":{}}"#), Record::Prefs { set: BTreeMap::new() });
+        assert_eq!(Record::parse(br#"{"k":"saved","ops":[]}"#), Record::Unknown);
         assert_eq!(Record::parse(b"not json"), Record::Unknown);
     }
 
@@ -232,6 +277,21 @@ mod tests {
         assert_eq!(book.fold(Record::CommunityKey { server, key: key(new), at: 10 }), Change::Keys);
         assert_eq!(book.fold(Record::CommunityKey { server, key: key(old), at: 5 }), Change::Nothing);
         assert_eq!(book.given()[&server].0, new);
+    }
+
+    #[test]
+    fn read_positions_and_prefs_from_any_device_merge_and_report_what_moved() {
+        let mut book = Book::default();
+        let mark = |id: &str, at: i64| ReadMark { id: Some(id.into()), at, set: at, back: false };
+        let read = |marks: Vec<(&str, ReadMark)>| Record::parse(&read_record(&marks.into_iter().map(|(c, m)| (c.to_string(), m)).collect()));
+        assert_eq!(book.fold(read(vec![("a", mark("m2", 2)), ("b", mark("m1", 1))])), Change::Read(vec!["a".into(), "b".into()]));
+        assert_eq!(book.fold(read(vec![("a", mark("m1", 1))])), Change::Nothing, "an older position never moves a channel back");
+        assert_eq!(book.reads().channels["a"].id.as_deref(), Some("m2"));
+        let piece = |value: &str, at| PrefPiece { value: value.into(), at };
+        let prefs = |set: Vec<(&str, PrefPiece)>| Record::parse(&prefs_record(&set.into_iter().map(|(k, p)| (k.to_string(), p)).collect()));
+        let newer = BTreeMap::from([("notify.level".to_string(), piece("mentions", 5))]);
+        assert_eq!(book.fold(prefs(vec![("notify.level", piece("mentions", 5))])), Change::Prefs(newer));
+        assert_eq!(book.fold(prefs(vec![("notify.level", piece("all", 1))])), Change::Nothing);
     }
 
     #[test]

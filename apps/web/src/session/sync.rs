@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -8,15 +9,32 @@ use commy_net::entry_list::EntryList;
 use commy_net::sealed::SealKey;
 use commy_net::{sync_streams, ServerTicket, WirePayload};
 use commy_sync::{Pool, StreamId, SyncClient, SyncEvent};
+use commy_view::reads::{PrefPiece, ReadMark, ReadView};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
 use super::Session;
 use crate::client::Applied;
-use crate::sync_book::{Book, Change, Record};
+use crate::sync_book::{prefs_record, read_record, Book, Change, Record};
 
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
+const MAX_MARKS_PER_RECORD: usize = 300;
+
+fn chunks(marks: BTreeMap<String, ReadMark>, size: usize) -> Vec<BTreeMap<String, ReadMark>> {
+    let mut out = Vec::new();
+    let mut current = BTreeMap::new();
+    for (channel, mark) in marks {
+        current.insert(channel, mark);
+        if current.len() >= size {
+            out.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
 
 pub(super) struct Live {
     pool: Pool,
@@ -192,7 +210,55 @@ impl Session {
             Change::Nothing => {}
             Change::Keys => self.refresh_sync(),
             Change::Servers => self.follow_server_list(),
+            Change::Read(changed) => {
+                let view = self.sync.borrow().as_ref().map(|live| self.client.borrow().read_view(live.book.reads(), Some(&changed)));
+                if let Some(view) = view {
+                    self.emit("read-state-changed", json!(view));
+                }
+            }
+            Change::Prefs(set) => self.emit("sync-prefs-changed", json!(set)),
         }
+    }
+
+    pub(super) fn read_view(&self, only: Option<&[String]>) -> ReadView {
+        let guard = self.sync.borrow();
+        let reads = guard.as_ref().map(|live| live.book.reads().clone()).unwrap_or_default();
+        self.client.borrow().read_view(&reads, only)
+    }
+
+    pub(super) fn note_reads(&self, marks: BTreeMap<String, ReadMark>) {
+        let changed = {
+            let mut guard = self.sync.borrow_mut();
+            let Some(live) = guard.as_mut() else { return };
+            let changed = live.book.note_reads(marks);
+            changed.iter().filter_map(|c| live.book.reads().channels.get(c).map(|m| (c.clone(), m.clone()))).collect::<BTreeMap<_, _>>()
+        };
+        for chunk in chunks(changed, MAX_MARKS_PER_RECORD) {
+            self.append_account(read_record(&chunk));
+        }
+    }
+
+    pub(super) fn prefs(&self) -> BTreeMap<String, PrefPiece> {
+        self.sync.borrow().as_ref().map(|live| live.book.prefs().clone()).unwrap_or_default()
+    }
+
+    pub(super) fn note_prefs(&self, set: BTreeMap<String, PrefPiece>) {
+        let taken = match self.sync.borrow_mut().as_mut() {
+            Some(live) => live.book.note_prefs(set),
+            None => return,
+        };
+        if !taken.is_empty() {
+            self.append_account(prefs_record(&taken));
+        }
+    }
+
+    fn append_account(&self, plain: Vec<u8>) {
+        let Some((stream, client)) = self.sync.borrow().as_ref().and_then(|live| Some((live.account, live.pool.client_for(live.account)?))) else {
+            return;
+        };
+        spawn_local(async move {
+            let _ = client.append(stream, plain).await;
+        });
     }
 
     fn follow_server_list(self: &Rc<Self>) {

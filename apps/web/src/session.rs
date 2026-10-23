@@ -28,6 +28,8 @@ mod handoff;
 mod sync;
 
 const DEVICE_NAME: &str = "Web browser";
+const MAX_PREF_KEY: usize = 200;
+const MAX_PREFS_PER_CALL: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Unlock {
@@ -95,6 +97,9 @@ struct Args {
     from: Option<String>,
     mentions: Option<String>,
     offset: Option<usize>,
+    channels: Option<std::collections::BTreeMap<String, commy_view::reads::ReadMark>>,
+    channel_ids: Option<Vec<String>>,
+    changes: Option<std::collections::BTreeMap<String, Value>>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -147,6 +152,32 @@ impl Session {
             }
             "send_message" => self.send_message(args).await,
             "send_poll" => self.send_poll(args).await,
+            "read_state_load" | "read_state_sync" => to_json(&self.read_view(None)),
+            "read_state_set" => {
+                self.note_reads(args.channels.unwrap_or_default());
+                Ok(Value::Null)
+            }
+            "read_state_mark_read" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                let marks = self.client.borrow().latest_marks(server, args.channel_ids.as_deref(), Utc::now().timestamp_millis())?;
+                let touched: Vec<String> = marks.keys().cloned().collect();
+                self.note_reads(marks);
+                to_json(&self.read_view(Some(&touched)))
+            }
+            "sync_prefs_load" => to_json(&self.prefs()),
+            "sync_prefs_set" => {
+                let at = Utc::now().timestamp_millis();
+                let set = args
+                    .changes
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|(key, _)| !key.is_empty() && key.len() <= MAX_PREF_KEY)
+                    .take(MAX_PREFS_PER_CALL)
+                    .map(|(key, value)| (key, commy_view::reads::PrefPiece { value, at }))
+                    .collect();
+                self.note_prefs(set);
+                Ok(Value::Null)
+            }
             "search_messages" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 let user = |raw: Option<&String>| raw.map(|u| parse::<commy_core::UserId>(Some(u), "user")).transpose();

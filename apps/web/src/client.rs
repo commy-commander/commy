@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
@@ -12,6 +12,7 @@ use commy_net::protocol::{gossip_size, verify_sync_response, SyncMember, MAX_GOS
 use commy_net::{ServerTicket, WirePayload};
 use commy_view::act::{self, Act};
 use commy_view::keys::KeyHolder;
+use commy_view::reads::{ReadMark, ReadState, ReadView};
 use commy_view::search::{Page, SearchQuery, SearchResults};
 use commy_view::{MessageView, PinView, ServerSummary, ServerView};
 
@@ -164,6 +165,24 @@ impl Client {
         let mut message = Message::new(channel, profile.id, "");
         message.attachments.push(poll.into_attachment());
         seal_sign_apply(state, &keys, &identity, message)
+    }
+
+    pub fn read_view(&self, reads: &ReadState, only: Option<&[String]>) -> ReadView {
+        let me = self.me_id();
+        let servers = self.servers.lock().unwrap();
+        commy_view::reads::view(servers.values(), reads, only, me, &HashSet::new())
+    }
+
+    pub fn latest_marks(&self, server: ServerId, channels: Option<&[String]>, now_ms: i64) -> Result<BTreeMap<String, ReadMark>, String> {
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server).ok_or("This server is still loading")?;
+        Ok(state
+            .server
+            .channels
+            .iter()
+            .filter(|c| channels.is_none_or(|ids| ids.contains(&c.id.to_string())))
+            .filter_map(|c| commy_view::reads::latest_mark(state.messages(c.id), now_ms).map(|mark| (c.id.to_string(), mark)))
+            .collect())
     }
 
     pub fn search(&self, server: ServerId, query: &SearchQuery, page: Page) -> Result<SearchResults, String> {
