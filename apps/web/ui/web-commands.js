@@ -52,7 +52,7 @@ const WEB_UNLOCK_TEXT = {
   signed_out: "Sign in to open your servers.",
   no_list: "Open Commy on your computer and sign in there first. The web app opens the servers your computer has.",
   locked: "Approve this browser on one of your Commy devices, or enter your recovery code.",
-  asking: "Check your other devices and choose Allow.",
+  asking: "Open Commy on one of your other devices and choose Allow.",
   opening: "Opening your servers",
   unlocked: "",
 };

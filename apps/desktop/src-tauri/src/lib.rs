@@ -22,6 +22,7 @@ mod mirror;
 mod igdb;
 mod instance;
 mod invite_link;
+mod key_handoff;
 mod link_preview;
 mod local_key;
 mod liveness;
