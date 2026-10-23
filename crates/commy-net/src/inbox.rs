@@ -21,10 +21,16 @@ pub fn inboxes(state: &ServerState, user: UserId, ring: &Keyring, now_ms: i64) -
     if !state.server.is_current_member(user) || state.is_deleted() {
         return Vec::new();
     }
-    community_streams::epochs(state, KeyScope::Community, ring, now_ms)
-        .into_iter()
-        .map(|(_, secret)| inbox_for(&secret, state.server.id, user))
-        .collect()
+    let server = state.server.id;
+    let granted = state.community_keys().grant_for(user).and_then(|grant| ring.secret(grant.key));
+    let mut out: Vec<StreamKeys> = granted.map(|secret| inbox_for(secret, server, user)).into_iter().collect();
+    for (_, secret) in community_streams::epochs(state, KeyScope::Community, ring, now_ms) {
+        let keys = inbox_for(&secret, server, user);
+        if !out.iter().any(|known| known.id == keys.id) {
+            out.push(keys);
+        }
+    }
+    out
 }
 
 pub fn writable(state: &ServerState, me: UserId, to: UserId, ring: &Keyring) -> Option<StreamKeys> {
@@ -158,5 +164,27 @@ mod tests {
         let written = writable(&state, owner, member, &owners).expect("the owner still holds the member's key");
         let read = inboxes(&state, member, &members, now);
         assert_eq!(read.first().map(|keys| keys.id), Some(written.id));
+    }
+
+    #[test]
+    fn a_member_reads_the_inbox_of_the_key_it_was_given_even_without_its_record() {
+        let (mut state, _, owner) = fixture();
+        let member = join(&mut state, "member");
+        settle(&mut state, owner);
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut theirs = state.clone();
+        let mut owners = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        let record = owners.rotate(state.server.id, KeyScope::Community, &state.community_keys().heads(), now + 1);
+        let newest = record.id;
+        state.apply(ServerEvent::CommunityKeyAdd { server: state.server.id, key: record }).unwrap();
+        for event in owners.grant_events(&state, KeyScope::Community, newest, &[owner, member]) {
+            state.apply(event.clone()).unwrap();
+            let _ = theirs.apply(event);
+        }
+        let owners = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        let written = writable(&state, owner, member, &owners).expect("the owner holds the member's newest key");
+        let members = Keyring::unlock_community(&theirs, member, &identity_for(member));
+        assert!(members.holds(newest), "the grant arrived but the key record did not");
+        assert!(inboxes(&theirs, member, &members, now).iter().any(|keys| keys.id == written.id));
     }
 }

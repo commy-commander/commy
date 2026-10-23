@@ -116,9 +116,6 @@ fn start(handle: &AppHandle) {
         stop();
         return;
     };
-    if !account_log::is_live(&app) {
-        return;
-    }
     let (Some(dir), Some(me), Some(identity)) =
         (app.data_dir().cloned(), app.profile.lock().unwrap().as_ref().map(|p| p.id), app.identity())
     else {
@@ -149,6 +146,9 @@ fn start(handle: &AppHandle) {
         }
         !same
     };
+    if fresh {
+        tracing::info!("DM sync is on");
+    }
     refresh(handle);
     if fresh {
         outbox::wake_all_dms(&app);
@@ -258,6 +258,9 @@ pub fn tend_inboxes(handle: &AppHandle) {
         }
         let changed = !gone.is_empty() || !group.is_empty();
         live.pool.follow_together(group);
+        if changed {
+            tracing::info!("reading {} first-message inboxes", live.inboxes.len());
+        }
         changed
     };
     if changed {
@@ -321,7 +324,10 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
         return call && account_log::is_live(app) && append_pairwise(app, to, envelope).await;
     }
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return false };
-    let (Some(key), Some(keys)) = (partner_key(app, to), inbox_to(app, me, to)) else { return false };
+    let (Some(key), Some(keys)) = (partner_key(app, to), inbox_to(app, me, to)) else {
+        tracing::info!("no first-message inbox to leave a message for {to} in");
+        return false;
+    };
     let Some(plain) = inbox::seal(&key, envelope) else { return false };
     let stream = keys.id;
     let wake = rings(&envelope.message).then(|| keys.wake_tag(&to.to_string(), push_wake::today()));
@@ -342,6 +348,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     }
     match sent {
         Ok(Ok(_)) => {
+            tracing::info!("left a first message for {to} on the sync service");
             if let Some(tag) = wake {
                 let http = app.http.clone();
                 tauri::async_runtime::spawn(push_wake::ring(http, vec![tag]));
@@ -349,7 +356,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
             true
         }
         Ok(Err(e)) => {
-            tracing::debug!("could not leave a first message on the sync service: {e}");
+            tracing::info!("could not leave a first message on the sync service: {e}");
             false
         }
         Err(_) => {

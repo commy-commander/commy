@@ -7613,6 +7613,7 @@ async fn run_net_loop(
                     .then(|| action.map(|action| SignedEvent { action, event: event.clone() }))
                     .flatten();
                 let holdable = catchup::holdable(&event);
+                let about = commy_core::action::subject(&event);
                 let kept = (holdable || action.is_some()).then(|| event.clone());
                 let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
                 let profile_changed = match &event {
@@ -7730,7 +7731,7 @@ async fn run_net_loop(
                             let signed = SignedEvent { action, event };
                             app.catchup.lock().unwrap().hold_action(server, signed, std::time::Instant::now())
                         }
-                        (e, _, _) => tracing::warn!("rejected remote event: {e}"),
+                        (e, _, _) => tracing::warn!("rejected remote event about {}: {e}", about.as_deref().unwrap_or("something")),
                     },
                 }
             }
