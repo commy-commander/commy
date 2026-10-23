@@ -48,7 +48,7 @@ impl SpeakingDetector {
             }
         } else {
             self.silent_run = self.silent_run.saturating_add(1);
-            self.voiced_run = 0;
+            self.voiced_run = self.voiced_run.saturating_sub(1);
             if self.speaking && self.silent_run >= self.hold {
                 self.speaking = false;
                 return Some(false);
@@ -97,6 +97,15 @@ mod tests {
         assert_eq!(d.push(&quiet()), None);
         assert_eq!(d.push(&loud()), None);
         assert!(!d.is_speaking());
+    }
+
+    #[test]
+    fn broken_up_speech_still_triggers() {
+        let mut d = SpeakingDetector::new(2, 5);
+        assert_eq!(d.push(&loud()), None);
+        assert_eq!(d.push(&quiet()), None);
+        assert_eq!(d.push(&loud()), None);
+        assert_eq!(d.push(&loud()), Some(true));
     }
 
     #[test]
