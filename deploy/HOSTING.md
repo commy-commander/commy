@@ -358,10 +358,20 @@ server or channel a log belongs to.
   rang, but an operator watching live traffic could pair the address that rang
   with the phones it woke. Without the key, `GET /sync/wake` answers 404 and
   apps do not register.
+- **Pictures:** avatars, banners, server icons and banners, emoji, stickers,
+  soundboard sounds and link preview pictures (up to 1 MB each) are kept so
+  they load while whoever shared them is offline. An app seals each picture
+  with a key derived from its content hash, which only appears inside the
+  sealed logs, and stores it under an id derived the same way
+  (`PUT`/`GET /sync/pictures/<id>`). Sizes are rounded up to 16 KB, 64 KB,
+  256 KB or 1 MB. A picture nobody fetched or stored for the retention period
+  is removed. The service cannot open a picture or tell whose it is; someone
+  who already holds the exact same file could check whether it is stored.
+  Files, voice messages and videos stay peer to peer.
 - **Setting it up:** `docker compose up -d sync`, then add `SYNC_URL` and
   recreate auth: `docker compose up -d --no-deps auth`. The service answers
-  `GET /sync/healthz`. It logs only totals (connections, live logs, opens and
-  appends per 10 minutes, and wake-ups when they are on).
+  `GET /sync/healthz`. It logs only totals (connections, live logs, opens,
+  appends and stored pictures per 10 minutes, and wake-ups when they are on).
 
 ## iroh relay
 
@@ -430,8 +440,9 @@ server stay readable to the new one and are encrypted ten minutes after it
 starts, once the container it replaced has stopped.
 
 The sync service database (`commy_sync`) holds only random stream ids, entry
-numbers, times, retry nonces and sealed, padded entries, plus wake tags with
-push tokens when wake-ups are on. The operator can see how many logs exist and
+numbers, times, retry nonces and sealed, padded entries, sealed pictures under
+random-looking ids with the day they were last used, plus wake tags with push
+tokens when wake-ups are on. The operator can see how many logs exist and
 how busy each one is, not whose they are or what they say. With wake-ups on,
 the operator can also see how many tags a phone has registered and when they
 are rung, not which logs or people they stand for.

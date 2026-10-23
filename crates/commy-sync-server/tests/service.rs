@@ -352,3 +352,33 @@ async fn wake_ups_are_off_without_a_push_service() {
     assert_eq!(post(&address, "/sync/wake/register", &register).await, 404);
     assert_eq!(post(&address, "/sync/wake/ring", &serde_json::to_value(WakeRing { tags: vec![tag] }).unwrap()).await, 204);
 }
+
+async fn request(address: &str, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
+    let mut tcp = tokio::net::TcpStream::connect(address).await.unwrap();
+    let head = format!("{method} {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+    tcp.write_all(head.as_bytes()).await.unwrap();
+    tcp.write_all(body).await.unwrap();
+    let mut reply = Vec::new();
+    tcp.read_to_end(&mut reply).await.unwrap();
+    let status = std::str::from_utf8(&reply[9..12]).unwrap().parse().unwrap();
+    let split = reply.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    (status, reply[split..].to_vec())
+}
+
+#[tokio::test]
+async fn a_sealed_picture_is_kept_for_whoever_holds_its_reference() {
+    let (url, _) = start().await;
+    let address = url.trim_start_matches("ws://").trim_end_matches("/sync").to_string();
+    let key = commy_sync::PictureKey::for_blob("a-picture-hash");
+    let path = format!("/sync/pictures/{}", key.id_hex());
+    assert_eq!(request(&address, "GET", &path, b"").await.0, 404);
+    let sealed = key.seal(b"pixels").unwrap();
+    assert_eq!(request(&address, "PUT", &path, &sealed).await.0, 204);
+    let (status, body) = request(&address, "GET", &path, b"").await;
+    assert_eq!(status, 200);
+    assert_eq!(key.open(&body).unwrap(), b"pixels");
+    assert_eq!(request(&address, "PUT", &path, b"not sealed").await.0, 400, "only whole sealed pictures are taken");
+    assert_eq!(request(&address, "GET", "/sync/pictures/nothex", b"").await.0, 400);
+    let too_big = vec![0u8; commy_sync::picture::MAX_PICTURE_SEALED + 16];
+    assert_eq!(request(&address, "PUT", &path, &too_big).await.0, 413);
+}

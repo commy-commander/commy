@@ -570,6 +570,16 @@ impl MediaDialer {
 
 pub const MAX_BLOB_BYTES: u64 = 20 * 1024 * 1024;
 
+#[cfg(not(wasm_browser))]
+pub fn blob_hash(bytes: &[u8]) -> String {
+    iroh_blobs::Hash::new(bytes).to_string()
+}
+
+#[cfg(not(wasm_browser))]
+pub fn is_blob_of(blob: &str, bytes: &[u8]) -> bool {
+    blob.parse::<iroh_blobs::Hash>().is_ok_and(|hash| hash == iroh_blobs::Hash::new(bytes))
+}
+
 pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
     anyhow::ensure!(size <= max, "that file is larger than {} MB", max / (1024 * 1024));
     Ok(())
