@@ -14,6 +14,7 @@ pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
 pub const DEVICE_SECRET_KEY: &str = "commy.device";
 pub const ENTRY_KEY_KEY: &str = "commy.entry-key";
 pub const PINS_KEY: &str = "commy.pins";
+pub const SAFETY_KEY: &str = "commy.safety";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountUser {
@@ -208,6 +209,10 @@ pub fn entry_key_record(account: &str, key: &SealKey) -> String {
 
 pub fn pins_key(account: &str) -> String {
     format!("{PINS_KEY}.{account}")
+}
+
+pub fn safety_key(account: &str) -> String {
+    format!("{SAFETY_KEY}.{account}")
 }
 
 pub fn device_secret_key(account: &str) -> String {

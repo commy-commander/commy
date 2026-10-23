@@ -39,11 +39,11 @@ fn chunks(marks: BTreeMap<String, ReadMark>, size: usize) -> Vec<BTreeMap<String
 }
 
 pub(super) struct Live {
-    pool: Pool,
+    pub(super) pool: Pool,
     account: StreamId,
     account_live: bool,
-    book: Book,
-    node: [u8; 32],
+    pub(super) book: Book,
+    pub(super) node: [u8; 32],
     greeted: HashSet<ServerId>,
     gone: bool,
 }
@@ -69,6 +69,7 @@ impl Session {
 
     pub(super) fn stop_sync(&self) {
         self.sync.borrow_mut().take();
+        self.dms.borrow_mut().forget_streams();
     }
 
     pub(super) fn nudge_sync(&self) {
@@ -82,6 +83,7 @@ impl Session {
             match event {
                 SyncEvent::Entry { stream, seq, plain, .. } => self.on_sync_entry(stream, seq, &plain),
                 SyncEvent::Unreadable { stream, seq } => {
+                    self.dms.borrow_mut().advance(stream, seq);
                     if let Some(live) = self.sync.borrow_mut().as_mut() {
                         live.book.advance(stream, seq);
                     }
@@ -170,9 +172,16 @@ impl Session {
                 live.pool.follow_together_tail(part, Some(tail));
             }
         }
+        drop(guard);
+        self.refresh_dms();
     }
 
     fn on_sync_entry(self: &Rc<Self>, stream: StreamId, seq: u64, plain: &[u8]) {
+        let dm = self.dms.borrow().source(stream);
+        if let Some(source) = dm {
+            self.on_dm_entry(stream, seq, source, plain);
+            return;
+        }
         let routed = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return };
@@ -180,7 +189,7 @@ impl Session {
                 let change = live.book.fold(Record::parse(plain));
                 let settled = live.account_live;
                 drop(guard);
-                if settled {
+                if settled || matches!(change, Change::Partner(..)) {
                     self.on_account_change(change);
                 }
                 return;
@@ -252,6 +261,9 @@ impl Session {
     }
 
     fn on_sync_caught_up(self: &Rc<Self>, stream: StreamId, seq: u64) {
+        if self.dms.borrow_mut().caught_up(stream, seq) {
+            return;
+        }
         let (server, state_lane) = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return };
@@ -292,6 +304,7 @@ impl Session {
             }
             Change::Prefs(set) => self.emit("sync-prefs-changed", json!(set)),
             Change::Saved => self.emit("saved-changed", json!(self.saved())),
+            Change::Partner(profile, at, accepted) => self.adopt_partner(*profile, at, accepted),
         }
     }
 
@@ -348,7 +361,7 @@ impl Session {
         Ok(self.saved())
     }
 
-    fn append_account(&self, plain: Vec<u8>) {
+    pub(super) fn append_account(&self, plain: Vec<u8>) {
         let Some((stream, client)) = self.sync.borrow().as_ref().and_then(|live| Some((live.account, live.pool.client_for(live.account)?))) else {
             return;
         };

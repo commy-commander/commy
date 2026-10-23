@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use commy_core::channel_key::{ChannelSecret, KeyId};
-use commy_core::ServerId;
+use commy_core::{ServerId, UserProfile};
 use commy_net::community_streams::{Lane, Want};
 use commy_net::entry_list::EntryList;
 use commy_net::sync_streams::SharedKey;
@@ -21,6 +21,12 @@ pub enum Record {
     Read { marks: BTreeMap<String, ReadMark> },
     Prefs { set: BTreeMap<String, PrefPiece> },
     Saved { ops: Vec<SavedOp> },
+    DmPartner {
+        profile: Box<UserProfile>,
+        at: i64,
+        #[serde(default)]
+        accepted: bool,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -39,6 +45,10 @@ pub fn prefs_record(set: &BTreeMap<String, PrefPiece>) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({ "k": "prefs", "set": set })).expect("prefs encode")
 }
 
+pub fn partner_record(profile: &UserProfile, at: i64, accepted: bool) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "k": "dm_partner", "profile": profile, "at": at, "accepted": accepted })).expect("partner encode")
+}
+
 pub fn saved_record(ops: &[SavedOp]) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({ "k": "saved", "ops": ops })).expect("saved encode")
 }
@@ -51,6 +61,7 @@ pub enum Change {
     Read(Vec<String>),
     Prefs(BTreeMap<String, PrefPiece>),
     Saved,
+    Partner(Box<UserProfile>, i64, bool),
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -110,6 +121,7 @@ impl Book {
             Record::Saved { ops } => {
                 if self.note_saved(ops).is_empty() { Change::Nothing } else { Change::Saved }
             }
+            Record::DmPartner { profile, at, accepted } => Change::Partner(profile, at, accepted),
             Record::Unknown => Change::Nothing,
         }
     }
@@ -286,6 +298,11 @@ mod tests {
         assert_eq!(Record::parse(br#"{"k":"prefs","set":{}}"#), Record::Prefs { set: BTreeMap::new() });
         assert_eq!(Record::parse(br#"{"k":"saved","ops":[]}"#), Record::Saved { ops: Vec::new() });
         assert_eq!(Record::parse(br#"{"k":"dm_partner","at":1}"#), Record::Unknown);
+        let friend = commy_core::UserProfile::new("friend");
+        let older_build = serde_json::json!({ "k": "dm_partner", "profile": friend, "at": 3 }).to_string();
+        assert_eq!(Record::parse(older_build.as_bytes()), Record::DmPartner { profile: Box::new(friend.clone()), at: 3, accepted: false });
+        let ours = Record::parse(&partner_record(&friend, 4, true));
+        assert_eq!(ours, Record::DmPartner { profile: Box::new(friend), at: 4, accepted: true });
         assert_eq!(Record::parse(b"not json"), Record::Unknown);
     }
 

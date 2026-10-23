@@ -8,8 +8,10 @@ use commy_core::{
     ServerState, SignedEvent, Snapshot, UserId, UserProfile,
 };
 use commy_net::community_streams::{self as streams, Lane, Want};
+use commy_net::inbox;
 use commy_net::protocol::{gossip_size, verify_sync_response, SyncMember, MAX_GOSSIP_BYTES};
 use commy_net::{ServerTicket, WirePayload};
+use commy_sync::StreamKeys;
 use commy_view::act::{self, Act};
 use commy_view::keys::KeyHolder;
 use commy_view::liveness::{self, Liveness};
@@ -416,6 +418,33 @@ impl Client {
                 (!wants.is_empty()).then_some((*sid, wants))
             })
             .collect()
+    }
+
+    pub fn own_inboxes(&self, given: &HashMap<ServerId, (KeyId, ChannelSecret)>, now_ms: i64) -> Vec<(ServerId, StreamKeys)> {
+        let Some(me) = self.me_id() else { return Vec::new() };
+        let holder = self.keys();
+        let servers = self.servers.lock().unwrap();
+        servers
+            .iter()
+            .filter_map(|(sid, state)| {
+                let ring = holder.community_ring(state, given.get(sid).cloned())?;
+                Some(inbox::inboxes(state, me, &ring, now_ms).into_iter().map(|keys| (*sid, keys)).collect::<Vec<_>>())
+            })
+            .flatten()
+            .collect()
+    }
+
+    pub fn inbox_to(&self, given: &HashMap<ServerId, (KeyId, ChannelSecret)>, to: UserId) -> Option<StreamKeys> {
+        let me = self.me_id()?;
+        let holder = self.keys();
+        let servers = self.servers.lock().unwrap();
+        let mut sids: Vec<&ServerId> = servers.keys().collect();
+        sids.sort();
+        sids.into_iter().find_map(|sid| {
+            let state = servers.get(sid)?;
+            let ring = holder.community_ring(state, given.get(sid).cloned())?;
+            inbox::writable(state, me, to, &ring)
+        })
     }
 
     pub fn message_created_payload(&self, server: ServerId, message: &Message) -> Option<serde_json::Value> {

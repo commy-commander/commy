@@ -2062,17 +2062,7 @@ fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
     let safety = app.safety.lock().unwrap();
     let mut views = dm_thread_views(&dms, me);
     views.extend(groups);
-    views.sort_by(|a, b| b.last_at.cmp(&a.last_at));
-    views.retain_mut(|view| {
-        let Ok(partner) = view.user.parse::<UserId>() else { return true };
-        if safety.is_blocked(partner) {
-            return false;
-        }
-        if !safety.accepted.contains(&partner) && !dms.has_sent_to(me, partner) {
-            view.kind = if safety.spam.contains(&partner) { "spam" } else { "request" }.to_string();
-        }
-        true
-    });
+    commy_view::dms::sort_threads(&mut views, &dms, &safety, me);
     views
 }
 

@@ -1,5 +1,6 @@
 pub mod account;
 pub mod client;
+pub mod dm_book;
 pub mod store;
 pub mod sync_book;
 

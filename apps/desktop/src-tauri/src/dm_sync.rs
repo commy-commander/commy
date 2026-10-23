@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use commy_core::dm::{CallSignal, DmAction, DmMessage};
+use commy_core::dm::{DmAction, DmMessage};
 use commy_core::{IdentityKey, MessageId, ServerId, UserId, UserProfile};
 use commy_net::inbox;
 use commy_net::node::IncomingDm;
@@ -14,18 +14,16 @@ use commy_sync::wake::DAY_MS;
 use commy_sync::{StreamId, StreamKeys, SyncEvent};
 use tauri::{AppHandle, Manager};
 
+pub use commy_view::dms::{call_fresh, is_call, pick_partners, rings, should_ring, syncable};
+use commy_view::dms::{EPOCHS, RECENT_MS};
+
 use crate::catchup::AppAccess;
 use crate::state::App;
 use crate::sync_link::{self, Pool};
-use crate::{account_log, outbox, push_wake, safety};
+use crate::{account_log, outbox, push_wake};
 
-const EPOCHS: u32 = 3;
-const MAX_PARTNERS: usize = 40;
-const RECENT_MS: i64 = 90 * 24 * 60 * 60 * 1000;
-const QUIET_AFTER_SECS: i64 = 10 * 60;
 const REFRESH_EVERY: Duration = Duration::from_secs(60 * 60);
 const HOLD_WAIT: Duration = Duration::from_secs(8);
-const CALL_FRESH_MS: i64 = 60 * 1000;
 
 struct Partner {
     key: IdentityKey,
@@ -53,11 +51,6 @@ pub fn nudge() {
     }
 }
 
-pub fn syncable(message: &DmMessage) -> bool {
-    matches!(message.action, DmAction::Post | DmAction::Edit { .. } | DmAction::Delete { .. } | DmAction::React { .. })
-        && !message.content.starts_with(safety::REPORT_PREFIX)
-        && safety::FriendSignal::decode(&message.content).is_none()
-}
 
 fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
@@ -77,18 +70,6 @@ fn last_message_ms(app: &App, user: UserId) -> Option<i64> {
     app.dms.lock().unwrap().conversation(user).last().map(|m| m.created_at.timestamp_millis())
 }
 
-pub fn pick_partners(noted: &BTreeMap<UserId, i64>, local: &[(UserId, i64)], now: i64) -> Vec<UserId> {
-    let mut latest: BTreeMap<UserId, i64> = BTreeMap::new();
-    for (user, at) in noted.iter().map(|(u, a)| (*u, *a)).chain(local.iter().copied()) {
-        if now - at < RECENT_MS {
-            let seen = latest.entry(user).or_insert(at);
-            *seen = (*seen).max(at);
-        }
-    }
-    let mut ranked: Vec<(UserId, i64)> = latest.into_iter().collect();
-    ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    ranked.into_iter().take(MAX_PARTNERS).map(|(user, _)| user).collect()
-}
 
 fn wanted(app: &App) -> Vec<(UserId, IdentityKey)> {
     let partners = app.dms.lock().unwrap().partners();
@@ -268,9 +249,6 @@ pub fn tend_inboxes(handle: &AppHandle) {
     }
 }
 
-pub fn is_call(message: &DmMessage) -> bool {
-    matches!(message.action, DmAction::Call { .. })
-}
 
 #[derive(Debug, PartialEq)]
 pub enum Route {
@@ -298,9 +276,6 @@ pub fn route(entry: &DmEntry, here: Option<&str>, at: i64, now: i64) -> Route {
     }
 }
 
-pub fn call_fresh(at: i64, now: i64) -> bool {
-    (now - at).abs() < CALL_FRESH_MS
-}
 
 fn inbox_to(app: &App, me: UserId, to: UserId) -> Option<StreamKeys> {
     let holder = crate::channel_lock::holder_of(app);
@@ -423,9 +398,6 @@ pub fn wake_tags(app: &App, days: &[i64]) -> Option<Vec<([u8; 32], i64)>> {
     Some(tags)
 }
 
-pub fn rings(message: &DmMessage) -> bool {
-    matches!(message.action, DmAction::Post | DmAction::Call { signal: CallSignal::Ring, .. })
-}
 
 async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver<SyncEvent>) {
     let mut tick = tokio::time::interval(REFRESH_EVERY);
@@ -520,9 +492,6 @@ impl AppAccess for Quiet {
     }
 }
 
-pub fn should_ring(live_now: bool, created_at: chrono::DateTime<Utc>, now: chrono::DateTime<Utc>) -> bool {
-    live_now && (now - created_at).num_seconds() < QUIET_AFTER_SECS
-}
 
 fn receive(handle: &AppHandle, envelope: DmEnvelope, live_now: bool) {
     let Ok(node) = data_encoding::HEXLOWER_PERMISSIVE.decode(envelope.message.from_node.trim().as_bytes()) else { return };
@@ -555,12 +524,8 @@ fn take_mine(handle: &AppHandle, partner: UserId, message: DmMessage) {
 }
 
 pub fn partner_follows(app: &App, partner: UserId) -> bool {
-    let since = now_ms() - RECENT_MS;
     let queued = app.outbox.lock().unwrap().pending_dms(partner);
-    let dms = app.dms.lock().unwrap();
-    dms.conversation(partner)
-        .iter()
-        .any(|m| m.created_at.timestamp_millis() > since && (m.from == partner || !queued.contains(&m.id)))
+    commy_view::dms::follows(&app.dms.lock().unwrap(), partner, &queued, now_ms())
 }
 
 pub fn waiting_dms(app: &App, partner: UserId) -> HashSet<MessageId> {
@@ -684,19 +649,7 @@ pub fn seed(handle: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_conversation_messages_go_to_the_service() {
-        let (a, b) = (UserId::new(), UserId::new());
-        assert!(syncable(&DmMessage::new(a, b, "hello")));
-        let target = commy_core::MessageId::new();
-        assert!(syncable(&DmMessage::acting(a, b, DmAction::Edit { target }, "hello!")));
-        assert!(syncable(&DmMessage::acting(a, b, DmAction::React { target, emoji: "🔥".into(), active: true }, "")));
-        assert!(!syncable(&DmMessage::acting(a, b, DmAction::GroupInvite { ticket: "t".into() }, "")));
-        assert!(!syncable(&DmMessage::new(a, b, format!("{}spam", safety::REPORT_PREFIX))));
-        let signal = safety::FriendSignal::Request.encode();
-        assert!(!syncable(&DmMessage::new(a, b, signal)));
-    }
+    use commy_core::dm::CallSignal;
 
     #[test]
     fn a_dm_the_service_holds_counts_as_sent_once_the_partner_follows_the_conversation() {
@@ -728,23 +681,6 @@ mod tests {
     }
 
     #[test]
-    fn a_call_rings_only_while_fresh_and_never_from_history() {
-        let (a, b) = (UserId::new(), UserId::new());
-        let channel = commy_core::ChannelId::new();
-        let ring = DmMessage::acting(a, b, DmAction::Call { call: channel, signal: CallSignal::Ring }, "");
-        let hang_up = DmMessage::acting(a, b, DmAction::Call { call: channel, signal: CallSignal::HangUp }, "");
-        assert!(is_call(&ring) && is_call(&hang_up));
-        assert!(!is_call(&DmMessage::new(a, b, "hello")));
-        assert!(!syncable(&ring), "calls never become conversation history");
-        assert!(rings(&ring), "a ring wakes the partner's phone");
-        assert!(!rings(&hang_up));
-        let now = 1_000_000_000_000;
-        assert!(call_fresh(now - 5_000, now));
-        assert!(call_fresh(now + 5_000, now), "a clock a little ahead still rings");
-        assert!(!call_fresh(now - CALL_FRESH_MS - 1, now), "an old ring read back later stays quiet");
-    }
-
-    #[test]
     fn our_own_entries_reach_our_other_devices_and_only_their_calls_settle_ours() {
         let (me, partner) = (UserId::new(), UserId::new());
         let profile = UserProfile::new("me");
@@ -763,7 +699,7 @@ mod tests {
         let accept = DmAction::Call { call: channel, signal: CallSignal::Accept };
         assert_eq!(route(&mine(accept.clone(), &other), Some(&here), now, now), Route::Settled);
         assert_eq!(route(&mine(accept.clone(), &here), Some(&here), now, now), Route::Skip, "our own answer never ends our call");
-        assert_eq!(route(&mine(accept, &other), Some(&here), now - CALL_FRESH_MS - 1, now), Route::Skip);
+        assert_eq!(route(&mine(accept, &other), Some(&here), now - commy_view::dms::CALL_FRESH_MS - 1, now), Route::Skip);
     }
 
     #[test]
@@ -775,34 +711,4 @@ mod tests {
         assert!(partner_follows(&app, partner));
     }
 
-    #[test]
-    fn the_most_recent_partners_are_followed() {
-        let now = 1_000_000_000_000;
-        let (old, fresh, local, renoted) = (UserId::new(), UserId::new(), UserId::new(), UserId::new());
-        let noted = BTreeMap::from([(old, now - RECENT_MS - 1), (fresh, now - 10), (renoted, now - RECENT_MS - 5)]);
-        let picked = pick_partners(&noted, &[(local, now - 5), (renoted, now - 1)], now);
-        assert_eq!(picked, vec![renoted, local, fresh]);
-        let many: Vec<(UserId, i64)> = (0..(MAX_PARTNERS as i64 + 5)).map(|n| (UserId::new(), now - n)).collect();
-        let picked = pick_partners(&BTreeMap::new(), &many, now);
-        assert_eq!(picked.len(), MAX_PARTNERS);
-        assert_eq!(picked[0], many[0].0);
-    }
-
-    #[test]
-    fn only_new_messages_wake_the_partners_phone() {
-        let (a, b) = (UserId::new(), UserId::new());
-        let target = commy_core::MessageId::new();
-        assert!(rings(&DmMessage::new(a, b, "hello")));
-        assert!(!rings(&DmMessage::acting(a, b, DmAction::Edit { target }, "hello!")));
-        assert!(!rings(&DmMessage::acting(a, b, DmAction::React { target, emoji: "🔥".into(), active: true }, "")));
-        assert!(!rings(&DmMessage::acting(a, b, DmAction::Delete { target }, "")));
-    }
-
-    #[test]
-    fn history_from_the_service_never_rings() {
-        let now = Utc::now();
-        assert!(should_ring(true, now - chrono::Duration::seconds(5), now));
-        assert!(!should_ring(false, now - chrono::Duration::seconds(5), now), "catching up stays quiet");
-        assert!(!should_ring(true, now - chrono::Duration::hours(2), now), "old news stays quiet");
-    }
 }
