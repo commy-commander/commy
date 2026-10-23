@@ -443,18 +443,27 @@ impl Session {
         let Ok(ticket) = ServerTicket::decode(raw) else { return };
         let Some((id, secret)) = key else { return };
         let server = ticket.server_id;
-        if ticket.owner.is_none() || self.client.borrow().tickets.contains_key(&server) {
+        if ticket.owner.is_none() || self.client.borrow().has(server) {
             return;
         }
         let now = Utc::now();
         let entry = entry_list::Entry { name: ticket.server_name.clone(), ticket: raw.to_string(), since: now };
         let shared = SharedKey::of(id, &secret);
-        let joined = self.sync.borrow_mut().as_mut().is_some_and(|live| live.book.join(server, entry.clone(), shared.clone(), now.timestamp_millis()));
-        if !joined {
+        let listed = self.client.borrow().tickets.contains_key(&server);
+        let (joined, keyed) = match self.sync.borrow_mut().as_mut() {
+            Some(live) => {
+                let joined = !listed && live.book.join(server, entry.clone(), shared.clone(), now.timestamp_millis());
+                (joined, live.book.offer_key(server, shared.clone(), now.timestamp_millis()))
+            }
+            None => return,
+        };
+        if !joined && !keyed {
             return;
         }
-        self.client.borrow_mut().tickets.insert(server, ticket.clone());
-        self.append_account(joined_record(server, &entry));
+        if joined {
+            self.client.borrow_mut().tickets.insert(server, ticket.clone());
+            self.append_account(joined_record(server, &entry));
+        }
         self.append_account(community_key_record(server, &shared, now.timestamp_millis(), ticket.owner));
         self.refresh_sync();
         let details = self.dms.borrow().safety.profile_policy.shows_details_to_servers();

@@ -1963,6 +1963,7 @@ async fn join_group(app: &App, handle: &tauri::AppHandle, from: UserId, ticket: 
         Ok(_) => {
             entry_list::record_join(app, ticket.server_id);
             entry_list::schedule(handle);
+            community_sync::refresh_soon(handle);
         }
         Err(e) => tracing::warn!("could not join a group from {from}: {e}"),
     }
@@ -2531,7 +2532,8 @@ where
         outbox::dm_held(app, partner, message.id);
     }
     let held = stored && dm_sync::partner_follows(app, partner);
-    let delivered = !held && !waiting && send(envelope).await;
+    let jumps = !commy_view::dms::syncable(&message);
+    let delivered = !held && (!waiting || jumps) && send(envelope).await;
     if delivered {
         outbox::dm_delivered(app, partner, message.id);
     } else if waiting || held {
@@ -3652,6 +3654,28 @@ mod dm_send_tests {
         assert!(view.pending);
         assert_eq!(app.outbox.lock().unwrap().dm_queue(partner), vec![first_id, second_id]);
         assert_eq!(event_names(&handle), vec!["dm-sending", "dm-changed"]);
+    }
+
+    #[tokio::test]
+    async fn a_group_invite_goes_out_at_once_even_behind_waiting_dms() {
+        let (app, me) = signed_in();
+        let handle = TestHandle::new(app.clone());
+        let partner = UserId::new();
+        let first = DmMessage::new(me.id, partner, "first");
+        let first_id = first.id;
+        post_dm_with(&handle, &me, partner, first, |_| async { false }).await.unwrap();
+
+        let invite = commy_view::dms::group_invite(me.id, partner, "ticket".into(), None);
+        let sent = std::sync::Mutex::new(Vec::new());
+        post_dm_with(&handle, &me, partner, invite.clone(), |envelope: DmEnvelope| {
+            sent.lock().unwrap().push(envelope.message.id);
+            async { true }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(*sent.lock().unwrap(), vec![invite.id]);
+        assert_eq!(app.outbox.lock().unwrap().dm_queue(partner), vec![first_id]);
     }
 }
 
