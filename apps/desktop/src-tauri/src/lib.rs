@@ -2205,15 +2205,23 @@ async fn send_direct_dm(
     let sender = app.profile_for(me, message.to);
     let to = message.to;
     let envelope = DmEnvelope::new(message, sender).with_note(note);
-    if dm_sync::post_inbox(app, to, &envelope).await {
-        return Ok(());
-    }
-    let hex = hex.ok_or("that person's device is unknown")?;
+    let inboxed = dm_sync::post_inbox(app, to, &envelope).await;
+    let Some(hex) = hex else {
+        return if inboxed { Ok(()) } else { Err("that person's device is unknown".into()) };
+    };
     let send = {
         let net = app.net.lock().await;
-        net.as_ref().ok_or("network is not ready yet")?.send_dm(hex, &envelope)
+        match net.as_ref() {
+            Some(node) => node.send_dm(hex, &envelope),
+            None if inboxed => return Ok(()),
+            None => return Err("network is not ready yet".into()),
+        }
     };
-    send.await.map_err(|_| offline.to_string())
+    match send.await {
+        Ok(()) => Ok(()),
+        Err(_) if inboxed => Ok(()),
+        Err(_) => Err(offline.to_string()),
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -2604,7 +2612,8 @@ async fn post_dm(
     message: DmMessage,
 ) -> CmdResult<Option<DmMessageView>> {
     post_dm_with(handle, me, partner, message, |envelope| async move {
-        dm_sync::post_inbox(app, partner, &envelope).await || outbox::try_send_dm(app, partner, &envelope).await
+        let inboxed = dm_sync::post_inbox(app, partner, &envelope).await;
+        outbox::try_send_dm(app, partner, &envelope).await || inboxed
     })
     .await
 }
