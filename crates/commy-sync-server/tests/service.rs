@@ -427,3 +427,46 @@ async fn a_live_signal_reaches_the_other_followers_and_is_never_stored() {
         }
     }
 }
+
+async fn next_signal(events: &mut UnboundedReceiver<SyncEvent>) -> Vec<u8> {
+    loop {
+        if let SyncEvent::Signal { plain, .. } = tokio::time::timeout(WAIT, events.recv()).await.expect("a signal in time").expect("client running") {
+            return plain;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_last_word_is_heard_when_a_connection_drops_but_not_after_a_close() {
+    let (url, _) = start().await;
+    let keys = StreamSecret::random().keys();
+    let (listener, mut heard) = SyncClient::spawn(url.clone());
+    listener.follow(keys.clone(), 0);
+    assert!(caught_up(&mut heard).await.is_empty());
+
+    let mut leaving = raw(&url).await;
+    open_raw(&mut leaving, &keys).await;
+    send(&mut leaving, &ClientFrame::will(&keys, [1; APPEND_NONCE_BYTES], keys.seal(b"gone").unwrap())).await;
+    let forged = ClientFrame::Will { stream: keys.id, nonce: Bytes([2; APPEND_NONCE_BYTES]), body: Blob(keys.seal(b"x").unwrap()), sig: Bytes([7; 64]) };
+    send(&mut leaving, &forged).await;
+    assert!(matches!(receive(&mut leaving).await, ServerFrame::Error { code: ErrorCode::BadSignature, .. }));
+    drop(leaving);
+    assert_eq!(next_signal(&mut heard).await, b"gone".to_vec(), "a dropped connection speaks its last word");
+
+    let mut closing = raw(&url).await;
+    open_raw(&mut closing, &keys).await;
+    send(&mut closing, &ClientFrame::will(&keys, [3; APPEND_NONCE_BYTES], keys.seal(b"closed").unwrap())).await;
+    send(&mut closing, &ClientFrame::Close { stream: keys.id }).await;
+    send(&mut closing, &ClientFrame::Ping).await;
+    assert_eq!(receive(&mut closing).await, ServerFrame::Pong);
+    drop(closing);
+
+    let (speaker, mut said) = SyncClient::spawn(url.clone());
+    speaker.follow(keys.clone(), 0);
+    speaker.will(keys.id, b"later".to_vec());
+    assert!(caught_up(&mut said).await.is_empty());
+    speaker.signal(keys.id, b"here".to_vec());
+    assert_eq!(next_signal(&mut heard).await, b"here".to_vec(), "a closed stream left no last word behind");
+    drop(speaker);
+    assert_eq!(next_signal(&mut heard).await, b"later".to_vec(), "the client hands its last word over after the greeting");
+}

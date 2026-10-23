@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::extract::ws::{Message, WebSocket};
 use commy_sync::stream::{verify_append, verify_signal, StreamId, MAX_SEALED, MAX_SIGNAL_SEALED, NONCE_BYTES, SIZE_BUCKETS, TAG_BYTES};
 use commy_sync::wire::{
-    AppendNonce, ClientFrame, ErrorCode, ServerFrame, WireEntry, FRAME_BODY_BUDGET, MAX_STREAMS_PER_CONNECTION, PAGE_SIZE, PROTOCOL,
+    AppendNonce, Blob, ClientFrame, ErrorCode, ServerFrame, WireEntry, FRAME_BODY_BUDGET, MAX_STREAMS_PER_CONNECTION, PAGE_SIZE, PROTOCOL,
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
@@ -22,6 +22,7 @@ const OUTGOING_BUFFER: usize = 64;
 struct OpenStream {
     write: [u8; 32],
     follower: JoinHandle<()>,
+    will: Option<Blob>,
 }
 
 pub(crate) fn is_padded_size(len: usize) -> bool {
@@ -78,6 +79,12 @@ pub(crate) async fn run(service: Arc<Service>, key: AddressKey, socket: WebSocke
             _ = tokio::time::sleep_until(deadline) => break,
         }
     }
+    for (stream, opened) in &open {
+        if let Some(body) = opened.will.clone() {
+            let heard = service.hub.signal(stream, session, body);
+            service.stats.signalled(heard.saturating_sub(1));
+        }
+    }
     for (stream, opened) in open.drain() {
         opened.follower.abort();
         let _ = opened.follower.await;
@@ -104,9 +111,11 @@ async fn handle(
                 let _ = out.send(ServerFrame::stream_error(ErrorCode::BadStream, stream)).await;
                 return;
             }
+            let mut will = None;
             if let Some(previous) = open.remove(&stream) {
                 previous.follower.abort();
                 let _ = previous.follower.await;
+                will = previous.will.filter(|_| previous.write == write.0);
             } else if open.len() >= MAX_STREAMS_PER_CONNECTION {
                 let _ = out.send(ServerFrame::stream_error(ErrorCode::TooManyStreams, stream)).await;
                 return;
@@ -121,7 +130,7 @@ async fn handle(
             }
             service.stats.opened();
             let follower = tokio::spawn(follow(service.clone(), session, stream, after, tail, out.clone()));
-            open.insert(stream, OpenStream { write: write.0, follower });
+            open.insert(stream, OpenStream { write: write.0, follower, will });
         }
         ClientFrame::Close { stream } => {
             if let Some(opened) = open.remove(&stream) {
@@ -135,19 +144,27 @@ async fn handle(
                 let _ = out.send(refused(ErrorCode::NotOpen, stream, nonce, None)).await;
                 return;
             };
-            if !is_padded_size(body.0.len()) || body.0.len() > MAX_SIGNAL_SEALED {
-                let _ = out.send(refused(ErrorCode::TooLarge, stream, nonce, None)).await;
-                return;
-            }
-            if !verify_signal(&opened.write, &stream, &nonce.0, &body.0, &sig.0) {
-                let _ = out.send(refused(ErrorCode::BadSignature, stream, nonce, None)).await;
-                return;
-            }
-            if service.limiter.signal(key, body.0.len()).is_err() {
+            if let Err(code) = check_signal(service, key, &opened.write, stream, &nonce, &body, &sig) {
+                if let Some(code) = code {
+                    let _ = out.send(refused(code, stream, nonce, None)).await;
+                }
                 return;
             }
             let heard = service.hub.signal(&stream, session, body);
             service.stats.signalled(heard.saturating_sub(1));
+        }
+        ClientFrame::Will { stream, nonce, body, sig } => {
+            let Some(opened) = open.get_mut(&stream) else {
+                let _ = out.send(refused(ErrorCode::NotOpen, stream, nonce, None)).await;
+                return;
+            };
+            if let Err(code) = check_signal(service, key, &opened.write, stream, &nonce, &body, &sig) {
+                if let Some(code) = code {
+                    let _ = out.send(refused(code, stream, nonce, None)).await;
+                }
+                return;
+            }
+            opened.will = Some(body);
         }
         ClientFrame::Append { stream, nonce, body, sig } => {
             let Some(opened) = open.get(&stream) else {
@@ -181,6 +198,24 @@ async fn handle(
             }
         }
     }
+}
+
+fn check_signal(
+    service: &Service,
+    key: AddressKey,
+    write: &[u8; 32],
+    stream: StreamId,
+    nonce: &AppendNonce,
+    body: &Blob,
+    sig: &commy_sync::wire::Bytes<64>,
+) -> Result<(), Option<ErrorCode>> {
+    if !is_padded_size(body.0.len()) || body.0.len() > MAX_SIGNAL_SEALED {
+        return Err(Some(ErrorCode::TooLarge));
+    }
+    if !verify_signal(write, &stream, &nonce.0, &body.0, &sig.0) {
+        return Err(Some(ErrorCode::BadSignature));
+    }
+    service.limiter.signal(key, body.0.len()).map_err(|_| None)
 }
 
 pub(crate) fn start_after(after: u64, tail: Option<u32>, head: u64) -> u64 {
@@ -281,7 +316,6 @@ fn split_by_size(page: Vec<WireEntry>) -> Vec<Vec<WireEntry>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commy_sync::wire::Blob;
 
     #[test]
     fn a_tail_starts_a_fresh_reader_near_the_head() {

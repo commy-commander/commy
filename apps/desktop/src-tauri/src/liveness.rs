@@ -158,6 +158,11 @@ async fn send_all(app: &App, user: UserId, presence: Presence, through_service: 
             crate::community_sync::signal(*sid, payload);
         }
     }
+    if !through_service && presence.is_visible_online() {
+        for (sid, _) in &payloads {
+            crate::community_sync::leave_word(app, *sid);
+        }
+    }
     let net = app.net.lock().await;
     let Some(node) = net.as_ref() else { return };
     for (sid, payload) in payloads {
