@@ -762,14 +762,15 @@ where
         };
         message.sign(&node, &identity);
         let envelope = DmEnvelope::new(message, app.profile_for(&me, partner));
-        if !unstored && !app.outbox.lock().unwrap().is_dm_stored(partner, id) {
+        let syncs = commy_view::dms::syncable(&envelope.message);
+        if syncs && !unstored && !app.outbox.lock().unwrap().is_dm_stored(partner, id) {
             if crate::dm_sync::publish(app, partner, &envelope).await {
                 changed |= app.outbox.lock().unwrap().dm_stored(partner, id);
             } else {
                 unstored = true;
             }
         }
-        if failed {
+        if failed && syncs {
             if unstored {
                 break;
             }
@@ -1570,6 +1571,35 @@ mod tests {
         assert_eq!(*sent.lock().unwrap(), vec![message.id]);
         assert!(!app.outbox.lock().unwrap().has_dms(partner));
         assert_eq!(handle.take_events(), vec![("dm-sent".to_string(), partner.to_string().into())]);
+    }
+
+    #[tokio::test]
+    async fn a_group_invite_does_not_wait_behind_a_dm_the_service_already_holds() {
+        let app = Arc::new(App::default());
+        let identity = Identity::generate();
+        let mut me = UserProfile::new("me");
+        me.identity = Some(identity.public());
+        *app.profile.lock().unwrap() = Some(me.clone());
+        *app.identity.lock().unwrap() = Some(identity);
+        *app.node_hex.lock().unwrap() = Some(hex(SENDER_NODE));
+        let partner = UserId::new();
+        let reply = DmMessage::new(me.id, partner, "already on the service");
+        let invite = commy_view::dms::group_invite(me.id, partner, "ticket".into(), None);
+        for message in [&reply, &invite] {
+            app.dms.lock().unwrap().apply(partner, message.clone());
+            app.outbox.lock().unwrap().add_dm(partner, message.id);
+        }
+        app.outbox.lock().unwrap().dm_stored(partner, reply.id);
+        let handle = TestHandle::new(app.clone());
+        let sent = Mutex::new(Vec::new());
+        deliver_dms_with(&handle, partner, |envelope: DmEnvelope| {
+            let invited = matches!(envelope.message.action, DmAction::GroupInvite { .. });
+            sent.lock().unwrap().push(envelope.message.id);
+            async move { invited }
+        })
+        .await;
+        assert_eq!(*sent.lock().unwrap(), vec![reply.id, invite.id]);
+        assert_eq!(app.outbox.lock().unwrap().dm_queue(partner), vec![reply.id], "the held reply keeps waiting for direct delivery");
     }
 
     #[tokio::test]
