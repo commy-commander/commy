@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -152,11 +152,20 @@ pub fn ring(app: &App, server: ServerId, message: &Message) {
     tauri::async_runtime::spawn(push_wake::ring(app.http.clone(), tags));
 }
 
-pub fn wake_tags(app: &App, days: &[i64]) -> Vec<([u8; 32], i64)> {
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return Vec::new() };
+#[derive(Default)]
+pub struct ServerTags {
+    pub tags: Vec<(ServerId, ([u8; 32], i64))>,
+    pub unsettled: HashSet<ServerId>,
+}
+
+pub fn wake_tags(app: &App, days: &[i64]) -> ServerTags {
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let Some(me) = me else { return ServerTags { tags: Vec::new(), unsettled: app.servers.lock().unwrap().keys().copied().collect() } };
     let prefs = account_log::pref_values(app);
     let points = community_sync::wake_points();
     let servers = app.servers.lock().unwrap();
+    let live: HashSet<ServerId> = points.iter().map(|(server, _, _)| *server).collect();
+    let unsettled = servers.keys().filter(|server| !live.contains(server)).copied().collect();
     let mut tags = Vec::new();
     for (server, channel, keys) in points {
         let Some(state) = servers.get(&server) else { continue };
@@ -165,11 +174,11 @@ pub fn wake_tags(app: &App, days: &[i64]) -> Vec<([u8; 32], i64)> {
         }
         for who in listen_whos(state, me, &choice(&prefs, server)) {
             for day in days {
-                tags.push((keys.wake_tag(&who, *day), *day));
+                tags.push((server, (keys.wake_tag(&who, *day), *day)));
             }
         }
     }
-    tags
+    ServerTags { tags, unsettled }
 }
 
 #[cfg(test)]

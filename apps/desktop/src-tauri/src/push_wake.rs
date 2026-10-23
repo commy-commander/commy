@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use commy_sync::wake::{wake_day, WakeForget, WakeRegister, WakeRing, MAX_DAYS_AHEAD, MAX_RING_TAGS};
+use commy_core::ServerId;
 use commy_sync::wire::Bytes;
 use rand::Rng;
 use reqwest::StatusCode;
@@ -21,11 +22,18 @@ const KEPT_FILE: &str = "wake-tags.json";
 
 type Tag = ([u8; 32], i64);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Source {
+    Dm,
+    Server(ServerId),
+}
+
 struct Registered {
     push: String,
     base: String,
-    tags: HashSet<Tag>,
-    earlier: HashSet<Tag>,
+    tags: HashMap<Tag, Source>,
+    earlier: HashMap<Tag, Source>,
     off_on: Option<i64>,
 }
 
@@ -33,7 +41,7 @@ struct Registered {
 struct Kept {
     push: String,
     base: String,
-    tags: Vec<(Bytes<32>, i64)>,
+    tags: Vec<(Bytes<32>, i64, Source)>,
 }
 
 static TOKEN: Mutex<Option<String>> = Mutex::new(None);
@@ -100,6 +108,7 @@ fn target() -> Option<(String, String)> {
 pub fn register(handle: &AppHandle) {
     let _ = HANDLE.set(handle.clone());
     if target().is_none() {
+        ask_token(handle);
         return;
     }
     if REGISTERING.swap(true, Ordering::SeqCst) {
@@ -125,46 +134,53 @@ fn days_from(today: i64) -> Vec<i64> {
     (0..MAX_DAYS_AHEAD).map(|ahead| today + ahead).collect()
 }
 
-fn begin(push: &str, base: &str, earlier: impl FnOnce() -> HashSet<Tag>) {
+fn begin(push: &str, base: &str, earlier: impl FnOnce() -> HashMap<Tag, Source>) {
     let mut guard = REGISTERED.lock().unwrap();
     if guard.as_ref().is_none_or(|r| r.push != push || r.base != base) {
-        *guard = Some(Registered { push: push.to_string(), base: base.to_string(), tags: HashSet::new(), earlier: earlier(), off_on: None });
+        *guard = Some(Registered { push: push.to_string(), base: base.to_string(), tags: HashMap::new(), earlier: earlier(), off_on: None });
     }
 }
 
-fn still_needed(push: &str, today: i64, wanted: Vec<Tag>) -> Vec<Tag> {
+fn still_needed(push: &str, today: i64, wanted: Vec<(Tag, Source)>) -> Vec<(Tag, Source)> {
     let mut guard = REGISTERED.lock().unwrap();
     let Some(registered) = guard.as_mut().filter(|r| r.push == push) else { return Vec::new() };
     if registered.off_on == Some(today) {
         return Vec::new();
     }
-    registered.tags.retain(|(_, day)| *day >= today);
-    wanted.into_iter().filter(|tag| !registered.tags.contains(tag)).collect()
+    registered.tags.retain(|(_, day), _| *day >= today);
+    wanted.into_iter().filter(|(tag, _)| !registered.tags.contains_key(tag)).collect()
 }
 
-fn no_longer_wanted(push: &str, today: i64, wanted: &[Tag]) -> Vec<Tag> {
+fn no_longer_wanted(push: &str, today: i64, wanted: &[(Tag, Source)], settled: impl Fn(&Source) -> bool) -> Vec<Tag> {
     let guard = REGISTERED.lock().unwrap();
     let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return Vec::new() };
-    let held: HashSet<&Tag> = registered.tags.iter().chain(&registered.earlier).collect();
-    held.into_iter().filter(|tag| tag.1 >= today && !wanted.contains(tag)).copied().collect()
+    let wanted: HashSet<&Tag> = wanted.iter().map(|(tag, _)| tag).collect();
+    let stale: HashSet<Tag> = registered
+        .tags
+        .iter()
+        .chain(&registered.earlier)
+        .filter(|(tag, source)| tag.1 >= today && !wanted.contains(tag) && settled(source))
+        .map(|(tag, _)| *tag)
+        .collect();
+    stale.into_iter().collect()
 }
 
 fn kept_now(push: &str, today: i64) -> Option<Kept> {
     let guard = REGISTERED.lock().unwrap();
     let registered = guard.as_ref().filter(|r| r.push == push)?;
-    let held: HashSet<&Tag> = registered.tags.iter().chain(&registered.earlier).filter(|tag| tag.1 >= today).collect();
-    Some(Kept { push: registered.push.clone(), base: registered.base.clone(), tags: held.into_iter().map(|(tag, day)| (Bytes(*tag), *day)).collect() })
+    let held: HashMap<&Tag, &Source> = registered.earlier.iter().chain(&registered.tags).filter(|(tag, _)| tag.1 >= today).collect();
+    Some(Kept { push: registered.push.clone(), base: registered.base.clone(), tags: held.into_iter().map(|((tag, day), source)| (Bytes(*tag), *day, *source)).collect() })
 }
 
 fn kept_path(app: &App) -> Option<PathBuf> {
     app.base_dir().map(|dir| dir.join(KEPT_FILE))
 }
 
-fn load_kept(app: &App, push: &str, base: &str) -> HashSet<Tag> {
-    let Some(path) = kept_path(app) else { return HashSet::new() };
+fn load_kept(app: &App, push: &str, base: &str) -> HashMap<Tag, Source> {
+    let Some(path) = kept_path(app) else { return HashMap::new() };
     crate::persist::read_json::<Kept>(&path)
         .filter(|kept| kept.push == push && kept.base == base)
-        .map(|kept| kept.tags.into_iter().map(|(tag, day)| (tag.0, day)).collect())
+        .map(|kept| kept.tags.into_iter().map(|(tag, day, source)| ((tag.0, day), source)).collect())
         .unwrap_or_default()
 }
 
@@ -192,14 +208,20 @@ async fn register_now(handle: &AppHandle, push: String, base: String) {
 async fn sync_tags(app: &App, push: &str, base: &str, today: i64) {
     let push = push.to_string();
     let days = days_from(today);
-    let mut wanted = dm_sync::wake_tags(app, &days);
-    wanted.extend(server_wake::wake_tags(app, &days));
-    let stale = no_longer_wanted(&push, today, &wanted);
+    let dm = dm_sync::wake_tags(app, &days);
+    let servers = server_wake::wake_tags(app, &days);
+    let dm_settled = dm.is_some();
+    let mut wanted: Vec<(Tag, Source)> = dm.unwrap_or_default().into_iter().map(|tag| (tag, Source::Dm)).collect();
+    wanted.extend(servers.tags.into_iter().map(|(server, tag)| (tag, Source::Server(server))));
+    let stale = no_longer_wanted(&push, today, &wanted, |source| match source {
+        Source::Dm => dm_settled,
+        Source::Server(server) => !servers.unsettled.contains(server),
+    });
     let needed = still_needed(&push, today, wanted);
     let http = app.http.clone();
     forget(&http, &push, base, stale).await;
     let mut registered = 0;
-    for (tag, day) in needed {
+    for ((tag, day), source) in needed {
         let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
         tokio::time::sleep(Duration::from_millis(gap)).await;
         let body = WakeRegister { tag: Bytes(tag), push: push.clone(), until: day };
@@ -207,7 +229,7 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) {
             Ok(status) if status.is_success() => {
                 registered += 1;
                 note(&push, |r| {
-                    r.tags.insert((tag, day));
+                    r.tags.insert((tag, day), source);
                 });
             }
             Ok(StatusCode::NOT_FOUND) => {
@@ -262,6 +284,7 @@ async fn forget(http: &reqwest::Client, push: &str, base: &str, stale: Vec<Tag>)
 
 #[cfg(target_os = "android")]
 mod android {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
     use serde::Deserialize;
@@ -275,6 +298,7 @@ mod android {
     }
 
     static PLUGIN: Mutex<Option<PluginHandle<Wry>>> = Mutex::new(None);
+    static ASKING: AtomicBool = AtomicBool::new(false);
 
     pub fn init() -> tauri::plugin::TauriPlugin<Wry> {
         tauri::plugin::Builder::new("push-wake")
@@ -289,17 +313,35 @@ mod android {
 
     pub fn fetch_token(handle: AppHandle) {
         let Some(plugin) = PLUGIN.lock().unwrap().clone() else { return };
-        let _ = std::thread::Builder::new().name("push-token".into()).spawn(move || {
-            match plugin.run_mobile_plugin::<TokenAnswer>("token", serde_json::json!({})) {
+        if ASKING.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let asked = std::thread::Builder::new().name("push-token".into()).spawn(move || {
+            let answer = plugin.run_mobile_plugin::<TokenAnswer>("token", serde_json::json!({}));
+            ASKING.store(false, Ordering::SeqCst);
+            match answer {
                 Ok(answer) => super::set_token(&handle, answer.token),
-                Err(e) => tracing::debug!("no push token: {e}"),
+                Err(e) => tracing::info!("no push token: {e}"),
             }
         });
+        if asked.is_err() {
+            ASKING.store(false, Ordering::SeqCst);
+        }
     }
 }
 
 #[cfg(target_os = "android")]
 pub use android::init;
+
+#[cfg(target_os = "android")]
+fn ask_token(handle: &AppHandle) {
+    if TOKEN.lock().unwrap().is_none() {
+        android::fetch_token(handle.clone());
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn ask_token(_handle: &AppHandle) {}
 
 #[cfg(target_os = "android")]
 pub fn on_resumed(handle: &AppHandle) {
@@ -324,38 +366,49 @@ mod tests {
     #[test]
     fn a_phone_registers_today_and_tomorrow_and_only_once() {
         let base = "https://x/sync/wake";
+        let server = ServerId::new();
+        let s = Source::Server(server);
+        let all = |_: &Source| true;
         assert_eq!(days_from(20_000), vec![20_000, 20_001]);
-        let wanted = vec![([1; 32], 20_000), ([2; 32], 20_001)];
-        begin("fcm:a", base, HashSet::new);
+        let wanted = vec![(([1; 32], 20_000), Source::Dm), (([2; 32], 20_001), s)];
+        begin("fcm:a", base, HashMap::new);
         assert_eq!(still_needed("fcm:a", 20_000, wanted.clone()), wanted);
         note("fcm:a", |r| {
-            r.tags.insert(([1; 32], 20_000));
+            r.tags.insert(([1; 32], 20_000), Source::Dm);
         });
-        assert_eq!(still_needed("fcm:a", 20_000, wanted.clone()), vec![([2; 32], 20_001)]);
+        assert_eq!(still_needed("fcm:a", 20_000, wanted.clone()), vec![(([2; 32], 20_001), s)]);
         note("fcm:a", |r| r.off_on = Some(20_000));
         assert!(still_needed("fcm:a", 20_000, wanted.clone()).is_empty(), "a service without wake-ups is not asked again that day");
-        begin("fcm:b", base, HashSet::new);
+        begin("fcm:b", base, HashMap::new);
         assert_eq!(still_needed("fcm:b", 20_000, wanted.clone()), wanted, "a new token starts over");
         note("fcm:b", |r| {
-            r.tags.insert(([1; 32], 20_000));
-            r.tags.insert(([3; 32], 20_001));
-            r.tags.insert(([4; 32], 19_999));
+            r.tags.insert(([1; 32], 20_000), Source::Dm);
+            r.tags.insert(([3; 32], 20_001), s);
+            r.tags.insert(([4; 32], 19_999), s);
         });
-        assert_eq!(no_longer_wanted("fcm:b", 20_000, &wanted), vec![([3; 32], 20_001)], "settings that changed drop their tags");
-        assert!(no_longer_wanted("fcm:a", 20_000, &wanted).is_empty());
+        assert_eq!(no_longer_wanted("fcm:b", 20_000, &wanted, all), vec![([3; 32], 20_001)], "settings that changed drop their tags");
+        assert!(no_longer_wanted("fcm:a", 20_000, &wanted, all).is_empty());
 
-        let earlier = HashSet::from([([5; 32], 20_000), ([1; 32], 20_000), ([6; 32], 19_999)]);
+        let earlier = HashMap::from([(([5; 32], 20_000), s), (([7; 32], 20_000), Source::Dm), (([1; 32], 20_000), Source::Dm), (([6; 32], 19_999), s)]);
         begin("fcm:c", base, || earlier.clone());
         begin("fcm:c", base, || panic!("tags kept from an earlier run are read once"));
         assert_eq!(still_needed("fcm:c", 20_000, wanted.clone()), wanted, "a restarted app registers what it wants again");
-        assert_eq!(no_longer_wanted("fcm:c", 20_000, &wanted), vec![([5; 32], 20_000)], "tags from before a restart are dropped when no longer wanted");
+        let mut stale = no_longer_wanted("fcm:c", 20_000, &wanted, all);
+        stale.sort();
+        assert_eq!(stale, vec![([5; 32], 20_000), ([7; 32], 20_000)], "tags from before a restart are dropped when no longer wanted");
+        assert_eq!(no_longer_wanted("fcm:c", 20_000, &wanted, |source| *source != s), vec![([7; 32], 20_000)], "a server not synced yet keeps its tags");
+        assert!(no_longer_wanted("fcm:c", 20_000, &wanted, |source| *source != Source::Dm).iter().all(|tag| *tag != ([7; 32], 20_000)), "so do direct messages until they are");
         note("fcm:c", |r| {
-            r.tags.insert(([2; 32], 20_001));
+            r.tags.insert(([2; 32], 20_001), s);
             r.earlier.remove(&([5; 32], 20_000));
+            r.earlier.remove(&([7; 32], 20_000));
         });
-        let mut kept: Vec<Tag> = kept_now("fcm:c", 20_000).unwrap().tags.into_iter().map(|(tag, day)| (tag.0, day)).collect();
-        kept.sort();
-        assert_eq!(kept, vec![([1; 32], 20_000), ([2; 32], 20_001)], "what is kept for the next run holds both, without past days");
+        let mut kept: Vec<(Tag, Source)> = kept_now("fcm:c", 20_000).unwrap().tags.into_iter().map(|(tag, day, source)| ((tag.0, day), source)).collect();
+        kept.sort_by_key(|(tag, _)| *tag);
+        assert_eq!(kept, vec![(([1; 32], 20_000), Source::Dm), (([2; 32], 20_001), s)], "what is kept for the next run holds both, without past days");
         assert!(kept_now("fcm:a", 20_000).is_none());
+        let saved = serde_json::to_string(&kept_now("fcm:c", 20_000).unwrap()).unwrap();
+        let back: Kept = serde_json::from_str(&saved).unwrap();
+        assert_eq!(back.tags.len(), 2);
     }
 }
