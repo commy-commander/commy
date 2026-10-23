@@ -825,11 +825,15 @@ pub fn profile_digest(profile: &UserProfile) -> Option<String> {
 }
 
 pub fn announce_profile(server: ServerId, profile: &UserProfile, payload: &WirePayload) {
-    let Some(profile) = profile_digest(profile) else { return };
-    let Some(plain) = streams::encode_entry(payload) else { return };
+    announce(server, profile, payload);
+}
+
+fn announce(server: ServerId, profile: &UserProfile, payload: &WirePayload) -> Vec<tauri::async_runtime::JoinHandle<bool>> {
+    let Some(profile) = profile_digest(profile) else { return Vec::new() };
+    let Some(plain) = streams::encode_entry(payload) else { return Vec::new() };
     let sends = {
         let mut guard = LIVE.lock().unwrap();
-        let Some(live) = guard.as_mut() else { return };
+        let Some(live) = guard.as_mut() else { return Vec::new() };
         let fresh: Vec<_> = targets(live, server, Lane::State, false)
             .into_iter()
             .filter(|(stream, _)| live.cursors.announce(*stream, &profile))
@@ -840,21 +844,24 @@ pub fn announce_profile(server: ServerId, profile: &UserProfile, payload: &WireP
         fresh
     };
     if sends.is_empty() {
-        return;
+        return Vec::new();
     }
     save_soon();
-    for (stream, client) in sends {
-        let (plain, profile) = (plain.clone(), profile.clone());
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = sync_link::append(client, stream, plain).await {
+    sends
+        .into_iter()
+        .map(|(stream, client)| {
+            let (plain, profile) = (plain.clone(), profile.clone());
+            tauri::async_runtime::spawn(async move {
+                let Err(e) = sync_link::append(client, stream, plain).await else { return true };
                 tracing::debug!("could not tell the sync service where this device is: {e}");
                 if let Some(live) = LIVE.lock().unwrap().as_mut() {
                     live.cursors.unannounce(stream, &profile);
                 }
                 save_soon();
-            }
-        });
-    }
+                false
+            })
+        })
+        .collect()
 }
 
 fn announce_me(handle: &AppHandle, server: ServerId) {
@@ -867,7 +874,20 @@ fn announce_me(handle: &AppHandle, server: ServerId) {
         crate::devices::point_at_voice(state, &mut profile);
     }
     let payload = app.wire_for(server, ServerEvent::MemberJoin { server, profile: profile.clone() });
-    announce_profile(server, &profile, &payload);
+    let sends = announce(server, &profile, &payload);
+    if sends.is_empty() {
+        return;
+    }
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut stored = false;
+        for send in sends {
+            stored |= send.await.unwrap_or(false);
+        }
+        if stored {
+            say_here(&handle, server);
+        }
+    });
 }
 
 async fn listen(handle: AppHandle, mut events: mpsc::UnboundedReceiver<SyncEvent>) {
