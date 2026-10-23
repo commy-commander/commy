@@ -250,6 +250,10 @@ impl Session {
             self.finish(list, key)?;
             return Ok(self.unlock_view());
         }
+        if let Some(key) = self.escrowed_key().await.filter(|key| EntryList::open(key, &sealed).is_ok()) {
+            self.accept_key(&account, key)?;
+            return Ok(self.unlock_view());
+        }
         self.set_unlock(Unlock::Locked, "Approve this browser on one of your Commy devices, or enter your recovery code.");
         Ok(self.unlock_view())
     }
@@ -369,7 +373,34 @@ impl Session {
         let sealed = self.status.borrow().sealed.clone().ok_or("Your server list has not loaded yet")?;
         let list = EntryList::open(&key, &sealed)?;
         self.host.save(account::ENTRY_KEY_KEY, &account::entry_key_record(&account.id, &key));
+        let this = self.clone();
+        let kept = key.clone();
+        spawn_local(async move { this.escrow(&kept).await });
         self.finish(list, key)
+    }
+
+    async fn wrapping_key(&self) -> Option<SealKey> {
+        let body = json!({ "lockId": commy_net::entry_escrow::LOCK_ID });
+        let reply = self.request("POST", account::FOLDER_KEY_PATH, Some(body)).await.ok()?;
+        commy_net::entry_escrow::wrapping_key(&account::folder_key(&reply)?)
+    }
+
+    async fn escrowed_key(&self) -> Option<SealKey> {
+        let reply = self.request("GET", &account::escrow_path(), None).await.ok()?;
+        let sealed = account::vault_data(&reply).ok()??;
+        commy_net::entry_escrow::unwrap(&self.wrapping_key().await?, &sealed)
+    }
+
+    async fn escrow(&self, key: &SealKey) {
+        let Ok(reply) = self.request("GET", &account::escrow_path(), None).await else { return };
+        let Some(version) = account::vault_version(&reply) else { return };
+        let Some(wrapping) = self.wrapping_key().await else { return };
+        let held = account::vault_data(&reply).ok().flatten().and_then(|sealed| commy_net::entry_escrow::unwrap(&wrapping, &sealed));
+        if held.as_ref() == Some(key) {
+            return;
+        }
+        let body = json!({ "name": commy_net::entry_escrow::VAULT_ITEM, "data": commy_net::entry_escrow::wrap(&wrapping, key), "version": version });
+        let _ = self.request("POST", account::VAULT_PUT_PATH, Some(body)).await;
     }
 
     fn finish(self: &Rc<Self>, list: EntryList, key: SealKey) -> Result<(), String> {

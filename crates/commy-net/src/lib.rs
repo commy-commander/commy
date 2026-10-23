@@ -1,6 +1,7 @@
 pub mod catchup;
 pub mod community_streams;
 pub mod dm;
+pub mod entry_escrow;
 pub mod entry_key;
 pub mod entry_list;
 pub mod inbox;
