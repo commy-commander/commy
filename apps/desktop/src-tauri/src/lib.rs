@@ -1001,7 +1001,7 @@ async fn send_dm_voice_message(
     handle: tauri::AppHandle,
     user_id: String,
 ) -> CmdResult<DmMessageView> {
-    let (me, partner) = dm_partner(&app, &user_id)?;
+    let (me, partner) = dm_recipient(&app, &user_id)?;
     let clip = take_recording(&app).await?;
     let size_bytes = clip.bytes.len() as u64;
     let (blob, provider) = store_blob(&app, clip.bytes).await?;
@@ -2604,6 +2604,19 @@ fn dm_partner(app: &App, user_id: &str) -> CmdResult<(UserProfile, UserId)> {
     Ok((me, partner))
 }
 
+fn known_user(app: &App, user: UserId) -> bool {
+    known_profile_field(app, user, |_| Some(())).is_some()
+        || app.servers.lock().unwrap().values().any(|s| s.server.is_current_member(user))
+}
+
+fn dm_recipient(app: &App, user_id: &str) -> CmdResult<(UserProfile, UserId)> {
+    let (me, partner) = dm_partner(app, user_id)?;
+    if !known_user(app, partner) {
+        return Err("you can only message people you share a server with or who have messaged you".into());
+    }
+    Ok((me, partner))
+}
+
 async fn post_dm(
     app: &App,
     handle: &tauri::AppHandle,
@@ -2674,7 +2687,7 @@ async fn send_dm(
     reply_to: Option<String>,
 ) -> CmdResult<DmMessageView> {
     let content = clean_message(&content)?;
-    let (me, partner) = dm_partner(&app, &user_id)?;
+    let (me, partner) = dm_recipient(&app, &user_id)?;
     let content = carry_expressions(&app, content, &std::collections::HashSet::new()).await;
     let mut message = DmMessage::new(me.id, partner, content);
     if let Some(raw) = reply_to {
@@ -3613,6 +3626,15 @@ async fn run_status_expiry(handle: tauri::AppHandle) {
 #[cfg(test)]
 mod edit_tests {
     use super::*;
+
+    #[test]
+    fn only_known_people_can_be_messaged() {
+        let app = App::default();
+        let stranger = UserProfile::new("stranger");
+        assert!(!known_user(&app, stranger.id), "an id nobody has seen is refused");
+        app.dms.lock().unwrap().contacts.insert(stranger.id, stranger.clone());
+        assert!(known_user(&app, stranger.id), "someone who has messaged you is known");
+    }
 
     #[test]
     fn an_edit_is_dated_after_the_last_one_so_peers_take_it() {
