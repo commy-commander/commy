@@ -50,7 +50,8 @@ impl Session {
             return;
         }
         let Some(url) = self.sync_service_url().await else { return };
-        let Some(node) = self.node.lock().await.as_ref().map(|node| node.node_id_bytes()) else { return };
+        let Ok(account) = self.account() else { return };
+        let node = *iroh::SecretKey::from_bytes(&self.device_secret(&account)).public().as_bytes();
         let (mut pool, events) = Pool::new(&url);
         let stream = sync_streams::account_stream(&key);
         let account = stream.id;
@@ -304,6 +305,7 @@ impl Session {
         self.release_parked(server);
         self.emit("servers-changed", Value::Null);
         self.emit("server-event", json!(server.to_string()));
+        self.announce_if_loaded();
         self.refresh_sync();
     }
 

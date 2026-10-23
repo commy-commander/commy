@@ -80,9 +80,8 @@ async fn watch(handle: AppHandle, url: String, account: String, me: IdentityKey)
                     }
                     Note::Give { to, .. } => {
                         waiting.retain(|(_, ask)| ask.node != to);
-                        if let Some(id) = open.remove(&to) {
-                            entry_list::close_prompt(&handle, id);
-                        }
+                        open.remove(&to);
+                        entry_list::close_prompts_for(&handle, &to);
                     }
                     _ => {}
                 }
@@ -99,10 +98,10 @@ async fn watch(handle: AppHandle, url: String, account: String, me: IdentityKey)
             }
             let Some((id, reply)) = prompt(&handle, &ask).await else { continue };
             open.insert(ask.node, id);
-            let client = client.clone();
+            let (client, handle) = (client.clone(), handle.clone());
             tauri::async_runtime::spawn(async move {
                 let answer = tokio::time::timeout(commy_net::entry_key::ANSWER_TIMEOUT, reply).await;
-                entry_list::forget_prompt(id);
+                entry_list::close_prompt(&handle, id);
                 if let Ok(Ok(EntryKeyReply::Key(text))) = answer {
                     answer_with_key(&client, stream, &ask.node, &text).await;
                 }
@@ -120,7 +119,7 @@ async fn prompt(handle: &AppHandle, ask: &Ask) -> Option<(u64, tokio::sync::ones
         tracing::warn!("a device outside this account asked for the server list key");
         return None;
     }
-    entry_list::prompt(handle, &ask.name, Some(handoff::code(&ask.node)))
+    entry_list::prompt(handle, &ask.name, ask.node)
 }
 
 async fn answer_with_key(client: &SyncClient, stream: StreamId, to: &IdentityKey, text: &str) {

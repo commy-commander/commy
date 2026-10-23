@@ -29,3 +29,12 @@ pub(super) async fn ask(url: &str, account: &str, me: &Identity, name: &str) -> 
     .await;
     waited.ok().flatten()
 }
+
+pub(super) async fn tell_devices_we_have_the_key(url: &str, account: &str, me: &Identity, key: &SealKey) {
+    let Some(note) = handoff::give(&me.public(), key) else { return };
+    let keys = handoff::mailbox(account);
+    let stream = keys.id;
+    let (client, _events) = SyncClient::spawn(url.to_string());
+    client.follow_tail(keys, 0, Some(handoff::TAIL));
+    let _ = n0_future::time::timeout(WAIT, client.append(stream, note.encode())).await;
+}
