@@ -118,6 +118,16 @@ pub fn listen_whos(state: &ServerState, me: UserId, choice: &Choice) -> Vec<Stri
     }
 }
 
+pub fn unwanted_whos(state: &ServerState, me: UserId, choice: &Choice) -> Vec<String> {
+    let bucket = bucket_of(me, buckets(state.server.members.len()));
+    let roles = state.server.member(me).map(|m| m.roles.clone()).unwrap_or_default();
+    let mut every = vec![shared(ALL, bucket), me.to_string(), shared(EVERYONE, bucket)];
+    every.extend(roles.into_iter().map(|role| shared(&role_who(role), bucket)));
+    let wanted = listen_whos(state, me, choice);
+    every.retain(|who| !wanted.contains(who));
+    every
+}
+
 fn all_due(server: ServerId, now: Instant) -> bool {
     let mut guard = LAST_ALL.lock().unwrap();
     let last = guard.get_or_insert_with(HashMap::new);
@@ -156,29 +166,32 @@ pub fn ring(app: &App, server: ServerId, message: &Message) {
 pub struct ServerTags {
     pub tags: Vec<(ServerId, ([u8; 32], i64))>,
     pub unsettled: HashSet<ServerId>,
+    pub unwanted: Vec<(ServerId, ([u8; 32], i64))>,
 }
 
 pub fn wake_tags(app: &App, days: &[i64]) -> ServerTags {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let Some(me) = me else { return ServerTags { tags: Vec::new(), unsettled: app.servers.lock().unwrap().keys().copied().collect() } };
+    let Some(me) = me else { return ServerTags { unsettled: app.servers.lock().unwrap().keys().copied().collect(), ..Default::default() } };
     let prefs = account_log::pref_values(app);
     let points = community_sync::wake_points();
     let servers = app.servers.lock().unwrap();
     let live: HashSet<ServerId> = points.iter().map(|(server, _, _)| *server).collect();
     let unsettled = servers.keys().filter(|server| !live.contains(server)).copied().collect();
     let mut tags = Vec::new();
+    let mut unwanted = Vec::new();
     for (server, channel, keys) in points {
         let Some(state) = servers.get(&server) else { continue };
         if channel.is_some_and(|c: ChannelId| !state.server.can_view(c, me)) {
             continue;
         }
-        for who in listen_whos(state, me, &choice(&prefs, server)) {
-            for day in days {
-                tags.push((server, (keys.wake_tag(&who, *day), *day)));
-            }
-        }
+        let chosen = choice(&prefs, server);
+        let tagged = |whos: Vec<String>| -> Vec<(ServerId, ([u8; 32], i64))> {
+            whos.iter().flat_map(|who| days.iter().map(|day| (server, (keys.wake_tag(who, *day), *day)))).collect()
+        };
+        tags.extend(tagged(listen_whos(state, me, &chosen)));
+        unwanted.extend(tagged(unwanted_whos(state, me, &chosen)));
     }
-    ServerTags { tags, unsettled }
+    ServerTags { tags, unsettled, unwanted }
 }
 
 #[cfg(test)]
@@ -260,6 +273,23 @@ mod tests {
         prefs.insert(format!("notify.muted.{server}"), Value::Null);
         prefs.insert(format!("notify.servers.{server}"), Value::from("none"));
         assert!(listen(&prefs).is_empty());
+    }
+
+    #[test]
+    fn a_phone_drops_what_its_settings_no_longer_ask_for() {
+        let (mut state, ids) = server_with(&["kit"]);
+        let kit = ids[1];
+        let role = crew(&mut state, kit);
+        let server = state.server.id;
+        let mut prefs = BTreeMap::new();
+        let unwanted = |prefs: &BTreeMap<String, Value>| unwanted_whos(&state, kit, &choice(prefs, server));
+        assert_eq!(unwanted(&prefs), vec![kit.to_string(), shared(EVERYONE, 0), shared(&role_who(role), 0)]);
+        prefs.insert("notify.level".into(), Value::from("mentions"));
+        assert_eq!(unwanted(&prefs), vec![shared(ALL, 0)]);
+        prefs.insert(format!("notify.suppressEveryone.{server}"), Value::from(true));
+        assert_eq!(unwanted(&prefs), vec![shared(ALL, 0), shared(EVERYONE, 0)]);
+        prefs.insert(format!("notify.muted.{server}"), Value::from(true));
+        assert_eq!(unwanted(&prefs), vec![shared(ALL, 0), kit.to_string(), shared(EVERYONE, 0), shared(&role_who(role), 0)]);
     }
 
     #[test]

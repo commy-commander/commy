@@ -36,6 +36,7 @@ struct Registered {
     base: String,
     tags: HashMap<Tag, Source>,
     earlier: HashMap<Tag, Source>,
+    swept: HashSet<Tag>,
     off_on: Option<i64>,
 }
 
@@ -144,7 +145,7 @@ fn days_from(today: i64) -> Vec<i64> {
 fn begin(push: &str, base: &str, earlier: impl FnOnce() -> HashMap<Tag, Source>) {
     let mut guard = REGISTERED.lock().unwrap();
     if guard.as_ref().is_none_or(|r| r.push != push || r.base != base) {
-        *guard = Some(Registered { push: push.to_string(), base: base.to_string(), tags: HashMap::new(), earlier: earlier(), off_on: None });
+        *guard = Some(Registered { push: push.to_string(), base: base.to_string(), tags: HashMap::new(), earlier: earlier(), swept: HashSet::new(), off_on: None });
     }
 }
 
@@ -170,6 +171,14 @@ fn no_longer_wanted(push: &str, today: i64, wanted: &[(Tag, Source)], settled: i
         .map(|(tag, _)| *tag)
         .collect();
     stale.into_iter().collect()
+}
+
+fn to_sweep(push: &str, today: i64, wanted: &[(Tag, Source)], unwanted: Vec<Tag>) -> Vec<Tag> {
+    let guard = REGISTERED.lock().unwrap();
+    let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return Vec::new() };
+    let wanted: HashSet<&Tag> = wanted.iter().map(|(tag, _)| tag).collect();
+    let sweep: HashSet<Tag> = unwanted.into_iter().filter(|tag| tag.1 >= today && !wanted.contains(tag) && !registered.swept.contains(tag)).collect();
+    sweep.into_iter().collect()
 }
 
 fn kept_now(push: &str, today: i64) -> Option<Kept> {
@@ -252,9 +261,10 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
         Source::Dm => dm_settled,
         Source::Server(server) => !servers.unsettled.contains(server),
     });
-    let needed = still_needed(&push, today, wanted);
     let http = app.http.clone();
-    let forgotten = forget(&http, &push, base, stale).await;
+    let forgotten = forget(app, &http, &push, base, today, stale).await;
+    let sweep = to_sweep(&push, today, &wanted, servers.unwanted.into_iter().map(|(_, tag)| tag).collect());
+    let needed = still_needed(&push, today, wanted);
     let mut registered = 0;
     for ((tag, day), source) in needed {
         let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
@@ -265,7 +275,9 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
                 registered += 1;
                 note(&push, |r| {
                     r.tags.insert((tag, day), source);
+                    r.swept.remove(&(tag, day));
                 });
+                save_kept(app, &push, today);
             }
             Ok(StatusCode::NOT_FOUND) => {
                 tracing::info!("the sync service does not offer wake-ups");
@@ -286,10 +298,10 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
     if registered > 0 {
         tracing::info!("registered {registered} wake-up tags");
     }
-    forgotten
+    forget(app, &http, &push, base, today, sweep).await && forgotten
 }
 
-async fn forget(http: &reqwest::Client, push: &str, base: &str, stale: Vec<Tag>) -> bool {
+async fn forget(app: &App, http: &reqwest::Client, push: &str, base: &str, today: i64, stale: Vec<Tag>) -> bool {
     let mut forgotten = 0;
     for (tag, day) in stale {
         let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
@@ -301,7 +313,9 @@ async fn forget(http: &reqwest::Client, push: &str, base: &str, stale: Vec<Tag>)
                 note(push, |r| {
                     r.tags.remove(&(tag, day));
                     r.earlier.remove(&(tag, day));
+                    r.swept.insert((tag, day));
                 });
+                save_kept(app, push, today);
             }
             Ok(status) => {
                 tracing::info!("the sync service did not drop a wake-up tag: {status}");
@@ -465,5 +479,12 @@ mod tests {
         let saved = serde_json::to_string(&kept_now("fcm:c", 20_000).unwrap()).unwrap();
         let back: Kept = serde_json::from_str(&saved).unwrap();
         assert_eq!(back.tags.len(), 2);
+
+        let unwanted = vec![([8; 32], 20_000), ([1; 32], 20_000), ([9; 32], 19_999)];
+        assert_eq!(to_sweep("fcm:c", 20_000, &wanted, unwanted.clone()), vec![([8; 32], 20_000)], "tags the settings rule out are dropped even if no run remembers them");
+        note("fcm:c", |r| {
+            r.swept.insert(([8; 32], 20_000));
+        });
+        assert!(to_sweep("fcm:c", 20_000, &wanted, unwanted).is_empty(), "and only once");
     }
 }
