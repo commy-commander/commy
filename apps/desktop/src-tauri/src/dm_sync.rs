@@ -346,11 +346,11 @@ fn on_inbox(handle: &AppHandle, server: ServerId, plain: &[u8], at: i64, live_no
     });
 }
 
-pub fn wake_tags(app: &App, days: &[i64]) -> Vec<([u8; 32], i64)> {
-    let (Some(identity), Some(me)) = (app.identity(), app.profile.lock().unwrap().as_ref().map(|p| p.id)) else { return Vec::new() };
+pub fn wake_tags(app: &App, days: &[i64]) -> Option<Vec<([u8; 32], i64)>> {
+    let (Some(identity), Some(me)) = (app.identity(), app.profile.lock().unwrap().as_ref().map(|p| p.id)) else { return None };
     let partners: Vec<IdentityKey> = match LIVE.lock().unwrap().as_ref() {
         Some(live) if live.me_key == identity.public() => live.partners.values().map(|p| p.key).collect(),
-        _ => return Vec::new(),
+        _ => return None,
     };
     let inboxes: Vec<StreamKeys> =
         LIVE.lock().unwrap().as_ref().map(|live| live.inboxes.values().map(|(_, keys)| keys.clone()).collect()).unwrap_or_default();
@@ -367,7 +367,7 @@ pub fn wake_tags(app: &App, days: &[i64]) -> Vec<([u8; 32], i64)> {
             }
         }
     }
-    tags
+    Some(tags)
 }
 
 pub fn rings(message: &DmMessage) -> bool {
