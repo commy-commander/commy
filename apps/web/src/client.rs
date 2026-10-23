@@ -346,9 +346,9 @@ impl Client {
         ring.newest_in(state, KeyScope::Community).map(|(id, secret)| (id, secret.clone()))
     }
 
-    pub fn owned(&self) -> Vec<ServerId> {
+    pub fn owned_groups(&self) -> Vec<ServerId> {
         let Some(me) = self.me_id() else { return Vec::new() };
-        self.servers.lock().unwrap().iter().filter(|(_, s)| s.server.owner == me && !s.is_deleted()).map(|(id, _)| *id).collect()
+        self.servers.lock().unwrap().iter().filter(|(_, s)| s.server.group && s.server.owner == me && !s.is_deleted()).map(|(id, _)| *id).collect()
     }
 
     pub fn summary(&self, server: ServerId) -> Option<ServerSummary> {
@@ -658,7 +658,7 @@ mod tests {
         assert!(!creator.start_group(group).unwrap().is_empty());
         assert!(creator.start_group(group).is_err());
         assert!(creator.is_group(group));
-        assert_eq!(creator.owned(), vec![group]);
+        assert_eq!(creator.owned_groups(), vec![group]);
         assert!(creator.key_work(group).is_empty(), "the new key needs nothing more");
         let mut ticket = ServerTicket::new(group, "", [0u8; 32], Vec::new());
         ticket.owner = Some((me.id, mine.public()));
@@ -681,7 +681,7 @@ mod tests {
         assert!(friend.install_service_snapshot(group, copy[0].clone(), Some(joined)).unwrap());
         assert!(friend.is_group(group));
         assert!(friend.servers.lock().unwrap()[&group].server.is_current_member(friend_profile.id));
-        assert!(friend.owned().is_empty());
+        assert!(friend.owned_groups().is_empty());
     }
 
     fn mirror(world: &World) -> Vec<u8> {

@@ -113,7 +113,7 @@ impl Session {
 
     fn tend_owned(&self) {
         let now = Utc::now().timestamp_millis();
-        for server in self.client.borrow().owned() {
+        for server in self.client.borrow().owned_groups() {
             let (due, copy) = {
                 let mut guard = self.sync.borrow_mut();
                 let Some(live) = guard.as_mut() else { return };
