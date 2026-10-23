@@ -71,6 +71,7 @@ use commy_core::{
     Presence, RoleId, ServerEvent, ServerId, ServerState, StoreError, UserId,
     UserProfile,
 };
+use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::server::Role;
 use commy_core::template::{text_channel_name, MAX_RETENTION_DAYS};
 use commy_media::screen::{SourceKind, StreamQuality};
@@ -1947,13 +1948,16 @@ fn known_profile_field<T>(app: &App, user: UserId, field: impl Fn(&UserProfile) 
     app.servers.lock().unwrap().values().find_map(|s| s.profiles.get(&user).and_then(&field))
 }
 
-async fn join_group(app: &App, handle: &tauri::AppHandle, from: UserId, ticket: &str) {
+async fn join_group(app: &App, handle: &tauri::AppHandle, from: UserId, ticket: &str, key: Option<(KeyId, ChannelSecret)>) {
     let Ok(ticket) = ServerTicket::decode(ticket) else {
         tracing::debug!("ignored a group invite from {from} with a bad ticket");
         return;
     };
     if app.servers.lock().unwrap().contains_key(&ticket.server_id) {
         return;
+    }
+    if let Some((id, secret)) = key {
+        community_sync::remember_invite_key(ticket.server_id, id, secret);
     }
     match join_ticket(app, handle, ticket.clone()).await {
         Ok(_) => {
@@ -1966,13 +1970,14 @@ async fn join_group(app: &App, handle: &tauri::AppHandle, from: UserId, ticket: 
 
 async fn invite_to_group(app: &App, handle: &tauri::AppHandle, me: &UserProfile, sid: ServerId, user_ids: Vec<String>) -> CmdResult<()> {
     let ticket = app.vouched_ticket(sid).ok_or("no invite available; you may be offline")?.encode();
+    let key = community_sync::invite_key(app, sid);
     for raw in user_ids {
         let (_, user) = dm_partner(app, &raw)?;
         let already = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.is_current_member(user));
         if already {
             continue;
         }
-        let invite = DmMessage::acting(me.id, user, DmAction::GroupInvite { ticket: ticket.clone() }, "");
+        let invite = commy_view::dms::group_invite(me.id, user, ticket.clone(), key.as_ref().map(|(id, secret)| (*id, secret)));
         post_dm(app, handle, me, user, invite).await?;
     }
     Ok(())
@@ -2018,37 +2023,7 @@ async fn add_group_members(app: tauri::State<'_, App>, handle: tauri::AppHandle,
 }
 
 fn group_thread_views(app: &App, me: UserId) -> Vec<DmThreadView> {
-    let servers = app.servers.lock().unwrap();
-    servers
-        .values()
-        .filter(|s| s.server.group)
-        .map(|state| {
-            let last = state
-                .server
-                .sorted_channels()
-                .into_iter()
-                .filter(|c| c.kind == ChannelKind::Text)
-                .flat_map(|c| state.messages(c.id).iter())
-                .max_by_key(|m| m.created_at);
-            DmThreadView {
-                user: state.server.id.to_string(),
-                name: view::server_name(state, Some(me)),
-                last_message: last
-                    .map(|m| {
-                        let who = if m.author == me { "You".to_string() } else { view::display_name(state, m.author) };
-                        let text = if m.content.is_empty() {
-                            m.files().next().map(|a| a.filename.clone()).unwrap_or_default()
-                        } else {
-                            safety::truncate(&m.content, 60)
-                        };
-                        format!("{who}: {text}")
-                    })
-                    .unwrap_or_default(),
-                last_at: last.map(|m| m.created_at.to_rfc3339()).unwrap_or_default(),
-                kind: "group".to_string(),
-            }
-        })
-        .collect()
+    commy_view::dms::group_threads(app.servers.lock().unwrap().values(), me)
 }
 
 #[tauri::command]
@@ -7863,7 +7838,7 @@ pub(crate) async fn take_dm(handle: &tauri::AppHandle, dm: commy_net::node::Inco
             let _ = send_friend_signal(&app, to, signal, None).await;
         }
         outbox::Received::Call { from, call, signal } => calls::on_signal(&app, handle, from, call, signal).await,
-        outbox::Received::GroupInvite { from, ticket } => join_group(&app, handle, from, &ticket).await,
+        outbox::Received::GroupInvite { from, ticket, key } => join_group(&app, handle, from, &ticket, key).await,
         outbox::Received::Taken => {
             dm_sync::noticed(handle, sender);
             let contact = app.dms.lock().unwrap().contacts.get(&sender).cloned();

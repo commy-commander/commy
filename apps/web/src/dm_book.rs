@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
+use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::dm::{DmAction, DmMessage};
 use commy_core::{DmStore, Identity, IdentityKey, MessageId, ServerId, ServerState, UserId, UserProfile};
 use commy_net::sync_streams;
@@ -27,6 +28,7 @@ pub enum Received {
     Changed(UserId),
     Posted { partner: UserId, notice: Value },
     Friends { notice: Value, reply: Option<(UserId, FriendSignal)> },
+    Invited { from: UserId, ticket: String, key: Option<(KeyId, ChannelSecret)> },
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -220,7 +222,15 @@ impl DmBook {
             let notice = json!({ "user": partner.to_string(), "name": name, "signal": signal, "note": note });
             return Received::Friends { notice, reply: reply.map(|signal| (partner, signal)) };
         }
-        if matches!(message.action, DmAction::Call { .. } | DmAction::GroupInvite { .. }) {
+        if let DmAction::GroupInvite { ticket } = &message.action {
+            if !dms::invite_welcome(&self.store, &self.safety, servers, me, partner) {
+                return Received::Dropped;
+            }
+            let (ticket, key) = (ticket.clone(), dms::invite_key_of(&message));
+            self.store.remember_contact(sender);
+            return if self.store.apply(partner, message) { Received::Invited { from: partner, ticket, key } } else { Received::Dropped };
+        }
+        if dms::is_call(&message) {
             return Received::Dropped;
         }
         if !message.is_post() {
@@ -312,8 +322,9 @@ impl DmBook {
         }
     }
 
-    pub fn threads(&self, me: UserId) -> Vec<DmThreadView> {
+    pub fn threads(&self, me: UserId, servers: &Servers) -> Vec<DmThreadView> {
         let mut views = dm_thread_views(&self.store, me);
+        views.extend(dms::group_threads(servers.values(), me));
         dms::sort_threads(&mut views, &self.store, &self.safety, me);
         views
     }
@@ -370,7 +381,7 @@ mod tests {
             }
             other => panic!("expected a post, got {other:?}"),
         }
-        assert_eq!(book.threads(me.0.id)[0].kind, "request");
+        assert_eq!(book.threads(me.0.id, &servers)[0].kind, "request");
 
         let impostor = person("friend");
         let mut forged = from(&impostor, me.0.id, "send me your password");
@@ -390,14 +401,14 @@ mod tests {
         let reply = DmMessage::new(me.0.id, friend.0.id, "hey!");
         let id = reply.id;
         assert!(book.sent(friend.0.id, reply));
-        assert_eq!(book.threads(me.0.id)[0].kind, "inbox");
+        assert_eq!(book.threads(me.0.id, &servers)[0].kind, "inbox");
         let now = Utc::now().timestamp_millis();
         assert!(book.follows(friend.0.id, now), "they wrote recently, so they read our conversation stream");
         assert!(book.messages(me.0.id, friend.0.id, now).iter().any(|m| m.id == id.to_string() && m.pending));
         book.stored(id);
         assert!(book.messages(me.0.id, friend.0.id, now).iter().all(|m| !m.pending));
         book.safety.set_blocked(friend.0.id, true);
-        assert!(book.threads(me.0.id).is_empty());
+        assert!(book.threads(me.0.id, &servers).is_empty());
     }
 
     #[test]
@@ -463,5 +474,29 @@ mod tests {
             other => panic!("expected a friend signal, got {other:?}"),
         }
         assert!(book.safety.friends.contains(&friend.0.id));
+    }
+
+    #[test]
+    fn a_group_invite_from_someone_we_know_hands_over_its_key_once() {
+        let me = person("me");
+        let friend = person("friend");
+        let stranger = person("stranger");
+        let servers = shared(&me.0, &friend.0);
+        let mut book = DmBook::default();
+        let at = Utc::now().timestamp();
+        let (id, secret) = (KeyId::random(), ChannelSecret::random());
+        let invite = |sender: &(UserProfile, Identity)| {
+            let mut message = dms::group_invite(sender.0.id, me.0.id, "ticket".into(), Some((id, &secret)));
+            message.sign(&data_encoding::HEXLOWER.encode(&NODE), &sender.1);
+            DmEnvelope::new(message, sender.0.clone())
+        };
+        let first = invite(&friend);
+        assert_eq!(
+            book.receive(me.0.id, &servers, first.clone(), NODE, at),
+            Received::Invited { from: friend.0.id, ticket: "ticket".into(), key: Some((id, secret.clone())) }
+        );
+        assert_eq!(book.receive(me.0.id, &servers, first, NODE, at), Received::Dropped, "a replayed invite joins once");
+        assert_eq!(book.receive(me.0.id, &servers, invite(&stranger), NODE, at), Received::Dropped);
+        assert!(book.threads(me.0.id, &servers).iter().all(|t| t.kind != "request"), "an invite is not a message");
     }
 }

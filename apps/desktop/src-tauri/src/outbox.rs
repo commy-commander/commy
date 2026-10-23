@@ -2,6 +2,7 @@ use crate::catchup::AppAccess;
 use crate::safety::{self, FriendSignal};
 use crate::state::App;
 use commy_core::catchup::{day_number, first_day};
+use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::{
     CallSignal, ChannelId, DmAction, Identity, Message, MessageId, Presence, ServerEvent, ServerId, ServerState, TombstoneProof,
     UserId, UserProfile,
@@ -322,7 +323,7 @@ pub enum Received {
     Report { from: UserId, content: String },
     Reply { to: UserId, signal: FriendSignal },
     Call { from: UserId, call: ChannelId, signal: CallSignal },
-    GroupInvite { from: UserId, ticket: String },
+    GroupInvite { from: UserId, ticket: String, key: Option<(KeyId, ChannelSecret)> },
 }
 
 pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
@@ -362,10 +363,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         let known = {
             let safety = app.safety.lock().unwrap();
             let dms = app.dms.lock().unwrap();
-            !safety.is_blocked(partner)
-                && (dms.has_sent_to(me, partner)
-                    || safety.friends.contains(&partner)
-                    || app.servers.lock().unwrap().values().any(|s| s.server.is_member(partner)))
+            commy_view::dms::invite_welcome(&dms, &safety, &app.servers.lock().unwrap(), me, partner)
         };
         if !known {
             tracing::debug!("dropped a call or group invite from {partner}, who we do not talk to");
@@ -375,11 +373,12 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         return match message.action.clone() {
             DmAction::Call { call, signal } => Received::Call { from: partner, call, signal },
             DmAction::GroupInvite { ticket } => {
+                let key = commy_view::dms::invite_key_of(&message);
                 if !app.dms.lock().unwrap().apply(partner, message) {
                     return Received::Dropped;
                 }
                 app.persist_dms();
-                Received::GroupInvite { from: partner, ticket }
+                Received::GroupInvite { from: partner, ticket, key }
             }
             _ => Received::Dropped,
         };

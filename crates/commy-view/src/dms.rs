@@ -1,11 +1,21 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
+use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::dm::{CallSignal, DmAction, DmMessage};
-use commy_core::{DmStore, IdentityKey, MessageId, ServerId, ServerState, UserId, UserProfile};
+use commy_core::{ChannelKind, DmStore, IdentityKey, MessageId, ServerId, ServerState, UserId, UserProfile};
+use serde::{Deserialize, Serialize};
 
 use crate::safety::{self, SafetySettings};
 use crate::DmThreadView;
+
+#[derive(Serialize, Deserialize)]
+struct InviteKey {
+    #[serde(rename = "i")]
+    id: String,
+    #[serde(rename = "s")]
+    secret: String,
+}
 
 pub const EPOCHS: u32 = 3;
 pub const MAX_PARTNERS: usize = 40;
@@ -68,6 +78,64 @@ pub fn member_profile(servers: &HashMap<ServerId, ServerState>, user: UserId) ->
     let mut keys = member_entries(servers, user).filter_map(|p| p.identity);
     let identity = keys.next().filter(|first| keys.all(|key| key == *first));
     Some(UserProfile { identity, ..profile })
+}
+
+pub fn group_invite(from: UserId, to: UserId, ticket: String, key: Option<(KeyId, &ChannelSecret)>) -> DmMessage {
+    let content = key
+        .map(|(id, secret)| {
+            let key = InviteKey { id: id.to_hex(), secret: data_encoding::BASE64URL_NOPAD.encode(secret.bytes()) };
+            serde_json::to_string(&key).expect("invite key encodes")
+        })
+        .unwrap_or_default();
+    DmMessage::acting(from, to, DmAction::GroupInvite { ticket }, content)
+}
+
+pub fn invite_key_of(message: &DmMessage) -> Option<(KeyId, ChannelSecret)> {
+    if !matches!(message.action, DmAction::GroupInvite { .. }) {
+        return None;
+    }
+    let key: InviteKey = serde_json::from_str(&message.content).ok()?;
+    let id: [u8; 16] = data_encoding::HEXLOWER_PERMISSIVE.decode(key.id.as_bytes()).ok()?.try_into().ok()?;
+    let secret: [u8; 32] = data_encoding::BASE64URL_NOPAD.decode(key.secret.as_bytes()).ok()?.try_into().ok()?;
+    Some((KeyId(id), ChannelSecret::from_bytes(secret)))
+}
+
+pub fn invite_welcome(dms: &DmStore, safety: &SafetySettings, servers: &HashMap<ServerId, ServerState>, me: UserId, from: UserId) -> bool {
+    !safety.is_blocked(from)
+        && (dms.has_sent_to(me, from) || safety.friends.contains(&from) || servers.values().any(|s| s.server.is_member(from)))
+}
+
+pub fn group_threads<'a>(servers: impl IntoIterator<Item = &'a ServerState>, me: UserId) -> Vec<DmThreadView> {
+    servers
+        .into_iter()
+        .filter(|s| s.server.group)
+        .map(|state| {
+            let last = state
+                .server
+                .sorted_channels()
+                .into_iter()
+                .filter(|c| c.kind == ChannelKind::Text)
+                .flat_map(|c| state.messages(c.id).iter())
+                .max_by_key(|m| m.created_at);
+            DmThreadView {
+                user: state.server.id.to_string(),
+                name: crate::server_name(state, Some(me)),
+                last_message: last
+                    .map(|m| {
+                        let who = if m.author == me { "You".to_string() } else { crate::display_name(state, m.author) };
+                        let text = if m.content.is_empty() {
+                            m.files().next().map(|a| a.filename.clone()).unwrap_or_default()
+                        } else {
+                            safety::truncate(&m.content, 60)
+                        };
+                        format!("{who}: {text}")
+                    })
+                    .unwrap_or_default(),
+                last_at: last.map(|m| m.created_at.to_rfc3339()).unwrap_or_default(),
+                kind: "group".to_string(),
+            }
+        })
+        .collect()
 }
 
 pub fn sort_threads(views: &mut Vec<DmThreadView>, dms: &DmStore, safety: &SafetySettings, me: UserId) {
@@ -159,6 +227,38 @@ mod tests {
         assert!(follows(&dms, partner, &HashSet::new(), now));
         dms.apply(partner, DmMessage::new(partner, me, "hi"));
         assert!(follows(&dms, partner, &HashSet::from([ours.id]), now));
+    }
+
+    #[test]
+    fn a_group_invite_carries_the_group_key_and_old_invites_still_read() {
+        let (a, b) = (UserId::new(), UserId::new());
+        let (id, secret) = (KeyId::random(), ChannelSecret::random());
+        let invite = group_invite(a, b, "ticket".into(), Some((id, &secret)));
+        assert!(matches!(&invite.action, DmAction::GroupInvite { ticket } if ticket == "ticket"));
+        let (back, opened) = invite_key_of(&invite).unwrap();
+        assert_eq!(back, id);
+        assert_eq!(opened.bytes(), secret.bytes());
+        assert!(!syncable(&invite));
+        assert!(invite_key_of(&group_invite(a, b, "ticket".into(), None)).is_none());
+        assert!(invite_key_of(&DmMessage::new(a, b, invite.content.clone())).is_none(), "only an invite carries a key");
+    }
+
+    #[test]
+    fn group_invites_come_only_from_people_we_know() {
+        let (me, friend, member, stranger) = (UserId::new(), UserId::new(), UserId::new(), UserId::new());
+        let mut safety = SafetySettings::default();
+        safety.friends.insert(friend);
+        let mut dms = DmStore::new();
+        let talked = UserId::new();
+        dms.apply(talked, DmMessage::new(me, talked, "hi"));
+        let server = commy_core::Server::new("club", member);
+        let servers = HashMap::from([(server.id, ServerState::new(server))]);
+        assert!(invite_welcome(&dms, &safety, &servers, me, friend));
+        assert!(invite_welcome(&dms, &safety, &servers, me, member));
+        assert!(invite_welcome(&dms, &safety, &servers, me, talked));
+        assert!(!invite_welcome(&dms, &safety, &servers, me, stranger));
+        safety.blocked.push(friend);
+        assert!(!invite_welcome(&dms, &safety, &servers, me, friend));
     }
 
     #[test]

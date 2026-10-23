@@ -3,9 +3,11 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use chrono::Utc;
+use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::{Message, ServerEvent, ServerId};
 use commy_net::community_streams::{self as streams, Lane};
-use commy_net::entry_list::EntryList;
+use commy_net::entry_list::{self, EntryList};
+use commy_net::sync_streams::SharedKey;
 use commy_net::sealed::SealKey;
 use commy_net::{sync_streams, ServerTicket, WirePayload};
 use commy_sync::{Pool, StreamId, SyncClient, SyncEvent};
@@ -18,7 +20,7 @@ use wasm_bindgen_futures::spawn_local;
 
 use super::Session;
 use crate::client::Applied;
-use crate::sync_book::{prefs_record, read_record, saved_record, Book, Change, Record};
+use crate::sync_book::{community_key_record, joined_record, prefs_record, read_record, saved_record, Book, Change, Record};
 
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
 const MAX_MARKS_PER_RECORD: usize = 300;
@@ -370,6 +372,36 @@ impl Session {
         });
     }
 
+    pub(super) fn join_group(self: &Rc<Self>, raw: &str, key: Option<(KeyId, ChannelSecret)>) {
+        let Ok(ticket) = ServerTicket::decode(raw) else { return };
+        let Some((id, secret)) = key else { return };
+        let server = ticket.server_id;
+        if ticket.owner.is_none() || self.client.borrow().tickets.contains_key(&server) {
+            return;
+        }
+        let now = Utc::now();
+        let entry = entry_list::Entry { name: ticket.server_name.clone(), ticket: raw.to_string(), since: now };
+        let shared = SharedKey::of(id, &secret);
+        let joined = self.sync.borrow_mut().as_mut().is_some_and(|live| live.book.join(server, entry.clone(), shared.clone(), now.timestamp_millis()));
+        if !joined {
+            return;
+        }
+        self.client.borrow_mut().tickets.insert(server, ticket.clone());
+        self.append_account(joined_record(server, &entry));
+        self.append_account(community_key_record(server, &shared, now.timestamp_millis(), ticket.owner));
+        self.refresh_sync();
+        let details = self.dms.borrow().safety.profile_policy.shows_details_to_servers();
+        let state = streams::bootstrap(server, id, &secret).keys.id;
+        let payload = self.client.borrow().join_payload(server, details);
+        let plain = payload.as_ref().and_then(streams::encode_entry);
+        let client = self.sync.borrow().as_ref().and_then(|live| live.pool.client_for(state));
+        if let (Some(plain), Some(client)) = (plain, client) {
+            spawn_local(async move {
+                let _ = client.append(state, plain).await;
+            });
+        }
+    }
+
     fn follow_server_list(self: &Rc<Self>) {
         let Some(tickets) = self.sync.borrow().as_ref().map(|live| live.book.tickets()) else { return };
         let (added, removed) = {
@@ -413,6 +445,9 @@ impl Session {
         self.release_parked(server);
         self.emit("servers-changed", Value::Null);
         self.emit("server-event", json!(server.to_string()));
+        if self.client.borrow().is_group(server) {
+            self.emit("dm-changed", json!(server.to_string()));
+        }
         self.announce_if_loaded();
         self.refresh_sync();
         if self.sync.borrow_mut().as_mut().is_some_and(|live| !live.gone && live.greeted.insert(server)) {
