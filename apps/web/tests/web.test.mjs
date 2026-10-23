@@ -31,9 +31,9 @@ test("the browser answers each command once, either from defaults or from the ba
 });
 
 test("defaults are fresh copies, so the app cannot change them for the next caller", () => {
-  const first = webDefault("list_friends").value;
-  first.friends.push({ id: "x" });
-  assert.deepEqual(webDefault("list_friends").value.friends, []);
+  const first = webDefault("list_audio_devices").value;
+  first.inputs.push({ id: "x" });
+  assert.deepEqual(webDefault("list_audio_devices").value.inputs, []);
   assert.equal(webDefault("create_server").known, false);
 });
 

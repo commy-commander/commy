@@ -3,7 +3,7 @@ use crate::safety::{self, FriendSignal};
 use crate::state::App;
 use commy_core::catchup::{day_number, first_day};
 use commy_core::{
-    CallSignal, ChannelId, DmAction, DmStore, Identity, IdentityKey, Message, MessageId, Presence, ServerEvent, ServerId, ServerState, TombstoneProof,
+    CallSignal, ChannelId, DmAction, Identity, Message, MessageId, Presence, ServerEvent, ServerId, ServerState, TombstoneProof,
     UserId, UserProfile,
 };
 use commy_net::node::IncomingDm;
@@ -287,20 +287,8 @@ pub fn online_user(event: &ServerEvent) -> Option<(UserId, Presence)> {
     }
 }
 
-pub fn key_matches_pins(key: IdentityKey, pins: impl IntoIterator<Item = Option<IdentityKey>>) -> bool {
-    pins.into_iter().flatten().all(|pinned| pinned == key)
-}
 
-fn member_entries(servers: &HashMap<ServerId, ServerState>, user: UserId) -> impl Iterator<Item = &UserProfile> {
-    servers.values().filter(move |s| s.server.is_member(user)).filter_map(move |s| s.profiles.get(&user))
-}
 
-pub fn member_profile(servers: &HashMap<ServerId, ServerState>, user: UserId) -> Option<UserProfile> {
-    let profile = member_entries(servers, user).next()?.clone();
-    let mut keys = member_entries(servers, user).filter_map(|p| p.identity);
-    let identity = keys.next().filter(|first| keys.all(|key| key == *first));
-    Some(UserProfile { identity, ..profile })
-}
 
 pub fn dm_sender_trusted(app: &App, envelope: &DmEnvelope) -> bool {
     let Some(key) = envelope.sender.identity.filter(|_| envelope.signed_by_sender()) else {
@@ -324,11 +312,8 @@ pub fn screen_dm(app: &App, dm: &IncomingDm) -> Option<UserProfile> {
     Some(sender)
 }
 
-pub const MAX_STRANGER_REQUESTS: usize = 50;
-
-pub fn open_stranger_requests(dms: &DmStore, me: UserId, known: impl Fn(UserId) -> bool) -> usize {
-    dms.partners().into_iter().filter(|partner| !dms.has_sent_to(me, *partner) && !known(*partner)).count()
-}
+pub use commy_view::dms::{key_matches_pins, member_entries, member_profile};
+pub use commy_view::safety::{open_stranger_requests, MAX_STRANGER_REQUESTS};
 
 #[derive(Debug, PartialEq)]
 pub enum Received {
@@ -815,7 +800,7 @@ where
 mod tests {
     use super::*;
     use crate::catchup::TestHandle;
-    use commy_core::{DmMessage, Identity, Message, Server, TombstoneProof};
+    use commy_core::{DmMessage, DmStore, Identity, IdentityKey, Message, Server, TombstoneProof};
     use std::sync::{Arc, Mutex};
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {

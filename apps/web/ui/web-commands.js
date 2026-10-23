@@ -11,8 +11,6 @@ const WEB_UPDATE_STATUS = {
 const WEB_DEFAULTS = {
   ui_ready: null,
   get_voice_settings: WEB_VOICE_SETTINGS,
-  get_safety: { blocked: [], dm_policy: "everyone", spam_filter: true },
-  list_friends: { friends: [], incoming: [], outgoing: [] },
   get_overlay_settings: { enabled: false, corner: "top-left", opacity: 0.9, show_chat: false, show_everyone: false, toggle_hotkey: "", chat_hotkey: "" },
   overlay_hotkey_problems: [],
   voice_hotkey_problems: [],
@@ -23,8 +21,6 @@ const WEB_DEFAULTS = {
   get_autostart: false,
   get_stream_deck: { enabled: false, status: "off", decks: [] },
   list_reports: [],
-  list_dm_threads: [],
-  get_dm_messages: [],
   get_awaited: 0,
   note_user_activity: null,
   set_window_title: null,

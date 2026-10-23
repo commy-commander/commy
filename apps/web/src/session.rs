@@ -23,9 +23,11 @@ use commy_view::search::{Page, SearchQuery};
 
 use crate::account::{self, AccountUser, Reply};
 use crate::client::{Applied, Client, PollForm};
+use crate::dm_book::DmBook;
 use crate::host::Host;
 use crate::store::WebStore;
 
+mod dms;
 mod handoff;
 mod sync;
 
@@ -73,6 +75,7 @@ pub struct Session {
     node: Mutex<Option<CommyNode>>,
     store: RefCell<Option<SharedCatchupStore>>,
     sync: RefCell<Option<sync::Live>>,
+    dms: RefCell<DmBook>,
 }
 
 #[derive(Deserialize, Default)]
@@ -110,6 +113,11 @@ struct Args {
     channels: Option<std::collections::BTreeMap<String, commy_view::reads::ReadMark>>,
     channel_ids: Option<Vec<String>>,
     changes: Option<std::collections::BTreeMap<String, Value>>,
+    blocked: Option<bool>,
+    policy: Option<String>,
+    spam_filter: Option<bool>,
+    action: Option<String>,
+    note: Option<String>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -138,6 +146,7 @@ impl Session {
             node: Mutex::new(None),
             store: RefCell::new(None),
             sync: RefCell::new(None),
+            dms: RefCell::new(DmBook::default()),
         })
     }
 
@@ -249,6 +258,20 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
+            "list_dm_threads" => self.dm_command(cmd, args).await,
+            "get_dm_messages" => self.dm_command(cmd, args).await,
+            "open_dm" => self.dm_command(cmd, args).await,
+            "send_dm" => self.dm_command(cmd, args).await,
+            "edit_dm" => self.dm_command(cmd, args).await,
+            "delete_dm" => self.dm_command(cmd, args).await,
+            "set_dm_reaction" => self.dm_command(cmd, args).await,
+            "accept_dm_request" => self.dm_command(cmd, args).await,
+            "decline_dm_request" => self.dm_command(cmd, args).await,
+            "get_safety" => self.dm_command(cmd, args).await,
+            "set_blocked" => self.dm_command(cmd, args).await,
+            "set_dm_settings" => self.dm_command(cmd, args).await,
+            "list_friends" => self.dm_command(cmd, args).await,
+            "friend_action" => self.dm_command(cmd, args).await,
             "web_farewell" => {
                 self.say_goodbye();
                 Ok(Value::Null)
@@ -319,6 +342,7 @@ impl Session {
         self.say_goodbye();
         n0_future::time::sleep(FAREWELL_LINGER).await;
         self.stop_sync();
+        *self.dms.borrow_mut() = DmBook::default();
         let _ = self.request("POST", account::SIGN_OUT_PATH, Some(json!({}))).await;
         self.host.remove(account::ENTRY_KEY_KEY);
         self.account_status().await
@@ -419,7 +443,7 @@ impl Session {
         if slot.is_some() {
             return Ok(());
         }
-        let (mut node, events, _media, _dms) = CommyNode::spawn_with(Some(secret), Some(relay_map_of(&self.relays)?))
+        let (mut node, events, _media, incoming) = CommyNode::spawn_with(Some(secret), Some(relay_map_of(&self.relays)?))
             .await
             .map_err(|e| format!("Could not connect to the Commy network: {e}"))?;
         let (changed_tx, changed_rx) = mpsc::unbounded_channel();
@@ -435,6 +459,7 @@ impl Session {
         *slot = Some(node);
         spawn_local(self.clone().run_events(events));
         spawn_local(self.clone().run_changes(changed_rx));
+        spawn_local(self.clone().run_dms(incoming));
         Ok(())
     }
 
@@ -575,6 +600,7 @@ impl Session {
             *client.me.lock().unwrap() = Some((profile, identity));
             client.tickets = tickets.iter().map(|t| (t.server_id, t.clone())).collect();
         }
+        self.load_dms();
         self.set_unlock(Unlock::Unlocked, "");
         spawn_local(self.clone().load_servers(tickets));
         spawn_local(self.clone().start_sync(key, list));
@@ -723,7 +749,7 @@ impl Session {
     }
 
     fn apply_stored(&self, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
-        let applied = self.client.borrow().apply_stored(server, event, action);
+        let applied = self.client.borrow().apply_stored(server, event, action, shown);
         self.after_apply(server, applied, rings, shown)
     }
 
