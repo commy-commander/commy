@@ -34,6 +34,7 @@ const MAX_UNSENT: usize = 500;
 const UNSENT_WITHOUT_SERVICE_MS: i64 = 10 * 60 * 1000;
 const PUBLISH_WAIT: Duration = Duration::from_secs(8);
 const UNSENT_FOR_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+const READ_BACK: u64 = 2_000;
 const GREET_GAP: Duration = Duration::from_secs(120);
 const GREET_SPREAD_MS: u64 = 3_000;
 
@@ -47,6 +48,10 @@ pub struct Cursors {
     pub announced: BTreeMap<String, String>,
     #[serde(default)]
     pub unsent: Vec<Unsent>,
+    #[serde(default)]
+    pub read_back: BTreeSet<String>,
+    #[serde(default)]
+    pub older_before: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -80,6 +85,8 @@ impl Cursors {
     pub fn keep_only(&mut self, streams: &HashSet<String>) {
         self.after.retain(|stream, _| streams.contains(stream));
         self.backfilled.retain(|stream| streams.contains(stream));
+        self.read_back.retain(|stream| streams.contains(stream));
+        self.older_before.retain(|stream, _| streams.contains(stream));
         self.announced.retain(|stream, _| streams.contains(stream));
     }
 
@@ -92,6 +99,12 @@ impl Cursors {
             self.announced.remove(&stream.to_hex());
         }
     }
+}
+
+struct Reading {
+    stream: StreamId,
+    _client: SyncClient,
+    task: tauri::async_runtime::JoinHandle<()>,
 }
 
 struct Community {
@@ -116,6 +129,8 @@ struct Live {
     published: HashMap<ServerId, i64>,
     retried: HashSet<MessageId>,
     echoes: VecDeque<[u8; 32]>,
+    fresh: HashSet<StreamId>,
+    reading: Option<Reading>,
     greeted: HashMap<ServerId, Instant>,
     cursors: Cursors,
     task: tauri::async_runtime::JoinHandle<()>,
@@ -245,6 +260,9 @@ pub fn stop() {
     save();
     if let Some(old) = LIVE.lock().unwrap().take() {
         old.task.abort();
+        if let Some(reading) = old.reading {
+            reading.task.abort();
+        }
         UNSENT.lock().unwrap().clear();
     }
 }
@@ -318,6 +336,8 @@ async fn tend(handle: &AppHandle) {
             published: HashMap::new(),
             retried: HashSet::new(),
             echoes: VecDeque::new(),
+            fresh: HashSet::new(),
+            reading: None,
             greeted: HashMap::new(),
             cursors,
             task,
@@ -330,6 +350,101 @@ async fn tend(handle: &AppHandle) {
     publish_snapshots(handle);
     store_pending(handle);
     send_unsent();
+    read_back(handle);
+}
+
+fn read_back(handle: &AppHandle) {
+    let next = {
+        let mut guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_mut() else { return };
+        if live.reading.as_ref().is_some_and(|r| live.route(r.stream).is_some() && !r.task.inner().is_finished()) {
+            return;
+        }
+        if let Some(stale) = live.reading.take() {
+            stale.task.abort();
+        }
+        let mut waiting: Vec<(StreamId, ServerId, Want)> = live
+            .communities
+            .iter()
+            .flat_map(|(server, c)| c.wants.iter().map(move |(stream, want)| (*stream, *server, want.clone())))
+            .filter(|(stream, _, want)| {
+                let hex = stream.to_hex();
+                matches!(want.lane, Lane::Channel(_))
+                    && live.caught_up.contains(stream)
+                    && !live.cursors.read_back.contains(&hex)
+                    && (live.fresh.contains(stream) || live.cursors.older_before.contains_key(&hex))
+            })
+            .collect();
+        waiting.sort_by_key(|(stream, _, _)| stream.to_hex());
+        let mut pick = None;
+        for (stream, server, want) in waiting {
+            match live.cursors.older_before.get(&stream.to_hex()).copied() {
+                Some(until) if until > 1 => {
+                    pick = Some((stream, server, want, until));
+                    break;
+                }
+                _ => {
+                    live.cursors.older_before.remove(&stream.to_hex());
+                    live.cursors.read_back.insert(stream.to_hex());
+                }
+            }
+        }
+        pick.map(|pick| (pick, live.url.clone()))
+    };
+    let Some(((stream, server, want, until), url)) = next else { return };
+    let (client, events) = SyncClient::spawn(url);
+    client.follow(want.keys.clone(), until.saturating_sub(READ_BACK + 1));
+    let task = tauri::async_runtime::spawn(read_until(handle.clone(), server, stream, want.lane, until, events));
+    if let Some(live) = LIVE.lock().unwrap().as_mut() {
+        live.reading = Some(Reading { stream, _client: client, task });
+    }
+}
+
+async fn read_until(handle: AppHandle, server: ServerId, stream: StreamId, lane: Lane, until: u64, mut events: mpsc::UnboundedReceiver<SyncEvent>) {
+    let mut older = Vec::new();
+    while let Some(event) = events.recv().await {
+        match event {
+            SyncEvent::Entry { seq, plain, .. } if seq < until => older.extend(streams::decode_entry(&plain, lane)),
+            SyncEvent::Entry { .. } | SyncEvent::CaughtUp { .. } => break,
+            SyncEvent::Refused { code, .. } => {
+                tracing::debug!("the sync service refused reading older history: {code:?}");
+                return;
+            }
+            _ => {}
+        }
+    }
+    tracing::info!("read {} older entries for a channel of {server}", older.len());
+    apply_older(&handle, server, older);
+    if let Some(live) = LIVE.lock().unwrap().as_mut() {
+        live.cursors.older_before.remove(&stream.to_hex());
+        live.cursors.read_back.insert(stream.to_hex());
+    }
+    save_soon();
+    refresh_soon(&handle);
+}
+
+fn apply_older(handle: &AppHandle, server: ServerId, older: Vec<WirePayload>) {
+    if handle.state::<App>().awaits_snapshot(server) {
+        return;
+    }
+    let Some(net) = LIVE.lock().unwrap().as_ref().map(|live| live.net.clone()) else { return };
+    let store = crate::catchup::AppStore(handle.clone());
+    let mut messages = Vec::new();
+    for payload in older {
+        let Some((event, action)) = streams::event_of(&payload).map(|(event, action)| (event.clone(), action)) else { continue };
+        match event {
+            ServerEvent::MessageCreate { message } => messages.push(message),
+            event => {
+                if !messages.is_empty() {
+                    store.apply(server, std::mem::take(&mut messages), Vec::new());
+                }
+                let _ = net.send(NetEvent::Event { server, sender: streams::SERVICE_SENDER, event, action });
+            }
+        }
+    }
+    if !messages.is_empty() {
+        store.apply(server, messages, Vec::new());
+    }
 }
 
 fn store_pending(handle: &AppHandle) {
@@ -486,7 +601,11 @@ fn refresh(handle: &AppHandle) {
                 held.writes = want.writes;
                 continue;
             }
-            group.push((want.lane, want.keys.clone(), live.cursors.after(stream)));
+            let after = live.cursors.after(stream);
+            if after == 0 && matches!(want.lane, Lane::Channel(_)) {
+                live.fresh.insert(stream);
+            }
+            group.push((want.lane, want.keys.clone(), after));
             community.wants.insert(stream, want);
         }
         if group.is_empty() {
@@ -757,6 +876,9 @@ fn on_entry(handle: &AppHandle, stream: StreamId, seq: u64, plain: &[u8]) {
         let Some(live) = guard.as_mut() else { return };
         let Some((server, want)) = live.route(stream) else { return };
         live.cursors.advance(stream, seq);
+        if live.fresh.contains(&stream) && !live.cursors.read_back.contains(&stream.to_hex()) {
+            live.cursors.older_before.entry(stream.to_hex()).or_insert(seq);
+        }
         let echo = live.take_echo(&digest(plain));
         let live_now = live.caught_up.contains(&stream);
         let decoded = (!echo).then(|| streams::decode_entry(plain, want.lane)).flatten();
@@ -1062,9 +1184,14 @@ mod tests {
         assert_eq!(cursors.after(a), 5);
         cursors.advance(b, 2);
         cursors.backfilled.insert(b.to_hex());
+        cursors.read_back.insert(b.to_hex());
+        cursors.older_before.insert(b.to_hex(), 201);
+        cursors.older_before.insert(a.to_hex(), 801);
         cursors.keep_only(&HashSet::from([a.to_hex()]));
         assert_eq!(cursors.after(b), 0);
         assert!(cursors.backfilled.is_empty());
+        assert!(cursors.read_back.is_empty());
+        assert_eq!(cursors.older_before, BTreeMap::from([(a.to_hex(), 801)]), "a read back still to do survives a restart");
         let json = serde_json::to_string(&cursors).unwrap();
         assert_eq!(serde_json::from_str::<Cursors>(&json).unwrap(), cursors);
         assert_eq!(serde_json::from_str::<Cursors>("{}").unwrap(), Cursors::default());
