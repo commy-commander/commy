@@ -4,14 +4,15 @@ use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, Keyring};
 use commy_core::{
-    action, Action, ChannelId, ChannelKind, Identity, Message, MessageId, Permissions, ServerEvent, ServerId, ServerState,
-    SignedEvent, Snapshot, UserId, UserProfile,
+    action, Action, ChannelId, ChannelKind, Identity, Message, MessageId, Permissions, Presence, ServerEvent, ServerId,
+    ServerState, SignedEvent, Snapshot, UserId, UserProfile,
 };
 use commy_net::community_streams::{self as streams, Lane, Want};
 use commy_net::protocol::{gossip_size, verify_sync_response, SyncMember, MAX_GOSSIP_BYTES};
 use commy_net::{ServerTicket, WirePayload};
 use commy_view::act::{self, Act};
 use commy_view::keys::KeyHolder;
+use commy_view::liveness::{self, Liveness};
 use commy_view::reads::{ReadMark, ReadState, ReadView};
 use commy_view::search::{Page, SearchQuery, SearchResults};
 use commy_view::{MessageView, PinView, ServerSummary, ServerView};
@@ -36,6 +37,7 @@ pub struct Client {
     pub me: Me,
     pub tickets: HashMap<ServerId, ServerTicket>,
     pub pending: HashSet<MessageId>,
+    pub liveness: Mutex<Liveness>,
 }
 
 impl Client {
@@ -194,11 +196,30 @@ impl Client {
     }
 
     pub fn apply_live(&self, server: ServerId, event: ServerEvent, action: Option<Action>) -> Applied {
+        self.apply_from(server, event, action, false)
+    }
+
+    pub fn apply_stored(&self, server: ServerId, event: ServerEvent, action: Option<Action>) -> Applied {
+        self.apply_from(server, event, action, true)
+    }
+
+    fn apply_from(&self, server: ServerId, event: ServerEvent, action: Option<Action>, stored: bool) -> Applied {
         let keys = self.keys();
         let me = self.me_id();
         let mut servers = self.servers.lock().unwrap();
         let Some(state) = servers.get_mut(&server) else { return Applied::Nothing };
-        match commy_net::catchup::apply_live(state, event, action) {
+        let profile = match &event {
+            ServerEvent::ProfileUpdate { profile } | ServerEvent::MemberJoin { profile, .. } if stored => Some(profile.id),
+            _ => None,
+        };
+        let shown = profile.map(|user| state.profiles.get(&user).map_or(Presence::Offline, |p| p.presence));
+        let applied = commy_net::catchup::apply_live(state, event, action);
+        if let (Some(user), Some(shown)) = (profile, shown) {
+            if let Some(profile) = state.profiles.get_mut(&user) {
+                profile.presence = shown;
+            }
+        }
+        match applied {
             (Ok(true), Some(message), _) => {
                 let visible = me.is_some_and(|me| state.server.can_view(message.channel, me));
                 match keys.open(state, &message) {
@@ -209,6 +230,79 @@ impl Client {
             (Ok(true), _, _) => Applied::Changed,
             _ => Applied::Nothing,
         }
+    }
+
+    pub fn apply_signal(&self, server: ServerId, node: &[u8; 32], event: ServerEvent, action: Option<Action>) -> bool {
+        let speaker = liveness::speaker(&event, action.as_ref());
+        let said = match &event {
+            ServerEvent::PresenceUpdate { user, presence } => Some((*user, *presence)),
+            _ => None,
+        };
+        let now = web_time::Instant::now();
+        let mut servers = self.servers.lock().unwrap();
+        let Some(state) = servers.get_mut(&server) else { return false };
+        let mut changed = match commy_net::catchup::apply_live(state, event, action).0 {
+            Ok(changed) => changed,
+            Err(_) => return false,
+        };
+        let mut live = self.liveness.lock().unwrap();
+        if let Some((user, presence)) = said {
+            changed |= live.settle_device_presence(state, user, node, presence, now);
+        }
+        if let Some(user) = speaker {
+            live.heard_through_service(server, user, now);
+        }
+        changed
+    }
+
+    pub fn hear_peer(&self, server: ServerId, event: &ServerEvent, action: Option<&Action>) {
+        if let Some(user) = liveness::speaker(event, action) {
+            self.liveness.lock().unwrap().heard(server, user, web_time::Instant::now());
+        }
+    }
+
+    pub fn is_shown_online(&self, server: ServerId, user: UserId) -> bool {
+        let servers = self.servers.lock().unwrap();
+        servers.get(&server).and_then(|s| s.profiles.get(&user)).is_some_and(|p| p.presence.is_visible_online())
+    }
+
+    pub fn here(&self, server: ServerId, node: &[u8; 32]) -> Vec<WirePayload> {
+        let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
+        if profile.presence == Presence::Invisible {
+            return Vec::new();
+        }
+        let announce = ServerEvent::DeviceAnnounce { server, user: profile.id, node: liveness::node_hex(node), voice: None, since: None };
+        if let Some(state) = self.servers.lock().unwrap().get_mut(&server) {
+            let _ = state.apply(announce.clone());
+        }
+        let at = Utc::now().timestamp_millis();
+        [announce, ServerEvent::PresenceUpdate { user: profile.id, presence: profile.presence }]
+            .into_iter()
+            .map(|event| WirePayload::Signed(SignedEvent::sign(server, profile.id, at, event, &identity)))
+            .collect()
+    }
+
+    pub fn farewell(&self) -> Vec<(ServerId, WirePayload)> {
+        let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
+        if profile.presence == Presence::Invisible {
+            return Vec::new();
+        }
+        let at = Utc::now().timestamp_millis();
+        let servers: Vec<ServerId> = self.servers.lock().unwrap().keys().copied().collect();
+        servers
+            .into_iter()
+            .map(|server| {
+                let event = ServerEvent::PresenceUpdate { user: profile.id, presence: Presence::Offline };
+                (server, WirePayload::Signed(SignedEvent::sign(server, profile.id, at, event, &identity)))
+            })
+            .collect()
+    }
+
+    pub fn sweep_presence(&self, wall_ms: i64) -> Vec<ServerId> {
+        let Some(me) = self.me_id() else { return Vec::new() };
+        let mut servers = self.servers.lock().unwrap();
+        let mut live = self.liveness.lock().unwrap();
+        live.sweep(servers.iter_mut(), me, web_time::Instant::now(), wall_ms, liveness::EXPIRE)
     }
 
     pub fn install_mirror(&self, server: ServerId, bytes: &[u8]) -> Result<bool, String> {
@@ -439,6 +533,48 @@ mod tests {
         let messages = w.client.get_messages(w.server, w.channel, None).unwrap();
         assert_eq!(messages.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), ["hello"]);
         assert!(!w.client.install_mirror(w.server, &mirror(&w)).unwrap(), "only the first copy is taken");
+    }
+
+    #[test]
+    fn the_browser_says_it_is_here_and_a_friend_stays_online_while_one_of_their_devices_is() {
+        let w = world();
+        assert!(w.client.install_mirror(w.server, &mirror(&w)).unwrap());
+        let node = [7u8; 32];
+        let said = w.client.here(w.server, &node);
+        assert_eq!(said.len(), 2);
+        let me = w.client.profile().unwrap().id;
+        let mut observer = w.state.clone();
+        for payload in &said {
+            let WirePayload::Signed(signed) = payload else { panic!("presence is signed") };
+            assert!(observer.admits_signed(signed).is_ok());
+            observer.apply(signed.event.clone()).unwrap();
+        }
+        assert!(observer.devices_of(me).iter().any(|d| d.node == liveness::node_hex(&node)));
+
+        let (owner, identity) = w.owner.clone();
+        let (desk, phone) = ([1u8; 32], [2u8; 32]);
+        let at = Utc::now().timestamp_millis();
+        let signed = |event: ServerEvent| {
+            let signed = SignedEvent::sign(w.server, owner.id, at, event, &identity);
+            (signed.event, Some(signed.action))
+        };
+        for node in [desk, phone] {
+            let announce = ServerEvent::DeviceAnnounce { server: w.server, user: owner.id, node: liveness::node_hex(&node), voice: None, since: None };
+            let (event, action) = signed(announce);
+            w.client.apply_signal(w.server, &node, event, action);
+        }
+        let online = |presence| ServerEvent::PresenceUpdate { user: owner.id, presence };
+        let (event, action) = signed(online(Presence::Online));
+        w.client.apply_signal(w.server, &desk, event, action);
+        let (event, action) = signed(online(Presence::Online));
+        w.client.apply_signal(w.server, &phone, event, action);
+        let (event, action) = signed(online(Presence::Offline));
+        w.client.apply_signal(w.server, &phone, event, action);
+        assert!(w.client.is_shown_online(w.server, owner.id), "the desk is still on");
+        let (event, action) = signed(online(Presence::Offline));
+        w.client.apply_signal(w.server, &desk, event, action);
+        assert!(!w.client.is_shown_online(w.server, owner.id));
+        assert!(w.client.farewell().iter().all(|(_, p)| matches!(p, WirePayload::Signed(s) if s.event == ServerEvent::PresenceUpdate { user: me, presence: Presence::Offline })));
     }
 
     #[test]

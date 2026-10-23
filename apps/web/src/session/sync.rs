@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -9,6 +9,7 @@ use commy_net::entry_list::EntryList;
 use commy_net::sealed::SealKey;
 use commy_net::{sync_streams, ServerTicket, WirePayload};
 use commy_sync::{Pool, StreamId, SyncClient, SyncEvent};
+use commy_view::liveness::{SERVICE_BEAT, SWEEP_EVERY};
 use commy_view::reads::{PrefPiece, ReadMark, ReadView};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -42,6 +43,8 @@ pub(super) struct Live {
     account_live: bool,
     book: Book,
     node: [u8; 32],
+    greeted: HashSet<ServerId>,
+    gone: bool,
 }
 
 impl Session {
@@ -56,9 +59,10 @@ impl Session {
         let stream = sync_streams::account_stream(&key);
         let account = stream.id;
         pool.follow(stream, 0);
-        *self.sync.borrow_mut() = Some(Live { pool, account, account_live: false, book: Book::new(list), node });
+        *self.sync.borrow_mut() = Some(Live { pool, account, account_live: false, book: Book::new(list), node, greeted: HashSet::new(), gone: false });
         spawn_local(self.clone().run_sync(events));
         spawn_local(self.clone().tend_sync());
+        spawn_local(self.clone().tend_presence());
         self.refresh_sync();
     }
 
@@ -96,6 +100,57 @@ impl Session {
             }
             self.refresh_sync();
         }
+    }
+
+    async fn tend_presence(self: Rc<Self>) {
+        let mut beat_due = web_time::Instant::now() + SERVICE_BEAT;
+        loop {
+            n0_future::time::sleep(SWEEP_EVERY).await;
+            if self.sync.borrow().is_none() {
+                return;
+            }
+            if web_time::Instant::now() >= beat_due {
+                beat_due = web_time::Instant::now() + SERVICE_BEAT;
+                self.say_here_everywhere();
+            }
+            for server in self.client.borrow().sweep_presence(Utc::now().timestamp_millis()) {
+                self.emit("server-event", json!(server.to_string()));
+            }
+        }
+    }
+
+    fn say_here(&self, server: ServerId) {
+        let Some(node) = self.sync.borrow().as_ref().map(|live| live.node) else { return };
+        for payload in self.client.borrow().here(server, &node) {
+            self.publish(server, &payload);
+        }
+    }
+
+    pub(super) fn say_here_everywhere(&self) {
+        let servers: Vec<ServerId> = match self.sync.borrow_mut().as_mut() {
+            Some(live) => {
+                live.gone = false;
+                live.greeted.iter().copied().collect()
+            }
+            None => return,
+        };
+        for server in servers {
+            self.say_here(server);
+        }
+    }
+
+    pub(super) fn say_goodbye(&self) {
+        match self.sync.borrow_mut().as_mut() {
+            Some(live) => live.gone = true,
+            None => return,
+        }
+        for (server, payload) in self.client.borrow().farewell() {
+            self.publish(server, &payload);
+        }
+    }
+
+    pub(super) fn said_goodbye(&self) -> bool {
+        self.sync.borrow().as_ref().is_some_and(|live| live.gone)
     }
 
     pub(super) fn refresh_sync(&self) {
@@ -158,7 +213,7 @@ impl Session {
         let Some((event, action)) = streams::event_of(&payload).map(|(event, action)| (event.clone(), action)) else { return };
         let key_event = streams::is_key_event(&event);
         let rings = matches!(&event, ServerEvent::MessageCreate { message } if streams::rings(now_live, message.created_at, Utc::now()));
-        let applied = self.apply_event(server, event, action, rings, now_live);
+        let applied = self.apply_stored(server, event, action, rings, now_live);
         if key_event && now_live && applied != Applied::Nothing {
             self.refresh_sync();
         }
@@ -170,9 +225,9 @@ impl Session {
             let Some(live) = guard.as_ref() else { return };
             let Some((server, want)) = live.book.route(stream) else { return };
             let Some((node, payload)) = streams::decode_signal(plain, want.lane) else { return };
-            (node != live.node).then_some((server, payload))
+            (node != live.node).then_some((server, node, payload))
         };
-        let Some((server, payload)) = found else { return };
+        let Some((server, node, payload)) = found else { return };
         let Some((event, action)) = streams::event_of(&payload).map(|(event, action)| (event.clone(), action)) else { return };
         if let ServerEvent::TypingStart { channel, user } = &event {
             if self.client.borrow().admits(server, &event, action) {
@@ -180,11 +235,23 @@ impl Session {
             }
             return;
         }
-        self.apply_event(server, event, action, false, true);
+        let returning = match &event {
+            ServerEvent::PresenceUpdate { user, presence } => {
+                presence.is_visible_online() && !self.client.borrow().is_shown_online(server, *user)
+            }
+            _ => false,
+        };
+        if !self.client.borrow().apply_signal(server, &node, event, action) {
+            return;
+        }
+        self.emit("server-event", json!(server.to_string()));
+        if returning && !self.said_goodbye() {
+            self.say_here(server);
+        }
     }
 
     fn on_sync_caught_up(self: &Rc<Self>, stream: StreamId, seq: u64) {
-        let server = {
+        let (server, state_lane) = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return };
             if stream == live.account {
@@ -194,11 +261,16 @@ impl Session {
                 return;
             }
             live.book.caught_up(stream, seq);
-            let Some((server, _)) = live.book.route(stream) else { return };
-            server
+            let Some((server, want)) = live.book.route(stream) else { return };
+            (server, want.lane == Lane::State)
         };
         if self.client.borrow().has(server) {
             self.release_parked(server);
+            let greet = state_lane
+                && self.sync.borrow_mut().as_mut().is_some_and(|live| !live.gone && live.greeted.insert(server));
+            if greet {
+                self.say_here(server);
+            }
             self.emit("server-event", json!(server.to_string()));
             self.refresh_sync();
         } else {
@@ -307,6 +379,9 @@ impl Session {
         self.emit("server-event", json!(server.to_string()));
         self.announce_if_loaded();
         self.refresh_sync();
+        if self.sync.borrow_mut().as_mut().is_some_and(|live| !live.gone && live.greeted.insert(server)) {
+            self.say_here(server);
+        }
     }
 
     fn release_parked(&self, server: ServerId) {
@@ -316,7 +391,7 @@ impl Session {
         });
         for payload in parked.unwrap_or_default() {
             if let Some((event, action)) = streams::event_of(&payload) {
-                self.apply_event(server, event.clone(), action, false, false);
+                self.apply_stored(server, event.clone(), action, false, false);
             }
         }
     }

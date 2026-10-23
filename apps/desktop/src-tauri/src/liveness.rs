@@ -1,110 +1,33 @@
 use crate::catchup::AppAccess;
 use crate::state::App;
-use commy_core::{action, devices, Action, Presence, ServerEvent, ServerId, ServerState, UserId};
+use commy_core::{Presence, ServerEvent, ServerId, ServerState, UserId};
 use commy_net::WirePayload;
-use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-pub const BEAT: Duration = Duration::from_secs(45);
-
-pub const EXPIRE: Duration = Duration::from_secs(120);
-
-pub const SERVICE_BEAT: Duration = Duration::from_secs(5 * 60);
-
-pub const SERVICE_EXPIRE: Duration = Duration::from_secs(11 * 60);
-
-const SWEEP_EVERY: Duration = Duration::from_secs(15);
+pub use commy_view::liveness::{speaker, Liveness, BEAT, EXPIRE, SERVICE_BEAT, SWEEP_EVERY};
+#[cfg(test)]
+use commy_view::liveness::SERVICE_EXPIRE;
 
 const FAREWELL_WAIT: Duration = Duration::from_millis(1500);
 
 const FAREWELL_LINGER: Duration = Duration::from_millis(300);
 
-type DeviceSaid = HashMap<String, (Presence, Instant)>;
-
-#[derive(Debug, Default)]
-pub struct Liveness {
-    heard: HashMap<(ServerId, UserId), Instant>,
-    lasting: HashMap<(ServerId, UserId), Instant>,
-    devices: HashMap<(ServerId, UserId), DeviceSaid>,
-    last_sweep_ms: Option<i64>,
-}
-
-pub fn speaker(event: &ServerEvent, signed_by: Option<&Action>) -> Option<UserId> {
-    if action::relayable(event) {
-        return None;
-    }
-    let actor = action::actor(event)?;
-    signed_by.is_none_or(|a| a.by == actor).then_some(actor)
-}
-
 pub fn heard(app: &App, server: ServerId, user: UserId, at: Instant) {
-    app.liveness.lock().unwrap().heard.insert((server, user), at);
+    app.liveness.lock().unwrap().heard(server, user, at);
 }
 
 pub fn heard_through_service(app: &App, server: ServerId, user: UserId, now: Instant) {
-    let mut live = app.liveness.lock().unwrap();
-    live.heard.insert((server, user), now);
-    live.lasting.insert((server, user), now + SERVICE_EXPIRE);
+    app.liveness.lock().unwrap().heard_through_service(server, user, now);
 }
 
 pub fn settle_device_presence(app: &App, state: &mut ServerState, user: UserId, sender: &[u8; 32], presence: Presence, now: Instant) -> bool {
-    let node = data_encoding::HEXLOWER.encode(sender);
-    if !state.devices_of(user).iter().any(|d| d.node == node) {
-        return false;
-    }
-    let mut live = app.liveness.lock().unwrap();
-    let said = live.devices.entry((state.server.id, user)).or_default();
-    said.insert(node, (presence, now));
-    said.retain(|_, (_, at)| now.duration_since(*at) <= SERVICE_EXPIRE);
-    if said.len() < 2 {
-        return false;
-    }
-    let shown = devices::combined_presence(said.values().map(|(p, _)| *p));
-    match state.profiles.get_mut(&user) {
-        Some(profile) if profile.presence != shown => {
-            profile.presence = shown;
-            true
-        }
-        _ => false,
-    }
+    app.liveness.lock().unwrap().settle_device_presence(state, user, sender, presence, now)
 }
 
 pub fn sweep(app: &App, me: UserId, now: Instant, wall_ms: i64, expire: Duration) -> Vec<ServerId> {
     let mut servers = app.servers.lock().unwrap();
     let mut live = app.liveness.lock().unwrap();
-    let asleep = live.last_sweep_ms.is_some_and(|last| wall_ms.saturating_sub(last) > expire.as_millis() as i64);
-    live.last_sweep_ms = Some(wall_ms);
-    if asleep {
-        live.heard.clear();
-        live.lasting.clear();
-    }
-    live.lasting.retain(|_, until| now < *until);
-    let mut changed = Vec::new();
-    let mut online = HashSet::new();
-    for (sid, state) in servers.iter_mut() {
-        let shown: Vec<UserId> = state
-            .profiles
-            .values()
-            .filter(|p| p.id != me && p.presence.is_visible_online())
-            .map(|p| p.id)
-            .collect();
-        let mut gone = false;
-        for user in shown {
-            let last = *live.heard.entry((*sid, user)).or_insert(now);
-            let lasting = live.lasting.contains_key(&(*sid, user));
-            if now.duration_since(last) > expire && !lasting {
-                gone |= state.apply(ServerEvent::PresenceUpdate { user, presence: Presence::Offline }) == Ok(true);
-            } else {
-                online.insert((*sid, user));
-            }
-        }
-        if gone {
-            changed.push(*sid);
-        }
-    }
-    live.heard.retain(|key, _| online.contains(key));
-    live.devices.retain(|key, _| online.contains(key));
-    changed
+    live.sweep(servers.iter_mut(), me, now, wall_ms, expire)
 }
 
 fn hear_voice_peers(app: &App, now: Instant) {
@@ -116,10 +39,7 @@ fn hear_voice_peers(app: &App, now: Instant) {
 }
 
 pub fn rest(app: &App) {
-    let mut live = app.liveness.lock().unwrap();
-    live.heard.clear();
-    live.lasting.clear();
-    live.devices.clear();
+    app.liveness.lock().unwrap().rest();
 }
 
 fn own_beat(app: &App) -> Option<(UserId, Presence)> {
@@ -321,7 +241,7 @@ mod tests {
         let sid = ServerId::new();
         let typing = ServerEvent::TypingStart { channel: commy_core::ChannelId::new(), user: friend.id };
         assert_eq!(speaker(&typing, None), Some(friend.id));
-        let by = |user: UserId| Action { by: user, at: 0, sig: commy_core::Signature([0; 64]) };
+        let by = |user: UserId| commy_core::Action { by: user, at: 0, sig: commy_core::Signature([0; 64]) };
         let beat = ServerEvent::PresenceUpdate { user: friend.id, presence: Presence::Online };
         assert_eq!(speaker(&beat, Some(&by(friend.id))), Some(friend.id));
         assert_eq!(speaker(&beat, Some(&by(other.id))), None);

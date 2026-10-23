@@ -30,6 +30,7 @@ mod sync;
 const DEVICE_NAME: &str = "Web browser";
 const MAX_PREF_KEY: usize = 200;
 const MAX_PREFS_PER_CALL: usize = 500;
+const FAREWELL_LINGER: std::time::Duration = std::time::Duration::from_millis(300);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Unlock {
@@ -204,6 +205,13 @@ impl Session {
             }
             "web_nudge" => {
                 self.nudge_sync();
+                if self.said_goodbye() {
+                    self.say_here_everywhere();
+                }
+                Ok(Value::Null)
+            }
+            "web_farewell" => {
+                self.say_goodbye();
                 Ok(Value::Null)
             }
             _ => Err(format!("{cmd} is not available in the web app yet")),
@@ -252,6 +260,8 @@ impl Session {
     }
 
     async fn sign_out(&self) -> Result<Value, String> {
+        self.say_goodbye();
+        n0_future::time::sleep(FAREWELL_LINGER).await;
         self.stop_sync();
         let _ = self.request("POST", account::SIGN_OUT_PATH, Some(json!({}))).await;
         self.host.remove(account::ENTRY_KEY_KEY);
@@ -600,6 +610,9 @@ impl Session {
         while let Some(event) = events.recv().await {
             match event {
                 NetEvent::Event { server, event, action, .. } => {
+                    if self.client.borrow().admits(server, &event, action) {
+                        self.client.borrow().hear_peer(server, &event, action.as_ref());
+                    }
                     self.apply_event(server, event, action, true, true);
                 }
                 NetEvent::SyncReceived { server, payload } => {
@@ -636,6 +649,15 @@ impl Session {
 
     fn apply_event(&self, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
         let applied = self.client.borrow().apply_live(server, event, action);
+        self.after_apply(server, applied, rings, shown)
+    }
+
+    fn apply_stored(&self, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
+        let applied = self.client.borrow().apply_stored(server, event, action);
+        self.after_apply(server, applied, rings, shown)
+    }
+
+    fn after_apply(&self, server: ServerId, applied: Applied, rings: bool, shown: bool) -> Applied {
         if let Applied::Created(message) = &applied {
             if let Some(payload) = self.client.borrow().message_created_payload(server, message).filter(|_| rings) {
                 self.emit("message-created", payload);
