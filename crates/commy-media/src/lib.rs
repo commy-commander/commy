@@ -20,7 +20,7 @@ pub struct StreamGuards {
     pub speaker: Option<OutputHandle>,
 }
 
-const ACTIVITY_FLOOR: i32 = i16::MAX as i32 / 100;
+const ACTIVITY_FLOOR: i32 = i16::MAX as i32 / 200;
 
 pub fn frame_has_signal(pcm: &[i16]) -> bool {
     if pcm.is_empty() {
@@ -55,5 +55,13 @@ mod tests {
             .collect();
         assert!(frame_has_signal(&tone));
         assert!(frame_has_signal(&[i16::MIN; FRAME_SIZE]));
+    }
+
+    #[test]
+    fn quiet_speech_has_signal() {
+        let quiet: Vec<i16> = (0..FRAME_SIZE)
+            .map(|i| if i % 2 == 0 { 220 } else { -220 })
+            .collect();
+        assert!(frame_has_signal(&quiet));
     }
 }
