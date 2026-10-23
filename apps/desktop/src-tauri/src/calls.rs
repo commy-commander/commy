@@ -60,9 +60,9 @@ fn matching(app: &App, partner: UserId, channel: ChannelId) -> Option<DmCall> {
 async fn send_signal(app: &App, to: UserId, call: ChannelId, signal: CallSignal) -> CmdResult<()> {
     let _signing = app.signing.read().await;
     let me = current_profile(app)?;
-    let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
+    let hex = node_hex_for_user(app, to);
     let message = DmMessage::acting(me.id, to, DmAction::Call { call, signal }, "");
-    crate::send_direct_dm(app, &me, Some(&hex), message, "they are offline right now", None).await
+    crate::send_direct_dm(app, &me, hex.as_deref(), message, "they are offline right now", None).await
 }
 
 pub fn peer_ok(app: &App, user: UserId, node_hex: &str, channel: ChannelId) -> bool {
@@ -138,6 +138,9 @@ fn ring_timeout(handle: tauri::AppHandle, channel: ChannelId) {
 pub async fn on_signal(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, from: UserId, channel: ChannelId, signal: CallSignal) {
     match signal {
         CallSignal::Ring => {
+            if matching(app, from, channel).is_some() {
+                return;
+            }
             if busy(app) {
                 let _ = send_signal(app, from, channel, CallSignal::Decline).await;
                 return;
@@ -164,6 +167,22 @@ pub async fn on_signal(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, f
                 end(app, handle, false, if call.active { "hung_up" } else { "missed" }).await;
             }
         }
+    }
+}
+
+pub fn settled_elsewhere(app: &App, handle: &tauri::AppHandle, partner: UserId, channel: ChannelId, signal: CallSignal) {
+    if !matches!(signal, CallSignal::Accept | CallSignal::Decline) {
+        return;
+    }
+    let ringing = {
+        let mut slot = app.dm_call.lock().unwrap();
+        match slot.as_ref() {
+            Some(c) if c.partner == partner && c.channel == channel && !c.outgoing && !c.active => slot.take(),
+            _ => None,
+        }
+    };
+    if let Some(call) = ringing {
+        announce(app, handle, &call, "ended", Some("elsewhere"));
     }
 }
 

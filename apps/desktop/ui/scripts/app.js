@@ -13651,6 +13651,7 @@ function callEndedLine(view) {
     case "declined": return `${name} declined the call`;
     case "unanswered": return `${name} did not answer`;
     case "missed": return `Missed call from ${name}`;
+    case "elsewhere": return "Answered on another device";
     case "failed": return "The call could not connect";
     default: return "Call ended";
   }
