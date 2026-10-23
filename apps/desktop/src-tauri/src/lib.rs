@@ -7484,6 +7484,7 @@ async fn run_net_loop(
                     .flatten();
                 let holdable = catchup::holdable(&event);
                 let about = commy_core::action::subject(&event);
+                let early = app.awaits_snapshot(server);
                 let kept = (holdable || action.is_some()).then(|| event.clone());
                 let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
                 let profile_changed = match &event {
@@ -7594,6 +7595,9 @@ async fn run_net_loop(
                     }
                     Ok(false) => {}
                     Err(e) => match (e, kept, action) {
+                        (_, Some(event), Some(action)) if early => {
+                            app.catchup.lock().unwrap().hold_early(server, SignedEvent { action, event }, std::time::Instant::now())
+                        }
                         (StoreError::UnknownAuthorKey(signer), Some(event), _) if holdable => {
                             catchup::hold(&app, server, signer, event)
                         }
@@ -7611,7 +7615,9 @@ async fn run_net_loop(
                 }
             }
             NetEvent::SyncReceived { server, payload } => {
-                catchup::apply_snapshot(&handle, server, payload);
+                if catchup::apply_snapshot(&handle, server, payload) {
+                    community_sync::refresh_soon(&handle);
+                }
             }
             NetEvent::VoiceDial { .. } => {}
             NetEvent::NeighborUp { server, peer } => {
