@@ -118,6 +118,7 @@ struct Args {
     spam_filter: Option<bool>,
     action: Option<String>,
     note: Option<String>,
+    user_ids: Option<Vec<String>>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -259,6 +260,7 @@ impl Session {
                 Ok(Value::Null)
             }
             "list_dm_threads" => self.dm_command(cmd, args).await,
+            "add_group_members" => self.dm_command(cmd, args).await,
             "get_dm_messages" => self.dm_command(cmd, args).await,
             "open_dm" => self.dm_command(cmd, args).await,
             "send_dm" => self.dm_command(cmd, args).await,

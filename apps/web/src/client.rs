@@ -288,6 +288,32 @@ impl Client {
             .collect()
     }
 
+    pub fn is_group(&self, server: ServerId) -> bool {
+        self.servers.lock().unwrap().get(&server).is_some_and(|s| s.server.group)
+    }
+
+    pub fn join_payload(&self, server: ServerId, details: bool) -> Option<WirePayload> {
+        let (profile, identity) = self.me.lock().unwrap().clone()?;
+        let mut shown = profile.as_seen_by_others();
+        if !details {
+            shown = shown.without_details();
+        }
+        let event = ServerEvent::MemberJoin { server, profile: shown };
+        Some(WirePayload::Signed(SignedEvent::sign(server, profile.id, Utc::now().timestamp_millis(), event, &identity)))
+    }
+
+    pub fn group_invite_from(&self, server: ServerId, given: Option<(KeyId, ChannelSecret)>) -> Result<(ServerTicket, Option<(KeyId, ChannelSecret)>), String> {
+        let me = self.me_id().ok_or("Your servers are not unlocked yet")?;
+        let ticket = self.tickets.get(&server).filter(|t| t.owner.is_some()).cloned().ok_or("no invite available; you may be offline")?;
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server).filter(|s| s.server.group && s.server.is_current_member(me)).ok_or("that is not a group you are in")?;
+        let key = self
+            .keys()
+            .community_ring(state, given)
+            .and_then(|ring| ring.newest_in(state, commy_core::channel_key::KeyScope::Community).map(|(id, secret)| (id, secret.clone())));
+        Ok((ticket, key))
+    }
+
     pub fn farewell(&self) -> Vec<(ServerId, WirePayload)> {
         let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
         if profile.presence == Presence::Invisible {

@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use commy_core::channel_key::{ChannelSecret, KeyId};
-use commy_core::{ServerId, UserProfile};
+use commy_core::{IdentityKey, ServerId, UserId, UserProfile};
 use commy_net::community_streams::{Lane, Want};
-use commy_net::entry_list::EntryList;
+use commy_net::entry_list::{Entry, EntryList};
 use commy_net::sync_streams::SharedKey;
 use commy_net::{ServerTicket, WirePayload};
 use commy_sync::{StreamId, StreamKeys};
@@ -47,6 +47,16 @@ pub fn prefs_record(set: &BTreeMap<String, PrefPiece>) -> Vec<u8> {
 
 pub fn partner_record(profile: &UserProfile, at: i64, accepted: bool) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({ "k": "dm_partner", "profile": profile, "at": at, "accepted": accepted })).expect("partner encode")
+}
+
+pub fn joined_record(server: ServerId, entry: &Entry) -> Vec<u8> {
+    let list = EntryList { servers: [(server, entry.clone())].into(), ..Default::default() };
+    serde_json::to_vec(&serde_json::json!({ "k": "servers", "list": list })).expect("servers encode")
+}
+
+pub fn community_key_record(server: ServerId, key: &SharedKey, at: i64, owner: Option<(UserId, IdentityKey)>) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "k": "community_key", "server": server, "key": key, "at": at, "owner": owner }))
+        .expect("community key encode")
 }
 
 pub fn saved_record(ops: &[SavedOp]) -> Vec<u8> {
@@ -176,6 +186,27 @@ impl Book {
             .filter_map(|entry| ServerTicket::decode(&entry.ticket).ok())
             .map(|ticket| (ticket.server_id, ticket))
             .collect()
+    }
+
+    pub fn join(&mut self, server: ServerId, entry: Entry, key: SharedKey, at: i64) -> bool {
+        if self.list.servers.contains_key(&server) {
+            return false;
+        }
+        self.list.left.retain(|id, left| *id != server || *left > entry.since);
+        if self.list.left.contains_key(&server) {
+            return false;
+        }
+        self.list.servers.insert(server, entry);
+        self.offer_key(server, key, at);
+        true
+    }
+
+    pub fn offer_key(&mut self, server: ServerId, key: SharedKey, at: i64) -> bool {
+        if self.keys.contains_key(&server) {
+            return false;
+        }
+        self.keys.insert(server, (key, at));
+        true
     }
 
     pub fn joined_ms(&self, server: ServerId) -> Option<i64> {
@@ -333,6 +364,28 @@ mod tests {
         let leaving = EntryList { left: [(kept, Utc::now())].into(), ..Default::default() };
         assert_eq!(book.fold(Record::Servers { list: Box::new(leaving) }), Change::Servers);
         assert_eq!(book.tickets().keys().copied().collect::<Vec<_>>(), vec![joined]);
+    }
+
+    #[test]
+    fn joining_from_an_invite_lists_the_server_with_its_key_and_reads_back_as_our_own_records() {
+        let mut book = Book::new(EntryList::default());
+        let server = ServerId::new();
+        let key = SharedKey::of(KeyId::random(), &ChannelSecret::random());
+        let joined = entry(server, Utc::now());
+        assert!(book.join(server, joined.clone(), key.clone(), 5));
+        assert!(!book.join(server, joined.clone(), key.clone(), 6), "joining twice changes nothing");
+        assert!(!book.offer_key(server, key.clone(), 7), "a key we hold is kept");
+        let listed = ServerId::new();
+        let mut from_log = Book::new(EntryList { servers: [(listed, entry(listed, Utc::now()))].into(), ..Default::default() });
+        assert!(!from_log.join(listed, entry(listed, Utc::now()), key.clone(), 5), "another device listed it first");
+        assert!(from_log.offer_key(listed, key.clone(), 5), "but the invite still hands over its key");
+        assert!(from_log.given().contains_key(&listed));
+        assert!(book.given().contains_key(&server));
+        assert_eq!(book.joined_ms(server), Some(joined.since.timestamp_millis()));
+        assert_eq!(book.fold(Record::parse(&joined_record(server, &joined))), Change::Nothing, "our own server record echoes back quietly");
+        assert_eq!(book.fold(Record::parse(&community_key_record(server, &key, 5, None))), Change::Nothing);
+        let mut left = Book::new(EntryList { left: [(server, Utc::now() + Duration::days(1))].into(), ..Default::default() });
+        assert!(!left.join(server, joined, key, 5), "a server we left after this invite stays left");
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use commy_core::dm::{DmAction, DmMessage};
-use commy_core::{Identity, MessageId, UserId, UserProfile};
+use commy_core::{Identity, MessageId, ServerId, UserId, UserProfile};
 use commy_net::inbox;
 use commy_net::node::IncomingDm;
 use commy_net::sync_streams::{self, DmEntry};
@@ -183,6 +183,7 @@ impl Session {
                     });
                 }
             }
+            Received::Invited { ticket, key, .. } => self.join_group(&ticket, key),
             Received::Dropped => {}
         }
     }
@@ -347,10 +348,26 @@ impl Session {
     }
 
     fn threads(&self) -> Vec<DmThreadView> {
-        match self.me_and_key() {
-            Some((me, _)) => self.dms.borrow().threads(me.id),
-            None => Vec::new(),
+        let Some((me, _)) = self.me_and_key() else { return Vec::new() };
+        let client = self.client.borrow();
+        let servers = client.servers.lock().unwrap();
+        self.dms.borrow().threads(me.id, &servers)
+    }
+
+    async fn invite_to_group(&self, server: ServerId, user_ids: Vec<String>) -> Result<(), String> {
+        let given = self.sync.borrow().as_ref().and_then(|live| live.book.given().remove(&server));
+        let (ticket, key) = self.client.borrow().group_invite_from(server, given)?;
+        let raw = ticket.encode();
+        for user in user_ids {
+            let (me, partner) = self.recipient(Some(&user))?;
+            let already = self.client.borrow().servers.lock().unwrap().get(&server).is_some_and(|s| s.server.is_current_member(partner));
+            if already {
+                continue;
+            }
+            let invite = dms::group_invite(me.id, partner, raw.clone(), key.as_ref().map(|(id, secret)| (*id, secret)));
+            self.post_dm(&me, partner, invite).await?;
         }
+        Ok(())
     }
 
     fn friends_view(&self) -> Value {
@@ -390,6 +407,10 @@ impl Session {
     pub(super) async fn dm_command(self: &Rc<Self>, cmd: &str, args: Args) -> Result<Value, String> {
         match cmd {
             "list_dm_threads" => to_json(&self.threads()),
+            "add_group_members" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                self.invite_to_group(server, args.user_ids.unwrap_or_default()).await.map(|_| Value::Null)
+            }
             "get_dm_messages" => {
                 let partner: UserId = parse(args.user_id.as_ref(), "user")?;
                 let Some((me, _)) = self.me_and_key() else { return Ok(json!([])) };
