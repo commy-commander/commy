@@ -141,6 +141,9 @@ pub fn group_threads<'a>(servers: impl IntoIterator<Item = &'a ServerState>, me:
 pub fn sort_threads(views: &mut Vec<DmThreadView>, dms: &DmStore, safety: &SafetySettings, me: UserId) {
     views.sort_by(|a, b| b.last_at.cmp(&a.last_at));
     views.retain_mut(|view| {
+        if view.kind == "group" {
+            return true;
+        }
         let Ok(partner) = view.user.parse::<UserId>() else { return true };
         if safety.is_blocked(partner) {
             return false;
@@ -259,6 +262,17 @@ mod tests {
         assert!(!invite_welcome(&dms, &safety, &servers, me, stranger));
         safety.blocked.push(friend);
         assert!(!invite_welcome(&dms, &safety, &servers, me, friend));
+    }
+
+    #[test]
+    fn a_group_stays_a_group_in_the_conversation_list() {
+        let me = UserId::new();
+        let state = ServerState::new(commy_core::Server::group(me));
+        let mut views = group_threads([&state], me);
+        sort_threads(&mut views, &DmStore::new(), &SafetySettings::default(), me);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].kind, "group");
+        assert_eq!(views[0].user, state.server.id.to_string());
     }
 
     #[test]
