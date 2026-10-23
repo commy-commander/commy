@@ -47,21 +47,44 @@ fn tile_colour(name: &str) -> Option<[u8; 3]> {
     TILE_COLOURS.iter().find(|(preset, _)| *preset == name).and_then(|(_, hex)| parse_hex(hex))
 }
 
-fn mark_on_tile(rgb: [u8; 3]) -> Option<RgbaImage> {
+const CLASSIC_RGB: [u8; 3] = [239, 68, 60];
+const STAR_FIT: f32 = 0.7;
+
+fn star_geometry(star: &RgbaImage) -> (f32, f32, f32) {
+    let solid: Vec<(f32, f32)> = star
+        .enumerate_pixels()
+        .filter(|(_, _, p)| p[3] >= 128)
+        .map(|(x, y, _)| (x as f32 + 0.5, y as f32 + 0.5))
+        .collect();
+    let n = solid.len().max(1) as f32;
+    let cx = solid.iter().map(|p| p.0).sum::<f32>() / n;
+    let cy = solid.iter().map(|p| p.1).sum::<f32>() / n;
+    let reach = solid.iter().map(|p| ((p.0 - cx).powi(2) + (p.1 - cy).powi(2)).sqrt()).fold(0.0, f32::max);
+    (cx, cy, reach)
+}
+
+fn round_tile(rgb: [u8; 3]) -> Option<RgbaImage> {
     let star = mark()?;
-    Some(RgbaImage::from_fn(star.width(), star.height(), |x, y| {
-        let px = star.get_pixel(x, y);
-        let coverage = px[3] as u32;
-        let mix = |i: usize| ((px[i] as u32 * coverage + rgb[i] as u32 * (255 - coverage) + 127) / 255) as u8;
-        Rgba([mix(0), mix(1), mix(2), 255])
-    }))
+    let (w, h) = star.dimensions();
+    let (cx, cy, reach) = star_geometry(star);
+    let size = w.min(h) as f32;
+    let disc = size / 2.0;
+    let scale = disc * STAR_FIT / reach;
+    let scaled = imageops::resize(star, (w as f32 * scale) as u32, (h as f32 * scale) as u32, imageops::FilterType::Lanczos3);
+    let mut tile = RgbaImage::from_pixel(w, h, Rgba([rgb[0], rgb[1], rgb[2], 255]));
+    imageops::overlay(&mut tile, &scaled, (disc - cx * scale).round() as i64, (disc - cy * scale).round() as i64);
+    for (x, y, px) in tile.enumerate_pixels_mut() {
+        let d = ((x as f32 + 0.5 - disc).powi(2) + (y as f32 + 0.5 - disc).powi(2)).sqrt();
+        px[3] = (255.0 * (disc - d).clamp(0.0, 1.0)).round() as u8;
+    }
+    Some(tile)
 }
 
 pub fn preset(name: &str) -> Option<RgbaImage> {
     if name == CLASSIC {
-        return original().cloned();
+        return round_tile(CLASSIC_RGB);
     }
-    tile_colour(name).and_then(mark_on_tile)
+    tile_colour(name).and_then(round_tile)
 }
 
 pub fn custom_path(dir: &Path, target: &str) -> PathBuf {
@@ -127,26 +150,26 @@ mod tests {
     }
 
     #[test]
-    fn every_preset_builds_as_a_full_tile() {
+    fn every_preset_builds_as_a_round_tile_with_the_star_centred() {
         let classic = preset(CLASSIC).unwrap();
+        let (w, h) = classic.dimensions();
         for name in PRESETS {
             let icon = preset(name).unwrap();
             assert_eq!(icon.dimensions(), classic.dimensions());
-            assert!(icon.pixels().all(|p| p[3] == 255), "{name} has no see-through pixels");
+            assert_eq!(icon.get_pixel(0, 0)[3], 0, "{name} corner is see-through");
+            assert_eq!(icon.get_pixel(w / 2, h / 2)[3], 255, "{name} centre is solid");
+            assert_ne!(icon.get_pixel(w / 2, h / 2).0[..3], icon.get_pixel(w / 2, h / 12).0[..3], "{name} star sits at the centre");
         }
         assert!(preset("nope").is_none());
     }
 
     #[test]
     fn colour_tiles_share_the_same_star() {
-        let star = mark().unwrap();
-        let solid: Vec<usize> = star.pixels().enumerate().filter(|(_, p)| p[3] == 255).map(|(i, _)| i).collect();
-        assert!(!solid.is_empty());
         let amber = preset("amber").unwrap();
         let mono = preset("mono").unwrap();
-        for i in solid {
-            assert_eq!(amber.as_raw()[i * 4..i * 4 + 3], mono.as_raw()[i * 4..i * 4 + 3]);
-        }
+        let (w, h) = amber.dimensions();
+        let shared = amber.pixels().zip(mono.pixels()).filter(|(a, m)| a[3] == 255 && a.0 == m.0).count();
+        assert!(shared as u32 > w * h / 20, "the star is the same on every tile, only the disc changes: {shared}");
     }
 
     #[test]

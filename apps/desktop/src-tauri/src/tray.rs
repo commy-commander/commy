@@ -13,23 +13,25 @@ pub const TRAY_ID: &str = "commy-tray";
 
 pub const ICON_PNG: &[u8] = include_bytes!("../icons/icon.png");
 
-const BADGE_RGB: [u8; 3] = [255, 77, 77];
-const RING_RGB: [u8; 3] = [255, 255, 255];
+const BADGE_RGB: [u8; 3] = [46, 125, 255];
+const DOT_RGB: [u8; 3] = [255, 255, 255];
+const DOT_SHARE: f32 = 0.45;
 
 pub fn draw_bubble(rgba: &mut [u8], width: u32, height: u32, cx: f32, cy: f32, radius: f32) {
-    let ring = (radius * 0.2).max(1.0);
+    let dot = radius * DOT_SHARE;
     for y in 0..height {
         for x in 0..width {
             let dx = x as f32 + 0.5 - cx;
             let dy = y as f32 + 0.5 - cy;
             let d = (dx * dx + dy * dy).sqrt();
             let idx = ((y * width + x) * 4) as usize;
-            if d <= radius {
-                let a = (radius - d).clamp(0.0, 1.0);
-                blend(&mut rgba[idx..idx + 4], BADGE_RGB, a);
-            } else if d <= radius + ring {
-                let a = (radius + ring - d).clamp(0.0, 1.0);
-                blend(&mut rgba[idx..idx + 4], RING_RGB, a);
+            let outer = (radius - d).clamp(0.0, 1.0);
+            if outer > 0.0 {
+                blend(&mut rgba[idx..idx + 4], BADGE_RGB, outer);
+                let inner = (dot - d).clamp(0.0, 1.0);
+                if inner > 0.0 {
+                    blend(&mut rgba[idx..idx + 4], DOT_RGB, inner);
+                }
             }
         }
     }
@@ -37,9 +39,8 @@ pub fn draw_bubble(rgba: &mut [u8], width: u32, height: u32, cx: f32, cy: f32, r
 
 pub fn draw_badge(rgba: &mut [u8], width: u32, height: u32) {
     let size = width.min(height) as f32;
-    let radius = size * 0.27;
-    let ring = radius * 0.2;
-    draw_bubble(rgba, width, height, width as f32 - radius - ring, radius + ring, radius);
+    let radius = size * 0.16;
+    draw_bubble(rgba, width, height, width as f32 - radius, radius, radius);
 }
 
 fn round_off(rgba: &mut image::RgbaImage) {
@@ -87,7 +88,7 @@ pub fn overlay() -> Image<'static> {
     let size = 32u32;
     let mut rgba = vec![0u8; (size * size * 4) as usize];
     let half = size as f32 / 2.0;
-    draw_bubble(&mut rgba, size, size, half, half, half - 1.5);
+    draw_bubble(&mut rgba, size, size, half, half, half * 0.6);
     Image::new_owned(rgba, size, size)
 }
 
@@ -188,13 +189,16 @@ mod tests {
     }
 
     #[test]
-    fn badge_paints_a_solid_bubble_top_right_only() {
+    fn badge_paints_a_bullseye_top_right_only() {
         let (w, h) = (64u32, 64u32);
         let mut rgba = vec![0u8; (w * h * 4) as usize];
         draw_badge(&mut rgba, w, h);
         assert_eq!(px(&rgba, w, 4, 4), [0, 0, 0, 0], "top-left untouched");
         let r = BADGE_RGB;
-        assert_eq!(px(&rgba, w, w - 14, 14), [r[0], r[1], r[2], 255], "the bubble is solid and blank, top right");
+        assert_eq!(px(&rgba, w, 47, 10), [r[0], r[1], r[2], 255], "the outer disc is solid, top right");
+        let d = DOT_RGB;
+        assert_eq!(px(&rgba, w, 54, 10), [d[0], d[1], d[2], 255], "a white dot sits in the middle");
+        assert_eq!(px(&rgba, w, 54, 30), [0, 0, 0, 0], "no border outside the disc");
         assert_eq!(px(&rgba, w, 4, h - 4), [0, 0, 0, 0], "bottom-left untouched");
     }
 
