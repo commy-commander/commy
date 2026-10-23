@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use commy_core::dm::{DmAction, DmMessage};
+use commy_core::dm::{CallSignal, DmAction, DmMessage};
 use commy_core::{IdentityKey, MessageId, ServerId, UserId, UserProfile};
 use commy_net::inbox;
 use commy_net::node::IncomingDm;
@@ -25,6 +25,7 @@ const RECENT_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 const QUIET_AFTER_SECS: i64 = 10 * 60;
 const REFRESH_EVERY: Duration = Duration::from_secs(60 * 60);
 const HOLD_WAIT: Duration = Duration::from_secs(8);
+const CALL_FRESH_MS: i64 = 60 * 1000;
 
 struct Partner {
     key: IdentityKey,
@@ -256,8 +257,12 @@ pub fn tend_inboxes(handle: &AppHandle) {
     }
 }
 
-pub fn inboxable(message: &DmMessage) -> bool {
-    !matches!(message.action, DmAction::Call { .. })
+pub fn is_call(message: &DmMessage) -> bool {
+    matches!(message.action, DmAction::Call { .. })
+}
+
+pub fn call_fresh(at: i64, now: i64) -> bool {
+    (now - at).abs() < CALL_FRESH_MS
 }
 
 fn inbox_to(app: &App, me: UserId, to: UserId) -> Option<StreamKeys> {
@@ -275,11 +280,12 @@ fn inbox_to(app: &App, me: UserId, to: UserId) -> Option<StreamKeys> {
 }
 
 pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
-    if !inboxable(&envelope.message) || sync_link::url().is_none() {
+    if sync_link::url().is_none() {
         return false;
     }
-    if syncable(&envelope.message) && partner_follows(app, to) {
-        return false;
+    let call = is_call(&envelope.message);
+    if (call || syncable(&envelope.message)) && partner_follows(app, to) {
+        return call && account_log::is_live(app) && append_pairwise(app, to, envelope).await;
     }
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return false };
     let (Some(key), Some(keys)) = (partner_key(app, to), inbox_to(app, me, to)) else { return false };
@@ -320,7 +326,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     }
 }
 
-fn on_inbox(handle: &AppHandle, server: ServerId, plain: &[u8], live_now: bool) {
+fn on_inbox(handle: &AppHandle, server: ServerId, plain: &[u8], at: i64, live_now: bool) {
     let app = handle.state::<App>();
     let Some(identity) = app.identity() else { return };
     let Some(envelope) = inbox::open(&identity, plain) else { return };
@@ -328,7 +334,7 @@ fn on_inbox(handle: &AppHandle, server: ServerId, plain: &[u8], live_now: bool) 
     let member = app.servers.lock().unwrap().get(&server).is_some_and(|state| {
         state.server.is_current_member(from) && state.profiles.get(&from).and_then(|p| p.identity) == envelope.sender.identity
     });
-    if !member || !inboxable(&envelope.message) {
+    if !member || (is_call(&envelope.message) && !call_fresh(at, now_ms())) {
         return;
     }
     let Ok(node) = data_encoding::HEXLOWER_PERMISSIVE.decode(envelope.message.from_node.trim().as_bytes()) else { return };
@@ -365,7 +371,7 @@ pub fn wake_tags(app: &App, days: &[i64]) -> Vec<([u8; 32], i64)> {
 }
 
 pub fn rings(message: &DmMessage) -> bool {
-    matches!(message.action, DmAction::Post)
+    matches!(message.action, DmAction::Post | DmAction::Call { signal: CallSignal::Ring, .. })
 }
 
 async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver<SyncEvent>) {
@@ -385,13 +391,13 @@ async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver
 fn on_event(handle: &AppHandle, event: SyncEvent) {
     let app = handle.state::<App>();
     match event {
-        SyncEvent::Entry { stream, seq, plain, .. } => {
+        SyncEvent::Entry { stream, seq, at, plain } => {
             let inbox = {
                 let live = LIVE.lock().unwrap();
                 live.as_ref().and_then(|l| l.inboxes.get(&stream).map(|(server, _)| (*server, l.caught_up.contains(&stream))))
             };
             if let Some((server, live_now)) = inbox {
-                on_inbox(handle, server, &plain, live_now);
+                on_inbox(handle, server, &plain, at, live_now);
                 account_log::set_dm_cursor(&app, stream.to_hex(), seq, live_now);
                 return;
             }
@@ -406,6 +412,12 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
             let Some((me, me_key, partner, key, live_now)) = found else { return };
             match sync_streams::decode_dm(&plain, me, &me_key, partner, &key) {
                 Some(DmEntry::FromPartner(envelope)) if syncable(&envelope.message) => receive(handle, envelope, live_now),
+                Some(DmEntry::FromPartner(envelope)) if is_call(&envelope.message) && call_fresh(at, now_ms()) => ring(handle, envelope),
+                Some(DmEntry::FromMe(envelope)) if call_fresh(at, now_ms()) => {
+                    if let DmAction::Call { call, signal } = envelope.message.action {
+                        crate::calls::settled_elsewhere(&app, handle, partner, call, signal);
+                    }
+                }
                 Some(DmEntry::FromMe(envelope)) if syncable(&envelope.message) => take_mine(handle, partner, envelope.message),
                 _ => {}
             }
@@ -466,6 +478,15 @@ fn receive(handle: &AppHandle, envelope: DmEnvelope, live_now: bool) {
     }
 }
 
+fn ring(handle: &AppHandle, envelope: DmEnvelope) {
+    let Ok(node) = data_encoding::HEXLOWER_PERMISSIVE.decode(envelope.message.from_node.trim().as_bytes()) else { return };
+    let Ok(node) = <[u8; 32]>::try_from(node) else { return };
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::take_dm(&handle, IncomingDm { envelope, node }, true).await;
+    });
+}
+
 fn take_mine(handle: &AppHandle, partner: UserId, message: DmMessage) {
     let app = handle.state::<App>();
     let applied = app.dms.lock().unwrap().apply(partner, message);
@@ -501,6 +522,10 @@ pub async fn publish(app: &App, partner: UserId, envelope: &DmEnvelope) -> bool 
     if let Some(profile) = partner_profile(app, partner) {
         account_log::note_partner(app, profile, true);
     }
+    append_pairwise(app, partner, envelope).await
+}
+
+async fn append_pairwise(app: &App, partner: UserId, envelope: &DmEnvelope) -> bool {
     let (Some(key), Some(identity)) = (partner_key(app, partner), app.identity()) else { return false };
     let epoch = sync_streams::dm_epoch(Utc::now());
     let Some(keys) = sync_streams::dm_stream(&identity, &key, &epoch) else { return false };
@@ -645,14 +670,20 @@ mod tests {
     }
 
     #[test]
-    fn first_messages_friend_requests_invites_and_reports_may_wait_in_an_inbox_but_calls_do_not() {
+    fn a_call_rings_only_while_fresh_and_never_from_history() {
         let (a, b) = (UserId::new(), UserId::new());
-        assert!(inboxable(&DmMessage::new(a, b, "hello")));
-        assert!(inboxable(&DmMessage::new(a, b, safety::FriendSignal::Request.encode())));
-        assert!(inboxable(&DmMessage::new(a, b, format!("{}report", safety::REPORT_PREFIX))));
-        assert!(inboxable(&DmMessage::acting(a, b, DmAction::GroupInvite { ticket: "t".into() }, "")));
-        let call = DmAction::Call { call: commy_core::ChannelId::new(), signal: commy_core::dm::CallSignal::Ring };
-        assert!(!inboxable(&DmMessage::acting(a, b, call, "")));
+        let channel = commy_core::ChannelId::new();
+        let ring = DmMessage::acting(a, b, DmAction::Call { call: channel, signal: CallSignal::Ring }, "");
+        let hang_up = DmMessage::acting(a, b, DmAction::Call { call: channel, signal: CallSignal::HangUp }, "");
+        assert!(is_call(&ring) && is_call(&hang_up));
+        assert!(!is_call(&DmMessage::new(a, b, "hello")));
+        assert!(!syncable(&ring), "calls never become conversation history");
+        assert!(rings(&ring), "a ring wakes the partner's phone");
+        assert!(!rings(&hang_up));
+        let now = 1_000_000_000_000;
+        assert!(call_fresh(now - 5_000, now));
+        assert!(call_fresh(now + 5_000, now), "a clock a little ahead still rings");
+        assert!(!call_fresh(now - CALL_FRESH_MS - 1, now), "an old ring read back later stays quiet");
     }
 
     #[test]
