@@ -67,8 +67,8 @@ use base64::Engine as _;
 use commy_core::SignedEvent;
 use commy_core::{
     Activity, ActivityInput, Attachment, Channel, ChannelId, ChannelKind, DmAction, DmMessage, Identity, Message, MessageId, Permissions,
-    Presence, RoleId, ServerEvent, ServerId, ServerState, Signature, StoreError, TombstoneProof, UserId,
-    UserProfile, MAX_MESSAGE_BYTES,
+    Presence, RoleId, ServerEvent, ServerId, ServerState, StoreError, UserId,
+    UserProfile,
 };
 use commy_core::server::Role;
 use commy_core::template::{text_channel_name, MAX_RETENTION_DAYS};
@@ -605,12 +605,6 @@ async fn send_poll(
     commit_message(&app, &handle, sid, message).await
 }
 
-fn poll_target(state: &ServerState, mid: MessageId, me: UserId) -> CmdResult<(ChannelId, Message, commy_core::Poll)> {
-    let message = state.message(mid).ok_or("that message no longer exists")?;
-    require_can_view(state, me, message.channel)?;
-    let poll = message.poll().ok_or("that message is not a poll")?;
-    Ok((message.channel, message.clone(), poll))
-}
 
 #[tauri::command]
 async fn vote_poll(
@@ -623,21 +617,11 @@ async fn vote_poll(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let (channel, choices) = {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        let (channel, _, poll) = poll_target(state, mid, me.id)?;
-        if state.poll_closed(mid, chrono::Utc::now()) {
-            return Err("that poll has closed".into());
-        }
-        let choices = poll.normalize_choices(&choices).ok_or(if poll.multi {
-            "pick answers from the poll"
-        } else {
-            "this poll takes one answer"
-        })?;
-        (channel, choices)
+        view::act::poll_vote(state, &acting(&app, state, me.id), mid, &choices)?
     };
-    let event = ServerEvent::PollVote { server: sid, channel, message: mid, user: me.id, choices };
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
@@ -651,20 +635,11 @@ async fn close_poll(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let channel = {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        let (channel, message, _) = poll_target(state, mid, me.id)?;
-        let moderates = our_permissions(&app, state, me.id).allows(Permissions::MANAGE_MESSAGES);
-        if message.author != me.id && !moderates {
-            return Err("only the poll's author or a moderator can close it".into());
-        }
-        if state.poll_closed(mid, chrono::Utc::now()) {
-            return Err("that poll has already closed".into());
-        }
-        channel
+        view::act::poll_close(state, &acting(&app, state, me.id), mid)?
     };
-    let event = ServerEvent::PollClose { server: sid, channel, message: mid, by: me.id };
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
@@ -713,23 +688,13 @@ async fn set_reaction(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
-    let emoji = emoji.trim().to_string();
-    if !commy_core::server::valid_reaction(&emoji) {
-        return Err("reactions must be a single emoji".into());
-    }
     let me = current_profile(&app)?;
-    {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_can_view(state, me.id, cid)?;
-        require_not_timed_out(state, me.id)?;
-    }
-    apply_and_broadcast(
-        &app,
-        &handle,
-        sid,
-        ServerEvent::ReactionSet { channel: cid, message: mid, emoji, user: me.id, active },
-    ).await
+        view::act::reaction(state, &acting(&app, state, me.id), cid, mid, &emoji, active)?
+    };
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 fn server_images(state: &ServerState) -> std::collections::HashSet<String> {
@@ -791,36 +756,8 @@ fn signed_fits_one_gossip_frame(signed: &Message) -> bool {
     commy_net::protocol::gossip_size(&wire) <= commy_net::protocol::MAX_GOSSIP_BYTES
 }
 
-fn message_author(state: &ServerState, cid: ChannelId, mid: MessageId) -> CmdResult<UserId> {
-    state
-        .messages(cid)
-        .iter()
-        .find(|m| m.id == mid)
-        .map(|m| m.author)
-        .ok_or_else(|| "that message no longer exists".to_string())
-}
-
-fn edit_time_after_last_edit(original: &Message, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
-    match original.edited_at {
-        Some(last) if now.timestamp_millis() <= last.timestamp_millis() => last + chrono::Duration::milliseconds(1),
-        _ => now,
-    }
-}
-
-fn sign_edit(
-    sid: ServerId,
-    original: &Message,
-    content: String,
-    now: chrono::DateTime<chrono::Utc>,
-    identity: &Identity,
-) -> CmdResult<ServerEvent> {
-    let edited_at = edit_time_after_last_edit(original, now);
-    let placeholder_signature_of_real_size = Some(Signature([0; 64]));
-    let edited = Message { content, edited_at: Some(edited_at), sig: placeholder_signature_of_real_size, ..original.clone() };
-    if edited.authored_size() > MAX_MESSAGE_BYTES {
-        return Err("that edit is too long; try shortening it".into());
-    }
-    Ok(original.edit_event(sid, edited.content, edited_at, identity))
+fn acting(app: &App, state: &ServerState, me: UserId) -> view::act::Me {
+    view::act::Me { user: me, perms: our_permissions(app, state, me), now: chrono::Utc::now() }
 }
 
 #[tauri::command]
@@ -844,17 +781,7 @@ async fn edit_message(
     let edit = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        let original = state.messages(cid).iter().find(|m| m.id == mid).ok_or("that message no longer exists")?;
-        if original.author != me.id {
-            return Err("you can only edit your own messages".into());
-        }
-        require_can_post(&app, state, me.id, cid)?;
-        let rules = state.automod();
-        if !rules.exempt(&state.server, me.id) {
-            refuse_held(rules.content_hold(&content))?;
-        }
-        let content = keys.seal_edit(state, original, content)?;
-        sign_edit(sid, original, content, chrono::Utc::now(), &identity)?
+        view::act::edit(state, &acting(&app, state, me.id), &identity, &keys, cid, mid, content)?
     };
     apply_and_broadcast(&app, &handle, sid, edit).await
 }
@@ -873,20 +800,12 @@ async fn delete_message(
     let me = current_profile(&app)?;
     let _signing = app.signing.read().await;
     let identity = signing_key(&app)?;
-    {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        may_delete(&app, state, cid, mid, me.id)?;
-    }
-    let proof = TombstoneProof::sign(sid, cid, mid, me.id, chrono::Utc::now(), &identity);
-    apply_and_broadcast(&app, &handle, sid, proof.into_event()).await
-}
-
-fn may_delete(app: &App, state: &ServerState, channel: ChannelId, message: MessageId, me: UserId) -> CmdResult<()> {
-    if message_author(state, channel, message)? != me {
-        require_permission(app, state, me, Permissions::MANAGE_MESSAGES, "delete other people's messages")?;
-    }
-    Ok(())
+        view::act::delete(state, &acting(&app, state, me.id), &identity, cid, mid)?
+    };
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
@@ -1001,7 +920,7 @@ async fn send_dm_voice_message(
     handle: tauri::AppHandle,
     user_id: String,
 ) -> CmdResult<DmMessageView> {
-    let (me, partner) = dm_partner(&app, &user_id)?;
+    let (me, partner) = dm_recipient(&app, &user_id)?;
     let clip = take_recording(&app).await?;
     let size_bytes = clip.bytes.len() as u64;
     let (blob, provider) = store_blob(&app, clip.bytes).await?;
@@ -2604,6 +2523,19 @@ fn dm_partner(app: &App, user_id: &str) -> CmdResult<(UserProfile, UserId)> {
     Ok((me, partner))
 }
 
+fn known_user(app: &App, user: UserId) -> bool {
+    known_profile_field(app, user, |_| Some(())).is_some()
+        || app.servers.lock().unwrap().values().any(|s| s.server.is_current_member(user))
+}
+
+fn dm_recipient(app: &App, user_id: &str) -> CmdResult<(UserProfile, UserId)> {
+    let (me, partner) = dm_partner(app, user_id)?;
+    if !known_user(app, partner) {
+        return Err("you can only message people you share a server with or who have messaged you".into());
+    }
+    Ok((me, partner))
+}
+
 async fn post_dm(
     app: &App,
     handle: &tauri::AppHandle,
@@ -2674,7 +2606,7 @@ async fn send_dm(
     reply_to: Option<String>,
 ) -> CmdResult<DmMessageView> {
     let content = clean_message(&content)?;
-    let (me, partner) = dm_partner(&app, &user_id)?;
+    let (me, partner) = dm_recipient(&app, &user_id)?;
     let content = carry_expressions(&app, content, &std::collections::HashSet::new()).await;
     let mut message = DmMessage::new(me.id, partner, content);
     if let Some(raw) = reply_to {
@@ -3613,6 +3545,16 @@ async fn run_status_expiry(handle: tauri::AppHandle) {
 #[cfg(test)]
 mod edit_tests {
     use super::*;
+    use view::act::{edit_time_after_last_edit, sign_edit};
+
+    #[test]
+    fn only_known_people_can_be_messaged() {
+        let app = App::default();
+        let stranger = UserProfile::new("stranger");
+        assert!(!known_user(&app, stranger.id), "an id nobody has seen is refused");
+        app.dms.lock().unwrap().contacts.insert(stranger.id, stranger.clone());
+        assert!(known_user(&app, stranger.id), "someone who has messaged you is known");
+    }
 
     #[test]
     fn an_edit_is_dated_after_the_last_one_so_peers_take_it() {
@@ -3833,9 +3775,9 @@ mod placeholder_tests {
         app.servers.lock().unwrap().insert(sid, state.clone());
         app.set_awaiting_snapshot(sid, true);
 
-        assert_eq!(may_delete(&app, &state, channel, ours.id, me.id), Ok(()));
+        assert_eq!(view::act::may_delete(&state, our_permissions(&app, &state, me.id), me.id, channel, ours.id), Ok(()));
         let refused = Err("you do not have permission to delete other people's messages".to_string());
-        assert_eq!(may_delete(&app, &state, channel, theirs.id, me.id), refused);
+        assert_eq!(view::act::may_delete(&state, our_permissions(&app, &state, me.id), me.id, channel, theirs.id), refused);
         let moderation = [
             Permissions::MANAGE_SERVER,
             Permissions::MANAGE_CHANNELS,
@@ -3858,7 +3800,7 @@ mod placeholder_tests {
         assert!(!structural(structure_announcements(&app, sid, me.id)));
 
         app.set_awaiting_snapshot(sid, false);
-        assert_eq!(may_delete(&app, &state, channel, theirs.id, me.id), Ok(()));
+        assert_eq!(view::act::may_delete(&state, our_permissions(&app, &state, me.id), me.id, channel, theirs.id), Ok(()));
         for needed in moderation {
             assert!(require_permission(&app, &state, me.id, needed, "moderate").is_ok(), "{needed:?}");
         }
@@ -4426,35 +4368,15 @@ async fn accept_rules(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
 }
 
 fn require_can_view(state: &ServerState, user: UserId, channel: ChannelId) -> CmdResult<()> {
-    if state.server.can_view(channel, user) {
-        Ok(())
-    } else {
-        Err("you do not have a role that can see that channel".into())
-    }
+    view::act::can_view(state, user, channel)
 }
 
 fn require_not_timed_out(state: &ServerState, user: UserId) -> CmdResult<()> {
-    match state.server.timeout_of(user, chrono::Utc::now()) {
-        Some(timeout) => {
-            let left = commy_core::audit::duration_words(timeout.remaining_secs(chrono::Utc::now()).max(1));
-            Err(format!("you are timed out in this server for another {left}"))
-        }
-        None => Ok(()),
-    }
+    view::act::not_timed_out(state, user, chrono::Utc::now())
 }
 
 fn require_can_post(app: &App, state: &ServerState, user: UserId, channel: ChannelId) -> CmdResult<()> {
-    require_can_view(state, user, channel)?;
-    require_not_timed_out(state, user)?;
-    let restricted = state.server.channel(channel).is_some_and(|c| c.is_restricted());
-    if restricted && !state.server.can_post_in(channel, user) {
-        return Err("only some roles can send messages in this channel".into());
-    }
-    let announcement = state.server.channel(channel).is_some_and(|c| c.kind == ChannelKind::Announcement);
-    if announcement && !our_permissions(app, state, user).can_announce() {
-        return Err("only members allowed to post announcements can write in this channel".into());
-    }
-    Ok(())
+    view::act::can_post(state, our_permissions(app, state, user), user, channel, chrono::Utc::now())
 }
 
 fn refuse_held(hold: Option<commy_core::Hold>) -> CmdResult<()> {
@@ -5085,23 +5007,11 @@ async fn pin_message(
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        if !our_permissions(&app, state, me.id).can_pin() {
-            return Err("you do not have permission to pin messages".into());
-        }
-        require_can_view(state, me.id, cid)?;
-        message_author(state, cid, mid)?;
-        let pins = state.server.pins.iter().filter(|p| p.channel == cid).count();
-        if pinned && pins >= commy_core::server::MAX_PINS_PER_CHANNEL {
-            return Err(format!(
-                "a channel can hold {} pinned messages; unpin one first",
-                commy_core::server::MAX_PINS_PER_CHANNEL
-            ));
-        }
-    }
-    let event = ServerEvent::MessagePin { server: sid, channel: cid, message: mid, by: me.id, at: chrono::Utc::now(), pinned };
+        view::act::pin(state, &acting(&app, state, me.id), cid, mid, pinned)?
+    };
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
@@ -5120,24 +5030,11 @@ async fn set_thread(
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let root: MessageId = root_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let name = name.as_deref().and_then(commy_core::server::clean_thread_name);
-    if name.as_deref().is_some_and(|n| !commy_core::server::valid_thread_name(n)) {
-        return Err(format!("thread names can be at most {} characters", commy_core::server::MAX_THREAD_NAME_CHARS));
-    }
-    {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_can_view(state, me.id, cid)?;
-        let author = message_author(state, cid, root)?;
-        let perms = our_permissions(&app, state, me.id);
-        if author != me.id && !perms.allows(Permissions::MANAGE_MESSAGES) {
-            return Err("only the person who started a thread or a moderator can change it".into());
-        }
-        if state.thread_of(cid, root).is_none() && !perms.can_create_threads() {
-            return Err("you do not have permission to start threads here".into());
-        }
-    }
-    let event = ServerEvent::ThreadSet { server: sid, channel: cid, root, name, archived, locked, by: me.id };
+        view::act::thread(state, &acting(&app, state, me.id), cid, root, name.as_deref(), archived, locked)?
+    };
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 

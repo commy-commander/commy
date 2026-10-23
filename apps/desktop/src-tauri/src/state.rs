@@ -367,11 +367,14 @@ impl App {
     }
 
     pub fn wire_for(&self, server: ServerId, event: ServerEvent) -> WirePayload {
+        self.wire_at(server, event, chrono::Utc::now().timestamp_millis())
+    }
+
+    pub fn wire_at(&self, server: ServerId, event: ServerEvent, at: i64) -> WirePayload {
         if action::self_signed(&event) || (!self.key_settled() && action::may_go_unsigned(&event)) {
             return WirePayload::Event(event);
         }
         let Some((me, identity)) = self.signer() else { return WirePayload::Event(event) };
-        let at = chrono::Utc::now().timestamp_millis();
         WirePayload::Signed(SignedEvent::sign(server, me, at, event, &identity))
     }
 

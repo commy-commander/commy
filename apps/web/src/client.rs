@@ -4,14 +4,15 @@ use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, Keyring};
 use commy_core::{
-    Action, ChannelId, ChannelKind, Identity, Message, MessageId, Permissions, ServerEvent, ServerId, ServerState,
-    Snapshot, UserId, UserProfile,
+    action, Action, ChannelId, ChannelKind, Identity, Message, MessageId, Permissions, ServerEvent, ServerId, ServerState,
+    SignedEvent, Snapshot, UserId, UserProfile,
 };
 use commy_net::community_streams::{self as streams, Lane, Want};
 use commy_net::protocol::{gossip_size, verify_sync_response, SyncMember, MAX_GOSSIP_BYTES};
 use commy_net::{ServerTicket, WirePayload};
+use commy_view::act::{self, Act};
 use commy_view::keys::KeyHolder;
-use commy_view::{MessageView, ServerSummary, ServerView};
+use commy_view::{MessageView, PinView, ServerSummary, ServerView};
 
 pub type Servers = Arc<Mutex<HashMap<ServerId, ServerState>>>;
 pub type Me = Arc<Mutex<Option<(UserProfile, Identity)>>>;
@@ -77,6 +78,48 @@ impl Client {
             Some(id) => commy_view::message_views_around(state, channel, id, &self.pending, me, &keys, None)
                 .ok_or_else(|| "That message is not loaded in this browser".to_string()),
             None => Ok(commy_view::message_views(state, channel, PAGE, &self.pending, me, &keys, None)),
+        }
+    }
+
+    pub fn get_pins(&self, server: ServerId, channel: Option<ChannelId>) -> Result<Vec<PinView>, String> {
+        let me = self.me_id().ok_or("Your servers are not unlocked yet")?;
+        let keys = self.keys();
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server).ok_or("This server is still loading")?;
+        Ok(commy_view::pin_views(state, channel, me, &keys))
+    }
+
+    pub fn act(
+        &self,
+        server: ServerId,
+        build: impl FnOnce(&ServerState, &act::Me, &Identity, &KeyHolder) -> Act<ServerEvent>,
+    ) -> Result<WirePayload, String> {
+        let (profile, identity) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
+        let keys = KeyHolder::new(Some((profile.id, identity.clone())));
+        let mut servers = self.servers.lock().unwrap();
+        let state = servers.get_mut(&server).ok_or("This server is still loading")?;
+        let me = act::Me { user: profile.id, perms: state.server.permissions_for(profile.id), now: Utc::now() };
+        let event = build(state, &me, &identity, &keys)?;
+        let signed = SignedEvent::sign(server, profile.id, me.now.timestamp_millis(), event, &identity);
+        state.apply_own(&signed).map_err(|e| e.to_string())?;
+        Ok(if action::self_signed(&signed.event) { WirePayload::Event(signed.event) } else { WirePayload::Signed(signed) })
+    }
+
+    pub fn typing(&self, server: ServerId, channel: ChannelId) -> Result<Option<WirePayload>, String> {
+        let (profile, identity) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server).ok_or("This server is still loading")?;
+        let now = Utc::now();
+        let Some(event) = act::typing(state, profile.id, channel, now)? else { return Ok(None) };
+        Ok(Some(WirePayload::Signed(SignedEvent::sign(server, profile.id, now.timestamp_millis(), event, &identity))))
+    }
+
+    pub fn admits(&self, server: ServerId, event: &ServerEvent, action: Option<Action>) -> bool {
+        let servers = self.servers.lock().unwrap();
+        let Some(state) = servers.get(&server) else { return false };
+        match action {
+            Some(action) => state.admits_signed(&SignedEvent { action, event: event.clone() }).is_ok(),
+            None => state.admits_unsigned(event).is_ok(),
         }
     }
 
@@ -284,20 +327,8 @@ fn check_can_post(state: &ServerState, user: UserId, channel: ChannelId) -> Resu
     if state.server.rules.is_some() && !exempt && !state.server.rules_accepted.contains(&user) {
         return Err("Accept the server rules in the desktop app before posting".into());
     }
-    let channel = state.server.channel(channel).ok_or("That channel no longer exists")?;
-    if channel.kind == ChannelKind::Announcement && !perms.can_announce() {
-        return Err("Only members allowed to post announcements can write in this channel".into());
-    }
-    if !state.server.can_view(channel.id, user) {
-        return Err("You do not have a role that can see that channel".into());
-    }
-    if channel.is_restricted() && !state.server.can_post_in(channel.id, user) {
-        return Err("Only some roles can send messages in this channel".into());
-    }
-    if state.server.is_timed_out(user, Utc::now()) {
-        return Err("You are timed out in this server for now".into());
-    }
-    Ok(())
+    state.server.channel(channel).ok_or("That channel no longer exists")?;
+    act::can_post(state, perms, user, channel, Utc::now())
 }
 
 fn fits_one_gossip_frame(message: &Message) -> bool {

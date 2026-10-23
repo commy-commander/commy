@@ -16,6 +16,8 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 use wasm_bindgen_futures::spawn_local;
 
+use commy_view::act;
+
 use crate::account::{self, AccountUser, Reply};
 use crate::client::{Applied, Client};
 use crate::host::Host;
@@ -75,6 +77,15 @@ struct Args {
     reply_to: Option<String>,
     around: Option<String>,
     code: Option<String>,
+    message_id: Option<String>,
+    root_id: Option<String>,
+    emoji: Option<String>,
+    active: Option<bool>,
+    pinned: Option<bool>,
+    choices: Option<Vec<u8>>,
+    name: Option<String>,
+    archived: Option<bool>,
+    locked: Option<bool>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -126,6 +137,22 @@ impl Session {
                 to_json(&self.client.borrow().get_messages(server, channel, around)?)
             }
             "send_message" => self.send_message(args).await,
+            "get_pins" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                let channel: Option<ChannelId> = args.channel_id.as_ref().map(|c| parse(Some(c), "channel")).transpose()?;
+                to_json(&self.client.borrow().get_pins(server, channel)?)
+            }
+            "send_typing" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
+                if let Some(payload) = self.client.borrow().typing(server, channel)? {
+                    self.publish(server, &payload);
+                }
+                Ok(Value::Null)
+            }
+            "edit_message" | "delete_message" | "set_reaction" | "pin_message" | "vote_poll" | "close_poll" | "set_thread" => {
+                self.act(cmd, args)
+            }
             "web_nudge" => {
                 self.nudge_sync();
                 Ok(Value::Null)
@@ -248,6 +275,10 @@ impl Session {
         let stored = account::stored_entry_key(self.host.load(account::ENTRY_KEY_KEY).as_deref(), &account.id);
         if let Some((key, list)) = stored.and_then(|key| Some((key.clone(), EntryList::open(&key, &sealed).ok()?))) {
             self.finish(list, key)?;
+            return Ok(self.unlock_view());
+        }
+        if let Some(key) = self.escrowed_key().await.filter(|key| EntryList::open(key, &sealed).is_ok()) {
+            self.accept_key(&account, key)?;
             return Ok(self.unlock_view());
         }
         self.set_unlock(Unlock::Locked, "Approve this browser on one of your Commy devices, or enter your recovery code.");
@@ -373,7 +404,34 @@ impl Session {
         let sealed = self.status.borrow().sealed.clone().ok_or("Your server list has not loaded yet")?;
         let list = EntryList::open(&key, &sealed)?;
         self.host.save(account::ENTRY_KEY_KEY, &account::entry_key_record(&account.id, &key));
+        let this = self.clone();
+        let kept = key.clone();
+        spawn_local(async move { this.escrow(&kept).await });
         self.finish(list, key)
+    }
+
+    async fn wrapping_key(&self) -> Option<SealKey> {
+        let body = json!({ "lockId": commy_net::entry_escrow::LOCK_ID });
+        let reply = self.request("POST", account::FOLDER_KEY_PATH, Some(body)).await.ok()?;
+        commy_net::entry_escrow::wrapping_key(&account::folder_key(&reply)?)
+    }
+
+    async fn escrowed_key(&self) -> Option<SealKey> {
+        let reply = self.request("GET", &account::escrow_path(), None).await.ok()?;
+        let sealed = account::vault_data(&reply).ok()??;
+        commy_net::entry_escrow::unwrap(&self.wrapping_key().await?, &sealed)
+    }
+
+    async fn escrow(&self, key: &SealKey) {
+        let Ok(reply) = self.request("GET", &account::escrow_path(), None).await else { return };
+        let Some(version) = account::vault_version(&reply) else { return };
+        let Some(wrapping) = self.wrapping_key().await else { return };
+        let held = account::vault_data(&reply).ok().flatten().and_then(|sealed| commy_net::entry_escrow::unwrap(&wrapping, &sealed));
+        if held.as_ref() == Some(key) {
+            return;
+        }
+        let body = json!({ "name": commy_net::entry_escrow::VAULT_ITEM, "data": commy_net::entry_escrow::wrap(&wrapping, key), "version": version });
+        let _ = self.request("POST", account::VAULT_PUT_PATH, Some(body)).await;
     }
 
     fn finish(self: &Rc<Self>, list: EntryList, key: SealKey) -> Result<(), String> {
@@ -544,6 +602,56 @@ impl Session {
         while let Some(server) = changed.recv().await {
             self.emit("server-event", json!(server.to_string()));
         }
+    }
+
+    fn act(&self, cmd: &str, args: Args) -> Result<Value, String> {
+        let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+        let channel = || parse::<ChannelId>(args.channel_id.as_ref(), "channel");
+        let message = || parse::<MessageId>(args.message_id.as_ref(), "message");
+        let payload = match cmd {
+            "edit_message" => {
+                let (channel, message) = (channel()?, message()?);
+                let content = crate::client::clean_message(args.content.as_deref().unwrap_or(""))?;
+                self.client.borrow().act(server, |state, me, identity, keys| {
+                    act::edit(state, me, identity, keys, channel, message, content)
+                })?
+            }
+            "delete_message" => {
+                let (channel, message) = (channel()?, message()?);
+                self.client.borrow().act(server, |state, me, identity, _| act::delete(state, me, identity, channel, message))?
+            }
+            "set_reaction" => {
+                let (channel, message) = (channel()?, message()?);
+                let emoji = args.emoji.unwrap_or_default();
+                let active = args.active.unwrap_or(true);
+                self.client.borrow().act(server, |state, me, _, _| act::reaction(state, me, channel, message, &emoji, active))?
+            }
+            "pin_message" => {
+                let (channel, message) = (channel()?, message()?);
+                let pinned = args.pinned.unwrap_or(true);
+                self.client.borrow().act(server, |state, me, _, _| act::pin(state, me, channel, message, pinned))?
+            }
+            "vote_poll" => {
+                let message = message()?;
+                let choices = args.choices.unwrap_or_default();
+                self.client.borrow().act(server, |state, me, _, _| act::poll_vote(state, me, message, &choices))?
+            }
+            "close_poll" => {
+                let message = message()?;
+                self.client.borrow().act(server, |state, me, _, _| act::poll_close(state, me, message))?
+            }
+            "set_thread" => {
+                let channel = channel()?;
+                let root: MessageId = parse(args.root_id.as_ref(), "thread")?;
+                let (archived, locked) = (args.archived.unwrap_or(false), args.locked.unwrap_or(false));
+                let name = args.name;
+                self.client.borrow().act(server, |state, me, _, _| act::thread(state, me, channel, root, name.as_deref(), archived, locked))?
+            }
+            _ => return Err(format!("{cmd} is not available in the web app yet")),
+        };
+        self.publish(server, &payload);
+        self.emit("server-event", json!(server.to_string()));
+        Ok(Value::Null)
     }
 
     async fn send_message(self: &Rc<Self>, args: Args) -> Result<Value, String> {

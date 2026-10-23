@@ -23,6 +23,7 @@ pub(super) struct Live {
     account: StreamId,
     account_live: bool,
     book: Book,
+    node: [u8; 32],
 }
 
 impl Session {
@@ -31,11 +32,12 @@ impl Session {
             return;
         }
         let Some(url) = self.sync_service_url().await else { return };
+        let Some(node) = self.node.lock().await.as_ref().map(|node| node.node_id_bytes()) else { return };
         let (mut pool, events) = Pool::new(&url);
         let stream = sync_streams::account_stream(&key);
         let account = stream.id;
         pool.follow(stream, 0);
-        *self.sync.borrow_mut() = Some(Live { pool, account, account_live: false, book: Book::new(list) });
+        *self.sync.borrow_mut() = Some(Live { pool, account, account_live: false, book: Book::new(list), node });
         spawn_local(self.clone().run_sync(events));
         spawn_local(self.clone().tend_sync());
         self.refresh_sync();
@@ -61,7 +63,8 @@ impl Session {
                     }
                 }
                 SyncEvent::CaughtUp { stream, seq } => self.on_sync_caught_up(stream, seq),
-                SyncEvent::Refused { .. } | SyncEvent::Signal { .. } | SyncEvent::Connected | SyncEvent::Disconnected => {}
+                SyncEvent::Signal { stream, plain } => self.on_sync_signal(stream, &plain),
+                SyncEvent::Refused { .. } | SyncEvent::Connected | SyncEvent::Disconnected => {}
             }
         }
     }
@@ -140,6 +143,25 @@ impl Session {
         if key_event && now_live && applied != Applied::Nothing {
             self.refresh_sync();
         }
+    }
+
+    fn on_sync_signal(self: &Rc<Self>, stream: StreamId, plain: &[u8]) {
+        let found = {
+            let guard = self.sync.borrow();
+            let Some(live) = guard.as_ref() else { return };
+            let Some((server, want)) = live.book.route(stream) else { return };
+            let Some((node, payload)) = streams::decode_signal(plain, want.lane) else { return };
+            (node != live.node).then_some((server, payload))
+        };
+        let Some((server, payload)) = found else { return };
+        let Some((event, action)) = streams::event_of(&payload).map(|(event, action)| (event.clone(), action)) else { return };
+        if let ServerEvent::TypingStart { channel, user } = &event {
+            if self.client.borrow().admits(server, &event, action) {
+                self.emit("typing", json!({ "server": server.to_string(), "channel": channel.to_string(), "user": user.to_string() }));
+            }
+            return;
+        }
+        self.apply_event(server, event, action, false, true);
     }
 
     fn on_sync_caught_up(self: &Rc<Self>, stream: StreamId, seq: u64) {
@@ -236,6 +258,25 @@ impl Session {
         let guard = self.sync.borrow();
         let Some(live) = guard.as_ref() else { return Vec::new() };
         live.book.writers(server, lane).into_iter().filter_map(|stream| Some((stream, live.pool.client_for(stream)?))).collect()
+    }
+
+    pub(super) fn publish(&self, server: ServerId, payload: &WirePayload) {
+        if let Some(lane) = streams::lane_of_payload(payload) {
+            let Some(plain) = streams::encode_entry(payload) else { return };
+            for (stream, client) in self.writers(server, lane) {
+                let plain = plain.clone();
+                spawn_local(async move {
+                    let _ = client.append(stream, plain).await;
+                });
+            }
+            return;
+        }
+        let Some((event, _)) = streams::event_of(payload) else { return };
+        let Some(node) = self.sync.borrow().as_ref().map(|live| live.node) else { return };
+        let Some(plain) = streams::encode_signal(node, payload) else { return };
+        for (stream, client) in self.writers(server, streams::signal_lane(event)) {
+            client.signal(stream, plain.clone());
+        }
     }
 
     pub(super) fn send_to_service(self: &Rc<Self>, server: ServerId, message: &Message) {

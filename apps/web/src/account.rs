@@ -7,6 +7,8 @@ pub const DEVICES_PATH: &str = "/api/auth/commy/devices";
 pub const LINK_CHALLENGE_PATH: &str = "/api/auth/commy/devices/challenge";
 pub const LINK_REGISTER_PATH: &str = "/api/auth/commy/devices/register";
 pub const VAULT_PATH: &str = "/api/auth/commy/vault?name=servers";
+pub const VAULT_PUT_PATH: &str = "/api/auth/commy/vault/put";
+pub const FOLDER_KEY_PATH: &str = "/api/auth/commy/folder-key";
 pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
 
 pub const DEVICE_SECRET_KEY: &str = "commy.device";
@@ -84,6 +86,26 @@ pub fn other_devices(reply: &Reply, own_node: &str) -> Vec<String> {
     serde_json::from_str::<Devices>(&reply.body)
         .map(|d| d.devices.into_iter().map(|d| d.node_id.to_lowercase()).filter(|n| n != own_node).collect())
         .unwrap_or_default()
+}
+
+pub fn escrow_path() -> String {
+    format!("/api/auth/commy/vault?name={}", commy_net::entry_escrow::VAULT_ITEM)
+}
+
+pub fn vault_version(reply: &Reply) -> Option<u64> {
+    #[derive(Deserialize)]
+    struct Item {
+        version: u64,
+    }
+    reply.ok().then(|| serde_json::from_str::<Item>(&reply.body).ok().map(|item| item.version)).flatten()
+}
+
+pub fn folder_key(reply: &Reply) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Key {
+        key: String,
+    }
+    reply.ok().then(|| serde_json::from_str::<Key>(&reply.body).ok().map(|k| k.key)).flatten()
 }
 
 pub fn vault_data(reply: &Reply) -> Result<Option<String>, String> {

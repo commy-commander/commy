@@ -418,7 +418,11 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
                 generated = true;
                 (key, EntryList::default())
             }
-            (None, Some(_)) => {
+            (None, Some(data)) => {
+                if let Some(key) = escrowed_key(&app, &s).await.filter(|key| EntryList::open(key, data).is_ok()) {
+                    save_key(&dir, &s.server, &s.account, &key);
+                    continue;
+                }
                 set_status(handle, "waiting", approve_hint(&app), 0, false);
                 ask_other_devices(handle);
                 return Ok(());
@@ -482,10 +486,14 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
         }
 
         if merged == shared && item.data.is_some() {
+            escrow(&app, &s, &key).await;
             return finish(handle, "synced", "", merged.servers.len(), true).await;
         }
         match put(&app, &s, VAULT_ITEM, merged.seal(&key), item.version).await? {
-            Put::Done => return finish(handle, "synced", "", merged.servers.len(), true).await,
+            Put::Done => {
+                escrow(&app, &s, &key).await;
+                return finish(handle, "synced", "", merged.servers.len(), true).await;
+            }
             Put::Conflict => {
                 if generated {
                     let _ = std::fs::remove_file(dir.join(KEY_FILE));
@@ -508,6 +516,30 @@ async fn finish(handle: &AppHandle, state: &str, detail: &str, servers: usize, h
     }
     crate::settle::settle_key(handle).await;
     Ok(())
+}
+
+async fn wrapping_key(app: &App, s: &Session) -> Option<SealKey> {
+    let hex = crate::account::server_folder_key(app, &s.server, &s.token, commy_net::entry_escrow::LOCK_ID).await.ok()?;
+    commy_net::entry_escrow::wrapping_key(&hex)
+}
+
+async fn escrowed_key(app: &App, s: &Session) -> Option<SealKey> {
+    let Ok(Fetched::Item(VaultItem { data: Some(data), .. })) = fetch(app, s, commy_net::entry_escrow::VAULT_ITEM).await else {
+        return None;
+    };
+    commy_net::entry_escrow::unwrap(&wrapping_key(app, s).await?, &data)
+}
+
+async fn escrow(app: &App, s: &Session, key: &SealKey) {
+    let Ok(Fetched::Item(item)) = fetch(app, s, commy_net::entry_escrow::VAULT_ITEM).await else { return };
+    let Some(wrapping) = wrapping_key(app, s).await else { return };
+    if item.data.as_deref().and_then(|data| commy_net::entry_escrow::unwrap(&wrapping, data)).as_ref() == Some(key) {
+        return;
+    }
+    let sealed = commy_net::entry_escrow::wrap(&wrapping, key);
+    if let Err(e) = put(app, s, commy_net::entry_escrow::VAULT_ITEM, sealed, item.version).await {
+        tracing::warn!("could not keep the server list key with the account: {e}");
+    }
 }
 
 const KEY_WAIT_RETRY: std::time::Duration = std::time::Duration::from_secs(120);

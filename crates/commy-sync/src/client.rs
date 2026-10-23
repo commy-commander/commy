@@ -4,7 +4,7 @@ use n0_future::time::{self, Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::stream::{SealError, StreamId, StreamKeys, APPEND_NONCE_BYTES};
-use crate::wire::{ClientFrame, ErrorCode, ServerFrame, KEEPALIVE_SECS, SIGNALS_SINCE};
+use crate::wire::{ClientFrame, ErrorCode, ServerFrame, KEEPALIVE_SECS, SIGNALS_SINCE, WILLS_SINCE};
 
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 #[path = "client/native.rs"]
@@ -50,6 +50,7 @@ enum Command {
     Unfollow { stream: StreamId },
     Append { stream: StreamId, plain: Vec<u8>, reply: Reply },
     Signal { stream: StreamId, plain: Vec<u8> },
+    Will { stream: StreamId, plain: Vec<u8> },
     Nudge,
 }
 
@@ -88,6 +89,10 @@ impl SyncClient {
         let _ = self.commands.send(Command::Signal { stream, plain });
     }
 
+    pub fn will(&self, stream: StreamId, plain: Vec<u8>) {
+        let _ = self.commands.send(Command::Will { stream, plain });
+    }
+
     pub fn nudge(&self) {
         let _ = self.commands.send(Command::Nudge);
     }
@@ -101,11 +106,17 @@ struct Followed {
     keys: StreamKeys,
     after: u64,
     tail: Option<u32>,
+    will: Option<Vec<u8>>,
 }
 
 impl Followed {
     fn open(&self) -> ClientFrame {
         ClientFrame::open_tail(&self.keys, self.after, self.tail)
+    }
+
+    fn last_word(&self) -> Option<ClientFrame> {
+        let body = self.keys.seal(self.will.as_ref()?).ok()?;
+        Some(ClientFrame::will(&self.keys, rand::random(), body))
     }
 }
 
@@ -122,6 +133,7 @@ struct Link {
     pending: HashMap<[u8; APPEND_NONCE_BYTES], Pending>,
     reopen: HashMap<StreamId, Instant>,
     protocol: u32,
+    wills_due: bool,
 }
 
 enum Ended {
@@ -131,7 +143,7 @@ enum Ended {
 
 impl Link {
     fn new(url: String, events: mpsc::UnboundedSender<SyncEvent>) -> Self {
-        Self { url, events, streams: HashMap::new(), pending: HashMap::new(), reopen: HashMap::new(), protocol: 0 }
+        Self { url, events, streams: HashMap::new(), pending: HashMap::new(), reopen: HashMap::new(), protocol: 0, wills_due: false }
     }
 
     async fn run(mut self, mut inbox: mpsc::UnboundedReceiver<Command>) {
@@ -185,6 +197,7 @@ impl Link {
         }
         self.reopen.clear();
         self.protocol = 0;
+        self.wills_due = false;
         if self.flush_pending(&mut socket).await.is_err() {
             return Ended::Lost;
         }
@@ -212,7 +225,12 @@ impl Link {
                     heard = Instant::now();
                     match message {
                         Incoming::Text(text) => match serde_json::from_str::<ServerFrame>(&text) {
-                            Ok(frame) => self.handle(frame),
+                            Ok(frame) => {
+                                self.handle(frame);
+                                if self.wills_due && self.send_wills(&mut socket).await.is_err() {
+                                    return Ended::Lost;
+                                }
+                            }
                             Err(e) => tracing::debug!("sync service sent an unknown frame: {e}"),
                         },
                         Incoming::Other => {}
@@ -237,8 +255,10 @@ impl Link {
         match command {
             Command::Nudge => {}
             Command::Follow { keys, after, tail } => {
-                let after = self.streams.get(&keys.id).map_or(after, |f| f.after.max(after));
-                let followed = Followed { keys: *keys, after, tail };
+                let known = self.streams.get(&keys.id);
+                let after = known.map_or(after, |f| f.after.max(after));
+                let will = known.and_then(|f| f.will.clone());
+                let followed = Followed { keys: *keys, after, tail, will };
                 let open = followed.open();
                 self.streams.insert(followed.keys.id, followed);
                 if let Some(socket) = socket {
@@ -260,6 +280,14 @@ impl Link {
                 let Ok(body) = followed.keys.seal(&plain) else { return };
                 let _ = send(socket, &ClientFrame::signal(&followed.keys, rand::random(), body)).await;
             }
+            Command::Will { stream, plain } => {
+                let Some(followed) = self.streams.get_mut(&stream) else { return };
+                followed.will = Some(plain);
+                let (Some(socket), true) = (socket, self.protocol >= WILLS_SINCE) else { return };
+                if let Some(frame) = followed.last_word() {
+                    let _ = send(socket, &frame).await;
+                }
+            }
             Command::Append { stream, plain, reply } => {
                 let Some(followed) = self.streams.get(&stream) else {
                     let _ = reply.send(Err(AppendError::NotFollowed));
@@ -280,6 +308,14 @@ impl Link {
                 self.pending.insert(nonce, Pending { frame, reply, not_before: Instant::now() + Duration::from_secs(30) });
             }
         }
+    }
+
+    async fn send_wills(&mut self, socket: &mut Socket) -> Result<(), ()> {
+        self.wills_due = false;
+        for frame in self.streams.values().filter_map(Followed::last_word) {
+            send(socket, &frame).await?;
+        }
+        Ok(())
     }
 
     async fn flush_pending(&mut self, socket: &mut Socket) -> Result<(), ()> {
@@ -308,7 +344,10 @@ impl Link {
 
     fn handle(&mut self, frame: ServerFrame) {
         match frame {
-            ServerFrame::Hello { protocol } => self.protocol = protocol,
+            ServerFrame::Hello { protocol } => {
+                self.protocol = protocol;
+                self.wills_due = protocol >= WILLS_SINCE;
+            }
             ServerFrame::Pong => {}
             ServerFrame::Opened { stream, head } => {
                 if let Some(followed) = self.streams.get_mut(&stream) {

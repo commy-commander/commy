@@ -240,7 +240,7 @@ struct FolderKeyResponse {
     key: String,
 }
 
-async fn server_folder_key(app: &App, server: &str, token: &str, lock_id: &str) -> Result<String, String> {
+pub(crate) async fn server_folder_key(app: &App, server: &str, token: &str, lock_id: &str) -> Result<String, String> {
     let host = host_of(server);
     let res = app
         .http

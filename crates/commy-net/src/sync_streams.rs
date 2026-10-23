@@ -58,6 +58,14 @@ pub enum DmEntry {
     FromMe(DmEnvelope),
 }
 
+impl DmEntry {
+    pub fn into_envelope(self) -> DmEnvelope {
+        match self {
+            DmEntry::FromPartner(envelope) | DmEntry::FromMe(envelope) => envelope,
+        }
+    }
+}
+
 pub fn decode_dm(plain: &[u8], me: UserId, me_key: &IdentityKey, partner: UserId, partner_key: &IdentityKey) -> Option<DmEntry> {
     let envelope = DmEnvelope::decode(plain)?;
     if !envelope.signed_by_sender() {

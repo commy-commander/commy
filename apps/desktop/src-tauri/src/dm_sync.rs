@@ -227,6 +227,14 @@ fn own_inboxes(app: &App, me: UserId) -> Vec<(ServerId, StreamKeys)> {
         .collect()
 }
 
+pub fn tend(handle: &AppHandle) {
+    if LIVE.lock().unwrap().is_none() {
+        start(handle);
+    } else {
+        tend_inboxes(handle);
+    }
+}
+
 pub fn tend_inboxes(handle: &AppHandle) {
     let app = handle.state::<App>();
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
@@ -261,6 +269,32 @@ pub fn is_call(message: &DmMessage) -> bool {
     matches!(message.action, DmAction::Call { .. })
 }
 
+#[derive(Debug, PartialEq)]
+pub enum Route {
+    Receive,
+    Ring,
+    Settled,
+    Mine,
+    Skip,
+}
+
+pub fn route(entry: &DmEntry, here: Option<&str>, at: i64, now: i64) -> Route {
+    match entry {
+        DmEntry::FromPartner(envelope) if syncable(&envelope.message) => Route::Receive,
+        DmEntry::FromPartner(envelope) if is_call(&envelope.message) && call_fresh(at, now) => Route::Ring,
+        DmEntry::FromMe(envelope) if is_call(&envelope.message) => {
+            let written_here = here.is_some_and(|node| node.eq_ignore_ascii_case(envelope.message.from_node.trim()));
+            if !written_here && call_fresh(at, now) {
+                Route::Settled
+            } else {
+                Route::Skip
+            }
+        }
+        DmEntry::FromMe(envelope) if syncable(&envelope.message) => Route::Mine,
+        _ => Route::Skip,
+    }
+}
+
 pub fn call_fresh(at: i64, now: i64) -> bool {
     (now - at).abs() < CALL_FRESH_MS
 }
@@ -270,12 +304,11 @@ fn inbox_to(app: &App, me: UserId, to: UserId) -> Option<StreamKeys> {
     let mut sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
     sids.sort();
     let settled: Vec<ServerId> = sids.into_iter().filter(|sid| !app.awaits_snapshot(*sid)).collect();
-    let now = now_ms();
     let servers = app.servers.lock().unwrap();
     settled.into_iter().find_map(|sid| {
         let state = servers.get(&sid)?;
         let ring = holder.community_ring(state, None)?;
-        inbox::writable(state, me, to, &ring, now)
+        inbox::writable(state, me, to, &ring)
     })
 }
 
@@ -329,16 +362,29 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
 fn on_inbox(handle: &AppHandle, server: ServerId, plain: &[u8], at: i64, live_now: bool) {
     let app = handle.state::<App>();
     let Some(identity) = app.identity() else { return };
-    let Some(envelope) = inbox::open(&identity, plain) else { return };
+    let Some(envelope) = inbox::open(&identity, plain) else {
+        tracing::info!("an entry in our first-message inbox did not open");
+        return;
+    };
     let from = envelope.message.from;
     let member = app.servers.lock().unwrap().get(&server).is_some_and(|state| {
         state.server.is_current_member(from) && state.profiles.get(&from).and_then(|p| p.identity) == envelope.sender.identity
     });
-    if !member || (is_call(&envelope.message) && !call_fresh(at, now_ms())) {
+    if !member {
+        tracing::info!("dropped a first message from {from}, who is not a member we know with that key");
         return;
     }
-    let Ok(node) = data_encoding::HEXLOWER_PERMISSIVE.decode(envelope.message.from_node.trim().as_bytes()) else { return };
-    let Ok(node) = <[u8; 32]>::try_from(node) else { return };
+    if is_call(&envelope.message) && !call_fresh(at, now_ms()) {
+        return;
+    }
+    let Some(node) = data_encoding::HEXLOWER_PERMISSIVE
+        .decode(envelope.message.from_node.trim().as_bytes())
+        .ok()
+        .and_then(|node| <[u8; 32]>::try_from(node).ok())
+    else {
+        tracing::info!("dropped a first message from {from} without a device");
+        return;
+    };
     let ring = should_ring(live_now, envelope.message.created_at, Utc::now());
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
@@ -346,11 +392,11 @@ fn on_inbox(handle: &AppHandle, server: ServerId, plain: &[u8], at: i64, live_no
     });
 }
 
-pub fn wake_tags(app: &App, days: &[i64]) -> Vec<([u8; 32], i64)> {
-    let (Some(identity), Some(me)) = (app.identity(), app.profile.lock().unwrap().as_ref().map(|p| p.id)) else { return Vec::new() };
+pub fn wake_tags(app: &App, days: &[i64]) -> Option<Vec<([u8; 32], i64)>> {
+    let (Some(identity), Some(me)) = (app.identity(), app.profile.lock().unwrap().as_ref().map(|p| p.id)) else { return None };
     let partners: Vec<IdentityKey> = match LIVE.lock().unwrap().as_ref() {
         Some(live) if live.me_key == identity.public() => live.partners.values().map(|p| p.key).collect(),
-        _ => return Vec::new(),
+        _ => return None,
     };
     let inboxes: Vec<StreamKeys> =
         LIVE.lock().unwrap().as_ref().map(|live| live.inboxes.values().map(|(_, keys)| keys.clone()).collect()).unwrap_or_default();
@@ -367,7 +413,7 @@ pub fn wake_tags(app: &App, days: &[i64]) -> Vec<([u8; 32], i64)> {
             }
         }
     }
-    tags
+    Some(tags)
 }
 
 pub fn rings(message: &DmMessage) -> bool {
@@ -410,16 +456,21 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
                 })
             };
             let Some((me, me_key, partner, key, live_now)) = found else { return };
-            match sync_streams::decode_dm(&plain, me, &me_key, partner, &key) {
-                Some(DmEntry::FromPartner(envelope)) if syncable(&envelope.message) => receive(handle, envelope, live_now),
-                Some(DmEntry::FromPartner(envelope)) if is_call(&envelope.message) && call_fresh(at, now_ms()) => ring(handle, envelope),
-                Some(DmEntry::FromMe(envelope)) if call_fresh(at, now_ms()) => {
-                    if let DmAction::Call { call, signal } = envelope.message.action {
+            let Some(entry) = sync_streams::decode_dm(&plain, me, &me_key, partner, &key) else {
+                account_log::set_dm_cursor(&app, stream.to_hex(), seq, live_now);
+                return;
+            };
+            let here = app.node_hex.lock().unwrap().clone();
+            match route(&entry, here.as_deref(), at, now_ms()) {
+                Route::Receive => receive(handle, entry.into_envelope(), live_now),
+                Route::Ring => ring(handle, entry.into_envelope()),
+                Route::Settled => {
+                    if let DmAction::Call { call, signal } = entry.into_envelope().message.action {
                         crate::calls::settled_elsewhere(&app, handle, partner, call, signal);
                     }
                 }
-                Some(DmEntry::FromMe(envelope)) if syncable(&envelope.message) => take_mine(handle, partner, envelope.message),
-                _ => {}
+                Route::Mine => take_mine(handle, partner, entry.into_envelope().message),
+                Route::Skip => {}
             }
             account_log::set_dm_cursor(&app, stream.to_hex(), seq, live_now);
         }
@@ -684,6 +735,28 @@ mod tests {
         assert!(call_fresh(now - 5_000, now));
         assert!(call_fresh(now + 5_000, now), "a clock a little ahead still rings");
         assert!(!call_fresh(now - CALL_FRESH_MS - 1, now), "an old ring read back later stays quiet");
+    }
+
+    #[test]
+    fn our_own_entries_reach_our_other_devices_and_only_their_calls_settle_ours() {
+        let (me, partner) = (UserId::new(), UserId::new());
+        let profile = UserProfile::new("me");
+        let channel = commy_core::ChannelId::new();
+        let (here, other) = ("aa".repeat(32), "bb".repeat(32));
+        let mine = |action: DmAction, node: &str| {
+            let mut message = DmMessage::acting(me, partner, action, "");
+            message.from_node = node.to_string();
+            DmEntry::FromMe(DmEnvelope::new(message, profile.clone()))
+        };
+        let now = 1_000_000_000_000;
+        let posted = DmEntry::FromMe(DmEnvelope::new(DmMessage::new(me, partner, "sent from my phone"), profile.clone()));
+        assert_eq!(route(&posted, Some(&here), now, now), Route::Mine, "a fresh message of ours still reaches this device");
+        let reacted = mine(DmAction::React { target: commy_core::MessageId::new(), emoji: "👍".into(), active: true }, &other);
+        assert_eq!(route(&reacted, Some(&here), now, now), Route::Mine);
+        let accept = DmAction::Call { call: channel, signal: CallSignal::Accept };
+        assert_eq!(route(&mine(accept.clone(), &other), Some(&here), now, now), Route::Settled);
+        assert_eq!(route(&mine(accept.clone(), &here), Some(&here), now, now), Route::Skip, "our own answer never ends our call");
+        assert_eq!(route(&mine(accept, &other), Some(&here), now - CALL_FRESH_MS - 1, now), Route::Skip);
     }
 
     #[test]

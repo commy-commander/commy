@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
-use commy_core::{MessageId, ServerEvent, ServerId, SignedEvent, UserId, UserProfile};
+use commy_core::{MessageId, Presence, ServerEvent, ServerId, SignedEvent, UserId, UserProfile};
 use commy_net::catchup::CatchupStore;
 use commy_net::community_streams::{self as streams, rings, Lane, Want};
 pub use commy_net::sync_streams::SharedKey;
@@ -132,6 +132,7 @@ struct Live {
     fresh: HashSet<StreamId>,
     reading: Option<Reading>,
     greeted: HashMap<ServerId, Instant>,
+    say_again: HashSet<ServerId>,
     cursors: Cursors,
     task: tauri::async_runtime::JoinHandle<()>,
 }
@@ -339,12 +340,13 @@ async fn tend(handle: &AppHandle) {
             fresh: HashSet::new(),
             reading: None,
             greeted: HashMap::new(),
+            say_again: HashSet::new(),
             cursors,
             task,
         });
     }
     refresh(handle);
-    crate::dm_sync::tend_inboxes(handle);
+    crate::dm_sync::tend(handle);
     share_keys(&app);
     release_parked(handle);
     publish_snapshots(handle);
@@ -710,12 +712,32 @@ fn publish_held(held: Unsent) {
 pub fn signal(server: ServerId, payload: &WirePayload) {
     let Some((event, _)) = streams::event_of(payload) else { return };
     let lane = streams::signal_lane(event);
+    let again = {
+        let guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_ref() else { return };
+        let Some(plain) = streams::encode_signal(live.node, payload) else { return };
+        for (stream, client) in targets(live, server, lane, false) {
+            if let Some(client) = client {
+                client.signal(stream, plain.clone());
+            }
+        }
+        let online = matches!(event, ServerEvent::PresenceUpdate { user, presence } if *user == live.me && presence.is_visible_online());
+        online.then(|| live.handle.clone())
+    };
+    if let Some(handle) = again {
+        leave_word(&handle.state::<App>(), server);
+    }
+}
+
+pub fn leave_word(app: &App, server: ServerId) {
+    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let payload = app.wire_at(server, ServerEvent::PresenceUpdate { user: me, presence: Presence::Offline }, now_ms() + 1);
     let guard = LIVE.lock().unwrap();
-    let Some(live) = guard.as_ref() else { return };
-    let Some(plain) = streams::encode_signal(live.node, payload) else { return };
-    for (stream, client) in targets(live, server, lane, false) {
+    let Some(live) = guard.as_ref().filter(|live| live.me == me) else { return };
+    let Some(plain) = streams::encode_signal(live.node, &payload) else { return };
+    for (stream, client) in targets(live, server, Lane::State, false) {
         if let Some(client) = client {
-            client.signal(stream, plain.clone());
+            client.will(stream, plain.clone());
         }
     }
 }
@@ -866,7 +888,13 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
         SyncEvent::CaughtUp { stream, seq } => on_caught_up(handle, stream, seq),
         SyncEvent::Signal { stream, plain } => on_signal(handle, stream, &plain),
         SyncEvent::Refused { stream, code } => tracing::debug!("the sync service refused a server stream {stream}: {code:?}"),
-        SyncEvent::Connected | SyncEvent::Disconnected => {}
+        SyncEvent::Connected => {
+            if let Some(live) = LIVE.lock().unwrap().as_mut() {
+                let servers: Vec<ServerId> = live.communities.keys().copied().collect();
+                live.say_again.extend(servers);
+            }
+        }
+        SyncEvent::Disconnected => {}
     }
 }
 
@@ -1053,10 +1081,11 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
         let first = live.caught_up.insert(stream);
         let held = live.snapshots.contains_key(&server);
         let due = want.writes && !live.cursors.backfilled.contains(&stream.to_hex()) && !live.backfilling.contains(&stream);
-        (server, want, due, live.me, first, held)
+        let again = want.lane == Lane::State && want.writes && live.say_again.remove(&server);
+        (server, want, due, live.me, first, held, again)
     };
     save_soon();
-    let (server, want, due, me, first, held) = found;
+    let (server, want, due, me, first, held, again) = found;
     let empty = first && !held;
     let app = handle.state::<App>();
     if app.awaits_snapshot(server) {
@@ -1069,6 +1098,8 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
     if want.lane == Lane::State && want.writes {
         if first {
             announce_me(handle, server);
+        }
+        if first || again {
             say_here(handle, server);
         }
         publish_snapshots(handle);
