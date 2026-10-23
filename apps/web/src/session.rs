@@ -27,6 +27,7 @@ use crate::dm_book::DmBook;
 use crate::host::Host;
 use crate::store::WebStore;
 
+mod calls;
 mod dms;
 mod handoff;
 mod sync;
@@ -76,6 +77,8 @@ pub struct Session {
     store: RefCell<Option<SharedCatchupStore>>,
     sync: RefCell<Option<sync::Live>>,
     dms: RefCell<DmBook>,
+    voice: RefCell<calls::Voice>,
+    admit: calls::Admit,
 }
 
 #[derive(Deserialize, Default)]
@@ -119,6 +122,9 @@ struct Args {
     action: Option<String>,
     note: Option<String>,
     user_ids: Option<Vec<String>>,
+    accept: Option<bool>,
+    muted: Option<bool>,
+    deafened: Option<bool>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -148,6 +154,8 @@ impl Session {
             store: RefCell::new(None),
             sync: RefCell::new(None),
             dms: RefCell::new(DmBook::default()),
+            voice: RefCell::default(),
+            admit: calls::Admit::default(),
         })
     }
 
@@ -275,6 +283,14 @@ impl Session {
             "set_dm_settings" => self.dm_command(cmd, args).await,
             "list_friends" => self.dm_command(cmd, args).await,
             "friend_action" => self.dm_command(cmd, args).await,
+            "get_dm_call" => self.call_command(cmd, args).await,
+            "start_dm_call" => self.call_command(cmd, args).await,
+            "answer_dm_call" => self.call_command(cmd, args).await,
+            "end_dm_call" => self.call_command(cmd, args).await,
+            "get_voice_settings" => self.call_command(cmd, args).await,
+            "set_muted" => self.call_command(cmd, args).await,
+            "set_deafened" => self.call_command(cmd, args).await,
+            "voice_stats" => self.call_command(cmd, args).await,
             "web_farewell" => {
                 self.say_goodbye();
                 Ok(Value::Null)
@@ -446,7 +462,7 @@ impl Session {
         if slot.is_some() {
             return Ok(());
         }
-        let (mut node, events, _media, incoming) = CommyNode::spawn_with(Some(secret), Some(relay_map_of(&self.relays)?))
+        let (mut node, events, media, incoming) = CommyNode::spawn_with(Some(secret), Some(relay_map_of(&self.relays)?))
             .await
             .map_err(|e| format!("Could not connect to the Commy network: {e}"))?;
         let (changed_tx, changed_rx) = mpsc::unbounded_channel();
@@ -456,6 +472,7 @@ impl Session {
             changed: changed_tx,
         });
         node.set_catchup_store(store.clone());
+        node.set_media_gate(calls::media_gate(self.admit.clone()));
         let _ = node.take_entry_key_requests();
         let _ = node.take_mirror_requests();
         *self.store.borrow_mut() = Some(store);
@@ -463,6 +480,7 @@ impl Session {
         spawn_local(self.clone().run_events(events));
         spawn_local(self.clone().run_changes(changed_rx));
         spawn_local(self.clone().run_dms(incoming));
+        spawn_local(self.clone().run_media(media));
         Ok(())
     }
 

@@ -86,7 +86,7 @@ impl Session {
     async fn run_sync(self: Rc<Self>, mut events: mpsc::UnboundedReceiver<SyncEvent>) {
         while let Some(event) = events.recv().await {
             match event {
-                SyncEvent::Entry { stream, seq, plain, .. } => self.on_sync_entry(stream, seq, &plain),
+                SyncEvent::Entry { stream, seq, at, plain } => self.on_sync_entry(stream, seq, at, &plain),
                 SyncEvent::Unreadable { stream, seq } => {
                     self.dms.borrow_mut().advance(stream, seq);
                     if let Some(live) = self.sync.borrow_mut().as_mut() {
@@ -245,10 +245,10 @@ impl Session {
         self.refresh_dms();
     }
 
-    fn on_sync_entry(self: &Rc<Self>, stream: StreamId, seq: u64, plain: &[u8]) {
+    fn on_sync_entry(self: &Rc<Self>, stream: StreamId, seq: u64, at: i64, plain: &[u8]) {
         let dm = self.dms.borrow().source(stream);
         if let Some(source) = dm {
-            self.on_dm_entry(stream, seq, source, plain);
+            self.on_dm_entry(stream, seq, at, source, plain);
             return;
         }
         let routed = {

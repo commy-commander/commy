@@ -1,16 +1,11 @@
 "use strict";
 
-const WEB_VOICE_SETTINGS = {
-  noise_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, afk_timeout_minutes: 10,
-};
-
 const WEB_UPDATE_STATUS = {
   current: "web", can_install: false, reason: "web", phase: "idle", version: null, progress: null, checked_at: null, error: null, page: null,
 };
 
 const WEB_DEFAULTS = {
   ui_ready: null,
-  get_voice_settings: WEB_VOICE_SETTINGS,
   get_overlay_settings: { enabled: false, corner: "top-left", opacity: 0.9, show_chat: false, show_everyone: false, toggle_hotkey: "", chat_hotkey: "" },
   overlay_hotkey_problems: [],
   voice_hotkey_problems: [],
@@ -24,7 +19,6 @@ const WEB_DEFAULTS = {
   get_awaited: 0,
   note_user_activity: null,
   set_window_title: null,
-  get_dm_call: null,
   set_unread: null,
   get_custom_icon: null,
   take_pending_invite_link: null,
@@ -33,7 +27,6 @@ const WEB_DEFAULTS = {
   list_shareable_expressions: {},
   list_server_templates: [],
   list_audio_devices: { inputs: [], outputs: [] },
-  voice_stats: null,
   notify: null,
   account_cancel_sign_in: null,
   entry_list_status: { state: "synced", servers: 0, has_key: false, detail: "This browser opens your servers through your other devices." },

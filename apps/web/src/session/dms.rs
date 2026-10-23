@@ -51,11 +51,11 @@ impl Session {
         }
     }
 
-    fn me_and_key(&self) -> Option<(UserProfile, Identity)> {
+    pub(super) fn me_and_key(&self) -> Option<(UserProfile, Identity)> {
         self.client.borrow().me.lock().unwrap().clone()
     }
 
-    fn node_hex(&self) -> Option<String> {
+    pub(super) fn node_hex(&self) -> Option<String> {
         self.sync.borrow().as_ref().map(|live| data_encoding::HEXLOWER.encode(&live.node))
     }
 
@@ -111,7 +111,7 @@ impl Session {
         self.refresh_dms();
     }
 
-    pub(super) fn on_dm_entry(self: &Rc<Self>, stream: StreamId, seq: u64, source: Source, plain: &[u8]) {
+    pub(super) fn on_dm_entry(self: &Rc<Self>, stream: StreamId, seq: u64, at: i64, source: Source, plain: &[u8]) {
         let live_now = self.dms.borrow().is_live(stream);
         self.dms.borrow_mut().advance(stream, seq);
         let Some((me, identity)) = self.me_and_key() else { return };
@@ -123,7 +123,7 @@ impl Session {
                     state.server.is_current_member(from)
                         && state.profiles.get(&from).and_then(|p| p.identity) == envelope.sender.identity
                 });
-                if !member || dms::is_call(&envelope.message) {
+                if !member || (dms::is_call(&envelope.message) && !dms::call_fresh(at, Utc::now().timestamp_millis())) {
                     return;
                 }
                 let Some(node) = node_of(&envelope.message.from_node) else { return };
@@ -134,6 +134,21 @@ impl Session {
                     Some(DmEntry::FromPartner(envelope)) if dms::syncable(&envelope.message) => {
                         let Some(node) = node_of(&envelope.message.from_node) else { return };
                         self.take_dm(envelope, node, live_now);
+                    }
+                    Some(DmEntry::FromPartner(envelope))
+                        if dms::is_call(&envelope.message) && dms::call_fresh(at, Utc::now().timestamp_millis()) =>
+                    {
+                        let Some(node) = node_of(&envelope.message.from_node) else { return };
+                        self.take_dm(envelope, node, live_now);
+                    }
+                    Some(DmEntry::FromMe(envelope)) if dms::is_call(&envelope.message) => {
+                        let here = self.node_hex();
+                        let elsewhere = !dms::written_on(&envelope.message, here.as_deref());
+                        if let DmAction::Call { call, signal } = envelope.message.action {
+                            if elsewhere && dms::call_fresh(at, Utc::now().timestamp_millis()) {
+                                self.settled_elsewhere(partner, call, signal);
+                            }
+                        }
                     }
                     Some(DmEntry::FromMe(envelope)) if dms::syncable(&envelope.message) => {
                         if self.dms.borrow_mut().take_mine(partner, envelope.message) {
@@ -148,9 +163,7 @@ impl Session {
 
     pub(super) async fn run_dms(self: Rc<Self>, mut incoming: mpsc::UnboundedReceiver<IncomingDm>) {
         while let Some(IncomingDm { envelope, node }) = incoming.recv().await {
-            if !dms::is_call(&envelope.message) {
-                self.take_dm(envelope, node, true);
-            }
+            self.take_dm(envelope, node, true);
         }
     }
 
@@ -184,11 +197,12 @@ impl Session {
                 }
             }
             Received::Invited { ticket, key, .. } => self.join_group(&ticket, key),
+            Received::Call { from, node, call, signal } => self.on_call_signal(from, node, call, signal),
             Received::Dropped => {}
         }
     }
 
-    fn profile_for(&self, me: &UserProfile, partner: UserId) -> UserProfile {
+    pub(super) fn profile_for(&self, me: &UserProfile, partner: UserId) -> UserProfile {
         let shares_server = self.client.borrow().servers.lock().unwrap().values().any(|s| s.server.is_member(partner));
         let profile = me.as_seen_by_others();
         if self.dms.borrow().safety.shows_details_to(partner, shares_server) {
@@ -210,7 +224,7 @@ impl Session {
         Ok((me, partner))
     }
 
-    fn recipient(&self, raw: Option<&String>) -> Result<(UserProfile, UserId), String> {
+    pub(super) fn recipient(&self, raw: Option<&String>) -> Result<(UserProfile, UserId), String> {
         let (me, partner) = self.partner(raw)?;
         let known = {
             let client = self.client.borrow();
@@ -234,7 +248,7 @@ impl Session {
     }
 
     async fn append_pair(&self, identity: &Identity, partner: UserId, envelope: &DmEnvelope) -> bool {
-        if !dms::syncable(&envelope.message) {
+        if !dms::syncable(&envelope.message) && !dms::is_call(&envelope.message) {
             return false;
         }
         let key = {
@@ -297,6 +311,19 @@ impl Session {
             node.send_dm(&hex, envelope)
         };
         matches!(n0_future::time::timeout(HOLD_WAIT, send).await, Ok(Ok(())))
+    }
+
+    pub(super) async fn deliver_call(self: &Rc<Self>, identity: &Identity, to: UserId, envelope: DmEnvelope) -> bool {
+        let paired = self.dms.borrow().follows(to, Utc::now().timestamp_millis()) && self.append_pair(identity, to, &envelope).await;
+        let inboxed = !paired && self.post_inbox(to, &envelope).await;
+        if !paired && !inboxed {
+            return self.send_direct(to, &envelope).await;
+        }
+        let this = self.clone();
+        spawn_local(async move {
+            this.send_direct(to, &envelope).await;
+        });
+        true
     }
 
     async fn deliver_dm(&self, to: UserId, envelope: &DmEnvelope) -> bool {
