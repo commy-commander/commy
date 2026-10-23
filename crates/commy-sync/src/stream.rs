@@ -10,6 +10,7 @@ const STREAM_ID_DOMAIN: &[u8] = b"commy-sync-stream-id/v1";
 const APPEND_DOMAIN: &[u8] = b"commy-sync-append/v1";
 const SEAL_DOMAIN: &[u8] = b"commy-sync-seal/v1";
 const WAKE_DOMAIN: &[u8] = b"commy-sync-wake/v1";
+const SIGNAL_DOMAIN: &[u8] = b"commy-sync-signal/v1";
 
 pub const NONCE_BYTES: usize = 12;
 pub const TAG_BYTES: usize = 16;
@@ -18,6 +19,7 @@ pub const SIZE_BUCKETS: [usize; 5] = [512, 1024, 4096, 16 * 1024, 64 * 1024];
 pub const MAX_PLAIN: usize = SIZE_BUCKETS[SIZE_BUCKETS.len() - 1] - LENGTH_PREFIX_BYTES;
 pub const MAX_SEALED: usize = SIZE_BUCKETS[SIZE_BUCKETS.len() - 1] + NONCE_BYTES + TAG_BYTES;
 pub const APPEND_NONCE_BYTES: usize = 16;
+pub const MAX_SIGNAL_SEALED: usize = SIZE_BUCKETS[2] + NONCE_BYTES + TAG_BYTES;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SealError {
@@ -140,6 +142,10 @@ impl StreamKeys {
         self.write.sign(&append_message(&self.id, nonce, body)).to_bytes()
     }
 
+    pub fn sign_signal(&self, nonce: &[u8; APPEND_NONCE_BYTES], body: &[u8]) -> [u8; 64] {
+        self.write.sign(&signal_message(&self.id, nonce, body)).to_bytes()
+    }
+
     pub fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, SealError> {
         let padded = pad(plain)?;
         let nonce: [u8; NONCE_BYTES] = rand::random();
@@ -190,6 +196,15 @@ pub fn append_message(stream: &StreamId, nonce: &[u8; APPEND_NONCE_BYTES], body:
     msg.extend_from_slice(nonce);
     msg.extend_from_slice(body);
     msg
+}
+
+pub fn signal_message(stream: &StreamId, nonce: &[u8; APPEND_NONCE_BYTES], body: &[u8]) -> Vec<u8> {
+    [SIGNAL_DOMAIN, &stream.0[..], &nonce[..], body].concat()
+}
+
+pub fn verify_signal(write: &[u8; 32], stream: &StreamId, nonce: &[u8; APPEND_NONCE_BYTES], body: &[u8], sig: &[u8; 64]) -> bool {
+    let Ok(key) = VerifyingKey::from_bytes(write) else { return false };
+    key.verify(&signal_message(stream, nonce, body), &ed25519_dalek::Signature::from_bytes(sig)).is_ok()
 }
 
 pub fn verify_append(write: &[u8; 32], stream: &StreamId, nonce: &[u8; APPEND_NONCE_BYTES], body: &[u8], sig: &[u8; 64]) -> bool {

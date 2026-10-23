@@ -141,6 +141,54 @@ struct Entry {
     payload: WirePayload,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SignalEntry {
+    version: u16,
+    node: [u8; 32],
+    payload: WirePayload,
+}
+
+pub fn signals(event: &ServerEvent) -> bool {
+    use ServerEvent as E;
+    matches!(
+        event,
+        E::PresenceUpdate { .. }
+            | E::TypingStart { .. }
+            | E::VoiceState { .. }
+            | E::ScreenShare { .. }
+            | E::CameraState { .. }
+            | E::VoiceStatusSet { .. }
+            | E::VoiceModerate { .. }
+            | E::VoiceMove { .. }
+            | E::StageSet { .. }
+            | E::HandRaise { .. }
+            | E::ActivitySet { .. }
+            | E::DeviceAnnounce { .. }
+    )
+}
+
+pub fn signal_lane(event: &ServerEvent) -> Lane {
+    match event {
+        ServerEvent::TypingStart { channel, .. } => Lane::Channel(*channel),
+        _ => Lane::State,
+    }
+}
+
+pub fn encode_signal(node: [u8; 32], payload: &WirePayload) -> Option<Vec<u8>> {
+    let (event, _) = event_of(payload)?;
+    if !signals(event) {
+        return None;
+    }
+    postcard::to_stdvec(&SignalEntry { version: PROTOCOL_VERSION, node, payload: payload.clone() }).ok()
+}
+
+pub fn decode_signal(plain: &[u8], lane: Lane) -> Option<([u8; 32], WirePayload)> {
+    let entry: SignalEntry = postcard::from_bytes(plain).ok()?;
+    let (event, _) = event_of(&entry.payload)?;
+    let fits = entry.version == PROTOCOL_VERSION && signals(event) && signal_lane(event) == lane && entry.node != SERVICE_SENDER;
+    fits.then_some((entry.node, entry.payload))
+}
+
 pub fn event_of(payload: &WirePayload) -> Option<(&ServerEvent, Option<Action>)> {
     match payload {
         WirePayload::Event(event) => Some((event, None)),
@@ -214,6 +262,29 @@ mod tests {
 
     fn now() -> i64 {
         chrono::Utc::now().timestamp_millis()
+    }
+
+    #[test]
+    fn live_signals_carry_only_passing_state_on_its_own_lane() {
+        let (state, channel, owner) = fixture();
+        let server = state.server.id;
+        let node = [4; 32];
+        let typing = WirePayload::Event(ServerEvent::TypingStart { channel, user: owner });
+        let plain = encode_signal(node, &typing).unwrap();
+        assert_eq!(decode_signal(&plain, Lane::Channel(channel)), Some((node, typing.clone())));
+        assert_eq!(decode_signal(&plain, Lane::State), None, "typing travels on its channel only");
+        let online = WirePayload::Event(ServerEvent::PresenceUpdate { user: owner, presence: commy_core::Presence::Online });
+        assert!(decode_signal(&encode_signal(node, &online).unwrap(), Lane::State).is_some());
+        let rename = WirePayload::Event(ServerEvent::ServerRename { server, name: "x".into() });
+        assert_eq!(encode_signal(node, &rename), None, "lasting changes are stored, never signalled");
+        let sound = WirePayload::Event(ServerEvent::SoundboardPlay { server, channel, user: owner, name: "x".into() });
+        assert!(!signals(streams_event(&sound)), "a sound would play twice when it also arrives from a peer");
+        assert_eq!(encode_signal(SERVICE_SENDER, &online).and_then(|p| decode_signal(&p, Lane::State)), None);
+        assert_eq!(decode_signal(b"junk", Lane::State), None);
+    }
+
+    fn streams_event(payload: &WirePayload) -> &ServerEvent {
+        event_of(payload).unwrap().0
     }
 
     #[test]

@@ -3,7 +3,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::stream::{StreamId, StreamKeys, APPEND_NONCE_BYTES, MAX_SEALED};
 
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
+pub const SIGNALS_SINCE: u32 = 2;
 pub const PAGE_SIZE: usize = 200;
 pub const MAX_STREAMS_PER_CONNECTION: usize = 16;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
@@ -77,6 +78,7 @@ pub enum ClientFrame {
         tail: Option<u32>,
     },
     Append { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
+    Signal { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
     Close { stream: StreamId },
     Ping,
 }
@@ -94,6 +96,11 @@ impl ClientFrame {
     pub fn append(keys: &StreamKeys, nonce: [u8; APPEND_NONCE_BYTES], body: Vec<u8>) -> Self {
         let sig = keys.sign_append(&nonce, &body);
         ClientFrame::Append { stream: keys.id, nonce: Bytes(nonce), body: Blob(body), sig: Bytes(sig) }
+    }
+
+    pub fn signal(keys: &StreamKeys, nonce: [u8; APPEND_NONCE_BYTES], body: Vec<u8>) -> Self {
+        let sig = keys.sign_signal(&nonce, &body);
+        ClientFrame::Signal { stream: keys.id, nonce: Bytes(nonce), body: Blob(body), sig: Bytes(sig) }
     }
 }
 
@@ -130,6 +137,7 @@ pub enum ServerFrame {
     Opened { stream: StreamId, head: u64 },
     Entries { stream: StreamId, entries: Vec<WireEntry>, caught_up: bool },
     Appended { stream: StreamId, nonce: AppendNonce, seq: u64, at: i64 },
+    Signal { stream: StreamId, body: Blob },
     Error {
         code: ErrorCode,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -155,7 +163,7 @@ impl ServerFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stream::{verify_append, StreamSecret};
+    use crate::stream::{verify_append, verify_signal, StreamSecret};
 
     #[test]
     fn frames_round_trip_as_tagged_json() {
@@ -164,6 +172,7 @@ mod tests {
             ClientFrame::open(&keys, 41),
             ClientFrame::open_tail(&keys, 0, Some(50)),
             ClientFrame::append(&keys, [5; APPEND_NONCE_BYTES], vec![1, 2, 3]),
+            ClientFrame::signal(&keys, [6; APPEND_NONCE_BYTES], vec![4, 5]),
             ClientFrame::Close { stream: keys.id },
             ClientFrame::Ping,
         ];
@@ -187,6 +196,11 @@ mod tests {
             unreachable!()
         };
         assert!(verify_append(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0));
+        let ClientFrame::Signal { stream, nonce, body, sig } = ClientFrame::signal(&keys, [9; APPEND_NONCE_BYTES], b"x".to_vec()) else {
+            unreachable!()
+        };
+        assert!(verify_signal(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0));
+        assert!(!verify_append(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0), "a signal cannot be stored as an entry");
     }
 
     #[test]
@@ -197,6 +211,7 @@ mod tests {
             ServerFrame::Opened { stream: id, head: 7 },
             ServerFrame::Entries { stream: id, entries: vec![WireEntry { seq: 1, at: 1_760_000_000_000, body: Blob(vec![4; 40]) }], caught_up: true },
             ServerFrame::Appended { stream: id, nonce: Bytes([1; APPEND_NONCE_BYTES]), seq: 8, at: 5 },
+            ServerFrame::Signal { stream: id, body: Blob(vec![2; 30]) },
             ServerFrame::stream_error(ErrorCode::BadSignature, id),
             ServerFrame::Error { code: ErrorCode::RateLimited, stream: None, nonce: None, retry_after_ms: Some(900) },
             ServerFrame::Pong,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket};
-use commy_sync::stream::{verify_append, StreamId, MAX_SEALED, NONCE_BYTES, SIZE_BUCKETS, TAG_BYTES};
+use commy_sync::stream::{verify_append, verify_signal, StreamId, MAX_SEALED, MAX_SIGNAL_SEALED, NONCE_BYTES, SIZE_BUCKETS, TAG_BYTES};
 use commy_sync::wire::{
     AppendNonce, ClientFrame, ErrorCode, ServerFrame, WireEntry, FRAME_BODY_BUDGET, MAX_STREAMS_PER_CONNECTION, PAGE_SIZE, PROTOCOL,
 };
@@ -12,6 +12,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use crate::hub::Live;
 use crate::limits::{AddressKey, Refusal};
 use crate::Service;
 
@@ -44,6 +45,7 @@ pub(crate) async fn run(service: Arc<Service>, key: AddressKey, socket: WebSocke
     let (mut sink, mut source) = socket.split();
     let (out, mut outgoing) = mpsc::channel::<ServerFrame>(OUTGOING_BUFFER);
     let mut open: HashMap<StreamId, OpenStream> = HashMap::new();
+    let session: u64 = rand::random();
     let _ = out.send(ServerFrame::Hello { protocol: PROTOCOL }).await;
     let mut deadline = Instant::now() + IDLE_LIMIT;
     loop {
@@ -60,7 +62,7 @@ pub(crate) async fn run(service: Arc<Service>, key: AddressKey, socket: WebSocke
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 };
                 match serde_json::from_str::<ClientFrame>(&text) {
-                    Ok(frame) => handle(&service, key, frame, &mut open, &out).await,
+                    Ok(frame) => handle(&service, key, session, frame, &mut open, &out).await,
                     Err(_) => {
                         let _ = out.send(ServerFrame::error(ErrorCode::BadFrame)).await;
                     }
@@ -85,7 +87,14 @@ pub(crate) async fn run(service: Arc<Service>, key: AddressKey, socket: WebSocke
     service.stats.disconnected();
 }
 
-async fn handle(service: &Arc<Service>, key: AddressKey, frame: ClientFrame, open: &mut HashMap<StreamId, OpenStream>, out: &mpsc::Sender<ServerFrame>) {
+async fn handle(
+    service: &Arc<Service>,
+    key: AddressKey,
+    session: u64,
+    frame: ClientFrame,
+    open: &mut HashMap<StreamId, OpenStream>,
+    out: &mpsc::Sender<ServerFrame>,
+) {
     match frame {
         ClientFrame::Ping => {
             let _ = out.send(ServerFrame::Pong).await;
@@ -111,7 +120,7 @@ async fn handle(service: &Arc<Service>, key: AddressKey, frame: ClientFrame, ope
                 return;
             }
             service.stats.opened();
-            let follower = tokio::spawn(follow(service.clone(), stream, after, tail, out.clone()));
+            let follower = tokio::spawn(follow(service.clone(), session, stream, after, tail, out.clone()));
             open.insert(stream, OpenStream { write: write.0, follower });
         }
         ClientFrame::Close { stream } => {
@@ -120,6 +129,25 @@ async fn handle(service: &Arc<Service>, key: AddressKey, frame: ClientFrame, ope
                 let _ = opened.follower.await;
                 service.hub.release(&stream);
             }
+        }
+        ClientFrame::Signal { stream, nonce, body, sig } => {
+            let Some(opened) = open.get(&stream) else {
+                let _ = out.send(refused(ErrorCode::NotOpen, stream, nonce, None)).await;
+                return;
+            };
+            if !is_padded_size(body.0.len()) || body.0.len() > MAX_SIGNAL_SEALED {
+                let _ = out.send(refused(ErrorCode::TooLarge, stream, nonce, None)).await;
+                return;
+            }
+            if !verify_signal(&opened.write, &stream, &nonce.0, &body.0, &sig.0) {
+                let _ = out.send(refused(ErrorCode::BadSignature, stream, nonce, None)).await;
+                return;
+            }
+            if service.limiter.signal(key, body.0.len()).is_err() {
+                return;
+            }
+            let heard = service.hub.signal(&stream, session, body);
+            service.stats.signalled(heard.saturating_sub(1));
         }
         ClientFrame::Append { stream, nonce, body, sig } => {
             let Some(opened) = open.get(&stream) else {
@@ -163,7 +191,7 @@ pub(crate) fn start_after(after: u64, tail: Option<u32>, head: u64) -> u64 {
     }
 }
 
-async fn follow(service: Arc<Service>, stream: StreamId, after: u64, tail: Option<u32>, out: mpsc::Sender<ServerFrame>) {
+async fn follow(service: Arc<Service>, session: u64, stream: StreamId, after: u64, tail: Option<u32>, out: mpsc::Sender<ServerFrame>) {
     let mut live = service.hub.subscribe(stream);
     let head = match service.store.head(&stream).await {
         Ok(head) => head,
@@ -180,11 +208,22 @@ async fn follow(service: Arc<Service>, stream: StreamId, after: u64, tail: Optio
     let Some(caught) = catch_up(&service, stream, sent, &out).await else { return };
     sent = caught;
     loop {
-        match live.recv().await {
+        let heard = live.recv().await;
+        let entry = match heard.as_deref() {
+            Ok(Live::Signal { from, body }) => {
+                if *from != session && out.try_send(ServerFrame::Signal { stream, body: body.clone() }).is_err() {
+                    tracing::debug!("sync: dropped a live signal for a busy connection");
+                }
+                continue;
+            }
+            Ok(Live::Entry(entry)) => Ok(entry),
+            Err(e) => Err(e.clone()),
+        };
+        match entry {
             Ok(entry) if entry.seq <= sent => {}
             Ok(entry) if entry.seq == sent + 1 => {
                 sent = entry.seq;
-                let frame = ServerFrame::Entries { stream, entries: vec![(*entry).clone()], caught_up: true };
+                let frame = ServerFrame::Entries { stream, entries: vec![entry.clone()], caught_up: true };
                 if out.send(frame).await.is_err() {
                     return;
                 }
