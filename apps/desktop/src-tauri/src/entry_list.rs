@@ -419,13 +419,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
                 (key, EntryList::default())
             }
             (None, Some(_)) => {
-                set_status(
-                    handle,
-                    "waiting",
-                    "Approve this device on one of your other devices, or enter your recovery code.",
-                    0,
-                    false,
-                );
+                set_status(handle, "waiting", approve_hint(&app), 0, false);
                 ask_other_devices(handle);
                 return Ok(());
             }
@@ -510,6 +504,7 @@ async fn finish(handle: &AppHandle, state: &str, detail: &str, servers: usize, h
     if state == "synced" {
         crate::read_state::schedule(handle);
         crate::account_log::ensure(handle);
+        crate::key_handoff::ensure(handle);
     }
     crate::settle::settle_key(handle).await;
     Ok(())
@@ -695,6 +690,16 @@ fn device_name() -> String {
     "iPhone or iPad".into()
 }
 
+fn approve_hint(app: &App) -> String {
+    match crate::key_handoff::own_node(app) {
+        Some(node) => format!(
+            "Open Commy on one of your other devices and choose Allow when it shows the code {}, or enter your recovery code.",
+            commy_net::key_handoff::code(&node.public())
+        ),
+        None => "Open Commy on one of your other devices and choose Allow, or enter your recovery code.".into(),
+    }
+}
+
 fn ask_other_devices(handle: &AppHandle) {
     if ASKING.swap(true, Ordering::SeqCst) {
         return;
@@ -706,7 +711,10 @@ fn ask_other_devices(handle: &AppHandle) {
         let detail = match result {
             Ok(Asked::Got) => return schedule(&handle),
             Ok(Asked::NobodyHasKey) => "None of your devices has the key to your server list. Enter your recovery code, or start a new list from this device.".to_string(),
-            Ok(Asked::NotApproved) => "None of your other devices approved this one yet. Open Commy on one of them, or enter your recovery code.".to_string(),
+            Ok(Asked::NotApproved) => {
+                let app = handle.state::<App>();
+                format!("None of your other devices approved this one yet. {}", approve_hint(&app))
+            }
             Err(e) => e,
         };
         set_status(&handle, "waiting", detail, 0, false);
@@ -726,8 +734,8 @@ async fn ask(handle: &AppHandle) -> Result<Asked, String> {
     let app = handle.state::<App>();
     let Some(dir) = app.data_dir().cloned() else { return Ok(Asked::NotApproved) };
     let s = session(&app).ok_or("Sign in first")?;
-    let me = app.node_hex.lock().unwrap().clone().ok_or("Still connecting")?;
-    let endpoint = app.net.lock().await.as_ref().map(|n| n.endpoint()).ok_or("Still connecting")?;
+    let node = crate::key_handoff::own_node(&app).ok_or("This install has no device key yet")?;
+    let me = node.public().to_hex();
     if !crate::account::ensure_linked(&app).await {
         return Err("This device isn't linked to your account yet. Check your connection, then press Sync now.".into());
     }
@@ -735,14 +743,28 @@ async fn ask(handle: &AppHandle) -> Result<Asked, String> {
     if others.is_empty() {
         return Err("No other device is linked to your account. Enter your recovery code instead.".into());
     }
-    let request = EntryKeyRequest { server: s.server.clone(), account: s.account.clone(), device_name: device_name() };
-    let (tx, mut rx) = tokio::sync::mpsc::channel(others.len());
-    for node in others {
-        let (endpoint, request, tx) = (endpoint.clone(), request.clone(), tx.clone());
+    let url = crate::sync_link::url();
+    let endpoint = app.net.lock().await.as_ref().map(|n| n.endpoint());
+    if url.is_none() && endpoint.is_none() {
+        return Err("Still connecting".into());
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::channel(others.len() + 1);
+    if let Some(url) = url {
+        let (tx, account, name) = (tx.clone(), s.account.clone(), device_name());
         tauri::async_runtime::spawn(async move {
-            let reply = commy_net::entry_key::request(endpoint, &node, &request).await;
-            let _ = tx.send(reply).await;
+            let got = crate::key_handoff::ask(&url, &account, &node, &name).await;
+            let _ = tx.send(Ok(got.map_or(EntryKeyReply::Denied, |key| EntryKeyReply::Key(key.to_text())))).await;
         });
+    }
+    if let Some(endpoint) = endpoint {
+        let request = EntryKeyRequest { server: s.server.clone(), account: s.account.clone(), device_name: device_name() };
+        for other in others {
+            let (endpoint, request, tx) = (endpoint.clone(), request.clone(), tx.clone());
+            tauri::async_runtime::spawn(async move {
+                let reply = commy_net::entry_key::request(endpoint, &other, &request).await;
+                let _ = tx.send(reply).await;
+            });
+        }
     }
     drop(tx);
     let mut keyless = true;
@@ -768,6 +790,7 @@ static PENDING: Mutex<BTreeMap<u64, tokio::sync::oneshot::Sender<EntryKeyReply>>
 struct KeyAskView {
     id: u64,
     device_name: String,
+    code: Option<String>,
 }
 
 pub async fn run_entry_key_requests(handle: AppHandle, mut asks: tokio::sync::mpsc::UnboundedReceiver<EntryKeyAsk>) {
@@ -795,24 +818,48 @@ async fn answer(
     request: &EntryKeyRequest,
 ) -> Option<(u64, tokio::sync::oneshot::Receiver<EntryKeyReply>)> {
     let app = handle.state::<App>();
-    let dir = app.data_dir()?.clone();
     let s = session(&app)?;
     if request.server != s.server || request.account != s.account {
         return None;
     }
-    load_key(&dir, &s.server, &s.account)?;
     let peer_hex = data_encoding::HEXLOWER.encode(&peer);
     if !account_devices(&app, &s).await.ok()?.contains(&peer_hex) {
         tracing::warn!("a device outside this account asked for the server list key");
         return None;
     }
+    prompt(handle, &request.device_name, None)
+}
+
+pub(crate) fn prompt(
+    handle: &AppHandle,
+    device_name: &str,
+    code: Option<String>,
+) -> Option<(u64, tokio::sync::oneshot::Receiver<EntryKeyReply>)> {
+    let app = handle.state::<App>();
+    let dir = app.data_dir()?.clone();
+    let s = session(&app)?;
+    load_key(&dir, &s.server, &s.account)?;
     let id = NEXT_ASK.fetch_add(1, Ordering::SeqCst);
     let (tx, rx) = tokio::sync::oneshot::channel();
     PENDING.lock().unwrap().insert(id, tx);
-    let name: String = request.device_name.chars().filter(|c| !c.is_control()).take(64).collect();
+    let name = commy_net::key_handoff::clean_name(device_name);
     crate::tray::show_main_window(handle);
-    let _ = handle.emit("entry-key-request", KeyAskView { id, device_name: name });
+    let _ = handle.emit("entry-key-request", KeyAskView { id, device_name: name, code });
     Some((id, rx))
+}
+
+pub(crate) fn prompt_is_open(id: u64) -> bool {
+    PENDING.lock().unwrap().contains_key(&id)
+}
+
+pub(crate) fn forget_prompt(id: u64) {
+    PENDING.lock().unwrap().remove(&id);
+}
+
+pub(crate) fn close_prompt(handle: &AppHandle, id: u64) {
+    if PENDING.lock().unwrap().remove(&id).is_some() {
+        let _ = handle.emit("entry-key-request-closed", id);
+    }
 }
 
 #[tauri::command]

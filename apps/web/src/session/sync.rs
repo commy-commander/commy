@@ -13,7 +13,6 @@ use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
 use super::Session;
-use crate::account;
 use crate::client::Applied;
 use crate::sync_book::{Book, Change, Record};
 
@@ -31,8 +30,7 @@ impl Session {
         if self.sync.borrow().is_some() {
             return;
         }
-        let Ok(reply) = self.request("GET", account::DISCOVERY_PATH, None).await else { return };
-        let Some(url) = account::sync_url(&reply, &self.origin) else { return };
+        let Some(url) = self.sync_service_url().await else { return };
         let (mut pool, events) = Pool::new(&url);
         let stream = sync_streams::account_stream(&key);
         let account = stream.id;

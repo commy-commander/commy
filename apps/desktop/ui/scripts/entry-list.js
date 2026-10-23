@@ -108,7 +108,14 @@ if (IS_TAURI) {
     }
     pendingEntryAsk = e.payload;
     $("entry-key-device").textContent = e.payload.device_name || "your other device";
+    $("entry-key-code").textContent = e.payload.code || "";
+    $("entry-key-code-row").classList.toggle("hidden", !e.payload.code);
     showModal("modal-entry-key");
+  });
+  window.__TAURI__.event.listen("entry-key-request-closed", e => {
+    if (!pendingEntryAsk || pendingEntryAsk.id !== e.payload) return;
+    pendingEntryAsk = null;
+    hideModals();
   });
   refreshEntryStatus();
   document.addEventListener("visibilitychange", async () => {
