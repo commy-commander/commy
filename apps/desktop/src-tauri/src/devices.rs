@@ -3,7 +3,7 @@ use commy_core::ids::CALL_SERVER;
 use commy_core::{ChannelId, ServerEvent, ServerId, ServerState, UserId, UserProfile};
 use tauri::{Emitter, Manager};
 
-fn announcement(app: &App, server: ServerId) -> Option<ServerEvent> {
+pub(crate) fn announcement(app: &App, server: ServerId) -> Option<ServerEvent> {
     let user = app.profile.lock().unwrap().as_ref().map(|p| p.id)?;
     let node = app.node_hex.lock().unwrap().clone()?;
     let (voice, since) = match app.voice_session.lock().unwrap().as_ref().filter(|s| s.server == server) {
