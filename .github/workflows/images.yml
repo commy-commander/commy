@@ -327,8 +327,9 @@ jobs:
         run: |
           newest=true
           if [ "$GITHUB_REF" = refs/heads/main ]; then
-            head="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
-            [ "$head" = "$GITHUB_SHA" ] || { newest=false; echo "main is now at $head, leaving :dev to that run"; }
+            images='^(auth/|deploy/|crates/commy-sync/|crates/commy-sync-server/|\\.dockerignore$|\\.github/workflows/images\\.yml$)'
+            later="$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...main" --jq "[.files[]?.filename | select(test(\"$images\"))] | length")"
+            [ "$later" = 0 ] || { newest=false; echo "a later commit on main changes the images, leaving :dev to its run"; }
           fi
           args=""
           for tag in $TAGS; do
