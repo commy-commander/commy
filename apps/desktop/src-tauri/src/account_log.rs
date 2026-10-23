@@ -28,18 +28,7 @@ const MAX_PREFS_PER_CALL: usize = 500;
 const FLUSH_DELAY: Duration = Duration::from_secs(2);
 const SERVERS_DELAY: Duration = Duration::from_secs(1);
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PrefPiece {
-    #[serde(default)]
-    pub value: serde_json::Value,
-    pub at: i64,
-}
-
-impl PrefPiece {
-    fn beats(&self, other: Option<&PrefPiece>) -> bool {
-        other.is_none_or(|old| (self.at, self.value.to_string()) > (old.at, old.value.to_string()))
-    }
-}
+pub use commy_view::reads::PrefPiece;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedOp {

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
@@ -12,6 +12,8 @@ use commy_net::protocol::{gossip_size, verify_sync_response, SyncMember, MAX_GOS
 use commy_net::{ServerTicket, WirePayload};
 use commy_view::act::{self, Act};
 use commy_view::keys::KeyHolder;
+use commy_view::reads::{ReadMark, ReadState, ReadView};
+use commy_view::search::{Page, SearchQuery, SearchResults};
 use commy_view::{MessageView, PinView, ServerSummary, ServerView};
 
 pub type Servers = Arc<Mutex<HashMap<ServerId, ServerState>>>;
@@ -149,19 +151,46 @@ impl Client {
         if let Some(hold) = state.hold(&message) {
             return Err(hold.refusal().into());
         }
-        keys.seal_outgoing(state, &mut message)?;
-        message.sign(server, &identity);
-        if !fits_one_gossip_frame(&message) {
-            return Err("That message is too long to send; try splitting it up".into());
-        }
-        if let Some(hold) = keys.hold(state, &message) {
-            return Err(hold.refusal().into());
-        }
-        state
-            .apply(ServerEvent::MessageCreate { message: message.clone() })
-            .map_err(|e| e.to_string())?;
-        let view = MessageView::build(&message, state, &keys);
-        Ok((message, view))
+        seal_sign_apply(state, &keys, &identity, message)
+    }
+
+    pub fn compose_poll(&self, server: ServerId, channel: ChannelId, poll: PollForm) -> Result<(Message, MessageView), String> {
+        let (profile, identity) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
+        let keys = KeyHolder::new(Some((profile.id, identity.clone())));
+        let mut servers = self.servers.lock().unwrap();
+        let state = servers.get_mut(&server).ok_or("This server is still loading")?;
+        check_can_post(state, profile.id, channel)?;
+        let perms = state.server.permissions_for(profile.id);
+        let poll = act::poll(perms, poll.question, poll.options, poll.multi, poll.hours, Utc::now())?;
+        let mut message = Message::new(channel, profile.id, "");
+        message.attachments.push(poll.into_attachment());
+        seal_sign_apply(state, &keys, &identity, message)
+    }
+
+    pub fn read_view(&self, reads: &ReadState, only: Option<&[String]>) -> ReadView {
+        let me = self.me_id();
+        let servers = self.servers.lock().unwrap();
+        commy_view::reads::view(servers.values(), reads, only, me, &HashSet::new())
+    }
+
+    pub fn latest_marks(&self, server: ServerId, channels: Option<&[String]>, now_ms: i64) -> Result<BTreeMap<String, ReadMark>, String> {
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server).ok_or("This server is still loading")?;
+        Ok(state
+            .server
+            .channels
+            .iter()
+            .filter(|c| channels.is_none_or(|ids| ids.contains(&c.id.to_string())))
+            .filter_map(|c| commy_view::reads::latest_mark(state.messages(c.id), now_ms).map(|mark| (c.id.to_string(), mark)))
+            .collect())
+    }
+
+    pub fn search(&self, server: ServerId, query: &SearchQuery, page: Page) -> Result<SearchResults, String> {
+        let me = self.me_id();
+        let keys = self.keys();
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server).ok_or("This server is still loading")?;
+        Ok(commy_view::search::search(state, query, me, page, &keys, &commy_view::ChannelOpens::new(), Some(Utc::now())))
     }
 
     pub fn apply_live(&self, server: ServerId, event: ServerEvent, action: Option<Action>) -> Applied {
@@ -331,6 +360,28 @@ fn check_can_post(state: &ServerState, user: UserId, channel: ChannelId) -> Resu
     act::can_post(state, perms, user, channel, Utc::now())
 }
 
+pub struct PollForm {
+    pub question: String,
+    pub options: Vec<String>,
+    pub multi: bool,
+    pub hours: Option<u32>,
+}
+
+fn seal_sign_apply(state: &mut ServerState, keys: &KeyHolder, identity: &Identity, mut message: Message) -> Result<(Message, MessageView), String> {
+    let server = state.server.id;
+    keys.seal_outgoing(state, &mut message)?;
+    message.sign(server, identity);
+    if !fits_one_gossip_frame(&message) {
+        return Err("That message is too long to send; try splitting it up".into());
+    }
+    if let Some(hold) = keys.hold(state, &message) {
+        return Err(hold.refusal().into());
+    }
+    state.apply(ServerEvent::MessageCreate { message: message.clone() }).map_err(|e| e.to_string())?;
+    let view = MessageView::build(&message, state, keys);
+    Ok((message, view))
+}
+
 fn fits_one_gossip_frame(message: &Message) -> bool {
     let wire = WirePayload::Event(ServerEvent::MessageCreate { message: message.clone() });
     gossip_size(&wire) <= MAX_GOSSIP_BYTES
@@ -412,6 +463,20 @@ mod tests {
         assert!(message.verify(w.server, &me.identity.unwrap()));
         let messages = w.client.get_messages(w.server, w.channel, None).unwrap();
         assert_eq!(messages.last().unwrap().content, "hi there");
+    }
+
+    #[test]
+    fn a_poll_posts_and_takes_a_vote_and_search_finds_messages() {
+        let w = world();
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        let form = |options: Vec<&str>| PollForm { question: "Lunch?".into(), options: options.into_iter().map(String::from).collect(), multi: false, hours: Some(1) };
+        assert!(w.client.compose_poll(w.server, w.channel, form(vec!["only one"])).is_err());
+        let (poll, _) = w.client.compose_poll(w.server, w.channel, form(vec!["Soup", "Salad"])).unwrap();
+        let vote = w.client.act(w.server, |state, me, _, _| act::poll_vote(state, me, poll.id, &[1]));
+        assert!(matches!(vote, Ok(WirePayload::Signed(_))));
+        let query = SearchQuery::new(&["hello".to_string()], None, None, None);
+        let found = w.client.search(w.server, &query, Page::newest()).unwrap();
+        assert_eq!(found.hits.iter().map(|h| h.message.content.as_str()).collect::<Vec<_>>(), ["hello"]);
     }
 
     #[test]

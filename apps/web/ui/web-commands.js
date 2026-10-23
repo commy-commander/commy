@@ -40,7 +40,6 @@ const WEB_DEFAULTS = {
   voice_stats: null,
   notify: null,
   account_cancel_sign_in: null,
-  search_messages: { total: 0, hits: [] },
   entry_list_status: { state: "synced", servers: 0, has_key: false, detail: "This browser opens your servers through your other devices." },
 };
 
