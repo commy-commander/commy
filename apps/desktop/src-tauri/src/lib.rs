@@ -2173,20 +2173,20 @@ async fn send_friend_signal(app: &App, to: UserId, signal: safety::FriendSignal,
     let _signing = app.signing.read().await;
     let me = current_profile(app)?;
     refuse_while_key_may_be_replaced(app)?;
-    let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
+    let hex = node_hex_for_user(app, to);
     let message = DmMessage::new(me.id, to, signal.encode());
     let me = match signal {
         safety::FriendSignal::Remove | safety::FriendSignal::Decline => me.without_details(),
         safety::FriendSignal::Request | safety::FriendSignal::Accept => me,
     };
-    send_direct_dm(app, &me, &hex, message, "they are offline right now; try again later", note).await
+    send_direct_dm(app, &me, hex.as_deref(), message, "they are offline right now; try again later", note).await
 }
 
 async fn send_signed_dm(
     app: &App,
     me: &UserProfile,
     to: UserId,
-    hex: &str,
+    hex: Option<&str>,
     content: String,
     offline: &str,
 ) -> CmdResult<()> {
@@ -2196,19 +2196,32 @@ async fn send_signed_dm(
 async fn send_direct_dm(
     app: &App,
     me: &UserProfile,
-    hex: &str,
+    hex: Option<&str>,
     mut message: DmMessage,
     offline: &str,
     note: Option<String>,
 ) -> CmdResult<()> {
     sign_dm(app, &mut message)?;
     let sender = app.profile_for(me, message.to);
+    let to = message.to;
     let envelope = DmEnvelope::new(message, sender).with_note(note);
+    let inboxed = dm_sync::post_inbox(app, to, &envelope).await;
+    let Some(hex) = hex else {
+        return if inboxed { Ok(()) } else { Err("that person's device is unknown".into()) };
+    };
     let send = {
         let net = app.net.lock().await;
-        net.as_ref().ok_or("network is not ready yet")?.send_dm(hex, &envelope)
+        match net.as_ref() {
+            Some(node) => node.send_dm(hex, &envelope),
+            None if inboxed => return Ok(()),
+            None => return Err("network is not ready yet".into()),
+        }
     };
-    send.await.map_err(|_| offline.to_string())
+    match send.await {
+        Ok(()) => Ok(()),
+        Err(_) if inboxed => Ok(()),
+        Err(_) => Err(offline.to_string()),
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -2480,10 +2493,9 @@ async fn report_user(
         excerpt: safety::truncate(&excerpt, 300),
         created_at: chrono::Utc::now().to_rfc3339(),
     };
-    let owner_hex = node_hex_for_user(&app, owner)
-        .ok_or("the server owner's device is unknown; try again once they have been online")?;
+    let owner_hex = node_hex_for_user(&app, owner);
     let offline = "the server owner is offline right now; try again later";
-    send_signed_dm(&app, &me, owner, &owner_hex, report.encode(), offline).await
+    send_signed_dm(&app, &me, owner, owner_hex.as_deref(), report.encode(), offline).await
 }
 
 fn receive_report(app: &App, handle: &tauri::AppHandle, sender: UserId, content: &str) {
@@ -2600,7 +2612,8 @@ async fn post_dm(
     message: DmMessage,
 ) -> CmdResult<Option<DmMessageView>> {
     post_dm_with(handle, me, partner, message, |envelope| async move {
-        outbox::try_send_dm(app, partner, &envelope).await
+        let inboxed = dm_sync::post_inbox(app, partner, &envelope).await;
+        outbox::try_send_dm(app, partner, &envelope).await || inboxed
     })
     .await
 }
@@ -8062,24 +8075,29 @@ async fn run_dm_loop(
     mut incoming: tokio::sync::mpsc::UnboundedReceiver<commy_net::node::IncomingDm>,
 ) {
     while let Some(dm) = incoming.recv().await {
-        let app = handle.state::<App>();
-        let sender = dm.envelope.message.from;
-        match outbox::receive_dm(&handle, dm) {
-            outbox::Received::Report { from, content } => receive_report(&app, &handle, from, &content),
-            outbox::Received::Reply { to, signal } => {
-                let _ = send_friend_signal(&app, to, signal, None).await;
-            }
-            outbox::Received::Call { from, call, signal } => calls::on_signal(&app, &handle, from, call, signal).await,
-            outbox::Received::GroupInvite { from, ticket } => join_group(&app, &handle, from, &ticket).await,
-            outbox::Received::Taken => {
-                dm_sync::noticed(&handle, sender);
-                let contact = app.dms.lock().unwrap().contacts.get(&sender).cloned();
-                if let Some(profile) = contact {
-                    profile_images::prefetch(&handle, &profile);
-                }
-            }
-            outbox::Received::Dropped => {}
+        take_dm(&handle, dm, true).await;
+    }
+}
+
+pub(crate) async fn take_dm(handle: &tauri::AppHandle, dm: commy_net::node::IncomingDm, ring: bool) {
+    let app = handle.state::<App>();
+    let sender = dm.envelope.message.from;
+    let received = if ring { outbox::receive_dm(handle, dm) } else { outbox::receive_dm(&dm_sync::Quiet(handle.clone()), dm) };
+    match received {
+        outbox::Received::Report { from, content } => receive_report(&app, handle, from, &content),
+        outbox::Received::Reply { to, signal } => {
+            let _ = send_friend_signal(&app, to, signal, None).await;
         }
+        outbox::Received::Call { from, call, signal } => calls::on_signal(&app, handle, from, call, signal).await,
+        outbox::Received::GroupInvite { from, ticket } => join_group(&app, handle, from, &ticket).await,
+        outbox::Received::Taken => {
+            dm_sync::noticed(handle, sender);
+            let contact = app.dms.lock().unwrap().contacts.get(&sender).cloned();
+            if let Some(profile) = contact {
+                profile_images::prefetch(handle, &profile);
+            }
+        }
+        outbox::Received::Dropped => {}
     }
 }
 

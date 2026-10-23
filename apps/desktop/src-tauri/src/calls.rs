@@ -62,7 +62,7 @@ async fn send_signal(app: &App, to: UserId, call: ChannelId, signal: CallSignal)
     let me = current_profile(app)?;
     let hex = node_hex_for_user(app, to).ok_or("that person's device is unknown")?;
     let message = DmMessage::acting(me.id, to, DmAction::Call { call, signal }, "");
-    crate::send_direct_dm(app, &me, &hex, message, "they are offline right now", None).await
+    crate::send_direct_dm(app, &me, Some(&hex), message, "they are offline right now", None).await
 }
 
 pub fn peer_ok(app: &App, user: UserId, node_hex: &str, channel: ChannelId) -> bool {
