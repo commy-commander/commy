@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, Mutex};
 use wasm_bindgen_futures::spawn_local;
 
 use commy_view::act;
+use commy_view::catalog;
 use commy_view::pins::Pins;
 use commy_view::search::{Page, SearchQuery};
 
@@ -60,6 +61,7 @@ struct Status {
     account: Option<AccountUser>,
     device_linked: bool,
     sealed: Option<String>,
+    features: Option<account::Features>,
 }
 
 pub struct Session {
@@ -100,6 +102,9 @@ struct Args {
     hours: Option<u32>,
     terms: Option<Vec<String>>,
     from: Option<String>,
+    query: Option<String>,
+    page: Option<u32>,
+    category: Option<u32>,
     mentions: Option<String>,
     offset: Option<usize>,
     channels: Option<std::collections::BTreeMap<String, commy_view::reads::ReadMark>>,
@@ -128,6 +133,7 @@ impl Session {
                 account: None,
                 device_linked: false,
                 sealed: None,
+                features: None,
             }),
             node: Mutex::new(None),
             store: RefCell::new(None),
@@ -191,6 +197,21 @@ impl Session {
                 let page = args.offset.map_or(Page::newest(), Page::at);
                 to_json(&self.client.borrow().search(server, &query, page)?)
             }
+            "gif_search" => {
+                let params = [("q", catalog::gif_query(args.query.as_deref().unwrap_or("")))];
+                let found: Option<catalog::Found<catalog::GifHit>> = self.search("gifs", &params).await?;
+                to_json(&found.map(|found| catalog::safe_gifs(found.results)))
+            }
+            "sticker_search" => {
+                let params = catalog::sticker_params(args.query.as_deref().unwrap_or(""), args.from.as_deref(), args.page);
+                let found: Option<catalog::StickerPage> = self.search("stickers", &params).await?;
+                to_json(&found.map(catalog::safe_stickers))
+            }
+            "search_emoji_catalog" => {
+                let params = catalog::emoji_params(args.query.as_deref().unwrap_or(""), args.category, args.page);
+                let found: Option<catalog::EmojiPage> = self.search("emojis", &params).await?;
+                to_json(&catalog::safe_emojis(found.ok_or("This site does not offer emoji search")?))
+            }
             "pins_load" => to_json(&self.pins()),
             "pin_channel" => {
                 let (server, channel) = (args.server_id.unwrap_or_default(), args.channel_id.unwrap_or_default());
@@ -240,6 +261,11 @@ impl Session {
         self.host.emit(event, &payload.to_string());
     }
 
+    async fn search<T: serde::de::DeserializeOwned>(&self, kind: &str, params: &[(&str, String)]) -> Result<Option<T>, String> {
+        let reply = self.request("GET", &account::search_path(kind, params), None).await?;
+        account::search_reply(&reply)
+    }
+
     async fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<Reply, String> {
         let raw = self
             .host
@@ -256,6 +282,15 @@ impl Session {
     async fn account_status(&self) -> Result<Value, String> {
         let reply = self.request("GET", account::SESSION_PATH, None).await?;
         let user = account::parse_session(&reply);
+        let offers = match self.status.borrow().features {
+            Some(features) => features,
+            None => {
+                let features = account::features(&self.request("GET", account::DISCOVERY_PATH, None).await?);
+                self.status.borrow_mut().features = Some(features);
+                features
+            }
+        };
+        let offers = if user.is_some() { offers } else { account::Features::default() };
         let mut status = self.status.borrow_mut();
         status.account = user.clone();
         if user.is_none() {
@@ -271,9 +306,11 @@ impl Session {
             "server_from_env": true,
             "device_linked": status.device_linked,
             "pending_code": null,
-            "server_gifs": false,
-            "server_games": false,
-            "server_media": false,
+            "server_gifs": offers.gifs,
+            "server_games": offers.games,
+            "server_emojis": offers.emojis,
+            "server_stickers": offers.stickers,
+            "server_media": offers.media,
         }))
     }
 

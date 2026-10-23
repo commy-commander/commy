@@ -181,7 +181,7 @@
   window.__TAURI__ = {
     core: {
       invoke,
-      convertFileSrc: path => path,
+      convertFileSrc: (path, protocol) => webFileSrc(path, protocol),
     },
     event: {
       listen(event, callback) {

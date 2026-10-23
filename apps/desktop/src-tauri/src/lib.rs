@@ -38,6 +38,7 @@ mod read_state;
 mod relaunch;
 mod safety;
 mod saved;
+use commy_view::catalog;
 use commy_view::search;
 mod server_wake;
 mod settle;
@@ -5788,31 +5789,6 @@ async fn set_expression_sharing(
     Ok(())
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
-struct EmojiCatalogPage {
-    results: Vec<EmojiCatalogHit>,
-    #[serde(default)]
-    more: bool,
-    #[serde(default)]
-    categories: Vec<EmojiCatalogCategory>,
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
-struct EmojiCatalogHit {
-    id: u64,
-    title: String,
-    url: String,
-    #[serde(default)]
-    animated: bool,
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
-struct EmojiCatalogCategory {
-    id: u32,
-    name: String,
-}
-
-const EMOJIGG_IMAGES: &str = "https://cdn3.emoji.gg/emojis/";
 const MAX_CATALOG_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 
 #[tauri::command]
@@ -5821,55 +5797,16 @@ async fn search_emoji_catalog(
     query: String,
     category: Option<u32>,
     page: Option<u32>,
-) -> CmdResult<EmojiCatalogPage> {
-    let category = category.map(|c| c.to_string()).unwrap_or_default();
-    let page = page.unwrap_or(0).to_string();
-    let params = [("q", query.trim()), ("category", category.as_str()), ("page", page.as_str())];
-    let found: Option<EmojiCatalogPage> = account::server_search_with(&app, "emojis", &params).await?;
-    let mut found = found.ok_or("Sign in to an account server that offers emoji search")?;
-    found.results.retain(|hit| hit.url.starts_with(EMOJIGG_IMAGES));
-    Ok(found)
-}
-
-const KLIPY_IMAGES: &str = "https://static.klipy.com/";
-
-fn catalog_source(url: &str) -> Option<&'static str> {
-    let (source, path) = match (url.strip_prefix(EMOJIGG_IMAGES), url.strip_prefix(KLIPY_IMAGES)) {
-        (Some(path), _) if !path.contains('/') => ("emoji.gg", path),
-        (_, Some(path)) => ("KLIPY", path),
-        _ => return None,
-    };
-    if path.is_empty() || path.contains(['?', '#', '\\']) || path.contains("..") {
-        return None;
-    }
-    Some(source)
-}
-
-#[cfg(test)]
-mod catalog_tests {
-    use super::*;
-
-    #[test]
-    fn catalog_images_come_from_emoji_gg_or_klipy_only() {
-        assert_eq!(catalog_source("https://cdn3.emoji.gg/emojis/12_cat.png"), Some("emoji.gg"));
-        assert_eq!(catalog_source("https://static.klipy.com/ii/ab12/e8/3a/5LM0jRpL.webp"), Some("KLIPY"));
-        for url in [
-            "https://cdn3.emoji.gg/emojis/a/b.png",
-            "https://cdn3.emoji.gg/emojis/",
-            "https://static.klipy.com/ii/../x.gif",
-            "https://static.klipy.com/a.gif?x=1",
-            "https://static.klipy.com.evil.example/a.gif",
-            "http://static.klipy.com/a.gif",
-            "https://example.com/a.gif",
-        ] {
-            assert_eq!(catalog_source(url), None, "{url}");
-        }
-    }
+) -> CmdResult<catalog::EmojiPage> {
+    let params = catalog::emoji_params(&query, category, page);
+    let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let found: Option<catalog::EmojiPage> = account::server_search_with(&app, "emojis", &params).await?;
+    Ok(catalog::safe_emojis(found.ok_or("Sign in to an account server that offers emoji search")?))
 }
 
 #[tauri::command]
 async fn fetch_catalog_image(app: tauri::State<'_, App>, url: String) -> CmdResult<String> {
-    let source = catalog_source(&url).ok_or("only emoji.gg and KLIPY images can be added")?;
+    let source = catalog::source(&url).ok_or("only emoji.gg and KLIPY images can be added")?;
     let (_, bytes) = account::fetch_media(&app, &url)
         .await
         .map_err(|status| format!("{source} could not be reached right now ({status})"))?;
@@ -5880,45 +5817,17 @@ async fn fetch_catalog_image(app: tauri::State<'_, App>, url: String) -> CmdResu
     Ok(data_url(mime, &bytes))
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct StickerHit {
-    id: String,
-    preview: String,
-    url: String,
-    #[serde(default)]
-    ratio: f64,
-    #[serde(default)]
-    title: String,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct StickerPage {
-    results: Vec<StickerHit>,
-    #[serde(default)]
-    more: bool,
-}
-
 #[tauri::command]
 async fn sticker_search(
     app: tauri::State<'_, App>,
     query: String,
     from: Option<String>,
     page: Option<u32>,
-) -> CmdResult<Option<StickerPage>> {
-    let query = safety::truncate(query.trim(), 100);
-    let from = if from.as_deref() == Some("gifs") { "gifs" } else { "stickers" };
-    let page = page.unwrap_or(1).clamp(1, 20).to_string();
-    let params = [("q", query.as_str()), ("from", from), ("page", page.as_str())];
-    let found: Option<StickerPage> = account::server_search_with(&app, "stickers", &params).await?;
-    Ok(found.map(|found| StickerPage {
-        results: found
-            .results
-            .into_iter()
-            .filter(|s| catalog_source(&s.url) == Some("KLIPY") && catalog_source(&s.preview) == Some("KLIPY"))
-            .map(|s| StickerHit { id: safety::truncate(&s.id, 120), title: safety::truncate(&s.title, 200), ..s })
-            .collect(),
-        more: found.more,
-    }))
+) -> CmdResult<Option<catalog::StickerPage>> {
+    let params = catalog::sticker_params(&query, from.as_deref(), page);
+    let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let found: Option<catalog::StickerPage> = account::server_search_with(&app, "stickers", &params).await?;
+    Ok(found.map(catalog::safe_stickers))
 }
 
 #[tauri::command]
@@ -6968,26 +6877,10 @@ async fn search_games(app: tauri::State<'_, App>, query: String) -> CmdResult<Ve
     app.igdb.lock().await.search(&app.http, &creds, &query).await
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct GifHit {
-    preview: String,
-    url: String,
-    #[serde(default)]
-    ratio: f64,
-    #[serde(default)]
-    title: String,
-}
-
 #[tauri::command]
-async fn gif_search(app: tauri::State<'_, App>, query: String) -> CmdResult<Option<Vec<GifHit>>> {
-    let query = safety::truncate(query.trim(), 100);
-    let hits = account::server_search::<GifHit>(&app, "gifs", &query).await?;
-    Ok(hits.map(|hits| {
-        hits.into_iter()
-            .filter(|g| g.preview.starts_with("https://") && g.url.starts_with("https://"))
-            .map(|g| GifHit { title: safety::truncate(&g.title, 200), ..g })
-            .collect()
-    }))
+async fn gif_search(app: tauri::State<'_, App>, query: String) -> CmdResult<Option<Vec<catalog::GifHit>>> {
+    let hits = account::server_search::<catalog::GifHit>(&app, "gifs", &catalog::gif_query(&query)).await?;
+    Ok(hits.map(catalog::safe_gifs))
 }
 
 #[tauri::command]

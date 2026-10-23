@@ -1,4 +1,5 @@
 pub mod act;
+pub mod catalog;
 pub mod keys;
 pub mod liveness;
 pub mod pins;
