@@ -45,6 +45,7 @@ pub struct Catchup {
     swept: HashMap<ServerId, Instant>,
     held: HashMap<ServerId, VecDeque<(Held, usize)>>,
     held_actions: HashMap<ServerId, VecDeque<(Instant, SignedEvent)>>,
+    early: HashMap<ServerId, VecDeque<(Instant, SignedEvent)>>,
     fresh: HashMap<ServerId, HashMap<ChannelId, FreshChannel>>,
     dirty: HashSet<ServerId>,
     unsaved: HashSet<ServerId>,
@@ -187,6 +188,23 @@ impl Catchup {
     pub fn expire_held(&mut self, now: Instant) {
         expire_queues(&mut self.held, |((at, _, _), _)| !expired(*at, now));
         expire_queues(&mut self.held_actions, |(at, _)| !expired(*at, now));
+        expire_queues(&mut self.early, |(at, _)| !expired(*at, now));
+    }
+
+    pub fn hold_early(&mut self, server: ServerId, signed: SignedEvent, now: Instant) {
+        let queue = self.early.entry(server).or_default();
+        if queue.iter().any(|(_, held)| *held == signed) {
+            return;
+        }
+        queue.push_back((now, signed));
+        while queue.len() > HOLD_ACTIONS_CAP {
+            queue.pop_front();
+        }
+    }
+
+    pub fn take_early(&mut self, server: ServerId, now: Instant) -> Vec<SignedEvent> {
+        let queue = self.early.remove(&server).unwrap_or_default();
+        queue.into_iter().filter(|(at, _)| !expired(*at, now)).map(|(_, signed)| signed).collect()
     }
 
     pub fn hold_action(&mut self, server: ServerId, signed: SignedEvent, now: Instant) {
@@ -987,7 +1005,9 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
     let me = app.profile.lock().unwrap().clone();
     let me_id = me.as_ref().map(|p| p.id);
     let mut held = Vec::new();
+    let mut waiting = Vec::new();
     let learned: Vec<UserId>;
+    let early = app.catchup.lock().unwrap().take_early(server, Instant::now());
     {
         let mut servers = app.servers.lock().unwrap();
         let Some(old) = servers.remove(&server) else { return false };
@@ -1062,6 +1082,13 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
             let _ = state.apply(proof.into_event());
         }
         state.carry_polls(&old);
+        let mut replay: Vec<SignedEvent> = old.signed_actions().into_iter().cloned().chain(early).collect();
+        replay.sort_by_key(|signed| signed.action.at);
+        for signed in replay {
+            if let Err(StoreError::UnknownAuthorKey(_)) = state.apply_signed(&signed) {
+                waiting.push(signed);
+            }
+        }
         learned = state
             .profiles
             .values()
@@ -1072,6 +1099,13 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
     }
     for (signer, event) in held {
         hold(app, server, signer, event);
+    }
+    {
+        let mut catchup = app.catchup.lock().unwrap();
+        let now = Instant::now();
+        for signed in waiting {
+            catchup.hold_action(server, signed, now);
+        }
     }
     app.persist_server(server);
     release_held(access, server, &learned);
@@ -2021,6 +2055,52 @@ mod tests {
         app.invites.lock().unwrap().insert(lid, commy_net::ServerTicket::new(lid, "s", [0; 32], vec![]).encode());
         assert!(!apply_snapshot(&handle, lid, snapshot_by(&legacy, &other)), "an invite without an owner vouches for nobody");
         assert!(app.awaits_snapshot(lid));
+    }
+
+    #[test]
+    fn what_the_owner_sends_before_the_snapshot_lands_is_kept_for_it() {
+        use commy_core::channel_key::KeyScope;
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let at = Utc::now().timestamp_millis();
+        let events = crate::channel_lock::KeyHolder::as_user(owner.id(), owner.identity.clone()).scope_events(&real, KeyScope::Community);
+        let signed: Vec<SignedEvent> = events
+            .into_iter()
+            .enumerate()
+            .map(|(i, event)| SignedEvent::sign(sid, owner.id(), at + i as i64, event, &owner.identity))
+            .collect();
+        assert_eq!(signed.len(), 3);
+        for action in &signed {
+            assert_eq!(real.apply_signed(action), Ok(true));
+        }
+        let mut ticket = commy_net::ServerTicket::new(sid, "s", [0; 32], vec![]);
+        ticket.owner = Some((owner.id(), owner.identity.public()));
+        let holds = |app: &App| {
+            let state = &app.servers.lock().unwrap()[&sid];
+            let newest = state.community_keys().newest().map(|record| record.id);
+            let ring = crate::channel_lock::KeyHolder::as_user(me.id(), me.identity.clone()).community_ring(state, None).unwrap();
+            newest.is_some_and(|key| ring.holds(key))
+        };
+
+        let dropped = app_with(&me, placeholder(&me, sid));
+        dropped.set_awaiting_snapshot(sid, true);
+        dropped.invites.lock().unwrap().insert(sid, ticket.encode());
+        assert!(apply_snapshot(&TestHandle::new(dropped.clone()), sid, snapshot_by(&real, &owner)));
+        assert!(!holds(&dropped), "the snapshot alone carries no keys");
+
+        let app = app_with(&me, placeholder(&me, sid));
+        app.set_awaiting_snapshot(sid, true);
+        app.invites.lock().unwrap().insert(sid, ticket.encode());
+        for action in &signed {
+            assert!(app.servers.lock().unwrap().get_mut(&sid).unwrap().apply_signed(action).is_err());
+            app.catchup.lock().unwrap().hold_early(sid, action.clone(), Instant::now());
+        }
+        assert!(apply_snapshot(&TestHandle::new(app.clone()), sid, snapshot_by(&real, &owner)));
+        assert!(holds(&app), "the owner's key and grant wait for the snapshot");
+        assert!(app.catchup.lock().unwrap().take_early(sid, Instant::now()).is_empty());
     }
 
     #[test]
