@@ -282,7 +282,8 @@ impl Session {
     async fn account_status(&self) -> Result<Value, String> {
         let reply = self.request("GET", account::SESSION_PATH, None).await?;
         let user = account::parse_session(&reply);
-        let offers = match self.status.borrow().features {
+        let known = self.status.borrow().features;
+        let offers = match known {
             Some(features) => features,
             None => {
                 let features = account::features(&self.request("GET", account::DISCOVERY_PATH, None).await?);
