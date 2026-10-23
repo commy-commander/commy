@@ -29,6 +29,7 @@ mod outbox;
 mod overlay;
 mod persist;
 mod picker;
+mod pictures;
 mod pins;
 mod profile_images;
 mod push_wake;
@@ -683,11 +684,15 @@ async fn preview_card(app: &App, sid: ServerId, message: &Message, url: Option<&
             let size_bytes = bytes.len() as u64;
             let net = app.net.lock().await;
             let node = net.as_ref()?;
-            node.add_blob(bytes).await.ok().map(|blob| commy_core::PreviewPicture {
+            let picture = node.add_blob(bytes.clone()).await.ok().map(|blob| commy_core::PreviewPicture {
                 blob,
                 size_bytes,
                 provider: Some(node.node_id_hex()),
-            })
+            });
+            if let Some(picture) = &picture {
+                pictures::offer(&app.http, &picture.blob, &bytes);
+            }
+            picture
         }
         _ => None,
     };
@@ -1572,6 +1577,9 @@ fn image_sources(provider: &str, neighbors: Vec<[u8; 32]>) -> Vec<String> {
 }
 
 async fn fetch_shared_image(app: &App, image: &commy_core::server::ImageRef, max: u64) -> CmdResult<Vec<u8>> {
+    if let Some(bytes) = pictures::fetch(&app.http, &image.blob, max).await {
+        return Ok(bytes);
+    }
     let (fetcher, sources) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
@@ -1581,7 +1589,10 @@ async fn fetch_shared_image(app: &App, image: &commy_core::server::ImageRef, max
     let mut failure = String::from("nobody who has it is online");
     for source in sources {
         match fetcher.fetch(&image.blob, Some(&source), max).await {
-            Ok(bytes) => return Ok(bytes),
+            Ok(bytes) => {
+                pictures::offer(&app.http, &image.blob, &bytes);
+                return Ok(bytes);
+            }
             Err(e) => failure = err_to_string(e),
         }
     }
@@ -5694,6 +5705,7 @@ async fn store_shared_blob(app: &App, bytes: Vec<u8>) -> CmdResult<String> {
         let node = net.as_ref().ok_or("network is not ready yet")?;
         (node.add_blob(bytes.clone()).await.map_err(err_to_string)?, node.node_id_hex())
     };
+    pictures::offer(&app.http, &blob, &bytes);
     if let Some(path) = server_image_path(app, &blob) {
         write_blob_cache(&path, &bytes).map_err(err_to_string)?;
     }
@@ -6821,9 +6833,13 @@ async fn store_profile_image(
     if let Some(dir) = app.data_dir() {
         commy_core::at_rest::write(&dir.join(file), &bytes).map_err(err_to_string)?;
     }
-    let net = app.net.lock().await;
-    let node = net.as_ref().ok_or("network is not ready yet")?;
-    node.add_blob(bytes).await.map_err(err_to_string)
+    let blob = {
+        let net = app.net.lock().await;
+        let node = net.as_ref().ok_or("network is not ready yet")?;
+        node.add_blob(bytes.clone()).await.map_err(err_to_string)?
+    };
+    pictures::offer(&app.http, &blob, &bytes);
+    Ok(blob)
 }
 
 async fn restore_avatar_blob(app: &tauri::State<'_, App>, node: &CommyNode) {
@@ -7300,6 +7316,7 @@ async fn get_attachment_preview(
     mime: String,
     size_bytes: Option<u64>,
     clicked: Option<bool>,
+    shared: Option<bool>,
 ) -> CmdResult<String> {
     if !is_data_url_safe_image_mime(&mime) {
         return Err("not an image".into());
@@ -7308,7 +7325,21 @@ async fn get_attachment_preview(
     if size_bytes.is_some_and(|size| size > max) {
         return Err("image too large to preview".into());
     }
-    let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
+    let shared = shared.unwrap_or(false);
+    let held = match shared {
+        true => pictures::fetch(&app.http, &blob, max).await,
+        false => None,
+    };
+    let bytes = match held {
+        Some(bytes) => bytes,
+        None => {
+            let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
+            if shared {
+                pictures::offer(&app.http, &blob, &bytes);
+            }
+            bytes
+        }
+    };
     if bytes.len() as u64 > max {
         return Err("image too large to preview".into());
     }
@@ -7328,13 +7359,17 @@ pub(crate) async fn profile_image_bytes(app: &App, blob: &str, provider: Option<
     if let Some(bytes) = profile_images::cached(app, blob) {
         return Ok(bytes);
     }
+    let max = profile_images::MAX_PROFILE_IMAGE_BYTES as u64;
+    if let Some(bytes) = pictures::fetch(&app.http, blob, max).await.filter(|bytes| is_jpeg_or_png(bytes)) {
+        profile_images::keep_if_wanted(app, blob, &bytes);
+        return Ok(bytes);
+    }
     let (fetcher, sources) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
         let neighbors = servers_showing_profile_image(app, blob).into_iter().flat_map(|s| node.neighbors(s)).collect();
         (node.blob_fetcher(), image_sources(provider.unwrap_or_default(), neighbors))
     };
-    let max = profile_images::MAX_PROFILE_IMAGE_BYTES as u64;
     let mut attempts: Vec<Option<&str>> = sources.iter().filter(|s| !s.is_empty()).map(|s| Some(s.as_str())).collect();
     if attempts.is_empty() {
         attempts.push(None);
@@ -7344,6 +7379,7 @@ pub(crate) async fn profile_image_bytes(app: &App, blob: &str, provider: Option<
         match fetcher.fetch(blob, source, max).await {
             Ok(bytes) if is_jpeg_or_png(&bytes) => {
                 profile_images::keep_if_wanted(app, blob, &bytes);
+                pictures::offer(&app.http, blob, &bytes);
                 return Ok(bytes);
             }
             Ok(_) => failure = "not a profile picture".to_string(),

@@ -12226,7 +12226,7 @@ function linkCardImage(preview, layout) {
   const img = el("img");
   img.alt = "";
   img.onclick = () => openLightbox(img.src, preview.url, null);
-  loadImagePreview({ blob: image.blob, provider: image.provider, mime: image.mime, size_bytes: image.size_bytes }, false)
+  loadImagePreview({ blob: image.blob, provider: image.provider, mime: image.mime, size_bytes: image.size_bytes, shared: true }, false)
     .then(src => {
       img.src = src;
       frame.appendChild(img);
@@ -12342,6 +12342,7 @@ function loadImagePreview(att, clicked) {
       mime: att.mime,
       sizeBytes: att.size_bytes ?? null,
       clicked,
+      shared: att.shared ?? false,
     })
       .then(dataUrl => {
         imagePreviewCache.set(att.blob, dataUrl);

@@ -13,7 +13,11 @@ const SCHEMA: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS sync_entries_at ON sync_entries (at)",
     "CREATE TABLE IF NOT EXISTS sync_wakes (tag BYTEA NOT NULL, push TEXT NOT NULL, until_day BIGINT NOT NULL, PRIMARY KEY (tag, push))",
     "CREATE INDEX IF NOT EXISTS sync_wakes_until ON sync_wakes (until_day)",
+    "CREATE TABLE IF NOT EXISTS sync_pictures (id BYTEA PRIMARY KEY, body BYTEA NOT NULL, touched BIGINT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS sync_pictures_touched ON sync_pictures (touched)",
 ];
+
+pub const TOUCH_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
 
 pub const MAX_PUSHES_PER_TAG: usize = 16;
 
@@ -116,6 +120,38 @@ impl Store {
         }
     }
 
+    pub async fn put_picture(&self, id: &[u8; 32], body: &[u8], at: i64) -> Result<(), StoreError> {
+        match self {
+            Store::Memory(m) => {
+                m.pictures.lock().unwrap().insert(*id, (body.to_vec(), at));
+                Ok(())
+            }
+            Store::Postgres(p) => p.put_picture(id, body, at).await,
+        }
+    }
+
+    pub async fn get_picture(&self, id: &[u8; 32], at: i64) -> Result<Option<Vec<u8>>, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.pictures.lock().unwrap().get_mut(id).map(|(body, touched)| {
+                *touched = (*touched).max(at);
+                body.clone()
+            })),
+            Store::Postgres(p) => p.get_picture(id, at).await,
+        }
+    }
+
+    pub async fn prune_pictures(&self, before: i64) -> Result<u64, StoreError> {
+        match self {
+            Store::Memory(m) => {
+                let mut pictures = m.pictures.lock().unwrap();
+                let had = pictures.len();
+                pictures.retain(|_, (_, touched)| *touched >= before);
+                Ok((had - pictures.len()) as u64)
+            }
+            Store::Postgres(p) => p.prune_pictures(before).await,
+        }
+    }
+
     pub async fn ping(&self) -> bool {
         match self {
             Store::Memory(_) => true,
@@ -131,10 +167,13 @@ struct MemoryStream {
     entries: Vec<(u64, [u8; APPEND_NONCE_BYTES], i64, Vec<u8>)>,
 }
 
+type StoredPicture = (Vec<u8>, i64);
+
 #[derive(Default)]
 pub struct MemoryStore {
     streams: Mutex<HashMap<StreamId, MemoryStream>>,
     wakes: Mutex<HashMap<[u8; 32], HashMap<String, i64>>>,
+    pictures: Mutex<HashMap<[u8; 32], StoredPicture>>,
 }
 
 impl MemoryStore {
@@ -385,6 +424,30 @@ impl PgStore {
         Ok(sqlx::query("DELETE FROM sync_wakes WHERE until_day < $1").bind(today).execute(&self.pool).await?.rows_affected())
     }
 
+    async fn put_picture(&self, id: &[u8; 32], body: &[u8], at: i64) -> Result<(), StoreError> {
+        sqlx::query("INSERT INTO sync_pictures (id, body, touched) VALUES ($1, $2, $3) ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, touched = EXCLUDED.touched")
+            .bind(&id[..])
+            .bind(body)
+            .bind(at)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_picture(&self, id: &[u8; 32], at: i64) -> Result<Option<Vec<u8>>, StoreError> {
+        let row = sqlx::query("SELECT body, touched FROM sync_pictures WHERE id = $1").bind(&id[..]).fetch_optional(&self.pool).await?;
+        let Some(row) = row else { return Ok(None) };
+        let touched: i64 = row.try_get("touched")?;
+        if at - touched >= TOUCH_EVERY_MS {
+            sqlx::query("UPDATE sync_pictures SET touched = $2 WHERE id = $1").bind(&id[..]).bind(at).execute(&self.pool).await?;
+        }
+        Ok(Some(row.try_get("body")?))
+    }
+
+    async fn prune_pictures(&self, before: i64) -> Result<u64, StoreError> {
+        Ok(sqlx::query("DELETE FROM sync_pictures WHERE touched < $1").bind(before).execute(&self.pool).await?.rows_affected())
+    }
+
     async fn prune(&self, before: i64) -> Result<u64, StoreError> {
         let removed = sqlx::query("DELETE FROM sync_entries WHERE at < $1").bind(before).execute(&self.pool).await?.rows_affected();
         sqlx::query("DELETE FROM sync_streams s WHERE s.last_at < $1 AND NOT EXISTS (SELECT 1 FROM sync_entries e WHERE e.stream = s.id)")
@@ -431,6 +494,19 @@ mod tests {
         assert!(store.ping().await);
 
         exercise_wakes(store).await;
+        exercise_pictures(store).await;
+    }
+
+    async fn exercise_pictures(store: &Store) {
+        let (id, other) = ([3u8; 32], [4u8; 32]);
+        assert_eq!(store.get_picture(&id, 1_000).await.unwrap(), None);
+        store.put_picture(&id, b"first", 1_000).await.unwrap();
+        store.put_picture(&id, b"sealed", 2_000).await.unwrap();
+        store.put_picture(&other, b"old", 1_000).await.unwrap();
+        assert_eq!(store.get_picture(&id, 2_000 + TOUCH_EVERY_MS).await.unwrap().as_deref(), Some(&b"sealed"[..]), "the latest copy wins");
+        assert_eq!(store.prune_pictures(1_500 + TOUCH_EVERY_MS).await.unwrap(), 1, "a picture nobody fetched or stored again goes");
+        assert_eq!(store.get_picture(&other, 3_000).await.unwrap(), None);
+        assert!(store.get_picture(&id, 3_000).await.unwrap().is_some(), "fetching a picture keeps it");
     }
 
     async fn exercise_wakes(store: &Store) {

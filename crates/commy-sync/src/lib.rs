@@ -1,4 +1,5 @@
 pub mod endpoint;
+pub mod picture;
 pub mod stream;
 pub mod wake;
 pub mod wire;
@@ -8,6 +9,7 @@ pub mod client;
 #[cfg(feature = "client")]
 pub mod pool;
 
+pub use picture::PictureKey;
 pub use stream::{SealError, StreamId, StreamKeys, StreamSecret};
 pub use wire::{ClientFrame, ErrorCode, ServerFrame, WireEntry};
 

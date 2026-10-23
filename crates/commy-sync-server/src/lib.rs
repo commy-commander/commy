@@ -2,6 +2,7 @@ pub mod config;
 pub mod fcm;
 pub mod hub;
 pub mod limits;
+mod pictures;
 mod session;
 pub mod store;
 pub mod wake;
@@ -15,8 +16,9 @@ use axum::extract::DefaultBodyLimit;
 use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use commy_sync::picture::MAX_PICTURE_SEALED;
 use commy_sync::wire::{MAX_CLIENT_FRAME_BYTES, PROTOCOL};
 
 use crate::config::Config;
@@ -37,6 +39,7 @@ pub struct Stats {
     opens: AtomicU64,
     appends: AtomicU64,
     pushes: AtomicU64,
+    pictures: AtomicU64,
 }
 
 impl Stats {
@@ -60,12 +63,21 @@ impl Stats {
         self.pushes.fetch_add(1, Ordering::Relaxed);
     }
 
+    fn stored_picture(&self) {
+        self.pictures.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn connections(&self) -> usize {
         self.connections.load(Ordering::Relaxed)
     }
 
-    fn take_counts(&self) -> (u64, u64, u64) {
-        (self.opens.swap(0, Ordering::Relaxed), self.appends.swap(0, Ordering::Relaxed), self.pushes.swap(0, Ordering::Relaxed))
+    fn take_counts(&self) -> (u64, u64, u64, u64) {
+        (
+            self.opens.swap(0, Ordering::Relaxed),
+            self.appends.swap(0, Ordering::Relaxed),
+            self.pushes.swap(0, Ordering::Relaxed),
+            self.pictures.swap(0, Ordering::Relaxed),
+        )
     }
 }
 
@@ -119,6 +131,7 @@ pub fn router(service: Arc<Service>) -> Router {
         .route("/sync/wake/register", post(wake::register).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/forget", post(wake::forget).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/ring", post(wake::ring).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
+        .route("/sync/pictures/{id}", get(pictures::fetch).merge(put(pictures::store).layer(DefaultBodyLimit::max(MAX_PICTURE_SEALED))))
         .route("/healthz", get(health))
         .with_state(service)
 }
@@ -164,6 +177,11 @@ pub fn spawn_housekeeping(service: Arc<Service>) {
                 Ok(removed) => tracing::info!("sync: removed {removed} entries older than {} days", pruning.retention_days),
                 Err(e) => tracing::warn!("sync: pruning failed: {e}"),
             }
+            match pruning.store.prune_pictures(cutoff).await {
+                Ok(0) => {}
+                Ok(removed) => tracing::info!("sync: removed {removed} pictures nobody used for {} days", pruning.retention_days),
+                Err(e) => tracing::warn!("sync: pruning pictures failed: {e}"),
+            }
         }
     });
     let forgetting = service.clone();
@@ -180,9 +198,9 @@ pub fn spawn_housekeeping(service: Arc<Service>) {
         every.tick().await;
         loop {
             every.tick().await;
-            let (opens, appends, pushes) = service.stats.take_counts();
+            let (opens, appends, pushes, pictures) = service.stats.take_counts();
             tracing::info!(
-                "sync: {} connections, {} live streams, {opens} opens, {appends} appends and {pushes} wake-ups in the last 10 minutes",
+                "sync: {} connections, {} live streams, {opens} opens, {appends} appends, {pictures} pictures and {pushes} wake-ups in the last 10 minutes",
                 service.stats.connections(),
                 service.hub.live_streams()
             );
