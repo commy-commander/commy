@@ -741,7 +741,7 @@ async fn deliver_dms(handle: &tauri::AppHandle, partner: UserId) {
     let app = handle.state::<App>();
     deliver_dms_with(handle, partner, |envelope| {
         let app = &app;
-        async move { try_send_dm(app, partner, &envelope).await }
+        async move { crate::dm_sync::post_inbox(app, partner, &envelope).await || try_send_dm(app, partner, &envelope).await }
     })
     .await;
 }

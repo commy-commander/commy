@@ -5,12 +5,13 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use commy_core::dm::{DmAction, DmMessage};
-use commy_core::{IdentityKey, MessageId, UserId, UserProfile};
+use commy_core::{IdentityKey, MessageId, ServerId, UserId, UserProfile};
+use commy_net::inbox;
 use commy_net::node::IncomingDm;
 use commy_net::sync_streams::{self, DmEntry};
 use commy_net::DmEnvelope;
 use commy_sync::wake::DAY_MS;
-use commy_sync::{StreamId, SyncEvent};
+use commy_sync::{StreamId, StreamKeys, SyncEvent};
 use tauri::{AppHandle, Manager};
 
 use crate::catchup::AppAccess;
@@ -38,6 +39,7 @@ struct Live {
     pool: Pool,
     partners: HashMap<UserId, Partner>,
     owners: HashMap<StreamId, UserId>,
+    inboxes: HashMap<StreamId, (ServerId, StreamKeys)>,
     caught_up: HashSet<StreamId>,
     task: tauri::async_runtime::JoinHandle<()>,
 }
@@ -139,6 +141,7 @@ fn start(handle: &AppHandle) {
                 pool,
                 partners: HashMap::new(),
                 owners: HashMap::new(),
+                inboxes: HashMap::new(),
                 caught_up: HashSet::new(),
                 task,
             });
@@ -202,7 +205,139 @@ fn refresh(handle: &AppHandle) {
         live.pool.follow_together(group);
     }
     drop(guard);
+    tend_inboxes(handle);
     push_wake::register(handle);
+}
+
+fn own_inboxes(app: &App, me: UserId) -> Vec<(ServerId, StreamKeys)> {
+    let holder = crate::channel_lock::holder_of(app);
+    let sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let settled: Vec<ServerId> = sids.into_iter().filter(|sid| !app.awaits_snapshot(*sid)).collect();
+    let now = now_ms();
+    let servers = app.servers.lock().unwrap();
+    settled
+        .into_iter()
+        .filter_map(|sid| {
+            let state = servers.get(&sid)?;
+            let ring = holder.community_ring(state, None)?;
+            Some(inbox::inboxes(state, me, &ring, now).into_iter().map(move |keys| (sid, keys)))
+        })
+        .flatten()
+        .collect()
+}
+
+pub fn tend_inboxes(handle: &AppHandle) {
+    let app = handle.state::<App>();
+    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let mine = own_inboxes(&app, me);
+    let changed = {
+        let mut guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_mut().filter(|l| l.me == me) else { return };
+        let keep: HashSet<StreamId> = mine.iter().map(|(_, keys)| keys.id).collect();
+        let gone: Vec<StreamId> = live.inboxes.keys().filter(|stream| !keep.contains(stream)).copied().collect();
+        for stream in &gone {
+            live.inboxes.remove(stream);
+            live.pool.unfollow(*stream);
+        }
+        let mut group = Vec::new();
+        for (server, keys) in mine {
+            if live.inboxes.contains_key(&keys.id) {
+                continue;
+            }
+            group.push((keys.clone(), account_log::dm_cursor(&app, &keys.id.to_hex())));
+            live.inboxes.insert(keys.id, (server, keys));
+        }
+        let changed = !gone.is_empty() || !group.is_empty();
+        live.pool.follow_together(group);
+        changed
+    };
+    if changed {
+        push_wake::register_again();
+    }
+}
+
+pub fn inboxable(message: &DmMessage) -> bool {
+    !matches!(message.action, DmAction::Call { .. })
+}
+
+fn inbox_to(app: &App, me: UserId, to: UserId) -> Option<StreamKeys> {
+    let holder = crate::channel_lock::holder_of(app);
+    let mut sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    sids.sort();
+    let settled: Vec<ServerId> = sids.into_iter().filter(|sid| !app.awaits_snapshot(*sid)).collect();
+    let now = now_ms();
+    let servers = app.servers.lock().unwrap();
+    settled.into_iter().find_map(|sid| {
+        let state = servers.get(&sid)?;
+        let ring = holder.community_ring(state, None)?;
+        inbox::writable(state, me, to, &ring, now)
+    })
+}
+
+pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
+    if !inboxable(&envelope.message) || sync_link::url().is_none() {
+        return false;
+    }
+    if syncable(&envelope.message) && partner_follows(app, to) {
+        return false;
+    }
+    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return false };
+    let (Some(key), Some(keys)) = (partner_key(app, to), inbox_to(app, me, to)) else { return false };
+    let Some(plain) = inbox::seal(&key, envelope) else { return false };
+    let stream = keys.id;
+    let wake = rings(&envelope.message).then(|| keys.wake_tag(&to.to_string(), push_wake::today()));
+    let (client, borrowed) = {
+        let mut guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_mut().filter(|l| l.me == me) else { return false };
+        let borrowed = !live.pool.follows(stream);
+        if borrowed {
+            live.pool.follow_together_tail(vec![(keys, 0)], Some(0));
+        }
+        (live.pool.client_for(stream), borrowed)
+    };
+    let sent = tokio::time::timeout(HOLD_WAIT, sync_link::append(client, stream, plain)).await;
+    if borrowed {
+        if let Some(live) = LIVE.lock().unwrap().as_mut() {
+            live.pool.unfollow(stream);
+        }
+    }
+    match sent {
+        Ok(Ok(_)) => {
+            if let Some(tag) = wake {
+                let http = app.http.clone();
+                tauri::async_runtime::spawn(push_wake::ring(http, vec![tag]));
+            }
+            true
+        }
+        Ok(Err(e)) => {
+            tracing::debug!("could not leave a first message on the sync service: {e}");
+            false
+        }
+        Err(_) => {
+            tracing::debug!("the sync service did not take a first message in time");
+            false
+        }
+    }
+}
+
+fn on_inbox(handle: &AppHandle, server: ServerId, plain: &[u8], live_now: bool) {
+    let app = handle.state::<App>();
+    let Some(identity) = app.identity() else { return };
+    let Some(envelope) = inbox::open(&identity, plain) else { return };
+    let from = envelope.message.from;
+    let member = app.servers.lock().unwrap().get(&server).is_some_and(|state| {
+        state.server.is_current_member(from) && state.profiles.get(&from).and_then(|p| p.identity) == envelope.sender.identity
+    });
+    if !member || !inboxable(&envelope.message) {
+        return;
+    }
+    let Ok(node) = data_encoding::HEXLOWER_PERMISSIVE.decode(envelope.message.from_node.trim().as_bytes()) else { return };
+    let Ok(node) = <[u8; 32]>::try_from(node) else { return };
+    let ring = should_ring(live_now, envelope.message.created_at, Utc::now());
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::take_dm(&handle, IncomingDm { envelope, node }, ring).await;
+    });
 }
 
 pub fn wake_tags(app: &App, days: &[i64]) -> Vec<([u8; 32], i64)> {
@@ -211,8 +346,12 @@ pub fn wake_tags(app: &App, days: &[i64]) -> Vec<([u8; 32], i64)> {
         Some(live) if live.me_key == identity.public() => live.partners.values().map(|p| p.key).collect(),
         _ => return Vec::new(),
     };
+    let inboxes: Vec<StreamKeys> =
+        LIVE.lock().unwrap().as_ref().map(|live| live.inboxes.values().map(|(_, keys)| keys.clone()).collect()).unwrap_or_default();
     let who = me.to_string();
-    let mut tags = Vec::new();
+    let name = who.as_str();
+    let mut tags: Vec<([u8; 32], i64)> =
+        days.iter().flat_map(|day| inboxes.iter().map(move |keys| (keys.wake_tag(name, *day), *day))).collect();
     for day in days {
         let Some(start) = DateTime::from_timestamp_millis(day * DAY_MS) else { continue };
         let epoch = sync_streams::dm_epoch(start);
@@ -247,6 +386,15 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
     let app = handle.state::<App>();
     match event {
         SyncEvent::Entry { stream, seq, plain, .. } => {
+            let inbox = {
+                let live = LIVE.lock().unwrap();
+                live.as_ref().and_then(|l| l.inboxes.get(&stream).map(|(server, _)| (*server, l.caught_up.contains(&stream))))
+            };
+            if let Some((server, live_now)) = inbox {
+                on_inbox(handle, server, &plain, live_now);
+                account_log::set_dm_cursor(&app, stream.to_hex(), seq, live_now);
+                return;
+            }
             let found = {
                 let live = LIVE.lock().unwrap();
                 live.as_ref().and_then(|l| {
@@ -265,7 +413,7 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
         }
         SyncEvent::CaughtUp { stream, seq } => {
             let ours = match LIVE.lock().unwrap().as_mut() {
-                Some(live) if live.owners.contains_key(&stream) => {
+                Some(live) if live.owners.contains_key(&stream) || live.inboxes.contains_key(&stream) => {
                     live.caught_up.insert(stream);
                     true
                 }
@@ -280,7 +428,7 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
     }
 }
 
-struct Quiet(AppHandle);
+pub(crate) struct Quiet(pub(crate) AppHandle);
 
 impl AppAccess for Quiet {
     fn app(&self) -> &App {
@@ -494,6 +642,17 @@ mod tests {
         app.outbox.lock().unwrap().add_dm(partner, next_id);
         assert_eq!(waiting_dms(&app, partner), HashSet::from([next_id]), "not yet held by the service");
         assert_eq!(app.outbox.lock().unwrap().dm_queue(partner), vec![id, next_id]);
+    }
+
+    #[test]
+    fn first_messages_friend_requests_invites_and_reports_may_wait_in_an_inbox_but_calls_do_not() {
+        let (a, b) = (UserId::new(), UserId::new());
+        assert!(inboxable(&DmMessage::new(a, b, "hello")));
+        assert!(inboxable(&DmMessage::new(a, b, safety::FriendSignal::Request.encode())));
+        assert!(inboxable(&DmMessage::new(a, b, format!("{}report", safety::REPORT_PREFIX))));
+        assert!(inboxable(&DmMessage::acting(a, b, DmAction::GroupInvite { ticket: "t".into() }, "")));
+        let call = DmAction::Call { call: commy_core::ChannelId::new(), signal: commy_core::dm::CallSignal::Ring };
+        assert!(!inboxable(&DmMessage::acting(a, b, call, "")));
     }
 
     #[test]

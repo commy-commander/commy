@@ -368,6 +368,13 @@ server or channel a log belongs to.
   is removed. The service cannot open a picture or tell whose it is; someone
   who already holds the exact same file could check whether it is stored.
   Files, voice messages and videos stay peer to peer.
+- **First messages:** a first message, friend request, group invite or
+  report to someone who does not follow a conversation with the sender yet is
+  left in that person's inbox log on a server both are in. The inbox is named
+  from the server's key, so the service cannot tell whose it is, and each
+  entry is sealed to the recipient alone with a one-time key. Other members of
+  that server could count what arrives in an inbox but cannot read it or tell
+  who sent it.
 - **Setting it up:** `docker compose up -d sync`, then add `SYNC_URL` and
   recreate auth: `docker compose up -d --no-deps auth`. The service answers
   `GET /sync/healthz`. It logs only totals (connections, live logs, opens,

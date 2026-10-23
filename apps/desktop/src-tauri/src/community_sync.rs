@@ -318,6 +318,7 @@ async fn tend(handle: &AppHandle) {
         });
     }
     refresh(handle);
+    crate::dm_sync::tend_inboxes(handle);
     share_keys(&app);
     release_parked(handle);
     publish_snapshots(handle);
