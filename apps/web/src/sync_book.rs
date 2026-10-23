@@ -197,9 +197,15 @@ impl Book {
             return false;
         }
         self.list.servers.insert(server, entry);
-        if self.keys.get(&server).is_none_or(|(_, seen)| at > *seen) {
-            self.keys.insert(server, (key, at));
+        self.offer_key(server, key, at);
+        true
+    }
+
+    pub fn offer_key(&mut self, server: ServerId, key: SharedKey, at: i64) -> bool {
+        if self.keys.contains_key(&server) {
+            return false;
         }
+        self.keys.insert(server, (key, at));
         true
     }
 
@@ -368,6 +374,12 @@ mod tests {
         let joined = entry(server, Utc::now());
         assert!(book.join(server, joined.clone(), key.clone(), 5));
         assert!(!book.join(server, joined.clone(), key.clone(), 6), "joining twice changes nothing");
+        assert!(!book.offer_key(server, key.clone(), 7), "a key we hold is kept");
+        let listed = ServerId::new();
+        let mut from_log = Book::new(EntryList { servers: [(listed, entry(listed, Utc::now()))].into(), ..Default::default() });
+        assert!(!from_log.join(listed, entry(listed, Utc::now()), key.clone(), 5), "another device listed it first");
+        assert!(from_log.offer_key(listed, key.clone(), 5), "but the invite still hands over its key");
+        assert!(from_log.given().contains_key(&listed));
         assert!(book.given().contains_key(&server));
         assert_eq!(book.joined_ms(server), Some(joined.since.timestamp_millis()));
         assert_eq!(book.fold(Record::parse(&joined_record(server, &joined))), Change::Nothing, "our own server record echoes back quietly");
