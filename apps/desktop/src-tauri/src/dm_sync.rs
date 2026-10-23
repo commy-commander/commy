@@ -227,6 +227,14 @@ fn own_inboxes(app: &App, me: UserId) -> Vec<(ServerId, StreamKeys)> {
         .collect()
 }
 
+pub fn tend(handle: &AppHandle) {
+    if LIVE.lock().unwrap().is_none() {
+        start(handle);
+    } else {
+        tend_inboxes(handle);
+    }
+}
+
 pub fn tend_inboxes(handle: &AppHandle) {
     let app = handle.state::<App>();
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
@@ -270,12 +278,11 @@ fn inbox_to(app: &App, me: UserId, to: UserId) -> Option<StreamKeys> {
     let mut sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
     sids.sort();
     let settled: Vec<ServerId> = sids.into_iter().filter(|sid| !app.awaits_snapshot(*sid)).collect();
-    let now = now_ms();
     let servers = app.servers.lock().unwrap();
     settled.into_iter().find_map(|sid| {
         let state = servers.get(&sid)?;
         let ring = holder.community_ring(state, None)?;
-        inbox::writable(state, me, to, &ring, now)
+        inbox::writable(state, me, to, &ring)
     })
 }
 
@@ -329,16 +336,29 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
 fn on_inbox(handle: &AppHandle, server: ServerId, plain: &[u8], at: i64, live_now: bool) {
     let app = handle.state::<App>();
     let Some(identity) = app.identity() else { return };
-    let Some(envelope) = inbox::open(&identity, plain) else { return };
+    let Some(envelope) = inbox::open(&identity, plain) else {
+        tracing::info!("an entry in our first-message inbox did not open");
+        return;
+    };
     let from = envelope.message.from;
     let member = app.servers.lock().unwrap().get(&server).is_some_and(|state| {
         state.server.is_current_member(from) && state.profiles.get(&from).and_then(|p| p.identity) == envelope.sender.identity
     });
-    if !member || (is_call(&envelope.message) && !call_fresh(at, now_ms())) {
+    if !member {
+        tracing::info!("dropped a first message from {from}, who is not a member we know with that key");
         return;
     }
-    let Ok(node) = data_encoding::HEXLOWER_PERMISSIVE.decode(envelope.message.from_node.trim().as_bytes()) else { return };
-    let Ok(node) = <[u8; 32]>::try_from(node) else { return };
+    if is_call(&envelope.message) && !call_fresh(at, now_ms()) {
+        return;
+    }
+    let Some(node) = data_encoding::HEXLOWER_PERMISSIVE
+        .decode(envelope.message.from_node.trim().as_bytes())
+        .ok()
+        .and_then(|node| <[u8; 32]>::try_from(node).ok())
+    else {
+        tracing::info!("dropped a first message from {from} without a device");
+        return;
+    };
     let ring = should_ring(live_now, envelope.message.created_at, Utc::now());
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {

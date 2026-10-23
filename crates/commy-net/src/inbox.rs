@@ -27,11 +27,12 @@ pub fn inboxes(state: &ServerState, user: UserId, ring: &Keyring, now_ms: i64) -
         .collect()
 }
 
-pub fn writable(state: &ServerState, me: UserId, to: UserId, ring: &Keyring, now_ms: i64) -> Option<StreamKeys> {
-    if !state.server.is_current_member(me) || !state.server.is_current_member(to) || me == to {
+pub fn writable(state: &ServerState, me: UserId, to: UserId, ring: &Keyring) -> Option<StreamKeys> {
+    if !state.server.is_current_member(me) || !state.server.is_current_member(to) || me == to || state.is_deleted() {
         return None;
     }
-    inboxes(state, to, ring, now_ms).into_iter().next()
+    let theirs = state.community_keys().grant_for(to)?.key;
+    ring.secret(theirs).map(|secret| inbox_for(secret, state.server.id, to))
 }
 
 fn cipher(secret: [u8; 32]) -> Aes256Gcm {
@@ -106,11 +107,11 @@ mod tests {
         assert_ne!(inbox_for(&secret, elsewhere, alice).id, inbox.id);
         assert_ne!(inbox_for(&other, server, alice).id, inbox.id, "a new community key moves the inbox");
         let state = commy_core::ServerState::new(Server::new("Moonbase", alice));
-        assert!(writable(&state, alice, alice, &Keyring::default(), 0).is_none());
-        assert!(writable(&state, alice, bob, &Keyring::default(), 0).is_none(), "only to a current member");
+        assert!(writable(&state, alice, alice, &Keyring::default()).is_none());
+        assert!(writable(&state, alice, bob, &Keyring::default()).is_none(), "only to a current member");
         let mut state = state;
         state.apply(ServerEvent::MemberJoin { server: state.server.id, profile: UserProfile { id: bob, ..UserProfile::new("bob") } }).unwrap();
-        assert!(writable(&state, alice, bob, &Keyring::default(), 0).is_none(), "and only with the community key");
+        assert!(writable(&state, alice, bob, &Keyring::default()).is_none(), "and only with the community key");
     }
 
     fn settle(state: &mut ServerState, me: UserId) -> Keyring {
@@ -131,9 +132,31 @@ mod tests {
         let now = chrono::Utc::now().timestamp_millis();
         let owners = Keyring::unlock_community(&state, owner, &identity_for(owner));
         let members = Keyring::unlock_community(&state, member, &identity_for(member));
-        let written = writable(&state, owner, member, &owners, now).expect("both are members holding the key");
+        let written = writable(&state, owner, member, &owners).expect("both are members holding the key");
         let read = inboxes(&state, member, &members, now);
         assert_eq!(read.first().map(|keys| keys.id), Some(written.id));
-        assert!(!inboxes(&state, member, &members, now).iter().any(|keys| keys.id == writable(&state, member, owner, &members, now).unwrap().id));
+        assert!(!inboxes(&state, member, &members, now).iter().any(|keys| keys.id == writable(&state, member, owner, &members).unwrap().id));
+    }
+
+    #[test]
+    fn a_first_message_goes_where_the_recipient_reads_even_before_they_hold_the_newest_key() {
+        let (mut state, _, owner) = fixture();
+        let member = join(&mut state, "member");
+        settle(&mut state, owner);
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut owners = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        let held: Vec<_> = state.community_keys().heads();
+        let record = owners.rotate(state.server.id, KeyScope::Community, &held, now + 1);
+        let newest = record.id;
+        state.apply(ServerEvent::CommunityKeyAdd { server: state.server.id, key: record }).unwrap();
+        for event in owners.grant_events(&state, KeyScope::Community, newest, &[owner]) {
+            state.apply(event).unwrap();
+        }
+        let owners = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        let members = Keyring::unlock_community(&state, member, &identity_for(member));
+        assert!(owners.holds(newest) && !members.holds(newest), "the member has not been given the newest key yet");
+        let written = writable(&state, owner, member, &owners).expect("the owner still holds the member's key");
+        let read = inboxes(&state, member, &members, now);
+        assert_eq!(read.first().map(|keys| keys.id), Some(written.id));
     }
 }
