@@ -35,6 +35,9 @@ sha2 = "0.11"
 tokio = { workspace = true }
 iroh-blobs = { workspace = true }
 
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+iroh-blobs = { version = "0.103", default-features = false }
+
 [dev-dependencies]
 commy-core = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true }

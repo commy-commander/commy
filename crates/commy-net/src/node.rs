@@ -15,7 +15,6 @@ pub use iroh::endpoint::Connection;
 use iroh::endpoint::{RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
-#[cfg(not(wasm_browser))]
 use iroh_blobs::store::mem::MemStore;
 use iroh_gossip::api::{Event as GossipEvent, GossipSender};
 use iroh_gossip::net::Gossip;
@@ -570,12 +569,10 @@ impl MediaDialer {
 
 pub const MAX_BLOB_BYTES: u64 = 20 * 1024 * 1024;
 
-#[cfg(not(wasm_browser))]
 pub fn blob_hash(bytes: &[u8]) -> String {
     iroh_blobs::Hash::new(bytes).to_string()
 }
 
-#[cfg(not(wasm_browser))]
 pub fn is_blob_of(blob: &str, bytes: &[u8]) -> bool {
     blob.parse::<iroh_blobs::Hash>().is_ok_and(|hash| hash == iroh_blobs::Hash::new(bytes))
 }
@@ -586,13 +583,13 @@ pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
 }
 
 #[derive(Clone)]
-#[cfg(not(wasm_browser))]
 pub struct BlobFetcher {
     blobs: MemStore,
     endpoint: Endpoint,
+    lookup: MemoryLookup,
+    relays: Vec<RelayUrl>,
 }
 
-#[cfg(not(wasm_browser))]
 impl BlobFetcher {
     pub async fn fetch(&self, hash: &str, provider_hex: Option<&str>, max: u64) -> Result<Vec<u8>> {
         let hash: iroh_blobs::Hash = hash.parse().context("invalid blob hash")?;
@@ -604,6 +601,9 @@ impl BlobFetcher {
         }
         let provider = provider_hex.context("blob not local and no provider known")?;
         let node_id = parse_node_hex(provider)?;
+        if node_id != self.endpoint.id() {
+            self.lookup.add_endpoint_info(addr_via_relays(node_id, &self.relays));
+        }
         let bytes = fetch_capped(&self.endpoint, node_id, hash, max).await?;
         if let Err(e) = self.blobs.add_bytes(bytes.clone()).await {
             tracing::debug!("fetched blob was not kept locally: {e}");
@@ -612,7 +612,6 @@ impl BlobFetcher {
     }
 }
 
-#[cfg(not(wasm_browser))]
 async fn fetch_capped(endpoint: &Endpoint, node_id: EndpointId, hash: iroh_blobs::Hash, max: u64) -> Result<Vec<u8>> {
     use iroh_blobs::get::fsm::{self, ConnectedNext, EndBlobNext};
     let connection = endpoint
@@ -637,7 +636,6 @@ async fn fetch_capped(endpoint: &Endpoint, node_id: EndpointId, hash: iroh_blobs
 pub struct CommyNode {
     router: Router,
     gossip: Gossip,
-    #[cfg(not(wasm_browser))]
     blobs: MemStore,
     lookup: MemoryLookup,
     relays: Vec<RelayUrl>,
@@ -768,9 +766,7 @@ impl CommyNode {
         };
         let gossip = Gossip::builder().spawn(endpoint.clone());
         let router = Router::builder(endpoint).accept(iroh_gossip::ALPN, gossip.clone());
-        #[cfg(not(wasm_browser))]
         let blobs = MemStore::new();
-        #[cfg(not(wasm_browser))]
         let router = router.accept(iroh_blobs::ALPN, iroh_blobs::BlobsProtocol::new(&blobs, None));
         let router = router
             .accept(MEDIA_ALPN, MediaAcceptor { tx: media_tx, gate: media_gate.clone() })
@@ -786,7 +782,6 @@ impl CommyNode {
             Self {
                 router,
                 gossip,
-                #[cfg(not(wasm_browser))]
                 blobs,
                 lookup,
                 relays,
@@ -1175,14 +1170,12 @@ impl CommyNode {
         MediaDialer { endpoint: self.endpoint() }
     }
 
-    #[cfg(not(wasm_browser))]
     pub async fn add_blob(&self, bytes: Vec<u8>) -> Result<String> {
         Ok(self.blobs.add_bytes(bytes).await?.hash.to_string())
     }
 
-    #[cfg(not(wasm_browser))]
     pub fn blob_fetcher(&self) -> BlobFetcher {
-        BlobFetcher { blobs: self.blobs.clone(), endpoint: self.endpoint() }
+        BlobFetcher { blobs: self.blobs.clone(), endpoint: self.endpoint(), lookup: self.lookup.clone(), relays: self.relays.clone() }
     }
 
     pub fn set_media_gate(&self, gate: MediaGate) {

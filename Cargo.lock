@@ -1164,6 +1164,7 @@ dependencies = [
  "data-encoding",
  "iroh",
  "js-sys",
+ "mime_guess",
  "n0-future",
  "serde",
  "serde_json",

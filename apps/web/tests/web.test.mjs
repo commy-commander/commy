@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -178,4 +178,67 @@ test("the speaker drops the oldest sound when it falls far behind, and goes quie
   for (let i = 0; i < 200; i++) queue.fill(out);
   assert.ok(out.every(sample => sample === 0));
   assert.equal(queue.playing, false);
+});
+
+function fakeDocument() {
+  const made = [];
+  const body = { children: [], appendChild(node) { this.children.push(node); } };
+  const doc = {
+    body,
+    made,
+    createElement(tag) {
+      const listeners = {};
+      const node = {
+        tag,
+        clicks: 0,
+        addEventListener(event, callback) { listeners[event] = callback; },
+        fire(event) { listeners[event](); },
+        click() { this.clicks += 1; },
+        remove() { body.children = body.children.filter(child => child !== node); },
+      };
+      made.push(node);
+      return node;
+    },
+  };
+  return doc;
+}
+
+test("file commands the browser answers with bytes are handled by the backend", () => {
+  for (const cmd of [...WEB_BYTE_COMMANDS, "attach_dm_bytes", "get_attachment_preview"]) {
+    assert.equal(webDefault(cmd).known, false, cmd);
+  }
+  for (const cmd of ["attach_dm_bytes", "get_attachment_preview"]) assert.ok(rustCommands.has(cmd), cmd);
+});
+
+test("picking a file opens the browser's own picker and gives back the chosen file", async () => {
+  const doc = fakeDocument();
+  const picking = webPickFile(doc, "video");
+  const [input] = doc.made;
+  assert.equal(input.type, "file");
+  assert.equal(input.accept, WEB_VIDEO_ACCEPT);
+  assert.equal(input.clicks, 1);
+  input.files = [{ name: "clip.mp4" }];
+  input.fire("change");
+  assert.deepEqual(await picking, { name: "clip.mp4" });
+});
+
+test("closing the picker sends nothing", async () => {
+  const doc = fakeDocument();
+  const picking = webPickFile(doc);
+  assert.equal(doc.made[0].accept, undefined);
+  doc.made[0].fire("cancel");
+  assert.equal(await picking, null);
+});
+
+test("a downloaded file is saved under its own name and leaves nothing behind on the page", () => {
+  const doc = fakeDocument();
+  const revoked = [];
+  const urls = { createObjectURL: () => "blob:one", revokeObjectURL: url => revoked.push(url) };
+  const saved = webSaveFile(doc, urls, new Uint8Array([1, 2, 3]), "report.pdf");
+  const [link] = doc.made;
+  assert.equal(saved, "report.pdf");
+  assert.equal(link.href, "blob:one");
+  assert.equal(link.clicks, 1);
+  assert.deepEqual(doc.body.children, []);
+  assert.equal(webSaveFile(fakeDocument(), urls, new Uint8Array([1]), ""), "file");
 });
