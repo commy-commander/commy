@@ -9,6 +9,10 @@ pub const BEAT: Duration = Duration::from_secs(45);
 
 pub const EXPIRE: Duration = Duration::from_secs(120);
 
+pub const SERVICE_BEAT: Duration = Duration::from_secs(5 * 60);
+
+pub const SERVICE_EXPIRE: Duration = Duration::from_secs(11 * 60);
+
 const SWEEP_EVERY: Duration = Duration::from_secs(15);
 
 const FAREWELL_WAIT: Duration = Duration::from_millis(1500);
@@ -20,6 +24,7 @@ type DeviceSaid = HashMap<String, (Presence, Instant)>;
 #[derive(Debug, Default)]
 pub struct Liveness {
     heard: HashMap<(ServerId, UserId), Instant>,
+    lasting: HashMap<(ServerId, UserId), Instant>,
     devices: HashMap<(ServerId, UserId), DeviceSaid>,
     last_sweep_ms: Option<i64>,
 }
@@ -36,6 +41,12 @@ pub fn heard(app: &App, server: ServerId, user: UserId, at: Instant) {
     app.liveness.lock().unwrap().heard.insert((server, user), at);
 }
 
+pub fn heard_through_service(app: &App, server: ServerId, user: UserId, now: Instant) {
+    let mut live = app.liveness.lock().unwrap();
+    live.heard.insert((server, user), now);
+    live.lasting.insert((server, user), now + SERVICE_EXPIRE);
+}
+
 pub fn settle_device_presence(app: &App, state: &mut ServerState, user: UserId, sender: &[u8; 32], presence: Presence, now: Instant) -> bool {
     let node = data_encoding::HEXLOWER.encode(sender);
     if !state.devices_of(user).iter().any(|d| d.node == node) {
@@ -44,7 +55,7 @@ pub fn settle_device_presence(app: &App, state: &mut ServerState, user: UserId, 
     let mut live = app.liveness.lock().unwrap();
     let said = live.devices.entry((state.server.id, user)).or_default();
     said.insert(node, (presence, now));
-    said.retain(|_, (_, at)| now.duration_since(*at) <= EXPIRE);
+    said.retain(|_, (_, at)| now.duration_since(*at) <= SERVICE_EXPIRE);
     if said.len() < 2 {
         return false;
     }
@@ -65,7 +76,9 @@ pub fn sweep(app: &App, me: UserId, now: Instant, wall_ms: i64, expire: Duration
     live.last_sweep_ms = Some(wall_ms);
     if asleep {
         live.heard.clear();
+        live.lasting.clear();
     }
+    live.lasting.retain(|_, until| now < *until);
     let mut changed = Vec::new();
     let mut online = HashSet::new();
     for (sid, state) in servers.iter_mut() {
@@ -78,7 +91,8 @@ pub fn sweep(app: &App, me: UserId, now: Instant, wall_ms: i64, expire: Duration
         let mut gone = false;
         for user in shown {
             let last = *live.heard.entry((*sid, user)).or_insert(now);
-            if now.duration_since(last) > expire {
+            let lasting = live.lasting.contains_key(&(*sid, user));
+            if now.duration_since(last) > expire && !lasting {
                 gone |= state.apply(ServerEvent::PresenceUpdate { user, presence: Presence::Offline }) == Ok(true);
             } else {
                 online.insert((*sid, user));
@@ -104,6 +118,7 @@ fn hear_voice_peers(app: &App, now: Instant) {
 pub fn rest(app: &App) {
     let mut live = app.liveness.lock().unwrap();
     live.heard.clear();
+    live.lasting.clear();
     live.devices.clear();
 }
 
@@ -117,11 +132,32 @@ fn server_ids(app: &App) -> Vec<ServerId> {
     app.servers.lock().unwrap().keys().copied().collect()
 }
 
-async fn send_all(app: &App, user: UserId, presence: Presence) {
+pub fn here(app: &App, server: ServerId) -> Vec<WirePayload> {
+    let Some((me, presence)) = own_beat(app) else { return Vec::new() };
+    let mut events: Vec<ServerEvent> = crate::devices::announcement(app, server).into_iter().collect();
+    events.push(ServerEvent::PresenceUpdate { user: me, presence });
+    let voice = app.voice_session.lock().unwrap().as_ref().filter(|s| s.server == server).map(|s| s.channel);
+    if let Some(channel) = voice {
+        let (muted, deafened) = {
+            let voice = app.voice.lock().unwrap();
+            (voice.muted, voice.deafened)
+        };
+        let since = app.servers.lock().unwrap().get(&server).and_then(|s| s.voice_since(me));
+        events.push(ServerEvent::VoiceState { user: me, channel: Some(channel), muted, deafened, since });
+    }
+    events.into_iter().map(|event| app.wire_for(server, event)).collect()
+}
+
+async fn send_all(app: &App, user: UserId, presence: Presence, through_service: bool) {
     let payloads: Vec<(ServerId, WirePayload)> = server_ids(app)
         .into_iter()
         .map(|sid| (sid, app.wire_for(sid, ServerEvent::PresenceUpdate { user, presence })))
         .collect();
+    if through_service {
+        for (sid, payload) in &payloads {
+            crate::community_sync::signal(*sid, payload);
+        }
+    }
     let net = app.net.lock().await;
     let Some(node) = net.as_ref() else { return };
     for (sid, payload) in payloads {
@@ -134,15 +170,15 @@ async fn send_all(app: &App, user: UserId, presence: Presence) {
     }
 }
 
-pub async fn beat(app: &App) {
+pub async fn beat(app: &App, through_service: bool) {
     if let Some((me, presence)) = own_beat(app) {
-        send_all(app, me, presence).await;
+        send_all(app, me, presence, through_service).await;
     }
 }
 
 pub async fn farewell(app: &App) {
     let Some((me, _)) = own_beat(app) else { return };
-    send_all(app, me, Presence::Offline).await;
+    send_all(app, me, Presence::Offline, true).await;
     tokio::time::sleep(FAREWELL_LINGER).await;
 }
 
@@ -154,6 +190,7 @@ pub fn say_goodbye(app: &App) {
 
 pub async fn run(access: impl AppAccess) {
     let mut beat_due = Instant::now() + BEAT;
+    let mut service_due = Instant::now() + SERVICE_BEAT;
     loop {
         tokio::time::sleep(SWEEP_EVERY).await;
         let app = access.app();
@@ -163,7 +200,11 @@ pub async fn run(access: impl AppAccess) {
         }
         if Instant::now() >= beat_due {
             beat_due = Instant::now() + BEAT;
-            beat(app).await;
+            let through_service = Instant::now() >= service_due;
+            if through_service {
+                service_due = Instant::now() + SERVICE_BEAT;
+            }
+            beat(app, through_service).await;
         }
         let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { continue };
         hear_voice_peers(app, Instant::now());
@@ -231,6 +272,32 @@ mod tests {
     }
 
     #[test]
+    fn a_member_heard_through_the_service_stays_online_between_its_slower_beats() {
+        let me = UserProfile::new("me");
+        let friend = UserProfile::new("friend");
+        let (app, sid) = app_with(&[&me, &friend]);
+        let start = Instant::now();
+        sweep(&app, me.id, start, 0, EXPIRE);
+        heard_through_service(&app, sid, friend.id, start);
+        assert!(sweep(&app, me.id, start + SERVICE_BEAT, 15_000, EXPIRE).is_empty());
+        assert_eq!(presence(&app, sid, friend.id), Presence::Online);
+        assert_eq!(sweep(&app, me.id, start + SERVICE_EXPIRE + SWEEP_EVERY, 30_000, EXPIRE), vec![sid]);
+        assert_eq!(presence(&app, sid, friend.id), Presence::Offline);
+    }
+
+    #[test]
+    fn saying_we_are_here_sends_presence_and_nothing_while_invisible() {
+        let mut me = UserProfile::new("me");
+        let (app, sid) = app_with(&[&me]);
+        *app.profile.lock().unwrap() = Some(me.clone());
+        let said: Vec<_> = here(&app, sid).iter().filter_map(|p| commy_net::community_streams::event_of(p).map(|(e, _)| e.clone())).collect();
+        assert_eq!(said, vec![ServerEvent::PresenceUpdate { user: me.id, presence: Presence::Online }]);
+        me.presence = Presence::Invisible;
+        *app.profile.lock().unwrap() = Some(me);
+        assert!(here(&app, sid).is_empty());
+    }
+
+    #[test]
     fn waking_from_sleep_gives_everyone_a_fresh_window() {
         let me = UserProfile::new("me");
         let friend = UserProfile::new("friend");
@@ -295,7 +362,7 @@ mod tests {
         says(&stranger, Presence::Offline, now);
         assert_eq!(presence(&app, sid, friend.id), Presence::Offline, "an unknown device is not one of theirs");
         says(&desktop, Presence::Online, now);
-        says(&tablet, Presence::Offline, now + EXPIRE + Duration::from_secs(1));
+        says(&tablet, Presence::Offline, now + SERVICE_EXPIRE + Duration::from_secs(1));
         assert_eq!(presence(&app, sid, friend.id), Presence::Offline, "the desktop has gone quiet too");
     }
 }

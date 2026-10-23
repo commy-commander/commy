@@ -2,27 +2,39 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use commy_sync::stream::StreamId;
-use commy_sync::wire::WireEntry;
+use commy_sync::wire::{Blob, WireEntry};
 use tokio::sync::broadcast;
 
 const LIVE_BUFFER: usize = 256;
 
+#[derive(Debug)]
+pub enum Live {
+    Entry(WireEntry),
+    Signal { from: u64, body: Blob },
+}
+
 #[derive(Default)]
 pub struct Hub {
-    streams: Mutex<HashMap<StreamId, broadcast::Sender<Arc<WireEntry>>>>,
+    streams: Mutex<HashMap<StreamId, broadcast::Sender<Arc<Live>>>>,
 }
 
 impl Hub {
-    pub fn subscribe(&self, stream: StreamId) -> broadcast::Receiver<Arc<WireEntry>> {
+    pub fn subscribe(&self, stream: StreamId) -> broadcast::Receiver<Arc<Live>> {
         let mut streams = self.streams.lock().unwrap();
         streams.entry(stream).or_insert_with(|| broadcast::channel(LIVE_BUFFER).0).subscribe()
     }
 
     pub fn publish(&self, stream: &StreamId, entry: WireEntry) {
+        self.send(stream, Live::Entry(entry));
+    }
+
+    pub fn signal(&self, stream: &StreamId, from: u64, body: Blob) -> usize {
+        self.send(stream, Live::Signal { from, body })
+    }
+
+    fn send(&self, stream: &StreamId, live: Live) -> usize {
         let streams = self.streams.lock().unwrap();
-        if let Some(sender) = streams.get(stream) {
-            let _ = sender.send(Arc::new(entry));
-        }
+        streams.get(stream).map_or(0, |sender| sender.send(Arc::new(live)).unwrap_or(0))
     }
 
     pub fn release(&self, stream: &StreamId) {
@@ -40,7 +52,6 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commy_sync::wire::Blob;
     use commy_sync::StreamSecret;
 
     fn entry(seq: u64) -> WireEntry {
@@ -55,7 +66,9 @@ mod tests {
         let mut on_a = hub.subscribe(a);
         let mut on_b = hub.subscribe(b);
         hub.publish(&a, entry(1));
-        assert_eq!(on_a.recv().await.unwrap().seq, 1);
+        assert!(matches!(&*on_a.recv().await.unwrap(), Live::Entry(e) if e.seq == 1));
+        assert_eq!(hub.signal(&a, 7, Blob(vec![1])), 1);
+        assert!(matches!(&*on_a.recv().await.unwrap(), Live::Signal { from: 7, .. }));
         assert!(on_b.try_recv().is_err());
         hub.publish(&StreamSecret::random().keys().id, entry(9));
         assert!(on_b.try_recv().is_err());

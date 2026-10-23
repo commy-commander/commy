@@ -368,10 +368,18 @@ server or channel a log belongs to.
   is removed. The service cannot open a picture or tell whose it is; someone
   who already holds the exact same file could check whether it is stored.
   Files, voice messages and videos stay peer to peer.
+- **Live signals:** who is online, typing, in a voice channel, sharing a screen
+  or a camera reaches the other members' open connections on the same log and
+  is never stored. Each signal is sealed like a log entry, signed with the
+  log's write key and at most 4 KB. Apps send a presence beat every 5 minutes
+  and members heard this way stay shown online for 11 minutes. Signals have
+  their own allowance per address (60 at once, then 2 a second) and count
+  toward the daily byte limit.
 - **Setting it up:** `docker compose up -d sync`, then add `SYNC_URL` and
   recreate auth: `docker compose up -d --no-deps auth`. The service answers
   `GET /sync/healthz`. It logs only totals (connections, live logs, opens,
-  appends and stored pictures per 10 minutes, and wake-ups when they are on).
+  appends, stored pictures and live signals per 10 minutes, and wake-ups when
+  they are on).
 
 ## iroh relay
 

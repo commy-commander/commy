@@ -40,6 +40,7 @@ pub struct Stats {
     appends: AtomicU64,
     pushes: AtomicU64,
     pictures: AtomicU64,
+    signals: AtomicU64,
 }
 
 impl Stats {
@@ -59,6 +60,10 @@ impl Stats {
         self.appends.fetch_add(1, Ordering::Relaxed);
     }
 
+    fn signalled(&self, heard: usize) {
+        self.signals.fetch_add(heard as u64, Ordering::Relaxed);
+    }
+
     fn pushed(&self) {
         self.pushes.fetch_add(1, Ordering::Relaxed);
     }
@@ -71,12 +76,13 @@ impl Stats {
         self.connections.load(Ordering::Relaxed)
     }
 
-    fn take_counts(&self) -> (u64, u64, u64, u64) {
+    fn take_counts(&self) -> (u64, u64, u64, u64, u64) {
         (
             self.opens.swap(0, Ordering::Relaxed),
             self.appends.swap(0, Ordering::Relaxed),
             self.pushes.swap(0, Ordering::Relaxed),
             self.pictures.swap(0, Ordering::Relaxed),
+            self.signals.swap(0, Ordering::Relaxed),
         )
     }
 }
@@ -198,9 +204,9 @@ pub fn spawn_housekeeping(service: Arc<Service>) {
         every.tick().await;
         loop {
             every.tick().await;
-            let (opens, appends, pushes, pictures) = service.stats.take_counts();
+            let (opens, appends, pushes, pictures, signals) = service.stats.take_counts();
             tracing::info!(
-                "sync: {} connections, {} live streams, {opens} opens, {appends} appends, {pictures} pictures and {pushes} wake-ups in the last 10 minutes",
+                "sync: {} connections, {} live streams, {opens} opens, {appends} appends, {pictures} pictures, {signals} live signals sent and {pushes} wake-ups in the last 10 minutes",
                 service.stats.connections(),
                 service.hub.live_streams()
             );

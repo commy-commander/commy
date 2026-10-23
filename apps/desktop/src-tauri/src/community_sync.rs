@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
-use commy_core::{MessageId, ServerEvent, ServerId, UserId, UserProfile};
+use commy_core::{MessageId, ServerEvent, ServerId, SignedEvent, UserId, UserProfile};
 use commy_net::catchup::CatchupStore;
 use commy_net::community_streams::{self as streams, rings, Lane, Want};
 pub use commy_net::sync_streams::SharedKey;
@@ -35,6 +35,8 @@ const UNSENT_WITHOUT_SERVICE_MS: i64 = 10 * 60 * 1000;
 const PUBLISH_WAIT: Duration = Duration::from_secs(8);
 const UNSENT_FOR_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 const READ_BACK: u64 = 2_000;
+const GREET_GAP: Duration = Duration::from_secs(120);
+const GREET_SPREAD_MS: u64 = 3_000;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Cursors {
@@ -115,6 +117,7 @@ struct Live {
     url: String,
     dir: PathBuf,
     me: UserId,
+    node: [u8; 32],
     events: mpsc::UnboundedSender<SyncEvent>,
     net: mpsc::UnboundedSender<NetEvent>,
     communities: HashMap<ServerId, Community>,
@@ -128,6 +131,7 @@ struct Live {
     echoes: VecDeque<[u8; 32]>,
     fresh: HashSet<StreamId>,
     reading: Option<Reading>,
+    greeted: HashMap<ServerId, Instant>,
     cursors: Cursors,
     task: tauri::async_runtime::JoinHandle<()>,
 }
@@ -303,7 +307,7 @@ async fn tend(handle: &AppHandle) {
     }
     let same = LIVE.lock().unwrap().as_ref().is_some_and(|l| l.url == url && l.dir == dir && l.me == me);
     if !same {
-        let Some(net) = app.net.lock().await.as_ref().map(|node| node.local_events()) else { return };
+        let Some((net, node)) = app.net.lock().await.as_ref().map(|node| (node.local_events(), node.node_id_bytes())) else { return };
         stop();
         let (events, received) = mpsc::unbounded_channel();
         let task = tauri::async_runtime::spawn(listen(handle.clone(), received));
@@ -320,6 +324,7 @@ async fn tend(handle: &AppHandle) {
             url,
             dir,
             me,
+            node,
             events,
             net,
             communities: HashMap::new(),
@@ -333,6 +338,7 @@ async fn tend(handle: &AppHandle) {
             echoes: VecDeque::new(),
             fresh: HashSet::new(),
             reading: None,
+            greeted: HashMap::new(),
             cursors,
             task,
         });
@@ -649,6 +655,10 @@ fn targets(live: &Live, server: ServerId, lane: Lane, key_event: bool) -> Vec<(S
 }
 
 pub fn publish(server: ServerId, payload: &WirePayload) {
+    if streams::lane_of_payload(payload).is_none() {
+        signal(server, payload);
+        return;
+    }
     publish_held(Unsent { server, payload: payload.clone(), at: now_ms() });
 }
 
@@ -693,6 +703,45 @@ fn publish_held(held: Unsent) {
         if retry {
             hold(held);
         }
+    });
+}
+
+pub fn signal(server: ServerId, payload: &WirePayload) {
+    let Some((event, _)) = streams::event_of(payload) else { return };
+    let lane = streams::signal_lane(event);
+    let guard = LIVE.lock().unwrap();
+    let Some(live) = guard.as_ref() else { return };
+    let Some(plain) = streams::encode_signal(live.node, payload) else { return };
+    for (stream, client) in targets(live, server, lane, false) {
+        if let Some(client) = client {
+            client.signal(stream, plain.clone());
+        }
+    }
+}
+
+fn say_here(handle: &AppHandle, server: ServerId) {
+    if let Some(live) = LIVE.lock().unwrap().as_mut() {
+        live.greeted.insert(server, Instant::now());
+    }
+    for payload in crate::liveness::here(&handle.state::<App>(), server) {
+        signal(server, &payload);
+    }
+}
+
+fn greet(handle: &AppHandle, server: ServerId) {
+    {
+        let mut guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_mut() else { return };
+        let now = Instant::now();
+        if live.greeted.get(&server).is_some_and(|at| now.duration_since(*at) < GREET_GAP) {
+            return;
+        }
+        live.greeted.insert(server, now);
+    }
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % GREET_SPREAD_MS)).await;
+        say_here(&handle, server);
     });
 }
 
@@ -814,6 +863,7 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
             save_soon();
         }
         SyncEvent::CaughtUp { stream, seq } => on_caught_up(handle, stream, seq),
+        SyncEvent::Signal { stream, plain } => on_signal(handle, stream, &plain),
         SyncEvent::Refused { stream, code } => tracing::debug!("the sync service refused a server stream {stream}: {code:?}"),
         SyncEvent::Connected | SyncEvent::Disconnected => {}
     }
@@ -863,6 +913,47 @@ fn on_entry(handle: &AppHandle, stream: StreamId, seq: u64, plain: &[u8]) {
     }
     if key_event {
         refresh_soon(handle);
+    }
+}
+
+fn on_signal(handle: &AppHandle, stream: StreamId, plain: &[u8]) {
+    let found = {
+        let guard = LIVE.lock().unwrap();
+        let Some(live) = guard.as_ref() else { return };
+        let Some((server, want)) = live.route(stream) else { return };
+        let Some((node, payload)) = streams::decode_signal(plain, want.lane) else { return };
+        (node != live.node).then(|| (server, node, payload, live.net.clone()))
+    };
+    let Some((server, node, payload, net)) = found else { return };
+    let app = handle.state::<App>();
+    if app.awaits_snapshot(server) {
+        return;
+    }
+    let Some((event, action)) = streams::event_of(&payload).map(|(event, action)| (event.clone(), action)) else { return };
+    let (admitted, returning) = {
+        let servers = app.servers.lock().unwrap();
+        let Some(state) = servers.get(&server) else { return };
+        let admitted = match action {
+            Some(action) => state.admits_signed(&SignedEvent { action, event: event.clone() }).is_ok(),
+            None => state.admits_unsigned(&event).is_ok(),
+        };
+        let returning = match &event {
+            ServerEvent::PresenceUpdate { user, presence } => {
+                presence.is_visible_online() && !state.profiles.get(user).is_some_and(|p| p.presence.is_visible_online())
+            }
+            _ => false,
+        };
+        (admitted, returning)
+    };
+    if !admitted {
+        return;
+    }
+    if let Some(user) = crate::liveness::speaker(&event, action.as_ref()) {
+        crate::liveness::heard_through_service(&app, server, user, Instant::now());
+    }
+    let _ = net.send(NetEvent::Event { server, sender: node, event, action });
+    if returning {
+        greet(handle, server);
     }
 }
 
@@ -977,6 +1068,7 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
     if want.lane == Lane::State && want.writes {
         if first {
             announce_me(handle, server);
+            say_here(handle, server);
         }
         publish_snapshots(handle);
     }

@@ -61,7 +61,7 @@ impl Session {
                     }
                 }
                 SyncEvent::CaughtUp { stream, seq } => self.on_sync_caught_up(stream, seq),
-                SyncEvent::Refused { .. } | SyncEvent::Connected | SyncEvent::Disconnected => {}
+                SyncEvent::Refused { .. } | SyncEvent::Signal { .. } | SyncEvent::Connected | SyncEvent::Disconnected => {}
             }
         }
     }
