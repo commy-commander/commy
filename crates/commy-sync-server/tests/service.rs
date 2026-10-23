@@ -133,7 +133,7 @@ type Raw = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<
 
 async fn raw(url: &str) -> Raw {
     let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
-    assert_eq!(receive(&mut socket).await, ServerFrame::Hello { protocol: 1 });
+    assert_eq!(receive(&mut socket).await, ServerFrame::Hello { protocol: commy_sync::wire::PROTOCOL });
     socket
 }
 
@@ -381,4 +381,49 @@ async fn a_sealed_picture_is_kept_for_whoever_holds_its_reference() {
     assert_eq!(request(&address, "GET", "/sync/pictures/nothex", b"").await.0, 400);
     let too_big = vec![0u8; commy_sync::picture::MAX_PICTURE_SEALED + 16];
     assert_eq!(request(&address, "PUT", &path, &too_big).await.0, 413);
+}
+
+#[tokio::test]
+async fn a_live_signal_reaches_the_other_followers_and_is_never_stored() {
+    let (url, _) = start().await;
+    let keys = StreamSecret::random().keys();
+    let mut sender = raw(&url).await;
+    let mut listener = raw(&url).await;
+    open_raw(&mut sender, &keys).await;
+    open_raw(&mut listener, &keys).await;
+    let body = keys.seal(b"typing").unwrap();
+    send(&mut sender, &ClientFrame::signal(&keys, [3; APPEND_NONCE_BYTES], body.clone())).await;
+    assert_eq!(receive(&mut listener).await, ServerFrame::Signal { stream: keys.id, body: Blob(body.clone()) });
+    send(&mut sender, &ClientFrame::Ping).await;
+    assert_eq!(receive(&mut sender).await, ServerFrame::Pong, "the sender does not hear its own signal");
+
+    let forged = ClientFrame::Signal { stream: keys.id, nonce: Bytes([3; APPEND_NONCE_BYTES]), body: Blob(body.clone()), sig: Bytes([7; 64]) };
+    send(&mut sender, &forged).await;
+    assert!(matches!(receive(&mut sender).await, ServerFrame::Error { code: ErrorCode::BadSignature, nonce: Some(_), .. }));
+    let big = keys.seal(&[0u8; 10_000]).unwrap();
+    send(&mut sender, &ClientFrame::signal(&keys, [4; APPEND_NONCE_BYTES], big)).await;
+    assert!(
+        matches!(receive(&mut sender).await, ServerFrame::Error { code: ErrorCode::TooLarge, nonce: Some(_), .. }),
+        "signals stay small, and a refusal never closes the stream"
+    );
+
+    let mut newcomer = raw(&url).await;
+    send(&mut newcomer, &ClientFrame::open(&keys, 0)).await;
+    assert_eq!(receive(&mut newcomer).await, ServerFrame::Opened { stream: keys.id, head: 0 });
+    assert_eq!(receive(&mut newcomer).await, ServerFrame::Entries { stream: keys.id, entries: Vec::new(), caught_up: true });
+
+    let (client, mut events) = SyncClient::spawn(url.clone());
+    client.follow(keys.clone(), 0);
+    loop {
+        if let SyncEvent::CaughtUp { .. } = tokio::time::timeout(WAIT, events.recv()).await.unwrap().unwrap() {
+            break;
+        }
+    }
+    send(&mut sender, &ClientFrame::signal(&keys, [5; APPEND_NONCE_BYTES], keys.seal(b"online").unwrap())).await;
+    loop {
+        if let SyncEvent::Signal { stream, plain } = tokio::time::timeout(WAIT, events.recv()).await.unwrap().unwrap() {
+            assert_eq!((stream, plain), (keys.id, b"online".to_vec()));
+            break;
+        }
+    }
 }

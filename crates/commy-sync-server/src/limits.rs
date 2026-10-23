@@ -22,6 +22,7 @@ pub struct Limits {
     pub opens: Rate,
     pub stream_appends: Rate,
     pub wakes: Rate,
+    pub signals: Rate,
     pub daily_bytes_per_address: u64,
 }
 
@@ -33,6 +34,7 @@ impl Default for Limits {
             opens: Rate { burst: 200.0, per_second: 20.0 },
             stream_appends: Rate { burst: 100.0, per_second: 20.0 },
             wakes: Rate { burst: 120.0, per_second: 1.0 },
+            signals: Rate { burst: 60.0, per_second: 2.0 },
             daily_bytes_per_address: 64 * 1024 * 1024,
         }
     }
@@ -71,6 +73,7 @@ struct Address {
     appends: Bucket,
     opens: Bucket,
     wakes: Bucket,
+    signals: Bucket,
     day_started: Instant,
     day_bytes: u64,
     seen: Instant,
@@ -117,6 +120,7 @@ impl Limiter {
             appends: Bucket::full(limits.appends, now),
             opens: Bucket::full(limits.opens, now),
             wakes: Bucket::full(limits.wakes, now),
+            signals: Bucket::full(limits.signals, now),
             day_started: now,
             day_bytes: 0,
             seen: now,
@@ -181,6 +185,23 @@ impl Limiter {
         bucket.take(limits.stream_appends, now).map_err(Refusal::Wait)
     }
 
+    pub fn signal(&self, key: AddressKey, bytes: usize) -> Result<(), Refusal> {
+        let now = Instant::now();
+        let mut books = self.books.lock().unwrap();
+        let limits = self.limits.clone();
+        let address = self.address(&mut books, key, now);
+        if now.saturating_duration_since(address.day_started) >= DAY {
+            address.day_started = now;
+            address.day_bytes = 0;
+        }
+        if address.day_bytes + bytes as u64 > limits.daily_bytes_per_address {
+            return Err(Refusal::Wait(DAY.saturating_sub(now.saturating_duration_since(address.day_started))));
+        }
+        address.signals.take(limits.signals, now).map_err(Refusal::Wait)?;
+        address.day_bytes += bytes as u64;
+        Ok(())
+    }
+
     pub fn forget_idle(&self) -> usize {
         let now = Instant::now();
         let mut books = self.books.lock().unwrap();
@@ -208,8 +229,21 @@ mod tests {
             opens: Rate { burst: 2.0, per_second: 1.0 },
             stream_appends: Rate { burst: 100.0, per_second: 100.0 },
             wakes: Rate { burst: 2.0, per_second: 1.0 },
+            signals: Rate { burst: 2.0, per_second: 1.0 },
             daily_bytes_per_address: 10_000,
         }
+    }
+
+    #[test]
+    fn live_signals_have_their_own_allowance_and_count_toward_the_day() {
+        let limiter = Limiter::new(tight());
+        let key = limiter.key("192.0.2.9".parse().unwrap());
+        assert!(limiter.signal(key, 100).is_ok());
+        assert!(limiter.signal(key, 100).is_ok());
+        assert!(matches!(limiter.signal(key, 100), Err(Refusal::Wait(_))));
+        assert!(limiter.append(key, &[1; 32], 100).is_ok(), "signals do not use up appends");
+        let other = limiter.key("192.0.2.10".parse().unwrap());
+        assert!(matches!(limiter.signal(other, 20_000), Err(Refusal::Wait(_))));
     }
 
     #[test]

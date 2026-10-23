@@ -16,6 +16,7 @@ pub enum Purpose {
     EntryList,
     InviteBackground,
     ReadState,
+    KeyHandoff,
 }
 
 impl Purpose {
@@ -25,6 +26,7 @@ impl Purpose {
             Purpose::EntryList => b"commy-entry-list-v1",
             Purpose::InviteBackground => b"commy-invite-bg-v1",
             Purpose::ReadState => b"commy-read-state-v1",
+            Purpose::KeyHandoff => b"commy-key-handoff-v1",
         }
     }
 }
@@ -51,6 +53,10 @@ impl std::fmt::Debug for SealKey {
 impl SealKey {
     pub fn generate() -> Self {
         Self(rand::rngs::OsRng.gen())
+    }
+
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 
     pub fn generate_short() -> (Self, String) {

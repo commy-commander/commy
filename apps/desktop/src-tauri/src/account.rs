@@ -399,6 +399,7 @@ impl Discovery {
 fn use_sync_service(handle: &AppHandle, server: &str, doc: &Discovery) {
     if crate::sync_link::set_url(server, doc.endpoints.sync.as_deref()) {
         crate::account_log::ensure(handle);
+        crate::key_handoff::ensure(handle);
         crate::community_sync::refresh_soon(handle);
     }
 }
@@ -1158,6 +1159,7 @@ pub async fn verify_saved_session(handle: AppHandle) {
     }
     crate::sync_link::clear_url();
     crate::account_log::stop();
+    crate::key_handoff::stop();
     crate::community_sync::stop();
     if let Some(dir) = app.data_dir() {
         account_folder::forget_key(dir);

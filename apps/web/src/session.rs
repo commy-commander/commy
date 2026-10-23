@@ -21,6 +21,7 @@ use crate::client::{Applied, Client};
 use crate::host::Host;
 use crate::store::WebStore;
 
+mod handoff;
 mod sync;
 
 const DEVICE_NAME: &str = "Web browser";
@@ -309,23 +310,35 @@ impl Session {
             self.set_unlock(Unlock::Locked, "No other device is linked to your account. Enter your recovery code instead.");
             return Ok(self.unlock_view());
         }
-        self.set_unlock(Unlock::Asking, "Check your other devices and choose Allow.");
-        let endpoint = {
-            let node = self.node.lock().await;
-            let node = node.as_ref().ok_or("Not connected yet")?;
+        let node = commy_core::Identity::from_bytes(&self.device_secret(&account));
+        let code = commy_net::key_handoff::code(&node.public());
+        self.set_unlock(Unlock::Asking, format!("Open Commy on one of your other devices and choose Allow. It will show the code {code}."));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        if let Some(url) = self.sync_service_url().await {
+            let (tx, account) = (tx.clone(), account.id.clone());
+            spawn_local(async move {
+                let got = handoff::ask(&url, &account, &node, DEVICE_NAME).await;
+                let _ = tx.send(got.map(|key| EntryKeyReply::Key(key.to_text())));
+            });
+        }
+        let endpoint = self.node.lock().await.as_ref().map(|node| {
             node.reach_via_relays(&devices);
             node.endpoint()
-        };
-        let request = EntryKeyRequest { server: self.origin.clone(), account: account.id.clone(), device_name: DEVICE_NAME.into() };
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        for device in &devices {
-            let (tx, endpoint, request, device) = (tx.clone(), endpoint.clone(), request.clone(), device.clone());
-            spawn_local(async move {
-                let _ = tx.send(commy_net::entry_key::request(endpoint, &device, &request).await.ok());
-            });
+        });
+        if let Some(endpoint) = endpoint {
+            let request = EntryKeyRequest { server: self.origin.clone(), account: account.id.clone(), device_name: DEVICE_NAME.into() };
+            for device in &devices {
+                let (tx, endpoint, request, device) = (tx.clone(), endpoint.clone(), request.clone(), device.clone());
+                spawn_local(async move {
+                    let _ = tx.send(commy_net::entry_key::request(endpoint, &device, &request).await.ok());
+                });
+            }
         }
         drop(tx);
         while let Some(reply) = rx.recv().await {
+            if self.status.borrow().unlock == Unlock::Unlocked {
+                return Ok(self.unlock_view());
+            }
             if let Some(EntryKeyReply::Key(text)) = reply {
                 if let Ok(key) = SealKey::from_text(&text) {
                     if self.accept_key(&account, key).is_ok() {
@@ -334,8 +347,15 @@ impl Session {
                 }
             }
         }
-        self.set_unlock(Unlock::Locked, "None of your devices approved this browser. Try again, or enter your recovery code.");
+        if self.status.borrow().unlock != Unlock::Unlocked {
+            self.set_unlock(Unlock::Locked, "None of your devices approved this browser yet. Ask again, or enter your recovery code.");
+        }
         Ok(self.unlock_view())
+    }
+
+    async fn sync_service_url(&self) -> Option<String> {
+        let reply = self.request("GET", account::DISCOVERY_PATH, None).await.ok()?;
+        account::sync_url(&reply, &self.origin)
     }
 
     async fn use_recovery_code(self: &Rc<Self>, code: &str) -> Result<Value, String> {

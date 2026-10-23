@@ -4,7 +4,7 @@ use n0_future::time::{self, Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::stream::{SealError, StreamId, StreamKeys, APPEND_NONCE_BYTES};
-use crate::wire::{ClientFrame, ErrorCode, ServerFrame, KEEPALIVE_SECS};
+use crate::wire::{ClientFrame, ErrorCode, ServerFrame, KEEPALIVE_SECS, SIGNALS_SINCE};
 
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 #[path = "client/native.rs"]
@@ -28,6 +28,7 @@ pub enum SyncEvent {
     Unreadable { stream: StreamId, seq: u64 },
     CaughtUp { stream: StreamId, seq: u64 },
     Refused { stream: StreamId, code: ErrorCode },
+    Signal { stream: StreamId, plain: Vec<u8> },
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -48,6 +49,7 @@ enum Command {
     Follow { keys: Box<StreamKeys>, after: u64, tail: Option<u32> },
     Unfollow { stream: StreamId },
     Append { stream: StreamId, plain: Vec<u8>, reply: Reply },
+    Signal { stream: StreamId, plain: Vec<u8> },
     Nudge,
 }
 
@@ -80,6 +82,10 @@ impl SyncClient {
         let (reply, answer) = oneshot::channel();
         self.commands.send(Command::Append { stream, plain, reply }).map_err(|_| AppendError::Stopped)?;
         answer.await.map_err(|_| AppendError::Stopped)?
+    }
+
+    pub fn signal(&self, stream: StreamId, plain: Vec<u8>) {
+        let _ = self.commands.send(Command::Signal { stream, plain });
     }
 
     pub fn nudge(&self) {
@@ -115,6 +121,7 @@ struct Link {
     streams: HashMap<StreamId, Followed>,
     pending: HashMap<[u8; APPEND_NONCE_BYTES], Pending>,
     reopen: HashMap<StreamId, Instant>,
+    protocol: u32,
 }
 
 enum Ended {
@@ -124,7 +131,7 @@ enum Ended {
 
 impl Link {
     fn new(url: String, events: mpsc::UnboundedSender<SyncEvent>) -> Self {
-        Self { url, events, streams: HashMap::new(), pending: HashMap::new(), reopen: HashMap::new() }
+        Self { url, events, streams: HashMap::new(), pending: HashMap::new(), reopen: HashMap::new(), protocol: 0 }
     }
 
     async fn run(mut self, mut inbox: mpsc::UnboundedReceiver<Command>) {
@@ -177,6 +184,7 @@ impl Link {
             }
         }
         self.reopen.clear();
+        self.protocol = 0;
         if self.flush_pending(&mut socket).await.is_err() {
             return Ended::Lost;
         }
@@ -244,6 +252,14 @@ impl Link {
                     }
                 }
             }
+            Command::Signal { stream, plain } => {
+                let (Some(followed), Some(socket)) = (self.streams.get(&stream), socket) else { return };
+                if self.protocol < SIGNALS_SINCE {
+                    return;
+                }
+                let Ok(body) = followed.keys.seal(&plain) else { return };
+                let _ = send(socket, &ClientFrame::signal(&followed.keys, rand::random(), body)).await;
+            }
             Command::Append { stream, plain, reply } => {
                 let Some(followed) = self.streams.get(&stream) else {
                     let _ = reply.send(Err(AppendError::NotFollowed));
@@ -292,7 +308,8 @@ impl Link {
 
     fn handle(&mut self, frame: ServerFrame) {
         match frame {
-            ServerFrame::Hello { .. } | ServerFrame::Pong => {}
+            ServerFrame::Hello { protocol } => self.protocol = protocol,
+            ServerFrame::Pong => {}
             ServerFrame::Opened { stream, head } => {
                 if let Some(followed) = self.streams.get_mut(&stream) {
                     if head < followed.after {
@@ -315,6 +332,12 @@ impl Link {
                 }
                 if caught_up {
                     let _ = self.events.send(SyncEvent::CaughtUp { stream, seq: followed.after });
+                }
+            }
+            ServerFrame::Signal { stream, body } => {
+                let Some(followed) = self.streams.get(&stream) else { return };
+                if let Ok(plain) = followed.keys.open(&body.0) {
+                    let _ = self.events.send(SyncEvent::Signal { stream, plain });
                 }
             }
             ServerFrame::Appended { nonce, seq, .. } => {

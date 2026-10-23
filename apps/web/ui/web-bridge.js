@@ -69,9 +69,9 @@
     modal.innerHTML = `
       <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
       <h2>Open your servers here</h2>
-      <p>Your messages stay between your devices. To open them in this browser, approve it from Commy on a device that already has them.</p>
+      <p>Your messages stay between your devices. To open them in this browser, choose Allow in Commy on a device that already has them, or paste your recovery code.</p>
       <div class="signin-start" id="web-unlock-ask-row">
-        <button class="btn-primary signin-go" id="web-unlock-ask">Ask my devices</button>
+        <button class="btn-primary signin-go" id="web-unlock-ask">Ask again</button>
       </div>
       <div class="signin-status hidden" id="web-unlock-wait"><span class="signin-spinner"></span><span id="web-unlock-wait-text"></span></div>
       <div class="signin-note" id="web-unlock-detail"></div>
@@ -94,7 +94,7 @@
     const asking = view.state === "asking" || view.state === "opening";
     const noList = view.state === "no_list";
     modal.querySelector("#web-unlock-ask-row").classList.toggle("hidden", asking || noList);
-    modal.querySelector("#web-unlock-code-row").classList.toggle("hidden", noList || asking);
+    modal.querySelector("#web-unlock-code-row").classList.toggle("hidden", noList || view.state === "opening");
     modal.querySelector("#web-unlock-wait").classList.toggle("hidden", !asking);
     modal.querySelector("#web-unlock-wait-text").textContent = asking ? webUnlockText(view) : "";
     modal.querySelector("#web-unlock-detail").textContent = asking ? "" : webUnlockText(view);
@@ -117,6 +117,7 @@
 
   let resolveUnlocked = null;
   let serversLoaded = false;
+  let askedDevices = false;
 
   function whenServersLoad() {
     if (serversLoaded) return Promise.resolve();
@@ -132,6 +133,10 @@
     paintUnlock(opening ? { state: "opening", detail: "" } : view);
     if (opening) whenServersLoad().then(() => resolveUnlocked && resolveUnlocked());
     if (typeof showModal === "function") showModal("modal-web-unlock");
+    if (view.state === "locked" && !askedDevices) {
+      askedDevices = true;
+      run("web_ask_devices");
+    }
   }
 
   function untilUnlocked() {

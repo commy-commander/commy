@@ -4,6 +4,7 @@ pub mod dm;
 pub mod entry_key;
 pub mod entry_list;
 pub mod inbox;
+pub mod key_handoff;
 pub mod media;
 pub mod mirror;
 pub mod node;
