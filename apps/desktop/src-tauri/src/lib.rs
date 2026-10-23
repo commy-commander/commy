@@ -38,7 +38,7 @@ mod read_state;
 mod relaunch;
 mod safety;
 mod saved;
-mod search;
+use commy_view::search;
 mod server_wake;
 mod settle;
 mod state;
@@ -574,27 +574,14 @@ async fn send_poll(
     multi: bool,
     hours: Option<u32>,
 ) -> CmdResult<MessageView> {
-    use commy_core::poll::{MAX_DURATION_HOURS, MAX_OPTIONS, MAX_OPTION_CHARS, MAX_QUESTION_CHARS, MIN_OPTIONS};
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid = channel_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
-    {
+    let poll = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        if !our_permissions(&app, state, profile.id).can_send_polls() {
-            return Err("you do not have permission to create polls here".into());
-        }
-    }
-    let hours = hours.filter(|h| *h > 0);
-    if hours.is_some_and(|h| h > MAX_DURATION_HOURS) {
-        return Err(format!("a poll runs for up to {} days", MAX_DURATION_HOURS / 24));
-    }
-    let closes_at = hours.map(|h| chrono::Utc::now() + chrono::Duration::hours(i64::from(h)));
-    let poll = commy_core::Poll { question, options, multi, closes_at }.tidy().ok_or_else(|| {
-        format!(
-            "a poll needs a question of up to {MAX_QUESTION_CHARS} characters and {MIN_OPTIONS} to {MAX_OPTIONS} answers of up to {MAX_OPTION_CHARS} characters each"
-        )
-    })?;
+        view::act::poll(our_permissions(&app, state, profile.id), question, options, multi, hours, chrono::Utc::now())?
+    };
     let mut message = Message::new(cid, profile.id, "");
     message.attachments.push(poll.into_attachment());
     let _signing = app.signing.read().await;

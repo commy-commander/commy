@@ -2,9 +2,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::Utc;
-use commy_core::{ChannelId, Message, ServerId, UserId};
+use commy_core::{ServerId, UserId};
 use commy_net::sealed::{Purpose, SealKey};
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::entry_list::{self, Fetched, Put, Session};
@@ -15,88 +14,15 @@ const VAULT_ITEM: &str = "read-state";
 const PUSH_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
 const PULL_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReadMark {
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub at: i64,
-    #[serde(default)]
-    pub set: i64,
-    #[serde(default)]
-    pub back: bool,
+pub use commy_view::reads::{latest_mark, ReadMark, ReadState, ReadView};
+
+fn seal_state(state: &ReadState, key: &SealKey) -> String {
+    key.seal(Purpose::ReadState, &serde_json::to_vec(state).expect("read state serialization cannot fail"))
 }
 
-impl ReadMark {
-    fn newer_than(&self, other: &ReadMark) -> bool {
-        if self.back || other.back {
-            (self.set, self.at, &self.id) > (other.set, other.at, &other.id)
-        } else {
-            (self.at, &self.id, self.set) > (other.at, &other.id, other.set)
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReadState {
-    #[serde(default)]
-    pub channels: BTreeMap<String, ReadMark>,
-}
-
-impl ReadState {
-    pub fn merge(a: &ReadState, b: &ReadState) -> ReadState {
-        let mut channels = a.channels.clone();
-        for (channel, mark) in &b.channels {
-            let take = channels.get(channel).map_or(true, |mine| mark.newer_than(mine));
-            if take {
-                channels.insert(channel.clone(), mark.clone());
-            }
-        }
-        ReadState { channels }
-    }
-
-    fn changed_from(&self, before: &ReadState) -> Vec<String> {
-        self.channels
-            .iter()
-            .filter(|(channel, mark)| before.channels.get(*channel) != Some(*mark))
-            .map(|(channel, _)| channel.clone())
-            .collect()
-    }
-
-    fn seal(&self, key: &SealKey) -> String {
-        key.seal(Purpose::ReadState, &serde_json::to_vec(self).expect("read state serialization cannot fail"))
-    }
-
-    fn open(key: &SealKey, sealed: &str) -> Result<ReadState, String> {
-        let bytes = key.open(Purpose::ReadState, sealed).map_err(|_| "The read positions were sealed with another key".to_string())?;
-        serde_json::from_slice(&bytes).map_err(|_| "The read positions are damaged".to_string())
-    }
-}
-
-pub fn count_after(messages: &[Message], mark: &ReadMark, me: Option<UserId>, blocked: &HashSet<UserId>) -> usize {
-    let anchored = mark.id.as_deref().and_then(|id| messages.iter().position(|m| m.id.to_string() == id));
-    let unread: Box<dyn Iterator<Item = &Message>> = match anchored {
-        Some(index) => Box::new(messages[index + 1..].iter()),
-        None => Box::new(messages.iter().filter(|m| m.created_at.timestamp_millis() > mark.at)),
-    };
-    unread.filter(|m| Some(m.author) != me && !blocked.contains(&m.author)).count()
-}
-
-pub fn latest_mark(messages: &[Message], now: i64) -> Option<ReadMark> {
-    let last = messages.last()?;
-    Some(ReadMark { id: Some(last.id.to_string()), at: last.created_at.timestamp_millis(), set: now, back: false })
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ChannelRead {
-    pub mark: ReadMark,
-    pub server: Option<String>,
-    pub unread: usize,
-}
-
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
-pub struct ReadView {
-    pub channels: BTreeMap<String, ChannelRead>,
+fn open_state(key: &SealKey, sealed: &str) -> Result<ReadState, String> {
+    let bytes = key.open(Purpose::ReadState, sealed).map_err(|_| "The read positions were sealed with another key".to_string())?;
+    serde_json::from_slice(&bytes).map_err(|_| "The read positions are damaged".to_string())
 }
 
 fn local_path(app: &App) -> Option<std::path::PathBuf> {
@@ -117,24 +43,7 @@ fn view_of(app: &App, state: &ReadState, only: Option<&[String]>) -> ReadView {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let blocked: HashSet<UserId> = app.safety.lock().unwrap().blocked.iter().copied().collect();
     let servers = app.servers.lock().unwrap();
-    let channels = state
-        .channels
-        .iter()
-        .filter(|(channel, _)| only.map_or(true, |list| list.contains(channel)))
-        .map(|(channel, mark)| {
-            let cid: Option<ChannelId> = channel.parse().ok();
-            let found = cid.and_then(|cid| servers.values().find(|s| s.server.channel(cid).is_some()).map(|s| (s, cid)));
-            let (server, unread) = match found {
-                Some((state, cid)) if me.is_none_or(|me| state.server.can_view(cid, me)) => {
-                    (Some(state.server.id.to_string()), count_after(state.messages(cid), mark, me, &blocked))
-                }
-                Some((state, _)) => (Some(state.server.id.to_string()), 0),
-                None => (None, 0),
-            };
-            (channel.clone(), ChannelRead { mark: mark.clone(), server, unread })
-        })
-        .collect();
-    ReadView { channels }
+    commy_view::reads::view(servers.values(), state, only, me, &blocked)
 }
 
 fn now_ms() -> i64 {
@@ -278,7 +187,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
             Fetched::Unsupported => return Ok(()),
         };
         let shared = match item.data.as_deref() {
-            Some(data) => ReadState::open(&key, data)?,
+            Some(data) => open_state(&key, data)?,
             None => ReadState::default(),
         };
         let before = local(&app);
@@ -291,7 +200,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
         if merged == shared && item.data.is_some() {
             return Ok(());
         }
-        match entry_list::put(&app, &s, VAULT_ITEM, merged.seal(&key), item.version).await? {
+        match entry_list::put(&app, &s, VAULT_ITEM, seal_state(&merged, &key), item.version).await? {
             Put::Done => return Ok(()),
             Put::Conflict => continue,
         }
@@ -303,7 +212,8 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use commy_core::MessageId;
+    use commy_core::{ChannelId, Message, MessageId};
+    use commy_view::reads::count_after;
 
     fn mark(id: &str, at: i64, set: i64) -> ReadMark {
         ReadMark { id: Some(id.into()), at, set, back: false }
@@ -391,9 +301,9 @@ mod tests {
     fn sealed_read_positions_round_trip_and_reject_other_keys() {
         let state = ReadState { channels: BTreeMap::from([("c".to_string(), mark("m", 5, 6))]) };
         let key = SealKey::generate();
-        let sealed = state.seal(&key);
-        assert_eq!(ReadState::open(&key, &sealed).unwrap(), state);
-        assert!(ReadState::open(&SealKey::generate(), &sealed).is_err());
+        let sealed = seal_state(&state, &key);
+        assert_eq!(open_state(&key, &sealed).unwrap(), state);
+        assert!(open_state(&SealKey::generate(), &sealed).is_err());
         let older_build: ReadState = serde_json::from_str(r#"{"channels":{"c":{"at":5}}}"#).unwrap();
         assert_eq!(older_build.channels["c"], ReadMark { id: None, at: 5, set: 0, back: false });
     }

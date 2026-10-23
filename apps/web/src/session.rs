@@ -17,9 +17,10 @@ use tokio::sync::{mpsc, Mutex};
 use wasm_bindgen_futures::spawn_local;
 
 use commy_view::act;
+use commy_view::search::{Page, SearchQuery};
 
 use crate::account::{self, AccountUser, Reply};
-use crate::client::{Applied, Client};
+use crate::client::{Applied, Client, PollForm};
 use crate::host::Host;
 use crate::store::WebStore;
 
@@ -27,6 +28,8 @@ mod handoff;
 mod sync;
 
 const DEVICE_NAME: &str = "Web browser";
+const MAX_PREF_KEY: usize = 200;
+const MAX_PREFS_PER_CALL: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Unlock {
@@ -86,6 +89,17 @@ struct Args {
     name: Option<String>,
     archived: Option<bool>,
     locked: Option<bool>,
+    question: Option<String>,
+    options: Option<Vec<String>>,
+    multi: Option<bool>,
+    hours: Option<u32>,
+    terms: Option<Vec<String>>,
+    from: Option<String>,
+    mentions: Option<String>,
+    offset: Option<usize>,
+    channels: Option<std::collections::BTreeMap<String, commy_view::reads::ReadMark>>,
+    channel_ids: Option<Vec<String>>,
+    changes: Option<std::collections::BTreeMap<String, Value>>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -137,6 +151,41 @@ impl Session {
                 to_json(&self.client.borrow().get_messages(server, channel, around)?)
             }
             "send_message" => self.send_message(args).await,
+            "send_poll" => self.send_poll(args).await,
+            "read_state_load" | "read_state_sync" => to_json(&self.read_view(None)),
+            "read_state_set" => {
+                self.note_reads(args.channels.unwrap_or_default());
+                Ok(Value::Null)
+            }
+            "read_state_mark_read" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                let marks = self.client.borrow().latest_marks(server, args.channel_ids.as_deref(), Utc::now().timestamp_millis())?;
+                let touched: Vec<String> = marks.keys().cloned().collect();
+                self.note_reads(marks);
+                to_json(&self.read_view(Some(&touched)))
+            }
+            "sync_prefs_load" => to_json(&self.prefs()),
+            "sync_prefs_set" => {
+                let at = Utc::now().timestamp_millis();
+                let set = args
+                    .changes
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|(key, _)| !key.is_empty() && key.len() <= MAX_PREF_KEY)
+                    .take(MAX_PREFS_PER_CALL)
+                    .map(|(key, value)| (key, commy_view::reads::PrefPiece { value, at }))
+                    .collect();
+                self.note_prefs(set);
+                Ok(Value::Null)
+            }
+            "search_messages" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                let user = |raw: Option<&String>| raw.map(|u| parse::<commy_core::UserId>(Some(u), "user")).transpose();
+                let channel: Option<ChannelId> = args.channel_id.as_ref().map(|c| parse(Some(c), "channel")).transpose()?;
+                let query = SearchQuery::new(&args.terms.unwrap_or_default(), user(args.from.as_ref())?, user(args.mentions.as_ref())?, channel);
+                let page = args.offset.map_or(Page::newest(), Page::at);
+                to_json(&self.client.borrow().search(server, &query, page)?)
+            }
             "get_pins" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 let channel: Option<ChannelId> = args.channel_id.as_ref().map(|c| parse(Some(c), "channel")).transpose()?;
@@ -644,6 +693,23 @@ impl Session {
         let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
         let reply_to: Option<MessageId> = args.reply_to.as_ref().map(|r| parse(Some(r), "message")).transpose()?;
         let (message, view) = self.client.borrow().compose(server, channel, args.content.as_deref().unwrap_or(""), reply_to)?;
+        self.deliver(server, message, view).await
+    }
+
+    async fn send_poll(self: &Rc<Self>, args: Args) -> Result<Value, String> {
+        let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+        let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
+        let form = PollForm {
+            question: args.question.unwrap_or_default(),
+            options: args.options.unwrap_or_default(),
+            multi: args.multi.unwrap_or(false),
+            hours: args.hours,
+        };
+        let (message, view) = self.client.borrow().compose_poll(server, channel, form)?;
+        self.deliver(server, message, view).await
+    }
+
+    async fn deliver(self: &Rc<Self>, server: ServerId, message: commy_core::Message, view: commy_view::MessageView) -> Result<Value, String> {
         let delivered = {
             let node = self.node.lock().await;
             match node.as_ref() {

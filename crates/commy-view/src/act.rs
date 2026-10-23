@@ -133,6 +133,23 @@ pub fn pin(state: &ServerState, me: &Me, channel: ChannelId, message: MessageId,
     Ok(ServerEvent::MessagePin { server: state.server.id, channel, message, by: me.user, at: me.now, pinned })
 }
 
+pub fn poll(perms: Permissions, question: String, options: Vec<String>, multi: bool, hours: Option<u32>, now: DateTime<Utc>) -> Act<Poll> {
+    use commy_core::poll::{MAX_DURATION_HOURS, MAX_OPTIONS, MAX_OPTION_CHARS, MAX_QUESTION_CHARS, MIN_OPTIONS};
+    if !perms.can_send_polls() {
+        return Err("you do not have permission to create polls here".into());
+    }
+    let hours = hours.filter(|h| *h > 0);
+    if hours.is_some_and(|h| h > MAX_DURATION_HOURS) {
+        return Err(format!("a poll runs for up to {} days", MAX_DURATION_HOURS / 24));
+    }
+    let closes_at = hours.map(|h| now + chrono::Duration::hours(i64::from(h)));
+    Poll { question, options, multi, closes_at }.tidy().ok_or_else(|| {
+        format!(
+            "a poll needs a question of up to {MAX_QUESTION_CHARS} characters and {MIN_OPTIONS} to {MAX_OPTIONS} answers of up to {MAX_OPTION_CHARS} characters each"
+        )
+    })
+}
+
 pub fn poll_target(state: &ServerState, message: MessageId, user: UserId) -> Act<(ChannelId, Message, Poll)> {
     let found = state.message(message).ok_or("that message no longer exists")?;
     can_view(state, user, found.channel)?;
