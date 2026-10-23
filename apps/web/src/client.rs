@@ -2,14 +2,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
-use commy_core::channel_key::{ChannelSecret, KeyId, Keyring};
+use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
 use commy_core::{
     action, Action, ChannelId, ChannelKind, Identity, Message, MessageId, Permissions, Presence, ServerEvent, ServerId,
     ServerState, SignedEvent, Snapshot, UserId, UserProfile,
 };
 use commy_net::community_streams::{self as streams, Lane, Want};
 use commy_net::inbox;
-use commy_net::protocol::{gossip_size, verify_sync_response, SyncMember, MAX_GOSSIP_BYTES};
+use commy_net::protocol::{build_sync_response_within, gossip_size, sign_sync_response, verify_sync_response, SyncMember, MAX_GOSSIP_BYTES};
 use commy_net::{ServerTicket, WirePayload};
 use commy_sync::StreamKeys;
 use commy_view::act::{self, Act};
@@ -286,6 +286,74 @@ impl Client {
             .into_iter()
             .map(|event| WirePayload::Signed(SignedEvent::sign(server, profile.id, at, event, &identity)))
             .collect()
+    }
+
+    pub fn start_group(&self, server: ServerId) -> Result<Vec<WirePayload>, String> {
+        let (profile, _) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
+        let mut group = commy_core::Server::group(profile.id);
+        group.id = server;
+        let mut state = ServerState::new(group);
+        state.profiles.insert(profile.id, profile.clone());
+        let mut servers = self.servers.lock().unwrap();
+        if servers.contains_key(&server) {
+            return Err("that group already exists".into());
+        }
+        servers.insert(server, state);
+        drop(servers);
+        Ok(self.tend_scope(server, KeyScope::Community))
+    }
+
+    pub fn key_work(&self, server: ServerId) -> Vec<KeyScope> {
+        let Some(me) = self.me_id() else { return Vec::new() };
+        let servers = self.servers.lock().unwrap();
+        servers.get(&server).filter(|s| s.server.owner == me && !s.is_deleted()).map(|state| self.keys().scopes_with_work(state)).unwrap_or_default()
+    }
+
+    pub fn tend_scope(&self, server: ServerId, scope: KeyScope) -> Vec<WirePayload> {
+        let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
+        let holder = KeyHolder::new(Some((profile.id, identity.clone())));
+        let mut servers = self.servers.lock().unwrap();
+        let Some(state) = servers.get_mut(&server) else { return Vec::new() };
+        let mut out = Vec::new();
+        for event in holder.scope_events(state, scope) {
+            let signed = SignedEvent::sign(server, profile.id, Utc::now().timestamp_millis(), event, &identity);
+            if state.apply_own(&signed).is_err() {
+                break;
+            }
+            out.push(WirePayload::Signed(signed));
+        }
+        out
+    }
+
+    pub fn owner_copy(&self, server: ServerId) -> Vec<WirePayload> {
+        let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
+        let servers = self.servers.lock().unwrap();
+        let Some(state) = servers.get(&server).filter(|s| s.server.owner == profile.id && !s.is_deleted()) else { return Vec::new() };
+        let mut snapshot = build_sync_response_within(state, 0, profile.id, streams::SNAPSHOT_BYTES);
+        sign_sync_response(&mut snapshot, Utc::now().timestamp_millis(), &identity);
+        let keys = state
+            .signed_actions()
+            .into_iter()
+            .filter(|signed| matches!(signed.event, ServerEvent::CommunityKeyAdd { .. }))
+            .map(|signed| WirePayload::Signed(signed.clone()));
+        std::iter::once(snapshot).chain(keys).collect()
+    }
+
+    pub fn newest_community_key(&self, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server)?;
+        let ring = self.keys().community_ring(state, None)?;
+        ring.newest_in(state, KeyScope::Community).map(|(id, secret)| (id, secret.clone()))
+    }
+
+    pub fn owned_groups(&self) -> Vec<ServerId> {
+        let Some(me) = self.me_id() else { return Vec::new() };
+        self.servers.lock().unwrap().iter().filter(|(_, s)| s.server.group && s.server.owner == me && !s.is_deleted()).map(|(id, _)| *id).collect()
+    }
+
+    pub fn summary(&self, server: ServerId) -> Option<ServerSummary> {
+        let me = self.me_id();
+        self.servers.lock().unwrap().get(&server).map(|state| ServerSummary::from_state(state, me))
     }
 
     pub fn is_group(&self, server: ServerId) -> bool {
@@ -577,6 +645,43 @@ mod tests {
         let client = Client::default();
         *client.me.lock().unwrap() = Some((me, my_identity));
         World { client, owner: (owner, owner_identity), server: sid, channel, state }
+    }
+
+    #[test]
+    fn a_group_started_in_the_browser_has_a_key_and_an_owner_copy_an_invited_friend_can_open() {
+        let mine = Identity::generate();
+        let mut me = UserProfile::new("me");
+        me.identity = Some(mine.public());
+        let creator = Client::default();
+        *creator.me.lock().unwrap() = Some((me.clone(), mine.clone()));
+        let group = ServerId::new();
+        assert!(!creator.start_group(group).unwrap().is_empty());
+        assert!(creator.start_group(group).is_err());
+        assert!(creator.is_group(group));
+        assert_eq!(creator.owned_groups(), vec![group]);
+        assert!(creator.key_work(group).is_empty(), "the new key needs nothing more");
+        let mut ticket = ServerTicket::new(group, "", [0u8; 32], Vec::new());
+        ticket.owner = Some((me.id, mine.public()));
+        let mut creator = creator;
+        creator.tickets.insert(group, ticket.clone());
+        let (key, _) = creator.newest_community_key(group).unwrap();
+        let (_, invited) = creator.group_invite_from(group, None).unwrap();
+        assert_eq!(invited.map(|(id, _)| id), Some(key));
+        let copy = creator.owner_copy(group);
+        assert!(matches!(copy[0], WirePayload::SyncResponse { .. }));
+        assert!(copy[1..].iter().any(|p| matches!(p, WirePayload::Signed(s) if matches!(s.event, ServerEvent::CommunityKeyAdd { .. }))));
+
+        let theirs = Identity::generate();
+        let mut friend_profile = UserProfile::new("friend");
+        friend_profile.identity = Some(theirs.public());
+        let mut friend = Client::default();
+        *friend.me.lock().unwrap() = Some((friend_profile.clone(), theirs));
+        friend.tickets.insert(group, ticket);
+        let joined = Utc::now().timestamp_millis() + 1_000;
+        assert!(friend.install_service_snapshot(group, copy[0].clone(), Some(joined)).unwrap());
+        assert!(friend.is_group(group));
+        assert!(friend.servers.lock().unwrap()[&group].server.is_current_member(friend_profile.id));
+        assert!(friend.owned_groups().is_empty());
     }
 
     fn mirror(world: &World) -> Vec<u8> {

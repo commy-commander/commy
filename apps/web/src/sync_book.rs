@@ -266,6 +266,10 @@ impl Book {
         self.live.contains(&stream)
     }
 
+    pub fn holds_state(&self, server: ServerId) -> bool {
+        self.routes.iter().any(|(stream, (sid, want))| *sid == server && want.lane == Lane::State && want.writes && self.live.contains(stream))
+    }
+
     pub fn writers(&self, server: ServerId, lane: Lane) -> Vec<StreamId> {
         self.routes
             .iter()

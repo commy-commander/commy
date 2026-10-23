@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
 use chrono::Utc;
-use commy_core::channel_key::{ChannelSecret, KeyId};
+use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope};
 use commy_core::{Message, ServerEvent, ServerId};
 use commy_net::community_streams::{self as streams, Lane};
 use commy_net::entry_list::{self, EntryList};
@@ -23,6 +23,7 @@ use crate::client::Applied;
 use crate::sync_book::{community_key_record, joined_record, prefs_record, read_record, saved_record, Book, Change, Record};
 
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
+const SNAPSHOT_EVERY_MS: i64 = 6 * 60 * 60 * 1000;
 const MAX_MARKS_PER_RECORD: usize = 300;
 
 fn chunks(marks: BTreeMap<String, ReadMark>, size: usize) -> Vec<BTreeMap<String, ReadMark>> {
@@ -48,6 +49,8 @@ pub(super) struct Live {
     pub(super) node: [u8; 32],
     greeted: HashSet<ServerId>,
     gone: bool,
+    published: HashMap<ServerId, i64>,
+    key_work: HashSet<(ServerId, KeyScope)>,
 }
 
 impl Session {
@@ -62,7 +65,7 @@ impl Session {
         let stream = sync_streams::account_stream(&key);
         let account = stream.id;
         pool.follow(stream, 0);
-        *self.sync.borrow_mut() = Some(Live { pool, account, account_live: false, book: Book::new(list), node, greeted: HashSet::new(), gone: false });
+        *self.sync.borrow_mut() = Some(Live { pool, account, account_live: false, book: Book::new(list), node, greeted: HashSet::new(), gone: false, published: HashMap::new(), key_work: HashSet::new() });
         spawn_local(self.clone().run_sync(events));
         spawn_local(self.clone().tend_sync());
         spawn_local(self.clone().tend_presence());
@@ -104,7 +107,71 @@ impl Session {
                 return;
             }
             self.refresh_sync();
+            self.tend_owned();
         }
+    }
+
+    fn tend_owned(&self) {
+        let now = Utc::now().timestamp_millis();
+        for server in self.client.borrow().owned_groups() {
+            let (due, copy) = {
+                let mut guard = self.sync.borrow_mut();
+                let Some(live) = guard.as_mut() else { return };
+                if !live.book.holds_state(server) {
+                    continue;
+                }
+                let work: HashSet<(ServerId, KeyScope)> = self.client.borrow().key_work(server).into_iter().map(|scope| (server, scope)).collect();
+                let due: Vec<KeyScope> = work.iter().filter(|w| live.key_work.contains(w)).map(|(_, scope)| *scope).collect();
+                live.key_work.retain(|(sid, _)| *sid != server);
+                live.key_work.extend(work);
+                let copy = live.published.get(&server).is_none_or(|at| now - at >= SNAPSHOT_EVERY_MS);
+                if copy {
+                    live.published.insert(server, now);
+                }
+                (due, copy)
+            };
+            for scope in due {
+                for payload in self.client.borrow().tend_scope(server, scope) {
+                    self.publish(server, &payload);
+                }
+            }
+            if copy {
+                for payload in self.client.borrow().owner_copy(server) {
+                    self.publish(server, &payload);
+                }
+            }
+        }
+    }
+
+    pub(super) async fn start_group(self: &Rc<Self>) -> Result<ServerId, String> {
+        let (me, identity) = self.client.borrow().me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
+        if self.sync.borrow().is_none() {
+            return Err("Your servers are not unlocked yet".into());
+        }
+        let server = ServerId::new();
+        let mut ticket = ServerTicket::new(server, "", commy_net::node::topic_for(server), Vec::new());
+        ticket.owner = Some((me.id, identity.public()));
+        let keys = self.client.borrow().start_group(server)?;
+        let (id, secret) = self.client.borrow().newest_community_key(server).ok_or("Could not make a key for the group")?;
+        let now = Utc::now();
+        let entry = entry_list::Entry { name: String::new(), ticket: ticket.encode(), since: now };
+        let shared = SharedKey::of(id, &secret);
+        if let Some(live) = self.sync.borrow_mut().as_mut() {
+            live.book.join(server, entry.clone(), shared.clone(), now.timestamp_millis());
+            live.published.insert(server, now.timestamp_millis());
+            live.greeted.insert(server);
+        }
+        self.client.borrow_mut().tickets.insert(server, ticket.clone());
+        self.append_account(joined_record(server, &entry));
+        self.append_account(community_key_record(server, &shared, now.timestamp_millis(), ticket.owner));
+        self.refresh_sync();
+        let copy = self.client.borrow().owner_copy(server);
+        for payload in keys.iter().chain(copy.iter()) {
+            self.publish(server, payload);
+        }
+        self.emit("servers-changed", Value::Null);
+        self.emit("dm-changed", json!(server.to_string()));
+        Ok(server)
     }
 
     async fn tend_presence(self: Rc<Self>) {

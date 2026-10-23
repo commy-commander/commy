@@ -260,6 +260,7 @@ impl Session {
                 Ok(Value::Null)
             }
             "list_dm_threads" => self.dm_command(cmd, args).await,
+            "create_group_dm" => self.dm_command(cmd, args).await,
             "add_group_members" => self.dm_command(cmd, args).await,
             "get_dm_messages" => self.dm_command(cmd, args).await,
             "open_dm" => self.dm_command(cmd, args).await,
