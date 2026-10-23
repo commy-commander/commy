@@ -216,6 +216,7 @@ impl Session {
         self.release_parked(server);
         self.emit("servers-changed", Value::Null);
         self.emit("server-event", json!(server.to_string()));
+        self.announce_if_loaded();
         self.refresh_sync();
     }
 

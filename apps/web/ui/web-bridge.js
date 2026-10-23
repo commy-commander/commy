@@ -154,7 +154,7 @@
     const fallback = webDefault(cmd);
     if (fallback.known) return fallback.value;
     if (cmd === "account_begin_sign_in") {
-      window.location.assign(webSignInUrl(window.location.origin));
+      window.location.assign(webSignInUrl(window.location.origin, window.location.pathname));
       return new Promise(() => {});
     }
     if (cmd === "account_sign_out") {
@@ -192,8 +192,11 @@
     },
   };
   document.documentElement.classList.add("web-app");
-  const signInButton = document.getElementById("signin-go");
-  if (signInButton) signInButton.textContent = `Sign in on ${window.location.host}`;
-  const signInNote = document.querySelector("#signin-start .signin-note");
-  if (signInNote) signInNote.textContent = "Sign in or create your account, then come back to the web app.";
+  function setWebText(element, text) {
+    if (!element) return;
+    element.removeAttribute("data-i18n");
+    element.textContent = text;
+  }
+  setWebText(document.getElementById("signin-go"), `Sign in on ${window.location.host}`);
+  setWebText(document.querySelector("#signin-start .signin-note"), "Sign in or create your account, then come back to the web app.");
 })();

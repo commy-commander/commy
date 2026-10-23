@@ -237,7 +237,7 @@ impl Session {
             }
         };
         let secret = self.device_secret(&account);
-        self.start_node(secret).await?;
+        self.start_node(secret).await.ok();
         self.link_device(secret).await?;
         let reply = self.request("GET", account::VAULT_PATH, None).await?;
         let Some(sealed) = account::vault_data(&reply)? else {
@@ -278,13 +278,9 @@ impl Session {
         Ok(())
     }
 
-    async fn node_hex(&self) -> Option<String> {
-        self.node.lock().await.as_ref().map(|n| n.node_id_hex())
-    }
-
     async fn link_device(&self, secret: [u8; 32]) -> Result<(), String> {
         let key = iroh::SecretKey::from_bytes(&secret);
-        let node_id = data_encoding::HEXLOWER.encode(key.public().as_bytes());
+        let node_id = node_id_of(&secret);
         let reply = self.request("POST", account::LINK_CHALLENGE_PATH, Some(json!({ "nodeId": node_id }))).await?;
         let challenge = account::parse_challenge(&reply, &self.origin, &node_id)?;
         let signature = data_encoding::HEXLOWER.encode(&key.sign(challenge.message.as_bytes()).to_bytes());
@@ -298,7 +294,7 @@ impl Session {
     }
 
     async fn other_devices(&self) -> Result<Vec<String>, String> {
-        let own = self.node_hex().await.unwrap_or_default();
+        let own = self.account().map(|account| node_id_of(&self.device_secret(&account))).unwrap_or_default();
         let reply = self.request("GET", account::DEVICES_PATH, None).await?;
         Ok(account::other_devices(&reply, &own))
     }
@@ -314,17 +310,21 @@ impl Session {
         let code = commy_net::key_handoff::code(&node.public());
         self.set_unlock(Unlock::Asking, format!("Open Commy on one of your other devices and choose Allow. It will show the code {code}."));
         let (tx, mut rx) = mpsc::unbounded_channel();
-        if let Some(url) = self.sync_service_url().await {
+        let sync = self.sync_service_url().await;
+        if let Some(url) = sync.clone() {
             let (tx, account) = (tx.clone(), account.id.clone());
             spawn_local(async move {
                 let got = handoff::ask(&url, &account, &node, DEVICE_NAME).await;
                 let _ = tx.send(got.map(|key| EntryKeyReply::Key(key.to_text())));
             });
         }
-        let endpoint = self.node.lock().await.as_ref().map(|node| {
-            node.reach_via_relays(&devices);
-            node.endpoint()
-        });
+        let endpoint = match sync {
+            Some(_) => None,
+            None => self.node.lock().await.as_ref().map(|node| {
+                node.reach_via_relays(&devices);
+                node.endpoint()
+            }),
+        };
         if let Some(endpoint) = endpoint {
             let request = EntryKeyRequest { server: self.origin.clone(), account: account.id.clone(), device_name: DEVICE_NAME.into() };
             for device in &devices {
@@ -361,7 +361,11 @@ impl Session {
     async fn use_recovery_code(self: &Rc<Self>, code: &str) -> Result<Value, String> {
         let account = self.account()?;
         let key = SealKey::from_text(code.trim()).map_err(|_| "That is not a recovery code".to_string())?;
-        self.accept_key(&account, key)?;
+        self.accept_key(&account, key.clone())?;
+        if let Some(url) = self.sync_service_url().await {
+            let me = commy_core::Identity::from_bytes(&self.device_secret(&account));
+            spawn_local(async move { handoff::tell_devices_we_have_the_key(&url, &account.id, &me, &key).await });
+        }
         Ok(self.unlock_view())
     }
 
@@ -390,11 +394,20 @@ impl Session {
         Ok(())
     }
 
+    fn announce_if_loaded(&self) {
+        let loaded = {
+            let client = self.client.borrow();
+            client.tickets.keys().all(|server| client.has(*server))
+        };
+        if loaded {
+            self.emit("web-servers-loaded", json!(self.client.borrow().list_servers().len()));
+        }
+    }
+
     async fn load_servers(self: Rc<Self>, tickets: Vec<ServerTicket>) {
+        self.announce_if_loaded();
         let devices = self.other_devices().await.unwrap_or_default();
-        {
-            let mut node = self.node.lock().await;
-            let Some(node) = node.as_mut() else { return };
+        if let Some(node) = self.node.lock().await.as_mut() {
             for ticket in &tickets {
                 if node.rejoin_server(ticket).await.is_ok() {
                     let _ = node.join_peers(ticket.server_id, &devices).await;
@@ -439,6 +452,7 @@ impl Session {
         }
         if installed {
             self.emit("servers-changed", Value::Null);
+            self.announce_if_loaded();
             self.refresh_sync();
             let node = self.node.lock().await;
             if let Some(node) = node.as_ref() {
@@ -485,6 +499,7 @@ impl Session {
                     let installed = self.client.borrow().install_owner_snapshot(server, payload).unwrap_or(false);
                     if installed {
                         self.emit("servers-changed", Value::Null);
+                        self.announce_if_loaded();
                         self.refresh_sync();
                         let node = self.node.lock().await;
                         if let Some(node) = node.as_ref() {
@@ -553,6 +568,10 @@ impl Session {
         self.emit("server-event", json!(server.to_string()));
         to_json(&view.with_pending(!delivered))
     }
+}
+
+fn node_id_of(secret: &[u8; 32]) -> String {
+    data_encoding::HEXLOWER.encode(iroh::SecretKey::from_bytes(secret).public().as_bytes())
 }
 
 fn relay_map_of(relays: &[String]) -> Result<RelayMap, String> {

@@ -41,6 +41,14 @@ test("sign-in goes to the same site's account page", () => {
   assert.equal(webSignInUrl("https://commy.chat"), "https://commy.chat/account");
 });
 
+test("sign-in brings the visitor back to the web app's own path", () => {
+  assert.equal(webSignInUrl("https://commy.chat", "/web/"), "https://commy.chat/account?next=%2Fweb%2F");
+});
+
+test("the browser's sign-in text is not replaced by the desktop's translations", () => {
+  assert.match(read("apps", "web", "ui", "web-bridge.js"), /removeAttribute\("data-i18n"\)/);
+});
+
 test("the unlock text prefers the backend's detail", () => {
   assert.equal(webUnlockText({ state: "locked", detail: "Try again" }), "Try again");
   assert.match(webUnlockText({ state: "no_list", detail: "" }), /computer/);

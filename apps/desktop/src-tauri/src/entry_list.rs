@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
 use commy_core::identity::IDENTITY_FILE;
-use commy_core::{ServerId, UserProfile};
+use commy_core::{IdentityKey, ServerId, UserProfile};
 use commy_net::entry_list::decode_identity;
 use commy_net::sealed::SealKey;
 use commy_net::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ServerTicket};
@@ -784,7 +784,12 @@ async fn ask(handle: &AppHandle) -> Result<Asked, String> {
 }
 
 static NEXT_ASK: AtomicU64 = AtomicU64::new(1);
-static PENDING: Mutex<BTreeMap<u64, tokio::sync::oneshot::Sender<EntryKeyReply>>> = Mutex::new(BTreeMap::new());
+struct OpenPrompt {
+    device: IdentityKey,
+    reply: tokio::sync::oneshot::Sender<EntryKeyReply>,
+}
+
+static PENDING: Mutex<BTreeMap<u64, OpenPrompt>> = Mutex::new(BTreeMap::new());
 
 #[derive(Debug, Clone, Serialize)]
 struct KeyAskView {
@@ -800,9 +805,9 @@ pub async fn run_entry_key_requests(handle: AppHandle, mut asks: tokio::sync::mp
             let reply = answer(&handle, ask.peer, &ask.request).await;
             match reply {
                 Some((id, rx)) => {
-                    let reply = rx.await.unwrap_or(EntryKeyReply::Denied);
-                    PENDING.lock().unwrap().remove(&id);
-                    let _ = ask.reply.send(reply);
+                    let answered = tokio::time::timeout(commy_net::entry_key::ANSWER_TIMEOUT, rx).await;
+                    close_prompt(&handle, id);
+                    let _ = ask.reply.send(answered.ok().and_then(Result::ok).unwrap_or(EntryKeyReply::Denied));
                 }
                 None => {
                     let _ = ask.reply.send(EntryKeyReply::Unknown);
@@ -827,13 +832,13 @@ async fn answer(
         tracing::warn!("a device outside this account asked for the server list key");
         return None;
     }
-    prompt(handle, &request.device_name, None)
+    prompt(handle, &request.device_name, IdentityKey(peer))
 }
 
 pub(crate) fn prompt(
     handle: &AppHandle,
     device_name: &str,
-    code: Option<String>,
+    device: IdentityKey,
 ) -> Option<(u64, tokio::sync::oneshot::Receiver<EntryKeyReply>)> {
     let app = handle.state::<App>();
     let dir = app.data_dir()?.clone();
@@ -841,8 +846,9 @@ pub(crate) fn prompt(
     load_key(&dir, &s.server, &s.account)?;
     let id = NEXT_ASK.fetch_add(1, Ordering::SeqCst);
     let (tx, rx) = tokio::sync::oneshot::channel();
-    PENDING.lock().unwrap().insert(id, tx);
+    PENDING.lock().unwrap().insert(id, OpenPrompt { device, reply: tx });
     let name = commy_net::key_handoff::clean_name(device_name);
+    let code = Some(commy_net::key_handoff::code(&device));
     crate::tray::show_main_window(handle);
     let _ = handle.emit("entry-key-request", KeyAskView { id, device_name: name, code });
     Some((id, rx))
@@ -852,19 +858,22 @@ pub(crate) fn prompt_is_open(id: u64) -> bool {
     PENDING.lock().unwrap().contains_key(&id)
 }
 
-pub(crate) fn forget_prompt(id: u64) {
-    PENDING.lock().unwrap().remove(&id);
-}
-
 pub(crate) fn close_prompt(handle: &AppHandle, id: u64) {
     if PENDING.lock().unwrap().remove(&id).is_some() {
         let _ = handle.emit("entry-key-request-closed", id);
     }
 }
 
+pub(crate) fn close_prompts_for(handle: &AppHandle, device: &IdentityKey) {
+    let ids: Vec<u64> = PENDING.lock().unwrap().iter().filter(|(_, open)| open.device == *device).map(|(id, _)| *id).collect();
+    for id in ids {
+        close_prompt(handle, id);
+    }
+}
+
 #[tauri::command]
 pub fn answer_entry_key_request(app: tauri::State<'_, App>, id: u64, allow: bool) -> Result<(), String> {
-    let sender = PENDING.lock().unwrap().remove(&id).ok_or("That request has expired")?;
+    let sender = PENDING.lock().unwrap().remove(&id).ok_or("That request has expired")?.reply;
     let reply = if allow {
         let (dir, s) = signed_in(&app)?;
         let key = load_key(&dir, &s.server, &s.account).ok_or("This device has no server list key")?;

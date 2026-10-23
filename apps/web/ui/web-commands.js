@@ -62,8 +62,9 @@ function webDefault(cmd) {
   return { known: true, value: structuredClone(WEB_DEFAULTS[cmd]) };
 }
 
-function webSignInUrl(origin) {
-  return `${origin}/account`;
+function webSignInUrl(origin, returnPath) {
+  const back = returnPath ? `?next=${encodeURIComponent(returnPath)}` : "";
+  return `${origin}/account${back}`;
 }
 
 function webUnlockText(view) {
