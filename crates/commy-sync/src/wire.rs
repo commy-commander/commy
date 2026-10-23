@@ -3,8 +3,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::stream::{StreamId, StreamKeys, APPEND_NONCE_BYTES, MAX_SEALED};
 
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 pub const SIGNALS_SINCE: u32 = 2;
+pub const WILLS_SINCE: u32 = 3;
 pub const PAGE_SIZE: usize = 200;
 pub const MAX_STREAMS_PER_CONNECTION: usize = 16;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
@@ -79,6 +80,7 @@ pub enum ClientFrame {
     },
     Append { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
     Signal { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
+    Will { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
     Close { stream: StreamId },
     Ping,
 }
@@ -101,6 +103,11 @@ impl ClientFrame {
     pub fn signal(keys: &StreamKeys, nonce: [u8; APPEND_NONCE_BYTES], body: Vec<u8>) -> Self {
         let sig = keys.sign_signal(&nonce, &body);
         ClientFrame::Signal { stream: keys.id, nonce: Bytes(nonce), body: Blob(body), sig: Bytes(sig) }
+    }
+
+    pub fn will(keys: &StreamKeys, nonce: [u8; APPEND_NONCE_BYTES], body: Vec<u8>) -> Self {
+        let sig = keys.sign_signal(&nonce, &body);
+        ClientFrame::Will { stream: keys.id, nonce: Bytes(nonce), body: Blob(body), sig: Bytes(sig) }
     }
 }
 
@@ -173,6 +180,7 @@ mod tests {
             ClientFrame::open_tail(&keys, 0, Some(50)),
             ClientFrame::append(&keys, [5; APPEND_NONCE_BYTES], vec![1, 2, 3]),
             ClientFrame::signal(&keys, [6; APPEND_NONCE_BYTES], vec![4, 5]),
+            ClientFrame::will(&keys, [7; APPEND_NONCE_BYTES], vec![6]),
             ClientFrame::Close { stream: keys.id },
             ClientFrame::Ping,
         ];
@@ -201,6 +209,10 @@ mod tests {
         };
         assert!(verify_signal(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0));
         assert!(!verify_append(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0), "a signal cannot be stored as an entry");
+        let ClientFrame::Will { stream, nonce, body, sig } = ClientFrame::will(&keys, [9; APPEND_NONCE_BYTES], b"x".to_vec()) else {
+            unreachable!()
+        };
+        assert!(verify_signal(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0), "a last word is a signal held for later");
     }
 
     #[test]

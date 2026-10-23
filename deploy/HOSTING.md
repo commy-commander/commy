@@ -382,6 +382,11 @@ server or channel a log belongs to.
   and members heard this way stay shown online for 11 minutes. Signals have
   their own allowance per address (60 at once, then 2 a second) and count
   toward the daily byte limit.
+- **Last word:** an app can leave one sealed signal per open log, its "gone
+  offline" note, which the service keeps in memory only and passes to the other
+  open connections if that connection drops without closing the log, so an app
+  that crashes or is killed shows offline at once. It is never stored and is
+  forgotten when the log is closed or the connection ends.
 - **Setting it up:** `docker compose up -d sync`, then add `SYNC_URL` and
   recreate auth: `docker compose up -d --no-deps auth`. The service answers
   `GET /sync/healthz`. It logs only totals (connections, live logs, opens,
