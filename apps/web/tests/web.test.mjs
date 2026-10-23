@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_DEFAULTS, webDefault, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
+const { WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
 
 const repo = join(import.meta.dirname, "..", "..", "..");
 const read = (...path) => readFileSync(join(repo, ...path), "utf8");
@@ -43,6 +43,11 @@ test("sign-in goes to the same site's account page", () => {
 
 test("sign-in brings the visitor back to the web app's own path", () => {
   assert.equal(webSignInUrl("https://commy.chat", "/web/"), "https://commy.chat/account?next=%2Fweb%2F");
+});
+
+test("pictures from GIF and emoji search load through this site's account server", () => {
+  assert.equal(webFileSrc("", "commy-media"), "/api/auth/commy/media");
+  assert.equal(webFileSrc("blob:x", "asset"), "blob:x");
 });
 
 test("the browser's sign-in text is not replaced by the desktop's translations", () => {

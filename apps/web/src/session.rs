@@ -17,6 +17,8 @@ use tokio::sync::{mpsc, Mutex};
 use wasm_bindgen_futures::spawn_local;
 
 use commy_view::act;
+use commy_view::catalog;
+use commy_view::pins::Pins;
 use commy_view::search::{Page, SearchQuery};
 
 use crate::account::{self, AccountUser, Reply};
@@ -30,6 +32,7 @@ mod sync;
 const DEVICE_NAME: &str = "Web browser";
 const MAX_PREF_KEY: usize = 200;
 const MAX_PREFS_PER_CALL: usize = 500;
+const FAREWELL_LINGER: std::time::Duration = std::time::Duration::from_millis(300);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Unlock {
@@ -58,6 +61,7 @@ struct Status {
     account: Option<AccountUser>,
     device_linked: bool,
     sealed: Option<String>,
+    features: Option<account::Features>,
 }
 
 pub struct Session {
@@ -75,6 +79,9 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 struct Args {
     server_id: Option<String>,
+    entry: Option<commy_view::saved::Entry>,
+    user_id: Option<String>,
+    saved: Option<bool>,
     channel_id: Option<String>,
     content: Option<String>,
     reply_to: Option<String>,
@@ -95,6 +102,9 @@ struct Args {
     hours: Option<u32>,
     terms: Option<Vec<String>>,
     from: Option<String>,
+    query: Option<String>,
+    page: Option<u32>,
+    category: Option<u32>,
     mentions: Option<String>,
     offset: Option<usize>,
     channels: Option<std::collections::BTreeMap<String, commy_view::reads::ReadMark>>,
@@ -123,6 +133,7 @@ impl Session {
                 account: None,
                 device_linked: false,
                 sealed: None,
+                features: None,
             }),
             node: Mutex::new(None),
             store: RefCell::new(None),
@@ -186,6 +197,35 @@ impl Session {
                 let page = args.offset.map_or(Page::newest(), Page::at);
                 to_json(&self.client.borrow().search(server, &query, page)?)
             }
+            "gif_search" => {
+                let params = [("q", catalog::gif_query(args.query.as_deref().unwrap_or("")))];
+                let found: Option<catalog::Found<catalog::GifHit>> = self.search("gifs", &params).await?;
+                to_json(&found.map(|found| catalog::safe_gifs(found.results)))
+            }
+            "sticker_search" => {
+                let params = catalog::sticker_params(args.query.as_deref().unwrap_or(""), args.from.as_deref(), args.page);
+                let found: Option<catalog::StickerPage> = self.search("stickers", &params).await?;
+                to_json(&found.map(catalog::safe_stickers))
+            }
+            "search_emoji_catalog" => {
+                let params = catalog::emoji_params(args.query.as_deref().unwrap_or(""), args.category, args.page);
+                let found: Option<catalog::EmojiPage> = self.search("emojis", &params).await?;
+                to_json(&catalog::safe_emojis(found.ok_or("This site does not offer emoji search")?))
+            }
+            "pins_load" => to_json(&self.pins()),
+            "pin_channel" => {
+                let (server, channel) = (args.server_id.unwrap_or_default(), args.channel_id.unwrap_or_default());
+                to_json(&self.change_pins(|pins| pins.set_channel(&server, &channel, args.pinned.unwrap_or(true)))?)
+            }
+            "pin_dm" => {
+                let user = args.user_id.unwrap_or_default();
+                to_json(&self.change_pins(|pins| pins.set_dm(&user, args.pinned.unwrap_or(true)))?)
+            }
+            "saved_list" => to_json(&self.saved()),
+            "saved_set" => {
+                let entry: commy_view::saved::Entry = args.entry.ok_or("Pick a message to save")?;
+                to_json(&self.set_saved(entry, args.saved.unwrap_or(true))?)
+            }
             "get_pins" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 let channel: Option<ChannelId> = args.channel_id.as_ref().map(|c| parse(Some(c), "channel")).transpose()?;
@@ -204,6 +244,13 @@ impl Session {
             }
             "web_nudge" => {
                 self.nudge_sync();
+                if self.said_goodbye() {
+                    self.say_here_everywhere();
+                }
+                Ok(Value::Null)
+            }
+            "web_farewell" => {
+                self.say_goodbye();
                 Ok(Value::Null)
             }
             _ => Err(format!("{cmd} is not available in the web app yet")),
@@ -212,6 +259,11 @@ impl Session {
 
     fn emit(&self, event: &str, payload: Value) {
         self.host.emit(event, &payload.to_string());
+    }
+
+    async fn search<T: serde::de::DeserializeOwned>(&self, kind: &str, params: &[(&str, String)]) -> Result<Option<T>, String> {
+        let reply = self.request("GET", &account::search_path(kind, params), None).await?;
+        account::search_reply(&reply)
     }
 
     async fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<Reply, String> {
@@ -230,6 +282,16 @@ impl Session {
     async fn account_status(&self) -> Result<Value, String> {
         let reply = self.request("GET", account::SESSION_PATH, None).await?;
         let user = account::parse_session(&reply);
+        let known = self.status.borrow().features;
+        let offers = match known {
+            Some(features) => features,
+            None => {
+                let features = account::features(&self.request("GET", account::DISCOVERY_PATH, None).await?);
+                self.status.borrow_mut().features = Some(features);
+                features
+            }
+        };
+        let offers = if user.is_some() { offers } else { account::Features::default() };
         let mut status = self.status.borrow_mut();
         status.account = user.clone();
         if user.is_none() {
@@ -245,13 +307,17 @@ impl Session {
             "server_from_env": true,
             "device_linked": status.device_linked,
             "pending_code": null,
-            "server_gifs": false,
-            "server_games": false,
-            "server_media": false,
+            "server_gifs": offers.gifs,
+            "server_games": offers.games,
+            "server_emojis": offers.emojis,
+            "server_stickers": offers.stickers,
+            "server_media": offers.media,
         }))
     }
 
     async fn sign_out(&self) -> Result<Value, String> {
+        self.say_goodbye();
+        n0_future::time::sleep(FAREWELL_LINGER).await;
         self.stop_sync();
         let _ = self.request("POST", account::SIGN_OUT_PATH, Some(json!({}))).await;
         self.host.remove(account::ENTRY_KEY_KEY);
@@ -274,6 +340,20 @@ impl Session {
             status.detail = detail.into();
         }
         self.emit("web-unlock-changed", self.unlock_view());
+    }
+
+    fn pins(&self) -> Pins {
+        let Ok(account) = self.account() else { return Pins::default() };
+        self.host.load(&account::pins_key(&account.id)).and_then(|raw| serde_json::from_str(&raw).ok()).unwrap_or_default()
+    }
+
+    fn change_pins(&self, edit: impl FnOnce(&mut Pins) -> bool) -> Result<Pins, String> {
+        let account = self.account()?;
+        let mut pins = self.pins();
+        if edit(&mut pins) {
+            self.host.save(&account::pins_key(&account.id), &serde_json::to_string(&pins).map_err(|e| e.to_string())?);
+        }
+        Ok(pins)
     }
 
     fn account(&self) -> Result<AccountUser, String> {
@@ -600,6 +680,9 @@ impl Session {
         while let Some(event) = events.recv().await {
             match event {
                 NetEvent::Event { server, event, action, .. } => {
+                    if self.client.borrow().admits(server, &event, action) {
+                        self.client.borrow().hear_peer(server, &event, action.as_ref());
+                    }
                     self.apply_event(server, event, action, true, true);
                 }
                 NetEvent::SyncReceived { server, payload } => {
@@ -636,6 +719,15 @@ impl Session {
 
     fn apply_event(&self, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
         let applied = self.client.borrow().apply_live(server, event, action);
+        self.after_apply(server, applied, rings, shown)
+    }
+
+    fn apply_stored(&self, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
+        let applied = self.client.borrow().apply_stored(server, event, action);
+        self.after_apply(server, applied, rings, shown)
+    }
+
+    fn after_apply(&self, server: ServerId, applied: Applied, rings: bool, shown: bool) -> Applied {
         if let Applied::Created(message) = &applied {
             if let Some(payload) = self.client.borrow().message_created_payload(server, message).filter(|_| rings) {
                 self.emit("message-created", payload);

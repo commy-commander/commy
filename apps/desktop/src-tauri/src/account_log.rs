@@ -15,7 +15,6 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::community_sync::SharedKey;
 use crate::entry_list;
 use crate::read_state::ReadMark;
-use crate::saved::SavedMessage;
 use crate::state::App;
 use crate::sync_link::{self, Pool};
 
@@ -30,13 +29,9 @@ const SERVERS_DELAY: Duration = Duration::from_secs(1);
 
 pub use commy_view::reads::PrefPiece;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SavedOp {
-    pub message: String,
-    pub at: i64,
-    #[serde(default)]
-    pub saved: Option<SavedMessage>,
-}
+pub use commy_view::saved::SavedOp;
+#[cfg(test)]
+use commy_view::saved::SavedMessage;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "k", rename_all = "snake_case")]
@@ -483,7 +478,7 @@ fn apply(handle: &AppHandle, change: Change) {
 fn seed(handle: &AppHandle) {
     let app = handle.state::<App>();
     let marks = crate::read_state::all_marks(&app);
-    let saved = app.data_dir().map(|dir| crate::saved::SavedStore::load(dir).saved).unwrap_or_default();
+    let saved = app.data_dir().map(|dir| crate::saved::load(dir).saved).unwrap_or_default();
     with_state(&app, |state| {
         for record in read_records(marks) {
             state.enqueue(record, None);

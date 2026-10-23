@@ -172,6 +172,8 @@
   const nudge = () => { if (unlocked) backend("web_nudge").catch(() => {}); };
   window.addEventListener("online", nudge);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") nudge(); });
+  window.addEventListener("pagehide", () => { if (unlocked) backend("web_farewell").catch(() => {}); });
+  window.addEventListener("pageshow", e => { if (e.persisted) nudge(); });
 
   listeners.set("web-unlock-changed", new Map([[0, e => e.payload.state !== "unlocked" && paintUnlock(e.payload)]]));
   listeners.set("web-servers-loaded", new Map([[0, () => { serversLoaded = true; }]]));
@@ -179,7 +181,7 @@
   window.__TAURI__ = {
     core: {
       invoke,
-      convertFileSrc: path => path,
+      convertFileSrc: (path, protocol) => webFileSrc(path, protocol),
     },
     event: {
       listen(event, callback) {

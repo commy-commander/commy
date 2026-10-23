@@ -59,6 +59,10 @@ function webDefault(cmd) {
   return { known: true, value: structuredClone(WEB_DEFAULTS[cmd]) };
 }
 
+function webFileSrc(path, protocol) {
+  return protocol === "commy-media" ? "/api/auth/commy/media" : path;
+}
+
 function webSignInUrl(origin, returnPath) {
   const back = returnPath ? `?next=${encodeURIComponent(returnPath)}` : "";
   return `${origin}/account${back}`;
@@ -79,5 +83,5 @@ function webReplyLine(status, text) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webSignInUrl, webUnlockText, webReplyLine, webRelays };
+  module.exports = { WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays };
 }

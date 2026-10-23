@@ -8,6 +8,7 @@ use commy_net::sync_streams::SharedKey;
 use commy_net::{ServerTicket, WirePayload};
 use commy_sync::{StreamId, StreamKeys};
 use commy_view::reads::{PrefPiece, ReadMark, ReadState};
+use commy_view::saved::{SavedOp, SavedStore};
 use serde::Deserialize;
 
 pub const MAX_PARKED: usize = 2_000;
@@ -19,6 +20,7 @@ pub enum Record {
     CommunityKey { server: ServerId, key: SharedKey, at: i64 },
     Read { marks: BTreeMap<String, ReadMark> },
     Prefs { set: BTreeMap<String, PrefPiece> },
+    Saved { ops: Vec<SavedOp> },
     #[serde(other)]
     Unknown,
 }
@@ -37,6 +39,10 @@ pub fn prefs_record(set: &BTreeMap<String, PrefPiece>) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({ "k": "prefs", "set": set })).expect("prefs encode")
 }
 
+pub fn saved_record(ops: &[SavedOp]) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "k": "saved", "ops": ops })).expect("saved encode")
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
     Nothing,
@@ -44,6 +50,7 @@ pub enum Change {
     Keys,
     Read(Vec<String>),
     Prefs(BTreeMap<String, PrefPiece>),
+    Saved,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -63,6 +70,8 @@ pub struct Book {
     parked: HashMap<ServerId, VecDeque<WirePayload>>,
     reads: ReadState,
     prefs: BTreeMap<String, PrefPiece>,
+    saved: SavedStore,
+    saved_at: HashMap<String, i64>,
 }
 
 impl Book {
@@ -98,8 +107,33 @@ impl Book {
                 let taken = self.note_prefs(set);
                 if taken.is_empty() { Change::Nothing } else { Change::Prefs(taken) }
             }
+            Record::Saved { ops } => {
+                if self.note_saved(ops).is_empty() { Change::Nothing } else { Change::Saved }
+            }
             Record::Unknown => Change::Nothing,
         }
+    }
+
+    pub fn note_saved(&mut self, ops: Vec<SavedOp>) -> Vec<SavedOp> {
+        let taken: Vec<SavedOp> = ops
+            .into_iter()
+            .filter(|op| op.saved.as_ref().is_none_or(|s| s.entry.message == op.message))
+            .filter(|op| {
+                let newer = self.saved_at.get(&op.message).is_none_or(|at| op.at > *at);
+                if newer {
+                    self.saved_at.insert(op.message.clone(), op.at);
+                }
+                newer
+            })
+            .collect();
+        if !taken.is_empty() {
+            self.saved.apply_ops(taken.clone());
+        }
+        taken
+    }
+
+    pub fn saved(&self) -> &SavedStore {
+        &self.saved
     }
 
     pub fn note_reads(&mut self, marks: BTreeMap<String, ReadMark>) -> Vec<String> {
@@ -250,8 +284,24 @@ mod tests {
         assert_eq!(Record::parse(json.as_bytes()), Record::Servers { list: Box::new(list) });
         assert_eq!(Record::parse(br#"{"k":"read","marks":{}}"#), Record::Read { marks: BTreeMap::new() });
         assert_eq!(Record::parse(br#"{"k":"prefs","set":{}}"#), Record::Prefs { set: BTreeMap::new() });
-        assert_eq!(Record::parse(br#"{"k":"saved","ops":[]}"#), Record::Unknown);
+        assert_eq!(Record::parse(br#"{"k":"saved","ops":[]}"#), Record::Saved { ops: Vec::new() });
+        assert_eq!(Record::parse(br#"{"k":"dm_partner","at":1}"#), Record::Unknown);
         assert_eq!(Record::parse(b"not json"), Record::Unknown);
+    }
+
+    #[test]
+    fn saved_messages_from_any_device_keep_the_newest_change() {
+        use commy_view::saved::{Entry, SavedMessage};
+        let save = |at| SavedOp { message: "m".into(), at, saved: Some(SavedMessage { saved_at: at, entry: Entry { message: "m".into(), ..Entry::default() } }) };
+        let unsave = |at| SavedOp { message: "m".into(), at, saved: None };
+        let mut book = Book::default();
+        assert_eq!(book.note_saved(vec![save(5)]).len(), 1);
+        let echo = serde_json::from_slice(&saved_record(&[save(5)])).unwrap();
+        assert_eq!(book.fold(echo), Change::Nothing, "our own change coming back is not news");
+        assert_eq!(book.fold(Record::Saved { ops: vec![unsave(3)] }), Change::Nothing, "an older change loses");
+        assert_eq!(book.saved().saved.len(), 1);
+        assert_eq!(book.fold(Record::Saved { ops: vec![unsave(9)] }), Change::Saved);
+        assert!(book.saved().saved.is_empty());
     }
 
     #[test]

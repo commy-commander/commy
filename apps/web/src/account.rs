@@ -13,6 +13,7 @@ pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
 
 pub const DEVICE_SECRET_KEY: &str = "commy.device";
 pub const ENTRY_KEY_KEY: &str = "commy.entry-key";
+pub const PINS_KEY: &str = "commy.pins";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountUser {
@@ -122,6 +123,58 @@ pub fn vault_data(reply: &Reply) -> Result<Option<String>, String> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+pub struct Features {
+    #[serde(default)]
+    pub gifs: bool,
+    #[serde(default)]
+    pub games: bool,
+    #[serde(default)]
+    pub emojis: bool,
+    #[serde(default)]
+    pub media: bool,
+    #[serde(default)]
+    pub stickers: bool,
+}
+
+pub fn features(reply: &Reply) -> Features {
+    #[derive(Deserialize)]
+    struct Discovery {
+        #[serde(default)]
+        features: Features,
+    }
+    if !reply.ok() {
+        return Features::default();
+    }
+    serde_json::from_str::<Discovery>(&reply.body).map(|d| d.features).unwrap_or_default()
+}
+
+fn encode_component(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+pub fn search_path(kind: &str, params: &[(&str, String)]) -> String {
+    let query: Vec<String> = params.iter().map(|(key, value)| format!("{key}={}", encode_component(value))).collect();
+    format!("/api/auth/commy/{kind}/search?{}", query.join("&"))
+}
+
+pub fn search_reply<T: serde::de::DeserializeOwned>(reply: &Reply) -> Result<Option<T>, String> {
+    match reply.status {
+        200 => serde_json::from_str(&reply.body).map(Some).map_err(|_| "Your account server sent an unexpected reply".to_string()),
+        404 => Ok(None),
+        401 => Err("Sign in again to search".into()),
+        429 => Err("Too many searches, try again in a minute".into()),
+        _ => Err("Your account server could not search right now".into()),
+    }
+}
+
 pub fn sync_url(reply: &Reply, origin: &str) -> Option<String> {
     #[derive(Deserialize)]
     struct Endpoints {
@@ -151,6 +204,10 @@ pub fn stored_entry_key(raw: Option<&str>, account: &str) -> Option<SealKey> {
 
 pub fn entry_key_record(account: &str, key: &SealKey) -> String {
     serde_json::to_string(&StoredKey { account: account.into(), key: key.to_text() }).expect("key record serializes")
+}
+
+pub fn pins_key(account: &str) -> String {
+    format!("{PINS_KEY}.{account}")
 }
 
 pub fn device_secret_key(account: &str) -> String {
@@ -249,5 +306,23 @@ mod tests {
         let hex = "11".repeat(32);
         assert_eq!(parse_device_secret(Some(&hex)), Some([0x11; 32]));
         assert_eq!(parse_device_secret(Some("zz")), None);
+    }
+
+    #[test]
+    fn searches_go_to_this_site_with_their_words_encoded() {
+        let path = search_path("gifs", &[("q", "cat & dog/ü".to_string())]);
+        assert_eq!(path, "/api/auth/commy/gifs/search?q=cat%20%26%20dog%2F%C3%BC");
+        let found = Reply { status: 200, body: r#"{"results":[1,2]}"#.into() };
+        let hits: Option<commy_view::catalog::Found<u8>> = search_reply(&found).unwrap();
+        assert_eq!(hits.unwrap().results, vec![1, 2]);
+        assert!(search_reply::<commy_view::catalog::Found<u8>>(&Reply { status: 404, body: String::new() }).unwrap().is_none());
+        assert!(search_reply::<commy_view::catalog::Found<u8>>(&Reply { status: 429, body: String::new() }).is_err());
+    }
+
+    #[test]
+    fn reads_what_the_site_offers() {
+        let reply = Reply { status: 200, body: r#"{"features":{"gifs":true,"media":true}}"#.into() };
+        assert_eq!(features(&reply), Features { gifs: true, media: true, ..Features::default() });
+        assert_eq!(features(&Reply { status: 500, body: String::new() }), Features::default());
     }
 }
