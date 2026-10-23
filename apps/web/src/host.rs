@@ -18,4 +18,13 @@ extern "C" {
 
     #[wasm_bindgen(method)]
     pub fn emit(this: &Host, event: &str, payload: &str);
+
+    #[wasm_bindgen(method, catch, js_name = startVoice)]
+    pub async fn start_voice(this: &Host) -> Result<JsValue, JsValue>;
+
+    #[wasm_bindgen(method, js_name = stopVoice)]
+    pub fn stop_voice(this: &Host);
+
+    #[wasm_bindgen(method, js_name = playVoice)]
+    pub fn play_voice(this: &Host, peer: &str, pcm: &[i16]);
 }

@@ -8,9 +8,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
-pub fn should_dial(our_node: &str, their_node: &str) -> bool {
-    our_node < their_node
-}
+pub use commy_view::calls::should_dial;
 
 pub fn mixer_key(user: UserId) -> u64 {
     let bytes = user.0.as_bytes();

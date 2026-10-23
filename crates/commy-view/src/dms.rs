@@ -37,6 +37,10 @@ pub fn rings(message: &DmMessage) -> bool {
     matches!(message.action, DmAction::Post | DmAction::Call { signal: CallSignal::Ring, .. })
 }
 
+pub fn written_on(message: &DmMessage, node_hex: Option<&str>) -> bool {
+    node_hex.is_some_and(|node| node.eq_ignore_ascii_case(message.from_node.trim()))
+}
+
 pub fn call_fresh(at: i64, now: i64) -> bool {
     (now - at).abs() < CALL_FRESH_MS
 }

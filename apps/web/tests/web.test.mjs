@@ -7,6 +7,8 @@ import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } fro
 
 const require = createRequire(import.meta.url);
 const { WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
+const webVoiceScripts = require("../ui/web-voice.js");
+const worklet = require("../ui/web-voice-worklet.js");
 
 const repo = join(import.meta.dirname, "..", "..", "..");
 const read = (...path) => readFileSync(join(repo, ...path), "utf8");
@@ -120,4 +122,60 @@ test("every image the bridge shows ships with the app", () => {
   const images = [...read("apps", "web", "ui", "web-bridge.js").matchAll(/src="(images\/[^"]+)"/g)].map(m => m[1]);
   assert.ok(images.length > 0);
   for (const image of images) assert.ok(existsSync(join(repo, "apps", "desktop", "ui", image)), image);
+});
+
+test("the voice engine loads before the bridge that hands it to the backend", () => {
+  const html = injectWebShell(read("apps", "desktop", "ui", "index.html"), { relays: ["https://relay.commy.chat:8443"] });
+  const voice = html.indexOf("scripts/web-voice.js");
+  assert.ok(html.indexOf("scripts/web-commands.js") < voice && voice < html.indexOf("scripts/web-bridge.js"));
+  assert.match(read("apps", "web", "build.mjs"), /"web-voice-worklet\.js", "scripts\/web-voice-worklet\.js"/);
+  assert.equal(webVoiceScripts.WEB_VOICE_WORKLET, "scripts/web-voice-worklet.js");
+});
+
+test("the microphone is asked for with the browser's echo, noise and level handling on", () => {
+  assert.deepEqual(webVoiceScripts.webMicConstraints().audio, { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 });
+});
+
+test("the microphone is cut into 10 ms frames at 48 kHz whatever rate the browser records at", () => {
+  for (const rate of [48000, 44100, 16000]) {
+    const frames = [];
+    const framer = new worklet.MicFramer(rate, frame => frames.push(frame));
+    const block = new Float32Array(128).fill(0.5);
+    for (let i = 0; i < rate / 128; i++) framer.push(block);
+    assert.ok(Math.abs(frames.length - 100) <= 1, `${rate}: ${frames.length}`);
+    assert.ok(frames.every(frame => frame.length === worklet.VOICE_FRAME));
+    assert.ok(frames.every(frame => frame.every(sample => Math.abs(sample - 16384) <= 1)));
+  }
+});
+
+test("loud input is clipped, not wrapped", () => {
+  const frames = [];
+  const framer = new worklet.MicFramer(48000, frame => frames.push(frame));
+  framer.push(new Float32Array(480).fill(3));
+  framer.push(new Float32Array(480).fill(-3));
+  assert.equal(frames[0][0], 32767);
+  assert.equal(frames[1][0], -32767);
+});
+
+test("the speaker waits for a short cushion, then plays what arrives in order", () => {
+  const queue = new worklet.SpeakerQueue(48000);
+  const out = new Float32Array(128);
+  queue.add(Int16Array.from({ length: 480 }, (_, i) => i));
+  queue.fill(out);
+  assert.ok(out.every(sample => sample === 0));
+  for (let n = 1; n * 480 < worklet.SPEAKER_START; n++) queue.add(Int16Array.from({ length: 480 }, (_, i) => n * 480 + i));
+  queue.fill(out);
+  for (let i = 1; i < out.length; i++) assert.ok(Math.abs(out[i] * 32768 - (i - 1)) < 1e-6, `${i}: ${out[i] * 32768}`);
+});
+
+test("the speaker drops the oldest sound when it falls far behind, and goes quiet when it runs dry", () => {
+  const queue = new worklet.SpeakerQueue(48000);
+  for (let n = 0; n < 100; n++) queue.add(new Int16Array(480).fill(n));
+  assert.ok(queue.queued <= worklet.SPEAKER_MOST);
+  const out = new Float32Array(128);
+  queue.fill(out);
+  assert.ok(out[127] * 32768 > 60);
+  for (let i = 0; i < 200; i++) queue.fill(out);
+  assert.ok(out.every(sample => sample === 0));
+  assert.equal(queue.playing, false);
 });

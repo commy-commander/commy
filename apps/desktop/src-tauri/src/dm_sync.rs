@@ -264,8 +264,7 @@ pub fn route(entry: &DmEntry, here: Option<&str>, at: i64, now: i64) -> Route {
         DmEntry::FromPartner(envelope) if syncable(&envelope.message) => Route::Receive,
         DmEntry::FromPartner(envelope) if is_call(&envelope.message) && call_fresh(at, now) => Route::Ring,
         DmEntry::FromMe(envelope) if is_call(&envelope.message) => {
-            let written_here = here.is_some_and(|node| node.eq_ignore_ascii_case(envelope.message.from_node.trim()));
-            if !written_here && call_fresh(at, now) {
+            if !commy_view::dms::written_on(&envelope.message, here) && call_fresh(at, now) {
                 Route::Settled
             } else {
                 Route::Skip

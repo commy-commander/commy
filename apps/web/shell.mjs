@@ -41,6 +41,6 @@ export function injectWebShell(html, { relays, base }) {
   );
   const firstScript = withHead.indexOf('<script src="scripts/');
   if (firstScript < 0 || withHead === based || (base && based === html)) throw new Error("index.html no longer has the expected stylesheet and script tags");
-  const bridge = '<script src="scripts/web-commands.js"></script>\n  <script src="scripts/web-bridge.js"></script>\n  ';
+  const bridge = '<script src="scripts/web-commands.js"></script>\n  <script src="scripts/web-voice.js"></script>\n  <script src="scripts/web-bridge.js"></script>\n  ';
   return withHead.slice(0, firstScript) + bridge + withHead.slice(firstScript);
 }

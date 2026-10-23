@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::dm::{DmAction, DmMessage};
-use commy_core::{DmStore, Identity, IdentityKey, MessageId, ServerId, ServerState, UserId, UserProfile};
+use commy_core::{CallSignal, ChannelId, DmStore, Identity, IdentityKey, MessageId, ServerId, ServerState, UserId, UserProfile};
 use commy_net::sync_streams;
 use commy_net::DmEnvelope;
 use commy_sync::{StreamId, StreamKeys};
@@ -29,6 +29,7 @@ pub enum Received {
     Posted { partner: UserId, notice: Value },
     Friends { notice: Value, reply: Option<(UserId, FriendSignal)> },
     Invited { from: UserId, ticket: String, key: Option<(KeyId, ChannelSecret)> },
+    Call { from: UserId, node: String, call: ChannelId, signal: CallSignal },
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -230,8 +231,13 @@ impl DmBook {
             self.store.remember_contact(sender);
             return if self.store.apply(partner, message) { Received::Invited { from: partner, ticket, key } } else { Received::Dropped };
         }
-        if dms::is_call(&message) {
-            return Received::Dropped;
+        if let DmAction::Call { call, signal } = message.action {
+            if !dms::invite_welcome(&self.store, &self.safety, servers, me, partner) {
+                return Received::Dropped;
+            }
+            let node = sender.node.clone().unwrap_or_default();
+            self.store.remember_contact(sender);
+            return Received::Call { from: partner, node, call, signal };
         }
         if !message.is_post() {
             let applied = self.store.has_sent_to(me, partner) && self.store.apply(partner, message);
@@ -498,5 +504,29 @@ mod tests {
         assert_eq!(book.receive(me.0.id, &servers, first, NODE, at), Received::Dropped, "a replayed invite joins once");
         assert_eq!(book.receive(me.0.id, &servers, invite(&stranger), NODE, at), Received::Dropped);
         assert!(book.threads(me.0.id, &servers).iter().all(|t| t.kind != "request"), "an invite is not a message");
+    }
+
+    #[test]
+    fn a_call_signal_from_someone_we_know_names_the_device_that_sent_it_and_leaves_no_message() {
+        let me = person("me");
+        let friend = person("friend");
+        let stranger = person("stranger");
+        let servers = shared(&me.0, &friend.0);
+        let mut book = DmBook::default();
+        let at = Utc::now().timestamp();
+        let call = ChannelId::new();
+        let ring = |sender: &(UserProfile, Identity)| {
+            let mut message = DmMessage::acting(sender.0.id, me.0.id, DmAction::Call { call, signal: CallSignal::Ring }, "");
+            message.sign(&data_encoding::HEXLOWER.encode(&NODE), &sender.1);
+            DmEnvelope::new(message, sender.0.clone())
+        };
+        assert_eq!(
+            book.receive(me.0.id, &servers, ring(&friend), NODE, at),
+            Received::Call { from: friend.0.id, node: data_encoding::HEXLOWER.encode(&NODE), call, signal: CallSignal::Ring }
+        );
+        assert_eq!(book.receive(me.0.id, &servers, ring(&stranger), NODE, at), Received::Dropped);
+        assert!(book.store.conversation(friend.0.id).is_empty());
+        book.safety.blocked.push(friend.0.id);
+        assert_eq!(book.receive(me.0.id, &servers, ring(&friend), NODE, at), Received::Dropped);
     }
 }

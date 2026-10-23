@@ -40,5 +40,9 @@ mod bindings {
                 }
             })
         }
+
+        pub fn voice_frame(&self, pcm: &[i16]) {
+            self.session.voice_frame(pcm);
+        }
     }
 }

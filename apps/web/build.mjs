@@ -33,6 +33,8 @@ for (const path of tracked) {
 }
 for (const [from, to] of [
   ["web-commands.js", "scripts/web-commands.js"],
+  ["web-voice.js", "scripts/web-voice.js"],
+  ["web-voice-worklet.js", "scripts/web-voice-worklet.js"],
   ["web-bridge.js", "scripts/web-bridge.js"],
   ["web.css", "styles/web.css"],
 ]) {

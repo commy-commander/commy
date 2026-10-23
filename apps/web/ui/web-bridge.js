@@ -48,9 +48,16 @@
     emit,
   };
 
+  const voice = webVoice(window);
+  let started = null;
+  host.startVoice = () => voice.start(frame => started && started.voice_frame(frame));
+  host.stopVoice = () => voice.stop();
+  host.playVoice = (peer, pcm) => voice.play(peer, pcm.slice());
+
   const client = import("./pkg/commy_web_client.js").then(async module => {
     await module.default();
-    return new module.WebClient(host, window.location.origin, webRelays(document));
+    started = new module.WebClient(host, window.location.origin, webRelays(document));
+    return started;
   });
 
   async function backend(cmd, args) {
