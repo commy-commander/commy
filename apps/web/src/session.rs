@@ -16,6 +16,8 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 use wasm_bindgen_futures::spawn_local;
 
+use commy_view::act;
+
 use crate::account::{self, AccountUser, Reply};
 use crate::client::{Applied, Client};
 use crate::host::Host;
@@ -75,6 +77,15 @@ struct Args {
     reply_to: Option<String>,
     around: Option<String>,
     code: Option<String>,
+    message_id: Option<String>,
+    root_id: Option<String>,
+    emoji: Option<String>,
+    active: Option<bool>,
+    pinned: Option<bool>,
+    choices: Option<Vec<u8>>,
+    name: Option<String>,
+    archived: Option<bool>,
+    locked: Option<bool>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -126,6 +137,22 @@ impl Session {
                 to_json(&self.client.borrow().get_messages(server, channel, around)?)
             }
             "send_message" => self.send_message(args).await,
+            "get_pins" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                let channel: Option<ChannelId> = args.channel_id.as_ref().map(|c| parse(Some(c), "channel")).transpose()?;
+                to_json(&self.client.borrow().get_pins(server, channel)?)
+            }
+            "send_typing" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
+                if let Some(payload) = self.client.borrow().typing(server, channel)? {
+                    self.publish(server, &payload);
+                }
+                Ok(Value::Null)
+            }
+            "edit_message" | "delete_message" | "set_reaction" | "pin_message" | "vote_poll" | "close_poll" | "set_thread" => {
+                self.act(cmd, args)
+            }
             "web_nudge" => {
                 self.nudge_sync();
                 Ok(Value::Null)
@@ -560,6 +587,56 @@ impl Session {
         while let Some(server) = changed.recv().await {
             self.emit("server-event", json!(server.to_string()));
         }
+    }
+
+    fn act(&self, cmd: &str, args: Args) -> Result<Value, String> {
+        let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+        let channel = || parse::<ChannelId>(args.channel_id.as_ref(), "channel");
+        let message = || parse::<MessageId>(args.message_id.as_ref(), "message");
+        let payload = match cmd {
+            "edit_message" => {
+                let (channel, message) = (channel()?, message()?);
+                let content = crate::client::clean_message(args.content.as_deref().unwrap_or(""))?;
+                self.client.borrow().act(server, |state, me, identity, keys| {
+                    act::edit(state, me, identity, keys, channel, message, content)
+                })?
+            }
+            "delete_message" => {
+                let (channel, message) = (channel()?, message()?);
+                self.client.borrow().act(server, |state, me, identity, _| act::delete(state, me, identity, channel, message))?
+            }
+            "set_reaction" => {
+                let (channel, message) = (channel()?, message()?);
+                let emoji = args.emoji.unwrap_or_default();
+                let active = args.active.unwrap_or(true);
+                self.client.borrow().act(server, |state, me, _, _| act::reaction(state, me, channel, message, &emoji, active))?
+            }
+            "pin_message" => {
+                let (channel, message) = (channel()?, message()?);
+                let pinned = args.pinned.unwrap_or(true);
+                self.client.borrow().act(server, |state, me, _, _| act::pin(state, me, channel, message, pinned))?
+            }
+            "vote_poll" => {
+                let message = message()?;
+                let choices = args.choices.unwrap_or_default();
+                self.client.borrow().act(server, |state, me, _, _| act::poll_vote(state, me, message, &choices))?
+            }
+            "close_poll" => {
+                let message = message()?;
+                self.client.borrow().act(server, |state, me, _, _| act::poll_close(state, me, message))?
+            }
+            "set_thread" => {
+                let channel = channel()?;
+                let root: MessageId = parse(args.root_id.as_ref(), "thread")?;
+                let (archived, locked) = (args.archived.unwrap_or(false), args.locked.unwrap_or(false));
+                let name = args.name;
+                self.client.borrow().act(server, |state, me, _, _| act::thread(state, me, channel, root, name.as_deref(), archived, locked))?
+            }
+            _ => return Err(format!("{cmd} is not available in the web app yet")),
+        };
+        self.publish(server, &payload);
+        self.emit("server-event", json!(server.to_string()));
+        Ok(Value::Null)
     }
 
     async fn send_message(self: &Rc<Self>, args: Args) -> Result<Value, String> {
