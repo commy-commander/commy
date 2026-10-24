@@ -13,7 +13,7 @@ const repo = join(import.meta.dirname, "..", "..", "..", "..");
 const read = (...path) => readFileSync(join(repo, ...path), "utf8");
 
 test("the three policies match the backend's names and the settings control's options", () => {
-  const rust = read("apps", "desktop", "src-tauri", "src", "safety.rs");
+  const rust = read("crates", "commy-view", "src", "safety.rs");
   for (const { value } of PROFILE_POLICIES) assert.match(rust, new RegExp(`"${value}" => Some\\(Self::`));
   const html = read("apps", "desktop", "ui", "index.html");
   const select = /<select id="profile-policy"[\s\S]*?<\/select>/.exec(html)[0];
