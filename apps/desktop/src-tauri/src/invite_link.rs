@@ -152,6 +152,9 @@ pub(crate) async fn create(
     }
     let (key, key_text) = commy_net::invite::new_key(name.is_some());
     let background = sealed_background(app, id, &key).await;
+    if crate::community_sync::invite_key(app, id).is_none() {
+        crate::channel_lock::tend_scope(app, handle, id, commy_core::channel_key::KeyScope::Community).await;
+    }
     let community = crate::community_sync::invite_key(app, id);
     let needs_account = expiry == Expiry::Never || name.is_some() || background.is_some();
     let token = needs_account.then(|| signed_in_token(app)).flatten();
