@@ -408,6 +408,19 @@ impl Client {
         ring.newest_in(state, KeyScope::Community).map(|(id, secret)| (id, secret.clone()))
     }
 
+    pub fn gone(&self, server: ServerId) -> Option<(String, bool)> {
+        let me = self.me_id()?;
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server)?;
+        if state.is_deleted() {
+            Some((state.server.name.clone(), true))
+        } else if state.server.banned.contains(&me) {
+            Some((state.server.name.clone(), false))
+        } else {
+            None
+        }
+    }
+
     pub fn owned_servers(&self) -> Vec<ServerId> {
         let Some(me) = self.me_id() else { return Vec::new() };
         self.servers.lock().unwrap().iter().filter(|(_, s)| s.server.owner == me && !s.is_deleted()).map(|(id, _)| *id).collect()
@@ -650,7 +663,7 @@ fn check_can_post(state: &ServerState, user: UserId, channel: ChannelId) -> Resu
     let perms = state.server.permissions_for(user);
     let exempt = user == state.server.owner || perms.allows(Permissions::MANAGE_SERVER);
     if state.server.rules.is_some() && !exempt && !state.server.rules_accepted.contains(&user) {
-        return Err("Accept the server rules in the desktop app before posting".into());
+        return Err("read and accept the server rules before posting".into());
     }
     state.server.channel(channel).ok_or("That channel no longer exists")?;
     act::can_post(state, perms, user, channel, Utc::now())
@@ -928,6 +941,22 @@ mod tests {
         w.client.apply_signal(w.server, &desk, event, action);
         assert!(!w.client.is_shown_online(w.server, owner.id));
         assert!(w.client.farewell().iter().all(|(_, p)| matches!(p, WirePayload::Signed(s) if s.event == ServerEvent::PresenceUpdate { user: me, presence: Presence::Offline })));
+    }
+
+    #[test]
+    fn a_ban_or_a_deletion_from_the_owner_marks_the_server_gone() {
+        for deleted in [false, true] {
+            let w = world();
+            w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+            assert_eq!(w.client.gone(w.server), None);
+            let (owner, identity) = w.owner.clone();
+            let me = w.client.me_id().unwrap();
+            let event = if deleted { ServerEvent::ServerDelete { server: w.server } } else { ServerEvent::MemberBan { server: w.server, user: me } };
+            let signed = SignedEvent::sign(w.server, owner.id, Utc::now().timestamp_millis(), event, &identity);
+            assert_eq!(w.client.apply_live(w.server, signed.event, Some(signed.action)), Applied::Changed);
+            let name = w.client.servers.lock().unwrap()[&w.server].server.name.clone();
+            assert_eq!(w.client.gone(w.server), Some((name, deleted)));
+        }
     }
 
     #[test]

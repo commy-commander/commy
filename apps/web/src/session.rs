@@ -149,6 +149,28 @@ struct Args {
     parent_id: Option<String>,
     retention_days: Option<u32>,
     moves: Option<Vec<servers::MoveArg>>,
+    role_id: Option<String>,
+    role_ids: Option<Vec<String>>,
+    view_roles: Option<Vec<String>>,
+    send_roles: Option<Vec<String>>,
+    permissions: Option<Vec<String>>,
+    color: Option<String>,
+    tag: Option<String>,
+    self_assignable: Option<bool>,
+    hoist: Option<bool>,
+    mentionable: Option<bool>,
+    held: Option<bool>,
+    grant: Option<bool>,
+    access: Option<String>,
+    restricted: Option<bool>,
+    nickname: Option<String>,
+    rules: Option<String>,
+    minutes: Option<u32>,
+    limit: Option<u32>,
+    seconds: Option<u32>,
+    sensitive: Option<bool>,
+    public: Option<bool>,
+    confirm_name: Option<String>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -346,6 +368,31 @@ impl Session {
             "delete_channel" => self.server_command(cmd, args).await,
             "set_channel_kind" => self.server_command(cmd, args).await,
             "move_channels" => self.server_command(cmd, args).await,
+            "delete_server" => self.server_command(cmd, args).await,
+            "transfer_ownership" => self.server_command(cmd, args).await,
+            "audit_log" => self.server_command(cmd, args).await,
+            "create_role" => self.server_command(cmd, args).await,
+            "update_role" => self.server_command(cmd, args).await,
+            "delete_role" => self.server_command(cmd, args).await,
+            "set_member_role" => self.server_command(cmd, args).await,
+            "set_own_role" => self.server_command(cmd, args).await,
+            "set_role_access" => self.server_command(cmd, args).await,
+            "kick_member" => self.server_command(cmd, args).await,
+            "ban_member" => self.server_command(cmd, args).await,
+            "unban_member" => self.server_command(cmd, args).await,
+            "time_out_member" => self.server_command(cmd, args).await,
+            "clear_timeout" => self.server_command(cmd, args).await,
+            "set_nickname" => self.server_command(cmd, args).await,
+            "set_rules" => self.server_command(cmd, args).await,
+            "accept_rules" => self.server_command(cmd, args).await,
+            "set_afk_channel" => self.server_command(cmd, args).await,
+            "set_server_afk_timeout" => self.server_command(cmd, args).await,
+            "set_server_public" => self.server_command(cmd, args).await,
+            "set_channel_limit" => self.server_command(cmd, args).await,
+            "set_channel_slow_mode" => self.server_command(cmd, args).await,
+            "set_channel_color" => self.server_command(cmd, args).await,
+            "set_channel_sensitive" => self.server_command(cmd, args).await,
+            "set_channel_access" => self.server_command(cmd, args).await,
             "web_farewell" => {
                 self.hang_up_on_farewell().await;
                 self.say_goodbye();
@@ -820,17 +867,17 @@ impl Session {
         }
     }
 
-    fn apply_event(&self, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
+    fn apply_event(self: &Rc<Self>, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
         let applied = self.client.borrow().apply_live(server, event, action);
         self.after_apply(server, applied, rings, shown)
     }
 
-    fn apply_stored(&self, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
+    fn apply_stored(self: &Rc<Self>, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
         let applied = self.client.borrow().apply_stored(server, event, action, shown);
         self.after_apply(server, applied, rings, shown)
     }
 
-    fn after_apply(&self, server: ServerId, applied: Applied, rings: bool, shown: bool) -> Applied {
+    fn after_apply(self: &Rc<Self>, server: ServerId, applied: Applied, rings: bool, shown: bool) -> Applied {
         if let Applied::Created(message) = &applied {
             if let Some(payload) = self.client.borrow().message_created_payload(server, message).filter(|_| rings) {
                 self.emit("message-created", payload);
@@ -838,6 +885,7 @@ impl Session {
         }
         if applied != Applied::Nothing && shown {
             self.emit("server-event", json!(server.to_string()));
+            self.retire_if_gone(server);
         }
         applied
     }
@@ -845,6 +893,7 @@ impl Session {
     async fn run_changes(self: Rc<Self>, mut changed: mpsc::UnboundedReceiver<ServerId>) {
         while let Some(server) = changed.recv().await {
             self.emit("server-event", json!(server.to_string()));
+            self.retire_if_gone(server);
         }
     }
 

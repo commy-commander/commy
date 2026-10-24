@@ -365,6 +365,7 @@ impl Session {
             }
             self.emit("server-event", json!(server.to_string()));
             self.refresh_sync();
+            self.retire_if_gone(server);
         } else {
             self.adopt(server);
         }
@@ -541,7 +542,7 @@ impl Session {
         }
     }
 
-    fn release_parked(&self, server: ServerId) {
+    fn release_parked(self: &Rc<Self>, server: ServerId) {
         let parked = self.sync.borrow_mut().as_mut().map(|live| {
             live.book.take_snapshot(server);
             live.book.take_parked(server)
