@@ -5,6 +5,7 @@ pub mod entry_escrow;
 pub mod entry_key;
 pub mod entry_list;
 pub mod inbox;
+pub mod invite;
 pub mod key_handoff;
 pub mod media;
 pub mod mirror;

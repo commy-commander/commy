@@ -433,10 +433,17 @@ impl Client {
     }
 
     pub fn group_invite_from(&self, server: ServerId, given: Option<(KeyId, ChannelSecret)>) -> Result<(ServerTicket, Option<(KeyId, ChannelSecret)>), String> {
+        if !self.is_group(server) {
+            return Err("that is not a group you are in".into());
+        }
+        self.invite_ticket(server, given)
+    }
+
+    pub fn invite_ticket(&self, server: ServerId, given: Option<(KeyId, ChannelSecret)>) -> Result<(ServerTicket, Option<(KeyId, ChannelSecret)>), String> {
         let me = self.me_id().ok_or("Your servers are not unlocked yet")?;
         let ticket = self.tickets.get(&server).filter(|t| t.owner.is_some()).cloned().ok_or("no invite available; you may be offline")?;
         let servers = self.servers.lock().unwrap();
-        let state = servers.get(&server).filter(|s| s.server.group && s.server.is_current_member(me)).ok_or("that is not a group you are in")?;
+        let state = servers.get(&server).filter(|s| s.server.is_current_member(me)).ok_or("that is not a server you are in")?;
         let key = self
             .keys()
             .community_ring(state, given)
@@ -792,6 +799,20 @@ mod tests {
         assert!(w.client.act(w.server, |state, me, _, _| commy_view::manage::rename(state, me.perms, "Mine now")).is_err());
         assert!(w.client.act(w.server, |state, me, _, _| commy_view::manage::delete_channel(state, me.perms, w.channel)).is_err());
         assert_eq!(w.client.servers.lock().unwrap()[&w.server].server.name, "Hangout");
+    }
+
+    #[test]
+    fn a_member_can_invite_to_a_server_but_not_through_the_group_path() {
+        let mut w = world();
+        w.client.servers.lock().unwrap().insert(w.server, w.state.clone());
+        assert!(w.client.invite_ticket(w.server, None).is_err(), "no ticket from the owner yet");
+        let mut ticket = ServerTicket::new(w.server, "Hangout", [0u8; 32], Vec::new());
+        ticket.owner = Some((w.owner.0.id, w.owner.1.public()));
+        w.client.tickets.insert(w.server, ticket);
+        let (ticket, _) = w.client.invite_ticket(w.server, None).unwrap();
+        assert_eq!(ticket.server_name, "Hangout");
+        assert!(w.client.group_invite_from(w.server, None).is_err());
+        assert!(w.client.invite_ticket(ServerId::new(), None).is_err());
     }
 
     fn mirror(world: &World) -> Vec<u8> {

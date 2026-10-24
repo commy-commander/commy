@@ -1,9 +1,10 @@
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use chrono::Utc;
+use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::{ChannelId, MessageId, ServerEvent, ServerId};
 use commy_net::entry_list::EntryList;
 use commy_net::sealed::SealKey;
@@ -31,6 +32,7 @@ mod calls;
 mod dms;
 mod files;
 mod handoff;
+mod invites;
 mod pictures;
 mod servers;
 mod sync;
@@ -83,6 +85,7 @@ pub struct Session {
     voice: RefCell<calls::Voice>,
     admit: calls::Admit,
     kept: RefCell<pictures::Kept>,
+    invited: RefCell<HashMap<ServerId, (KeyId, ChannelSecret)>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -137,6 +140,10 @@ struct Args {
     size_bytes: Option<u64>,
     clicked: Option<bool>,
     image: Option<String>,
+    expires: Option<String>,
+    link: Option<String>,
+    ticket: Option<String>,
+    origin: Option<String>,
     template: Option<String>,
     kind: Option<String>,
     parent_id: Option<String>,
@@ -174,6 +181,7 @@ impl Session {
             voice: RefCell::default(),
             admit: calls::Admit::default(),
             kept: RefCell::default(),
+            invited: RefCell::default(),
         })
     }
 
@@ -320,6 +328,13 @@ impl Session {
             "fetch_server_image" => self.picture_command(cmd, args).await,
             "fetch_expression" => self.picture_command(cmd, args).await,
             "get_attachment_preview" => self.file_command(cmd, args).await,
+            "account_server_info" => self.invite_command(cmd, args).await,
+            "get_invite" => self.invite_command(cmd, args).await,
+            "create_invite_link" => self.invite_command(cmd, args).await,
+            "resolve_invite_link" => self.invite_command(cmd, args).await,
+            "join_server" => self.invite_command(cmd, args).await,
+            "list_invites" => self.invite_command(cmd, args).await,
+            "revoke_invite" => self.invite_command(cmd, args).await,
             "list_server_templates" => self.server_command(cmd, args).await,
             "preview_server_template" => self.server_command(cmd, args).await,
             "create_server" => self.server_command(cmd, args).await,

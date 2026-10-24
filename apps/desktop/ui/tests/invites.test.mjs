@@ -38,7 +38,7 @@ test("custom names follow the same rules as the app's backend", () => {
     assert.ok(checkInviteName(bad).error, bad);
   }
   assert.equal(checkInviteName("pixel-pi").error, null);
-  const rust = readFileSync(join(repo, "apps", "desktop", "src-tauri", "src", "invite_link.rs"), "utf8");
+  const rust = readFileSync(join(repo, "crates", "commy-net", "src", "invite.rs"), "utf8");
   const reserved = /const RESERVED_NAMES: &\[&str\] = &\[([\s\S]*?)\];/.exec(rust)[1].match(/"([^"]+)"/g).map(s => s.slice(1, -1));
   assert.ok(reserved.length > 10);
   for (const name of reserved) assert.match(checkInviteName(name).error || "", /reserved|random invite code/, name);

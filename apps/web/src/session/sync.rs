@@ -23,6 +23,7 @@ use crate::client::Applied;
 use crate::sync_book::{community_key_record, joined_record, prefs_record, read_record, saved_record, Book, Change, Record};
 
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
+const STORE_WAIT: Duration = Duration::from_secs(5);
 const SNAPSHOT_EVERY_MS: i64 = 6 * 60 * 60 * 1000;
 const MAX_MARKS_PER_RECORD: usize = 300;
 
@@ -556,6 +557,14 @@ impl Session {
         let guard = self.sync.borrow();
         let Some(live) = guard.as_ref() else { return Vec::new() };
         live.book.writers(server, lane).into_iter().filter_map(|stream| Some((stream, live.pool.client_for(stream)?))).collect()
+    }
+
+    pub(super) async fn publish_stored(&self, server: ServerId, payload: &WirePayload) {
+        let Some(lane) = streams::lane_of_payload(payload) else { return self.publish(server, payload) };
+        let Some(plain) = streams::encode_entry(payload) else { return };
+        for (stream, client) in self.writers(server, lane) {
+            let _ = n0_future::time::timeout(STORE_WAIT, client.append(stream, plain.clone())).await;
+        }
     }
 
     pub(super) fn publish(&self, server: ServerId, payload: &WirePayload) {

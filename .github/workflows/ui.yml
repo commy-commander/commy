@@ -7,6 +7,7 @@ on:
       - "apps/desktop/ui/**"
       - "apps/desktop/src-tauri/src/expressions.rs"
       - "crates/commy-view/src/safety.rs"
+      - "crates/commy-net/src/invite.rs"
       - "crates/commy-bot/clients/**"
       - ".github/workflows/ui.yml"
   pull_request:

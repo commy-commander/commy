@@ -91,7 +91,7 @@ impl Session {
         if self.voice_here(server).is_some() {
             self.leave_room().await;
         }
-        self.publish(server, &payload);
+        self.publish_stored(server, &payload).await;
         let now = Utc::now();
         if let Some(live) = self.sync.borrow_mut().as_mut() {
             live.book.leave(server, now);
