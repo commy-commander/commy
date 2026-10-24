@@ -29,6 +29,7 @@ use crate::store::WebStore;
 
 mod calls;
 mod dms;
+mod files;
 mod handoff;
 mod sync;
 
@@ -125,6 +126,13 @@ struct Args {
     accept: Option<bool>,
     muted: Option<bool>,
     deafened: Option<bool>,
+    filename: Option<String>,
+    data: Option<String>,
+    blob: Option<String>,
+    provider: Option<String>,
+    mime: Option<String>,
+    size_bytes: Option<u64>,
+    clicked: Option<bool>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -291,6 +299,8 @@ impl Session {
             "set_muted" => self.call_command(cmd, args).await,
             "set_deafened" => self.call_command(cmd, args).await,
             "voice_stats" => self.call_command(cmd, args).await,
+            "attach_dm_bytes" => self.file_command(cmd, args).await,
+            "get_attachment_preview" => self.file_command(cmd, args).await,
             "web_farewell" => {
                 self.say_goodbye();
                 Ok(Value::Null)

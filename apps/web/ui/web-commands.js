@@ -34,6 +34,12 @@ const WEB_DEFAULTS = {
 
 const WEB_SERVER_WAIT_MS = 20000;
 
+const WEB_BYTE_COMMANDS = ["get_attachment_video", "get_voice_message", "download_attachment"];
+const WEB_VIDEO_ACCEPT = "video/mp4,video/quicktime,video/webm,.mp4,.m4v,.mov,.webm";
+const WEB_MAX_SEND_BYTES = 100 * 1024 * 1024;
+const WEB_SEND_TOO_LARGE = "files larger than 100 MB can be sent from the desktop app";
+const WEB_SAVE_LINGER_MS = 60000;
+
 const WEB_UNLOCK_TEXT = {
   signed_out: "Sign in to open your servers.",
   no_list: "Open Commy on your computer and sign in there first. The web app opens the servers your computer has.",
@@ -67,10 +73,33 @@ function webRelays(doc) {
   return relays || undefined;
 }
 
+function webPickFile(doc, kind) {
+  return new Promise(resolve => {
+    const input = doc.createElement("input");
+    input.type = "file";
+    if (kind === "video") input.accept = WEB_VIDEO_ACCEPT;
+    input.addEventListener("change", () => resolve((input.files && input.files[0]) || null), { once: true });
+    input.addEventListener("cancel", () => resolve(null), { once: true });
+    input.click();
+  });
+}
+
+function webSaveFile(doc, urls, bytes, filename) {
+  const url = urls.createObjectURL(new Blob([bytes]));
+  const link = doc.createElement("a");
+  link.href = url;
+  link.download = filename || "file";
+  doc.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => urls.revokeObjectURL(url), WEB_SAVE_LINGER_MS);
+  return link.download;
+}
+
 function webReplyLine(status, text) {
   return `${status}\n${text}`;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays };
+  module.exports = { WEB_BYTE_COMMANDS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays };
 }

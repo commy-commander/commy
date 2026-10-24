@@ -1,6 +1,7 @@
 pub mod account;
 pub mod client;
 pub mod dm_book;
+pub mod files;
 pub mod store;
 pub mod sync_book;
 
@@ -36,6 +37,26 @@ mod bindings {
             wasm_bindgen_futures::future_to_promise(async move {
                 match session.invoke(&cmd, &args).await {
                     Ok(value) => Ok(JsValue::from_str(&value.to_string())),
+                    Err(message) => Err(JsValue::from_str(&message)),
+                }
+            })
+        }
+
+        pub fn attach_dm(&self, user_id: String, filename: String, data: Vec<u8>) -> js_sys::Promise {
+            let session = self.session.clone();
+            wasm_bindgen_futures::future_to_promise(async move {
+                match session.attach_dm(&user_id, &filename, data).await {
+                    Ok(value) => Ok(JsValue::from_str(&value.to_string())),
+                    Err(message) => Err(JsValue::from_str(&message)),
+                }
+            })
+        }
+
+        pub fn file_bytes(&self, cmd: String, args: String) -> js_sys::Promise {
+            let session = self.session.clone();
+            wasm_bindgen_futures::future_to_promise(async move {
+                match session.file_bytes(&cmd, &args).await {
+                    Ok(bytes) => Ok(js_sys::Uint8Array::from(&bytes[..]).into()),
                     Err(message) => Err(JsValue::from_str(&message)),
                 }
             })

@@ -331,7 +331,7 @@ impl Session {
         self.send_direct(to, envelope).await || inboxed
     }
 
-    async fn post_dm(&self, me: &UserProfile, partner: UserId, mut message: DmMessage) -> Result<Option<DmMessageView>, String> {
+    pub(super) async fn post_dm(&self, me: &UserProfile, partner: UserId, mut message: DmMessage) -> Result<Option<DmMessageView>, String> {
         let (_, identity) = self.me_and_key().ok_or("Your servers are not unlocked yet")?;
         let node = self.node_hex().ok_or("Your servers are not unlocked yet")?;
         message.sign(&node, &identity);

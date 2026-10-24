@@ -65,6 +65,20 @@
     return JSON.parse(reply);
   }
 
+  async function fileBytes(cmd, args) {
+    const bytes = await (await client).file_bytes(cmd, JSON.stringify(args || {}));
+    if (cmd === "download_attachment") return webSaveFile(document, URL, bytes, args && args.filename);
+    return bytes.buffer;
+  }
+
+  async function attachPicked(args) {
+    const file = await webPickFile(document, args && args.kind);
+    if (!file) return null;
+    if (file.size > WEB_MAX_SEND_BYTES) throw WEB_SEND_TOO_LARGE;
+    const data = new Uint8Array(await file.arrayBuffer());
+    return JSON.parse(await (await client).attach_dm(args.userId, file.name, data));
+  }
+
   let unlocked = null;
 
   function unlockModal() {
@@ -169,6 +183,8 @@
       window.location.reload();
       return new Promise(() => {});
     }
+    if (WEB_BYTE_COMMANDS.includes(cmd)) return fileBytes(cmd, args);
+    if (cmd === "attach_dm_file") return attachPicked(args);
     if (cmd === "get_user") {
       await untilUnlocked();
       if (typeof hideModals === "function") hideModals();
