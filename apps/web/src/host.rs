@@ -7,6 +7,9 @@ extern "C" {
     #[wasm_bindgen(method, catch)]
     pub async fn request(this: &Host, method: &str, path: &str, body: Option<String>) -> Result<JsValue, JsValue>;
 
+    #[wasm_bindgen(method, catch, js_name = fetchBytes)]
+    pub async fn fetch_bytes(this: &Host, url: &str) -> Result<JsValue, JsValue>;
+
     #[wasm_bindgen(method)]
     pub fn load(this: &Host, key: &str) -> Option<String>;
 

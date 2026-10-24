@@ -4,6 +4,7 @@ pub mod catalog;
 pub mod dms;
 pub mod keys;
 pub mod liveness;
+pub mod pictures;
 pub mod pins;
 pub mod reads;
 pub mod safety;

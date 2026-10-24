@@ -18,6 +18,7 @@ use wasm_bindgen_futures::spawn_local;
 
 use super::{parse, to_json, Args, Session};
 use crate::dm_book;
+use crate::recording::Recorder;
 
 const RING_FOR: Duration = Duration::from_millis(calls::RING_FOR_MS as u64);
 const TEND_EVERY: Duration = Duration::from_secs(1);
@@ -37,6 +38,7 @@ pub(super) struct Voice {
     muted: bool,
     deafened: bool,
     link: Option<Link>,
+    recorder: Option<Recorder>,
 }
 
 struct Link {
@@ -142,6 +144,14 @@ impl Session {
             "input_gain": 1,
             "afk_timeout_minutes": 10,
         })
+    }
+
+    pub(super) fn voice_link_open(&self) -> bool {
+        self.voice.borrow().link.is_some()
+    }
+
+    pub(super) fn set_recorder(&self, recorder: Option<Recorder>) -> Option<Recorder> {
+        std::mem::replace(&mut self.voice.borrow_mut().recorder, recorder)
     }
 
     pub(super) fn voice_here(&self, server: ServerId) -> Option<(ChannelId, i64)> {
@@ -386,7 +396,7 @@ impl Session {
         self.leave_room().await;
         let _ = self.host.start_voice().await;
         let Some(call) = self.voice.borrow_mut().book.connected(call.channel, now_ms()) else {
-            self.host.stop_voice();
+            self.release_mic();
             return Err("the call ended".into());
         };
         let mut link = Link::new(None, call.channel, me.id);
@@ -426,7 +436,13 @@ impl Session {
         for user in quiet {
             self.speaking(user, false);
         }
-        self.host.stop_voice();
+        self.release_mic();
+    }
+
+    fn release_mic(&self) {
+        if self.voice.borrow().recorder.is_none() {
+            self.host.stop_voice();
+        }
     }
 
     async fn keep_voice(self: Rc<Self>, channel: ChannelId) {
@@ -600,6 +616,9 @@ impl Session {
 
     pub(crate) fn voice_frame(&self, pcm: &[i16]) {
         let mut voice = self.voice.borrow_mut();
+        if let Some(recorder) = voice.recorder.as_mut() {
+            recorder.push(pcm);
+        }
         if voice.muted {
             return;
         }

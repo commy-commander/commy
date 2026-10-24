@@ -2,6 +2,7 @@ pub mod account;
 pub mod client;
 pub mod dm_book;
 pub mod files;
+pub mod recording;
 pub mod store;
 pub mod sync_book;
 
@@ -46,6 +47,16 @@ mod bindings {
             let session = self.session.clone();
             wasm_bindgen_futures::future_to_promise(async move {
                 match session.attach_dm(&user_id, &filename, data).await {
+                    Ok(value) => Ok(JsValue::from_str(&value.to_string())),
+                    Err(message) => Err(JsValue::from_str(&message)),
+                }
+            })
+        }
+
+        pub fn attach(&self, server_id: String, channel_id: String, filename: String, data: Vec<u8>) -> js_sys::Promise {
+            let session = self.session.clone();
+            wasm_bindgen_futures::future_to_promise(async move {
+                match session.attach_server(&server_id, &channel_id, &filename, data).await {
                     Ok(value) => Ok(JsValue::from_str(&value.to_string())),
                     Err(message) => Err(JsValue::from_str(&message)),
                 }

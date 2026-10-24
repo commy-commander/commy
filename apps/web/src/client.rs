@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
 use commy_core::{
-    action, Action, ChannelId, ChannelKind, Identity, Message, MessageId, Permissions, Presence, ServerEvent, ServerId,
+    action, Action, Attachment, ChannelId, ChannelKind, Identity, Message, MessageId, Permissions, Presence, ServerEvent, ServerId,
     ServerState, SignedEvent, Snapshot, UserId, UserProfile,
 };
 use commy_net::community_streams::{self as streams, Lane, Want};
@@ -168,6 +168,20 @@ impl Client {
         let poll = act::poll(perms, poll.question, poll.options, poll.multi, poll.hours, Utc::now())?;
         let mut message = Message::new(channel, profile.id, "");
         message.attachments.push(poll.into_attachment());
+        seal_sign_apply(state, &keys, &identity, message)
+    }
+
+    pub fn compose_attachment(&self, server: ServerId, channel: ChannelId, attachment: Attachment, needed: Permissions, action: &str) -> Result<(Message, MessageView), String> {
+        let (profile, identity) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
+        let keys = KeyHolder::new(Some((profile.id, identity.clone())));
+        let mut servers = self.servers.lock().unwrap();
+        let state = servers.get_mut(&server).ok_or("This server is still loading")?;
+        check_can_post(state, profile.id, channel)?;
+        if !state.server.permissions_for(profile.id).allows(needed) {
+            return Err(format!("you do not have permission to {action}"));
+        }
+        let mut message = Message::new(channel, profile.id, "");
+        message.attachments.push(attachment);
         seal_sign_apply(state, &keys, &identity, message)
     }
 

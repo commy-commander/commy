@@ -14,6 +14,7 @@ commy-core = { workspace = true }
 commy-net = { workspace = true }
 commy-view = { workspace = true }
 commy-sync = { workspace = true }
+commy-audio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
@@ -27,7 +28,6 @@ anyhow = { workspace = true }
 iroh = { workspace = true }
 n0-future = "0.3"
 commy-sync = { workspace = true, features = ["client"] }
-commy-audio = { workspace = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

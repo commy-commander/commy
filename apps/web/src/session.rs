@@ -31,6 +31,7 @@ mod calls;
 mod dms;
 mod files;
 mod handoff;
+mod pictures;
 mod sync;
 
 const DEVICE_NAME: &str = "Web browser";
@@ -80,6 +81,7 @@ pub struct Session {
     dms: RefCell<DmBook>,
     voice: RefCell<calls::Voice>,
     admit: calls::Admit,
+    kept: RefCell<pictures::Kept>,
 }
 
 #[derive(Deserialize, Default)]
@@ -133,6 +135,7 @@ struct Args {
     mime: Option<String>,
     size_bytes: Option<u64>,
     clicked: Option<bool>,
+    image: Option<String>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -164,6 +167,7 @@ impl Session {
             dms: RefCell::new(DmBook::default()),
             voice: RefCell::default(),
             admit: calls::Admit::default(),
+            kept: RefCell::default(),
         })
     }
 
@@ -301,6 +305,14 @@ impl Session {
             "set_deafened" => self.call_command(cmd, args).await,
             "voice_stats" => self.call_command(cmd, args).await,
             "attach_dm_bytes" => self.file_command(cmd, args).await,
+            "attach_bytes" => self.file_command(cmd, args).await,
+            "start_voice_recording" => self.file_command(cmd, args).await,
+            "cancel_voice_recording" => self.file_command(cmd, args).await,
+            "send_voice_message" => self.file_command(cmd, args).await,
+            "send_dm_voice_message" => self.file_command(cmd, args).await,
+            "get_profile_image" => self.picture_command(cmd, args).await,
+            "fetch_server_image" => self.picture_command(cmd, args).await,
+            "fetch_expression" => self.picture_command(cmd, args).await,
             "get_attachment_preview" => self.file_command(cmd, args).await,
             "web_farewell" => {
                 self.hang_up_on_farewell().await;

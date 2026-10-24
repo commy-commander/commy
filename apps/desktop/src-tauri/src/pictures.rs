@@ -14,13 +14,7 @@ const MAX_OFFERED: usize = 4096;
 
 static OFFERED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
-pub fn pictures_url(sync_url: &str) -> Option<String> {
-    let (scheme, rest) = match sync_url.strip_prefix("wss://") {
-        Some(rest) => ("https", rest),
-        None => ("http", sync_url.strip_prefix("ws://")?),
-    };
-    Some(format!("{scheme}://{}/pictures", rest.trim_end_matches('/')))
-}
+pub use commy_view::pictures::pictures_url;
 
 fn picture_url(blob: &str) -> Option<(PictureKey, String)> {
     let base = sync_link::url().as_deref().and_then(pictures_url)?;

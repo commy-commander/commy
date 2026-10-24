@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -208,6 +208,16 @@ test("file commands the browser answers with bytes are handled by the backend", 
     assert.equal(webDefault(cmd).known, false, cmd);
   }
   for (const cmd of ["attach_dm_bytes", "get_attachment_preview"]) assert.ok(rustCommands.has(cmd), cmd);
+});
+
+test("picked files and the media the browser fetches itself are never answered by a default", () => {
+  for (const cmd of [...WEB_PICKED_COMMANDS, "attach_bytes", "get_profile_image", "fetch_server_image", "fetch_expression", "start_voice_recording", "cancel_voice_recording", "send_voice_message", "send_dm_voice_message"]) {
+    assert.equal(webDefault(cmd).known, false, cmd);
+  }
+  for (const cmd of ["attach_bytes", "get_profile_image", "fetch_server_image", "fetch_expression", "start_voice_recording", "cancel_voice_recording", "send_voice_message", "send_dm_voice_message"]) {
+    assert.ok(rustCommands.has(cmd), cmd);
+  }
+  assert.ok(WEB_PICKED_COMMANDS.includes("attach_file") && WEB_PICKED_COMMANDS.includes("attach_dm_file"));
 });
 
 test("picking a file opens the browser's own picker and gives back the chosen file", async () => {
