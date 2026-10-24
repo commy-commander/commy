@@ -295,6 +295,7 @@ impl Session {
             "start_dm_call" => self.call_command(cmd, args).await,
             "answer_dm_call" => self.call_command(cmd, args).await,
             "end_dm_call" => self.call_command(cmd, args).await,
+            "set_voice_channel" => self.call_command(cmd, args).await,
             "get_voice_settings" => self.call_command(cmd, args).await,
             "set_muted" => self.call_command(cmd, args).await,
             "set_deafened" => self.call_command(cmd, args).await,
@@ -302,6 +303,7 @@ impl Session {
             "attach_dm_bytes" => self.file_command(cmd, args).await,
             "get_attachment_preview" => self.file_command(cmd, args).await,
             "web_farewell" => {
+                self.hang_up_on_farewell().await;
                 self.say_goodbye();
                 Ok(Value::Null)
             }

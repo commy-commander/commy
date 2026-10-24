@@ -41,6 +41,26 @@ pub fn can_post(state: &ServerState, perms: Permissions, user: UserId, channel: 
     Ok(())
 }
 
+pub fn voice_full(state: &ServerState, perms: Permissions, user: UserId, channel: ChannelId) -> bool {
+    let Some(c) = state.server.channel(channel) else { return false };
+    if c.user_limit == 0 || perms.allows(Permissions::MANAGE_CHANNELS) {
+        return false;
+    }
+    let inside = state.voice_states.iter().filter(|(u, ch)| **ch == channel && **u != user).count();
+    inside >= c.user_limit as usize
+}
+
+pub fn join_voice(state: &ServerState, perms: Permissions, user: UserId, channel: ChannelId) -> Act<()> {
+    if !state.server.channel(channel).is_some_and(|c| c.kind.is_voice()) {
+        return Err("that is not a voice channel".into());
+    }
+    can_view(state, user, channel)?;
+    if voice_full(state, perms, user, channel) {
+        return Err("that voice channel is full".into());
+    }
+    Ok(())
+}
+
 pub fn author_of(state: &ServerState, channel: ChannelId, message: MessageId) -> Act<UserId> {
     state
         .messages(channel)
@@ -291,6 +311,22 @@ mod tests {
         let with = Me { perms: Permissions::all(), ..me(&w) };
         assert!(pin(&w.state, &with, w.channel, MessageId::new(), true).is_err());
         assert!(matches!(pin(&w.state, &with, w.channel, w.theirs, true), Ok(ServerEvent::MessagePin { pinned: true, .. })));
+    }
+
+    #[test]
+    fn voice_needs_a_voice_channel_with_room_unless_you_manage_channels() {
+        let w = world();
+        let sid = w.state.server.id;
+        let voice = w.state.server.channels.iter().find(|c| c.kind.is_voice()).map(|c| c.id).unwrap();
+        let perms = w.state.server.permissions_for(w.member);
+        assert!(join_voice(&w.state, perms, w.member, voice).is_ok());
+        assert_eq!(join_voice(&w.state, perms, w.member, w.channel).unwrap_err(), "that is not a voice channel");
+        let mut state = w.state.clone();
+        state.apply(ServerEvent::ChannelLimit { server: sid, channel: voice, user_limit: 1 }).unwrap();
+        state.apply(ServerEvent::VoiceState { user: w.owner, channel: Some(voice), muted: false, deafened: false, since: None }).unwrap();
+        assert_eq!(join_voice(&state, perms, w.member, voice).unwrap_err(), "that voice channel is full");
+        assert!(join_voice(&state, perms | Permissions::MANAGE_CHANNELS, w.member, voice).is_ok());
+        assert!(!voice_full(&state, perms, w.owner, voice), "someone already inside is not counted against themselves");
     }
 
     #[test]

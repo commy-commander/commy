@@ -272,12 +272,13 @@ impl Client {
         servers.get(&server).and_then(|s| s.profiles.get(&user)).is_some_and(|p| p.presence.is_visible_online())
     }
 
-    pub fn here(&self, server: ServerId, node: &[u8; 32]) -> Vec<WirePayload> {
+    pub fn here(&self, server: ServerId, node: &[u8; 32], voice: Option<(ChannelId, i64)>) -> Vec<WirePayload> {
         let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
         if profile.presence == Presence::Invisible {
             return Vec::new();
         }
-        let announce = ServerEvent::DeviceAnnounce { server, user: profile.id, node: liveness::node_hex(node), voice: None, since: None };
+        let (voice, since) = (voice.map(|(channel, _)| channel), voice.map(|(_, since)| since));
+        let announce = ServerEvent::DeviceAnnounce { server, user: profile.id, node: liveness::node_hex(node), voice, since };
         if let Some(state) = self.servers.lock().unwrap().get_mut(&server) {
             let _ = state.apply(announce.clone());
         }
@@ -286,6 +287,42 @@ impl Client {
             .into_iter()
             .map(|event| WirePayload::Signed(SignedEvent::sign(server, profile.id, at, event, &identity)))
             .collect()
+    }
+
+    pub fn voice_state(&self, server: ServerId, channel: Option<ChannelId>, muted: bool, deafened: bool, since: Option<i64>) -> Result<WirePayload, String> {
+        self.act(server, |state, me, _, _| {
+            if let Some(channel) = channel {
+                act::join_voice(state, me.perms, me.user, channel)?;
+            }
+            Ok(ServerEvent::VoiceState { user: me.user, channel, muted, deafened, since })
+        })
+    }
+
+    pub fn voice_targets(&self, server: ServerId, channel: ChannelId) -> Vec<(UserId, String)> {
+        let Some(me) = self.me_id() else { return Vec::new() };
+        let servers = self.servers.lock().unwrap();
+        let Some(state) = servers.get(&server) else { return Vec::new() };
+        state
+            .voice_members(channel)
+            .into_iter()
+            .filter(|user| *user != me)
+            .filter_map(|user| Some((user, state.voice_node(user)?)))
+            .collect()
+    }
+
+    pub fn voice_peer_ok(&self, server: ServerId, user: UserId, node: &str, channel: ChannelId) -> bool {
+        let servers = self.servers.lock().unwrap();
+        servers.get(&server).is_some_and(|state| state.media_peer_ok(user, node, channel, true))
+    }
+
+    pub fn voice_moved_away(&self, server: ServerId, channel: ChannelId, ours: &str) -> bool {
+        let Some(me) = self.me_id() else { return false };
+        let servers = self.servers.lock().unwrap();
+        let Some(state) = servers.get(&server) else { return false };
+        match state.voice_states.get(&me) {
+            Some(room) if *room == channel => state.voice_device(me).is_some_and(|node| !node.eq_ignore_ascii_case(ours)),
+            _ => false,
+        }
     }
 
     pub fn start_group(&self, server: ServerId) -> Result<Vec<WirePayload>, String> {
@@ -699,12 +736,70 @@ mod tests {
         assert!(!w.client.install_mirror(w.server, &mirror(&w)).unwrap(), "only the first copy is taken");
     }
 
+    fn voice_channel(w: &World) -> ChannelId {
+        w.state.server.channels.iter().find(|c| c.kind.is_voice()).map(|c| c.id).unwrap()
+    }
+
+    fn heard(observer: &mut ServerState, payloads: &[WirePayload]) {
+        for payload in payloads {
+            let WirePayload::Signed(signed) = payload else { panic!("voice changes are signed") };
+            assert!(observer.admits_signed(signed).is_ok());
+            observer.apply(signed.event.clone()).unwrap();
+        }
+    }
+
+    #[test]
+    fn joining_voice_names_this_tab_as_the_device_others_dial() {
+        let w = world();
+        assert!(w.client.install_mirror(w.server, &mirror(&w)).unwrap());
+        let voice = voice_channel(&w);
+        let me = w.client.profile().unwrap().id;
+        let node = [7u8; 32];
+        let hex = liveness::node_hex(&node);
+        assert!(w.client.voice_state(w.server, Some(w.channel), false, false, Some(1)).is_err(), "a text channel has no voice");
+        let joined = w.client.voice_state(w.server, Some(voice), false, false, Some(1)).unwrap();
+        let mut observer = w.state.clone();
+        heard(&mut observer, &[joined]);
+        heard(&mut observer, &w.client.here(w.server, &node, Some((voice, 1_000))));
+        assert_eq!(observer.voice_states.get(&me), Some(&voice));
+        assert_eq!(observer.voice_node(me), Some(hex.clone()));
+        assert!(observer.media_peer_ok(me, &hex, voice, true));
+        assert!(!w.client.voice_moved_away(w.server, voice, &hex));
+        assert!(w.client.voice_moved_away(w.server, voice, &liveness::node_hex(&[8u8; 32])), "another device of mine took the call");
+
+        let left = w.client.voice_state(w.server, None, false, false, None).unwrap();
+        heard(&mut observer, &[left]);
+        assert_eq!(observer.voice_states.get(&me), None);
+    }
+
+    #[test]
+    fn the_browser_dials_the_voice_device_of_everyone_else_in_the_channel_and_admits_only_them() {
+        let w = world();
+        assert!(w.client.install_mirror(w.server, &mirror(&w)).unwrap());
+        let voice = voice_channel(&w);
+        let (owner, identity) = w.owner.clone();
+        let theirs = [3u8; 32];
+        let at = Utc::now().timestamp_millis();
+        for event in [
+            ServerEvent::VoiceState { user: owner.id, channel: Some(voice), muted: false, deafened: false, since: Some(1) },
+            ServerEvent::DeviceAnnounce { server: w.server, user: owner.id, node: liveness::node_hex(&theirs), voice: Some(voice), since: Some(at) },
+        ] {
+            let signed = SignedEvent::sign(w.server, owner.id, at, event, &identity);
+            w.client.apply_signal(w.server, &theirs, signed.event, Some(signed.action));
+        }
+        w.client.voice_state(w.server, Some(voice), false, false, Some(1)).unwrap();
+        assert_eq!(w.client.voice_targets(w.server, voice), vec![(owner.id, liveness::node_hex(&theirs))]);
+        assert!(w.client.voice_peer_ok(w.server, owner.id, &liveness::node_hex(&theirs), voice));
+        assert!(!w.client.voice_peer_ok(w.server, owner.id, &liveness::node_hex(&[4u8; 32]), voice), "not their device");
+        assert!(!w.client.voice_peer_ok(w.server, owner.id, &liveness::node_hex(&theirs), w.channel), "not this channel");
+    }
+
     #[test]
     fn the_browser_says_it_is_here_and_a_friend_stays_online_while_one_of_their_devices_is() {
         let w = world();
         assert!(w.client.install_mirror(w.server, &mirror(&w)).unwrap());
         let node = [7u8; 32];
-        let said = w.client.here(w.server, &node);
+        let said = w.client.here(w.server, &node, None);
         assert_eq!(said.len(), 2);
         let me = w.client.profile().unwrap().id;
         let mut observer = w.state.clone();

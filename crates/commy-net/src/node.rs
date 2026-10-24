@@ -533,16 +533,25 @@ pub(crate) fn addr_via_relays(node: EndpointId, relays: &[RelayUrl]) -> Endpoint
     EndpointAddr::from_parts(node, relays.iter().cloned().map(iroh::TransportAddr::Relay))
 }
 
+fn hint_relays(lookup: &MemoryLookup, endpoint: &Endpoint, node: EndpointId, relays: &[RelayUrl]) {
+    if node != endpoint.id() {
+        lookup.add_endpoint_info(addr_via_relays(node, relays));
+    }
+}
+
 pub const MEDIA_DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct MediaDialer {
     endpoint: Endpoint,
+    lookup: MemoryLookup,
+    relays: Vec<RelayUrl>,
 }
 
 impl MediaDialer {
     pub async fn connect(&self, node_hex: &str, hello: MediaHello) -> Result<MediaChannel> {
         let node_id = parse_node_hex(node_hex)?;
+        hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays);
         let dial = async {
             let connection = self
                 .endpoint
@@ -601,9 +610,7 @@ impl BlobFetcher {
         }
         let provider = provider_hex.context("blob not local and no provider known")?;
         let node_id = parse_node_hex(provider)?;
-        if node_id != self.endpoint.id() {
-            self.lookup.add_endpoint_info(addr_via_relays(node_id, &self.relays));
-        }
+        hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays);
         let bytes = fetch_capped(&self.endpoint, node_id, hash, max).await?;
         if let Err(e) = self.blobs.add_bytes(bytes.clone()).await {
             tracing::debug!("fetched blob was not kept locally: {e}");
@@ -1167,7 +1174,7 @@ impl CommyNode {
     }
 
     pub fn media_dialer(&self) -> MediaDialer {
-        MediaDialer { endpoint: self.endpoint() }
+        MediaDialer { endpoint: self.endpoint(), lookup: self.lookup.clone(), relays: self.relays.clone() }
     }
 
     pub async fn add_blob(&self, bytes: Vec<u8>) -> Result<String> {
