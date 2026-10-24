@@ -169,14 +169,22 @@ pub struct ServerTags {
     pub unwanted: Vec<(ServerId, ([u8; 32], i64))>,
 }
 
+fn settled(state: &ServerState, me: UserId, live: impl Fn(Option<ChannelId>) -> bool) -> bool {
+    let server = &state.server;
+    if !server.is_current_member(me) || state.is_deleted() {
+        return true;
+    }
+    live(None) && server.channels.iter().filter(|c| c.kind.holds_messages() && c.is_private() && server.can_view(c.id, me)).all(|c| live(Some(c.id)))
+}
+
 pub fn wake_tags(app: &App, days: &[i64]) -> ServerTags {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let Some(me) = me else { return ServerTags { unsettled: app.servers.lock().unwrap().keys().copied().collect(), ..Default::default() } };
     let prefs = account_log::pref_values(app);
     let points = community_sync::wake_points();
     let servers = app.servers.lock().unwrap();
-    let live: HashSet<ServerId> = points.iter().map(|(server, _, _)| *server).collect();
-    let unsettled = servers.keys().filter(|server| !live.contains(server)).copied().collect();
+    let live: HashSet<(ServerId, Option<ChannelId>)> = points.iter().map(|(server, channel, _)| (*server, *channel)).collect();
+    let unsettled = servers.iter().filter(|(server, state)| !settled(state, me, |channel| live.contains(&(**server, channel)))).map(|(server, _)| *server).collect();
     let mut tags = Vec::new();
     let mut unwanted = Vec::new();
     for (server, channel, keys) in points {
@@ -290,6 +298,24 @@ mod tests {
         assert_eq!(unwanted(&prefs), vec![shared(ALL, 0), shared(EVERYONE, 0)]);
         prefs.insert(format!("notify.muted.{server}"), Value::from(true));
         assert_eq!(unwanted(&prefs), vec![shared(ALL, 0), kit.to_string(), shared(EVERYONE, 0), shared(&role_who(role), 0)]);
+    }
+
+    #[test]
+    fn a_server_counts_as_settled_only_once_every_stream_it_listens_on_is_live() {
+        let (mut state, ids) = server_with(&["kit", "sam"]);
+        let (kit, sam) = (ids[1], ids[2]);
+        let role = crew(&mut state, kit);
+        let mut locked = commy_core::server::Channel::new("crew", commy_core::ChannelKind::Text, 9);
+        locked.view_roles = vec![role];
+        let channel = locked.id;
+        state.server.channels.push(locked);
+        assert!(!settled(&state, kit, |_| false));
+        assert!(!settled(&state, kit, |c| c == Some(channel)), "the server's own stream is not live yet");
+        assert!(!settled(&state, kit, |c| c.is_none()), "a locked channel kit can read is not live yet");
+        assert!(settled(&state, kit, |_| true));
+        assert!(settled(&state, sam, |c| c.is_none()), "sam cannot read the locked channel");
+        let stranger = UserId::new();
+        assert!(settled(&state, stranger, |_| false), "a server we left wants nothing");
     }
 
     #[test]
