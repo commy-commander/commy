@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
+use chrono::{DateTime, Utc};
+
 use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::{IdentityKey, ServerId, UserId, UserProfile};
 use commy_net::community_streams::{Lane, Want};
@@ -51,6 +53,11 @@ pub fn partner_record(profile: &UserProfile, at: i64, accepted: bool) -> Vec<u8>
 
 pub fn joined_record(server: ServerId, entry: &Entry) -> Vec<u8> {
     let list = EntryList { servers: [(server, entry.clone())].into(), ..Default::default() };
+    serde_json::to_vec(&serde_json::json!({ "k": "servers", "list": list })).expect("servers encode")
+}
+
+pub fn left_record(server: ServerId, at: DateTime<Utc>) -> Vec<u8> {
+    let list = EntryList { left: [(server, at)].into(), ..Default::default() };
     serde_json::to_vec(&serde_json::json!({ "k": "servers", "list": list })).expect("servers encode")
 }
 
@@ -199,6 +206,11 @@ impl Book {
         self.list.servers.insert(server, entry);
         self.offer_key(server, key, at);
         true
+    }
+
+    pub fn leave(&mut self, server: ServerId, at: DateTime<Utc>) {
+        self.list.servers.remove(&server);
+        self.list.left.insert(server, at);
     }
 
     pub fn offer_key(&mut self, server: ServerId, key: SharedKey, at: i64) -> bool {

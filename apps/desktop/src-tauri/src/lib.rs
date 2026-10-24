@@ -73,7 +73,6 @@ use commy_core::{
 };
 use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::server::Role;
-use commy_core::template::{text_channel_name, MAX_RETENTION_DAYS};
 use commy_media::screen::{SourceKind, StreamQuality};
 use view::permissions_from_names;
 use commy_media::StreamGuards;
@@ -159,18 +158,13 @@ fn clean_message(content: &str) -> CmdResult<String> {
 }
 
 fn clean_server_name(name: &str) -> CmdResult<String> {
-    let name = name.trim();
-    if name.is_empty() || name.len() > 100 {
-        return Err("server name must be 1 to 100 characters".into());
-    }
-    Ok(name.to_string())
+    view::manage::server_name(name)
 }
 
-fn check_channel_name(name: String) -> CmdResult<String> {
-    if name.is_empty() || name.len() > 50 {
-        return Err("channel name must be 1 to 50 characters".into());
-    }
-    Ok(name)
+fn managed<T>(app: &App, sid: ServerId, me: UserId, build: impl FnOnce(&ServerState, Permissions) -> view::act::Act<T>) -> CmdResult<T> {
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    build(state, our_permissions(app, state, me))
 }
 
 const KEY_SETTLE_MAX: std::time::Duration = std::time::Duration::from_secs(120);
@@ -2754,11 +2748,9 @@ async fn rename_server(
     name: String,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let name = clean_server_name(&name)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "rename the server")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ServerRename { server: sid, name })
-        .await?;
+    let event = managed(&app, sid, me.id, |state, perms| view::manage::rename(state, perms, &name))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
@@ -2955,23 +2947,8 @@ async fn update_channel(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let kind = {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
-        state.server.channel(cid).ok_or("unknown channel")?.kind
-    };
-    let name = check_channel_name(match kind {
-        kind if kind.holds_messages() => text_channel_name(&name),
-        _ => name.trim().to_string(),
-    })?;
-    let retention_days = retention_days.filter(|d| *d > 0).map(|d| d.min(MAX_RETENTION_DAYS));
-    apply_and_broadcast(
-        &app,
-        &handle,
-        sid,
-        ServerEvent::ChannelUpdate { server: sid, channel: cid, name, retention_days },
-    ).await
+    let event = managed(&app, sid, me.id, |state, perms| view::manage::update_channel(state, perms, cid, &name, retention_days))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 const MESH_HEAL_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
@@ -3109,37 +3086,10 @@ async fn create_channel(
     parent_id: Option<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let name = check_channel_name(text_channel_name(&name))?;
-    let kind = match kind.as_str() {
-        "text" => ChannelKind::Text,
-        "voice" => ChannelKind::Voice,
-        "announcement" => ChannelKind::Announcement,
-        "forum" => ChannelKind::Forum,
-        "stage" => ChannelKind::Stage,
-        _ => return Err("channel kind must be text, voice, stage, announcement or forum".into()),
-    };
     let me = current_profile(&app)?;
-    let channel = {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "create channels")?;
-        if state.server.channels.iter().any(|c| c.name == name && c.kind == kind) {
-            return Err("a channel with that name already exists".into());
-        }
-        let position = state.server.channels.len() as u32;
-        let mut channel = Channel::new(name, kind, position);
-        channel.parent = parent_id
-            .and_then(|p| p.parse::<ChannelId>().ok())
-            .filter(|p| state.server.channel(*p).is_some_and(|c| c.kind == ChannelKind::Category));
-        channel
-    };
-    apply_and_broadcast(
-        &app,
-        &handle,
-        sid,
-        ServerEvent::ChannelCreate { server: sid, channel },
-    )
-    .await
+    let parent = parent_id.and_then(|p| p.parse::<ChannelId>().ok());
+    let event = managed(&app, sid, me.id, |state, perms| view::manage::create_channel(state, perms, &name, &kind, parent))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -3152,27 +3102,8 @@ async fn delete_channel(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "delete channels")?;
-        let remaining_text = state
-            .server
-            .channels
-            .iter()
-            .filter(|c| c.kind == ChannelKind::Text && c.id != cid)
-            .count();
-        if remaining_text == 0 {
-            return Err("a server needs at least one text channel".into());
-        }
-    }
-    apply_and_broadcast(
-        &app,
-        &handle,
-        sid,
-        ServerEvent::ChannelDelete { server: sid, channel: cid },
-    )
-    .await
+    let event = managed(&app, sid, me.id, |state, perms| view::manage::delete_channel(state, perms, cid))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4475,11 +4406,13 @@ struct ChannelMove {
 async fn move_channels(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, moves: Vec<ChannelMove>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_CHANNELS, "move channels")?;
-    for m in moves.into_iter().take(200) {
+    let mut parsed = Vec::new();
+    for m in moves.into_iter().take(view::manage::MAX_CHANNEL_MOVES) {
         let channel: ChannelId = m.channel.parse().map_err(err_to_string)?;
         let parent: Option<ChannelId> = m.parent.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
-        let event = ServerEvent::ChannelLayout { server: sid, channel, parent, position: m.position };
+        parsed.push(view::manage::ChannelMove { channel, parent, position: m.position });
+    }
+    for event in managed(&app, sid, me.id, |state, perms| view::manage::move_channels(state, perms, parsed))? {
         let _ = apply_and_broadcast(&app, &handle, sid, event).await;
     }
     Ok(())
@@ -4488,19 +4421,9 @@ async fn move_channels(app: tauri::State<'_, App>, handle: tauri::AppHandle, ser
 #[tauri::command]
 async fn create_category(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, name: String) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let name = name.trim().to_string();
-    if name.is_empty() || name.chars().count() > 50 {
-        return Err("category names must be 1 to 50 characters".into());
-    }
     let me = current_profile(&app)?;
-    let channel = {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "create categories")?;
-        let position = state.server.channels.iter().map(|c| c.position).max().unwrap_or(0) + 1;
-        Channel::new(name, ChannelKind::Category, position)
-    };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelCreate { server: sid, channel }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::manage::create_category(state, perms, &name))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4868,22 +4791,9 @@ async fn set_channel_kind(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
-    let kind = match kind.as_str() {
-        "text" => ChannelKind::Text,
-        "announcement" => ChannelKind::Announcement,
-        _ => return Err("channel kind must be text or announcement".into()),
-    };
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
-        let channel = state.server.channel(cid).ok_or("unknown channel")?;
-        if !matches!(channel.kind, ChannelKind::Text | ChannelKind::Announcement) {
-            return Err("only text channels can become announcement channels".into());
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelKindSet { server: sid, channel: cid, kind }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::manage::channel_kind_set(state, perms, cid, &kind))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]

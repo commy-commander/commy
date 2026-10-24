@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope};
-use commy_core::{Message, ServerEvent, ServerId};
+use commy_core::{Message, ServerEvent, ServerId, UserId};
 use commy_net::community_streams::{self as streams, Lane};
 use commy_net::entry_list::{self, EntryList};
 use commy_net::sync_streams::SharedKey;
@@ -115,7 +115,7 @@ impl Session {
 
     fn tend_owned(&self) {
         let now = Utc::now().timestamp_millis();
-        for server in self.client.borrow().owned_groups() {
+        for server in self.client.borrow().owned_servers() {
             let (due, copy) = {
                 let mut guard = self.sync.borrow_mut();
                 let Some(live) = guard.as_mut() else { return };
@@ -146,17 +146,21 @@ impl Session {
     }
 
     pub(super) async fn start_group(self: &Rc<Self>) -> Result<ServerId, String> {
+        self.start_server("", commy_core::Server::group)
+    }
+
+    pub(super) fn start_server(self: &Rc<Self>, name: &str, make: impl FnOnce(UserId) -> commy_core::Server) -> Result<ServerId, String> {
         let (me, identity) = self.client.borrow().me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
         if self.sync.borrow().is_none() {
             return Err("Your servers are not unlocked yet".into());
         }
         let server = ServerId::new();
-        let mut ticket = ServerTicket::new(server, "", commy_net::node::topic_for(server), Vec::new());
+        let mut ticket = ServerTicket::new(server, name, commy_net::node::topic_for(server), Vec::new());
         ticket.owner = Some((me.id, identity.public()));
-        let keys = self.client.borrow().start_group(server)?;
-        let (id, secret) = self.client.borrow().newest_community_key(server).ok_or("Could not make a key for the group")?;
+        let keys = self.client.borrow().start(server, make)?;
+        let (id, secret) = self.client.borrow().newest_community_key(server).ok_or("Could not make a key for the server")?;
         let now = Utc::now();
-        let entry = entry_list::Entry { name: String::new(), ticket: ticket.encode(), since: now };
+        let entry = entry_list::Entry { name: name.to_string(), ticket: ticket.encode(), since: now };
         let shared = SharedKey::of(id, &secret);
         if let Some(live) = self.sync.borrow_mut().as_mut() {
             live.book.join(server, entry.clone(), shared.clone(), now.timestamp_millis());
@@ -172,7 +176,9 @@ impl Session {
             self.publish(server, payload);
         }
         self.emit("servers-changed", Value::Null);
-        self.emit("dm-changed", json!(server.to_string()));
+        if self.client.borrow().is_group(server) {
+            self.emit("dm-changed", json!(server.to_string()));
+        }
         Ok(server)
     }
 
