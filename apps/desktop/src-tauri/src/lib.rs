@@ -1125,14 +1125,7 @@ async fn set_voice_channel(
             {
                 let servers = app.servers.lock().unwrap();
                 let state = servers.get(&sid).ok_or("unknown server")?;
-                if !state.server.channel(channel).is_some_and(|c| c.kind.is_voice()) {
-                    return Err("that is not a voice channel".into());
-                }
-                require_can_view(state, profile.id, channel)?;
-            }
-            let full = app.servers.lock().unwrap().get(&sid).is_some_and(|s| voice_channel_full(&app, s, channel, profile.id));
-            if full {
-                return Err("that voice channel is full".into());
+                view::act::join_voice(state, our_permissions(&app, state, profile.id), profile.id, channel)?;
             }
             calls::end(&app, &handle, true, "hung_up").await;
             let previous = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != sid);
@@ -4732,12 +4725,7 @@ async fn edit_forum_post(
 }
 
 fn voice_channel_full(app: &App, state: &ServerState, channel: ChannelId, user: UserId) -> bool {
-    let Some(c) = state.server.channel(channel) else { return false };
-    if c.user_limit == 0 || our_permissions(app, state, user).allows(Permissions::MANAGE_CHANNELS) {
-        return false;
-    }
-    let inside = state.voice_states.iter().filter(|(u, ch)| **ch == channel && **u != user).count();
-    inside >= c.user_limit as usize
+    view::act::voice_full(state, our_permissions(app, state, user), user, channel)
 }
 
 #[tauri::command]

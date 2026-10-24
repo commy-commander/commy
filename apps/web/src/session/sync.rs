@@ -191,9 +191,10 @@ impl Session {
         }
     }
 
-    fn say_here(&self, server: ServerId) {
+    pub(super) fn say_here(&self, server: ServerId) {
         let Some(node) = self.sync.borrow().as_ref().map(|live| live.node) else { return };
-        for payload in self.client.borrow().here(server, &node) {
+        let voice = self.voice_here(server);
+        for payload in self.client.borrow().here(server, &node, voice) {
             self.publish(server, &payload);
         }
     }
