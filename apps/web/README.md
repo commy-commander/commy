@@ -3,9 +3,10 @@
 The web client runs the desktop UI (`apps/desktop/ui`) on a WebAssembly build
 of the same Rust code the desktop app uses. It is a preview: sign in, open
 your servers, chat in text channels, send files and voice messages, use direct
-messages and group DMs, call people and join voice channels. Creating and
-managing servers, video, screen sharing and profile editing still need the
-desktop app.
+messages and group DMs, call people, join voice channels, create servers,
+arrange their channels, and make and open invite links. Links from another
+account server, roles and moderation, video, screen sharing and profile
+editing still need the desktop app.
 
 Pictures (avatars, server icons and banners, custom emoji) come from the sync
 service's encrypted picture copies when it has them, and otherwise straight

@@ -34,6 +34,7 @@ mod files;
 mod handoff;
 mod invites;
 mod pictures;
+mod servers;
 mod sync;
 
 const DEVICE_NAME: &str = "Web browser";
@@ -143,6 +144,11 @@ struct Args {
     link: Option<String>,
     ticket: Option<String>,
     origin: Option<String>,
+    template: Option<String>,
+    kind: Option<String>,
+    parent_id: Option<String>,
+    retention_days: Option<u32>,
+    moves: Option<Vec<servers::MoveArg>>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -329,6 +335,17 @@ impl Session {
             "join_server" => self.invite_command(cmd, args).await,
             "list_invites" => self.invite_command(cmd, args).await,
             "revoke_invite" => self.invite_command(cmd, args).await,
+            "list_server_templates" => self.server_command(cmd, args).await,
+            "preview_server_template" => self.server_command(cmd, args).await,
+            "create_server" => self.server_command(cmd, args).await,
+            "leave_server" => self.server_command(cmd, args).await,
+            "rename_server" => self.server_command(cmd, args).await,
+            "create_channel" => self.server_command(cmd, args).await,
+            "create_category" => self.server_command(cmd, args).await,
+            "update_channel" => self.server_command(cmd, args).await,
+            "delete_channel" => self.server_command(cmd, args).await,
+            "set_channel_kind" => self.server_command(cmd, args).await,
+            "move_channels" => self.server_command(cmd, args).await,
             "web_farewell" => {
                 self.hang_up_on_farewell().await;
                 self.say_goodbye();

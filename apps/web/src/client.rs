@@ -106,9 +106,16 @@ impl Client {
         let state = servers.get_mut(&server).ok_or("This server is still loading")?;
         let me = act::Me { user: profile.id, perms: state.server.permissions_for(profile.id), now: Utc::now() };
         let event = build(state, &me, &identity, &keys)?;
-        let signed = SignedEvent::sign(server, profile.id, me.now.timestamp_millis(), event, &identity);
-        state.apply_own(&signed).map_err(|e| e.to_string())?;
-        Ok(if action::self_signed(&signed.event) { WirePayload::Event(signed.event) } else { WirePayload::Signed(signed) })
+        sign_own(state, server, &me, &identity, event)
+    }
+
+    pub fn act_all(&self, server: ServerId, build: impl FnOnce(&ServerState, &act::Me) -> Act<Vec<ServerEvent>>) -> Result<Vec<WirePayload>, String> {
+        let (profile, identity) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
+        let mut servers = self.servers.lock().unwrap();
+        let state = servers.get_mut(&server).ok_or("This server is still loading")?;
+        let me = act::Me { user: profile.id, perms: state.server.permissions_for(profile.id), now: Utc::now() };
+        let events = build(state, &me)?;
+        events.into_iter().map(|event| sign_own(state, server, &me, &identity, event)).collect()
     }
 
     pub fn typing(&self, server: ServerId, channel: ChannelId) -> Result<Option<WirePayload>, String> {
@@ -340,14 +347,18 @@ impl Client {
     }
 
     pub fn start_group(&self, server: ServerId) -> Result<Vec<WirePayload>, String> {
+        self.start(server, commy_core::Server::group)
+    }
+
+    pub fn start(&self, server: ServerId, make: impl FnOnce(UserId) -> commy_core::Server) -> Result<Vec<WirePayload>, String> {
         let (profile, _) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
-        let mut group = commy_core::Server::group(profile.id);
-        group.id = server;
-        let mut state = ServerState::new(group);
+        let mut made = make(profile.id);
+        made.id = server;
+        let mut state = ServerState::new(made);
         state.profiles.insert(profile.id, profile.clone());
         let mut servers = self.servers.lock().unwrap();
         if servers.contains_key(&server) {
-            return Err("that group already exists".into());
+            return Err("that server already exists".into());
         }
         servers.insert(server, state);
         drop(servers);
@@ -397,9 +408,9 @@ impl Client {
         ring.newest_in(state, KeyScope::Community).map(|(id, secret)| (id, secret.clone()))
     }
 
-    pub fn owned_groups(&self) -> Vec<ServerId> {
+    pub fn owned_servers(&self) -> Vec<ServerId> {
         let Some(me) = self.me_id() else { return Vec::new() };
-        self.servers.lock().unwrap().iter().filter(|(_, s)| s.server.group && s.server.owner == me && !s.is_deleted()).map(|(id, _)| *id).collect()
+        self.servers.lock().unwrap().iter().filter(|(_, s)| s.server.owner == me && !s.is_deleted()).map(|(id, _)| *id).collect()
     }
 
     pub fn summary(&self, server: ServerId) -> Option<ServerSummary> {
@@ -621,6 +632,12 @@ impl Client {
     }
 }
 
+fn sign_own(state: &mut ServerState, server: ServerId, me: &act::Me, identity: &Identity, event: ServerEvent) -> Result<WirePayload, String> {
+    let signed = SignedEvent::sign(server, me.user, me.now.timestamp_millis(), event, identity);
+    state.apply_own(&signed).map_err(|e| e.to_string())?;
+    Ok(if action::self_signed(&signed.event) { WirePayload::Event(signed.event) } else { WirePayload::Signed(signed) })
+}
+
 pub fn clean_message(content: &str) -> Result<String, String> {
     let content = content.trim();
     if content.is_empty() || content.len() > MAX_MESSAGE_LEN {
@@ -716,7 +733,7 @@ mod tests {
         assert!(!creator.start_group(group).unwrap().is_empty());
         assert!(creator.start_group(group).is_err());
         assert!(creator.is_group(group));
-        assert_eq!(creator.owned_groups(), vec![group]);
+        assert_eq!(creator.owned_servers(), vec![group]);
         assert!(creator.key_work(group).is_empty(), "the new key needs nothing more");
         let mut ticket = ServerTicket::new(group, "", [0u8; 32], Vec::new());
         ticket.owner = Some((me.id, mine.public()));
@@ -739,7 +756,63 @@ mod tests {
         assert!(friend.install_service_snapshot(group, copy[0].clone(), Some(joined)).unwrap());
         assert!(friend.is_group(group));
         assert!(friend.servers.lock().unwrap()[&group].server.is_current_member(friend_profile.id));
-        assert!(friend.owned_groups().is_empty());
+        assert!(friend.owned_servers().is_empty());
+    }
+
+    #[test]
+    fn a_server_made_in_the_browser_follows_its_template_and_its_owner_can_rearrange_it() {
+        let mine = Identity::generate();
+        let mut me = UserProfile::new("me");
+        me.identity = Some(mine.public());
+        let creator = Client::default();
+        *creator.me.lock().unwrap() = Some((me.clone(), mine));
+        let server = ServerId::new();
+        let template = commy_view::templates::resolve(Some("gaming")).unwrap();
+        assert!(!creator.start(server, |owner| template.build("Game Night", owner)).unwrap().is_empty());
+        assert!(!creator.is_group(server));
+        assert_eq!(creator.owned_servers(), vec![server]);
+        let view = creator.get_server(server).unwrap();
+        assert_eq!(view.name, "Game Night");
+
+        let made = creator.act(server, |state, me, _, _| commy_view::manage::create_channel(state, me.perms, "Speed Runs", "text", None)).unwrap();
+        assert!(matches!(made, WirePayload::Signed(ref s) if matches!(s.event, ServerEvent::ChannelCreate { .. })));
+        let renamed = creator.act(server, |state, me, _, _| commy_view::manage::rename(state, me.perms, "Late Night")).unwrap();
+        assert!(matches!(renamed, WirePayload::Signed(_)));
+        let (runs, others) = {
+            let servers = creator.servers.lock().unwrap();
+            let state = &servers[&server];
+            assert_eq!(state.server.name, "Late Night");
+            let runs = state.server.channels.iter().find(|c| c.name == "speed-runs").map(|c| c.id).unwrap();
+            (runs, state.server.channels.iter().filter(|c| c.id != runs).count())
+        };
+        let moves = vec![commy_view::manage::ChannelMove { channel: runs, parent: None, position: 0 }];
+        let moved = creator.act_all(server, |state, me| commy_view::manage::move_channels(state, me.perms, moves)).unwrap();
+        assert_eq!(moved.len(), 1);
+        assert_eq!(creator.servers.lock().unwrap()[&server].server.channel(runs).unwrap().position, 0);
+        assert!(others > 0);
+    }
+
+    #[test]
+    fn a_member_cannot_manage_a_server_they_do_not_run() {
+        let w = world();
+        w.client.servers.lock().unwrap().insert(w.server, w.state.clone());
+        assert!(w.client.act(w.server, |state, me, _, _| commy_view::manage::rename(state, me.perms, "Mine now")).is_err());
+        assert!(w.client.act(w.server, |state, me, _, _| commy_view::manage::delete_channel(state, me.perms, w.channel)).is_err());
+        assert_eq!(w.client.servers.lock().unwrap()[&w.server].server.name, "Hangout");
+    }
+
+    #[test]
+    fn a_member_can_invite_to_a_server_but_not_through_the_group_path() {
+        let mut w = world();
+        w.client.servers.lock().unwrap().insert(w.server, w.state.clone());
+        assert!(w.client.invite_ticket(w.server, None).is_err(), "no ticket from the owner yet");
+        let mut ticket = ServerTicket::new(w.server, "Hangout", [0u8; 32], Vec::new());
+        ticket.owner = Some((w.owner.0.id, w.owner.1.public()));
+        w.client.tickets.insert(w.server, ticket);
+        let (ticket, _) = w.client.invite_ticket(w.server, None).unwrap();
+        assert_eq!(ticket.server_name, "Hangout");
+        assert!(w.client.group_invite_from(w.server, None).is_err());
+        assert!(w.client.invite_ticket(ServerId::new(), None).is_err());
     }
 
     fn mirror(world: &World) -> Vec<u8> {

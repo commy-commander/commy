@@ -70,11 +70,7 @@ impl Session {
         let client = self.client.borrow();
         let servers = client.servers.lock().unwrap();
         let state = servers.get(&server).ok_or("This server is still loading")?;
-        if state.server.permissions_for(me).allows(needed) {
-            Ok(())
-        } else {
-            Err(format!("you do not have permission to {action}"))
-        }
+        commy_view::manage::need(state.server.permissions_for(me), needed, action)
     }
 
     async fn create_invite(&self, server: ServerId, expiry: invite::Expiry, name: Option<String>) -> Result<invite::CreatedInvite, String> {

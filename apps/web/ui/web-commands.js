@@ -25,7 +25,6 @@ const WEB_DEFAULTS = {
   list_shareable_emojis: [],
   list_shareable_sounds: [],
   list_shareable_expressions: {},
-  list_server_templates: [],
   list_audio_devices: { inputs: [], outputs: [] },
   notify: null,
   account_cancel_sign_in: null,
