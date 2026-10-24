@@ -4,12 +4,14 @@ pub mod catalog;
 pub mod dms;
 pub mod keys;
 pub mod liveness;
+pub mod manage;
 pub mod pictures;
 pub mod pins;
 pub mod reads;
 pub mod safety;
 pub mod saved;
 pub mod search;
+pub mod templates;
 pub mod voice_invite;
 
 use crate::keys::KeyHolder;
