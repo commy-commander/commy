@@ -51,6 +51,7 @@ pub(super) struct Live {
     gone: bool,
     published: HashMap<ServerId, i64>,
     key_work: HashSet<(ServerId, KeyScope)>,
+    pub(super) pictures: Option<String>,
 }
 
 impl Session {
@@ -65,7 +66,8 @@ impl Session {
         let stream = sync_streams::account_stream(&key);
         let account = stream.id;
         pool.follow(stream, 0);
-        *self.sync.borrow_mut() = Some(Live { pool, account, account_live: false, book: Book::new(list), node, greeted: HashSet::new(), gone: false, published: HashMap::new(), key_work: HashSet::new() });
+        let pictures = commy_view::pictures::pictures_url(&url);
+        *self.sync.borrow_mut() = Some(Live { pool, account, account_live: false, book: Book::new(list), node, greeted: HashSet::new(), gone: false, published: HashMap::new(), key_work: HashSet::new(), pictures });
         spawn_local(self.clone().run_sync(events));
         spawn_local(self.clone().tend_sync());
         spawn_local(self.clone().tend_presence());

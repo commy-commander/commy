@@ -33,6 +33,18 @@
       const res = await fetch(path, init);
       return webReplyLine(res.status, await res.text());
     },
+    async fetchBytes(url) {
+      const stop = new AbortController();
+      const timer = setTimeout(() => stop.abort(), WEB_PICTURE_WAIT_MS);
+      try {
+        const res = await fetch(url, { credentials: "omit", signal: stop.signal });
+        return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     load(key) {
       const store = storage();
       return store ? store.getItem(key) : null;
@@ -71,12 +83,14 @@
     return bytes.buffer;
   }
 
-  async function attachPicked(args) {
+  async function attachPicked(cmd, args) {
     const file = await webPickFile(document, args && args.kind);
     if (!file) return null;
     if (file.size > WEB_MAX_SEND_BYTES) throw WEB_SEND_TOO_LARGE;
     const data = new Uint8Array(await file.arrayBuffer());
-    return JSON.parse(await (await client).attach_dm(args.userId, file.name, data));
+    const web = await client;
+    const sent = cmd === "attach_file" ? web.attach(args.serverId, args.channelId, file.name, data) : web.attach_dm(args.userId, file.name, data);
+    return JSON.parse(await sent);
   }
 
   let unlocked = null;
@@ -184,7 +198,7 @@
       return new Promise(() => {});
     }
     if (WEB_BYTE_COMMANDS.includes(cmd)) return fileBytes(cmd, args);
-    if (cmd === "attach_dm_file") return attachPicked(args);
+    if (WEB_PICKED_COMMANDS.includes(cmd)) return attachPicked(cmd, args);
     if (cmd === "get_user") {
       await untilUnlocked();
       if (typeof hideModals === "function") hideModals();

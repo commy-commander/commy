@@ -4144,7 +4144,7 @@ async fn set_about(app: tauri::State<'_, App>, handle: tauri::AppHandle, about: 
 }
 
 const SERVER_IMAGE_DIR: &str = "server-images";
-const MAX_SERVER_IMAGE_BYTES: usize = 1024 * 1024;
+const MAX_SERVER_IMAGE_BYTES: usize = view::pictures::MAX_SERVER_IMAGE_BYTES;
 
 fn server_image_path(app: &App, blob: &str) -> Option<std::path::PathBuf> {
     app.data_dir().map(|d| d.join(SERVER_IMAGE_DIR).join(format!("{blob}.img")))
@@ -4198,8 +4198,7 @@ async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdRes
 }
 
 pub(crate) fn picture_data_url(bytes: &[u8]) -> String {
-    let mime = if bytes.starts_with(&[0x89, b'P']) { "image/png" } else { "image/jpeg" };
-    data_url(mime, bytes)
+    data_url(view::pictures::picture_mime(bytes), bytes)
 }
 
 pub(crate) async fn server_image_bytes(app: &App, image: &str) -> CmdResult<Vec<u8>> {
@@ -6586,7 +6585,7 @@ async fn set_profile_banner(
 }
 
 pub(crate) fn is_jpeg_or_png(bytes: &[u8]) -> bool {
-    bytes.starts_with(&[0xff, 0xd8, 0xff]) || bytes.starts_with(&[0x89, b'P', b'N', b'G'])
+    view::pictures::is_jpeg_or_png(bytes)
 }
 
 fn decode_base64_image(data: &str) -> CmdResult<Vec<u8>> {

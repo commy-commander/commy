@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 pub const PROFILE_IMAGE_DIR: &str = "profile-images";
 pub const SMALL_SERVER_MEMBERS: usize = 50;
-pub const MAX_PROFILE_IMAGE_BYTES: usize = 512 * 1024;
+pub const MAX_PROFILE_IMAGE_BYTES: usize = commy_view::pictures::MAX_PROFILE_IMAGE_BYTES;
 
 pub fn image_blobs(profile: &UserProfile) -> Vec<String> {
     [profile.avatar.as_deref(), profile.banner.as_deref()]
