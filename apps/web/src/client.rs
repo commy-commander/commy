@@ -422,10 +422,17 @@ impl Client {
     }
 
     pub fn group_invite_from(&self, server: ServerId, given: Option<(KeyId, ChannelSecret)>) -> Result<(ServerTicket, Option<(KeyId, ChannelSecret)>), String> {
+        if !self.is_group(server) {
+            return Err("that is not a group you are in".into());
+        }
+        self.invite_ticket(server, given)
+    }
+
+    pub fn invite_ticket(&self, server: ServerId, given: Option<(KeyId, ChannelSecret)>) -> Result<(ServerTicket, Option<(KeyId, ChannelSecret)>), String> {
         let me = self.me_id().ok_or("Your servers are not unlocked yet")?;
         let ticket = self.tickets.get(&server).filter(|t| t.owner.is_some()).cloned().ok_or("no invite available; you may be offline")?;
         let servers = self.servers.lock().unwrap();
-        let state = servers.get(&server).filter(|s| s.server.group && s.server.is_current_member(me)).ok_or("that is not a group you are in")?;
+        let state = servers.get(&server).filter(|s| s.server.is_current_member(me)).ok_or("that is not a server you are in")?;
         let key = self
             .keys()
             .community_ring(state, given)
