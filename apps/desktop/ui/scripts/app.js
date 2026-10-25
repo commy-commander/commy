@@ -7383,11 +7383,40 @@ async function refreshConnPop() {
   }
   if (!stats.links.length) list.appendChild(el("div", "conn-empty", "Nobody else is connected yet."));
   $("conn-foot").textContent = `Audio: ${stats.codec}, ${stats.bitrate_kbps} kbps per person`;
-  const worst = stats.links.reduce((w, l) => {
+  paintSignal(stats);
+}
+
+function worstQuality(links) {
+  return links.reduce((w, l) => {
     const q = quality(l.rtt_ms, l.loss_pct);
     return q === "bad" || (q === "ok" && w === "good") ? q : w;
   }, "good");
-  $("vp-signal").dataset.quality = worst;
+}
+
+function paintSignal(stats) {
+  $("vp-signal").dataset.quality = stats ? worstQuality(stats.links) : "good";
+}
+
+let signalTimer = null;
+
+async function pollSignal() {
+  if (!state.voiceChannelId) return;
+  try {
+    paintSignal(await invoke("voice_stats"));
+  } catch (e) {
+    paintSignal(null);
+  }
+}
+
+function syncSignalPolling(active) {
+  if (active && !signalTimer) {
+    pollSignal();
+    signalTimer = setInterval(pollSignal, 4000);
+  } else if (!active && signalTimer) {
+    clearInterval(signalTimer);
+    signalTimer = null;
+    paintSignal(null);
+  }
 }
 
 function openConnPop() {
@@ -12467,6 +12496,7 @@ function renderVoicePanel() {
   const panel = $("voice-panel");
   const vs = state.voiceServer;
   panel.classList.toggle("hidden", !(state.voiceChannelId && vs));
+  syncSignalPolling(Boolean(state.voiceChannelId && vs));
   if (!state.voiceChannelId || !vs) return;
 
   const call = vs.call ? state.call : null;
