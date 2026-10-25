@@ -1145,8 +1145,10 @@ dependencies = [
  "chrono",
  "commy-core",
  "data-encoding",
+ "idna",
  "serde",
  "serde_json",
+ "url",
  "web-time",
 ]
 

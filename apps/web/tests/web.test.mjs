@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webOpenUrl, WEB_LINK_REFUSED } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -251,4 +251,23 @@ test("a downloaded file is saved under its own name and leaves nothing behind on
   assert.equal(link.clicks, 1);
   assert.deepEqual(doc.body.children, []);
   assert.equal(webSaveFile(fakeDocument(), urls, new Uint8Array([1]), ""), "file");
+});
+
+test("outside links open in a new tab that cannot reach back into the app", () => {
+  const opened = [];
+  const win = { open: (...args) => opened.push(args) };
+  assert.equal(webOpenUrl(win, "https://example.org/a b"), null);
+  assert.deepEqual(opened, [["https://example.org/a%20b", "_blank", "noopener,noreferrer"]]);
+});
+
+test("only web links open from the browser", () => {
+  const win = { open: () => assert.fail("nothing should open") };
+  for (const url of ["javascript:alert(1)", "data:text/html,hi", "file:///etc/passwd", "not a link", undefined]) {
+    assert.throws(() => webOpenUrl(win, url), e => e === WEB_LINK_REFUSED, String(url));
+  }
+});
+
+test("link checks are answered by the backend in the browser too", () => {
+  assert.ok(rustCommands.has("check_link"));
+  assert.equal(webDefault("check_link").known, false);
 });

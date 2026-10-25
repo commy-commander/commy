@@ -9,6 +9,8 @@ license.workspace = true
 chrono = { workspace = true }
 commy-core = { workspace = true }
 data-encoding = { workspace = true }
+idna = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
+url = "2"
 web-time = "1.1"

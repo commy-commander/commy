@@ -994,6 +994,22 @@
       </div>
     </div>
 
+    <div class="modal modal-leaving hidden" id="modal-leaving" role="dialog" aria-labelledby="leaving-title">
+      <h2 id="leaving-title">Leaving Commy</h2>
+      <p id="leaving-intro"></p>
+      <div class="leaving-host"><span id="leaving-host-prefix"></span><strong id="leaving-host-site"></strong></div>
+      <div class="leaving-spelled hidden" id="leaving-spelled"></div>
+      <ul class="leaving-notes hidden" id="leaving-notes"></ul>
+      <label class="leaving-trust" id="leaving-trust-row">
+        <input type="checkbox" id="leaving-trust" />
+        <span>Trust this domain on this device</span>
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="leaving-cancel">Go Back</button>
+        <button class="btn-primary" id="leaving-go">Open Site</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-report">
       <h2 id="report-title">Report</h2>
       <p>Your report goes privately to the server owner. They will see who sent it.</p>
@@ -1811,6 +1827,13 @@
               </div>
               <input type="checkbox" id="link-preview-show-toggle" class="switch" />
             </label>
+            <div class="setting-row">
+              <div>
+                <div class="setting-title">Trusted sites</div>
+                <div class="setting-sub" id="trusted-links-summary">Every site outside Commy asks before it opens.</div>
+              </div>
+              <button class="btn-secondary btn-small" type="button" id="trusted-links-forget">Forget All</button>
+            </div>
           </div>
           <h2 class="settings-subhead">Age-restricted Channels</h2>
           <div class="settings-card setting-row">
@@ -2729,6 +2752,7 @@
   <script src="scripts/embeds.js"></script>
   <script src="scripts/voice-message.js"></script>
   <script src="scripts/link-preview.js"></script>
+  <script src="scripts/link-safety.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/pref-sync.js"></script>
   <script src="scripts/friend-online.js"></script>

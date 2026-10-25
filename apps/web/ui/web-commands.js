@@ -97,10 +97,25 @@ function webSaveFile(doc, urls, bytes, filename) {
   return link.download;
 }
 
+const WEB_LINK_SCHEMES = ["http:", "https:"];
+const WEB_LINK_REFUSED = "only http and https links can be opened";
+
+function webOpenUrl(win, url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw WEB_LINK_REFUSED;
+  }
+  if (!WEB_LINK_SCHEMES.includes(parsed.protocol)) throw WEB_LINK_REFUSED;
+  win.open(parsed.href, "_blank", "noopener,noreferrer");
+  return null;
+}
+
 function webReplyLine(status, text) {
   return `${status}\n${text}`;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays };
+  module.exports = { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webOpenUrl, WEB_LINK_REFUSED };
 }
