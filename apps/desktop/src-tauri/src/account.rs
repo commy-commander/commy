@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
+use commy_net::server_address::public_server_origin;
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -604,10 +605,7 @@ pub fn set_account_server(app: tauri::State<'_, App>, server: Option<String>) ->
     }
     let server = match server.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
         None => None,
-        Some(s) => {
-            let with_scheme = if s.contains("://") { s } else { format!("https://{s}") };
-            Some(normalize_origin(&with_scheme).ok_or("Enter an address like https://chat.example.com")?)
-        }
+        Some(s) => Some(public_server_origin(&s).map_err(|e| e.message_key().to_string())?),
     }
     .filter(|s| s != DEFAULT_ACCOUNT_SERVER);
     {

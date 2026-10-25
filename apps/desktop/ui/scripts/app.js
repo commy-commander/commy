@@ -1529,7 +1529,7 @@ async function mockInvoke(cmd, args = {}) {
       return mock.account;
     }
     case "account_sign_out_other": mock.account.others = mock.account.others.filter(o => o.id !== args.id); return mock.account;
-    case "set_account_server": return mock.account;
+    case "set_account_server": if (args.server && !/^(https:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|org|net|chat)$/i.test(args.server)) throw "signin.server.bad.ending"; return mock.account;
     case "set_user_voice": {
       mock.voice.user_volumes = mock.voice.user_volumes || {};
       mock.voice.muted_users = mock.voice.muted_users || [];
@@ -15016,33 +15016,28 @@ function wireEvents() {
     await invoke("account_cancel_sign_in");
     showSignIn();
   };
-  $("signin-server-select").addEventListener("change", async e => {
+  $("signin-server-select").addEventListener("change", e => {
     const value = e.target.value;
-    syncServerNote();
     if (value === "custom") {
-      $("signin-server-edit").classList.remove("hidden");
-      $("signin-server-input").value = "";
-      $("signin-server-input").focus();
+      openServerEdit();
       return;
     }
-    try {
-      account = await invoke("set_account_server", { server: value === "default" ? null : value });
-      showSignIn();
-    } catch (err) {
-      showSignInError(String(err));
-    }
+    useAccountServer(value === "default" ? null : value);
   });
+  $("signin-server-input").addEventListener("input", syncServerNote);
   $("signin-server-input").addEventListener("keydown", e => {
     if (e.key === "Enter") $("signin-server-save").click();
-  });
-  $("signin-server-save").onclick = async () => {
-    try {
-      account = await invoke("set_account_server", { server: $("signin-server-input").value || null });
-      showSignIn();
-    } catch (e) {
-      showSignInError(String(e));
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      closeServerEdit();
     }
+  });
+  $("signin-server-save").onclick = () => {
+    const typed = $("signin-server-input").value.trim();
+    if (typed) useAccountServer(typed);
+    else showServerProblem("signin.server.bad.domain");
   };
+  $("signin-server-cancel").onclick = closeServerEdit;
   $("claim-keep").onclick = () => answerClaim(true);
   $("claim-fresh").onclick = () => answerClaim(false);
   $("claim-retry").onclick = () => openAccountFolder();
@@ -18396,6 +18391,49 @@ function syncServerNote() {
   note.dataset.i18n = custom ? "signin.server.warning" : "signin.server.note";
   note.textContent = t(note.dataset.i18n);
   note.classList.toggle("warn", custom);
+  note.classList.remove("error");
+  $("signin-server-input").removeAttribute("aria-invalid");
+}
+
+function showServerProblem(key) {
+  const note = $("signin-server-note");
+  note.dataset.i18n = key;
+  note.textContent = t(key);
+  note.classList.remove("warn");
+  note.classList.add("error");
+  $("signin-server-input").setAttribute("aria-invalid", "true");
+}
+
+function isServerProblem(message) {
+  return message.startsWith("signin.server.bad.");
+}
+
+function openServerEdit() {
+  $("signin-server-select").classList.add("hidden");
+  $("signin-server-edit").classList.remove("hidden");
+  $("signin-server-input").value = "";
+  syncServerNote();
+  $("signin-server-input").focus();
+}
+
+function closeServerEdit() {
+  const select = $("signin-server-select");
+  select.value = account.is_default_server ? "default" : account.server;
+  select.classList.remove("hidden");
+  $("signin-server-edit").classList.add("hidden");
+  syncServerNote();
+  select.focus();
+}
+
+async function useAccountServer(server) {
+  try {
+    account = await invoke("set_account_server", { server });
+    showSignIn();
+  } catch (err) {
+    const message = String(err);
+    if (isServerProblem(message)) showServerProblem(message);
+    else showSignInError(message);
+  }
 }
 
 function showSignIn() {
@@ -18421,6 +18459,7 @@ function showSignIn() {
     node.dataset.i18n = account.signed_in ? key.replace("signin.", "signin.add.") : key;
     node.textContent = t(node.dataset.i18n);
   }
+  select.classList.remove("hidden");
   $("signin-server-edit").classList.add("hidden");
   syncServerNote();
   if (!account.signed_in && account.pending_code) {
