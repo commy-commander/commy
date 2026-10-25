@@ -45,6 +45,18 @@
         clearTimeout(timer);
       }
     },
+    async putBytes(url, body) {
+      const stop = new AbortController();
+      const timer = setTimeout(() => stop.abort(), WEB_PICTURE_STORE_MS);
+      try {
+        const res = await fetch(url, { method: "PUT", credentials: "omit", body: body.slice(), signal: stop.signal });
+        return res.ok;
+      } catch {
+        return false;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     load(key) {
       const store = storage();
       return store ? store.getItem(key) : null;

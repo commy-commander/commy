@@ -3179,34 +3179,17 @@ async fn update_profile(
     presence: String,
     status_emoji: Option<String>,
 ) -> CmdResult<UserProfile> {
-    let presence: Presence = serde_json::from_value(serde_json::json!(presence))
-        .map_err(|_| "invalid presence".to_string())?;
-    let status_emoji = match status_emoji.map(|e| e.trim().to_string()) {
-        None => None,
-        Some(e) if e.is_empty() => Some(None),
-        Some(e) if commy_core::user::valid_status_emoji(&e) => Some(Some(carry_profile_emojis(&app, e).await)),
-        Some(_) => return Err("status emoji must be a single emoji".into()),
+    let presence = view::profile::presence(&presence)?;
+    let status_emoji = match view::profile::status_emoji(status_emoji)? {
+        Some(Some(emoji)) => Some(Some(carry_profile_emojis(&app, emoji).await)),
+        other => other,
     };
-    let clean = |s: Option<String>| {
-        s.map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && commy_core::user::rich_text_fits(s, commy_core::user::MAX_STATUS_CHARS))
-    };
-    let custom_status = match clean(custom_status) {
+    let custom_status = match view::profile::status_text(custom_status) {
         Some(status) => Some(carry_profile_emojis(&app, status).await),
         None => None,
     };
-    let display_name = clean(display_name).filter(|name| name.len() <= 64);
-    let profile = edit_profile(&app, |profile| {
-        profile.display_name = display_name;
-        profile.custom_status = custom_status;
-        if presence != profile.presence {
-            profile.presence_until = None;
-        }
-        profile.presence = presence;
-        if let Some(emoji) = status_emoji {
-            profile.status_emoji = emoji;
-        }
-    })?;
+    let edit = view::profile::ProfileEdit { display_name: view::profile::display_name(display_name), custom_status, presence, status_emoji };
+    let profile = edit_profile(&app, |profile| view::profile::apply_edit(profile, edit))?;
     app.auto_idle.store(false, std::sync::atomic::Ordering::Relaxed);
     publish_profile(&app, &handle, &profile).await;
     entry_list::record_profile_edit(&app);
@@ -4046,15 +4029,7 @@ fn preview_overlay(app: tauri::State<'_, App>, handle: tauri::AppHandle) {
 
 #[tauri::command]
 async fn set_about(app: tauri::State<'_, App>, handle: tauri::AppHandle, about: String) -> CmdResult<UserProfile> {
-    let about = about.trim().to_string();
-    if !commy_core::user::rich_text_fits(&about, commy_core::user::MAX_ABOUT_CHARS) {
-        return Err(format!(
-            "About Me can be up to {} characters and {} custom emojis",
-            commy_core::user::MAX_ABOUT_CHARS,
-            commy_core::user::MAX_PROFILE_EMOJIS
-        ));
-    }
-    let about = carry_profile_emojis(&app, about).await;
+    let about = carry_profile_emojis(&app, view::profile::about(&about)?).await;
     let profile = edit_profile(&app, |profile| profile.about = (!about.is_empty()).then_some(about))?;
     publish_profile(&app, &handle, &profile).await;
     Ok(profile)
@@ -6132,13 +6107,7 @@ async fn set_avatar(
 ) -> CmdResult<UserProfile> {
     let avatar = match kind.as_str() {
         "none" => None,
-        "emoji" => {
-            let emoji = data.unwrap_or_default().trim().to_string();
-            if !commy_core::user::is_emoji_like(&emoji) {
-                return Err("pick a single emoji".into());
-            }
-            Some(commy_core::Avatar::Emoji(emoji))
-        }
+        "emoji" => Some(view::profile::emoji_avatar(data)?),
         "image" => {
             let data = data.unwrap_or_default();
             let (too_large, not_image) = ("avatar image is too large", "avatar must be a JPEG or PNG image");
@@ -6208,13 +6177,7 @@ async fn store_profile_image(
     not_image: &str,
     file: &str,
 ) -> CmdResult<String> {
-    let bytes = decode_base64_image(data)?;
-    if bytes.len() > max {
-        return Err(too_large.into());
-    }
-    if !is_jpeg_or_png(&bytes) {
-        return Err(not_image.into());
-    }
+    let bytes = view::profile::image_bytes(data, max, too_large, not_image)?;
     if let Some(dir) = app.data_dir() {
         commy_core::at_rest::write(&dir.join(file), &bytes).map_err(err_to_string)?;
     }

@@ -36,6 +36,7 @@ const WEB_SERVER_WAIT_MS = 20000;
 const WEB_BYTE_COMMANDS = ["get_attachment_video", "get_voice_message", "download_attachment"];
 const WEB_PICKED_COMMANDS = ["attach_dm_file", "attach_file"];
 const WEB_PICTURE_WAIT_MS = 15_000;
+const WEB_PICTURE_STORE_MS = 60_000;
 const WEB_VIDEO_ACCEPT = "video/mp4,video/quicktime,video/webm,.mp4,.m4v,.mov,.webm";
 const WEB_MAX_SEND_BYTES = 100 * 1024 * 1024;
 const WEB_SEND_TOO_LARGE = "files larger than 100 MB can be sent from the desktop app";
@@ -102,5 +103,5 @@ function webReplyLine(status, text) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays };
+  module.exports = { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays };
 }

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use commy_core::server::ImageRef;
 use commy_net::node::is_blob_of;
+use commy_sync::picture::MAX_PICTURE_PLAIN;
 use commy_sync::PictureKey;
 use commy_view::pictures::{self, expression_mime, is_jpeg_or_png, picture_mime};
 use serde_json::Value;
@@ -60,6 +61,17 @@ impl Session {
         }
         kept.pictures.insert(blob.to_string(), bytes.clone());
         Ok(bytes)
+    }
+
+    pub(super) async fn offer_picture(&self, blob: &str, bytes: &[u8]) -> bool {
+        let Some(base) = self.sync.borrow().as_ref().and_then(|live| live.pictures.clone()) else { return false };
+        if bytes.len() > MAX_PICTURE_PLAIN || !is_blob_of(blob, bytes) {
+            return false;
+        }
+        let key = PictureKey::for_blob(blob);
+        let Ok(sealed) = key.seal(bytes) else { return false };
+        let sent = self.host.put_bytes(&format!("{base}/{}", key.id_hex()), &sealed).await;
+        sent.ok().and_then(|ok| ok.as_bool()).unwrap_or(false)
     }
 
     async fn shared_picture(&self, blob: &str, max: usize) -> Option<Vec<u8>> {
