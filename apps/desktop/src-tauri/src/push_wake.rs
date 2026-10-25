@@ -38,6 +38,7 @@ struct Registered {
     tags: HashMap<Tag, Source>,
     earlier: HashMap<Tag, Source>,
     swept: HashSet<Tag>,
+    kept_whole: bool,
     off_on: Option<i64>,
 }
 
@@ -143,10 +144,20 @@ fn days_from(today: i64) -> Vec<i64> {
     (0..MAX_DAYS_AHEAD).map(|ahead| today + ahead).collect()
 }
 
-fn begin(push: &str, base: &str, earlier: impl FnOnce() -> HashMap<Tag, Source>) {
+fn begin(push: &str, base: &str, earlier: impl FnOnce() -> Option<HashMap<Tag, Source>>) {
     let mut guard = REGISTERED.lock().unwrap();
     if guard.as_ref().is_none_or(|r| r.push != push || r.base != base) {
-        *guard = Some(Registered { push: push.to_string(), base: base.to_string(), tags: HashMap::new(), earlier: earlier(), swept: HashSet::new(), off_on: None });
+        let earlier = earlier();
+        let kept_whole = earlier.is_some();
+        *guard = Some(Registered {
+            push: push.to_string(),
+            base: base.to_string(),
+            tags: HashMap::new(),
+            earlier: earlier.unwrap_or_default(),
+            swept: HashSet::new(),
+            kept_whole,
+            off_on: None,
+        });
     }
 }
 
@@ -182,7 +193,7 @@ fn no_longer_wanted(push: &str, today: i64, wanted: &[(Tag, Source)], settled: i
 
 fn to_sweep(push: &str, today: i64, wanted: &[(Tag, Source)], unwanted: Vec<Tag>) -> Vec<Tag> {
     let guard = REGISTERED.lock().unwrap();
-    let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return Vec::new() };
+    let Some(registered) = guard.as_ref().filter(|r| r.push == push && !r.kept_whole) else { return Vec::new() };
     let wanted: HashSet<&Tag> = wanted.iter().map(|(tag, _)| tag).collect();
     let sweep: HashSet<Tag> = unwanted.into_iter().filter(|tag| tag.1 >= today && !wanted.contains(tag) && !registered.swept.contains(tag)).collect();
     sweep.into_iter().collect()
@@ -199,14 +210,14 @@ fn kept_path(app: &App) -> Option<PathBuf> {
     app.base_dir().map(|dir| dir.join(KEPT_FILE))
 }
 
-fn load_kept(app: &App, push: &str, base: &str) -> HashMap<Tag, Source> {
-    let Some(kept) = kept_path(app).and_then(|path| crate::persist::read_json::<Kept>(&path)) else { return HashMap::new() };
+fn load_kept(app: &App, push: &str, base: &str) -> Option<HashMap<Tag, Source>> {
+    let kept = kept_path(app).and_then(|path| crate::persist::read_json::<Kept>(&path))?;
     if kept.push != push || kept.base != base {
         tracing::info!("the wake-up tags kept from an earlier run were for another push token or sync service");
-        return HashMap::new();
+        return None;
     }
     tracing::info!("{} wake-up tags kept from an earlier run", kept.tags.len());
-    kept.tags.into_iter().map(|(tag, day, source)| ((tag.0, day), source)).collect()
+    Some(kept.tags.into_iter().map(|(tag, day, source)| ((tag.0, day), source)).collect())
 }
 
 fn save_kept(app: &App, push: &str, today: i64) {
@@ -464,7 +475,7 @@ mod tests {
         let all = |_: &Source| true;
         assert_eq!(days_from(20_000), vec![20_000, 20_001]);
         let wanted = vec![(([1; 32], 20_000), Source::Dm), (([2; 32], 20_001), s)];
-        begin("fcm:a", base, HashMap::new);
+        begin("fcm:a", base, || None);
         assert_eq!(still_needed("fcm:a", 20_000, wanted.clone()), wanted);
         note("fcm:a", |r| {
             r.tags.insert(([1; 32], 20_000), Source::Dm);
@@ -472,7 +483,7 @@ mod tests {
         assert_eq!(still_needed("fcm:a", 20_000, wanted.clone()), vec![(([2; 32], 20_001), s)]);
         note("fcm:a", |r| r.off_on = Some(20_000));
         assert!(still_needed("fcm:a", 20_000, wanted.clone()).is_empty(), "a service without wake-ups is not asked again that day");
-        begin("fcm:b", base, HashMap::new);
+        begin("fcm:b", base, || None);
         assert_eq!(still_needed("fcm:b", 20_000, wanted.clone()), wanted, "a new token starts over");
         note("fcm:b", |r| {
             r.tags.insert(([1; 32], 20_000), Source::Dm);
@@ -483,7 +494,7 @@ mod tests {
         assert!(no_longer_wanted("fcm:a", 20_000, &wanted, all).is_empty());
 
         let earlier = HashMap::from([(([5; 32], 20_000), s), (([7; 32], 20_000), Source::Dm), (([1; 32], 20_000), Source::Dm), (([6; 32], 19_999), s)]);
-        begin("fcm:c", base, || earlier.clone());
+        begin("fcm:c", base, || Some(earlier.clone()));
         begin("fcm:c", base, || panic!("tags kept from an earlier run are read once"));
         assert_eq!(still_needed("fcm:c", 20_000, wanted.clone()), wanted, "a restarted app registers what it wants again");
         assert_eq!(fresh_first("fcm:c", wanted.clone()), (vec![(([2; 32], 20_001), s)], vec![(([1; 32], 20_000), Source::Dm)]), "new tags go first and kept ones are confirmed after the drops");
@@ -506,10 +517,12 @@ mod tests {
         assert_eq!(back.tags.len(), 2);
 
         let unwanted = vec![([8; 32], 20_000), ([1; 32], 20_000), ([9; 32], 19_999)];
-        assert_eq!(to_sweep("fcm:c", 20_000, &wanted, unwanted.clone()), vec![([8; 32], 20_000)], "tags the settings rule out are dropped even if no run remembers them");
-        note("fcm:c", |r| {
+        assert!(to_sweep("fcm:c", 20_000, &wanted, unwanted.clone()).is_empty(), "a run that kept its tags drops only what it kept");
+        begin("fcm:d", base, || None);
+        assert_eq!(to_sweep("fcm:d", 20_000, &wanted, unwanted.clone()), vec![([8; 32], 20_000)], "tags the settings rule out are dropped when no run remembers them");
+        note("fcm:d", |r| {
             r.swept.insert(([8; 32], 20_000));
         });
-        assert!(to_sweep("fcm:c", 20_000, &wanted, unwanted).is_empty(), "and only once");
+        assert!(to_sweep("fcm:d", 20_000, &wanted, unwanted).is_empty(), "and only once");
     }
 }
