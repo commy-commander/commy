@@ -14,3 +14,8 @@ test("a choice made with the toggle wins over the window width", () => {
   assert.equal(membersCollapsed("0", 1000), false);
   assert.equal(membersCollapsed("1", 2000), true);
 });
+
+test("members always give way to the chat on small windows", () => {
+  assert.equal(membersCollapsed("0", 800), true);
+  assert.equal(membersCollapsed("0", 1000), false);
+});
