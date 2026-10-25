@@ -65,7 +65,7 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/promote.yml@${{ github.ref }}
         run: |
-          for svc in auth; do
+          for svc in auth sync; do
             repo="ghcr.io/${OWNER}/commy-${svc}"
             digest="$(docker buildx imagetools inspect "$repo:$SOURCE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
             echo "$svc: $repo:$SOURCE ($digest) -> $repo:$TARGET"
