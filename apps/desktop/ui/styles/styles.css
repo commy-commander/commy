@@ -2057,6 +2057,10 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   font-size: 13px;
 }
 .vp-watch-label, .vp-stream-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.vp-stream { flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 10px; border: 1px solid rgba(53, 194, 107, .35); background: var(--bg-dark); }
+.vp-stream-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.vp-stream-watch { background: var(--accent); color: var(--accent-ink); padding: 6px 10px; }
+.vp-stream-watch:hover { background: var(--accent-hover); color: var(--accent-ink); }
 .vp-stream .live-badge { margin-left: 0; cursor: default; }
 .vp-streams { display: flex; flex-direction: column; gap: 4px; }
 .vp-streams:empty { display: none; }
