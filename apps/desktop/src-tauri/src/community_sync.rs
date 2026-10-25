@@ -652,7 +652,7 @@ fn targets(live: &Live, server: ServerId, lane: Lane, key_event: bool) -> Vec<(S
     community
         .wants
         .iter()
-        .filter(|(_, want)| if key_event { want.lane == Lane::State } else { want.lane == lane && want.writes })
+        .filter(|(stream, want)| live.caught_up.contains(*stream) && if key_event { want.lane == Lane::State } else { want.lane == lane && want.writes })
         .map(|(stream, _)| (*stream, community.pool.client_for(*stream)))
         .collect()
 }
@@ -1106,6 +1106,9 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
     };
     save_soon();
     let (server, want, due, me, first, held, again) = found;
+    if first {
+        send_unsent();
+    }
     let empty = first && !held;
     let app = handle.state::<App>();
     if app.awaits_snapshot(server) {

@@ -419,7 +419,7 @@ impl Session {
         self.announce(&call, "ended", Some(reason));
     }
 
-    fn hang_up_media(&self) {
+    pub(super) fn hang_up_media(&self) {
         *self.admit.lock().unwrap() = None;
         let link = self.voice.borrow_mut().link.take();
         let Some(mut link) = link else { return };

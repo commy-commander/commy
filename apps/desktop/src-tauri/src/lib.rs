@@ -72,9 +72,7 @@ use commy_core::{
     UserProfile,
 };
 use commy_core::channel_key::{ChannelSecret, KeyId};
-use commy_core::server::Role;
 use commy_media::screen::{SourceKind, StreamQuality};
-use view::permissions_from_names;
 use commy_media::StreamGuards;
 use commy_net::media::MediaHello;
 use commy_net::{CommyNode, DmEnvelope, MediaChannel, NetEvent, ServerTicket, WirePayload};
@@ -222,6 +220,7 @@ async fn join_server(
     let summary = join_ticket(&app, &handle, ticket).await?;
     entry_list::record_join(&app, id);
     entry_list::schedule(&handle);
+    community_sync::refresh_soon(&handle);
     Ok(summary)
 }
 
@@ -3072,8 +3071,8 @@ async fn set_afk_channel(
     let channel: Option<ChannelId> =
         channel_id.as_deref().filter(|c| !c.is_empty()).map(str::parse).transpose().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change the AFK channel")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::AfkChannelSet { server: sid, channel }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::afk_channel(state, perms, channel))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -3116,21 +3115,8 @@ async fn kick_member(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let target: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::KICK_MEMBERS, "kick members")?;
-        if target == state.server.owner {
-            return Err("the owner cannot be kicked".into());
-        }
-    }
-    apply_and_broadcast(
-        &app,
-        &handle,
-        sid,
-        ServerEvent::MemberLeave { server: sid, user: target },
-    )
-    .await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::kick(state, perms, target))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4163,12 +4149,8 @@ async fn set_server_afk_timeout(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change the AFK timeout")?;
-    let minutes = minutes.filter(|m| *m > 0);
-    if minutes.is_some_and(|m| !commy_core::server::SERVER_AFK_MINUTES.contains(&m)) {
-        return Err("pick 1, 5, 15, 30 or 60 minutes".into());
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::AfkTimeoutSet { server: sid, minutes }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::afk_timeout(state, perms, minutes))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4195,12 +4177,8 @@ async fn set_game_tags(
 async fn set_rules(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, rules: Option<String>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change the rules")?;
-    let rules = rules.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
-    if rules.as_deref().is_some_and(|r| !commy_core::server::valid_rules(r)) {
-        return Err("rules are too long; keep them under about 3000 characters".into());
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::RulesSet { server: sid, rules }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::rules(state, perms, rules.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4264,7 +4242,8 @@ async fn answer_onboarding(
 async fn accept_rules(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::RulesAccept { server: sid, user: me.id }).await
+    let event = managed(&app, sid, me.id, |state, _| view::moderate::accept_rules(state, me.id))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 fn require_can_view(state: &ServerState, user: UserId, channel: ChannelId) -> CmdResult<()> {
@@ -4431,11 +4410,8 @@ async fn set_channel_limit(app: tauri::State<'_, App>, handle: tauri::AppHandle,
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_CHANNELS, "change user limits")?;
-    if limit > commy_core::server::MAX_USER_LIMIT {
-        return Err(format!("the limit can be at most {}", commy_core::server::MAX_USER_LIMIT));
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelLimit { server: sid, channel: cid, user_limit: limit }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::channel_limit(state, perms, cid, limit))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4443,11 +4419,8 @@ async fn set_channel_slow_mode(app: tauri::State<'_, App>, handle: tauri::AppHan
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_CHANNELS, "change slow mode")?;
-    if seconds > commy_core::server::MAX_SLOW_MODE {
-        return Err("slow mode can be at most six hours".into());
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelSlowMode { server: sid, channel: cid, seconds }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::slow_mode(state, perms, cid, seconds))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4668,38 +4641,9 @@ async fn update_role(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let tag = tag.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-    if tag.as_deref().is_some_and(|t| !commy_core::server::valid_role_tag(t)) {
-        return Err(format!("tags can be up to {} characters", commy_core::server::MAX_ROLE_TAG_CHARS));
-    }
-    let color = color.map(|c| c.trim_start_matches('#').to_lowercase()).filter(|c| !c.is_empty());
-    if color.as_deref().is_some_and(|c| !commy_core::server::valid_hex_color(c)) {
-        return Err("colors are six hex digits".into());
-    }
-    let role = {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "edit roles")?;
-        let existing = state.server.roles.iter().find(|r| r.id == rid).ok_or("unknown role")?;
-        let name = name.trim().to_string();
-        if name.is_empty() || name.chars().count() > 50 {
-            return Err("role names must be 1 to 50 characters".into());
-        }
-        let permissions = permissions
-            .map(|names| permissions_from_names(&names))
-            .unwrap_or(existing.permissions);
-        commy_core::server::Role {
-            name,
-            color,
-            self_assignable,
-            hoist: hoist.unwrap_or(existing.hoist),
-            tag,
-            permissions,
-            mentionable: mentionable.unwrap_or(existing.mentionable),
-            ..existing.clone()
-        }
-    };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
+    let form = view::roles::RoleForm { name, color, permissions, tag, self_assignable: Some(self_assignable), hoist, mentionable };
+    let event = managed(&app, sid, me.id, |state, perms| view::roles::update_role(state, perms, rid, form))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4768,17 +4712,8 @@ async fn set_channel_color(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
-        state.server.channel(cid).ok_or("unknown channel")?;
-    }
-    let color = color.map(|c| c.trim().trim_start_matches('#').to_ascii_lowercase());
-    if color.as_deref().is_some_and(|c| !commy_core::server::valid_hex_color(c)) {
-        return Err("channel colour must be six hex digits".into());
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelColor { server: sid, channel: cid, color }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::channel_color(state, perms, cid, color.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4807,16 +4742,8 @@ async fn set_channel_sensitive(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
-        let channel = state.server.channel(cid).ok_or("unknown channel")?;
-        if !channel.kind.holds_messages() {
-            return Err("only text and forum channels can be age-restricted".into());
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelSensitiveSet { server: sid, channel: cid, sensitive }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::sensitive(state, perms, cid, sensitive))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4831,25 +4758,11 @@ async fn set_channel_access(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let parse = |raw: Vec<String>| raw.iter().map(|r| r.parse::<RoleId>()).collect::<Result<Vec<_>, _>>();
-    let view = parse(view_roles).map_err(err_to_string)?;
+    let seen = parse(view_roles).map_err(err_to_string)?;
     let send = parse(send_roles).map_err(err_to_string)?;
-    if view.len() > commy_core::server::MAX_ACCESS_ROLES || send.len() > commy_core::server::MAX_ACCESS_ROLES {
-        return Err(format!("pick at most {} roles", commy_core::server::MAX_ACCESS_ROLES));
-    }
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
-        let channel = state.server.channel(cid).ok_or("unknown channel")?;
-        if channel.kind == ChannelKind::Category {
-            return Err("categories do not hold messages to lock".into());
-        }
-        if [&view, &send].into_iter().flatten().any(|r| !state.server.roles.iter().any(|known| known.id == *r && !known.is_everyone())) {
-            return Err("that role no longer exists".into());
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelAccessSet { server: sid, channel: cid, view, send }).await?;
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::channel_access(state, perms, cid, seen, send))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     leave_unseen_voice(&app, &handle, sid).await;
     channel_lock::tend_channel(&app, &handle, sid, cid).await;
     Ok(())
@@ -5078,27 +4991,8 @@ async fn set_nickname(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let cleaned = match nickname.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
-        None => None,
-        Some(text) => Some(commy_core::server::clean_nickname(text).ok_or_else(|| {
-            format!("nicknames can be up to {} characters", commy_core::server::MAX_NICKNAME_CHARS)
-        })?),
-    };
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        if !state.server.is_member(user) {
-            return Err("that person is not a member of this server".into());
-        }
-        let own = user == me.id && our_permissions(&app, state, me.id).allows(Permissions::CHANGE_NICKNAME);
-        if !own {
-            require_permission(&app, state, me.id, Permissions::MANAGE_NICKNAMES, "change nicknames")?;
-            if user == state.server.owner {
-                return Err("only the server owner can change their own nickname".into());
-            }
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberNickname { server: sid, user, nickname: cleaned }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::nickname(state, perms, me.id, user, nickname.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -5145,48 +5039,18 @@ async fn ban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::BAN_MEMBERS, "ban members")?;
-        if user == state.server.owner || user == me.id {
-            return Err("you cannot ban that member".into());
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberBan { server: sid, user }).await?;
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::ban(state, perms, me.id, user))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     channel_lock::tend_server(&app, &handle, sid).await;
     Ok(())
-}
-
-fn timeout_event(sid: ServerId, user: UserId, by: UserId, seconds: Option<u32>) -> CmdResult<ServerEvent> {
-    let at = chrono::Utc::now();
-    let until = match seconds {
-        Some(secs) if i64::from(secs) > commy_core::server::MAX_TIMEOUT_SECS => {
-            return Err("a timeout can last four weeks at most".into());
-        }
-        Some(0) => return Err("choose how long the timeout lasts".into()),
-        Some(secs) => Some(at + chrono::Duration::seconds(i64::from(secs))),
-        None => None,
-    };
-    Ok(ServerEvent::MemberTimeout { server: sid, user, by, at, until })
 }
 
 async fn set_member_timeout(app: &App, handle: &tauri::AppHandle, server_id: String, user_id: String, seconds: Option<u32>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(app, state, me.id, Permissions::TIME_OUT_MEMBERS, "time out members")?;
-        if user == state.server.owner || user == me.id {
-            return Err("you cannot time out that member".into());
-        }
-        if !state.server.is_member(user) {
-            return Err("that member is no longer in the server".into());
-        }
-    }
-    apply_and_broadcast(app, handle, sid, timeout_event(sid, user, me.id, seconds)?).await?;
+    let event = managed(app, sid, me.id, |state, perms| view::moderate::timeout(state, perms, me.id, user, seconds, chrono::Utc::now()))?;
+    apply_and_broadcast(app, handle, sid, event).await?;
     refresh_forced_voice(app, handle);
     Ok(())
 }
@@ -5206,8 +5070,8 @@ async fn unban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::BAN_MEMBERS, "unban members")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::MemberUnban { server: sid, user }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::unban(state, perms, user))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 fn end_voice_in(app: &App, sid: ServerId) {
@@ -5258,20 +5122,8 @@ async fn transfer_ownership(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        if state.server.owner != me.id {
-            return Err("only the owner can hand over this server".into());
-        }
-        if user == me.id || !state.server.is_member(user) {
-            return Err("pick another member of this server".into());
-        }
-        if confirm_name.trim() != state.server.name.trim() {
-            return Err("type the server name exactly as it is shown to hand it over".into());
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::OwnerTransfer { server: sid, user }).await
+    let event = managed(&app, sid, me.id, |state, _| view::moderate::transfer(state, me.id, user, &confirm_name))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -5286,14 +5138,9 @@ async fn delete_server(
     let notice = {
         let mut servers = app.servers.lock().unwrap();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
-        if state.server.owner != me.id {
-            return Err("only the owner can delete this server".into());
-        }
-        if confirm_name.trim() != state.server.name.trim() {
-            return Err("type the server name exactly as it is shown to delete it".into());
-        }
+        let event = view::moderate::delete(state, me.id, &confirm_name)?;
         let notice = app
-            .sign_event(sid, ServerEvent::ServerDelete { server: sid })
+            .sign_event(sid, event)
             .ok_or("your account key is still being confirmed; try again in a moment")?;
         state.apply_own(&notice).map_err(err_to_string)?;
         notice
@@ -5307,36 +5154,11 @@ async fn delete_server(
     Ok(())
 }
 
-#[derive(serde::Serialize)]
-struct AuditEntryView {
-    at: i64,
-    by: String,
-    by_name: String,
-    kind: commy_core::AuditKind,
-    target: Option<String>,
-    label: Option<String>,
-    detail: Option<String>,
-}
-
 #[tauri::command]
-fn audit_log(app: tauri::State<App>, server_id: String) -> CmdResult<Vec<AuditEntryView>> {
+fn audit_log(app: tauri::State<App>, server_id: String) -> CmdResult<Vec<view::roles::AuditEntryView>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let servers = app.servers.lock().unwrap();
-    let state = servers.get(&sid).ok_or("unknown server")?;
-    if !our_permissions(&app, state, me.id).can_view_audit_log() {
-        return Err("you do not have permission to view the audit log".into());
-    }
-    let entries = state.audit_log().iter().rev().map(|entry| AuditEntryView {
-        at: entry.at,
-        by: entry.by.to_string(),
-        by_name: commy_core::audit::member_name(state, entry.by).unwrap_or_else(|| "Someone".into()),
-        kind: entry.kind,
-        target: entry.target.clone(),
-        label: entry.label.clone(),
-        detail: entry.detail.clone(),
-    });
-    Ok(entries.collect())
+    managed(&app, sid, me.id, view::roles::audit_log)
 }
 
 fn effective_volume(voice: &VoiceSettings, user: &str) -> f32 {
@@ -5435,19 +5257,7 @@ async fn set_own_role(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        let pickable = state.server.roles.iter().any(|r| r.id == rid && r.self_assignable);
-        if !pickable {
-            return Err("that role cannot be picked".into());
-        }
-    }
-    let event = if held {
-        ServerEvent::RoleAssign { server: sid, user: me.id, role: rid }
-    } else {
-        ServerEvent::RoleUnassign { server: sid, user: me.id, role: rid }
-    };
+    let event = managed(&app, sid, me.id, |state, _| view::roles::own_role(state, me.id, rid, held))?;
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
@@ -5875,122 +5685,6 @@ async fn set_activities_enabled(
     Ok(())
 }
 
-fn role_access_permission(access: &str) -> CmdResult<(Permissions, &'static str)> {
-    match access {
-        "files" => Ok((Permissions::ATTACH_FILES, "change who can send files")),
-        "emojis" => Ok((Permissions::ADD_EMOJIS, "change who can add emojis")),
-        "stickers" => Ok((Permissions::ADD_STICKERS, "change who can add stickers")),
-        "emoticons" => Ok((Permissions::ADD_EMOTICONS, "change who can add emoticons")),
-        "embeds" => Ok((Permissions::NO_EMBED_LINKS, "change who can embed links")),
-        "history" => Ok((Permissions::NO_READ_MESSAGE_HISTORY, "change who can read message history")),
-        "threads" => Ok((Permissions::NO_CREATE_THREADS, "change who can start threads")),
-        "polls" => Ok((Permissions::NO_SEND_POLLS, "change who can create polls")),
-        "events" => Ok((Permissions::NO_CREATE_EVENTS, "change who can create events")),
-        _ => Err("unknown setting".into()),
-    }
-}
-
-fn role_access_updates(roles: &[Role], permission: Permissions, restricted: bool, allowed: &[RoleId]) -> Vec<Role> {
-    let inverted = permission.is_restriction();
-    roles
-        .iter()
-        .filter_map(|r| {
-            let mut role = r.clone();
-            if inverted {
-                role.permissions.remove(permission);
-                if restricted && !allowed.contains(&r.id) {
-                    role.permissions.insert(permission);
-                }
-            } else if r.is_everyone() {
-                role.permissions.remove(permission);
-                if !restricted {
-                    role.permissions.insert(permission);
-                }
-            } else if restricted {
-                if allowed.contains(&r.id) {
-                    role.permissions.insert(permission);
-                } else {
-                    role.permissions.remove(permission);
-                }
-            }
-            (role.permissions != r.permissions).then_some(role)
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod role_access_tests {
-    use super::*;
-    use commy_core::server::EVERYONE_ROLE_POSITION;
-
-    fn role(permissions: Permissions, position: u32) -> Role {
-        Role {
-            id: RoleId::new(),
-            name: "r".into(),
-            color: None,
-            permissions,
-            position,
-            hoist: false,
-            self_assignable: false,
-            mentionable: false,
-            tag: None,
-            banner: None,
-        }
-    }
-
-    fn after(roles: &[Role], updates: Vec<Role>) -> Vec<Permissions> {
-        roles
-            .iter()
-            .map(|r| updates.iter().find(|u| u.id == r.id).map_or(r.permissions, |u| u.permissions))
-            .collect()
-    }
-
-    #[test]
-    fn restricting_everyone_sets_the_no_bit_on_every_role_except_the_allowed_ones() {
-        let roles = [
-            role(Permissions::default_member(), EVERYONE_ROLE_POSITION),
-            role(Permissions::MANAGE_MESSAGES, 1),
-            role(Permissions::NONE, 2),
-        ];
-        let bit = Permissions::NO_SEND_POLLS;
-        let updates = role_access_updates(&roles, bit, true, &[roles[2].id]);
-        assert_eq!(updates.len(), 2);
-        let perms = after(&roles, updates);
-        assert!(perms[0].contains(bit));
-        assert!(perms[1].contains(bit));
-        assert!(!perms[2].contains(bit));
-        assert!(perms[1].allows(Permissions::MANAGE_MESSAGES));
-    }
-
-    #[test]
-    fn lifting_a_restriction_clears_the_no_bit_everywhere_and_touches_nothing_else() {
-        let bit = Permissions::NO_EMBED_LINKS;
-        let roles = [
-            role(Permissions::default_member() | bit, EVERYONE_ROLE_POSITION),
-            role(Permissions::MANAGE_MESSAGES | bit, 1),
-            role(Permissions::NONE, 2),
-        ];
-        let updates = role_access_updates(&roles, bit, false, &[]);
-        assert_eq!(updates.len(), 2);
-        let perms = after(&roles, updates);
-        assert_eq!(perms[0], Permissions::default_member());
-        assert_eq!(perms[1], Permissions::MANAGE_MESSAGES);
-        assert_eq!(perms[2], Permissions::NONE);
-    }
-
-    #[test]
-    fn positive_permissions_keep_the_grant_model() {
-        let roles = [
-            role(Permissions::default_member(), EVERYONE_ROLE_POSITION),
-            role(Permissions::NONE, 1),
-        ];
-        let updates = role_access_updates(&roles, Permissions::ATTACH_FILES, true, &[roles[1].id]);
-        let perms = after(&roles, updates);
-        assert!(!perms[0].contains(Permissions::ATTACH_FILES));
-        assert!(perms[1].contains(Permissions::ATTACH_FILES));
-    }
-}
-
 #[tauri::command]
 async fn set_role_access(
     app: tauri::State<'_, App>,
@@ -6001,21 +5695,15 @@ async fn set_role_access(
     role_ids: Vec<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let (permission, action) = role_access_permission(&access)?;
     let me = current_profile(&app)?;
     let allowed = role_ids
         .iter()
         .map(|r| r.parse::<RoleId>())
         .collect::<Result<Vec<RoleId>, _>>()
         .map_err(err_to_string)?;
-    let updates = {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, action)?;
-        role_access_updates(&state.server.roles, permission, restricted, &allowed)
-    };
-    for role in updates {
-        apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await?;
+    let updates = managed(&app, sid, me.id, |state, perms| view::roles::role_access(state, perms, &access, restricted, &allowed))?;
+    for event in updates {
+        apply_and_broadcast(&app, &handle, sid, event).await?;
     }
     let _ = handle.emit("servers-changed", ());
     Ok(())
@@ -6030,8 +5718,8 @@ async fn set_server_public(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "make this server public")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::PublicSet { server: sid, public }).await?;
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::public(state, perms, public))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
@@ -6877,46 +6565,11 @@ async fn create_role(
     mentionable: Option<bool>,
 ) -> CmdResult<String> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let name = name.trim().to_string();
-    if name.is_empty() || name.chars().count() > 50 {
-        return Err("role name must be 1 to 50 characters".into());
-    }
-    let color = color
-        .map(|c| c.trim().trim_start_matches('#').to_lowercase())
-        .filter(|c| commy_core::server::valid_hex_color(c));
-    let tag = tag.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-    if tag.as_deref().is_some_and(|t| !commy_core::server::valid_role_tag(t)) {
-        return Err(format!("tags can be up to {} characters", commy_core::server::MAX_ROLE_TAG_CHARS));
-    }
     let me = current_profile(&app)?;
-    let role = {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
-        let position = state
-            .server
-            .roles
-            .iter()
-            .map(|r| r.position)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        Role {
-            id: RoleId::new(),
-            name,
-            color,
-            permissions: permissions_from_names(&permissions),
-            position,
-            hoist: hoist.unwrap_or(false),
-            self_assignable: self_assignable.unwrap_or(false),
-            tag,
-            banner: None,
-            mentionable: mentionable.unwrap_or(false),
-        }
-    };
-    let id = role.id.to_string();
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleCreate { server: sid, role }).await?;
-    Ok(id)
+    let form = view::roles::RoleForm { name, color, permissions: Some(permissions), tag, self_assignable, hoist, mentionable };
+    let (id, event) = managed(&app, sid, me.id, |state, perms| view::roles::create_role(state, perms, form))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    Ok(id.to_string())
 }
 
 #[tauri::command]
@@ -6929,9 +6582,8 @@ async fn delete_role(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleDelete { server: sid, role: rid })
-        .await
+    let event = managed(&app, sid, me.id, |state, perms| view::roles::delete_role(state, perms, rid))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -6947,12 +6599,7 @@ async fn set_member_role(
     let uid: UserId = user_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_ROLES, "manage roles")?;
-    let event = if grant {
-        ServerEvent::RoleAssign { server: sid, user: uid, role: rid }
-    } else {
-        ServerEvent::RoleUnassign { server: sid, user: uid, role: rid }
-    };
+    let event = managed(&app, sid, me.id, |state, perms| view::roles::member_role(state, perms, uid, rid, grant))?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
     channel_lock::tend_server(&app, &handle, sid).await;
     Ok(())

@@ -15,7 +15,7 @@ const repo = join(import.meta.dirname, "..", "..", "..", "..");
 const read = (...path) => readFileSync(join(repo, ...path), "utf8");
 const appSource = read("apps", "desktop", "ui", "scripts", "app.js");
 const viewSource = read("crates", "commy-view", "src", "lib.rs");
-const libSource = read("apps", "desktop", "src-tauri", "src", "lib.rs");
+const rolesSource = read("crates", "commy-view", "src", "roles.rs");
 
 const editable = [...(/pub const EDITABLE_PERMISSIONS[\s\S]*?\];/.exec(viewSource)[0]).matchAll(/\("([a-z_]+)", Permissions::([A-Z_]+)\)/g)].map(m => [m[1], m[2]]);
 const labels = [...(/const PERMISSION_LABELS = \[([\s\S]*?)\n\];/.exec(appSource)[1]).matchAll(/\["([a-z_]+)", "([^"]+)"\]/g)].map(m => [m[1], m[2]]);
@@ -70,7 +70,7 @@ test("every editable permission has a label, a one-line hint and a place in the 
 });
 
 test("the everyone switches name settings the backend knows and flags the view reports", () => {
-  const backend = /fn role_access_permission[\s\S]*?\n\}/.exec(libSource)[0];
+  const backend = /fn role_access_permission[\s\S]*?\n\}/.exec(rolesSource)[0];
   const struct = /pub struct ChatRestrictions \{([\s\S]*?)\}/.exec(viewSource)[1];
   const labelNames = new Map(labels);
   assert.equal(EVERYONE_CHAT_ACCESS.length, 5);
