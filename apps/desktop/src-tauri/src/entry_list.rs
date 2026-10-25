@@ -221,11 +221,7 @@ fn local_list(app: &App, dir: &Path) -> EntryList {
     if recorded {
         write(&path, &record);
     }
-    let profile = app.profile.lock().unwrap().clone().map(|mut p| {
-        p.node = None;
-        p.activity = None;
-        p
-    });
+    let profile = app.profile.lock().unwrap().as_ref().map(commy_view::profile::for_list);
     EntryList { profile, profile_at: record.profile_edited, identity: read_identity(dir), servers, left: record.left }
 }
 
@@ -642,9 +638,7 @@ fn adopt_identity(app: &App, dir: &Path, shared: &EntryList) -> bool {
 
 fn same_shared_fields(a: Option<&UserProfile>, b: Option<&UserProfile>) -> bool {
     match (a, b) {
-        (Some(a), Some(b)) => {
-            a.id == b.id && a.username == b.username && a.display_name == b.display_name && a.avatar == b.avatar
-        }
+        (Some(a), Some(b)) => commy_view::profile::shared_fields_match(a, b),
         (None, None) => true,
         _ => false,
     }
@@ -658,9 +652,7 @@ fn take_profile_edits(handle: &AppHandle, app: &App, shared: Option<&UserProfile
         if profile.id != shared.id {
             return false;
         }
-        profile.username = shared.username.clone();
-        profile.display_name = shared.display_name.clone();
-        profile.avatar = shared.avatar.clone();
+        commy_view::profile::take_shared_fields(profile, shared);
         profile.clone()
     };
     app.persist_profile();

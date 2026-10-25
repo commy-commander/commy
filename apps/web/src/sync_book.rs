@@ -66,6 +66,11 @@ pub fn community_key_record(server: ServerId, key: &SharedKey, at: i64, owner: O
         .expect("community key encode")
 }
 
+pub fn profile_record(profile: &UserProfile, at: DateTime<Utc>) -> Vec<u8> {
+    let list = EntryList { profile: Some(profile.clone()), profile_at: Some(at), ..Default::default() };
+    serde_json::to_vec(&serde_json::json!({ "k": "servers", "list": list })).expect("servers encode")
+}
+
 pub fn saved_record(ops: &[SavedOp]) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({ "k": "saved", "ops": ops })).expect("saved encode")
 }
@@ -206,6 +211,15 @@ impl Book {
         self.list.servers.insert(server, entry);
         self.offer_key(server, key, at);
         true
+    }
+
+    pub fn note_profile(&mut self, profile: UserProfile, at: DateTime<Utc>) {
+        self.list.profile = Some(profile);
+        self.list.profile_at = Some(at);
+    }
+
+    pub fn profile(&self) -> Option<&UserProfile> {
+        self.list.profile.as_ref()
     }
 
     pub fn leave(&mut self, server: ServerId, at: DateTime<Utc>) {
@@ -380,6 +394,23 @@ mod tests {
         let leaving = EntryList { left: [(kept, Utc::now())].into(), ..Default::default() };
         assert_eq!(book.fold(Record::Servers { list: Box::new(leaving) }), Change::Servers);
         assert_eq!(book.tickets().keys().copied().collect::<Vec<_>>(), vec![joined]);
+    }
+
+    #[test]
+    fn a_profile_edit_echoes_quietly_and_a_newer_one_from_another_device_wins() {
+        let mut me = UserProfile::new("sam");
+        let mut book = Book::new(EntryList { profile: Some(me.clone()), profile_at: Some(Utc::now() - Duration::days(1)), ..Default::default() });
+        me.display_name = Some("Sammy".into());
+        let at = Utc::now();
+        book.note_profile(me.clone(), at);
+        assert_eq!(book.fold(Record::parse(&profile_record(&me, at))), Change::Nothing);
+        let mut older = me.clone();
+        older.display_name = Some("Old".into());
+        assert_eq!(book.fold(Record::parse(&profile_record(&older, at - Duration::hours(1)))), Change::Nothing);
+        let mut newer = me.clone();
+        newer.display_name = Some("Sam B".into());
+        assert_eq!(book.fold(Record::parse(&profile_record(&newer, at + Duration::hours(1)))), Change::Servers);
+        assert_eq!(book.profile().and_then(|p| p.display_name.as_deref()), Some("Sam B"));
     }
 
     #[test]

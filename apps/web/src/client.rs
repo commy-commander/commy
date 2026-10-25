@@ -445,6 +445,39 @@ impl Client {
         Some(WirePayload::Signed(SignedEvent::sign(server, profile.id, Utc::now().timestamp_millis(), event, &identity)))
     }
 
+    pub fn edit_me(&self, edit: impl FnOnce(&mut UserProfile)) -> Result<UserProfile, String> {
+        let mut me = self.me.lock().unwrap();
+        let (profile, _) = me.as_mut().ok_or("Your servers are not unlocked yet")?;
+        edit(profile);
+        Ok(profile.clone())
+    }
+
+    pub fn edit_me_if(&self, edit: impl FnOnce(&mut UserProfile) -> bool) -> Option<UserProfile> {
+        let mut me = self.me.lock().unwrap();
+        let (profile, _) = me.as_mut()?;
+        edit(profile).then(|| profile.clone())
+    }
+
+    pub fn announce_profile(&self, details: bool) -> Vec<(ServerId, WirePayload)> {
+        let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
+        let mut shown = profile.as_seen_by_others();
+        if !details {
+            shown = shown.without_details();
+        }
+        let at = Utc::now().timestamp_millis();
+        let mut servers = self.servers.lock().unwrap();
+        servers
+            .iter_mut()
+            .filter(|(_, state)| state.server.is_current_member(profile.id))
+            .map(|(server, state)| {
+                let _ = state.apply(ServerEvent::ProfileUpdate { profile: profile.clone() });
+                let signed = SignedEvent::sign(*server, profile.id, at, ServerEvent::ProfileUpdate { profile: shown.clone() }, &identity);
+                let payload = if action::self_signed(&signed.event) { WirePayload::Event(signed.event) } else { WirePayload::Signed(signed) };
+                (*server, payload)
+            })
+            .collect()
+    }
+
     pub fn group_invite_from(&self, server: ServerId, given: Option<(KeyId, ChannelSecret)>) -> Result<(ServerTicket, Option<(KeyId, ChannelSecret)>), String> {
         if !self.is_group(server) {
             return Err("that is not a group you are in".into());
@@ -957,6 +990,35 @@ mod tests {
             let name = w.client.servers.lock().unwrap()[&w.server].server.name.clone();
             assert_eq!(w.client.gone(w.server), Some((name, deleted)));
         }
+    }
+
+    #[test]
+    fn a_profile_edit_reaches_every_server_and_hides_details_when_asked() {
+        let w = world();
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        let me = w.client.edit_me(|p| {
+            p.display_name = Some("Sammy".into());
+            p.about = Some("hello".into());
+            p.presence = Presence::Invisible;
+        }).unwrap();
+        for details in [true, false] {
+            let sent = w.client.announce_profile(details);
+            assert_eq!(sent.len(), 1);
+            let (server, payload) = &sent[0];
+            assert_eq!(*server, w.server);
+            let shown = match streams::event_of(payload) {
+                Some((ServerEvent::ProfileUpdate { profile }, action)) => {
+                    assert!(w.client.admits(w.server, &ServerEvent::ProfileUpdate { profile: profile.clone() }, action));
+                    profile.clone()
+                }
+                other => panic!("expected a profile update, got {other:?}"),
+            };
+            assert_eq!(shown.display_name.as_deref(), Some("Sammy"));
+            assert_eq!(shown.presence, Presence::Offline);
+            assert_eq!(shown.about.is_some(), details);
+        }
+        let held = w.client.servers.lock().unwrap()[&w.server].profiles[&me.id].clone();
+        assert_eq!(held.display_name.as_deref(), Some("Sammy"));
     }
 
     #[test]

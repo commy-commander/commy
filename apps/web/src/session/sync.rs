@@ -490,6 +490,7 @@ impl Session {
     }
 
     fn follow_server_list(self: &Rc<Self>) {
+        self.adopt_shared_profile();
         let Some(tickets) = self.sync.borrow().as_ref().map(|live| live.book.tickets()) else { return };
         let (added, removed) = {
             let mut client = self.client.borrow_mut();

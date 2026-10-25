@@ -5,9 +5,10 @@ of the same Rust code the desktop app uses. It is a preview: sign in, open
 your servers, chat in text channels, send files and voice messages, use direct
 messages and group DMs, call people, join voice channels, create servers,
 arrange their channels, make and open invite links, manage roles, moderate
-members, set the rules and delete or hand over a server. Links from another
-account server, server pictures, expressions, events, video, screen sharing
-and profile editing still need the desktop app.
+members, set the rules, delete or hand over a server, and edit your profile
+(name, status, About Me, avatar and banner). Links from another account
+server, server pictures, expressions, events, video and screen sharing still
+need the desktop app.
 
 Pictures (avatars, server icons and banners, custom emoji) come from the sync
 service's encrypted picture copies when it has them, and otherwise straight

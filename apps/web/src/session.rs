@@ -34,6 +34,7 @@ mod files;
 mod handoff;
 mod invites;
 mod pictures;
+mod profile;
 mod servers;
 mod sync;
 
@@ -171,6 +172,11 @@ struct Args {
     sensitive: Option<bool>,
     public: Option<bool>,
     confirm_name: Option<String>,
+    display_name: Option<String>,
+    custom_status: Option<String>,
+    presence: Option<String>,
+    status_emoji: Option<String>,
+    about: Option<String>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -393,6 +399,10 @@ impl Session {
             "set_channel_color" => self.server_command(cmd, args).await,
             "set_channel_sensitive" => self.server_command(cmd, args).await,
             "set_channel_access" => self.server_command(cmd, args).await,
+            "update_profile" => self.profile_command(cmd, args).await,
+            "set_about" => self.profile_command(cmd, args).await,
+            "set_avatar" => self.profile_command(cmd, args).await,
+            "set_profile_banner" => self.profile_command(cmd, args).await,
             "web_farewell" => {
                 self.hang_up_on_farewell().await;
                 self.say_goodbye();

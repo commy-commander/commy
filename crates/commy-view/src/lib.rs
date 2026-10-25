@@ -8,6 +8,7 @@ pub mod manage;
 pub mod moderate;
 pub mod pictures;
 pub mod pins;
+pub mod profile;
 pub mod reads;
 pub mod roles;
 pub mod safety;
