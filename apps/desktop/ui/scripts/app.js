@@ -13044,6 +13044,60 @@ function readMembersPref() {
   }
 }
 
+function readSidebarWidth() {
+  try {
+    const raw = Number(localStorage.getItem("commy.sidebar.width"));
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function paintSidebarWidth(width) {
+  const app = $("app");
+  if (width == null) app.style.removeProperty("--sidebar-w");
+  else app.style.setProperty("--sidebar-w", `${clampSidebarWidth(width, window.innerWidth)}px`);
+}
+
+function setupSidebarResize() {
+  const handle = $("sidebar-resize");
+  paintSidebarWidth(readSidebarWidth());
+  window.addEventListener("resize", () => paintSidebarWidth(readSidebarWidth()));
+  handle.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add("dragging");
+    document.body.classList.add("sidebar-resizing");
+    const left = $("app").querySelector(".sidebar").getBoundingClientRect().left;
+    let width = null;
+    const move = ev => {
+      width = clampSidebarWidth(ev.clientX - left, window.innerWidth);
+      paintSidebarWidth(width);
+    };
+    const done = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", done);
+      handle.removeEventListener("pointercancel", done);
+      handle.classList.remove("dragging");
+      document.body.classList.remove("sidebar-resizing");
+      if (width != null) {
+        try {
+          localStorage.setItem("commy.sidebar.width", String(width));
+        } catch {}
+      }
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", done);
+    handle.addEventListener("pointercancel", done);
+  });
+  handle.addEventListener("dblclick", () => {
+    try {
+      localStorage.removeItem("commy.sidebar.width");
+    } catch {}
+    paintSidebarWidth(null);
+  });
+}
+
 function applyMembersLayout() {
   const collapsed = membersCollapsed(readMembersPref(), window.innerWidth);
   $("app").classList.toggle("members-collapsed", collapsed);
@@ -16405,6 +16459,7 @@ function wireEvents() {
   };
   window.addEventListener("resize", applyMembersLayout);
   applyMembersLayout();
+  setupSidebarResize();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;
