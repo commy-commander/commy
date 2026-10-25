@@ -159,6 +159,12 @@ fn still_needed(push: &str, today: i64, wanted: Vec<(Tag, Source)>) -> Vec<(Tag,
     wanted.into_iter().filter(|(tag, _)| !registered.tags.contains_key(tag)).collect()
 }
 
+fn fresh_first(push: &str, needed: Vec<(Tag, Source)>) -> (Vec<(Tag, Source)>, Vec<(Tag, Source)>) {
+    let guard = REGISTERED.lock().unwrap();
+    let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return (needed, Vec::new()) };
+    needed.into_iter().partition(|(tag, _)| !registered.earlier.contains_key(tag))
+}
+
 fn no_longer_wanted(push: &str, today: i64, wanted: &[(Tag, Source)], settled: impl Fn(&Source) -> bool) -> Vec<Tag> {
     let guard = REGISTERED.lock().unwrap();
     let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return Vec::new() };
@@ -262,43 +268,54 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
         Source::Server(server) => !servers.unsettled.contains(server),
     });
     let http = app.http.clone();
-    let needed = still_needed(&push, today, wanted.clone());
+    let (fresh, kept) = fresh_first(&push, still_needed(&push, today, wanted.clone()));
+    if let Err(done) = register_tags(app, &http, &push, base, today, fresh).await {
+        return done;
+    }
+    let forgotten = forget(app, &http, &push, base, today, stale).await;
+    let sweep = to_sweep(&push, today, &wanted, servers.unwanted.into_iter().map(|(_, tag)| tag).collect());
+    let swept = forget(app, &http, &push, base, today, sweep).await;
+    if let Err(done) = register_tags(app, &http, &push, base, today, kept).await {
+        return done;
+    }
+    forgotten && swept
+}
+
+async fn register_tags(app: &App, http: &reqwest::Client, push: &str, base: &str, today: i64, tags: Vec<(Tag, Source)>) -> Result<(), bool> {
     let mut registered = 0;
-    for ((tag, day), source) in needed {
+    for ((tag, day), source) in tags {
         let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
         tokio::time::sleep(Duration::from_millis(gap)).await;
-        let body = WakeRegister { tag: Bytes(tag), push: push.clone(), until: day };
-        match post(&http, &format!("{base}/register"), &body).await {
+        let body = WakeRegister { tag: Bytes(tag), push: push.to_string(), until: day };
+        match post(http, &format!("{base}/register"), &body).await {
             Ok(status) if status.is_success() => {
                 registered += 1;
-                note(&push, |r| {
+                note(push, |r| {
                     r.tags.insert((tag, day), source);
                     r.swept.remove(&(tag, day));
                 });
-                save_kept(app, &push, today);
+                save_kept(app, push, today);
             }
             Ok(StatusCode::NOT_FOUND) => {
                 tracing::info!("the sync service does not offer wake-ups");
-                note(&push, |r| r.off_on = Some(today));
-                return true;
+                note(push, |r| r.off_on = Some(today));
+                return Err(true);
             }
             Ok(StatusCode::TOO_MANY_REQUESTS) => {
                 tracing::info!("wake-up registration paused after {registered}: too many at once");
-                return false;
+                return Err(false);
             }
             Ok(status) => tracing::info!("the sync service refused a wake-up registration: {status}"),
             Err(e) => {
                 tracing::info!("could not register for wake-ups: {e}");
-                return false;
+                return Err(false);
             }
         }
     }
     if registered > 0 {
         tracing::info!("registered {registered} wake-up tags");
     }
-    let forgotten = forget(app, &http, &push, base, today, stale).await;
-    let sweep = to_sweep(&push, today, &wanted, servers.unwanted.into_iter().map(|(_, tag)| tag).collect());
-    forget(app, &http, &push, base, today, sweep).await && forgotten
+    Ok(())
 }
 
 async fn forget(app: &App, http: &reqwest::Client, push: &str, base: &str, today: i64, stale: Vec<Tag>) -> bool {
@@ -462,6 +479,7 @@ mod tests {
         begin("fcm:c", base, || earlier.clone());
         begin("fcm:c", base, || panic!("tags kept from an earlier run are read once"));
         assert_eq!(still_needed("fcm:c", 20_000, wanted.clone()), wanted, "a restarted app registers what it wants again");
+        assert_eq!(fresh_first("fcm:c", wanted.clone()), (vec![(([2; 32], 20_001), s)], vec![(([1; 32], 20_000), Source::Dm)]), "new tags go first and kept ones are confirmed after the drops");
         let mut stale = no_longer_wanted("fcm:c", 20_000, &wanted, all);
         stale.sort();
         assert_eq!(stale, vec![([5; 32], 20_000), ([7; 32], 20_000)], "tags from before a restart are dropped when no longer wanted");
