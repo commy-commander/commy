@@ -23,6 +23,7 @@ const SEND_RETRIES: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs
 const RETRY_LATER: Duration = Duration::from_secs(60);
 
 type Tag = ([u8; 32], i64);
+type Tagged = Vec<(Tag, Source)>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -159,7 +160,7 @@ fn still_needed(push: &str, today: i64, wanted: Vec<(Tag, Source)>) -> Vec<(Tag,
     wanted.into_iter().filter(|(tag, _)| !registered.tags.contains_key(tag)).collect()
 }
 
-fn fresh_first(push: &str, needed: Vec<(Tag, Source)>) -> (Vec<(Tag, Source)>, Vec<(Tag, Source)>) {
+fn fresh_first(push: &str, needed: Vec<(Tag, Source)>) -> (Tagged, Tagged) {
     let guard = REGISTERED.lock().unwrap();
     let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return (needed, Vec::new()) };
     needed.into_iter().partition(|(tag, _)| !registered.earlier.contains_key(tag))
@@ -199,11 +200,13 @@ fn kept_path(app: &App) -> Option<PathBuf> {
 }
 
 fn load_kept(app: &App, push: &str, base: &str) -> HashMap<Tag, Source> {
-    let Some(path) = kept_path(app) else { return HashMap::new() };
-    crate::persist::read_json::<Kept>(&path)
-        .filter(|kept| kept.push == push && kept.base == base)
-        .map(|kept| kept.tags.into_iter().map(|(tag, day, source)| ((tag.0, day), source)).collect())
-        .unwrap_or_default()
+    let Some(kept) = kept_path(app).and_then(|path| crate::persist::read_json::<Kept>(&path)) else { return HashMap::new() };
+    if kept.push != push || kept.base != base {
+        tracing::info!("the wake-up tags kept from an earlier run were for another push token or sync service");
+        return HashMap::new();
+    }
+    tracing::info!("{} wake-up tags kept from an earlier run", kept.tags.len());
+    kept.tags.into_iter().map(|(tag, day, source)| ((tag.0, day), source)).collect()
 }
 
 fn save_kept(app: &App, push: &str, today: i64) {
@@ -295,6 +298,10 @@ async fn register_tags(app: &App, http: &reqwest::Client, push: &str, base: &str
                     r.swept.remove(&(tag, day));
                 });
                 save_kept(app, push, today);
+                if AGAIN.load(Ordering::SeqCst) {
+                    tracing::info!("registered {registered} wake-up tags, then started over for newer settings");
+                    return Err(true);
+                }
             }
             Ok(StatusCode::NOT_FOUND) => {
                 tracing::info!("the sync service does not offer wake-ups");
