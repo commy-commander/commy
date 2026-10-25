@@ -1264,6 +1264,7 @@
         <button class="settings-tab" data-tab="notifications" data-i18n="settings.tab.notifications">Notifications</button>
         <button class="settings-tab" data-tab="integrations" data-i18n="settings.tab.integrations">Integrations</button>
         <button class="settings-tab" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
+        <button class="settings-tab desktop-only" data-tab="startup" data-i18n="settings.tab.startup">Startup</button>
         <button class="settings-tab desktop-only" data-tab="updates" data-i18n="settings.tab.updates">Updates</button>
       </div>
     </nav>
@@ -1573,20 +1574,6 @@
               <button class="btn-secondary btn-small" id="tts-preview">Preview</button>
             </div>
           </div>
-          <label class="settings-card setting-row desktop-only">
-            <div>
-              <div class="setting-title">Keep running in the tray</div>
-              <div class="setting-sub">Closing the window keeps Commy running in the system tray so messages, notifications and calls keep arriving. Quit from the tray icon.</div>
-            </div>
-            <input type="checkbox" id="close-to-tray-toggle" class="switch" />
-          </label>
-          <label class="settings-card setting-row desktop-only">
-            <div>
-              <div class="setting-title">Start with my computer</div>
-              <div class="setting-sub">Commy opens hidden in the system tray when you sign in to your computer, so you keep getting message notifications without opening the window.</div>
-            </div>
-            <input type="checkbox" id="autostart-toggle" class="switch" />
-          </label>
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">Test it</div>
@@ -1836,6 +1823,24 @@
               <div class="setting-sub">Shows the game or app in front on your screen as "Playing ..." or "Using ..." under your name, for everyone in your servers. Turn it off and it clears right away.</div>
             </div>
             <input type="checkbox" id="share-activity-toggle" class="switch" />
+          </label>
+        </section>
+
+        <section class="settings-page" data-page="startup">
+          <h1 data-i18n="settings.tab.startup">Startup</h1>
+          <label class="settings-card setting-row desktop-only">
+            <div>
+              <div class="setting-title">Keep running in the tray</div>
+              <div class="setting-sub">Closing the window keeps Commy running in the system tray so messages, notifications and calls keep arriving. Quit from the tray icon.</div>
+            </div>
+            <input type="checkbox" id="close-to-tray-toggle" class="switch" />
+          </label>
+          <label class="settings-card setting-row desktop-only">
+            <div>
+              <div class="setting-title">Start with my computer</div>
+              <div class="setting-sub">Commy opens hidden in the system tray when you sign in to your computer, so you keep getting message notifications without opening the window.</div>
+            </div>
+            <input type="checkbox" id="autostart-toggle" class="switch" />
           </label>
         </section>
 
