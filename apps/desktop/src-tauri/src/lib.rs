@@ -5089,6 +5089,7 @@ async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
     let name = forget_server_locally(app, sid).map(|s| s.server.name);
     end_voice_in(app, sid);
     leave_server_topic(app, sid).await;
+    community_sync::refresh_soon(handle);
     let _ = handle.emit("banned", serde_json::json!({ "server": sid.to_string(), "name": name }));
     let _ = handle.emit("servers-changed", ());
 }
@@ -5108,6 +5109,7 @@ fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, no
 
 fn on_server_deleted(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: SignedEvent) {
     let name = retire_deleted_server(app, handle, sid, notice, false);
+    community_sync::refresh_soon(handle);
     let _ = handle.emit("server-deleted", serde_json::json!({ "server": sid.to_string(), "name": name }));
 }
 
@@ -7041,6 +7043,7 @@ async fn run_net_loop(
                     _ => None,
                 };
                 let device_news = matches!(event, ServerEvent::DeviceAnnounce { .. }).then(|| event.clone());
+                let key_event = commy_net::community_streams::is_key_event(&event);
                 let speaker = liveness::speaker(&event, action.as_ref()).filter(|_| !replayed);
                 let (applied, was_online, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
@@ -7108,6 +7111,9 @@ async fn run_net_loop(
                             if let Some(profile) = stored {
                                 profile_images::prefetch(&handle, &profile);
                             }
+                        }
+                        if key_event {
+                            community_sync::refresh_soon(&handle);
                         }
                         if moderation {
                             refresh_forced_voice(&app, &handle);
