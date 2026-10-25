@@ -262,9 +262,7 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
         Source::Server(server) => !servers.unsettled.contains(server),
     });
     let http = app.http.clone();
-    let forgotten = forget(app, &http, &push, base, today, stale).await;
-    let sweep = to_sweep(&push, today, &wanted, servers.unwanted.into_iter().map(|(_, tag)| tag).collect());
-    let needed = still_needed(&push, today, wanted);
+    let needed = still_needed(&push, today, wanted.clone());
     let mut registered = 0;
     for ((tag, day), source) in needed {
         let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
@@ -298,6 +296,8 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
     if registered > 0 {
         tracing::info!("registered {registered} wake-up tags");
     }
+    let forgotten = forget(app, &http, &push, base, today, stale).await;
+    let sweep = to_sweep(&push, today, &wanted, servers.unwanted.into_iter().map(|(_, tag)| tag).collect());
     forget(app, &http, &push, base, today, sweep).await && forgotten
 }
 
