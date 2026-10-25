@@ -155,10 +155,12 @@ impl AudioStream for cpal::Stream {
 
 const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(200);
 const REOPEN_PAUSE: std::time::Duration = std::time::Duration::from_millis(500);
+const POLLS_PER_DEVICE_CHECK: u32 = 10;
 
 fn run_stream_thread<S: AudioStream>(
     died: &'static str,
     mut build: impl FnMut(StreamFault) -> Result<S> + Send + 'static,
+    mut device_moved: impl FnMut() -> bool + Send + 'static,
 ) -> Result<StreamHandle> {
     let stop = Arc::new(AtomicBool::new(false));
     let (ready, ready_rx) = std::sync::mpsc::channel();
@@ -176,12 +178,22 @@ fn run_stream_thread<S: AudioStream>(
             }
         };
         let mut reported = false;
+        let mut polls = 0u32;
         while !stopped.load(Ordering::Relaxed) {
             if fault.take() {
                 tracing::warn!("audio stream stopped, reopening it");
                 stream = None;
             }
             if stream.is_some() {
+                polls += 1;
+                if polls >= POLLS_PER_DEVICE_CHECK {
+                    polls = 0;
+                    if device_moved() {
+                        tracing::info!("the audio device to use changed, switching to it");
+                        stream = None;
+                        continue;
+                    }
+                }
                 std::thread::park_timeout(STOP_POLL);
                 continue;
             }
@@ -220,11 +232,7 @@ fn started<S: AudioStream>(stream: S) -> Option<S> {
 }
 
 pub fn list_device_names(input: bool) -> Vec<String> {
-    let host = cpal::default_host();
-    let devices = if input { host.input_devices() } else { host.output_devices() };
-    let mut names: Vec<String> = devices
-        .map(|list| list.filter_map(|d| d.name().ok()).collect())
-        .unwrap_or_default();
+    let mut names = device_names(&cpal::default_host(), input);
     names.dedup();
     names
 }
@@ -235,6 +243,46 @@ pub fn select_device(available: &[String], wanted: Option<&str>) -> Option<usize
         return None;
     }
     available.iter().position(|n| n == wanted)
+}
+
+type OpenedDevice = Arc<Mutex<Option<String>>>;
+
+fn device_names(host: &cpal::Host, input: bool) -> Vec<String> {
+    let devices = if input { host.input_devices() } else { host.output_devices() };
+    devices
+        .map(|list| list.filter_map(|d| d.name().ok()).collect())
+        .unwrap_or_default()
+}
+
+fn default_device_name(host: &cpal::Host, input: bool) -> Option<String> {
+    let device = if input { host.default_input_device() } else { host.default_output_device() };
+    device.and_then(|d| d.name().ok())
+}
+
+pub fn device_to_switch_to(
+    wanted: Option<&str>,
+    opened: Option<&str>,
+    wanted_is_back: impl FnOnce(&str) -> bool,
+    default_now: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let opened = opened?;
+    match wanted.map(str::trim).filter(|w| !w.is_empty()) {
+        Some(wanted) if wanted == opened => None,
+        Some(wanted) => wanted_is_back(wanted).then(|| wanted.to_string()),
+        None => default_now().filter(|now| now != opened),
+    }
+}
+
+fn device_moved(input: bool, wanted: Option<&str>, opened: &OpenedDevice) -> bool {
+    let opened = opened.lock().unwrap().clone();
+    let host = cpal::default_host();
+    device_to_switch_to(
+        wanted,
+        opened.as_deref(),
+        |wanted| device_names(&host, input).iter().any(|n| n == wanted),
+        || default_device_name(&host, input),
+    )
+    .is_some()
 }
 
 fn find_device(host: &cpal::Host, input: bool, wanted: Option<&str>) -> Option<cpal::Device> {
@@ -259,21 +307,25 @@ pub fn start_microphone(
     tx: UnboundedSender<Vec<i16>>,
     device_name: Option<String>,
 ) -> Result<InputHandle> {
-    run_stream_thread("microphone thread died", move |fault| {
+    let opened = OpenedDevice::default();
+    let watched = opened.clone();
+    let wanted = device_name.clone();
+    let build = move |fault: StreamFault| {
         let processor = processor.clone();
         let tx = tx.clone();
         let host = cpal::default_host();
         let device = find_device(&host, true, device_name.as_deref())
             .ok_or_else(|| anyhow!("no microphone found"))?;
+        *opened.lock().unwrap() = device.name().ok();
         let config = device
             .default_input_config()
             .context("no default input config")?;
         let mut assembler = FrameAssembler::new(config.sample_rate().0, config.channels());
+        processor.lock().unwrap().start_fresh();
 
-        let data_cb = move |data: &[f32], latency: Option<std::time::Duration>| {
+        let data_cb = move |data: &[f32]| {
             assembler.push(data);
             let mut processor = processor.lock().unwrap();
-            processor.note_capture_latency(latency);
             while let Some(frame) = assembler.next_frame() {
                 let processed = processor.process(&frame);
                 if let Ok(processed) = processed {
@@ -288,7 +340,8 @@ pub fn start_microphone(
             fault.raise();
         };
         open_input_stream(&device, config, data_cb, err_cb)
-    })
+    };
+    run_stream_thread("microphone thread died", build, move || device_moved(true, wanted.as_deref(), &watched))
 }
 
 pub fn pcm16(samples: &[f32]) -> Vec<i16> {
@@ -311,7 +364,7 @@ pub fn start_system_audio(tx: UnboundedSender<Vec<i16>>) -> Result<InputHandle> 
             .default_output_config()
             .context("no default output config")?;
         let mut assembler = FrameAssembler::new(config.sample_rate().0, config.channels());
-        let data_cb = move |data: &[f32], _: Option<std::time::Duration>| {
+        let data_cb = move |data: &[f32]| {
             assembler.push(data);
             while let Some(frame) = assembler.next_frame() {
                 let _ = tx.send(pcm16(&frame));
@@ -322,7 +375,7 @@ pub fn start_system_audio(tx: UnboundedSender<Vec<i16>>) -> Result<InputHandle> 
             fault.raise();
         };
         open_input_stream(&device, config, data_cb, err_cb)
-    })
+    }, || false)
 }
 
 #[cfg(not(windows))]
@@ -333,13 +386,13 @@ pub fn start_system_audio(_tx: UnboundedSender<Vec<i16>>) -> Result<InputHandle>
 fn open_input_stream(
     device: &cpal::Device,
     config: cpal::SupportedStreamConfig,
-    mut data_cb: impl FnMut(&[f32], Option<std::time::Duration>) + Send + 'static,
+    mut data_cb: impl FnMut(&[f32]) + Send + 'static,
     err_cb: impl Fn(cpal::StreamError) + Send + 'static,
 ) -> Result<cpal::Stream> {
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &config.into(),
-            move |data: &[f32], info| data_cb(data, capture_latency(info)),
+            move |data: &[f32], _| data_cb(data),
             err_cb,
             None,
         )?,
@@ -347,10 +400,10 @@ fn open_input_stream(
             let mut floats: Vec<f32> = Vec::new();
             device.build_input_stream(
                 &config.into(),
-                move |data: &[i16], info| {
+                move |data: &[i16], _| {
                     floats.clear();
                     floats.extend(data.iter().map(|s| *s as f32 / 32768.0));
-                    data_cb(&floats, capture_latency(info));
+                    data_cb(&floats);
                 },
                 err_cb,
                 None,
@@ -360,10 +413,10 @@ fn open_input_stream(
             let mut floats: Vec<f32> = Vec::new();
             device.build_input_stream(
                 &config.into(),
-                move |data: &[u16], info| {
+                move |data: &[u16], _| {
                     floats.clear();
                     floats.extend(data.iter().map(|s| (*s as f32 - 32768.0) / 32768.0));
-                    data_cb(&floats, capture_latency(info));
+                    data_cb(&floats);
                 },
                 err_cb,
                 None,
@@ -374,27 +427,21 @@ fn open_input_stream(
     Ok(stream)
 }
 
-fn capture_latency(info: &cpal::InputCallbackInfo) -> Option<std::time::Duration> {
-    let stamp = info.timestamp();
-    stamp.callback.duration_since(&stamp.capture)
-}
-
-fn playback_latency(info: &cpal::OutputCallbackInfo) -> Option<std::time::Duration> {
-    let stamp = info.timestamp();
-    stamp.playback.duration_since(&stamp.callback)
-}
-
 pub fn start_playback(
     mixer: Arc<Mutex<Mixer>>,
     device_name: Option<String>,
     far_end: Option<FarEndSink>,
 ) -> Result<OutputHandle> {
-    run_stream_thread("playback thread died", move |fault| {
+    let opened = OpenedDevice::default();
+    let watched = opened.clone();
+    let wanted = device_name.clone();
+    let build = move |fault: StreamFault| {
         let mixer = mixer.clone();
         let far_end = far_end.clone();
         let host = cpal::default_host();
         let device = find_device(&host, false, device_name.as_deref())
             .ok_or_else(|| anyhow!("no output device found"))?;
+        *opened.lock().unwrap() = device.name().ok();
         let config = device
             .default_output_config()
             .context("no default output config")?;
@@ -404,12 +451,11 @@ pub fn start_playback(
 
         let stream = device.build_output_stream(
             &config.into(),
-            move |data: &mut [f32], info| {
-                let latency = playback_latency(info);
+            move |data: &mut [f32], _| {
                 shaper.fill(data, channels, || {
                     let frame = mixer.lock().unwrap().next_frame();
                     if let Some(sink) = &far_end {
-                        sink.push(&frame, latency);
+                        sink.push(&frame);
                     }
                     frame
                 });
@@ -421,7 +467,8 @@ pub fn start_playback(
             None,
         )?;
         Ok(stream)
-    })
+    };
+    run_stream_thread("playback thread died", build, move || device_moved(false, wanted.as_deref(), &watched))
 }
 
 #[cfg(test)]
@@ -547,7 +594,7 @@ mod tests {
         let handle = run_stream_thread("test", move |fault| {
             opened.lock().unwrap().push(fault);
             Ok(FakeStream)
-        })
+        }, || false)
         .unwrap();
         assert_eq!(faults.lock().unwrap().len(), 1);
         faults.lock().unwrap()[0].raise();
@@ -567,7 +614,7 @@ mod tests {
                 1 | 2 => Err(anyhow!("unplugged")),
                 _ => Ok(FakeStream),
             }
-        })
+        }, || false)
         .unwrap();
         fault_slot.lock().unwrap().as_ref().unwrap().raise();
         wait_for("the device to come back", || attempts.load(Ordering::SeqCst) == 4);
@@ -577,8 +624,54 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_moves_when_the_device_to_use_changes() {
+        let opens = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let moved = Arc::new(AtomicBool::new(false));
+        let (counted, switch) = (opens.clone(), moved.clone());
+        let handle = run_stream_thread(
+            "test",
+            move |_| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Ok(FakeStream)
+            },
+            move || switch.swap(false, Ordering::SeqCst),
+        )
+        .unwrap();
+        std::thread::sleep(STOP_POLL * POLLS_PER_DEVICE_CHECK * 2);
+        assert_eq!(opens.load(Ordering::SeqCst), 1, "nothing changed, nothing reopened");
+        moved.store(true, Ordering::SeqCst);
+        wait_for("the switch", || opens.load(Ordering::SeqCst) == 2);
+        drop(handle);
+    }
+
+    #[test]
+    fn the_chosen_device_is_used_again_once_it_is_back() {
+        let back = |_: &str| true;
+        let gone = |_: &str| false;
+        let no_default = || None;
+        assert_eq!(
+            device_to_switch_to(Some("Headset"), Some("Laptop Mic"), back, no_default),
+            Some("Headset".to_string())
+        );
+        assert_eq!(device_to_switch_to(Some("Headset"), Some("Laptop Mic"), gone, no_default), None);
+        assert_eq!(device_to_switch_to(Some("Headset"), Some("Headset"), back, no_default), None);
+        assert_eq!(device_to_switch_to(Some("Headset"), None, back, no_default), None);
+    }
+
+    #[test]
+    fn following_the_system_default_moves_when_the_default_changes() {
+        let unused = |_: &str| panic!("no chosen device to look for");
+        assert_eq!(
+            device_to_switch_to(None, Some("Laptop Mic"), unused, || Some("Headset".to_string())),
+            Some("Headset".to_string())
+        );
+        assert_eq!(device_to_switch_to(Some("  "), Some("Headset"), unused, || Some("Headset".to_string())), None);
+        assert_eq!(device_to_switch_to(None, Some("Headset"), unused, || None), None);
+    }
+
+    #[test]
     fn a_device_that_never_opens_reports_why() {
-        let result = run_stream_thread::<FakeStream>("test", |_| Err(anyhow!("no microphone found")));
+        let result = run_stream_thread::<FakeStream>("test", |_| Err(anyhow!("no microphone found")), || false);
         assert_eq!(result.err().unwrap().to_string(), "no microphone found");
     }
 }
