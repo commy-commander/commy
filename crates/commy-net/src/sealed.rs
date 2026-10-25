@@ -9,6 +9,7 @@ pub const KEY_TEXT_LEN: usize = 43;
 pub const SHORT_KEY_TEXT_LEN: usize = 22;
 const SHORT_KEY_BYTES: usize = 16;
 const SHORT_KEY_DOMAIN: &[u8] = b"commy-short-key-v1";
+const INVITE_LINK_KEY_DOMAIN: &[u8] = b"commy-invite-link-key-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Purpose {
@@ -65,6 +66,22 @@ impl SealKey {
         let seed: [u8; SHORT_KEY_BYTES] = rand::rngs::OsRng.gen();
         let text = BASE64URL_NOPAD.encode(&seed);
         (Self::stretch(&seed), text)
+    }
+
+    pub fn for_invite_link(revoke_key: &str, short: bool) -> (Self, String) {
+        use sha2::Digest;
+        let mut hash = sha2::Sha256::new();
+        hash.update(INVITE_LINK_KEY_DOMAIN);
+        hash.update(revoke_key.as_bytes());
+        let bytes: [u8; 32] = hash.finalize().into();
+        if short {
+            let seed = &bytes[..SHORT_KEY_BYTES];
+            (Self::stretch(seed), BASE64URL_NOPAD.encode(seed))
+        } else {
+            let key = Self(bytes);
+            let text = key.to_text();
+            (key, text)
+        }
     }
 
     fn stretch(seed: &[u8]) -> Self {
@@ -174,6 +191,17 @@ mod tests {
         let seed: Vec<u8> = (0u8..16).collect();
         let key = SealKey::from_text(&BASE64URL_NOPAD.encode(&seed)).unwrap();
         assert_eq!(key.to_text(), "DGRsa06xoR5OUNXHMW5Duet9o5gSIQIugDHjgdk8l3k");
+    }
+
+    #[test]
+    fn invite_link_keys_come_back_from_the_same_revoke_key() {
+        for short in [true, false] {
+            let (key, text) = SealKey::for_invite_link("revoke", short);
+            assert_eq!(text.len(), if short { SHORT_KEY_TEXT_LEN } else { KEY_TEXT_LEN });
+            assert_eq!(SealKey::from_text(&text).unwrap(), key);
+            assert_eq!(SealKey::for_invite_link("revoke", short).1, text);
+            assert_ne!(SealKey::for_invite_link("other", short).1, text);
+        }
     }
 
     #[test]

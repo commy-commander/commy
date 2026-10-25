@@ -771,6 +771,7 @@ async function mockInvoke(cmd, args = {}) {
         expires_at: expiresAt ? new Date(expiresAt).toISOString() : null };
     }
     case "list_invites": return mockInvites().map(i => ({ ...i }));
+    case "invite_full_link": return `${args.origin}/i/${args.code}#` + "q".repeat(/^[A-Z2-9]{8}$/.test(args.code) ? 43 : 22);
     case "revoke_invite": {
       if (!mockInvites().some(i => i.origin === args.origin && i.code === args.code)) throw "That invite is already gone";
       mock.invites = mock.invites.filter(i => !(i.origin === args.origin && i.code === args.code));
@@ -15066,7 +15067,7 @@ function wireEvents() {
       await loadSaved();
       if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
-      await offerTrayPrompt();
+      if (!(await takePendingInviteLink())) await offerTrayPrompt();
     } catch (e) {
       toast(String(e));
     }
@@ -17571,7 +17572,7 @@ function paintAuditLog() {
 }
 
 const INVITE_BACKGROUND_MAX = 400 * 1024;
-const invitesView = { serverId: null, invites: [], clock: null, accountHost: null };
+const invitesView = { serverId: null, invites: [], clock: null, accountHost: null, accountOrigin: null };
 
 async function renderInvitesPage(server) {
   const manage = Boolean(server.can_manage_server);
@@ -17587,10 +17588,11 @@ async function renderInvitesPage(server) {
     if (!invitesView.accountHost) {
       invoke("account_server_info").then(info => {
         invitesView.accountHost = info.host;
-        $("invite-custom-prefix").textContent = `${info.host}/i/`;
+        invitesView.accountOrigin = info.origin;
+        $("invite-custom-prefix").textContent = `${info.origin}/i/`;
       }).catch(() => {});
     } else {
-      $("invite-custom-prefix").textContent = `${invitesView.accountHost}/i/`;
+      $("invite-custom-prefix").textContent = `${invitesView.accountOrigin}/i/`;
     }
   }
   try {
@@ -17640,7 +17642,7 @@ function paintInviteNameCheck() {
   const { name, error } = checkInviteName($("invite-custom-name").value);
   const note = $("invite-custom-note");
   note.classList.toggle("error", Boolean(error));
-  note.textContent = error || "Pick a name people can remember. You need to be signed in, and the link still ends in a short key so your account server never learns which server it opens.";
+  note.textContent = error || "Pick a name people can remember. You need to be signed in. The link ends in a short key after #, so always share the whole link. That key keeps your account server from learning which server it opens.";
   $("invite-custom-create").disabled = !name || Boolean(error);
 }
 
@@ -17652,8 +17654,7 @@ async function createCustomInvite() {
   button.disabled = true;
   try {
     const invite = await invoke("create_invite_link", { serverId: server.id, expires: $("invite-custom-expiry").value, name });
-    await navigator.clipboard.writeText(invite.url).catch(() => {});
-    toast("Custom invite link copied");
+    await copyFullInviteLink(invite.url);
     $("invite-custom-name").value = "";
     await renderInvitesPage(server);
   } catch (e) {
@@ -17677,6 +17678,9 @@ function inviteRow(invite) {
   left.dataset.expires = invite.expires_at == null ? "" : String(invite.expires_at);
   if (invite.expires_at != null) left.title = `Expires ${new Date(invite.expires_at).toLocaleString()}`;
   row.appendChild(left);
+  const copy = el("button", "btn-secondary btn-small invite-row-copy", "Copy Link");
+  copy.onclick = () => copyTrackedInvite(invite, copy);
+  row.appendChild(copy);
   const revoke = el("button", "btn-secondary btn-small danger-text invite-row-revoke", "Revoke");
   revoke.disabled = !invite.can_revoke;
   revoke.onclick = () => revokeInvite(invite, revoke);
@@ -17709,6 +17713,28 @@ function startInviteClock() {
     }
     if (expired) paintInviteList();
   }, 15e3);
+}
+
+async function copyFullInviteLink(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("Invite link copied. Share all of it, including the part after #.");
+  } catch {
+    toast(`Copy this whole link: ${url}`);
+  }
+}
+
+async function copyTrackedInvite(invite, button) {
+  const server = state.currentServer;
+  if (!server) return;
+  button.disabled = true;
+  try {
+    await copyFullInviteLink(await invoke("invite_full_link", { serverId: server.id, origin: invite.origin, code: invite.code }));
+  } catch (e) {
+    toast(String(e));
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function revokeInvite(invite, button) {
@@ -18295,7 +18321,8 @@ async function openAccountFolder() {
     paintClaim(String(e));
     return;
   }
-  if (account.unclaimed_profile) showClaim();
+  if (!account.signed_in) showSignIn();
+  else if (account.unclaimed_profile) showClaim();
   else await continueBoot();
 }
 
@@ -18319,7 +18346,8 @@ async function answerClaim(keep) {
   $("claim-keep").disabled = $("claim-fresh").disabled = true;
   try {
     account = await invoke("account_claim_profile", { keep });
-    await continueBoot();
+    if (account.signed_in) await continueBoot();
+    else showSignIn();
   } catch (e) {
     $("claim-error").textContent = String(e);
     $("claim-error").classList.remove("hidden");
@@ -18349,7 +18377,7 @@ async function continueBoot() {
   if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
   await primeFriendPresence();
-  await offerTrayPrompt();
+  if (!(await takePendingInviteLink())) await offerTrayPrompt();
 }
 
 async function offerTrayPrompt() {

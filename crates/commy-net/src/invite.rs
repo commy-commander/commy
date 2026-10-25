@@ -130,13 +130,8 @@ fn normalize_name(input: &str) -> Option<String> {
         && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && !name.starts_with('-')
         && !name.ends_with('-')
-        && !name.contains("--")
-        && !looks_like_code(&name);
+        && !name.contains("--");
     shape.then_some(name)
-}
-
-fn looks_like_code(name: &str) -> bool {
-    name.len() == CODE_LENGTH && !name.contains('-')
 }
 
 fn normalize_link_code(input: &str) -> Option<String> {
@@ -144,9 +139,6 @@ fn normalize_link_code(input: &str) -> Option<String> {
 }
 
 pub fn custom_name(input: &str) -> Result<String, String> {
-    if looks_like_code(&input.trim().to_ascii_lowercase()) {
-        return Err("Eight characters with no dash looks like a random invite code. Add a dash or pick another length.".into());
-    }
     let name = normalize_name(input)
         .ok_or("Custom names are 3 to 32 letters, numbers or single dashes, like pixel-pioneers")?;
     if RESERVED_NAMES.contains(&name.as_str()) {
@@ -381,14 +373,23 @@ pub fn check_create(state: &ServerState, me: UserId, expiry: Expiry, custom: boo
     Ok(())
 }
 
-pub fn new_key(custom: bool) -> (SealKey, String) {
-    if custom {
-        SealKey::generate_short()
-    } else {
-        let key = SealKey::generate();
-        let text = key.to_text();
-        (key, text)
-    }
+pub const OLD_LINK: &str = "This link was made by an older version of Commy, so its full link cannot be shown again. Make a new one to share.";
+
+pub fn link_key(revoke_key: &str, custom: bool) -> (SealKey, String) {
+    SealKey::for_invite_link(revoke_key, custom)
+}
+
+pub fn is_custom_code(code: &str) -> bool {
+    normalize_code(code).as_deref() != Some(code)
+}
+
+pub fn tracked_link(invite: &TrackedInvite) -> InviteLink {
+    let (_, key) = link_key(&invite.revoke_key, is_custom_code(&invite.code));
+    InviteLink { origin: invite.origin.clone(), code: invite.code.clone(), key: Some(key) }
+}
+
+pub fn same_code(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
 }
 
 pub fn new_revoke_key() -> String {
@@ -438,11 +439,11 @@ pub fn created(origin: &str, custom: Option<&str>, key_text: String, reply: Crea
     let Some(link) = parse(&reply.url).filter(|l| l.origin == origin && l.key.is_none()) else {
         return Err("The invite server sent an unexpected link".into());
     };
-    if custom.is_some_and(|n| n != link.code) {
+    if custom.is_some_and(|n| !same_code(n, &link.code)) {
         return Err("Your account server does not support custom invite names yet".into());
     }
-    let code = link.code.clone();
-    let url = InviteLink { key: Some(key_text), ..link }.url();
+    let code = custom.map_or_else(|| link.code.clone(), str::to_string);
+    let url = InviteLink { code: code.clone(), key: Some(key_text), ..link }.url();
     let expires_at = earliest(reply.expires_at.as_deref().and_then(parse_time), sealed_at);
     Ok(Created { invite: CreatedInvite { url, expires_at: expires_at.map(stamp) }, code, expires_at })
 }
@@ -514,7 +515,7 @@ pub fn invite_views(state: &ServerState, me: UserId, now_ms: i64) -> Vec<InviteV
             origin: i.origin.clone(),
             host: host_of(&i.origin),
             code: i.code.clone(),
-            custom: normalize_code(&i.code).is_none(),
+            custom: is_custom_code(&i.code),
             creator: i.creator.to_string(),
             creator_name: commy_core::audit::member_name(state, i.creator).unwrap_or_else(|| "Someone".into()),
             created_at: i.created_at,
@@ -550,8 +551,8 @@ mod tests {
         let server = commy_core::ServerId::new();
         let raw = crate::ServerTicket::new(server, "Pixel Pioneers", [3; 32], Vec::new()).encode();
         let (id, secret) = (KeyId::random(), ChannelSecret::random());
-        let (key, key_text) = new_key(false);
         let revoke_key = new_revoke_key();
+        let (key, key_text) = link_key(&revoke_key, false);
         let request = CreateRequest { raw_ticket: &raw, server_name: "Pixel Pioneers", expiry: Expiry::Day, custom: None, community: Some((id, &secret)), background: None, revoke_key: &revoke_key };
         let now = Utc::now();
         let (body, sealed_at) = create_body(&key, &request, now);
@@ -572,6 +573,33 @@ mod tests {
         assert!(open_reply(&link, &resolve, now + chrono::Duration::days(2)).is_err());
         let elsewhere = CreateResponse { url: "https://evil.example/i/AB23CD45".into(), expires_at: None };
         assert!(created("https://commy.chat", None, "k".into(), elsewhere, None).is_err());
+        let event = track_event(server, UserId::new(), "https://commy.chat".into(), &made, revoke_key, 1);
+        let commy_core::ServerEvent::InviteTrack { invite, .. } = event else { panic!("not a tracked invite") };
+        assert_eq!(tracked_link(&invite).url(), made.invite.url);
+    }
+
+    #[test]
+    fn an_eight_letter_custom_name_keeps_its_name_and_its_full_link() {
+        let server = commy_core::ServerId::new();
+        let raw = crate::ServerTicket::new(server, "Gabagool", [3; 32], Vec::new()).encode();
+        let revoke_key = new_revoke_key();
+        let (key, key_text) = link_key(&revoke_key, true);
+        assert_eq!(key_text.len(), sealed::SHORT_KEY_TEXT_LEN);
+        let request = CreateRequest { raw_ticket: &raw, server_name: "Gabagool", expiry: Expiry::Week, custom: Some("partyzzz"), community: None, background: None, revoke_key: &revoke_key };
+        let now = Utc::now();
+        let (body, sealed_at) = create_body(&key, &request, now);
+        let reply = CreateResponse { url: "https://commy.chat/i/PARTYZZZ".into(), expires_at: None };
+        let made = created("https://commy.chat", Some("partyzzz"), key_text, reply, sealed_at).unwrap();
+        assert_eq!(made.code, "partyzzz");
+        assert!(made.invite.url.starts_with("https://commy.chat/i/partyzzz#"));
+        let link = parse(&made.invite.url).unwrap();
+        let resolve = ResolveResponse { ticket: body["ticket"].as_str().unwrap().into(), expires_at: None, has_background: false };
+        assert_eq!(open_reply(&link, &resolve, now).unwrap().ticket.server_id, server);
+        let event = track_event(server, UserId::new(), "https://commy.chat".into(), &made, revoke_key, 1);
+        let commy_core::ServerEvent::InviteTrack { invite, .. } = event else { panic!("not a tracked invite") };
+        assert!(is_custom_code(&invite.code));
+        assert_eq!(tracked_link(&invite).url(), made.invite.url);
+        assert!(!is_custom_code("AB23CD45"));
     }
 
     #[test]
@@ -708,7 +736,6 @@ mod tests {
             "https://example.org/i/AB23CD45/extra",
             "https://example.org/i/AB23CD45?next=evil",
             "https://user:pw@example.org/i/AB23CD45",
-            "https://example.org/i/AB23CD4O",
             "https://example.org/i/AB",
             "https://example.org/i/AB_23",
             "commy://x/example.org/AB23CD45",
@@ -721,6 +748,7 @@ mod tests {
             assert_eq!(parse(bad), None, "{bad}");
         }
         assert_eq!(parse(&format!("https://example.org/i/{}", "A".repeat(MAX_LINK_LEN))), None);
+        assert_eq!(parse("https://example.org/i/AB23CD4O").unwrap().code, "ab23cd4o");
     }
 
     #[test]
@@ -740,11 +768,13 @@ mod tests {
         assert_eq!(custom_name("  Pixel-Pioneers "), Ok("pixel-pioneers".into()));
         assert_eq!(custom_name("abc"), Ok("abc".into()));
         assert_eq!(custom_name(&"a".repeat(MAX_NAME_LEN)), Ok("a".repeat(MAX_NAME_LEN)));
-        for bad in ["ab", "", "has space", "-lead", "trail-", "two--dashes", "emoji\u{1f600}", "admin", "Commy", "ab23cd45", "pixelpio"] {
+        for bad in ["ab", "", "has space", "-lead", "trail-", "two--dashes", "emoji\u{1f600}", "admin", "Commy"] {
             assert!(custom_name(bad).is_err(), "{bad}");
         }
         assert!(custom_name(&"a".repeat(MAX_NAME_LEN + 1)).is_err());
         assert_eq!(custom_name("pixel-pi"), Ok("pixel-pi".into()));
+        assert_eq!(custom_name("Gabagool"), Ok("gabagool".into()));
+        assert_eq!(custom_name("partyzzz"), Ok("partyzzz".into()));
     }
 
     #[test]

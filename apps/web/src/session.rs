@@ -360,6 +360,7 @@ impl Session {
             "get_invite" => self.invite_command(cmd, args).await,
             "create_invite_link" => self.invite_command(cmd, args).await,
             "resolve_invite_link" => self.invite_command(cmd, args).await,
+            "invite_full_link" => self.invite_command(cmd, args).await,
             "join_server" => self.invite_command(cmd, args).await,
             "list_invites" => self.invite_command(cmd, args).await,
             "revoke_invite" => self.invite_command(cmd, args).await,

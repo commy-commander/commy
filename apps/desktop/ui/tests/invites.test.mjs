@@ -16,6 +16,8 @@ test("random codes and custom names with their key are found in messages", () =>
   assert.equal(findInviteLink(`see https://commy.chat/i/KQ7M3N4P#${long}!`), `https://commy.chat/i/KQ7M3N4P#${long}`);
   assert.equal(findInviteLink(`come to https://commy.chat/i/pixel-pioneers#${short} tonight`), `https://commy.chat/i/pixel-pioneers#${short}`);
   assert.equal(findInviteLink(`commy://i/commy.chat/team42#${short}`), `commy://i/commy.chat/team42#${short}`);
+  assert.equal(findInviteLink(`https://commy.chat/i/partyzzz#${short}`), `https://commy.chat/i/partyzzz#${short}`);
+  assert.ok(looksLikeInviteLink(`https://commy.chat/i/gabagool#${short}`));
   assert.ok(looksLikeInviteLink(`  https://commy.chat/i/pixel-pioneers#${short} `));
 });
 
@@ -34,14 +36,16 @@ test("ordinary links that only look a little like invites are left alone", () =>
 test("custom names follow the same rules as the app's backend", () => {
   assert.deepEqual(checkInviteName("  Pixel-Pioneers "), { name: "pixel-pioneers", error: null });
   assert.deepEqual(checkInviteName(""), { name: "", error: null });
-  for (const bad of ["ab", "-lead", "trail-", "two--dashes", "has space", "admin", "pixelpio", "a".repeat(33)]) {
+  for (const bad of ["ab", "-lead", "trail-", "two--dashes", "has space", "admin", "a".repeat(33)]) {
     assert.ok(checkInviteName(bad).error, bad);
   }
   assert.equal(checkInviteName("pixel-pi").error, null);
+  assert.equal(checkInviteName("Gabagool").error, null);
+  assert.equal(checkInviteName("partyzzz").error, null);
   const rust = readFileSync(join(repo, "crates", "commy-net", "src", "invite.rs"), "utf8");
   const reserved = /const RESERVED_NAMES: &\[&str\] = &\[([\s\S]*?)\];/.exec(rust)[1].match(/"([^"]+)"/g).map(s => s.slice(1, -1));
   assert.ok(reserved.length > 10);
-  for (const name of reserved) assert.match(checkInviteName(name).error || "", /reserved|random invite code/, name);
+  for (const name of reserved) assert.match(checkInviteName(name).error || "", /reserved/, name);
 });
 
 test("time left reads plainly and counts down", () => {
@@ -58,9 +62,9 @@ test("time left reads plainly and counts down", () => {
 });
 
 test("invites list newest first by their link", () => {
-  const a = { host: "commy.chat", code: "KQ7M3N4P", created_at: 1 };
-  const b = { host: "commy.chat", code: "pixel-pioneers", created_at: 2 };
-  assert.equal(inviteLabel(b), "commy.chat/i/pixel-pioneers");
+  const a = { origin: "https://commy.chat", host: "commy.chat", code: "KQ7M3N4P", created_at: 1 };
+  const b = { origin: "https://commy.chat", host: "commy.chat", code: "pixel-pioneers", created_at: 2 };
+  assert.equal(inviteLabel(b), "https://commy.chat/i/pixel-pioneers");
   assert.deepEqual(sortInvites([a, b]), [b, a]);
   assert.deepEqual(sortInvites(null), []);
 });

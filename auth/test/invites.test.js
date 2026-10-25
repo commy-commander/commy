@@ -211,10 +211,12 @@ test("servers can require an account, and only the creator can revoke", async ()
 const SECRET = "r".repeat(43);
 const BACKGROUND = "sealed1." + "Bg-_0123456789xyz".repeat(10);
 
-test("custom names are short, plain and never look like random codes", () => {
+test("custom names are short and plain, and may be eight characters long", () => {
   assert.equal(normalizeName(" Pixel-Pioneers "), "pixel-pioneers");
   assert.equal(customName("team42"), "team42");
-  for (const bad of ["ab", "-lead", "trail-", "two--dashes", "has space", "pixelpio", "AB23CD45", "a".repeat(33), "ünïcode", null]) {
+  assert.equal(customName("Gabagool"), "gabagool");
+  assert.equal(customName("partyzzz"), "partyzzz");
+  for (const bad of ["ab", "-lead", "trail-", "two--dashes", "has space", "a".repeat(33), "ünïcode", null]) {
     assert.equal(normalizeName(bad), null, String(bad));
   }
   assert.equal(normalizeName("admin"), "admin");
@@ -245,7 +247,7 @@ test("signed in creators claim a custom name, keep it, and nobody else can take 
   assert.equal(db.invite.length, 1, "the owner points the same name at a new invite");
   assert.equal(db.invite[0].ticket, TICKET + "y");
 
-  for (const code of ["admin", "AB23CD45", "x"]) {
+  for (const code of ["admin", "x"]) {
     assert.equal((await call("POST", "/commy/invites/create", { cookie: alice.cookie, body: { ...body, code } })).status, 400, code);
   }
   for (let i = 1; i < MAX_CUSTOM_PER_ACCOUNT; i++) {
@@ -258,6 +260,31 @@ test("signed in creators claim a custom name, keep it, and nobody else can take 
   db.invite.find((r) => r.code === "pixel-pioneers").expiresAt = new Date(Date.now() - 1000);
   const after = await call("POST", "/commy/invites/create", { cookie: bob.cookie, body: { ...body, ticket: TICKET + "z" } });
   assert.equal(after.status, 200, "an expired name is free again");
+});
+
+test("an eight character name that reads like a code still opens its own invite", async () => {
+  const { db, call, signUp } = makeAuth();
+  const alice = await signUp("alice@example.test");
+  const bob = await signUp("bob@example.test");
+  const body = { ticket: TICKET, expiresIn: "30d", code: "PartyZZZ", revokeHash: hashRevokeSecret(SECRET) };
+  const created = await call("POST", "/commy/invites/create", { cookie: alice.cookie, body });
+  assert.equal(created.status, 200, JSON.stringify(created.json));
+  assert.equal(created.json.url, `${ORIGIN}/i/partyzzz`);
+  for (const code of ["partyzzz", "PARTYZZZ", "PartyZZZ"]) {
+    const resolved = await call("GET", "/commy/invites/resolve", { query: { code } });
+    assert.equal(resolved.status, 200, code);
+    assert.equal(resolved.json.code, "partyzzz");
+  }
+  const gabagool = await call("POST", "/commy/invites/create", { cookie: alice.cookie, body: { ...body, ticket: TICKET + "g", code: "gabagool" } });
+  assert.equal(gabagool.status, 200, JSON.stringify(gabagool.json));
+  assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: "gabagool" } })).json.ticket, TICKET + "g");
+
+  db.invite.push({ ...db.invite[0], id: "random", code: "KQ7M3N4P", custom: false, createdBy: bob.id, ticket: TICKET + "r" });
+  const clash = await call("POST", "/commy/invites/create", { cookie: alice.cookie, body: { ...body, ticket: TICKET + "c", code: "kq7m3n4p" } });
+  assert.equal(clash.status, 409, "a name cannot take over a random code");
+
+  await call("POST", "/commy/invites/revoke", { cookie: alice.cookie, body: { code: "PARTYZZZ" } });
+  assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: "partyzzz" } })).status, 404);
 });
 
 test("whoever holds the revoke secret can revoke, without an account", async () => {

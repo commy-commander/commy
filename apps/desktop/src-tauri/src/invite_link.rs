@@ -150,7 +150,8 @@ pub(crate) async fn create(
             return Ok(created);
         }
     }
-    let (key, key_text) = commy_net::invite::new_key(name.is_some());
+    let revoke_key = commy_net::invite::new_revoke_key();
+    let (key, key_text) = commy_net::invite::link_key(&revoke_key, name.is_some());
     let background = sealed_background(app, id, &key).await;
     if crate::community_sync::invite_key(app, id).is_none() {
         crate::channel_lock::tend_scope(app, handle, id, commy_core::channel_key::KeyScope::Community).await;
@@ -162,7 +163,6 @@ pub(crate) async fn create(
         return Err("Sign in to pick a custom invite name".into());
     }
     let background = background.filter(|_| token.is_some());
-    let revoke_key = commy_net::invite::new_revoke_key();
     let request = CreateRequest {
         raw_ticket: &raw,
         server_name: &ticket.server_name,
@@ -201,6 +201,21 @@ pub fn list_invites(app: tauri::State<'_, App>, server_id: String) -> Result<Vec
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&id).ok_or("unknown server")?;
     Ok(commy_net::invite::invite_views(state, me, Utc::now().timestamp_millis()))
+}
+
+#[tauri::command]
+pub async fn invite_full_link(app: tauri::State<'_, App>, server_id: String, origin: String, code: String) -> Result<String, String> {
+    let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id).ok_or("no profile yet")?;
+    let invite = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&id).ok_or("unknown server")?;
+        commy_net::invite::revocable(state, me, &origin, &code)?
+    };
+    let link = commy_net::invite::tracked_link(&invite);
+    let body: ResolveResponse = account_call(app.http.get(link.endpoint(commy_net::invite::RESOLVE_PATH)), &link.origin).await?;
+    commy_net::invite::open_reply(&link, &body, Utc::now()).map_err(|_| commy_net::invite::OLD_LINK.to_string())?;
+    Ok(link.url())
 }
 
 #[tauri::command]
