@@ -1,6 +1,6 @@
 import * as z from "zod";
 import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
-import { isPermanent, normalizeLinkCode } from "./invites.js";
+import { findInvite, isPermanent, linkCodeSpellings } from "./invites.js";
 
 const MODEL = "directoryListing";
 const INVITE_MODEL = "invite";
@@ -123,8 +123,7 @@ export const commyDirectory = () => ({
       async (ctx) => {
         const session = await getSessionFromCtx(ctx);
         if (!session) throw new APIError("UNAUTHORIZED", { message: "Sign in to list a server in Discover" });
-        const code = normalizeLinkCode(ctx.body.code);
-        if (!code) throw new APIError("BAD_REQUEST", { message: "That is not an invite code" });
+        if (!linkCodeSpellings(ctx.body.code).length) throw new APIError("BAD_REQUEST", { message: "That is not an invite code" });
         const key = validKey(ctx.body.key);
         if (!key) throw new APIError("BAD_REQUEST", { message: "That invite link is missing its key" });
         const name = cleanName(ctx.body.name);
@@ -139,7 +138,7 @@ export const commyDirectory = () => ({
         if (members === null) throw new APIError("BAD_REQUEST", { message: "That member count is not a known size" });
 
         const adapter = ctx.context.adapter;
-        const invite = await adapter.findOne({ model: INVITE_MODEL, where: [{ field: "code", value: code }] });
+        const invite = await findInvite(adapter, ctx.body.code);
         if (!invite || new Date(invite.expiresAt) < new Date() || invite.createdBy !== session.user.id) {
           throw new APIError("NOT_FOUND", { message: "Only your own invite links can be listed" });
         }
@@ -147,6 +146,7 @@ export const commyDirectory = () => ({
           throw new APIError("BAD_REQUEST", { message: "A listing needs an invite link that never expires" });
         }
 
+        const code = invite.code;
         const now = new Date();
         const fields = { key, name, description, category, members, updatedAt: now };
         const existing = await adapter.findOne({ model: MODEL, where: [{ field: "code", value: code }] });
@@ -176,10 +176,11 @@ export const commyDirectory = () => ({
         const session = await getSessionFromCtx(ctx);
         if (!session) throw new APIError("UNAUTHORIZED", { message: "Sign in to change Discover listings" });
         const adapter = ctx.context.adapter;
-        const code = normalizeLinkCode(ctx.body.code);
-        const row = code ? await adapter.findOne({ model: MODEL, where: [{ field: "code", value: code }] }) : null;
-        if (row && row.createdBy === session.user.id) {
-          await adapter.deleteMany({ model: MODEL, where: [{ field: "code", value: row.code }] });
+        for (const code of linkCodeSpellings(ctx.body.code)) {
+          const row = await adapter.findOne({ model: MODEL, where: [{ field: "code", value: code }] });
+          if (row && row.createdBy === session.user.id) {
+            await adapter.deleteMany({ model: MODEL, where: [{ field: "code", value: row.code }] });
+          }
         }
         return ctx.json({ success: true });
       },

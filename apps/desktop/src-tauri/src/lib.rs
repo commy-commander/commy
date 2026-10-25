@@ -7955,6 +7955,7 @@ pub fn run() {
             invite_link::create_invite_link,
             invite_link::list_invites,
             invite_link::revoke_invite,
+            invite_link::invite_full_link,
             invite_link::account_server_info,
             invite_link::take_pending_invite_link,
             directory::publish_listing,
