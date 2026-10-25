@@ -478,6 +478,26 @@ impl Client {
             .collect()
     }
 
+    pub fn own_pronouns(&self) -> Option<String> {
+        let me = self.me_id()?;
+        self.servers.lock().unwrap().values().find_map(|state| state.server.pronouns.get(&me).cloned())
+    }
+
+    pub fn pronoun_updates(&self, pronouns: Option<String>) -> Vec<(ServerId, WirePayload)> {
+        let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
+        let now = Utc::now();
+        let mut servers = self.servers.lock().unwrap();
+        servers
+            .iter_mut()
+            .filter(|(_, state)| state.server.is_current_member(profile.id))
+            .filter_map(|(server, state)| {
+                let me = act::Me { user: profile.id, perms: state.server.permissions_for(profile.id), now };
+                let event = ServerEvent::PronounsSet { server: *server, user: profile.id, pronouns: pronouns.clone() };
+                Some((*server, sign_own(state, *server, &me, &identity, event).ok()?))
+            })
+            .collect()
+    }
+
     pub fn group_invite_from(&self, server: ServerId, given: Option<(KeyId, ChannelSecret)>) -> Result<(ServerTicket, Option<(KeyId, ChannelSecret)>), String> {
         if !self.is_group(server) {
             return Err("that is not a group you are in".into());
@@ -1019,6 +1039,19 @@ mod tests {
         }
         let held = w.client.servers.lock().unwrap()[&w.server].profiles[&me.id].clone();
         assert_eq!(held.display_name.as_deref(), Some("Sammy"));
+    }
+
+    #[test]
+    fn pronouns_go_to_every_server_and_read_back() {
+        let w = world();
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        assert_eq!(w.client.own_pronouns(), None);
+        let sent = w.client.pronoun_updates(Some("they/them".into()));
+        assert_eq!(sent.len(), 1);
+        assert!(matches!(streams::event_of(&sent[0].1), Some((ServerEvent::PronounsSet { .. }, _))));
+        assert_eq!(w.client.own_pronouns().as_deref(), Some("they/them"));
+        w.client.pronoun_updates(None);
+        assert_eq!(w.client.own_pronouns(), None);
     }
 
     #[test]

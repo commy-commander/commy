@@ -1,4 +1,4 @@
-use commy_core::user::{is_emoji_like, rich_text_fits, valid_status_emoji, MAX_ABOUT_CHARS, MAX_PROFILE_EMOJIS, MAX_STATUS_CHARS};
+use commy_core::user::{clean_pronouns, is_emoji_like, rich_text_fits, valid_status_emoji, MAX_ABOUT_CHARS, MAX_PRONOUNS_CHARS, MAX_PROFILE_EMOJIS, MAX_STATUS_CHARS};
 use commy_core::{Avatar, Presence, UserProfile};
 
 use crate::act::Act;
@@ -51,6 +51,32 @@ pub fn apply_edit(profile: &mut UserProfile, edit: ProfileEdit) {
     profile.presence = edit.presence;
     if let Some(emoji) = edit.status_emoji {
         profile.status_emoji = emoji;
+    }
+}
+
+pub fn pronouns(raw: Option<&str>) -> Act<Option<String>> {
+    match raw.map(str::trim).filter(|p| !p.is_empty()) {
+        None => Ok(None),
+        Some(text) => clean_pronouns(text).map(Some).ok_or_else(|| format!("pronouns can be up to {MAX_PRONOUNS_CHARS} characters")),
+    }
+}
+
+pub fn future(at: Option<i64>, now: i64) -> Option<i64> {
+    at.filter(|t| *t > now)
+}
+
+pub fn expired(presence_until: Option<i64>, status_until: Option<i64>, now: i64) -> (bool, bool) {
+    (presence_until.is_some_and(|t| t <= now), status_until.is_some_and(|t| t <= now))
+}
+
+pub fn expire(profile: &mut UserProfile, presence: bool, status: bool) {
+    if presence {
+        profile.presence = Presence::Online;
+        profile.presence_until = None;
+    }
+    if status {
+        profile.custom_status = None;
+        profile.status_emoji = None;
     }
 }
 
@@ -144,6 +170,33 @@ mod tests {
         let edit = ProfileEdit { display_name: None, custom_status: None, presence: Presence::Idle, status_emoji: Some(None) };
         apply_edit(&mut profile, edit);
         assert_eq!(profile.status_emoji, None);
+    }
+
+    #[test]
+    fn pronouns_are_short_and_can_be_cleared() {
+        assert_eq!(pronouns(Some("  they / them ")), Ok(Some("they / them".into())));
+        assert_eq!(pronouns(Some("  ")), Ok(None));
+        assert_eq!(pronouns(None), Ok(None));
+        assert!(pronouns(Some(&"x".repeat(MAX_PRONOUNS_CHARS + 1))).is_err());
+    }
+
+    #[test]
+    fn a_timed_presence_or_status_runs_out() {
+        assert_eq!(future(Some(5), 10), None);
+        assert_eq!(future(Some(15), 10), Some(15));
+        assert_eq!(expired(Some(150), Some(200), 100), (false, false));
+        assert_eq!(expired(Some(150), Some(200), 150), (true, false));
+        assert_eq!(expired(Some(150), None, 200), (true, false));
+        let mut profile = UserProfile::new("sam");
+        profile.presence = Presence::DoNotDisturb;
+        profile.presence_until = Some(150);
+        profile.custom_status = Some("busy".into());
+        profile.status_emoji = Some("🔕".into());
+        expire(&mut profile, true, false);
+        assert_eq!((profile.presence, profile.presence_until), (Presence::Online, None));
+        assert_eq!(profile.custom_status.as_deref(), Some("busy"));
+        expire(&mut profile, false, true);
+        assert_eq!((profile.custom_status, profile.status_emoji), (None, None));
     }
 
     #[test]

@@ -3204,12 +3204,7 @@ async fn set_pronouns(
     pronouns: Option<String>,
 ) -> CmdResult<VoiceSettings> {
     let me = current_profile(&app)?;
-    let cleaned = match pronouns.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
-        None => None,
-        Some(text) => Some(commy_core::user::clean_pronouns(text).ok_or_else(|| {
-            format!("pronouns can be up to {} characters", commy_core::user::MAX_PRONOUNS_CHARS)
-        })?),
-    };
+    let cleaned = view::profile::pronouns(pronouns.as_deref())?;
     let settings = app.update_voice(|voice| voice.pronouns = cleaned.clone());
     if !app.safety.lock().unwrap().profile_policy.shows_details_to_servers() {
         return Ok(settings);
@@ -3328,10 +3323,9 @@ async fn set_status_expiry(
     status_until: Option<i64>,
 ) -> CmdResult<VoiceSettings> {
     let now = chrono::Utc::now().timestamp();
-    let future = |t: Option<i64>| t.filter(|t| *t > now);
     let settings = app.update_voice(|voice| {
-        voice.presence_until = future(presence_until);
-        voice.status_until = future(status_until);
+        voice.presence_until = view::profile::future(presence_until, now);
+        voice.status_until = view::profile::future(status_until, now);
     });
     let profile = {
         let mut guard = app.profile.lock().unwrap();
@@ -3350,10 +3344,7 @@ async fn set_status_expiry(
 }
 
 fn expired_status(voice: &VoiceSettings, now: i64) -> (bool, bool) {
-    (
-        voice.presence_until.is_some_and(|t| t <= now),
-        voice.status_until.is_some_and(|t| t <= now),
-    )
+    view::profile::expired(voice.presence_until, voice.status_until, now)
 }
 
 async fn run_status_expiry(handle: tauri::AppHandle) {
@@ -3376,14 +3367,7 @@ async fn run_status_expiry(handle: tauri::AppHandle) {
         let profile = {
             let mut guard = app.profile.lock().unwrap();
             let Some(profile) = guard.as_mut() else { continue };
-            if presence {
-                profile.presence = Presence::Online;
-                profile.presence_until = None;
-            }
-            if status {
-                profile.custom_status = None;
-                profile.status_emoji = None;
-            }
+            view::profile::expire(profile, presence, status);
             profile.clone()
         };
         publish_profile(&app, &handle, &profile).await;

@@ -194,6 +194,7 @@ impl Session {
                 beat_due = web_time::Instant::now() + SERVICE_BEAT;
                 self.say_here_everywhere();
             }
+            self.expire_status();
             for server in self.client.borrow().sweep_presence(Utc::now().timestamp_millis()) {
                 self.emit("server-event", json!(server.to_string()));
             }

@@ -37,9 +37,10 @@ impl Session {
         let Ok(account) = self.account() else { return };
         let safety = self.host.load(&account::safety_key(&account.id)).and_then(|raw| serde_json::from_str(&raw).ok());
         *self.dms.borrow_mut() = DmBook::new(safety.unwrap_or_default());
+        self.voice.borrow_mut().personal = self.host.load(&account::personal_key(&account.id)).and_then(|raw| serde_json::from_str(&raw).ok());
     }
 
-    fn save_safety(&self) {
+    pub(super) fn save_safety(&self) {
         let Ok(account) = self.account() else { return };
         let Ok(raw) = serde_json::to_string(&self.dms.borrow().safety) else { return };
         self.host.save(&account::safety_key(&account.id), &raw);

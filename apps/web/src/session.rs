@@ -177,6 +177,9 @@ struct Args {
     presence: Option<String>,
     status_emoji: Option<String>,
     about: Option<String>,
+    pronouns: Option<String>,
+    presence_until: Option<i64>,
+    status_until: Option<i64>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -403,6 +406,9 @@ impl Session {
             "set_about" => self.profile_command(cmd, args).await,
             "set_avatar" => self.profile_command(cmd, args).await,
             "set_profile_banner" => self.profile_command(cmd, args).await,
+            "set_pronouns" => self.profile_command(cmd, args).await,
+            "set_status_expiry" => self.profile_command(cmd, args).await,
+            "set_profile_privacy" => self.profile_command(cmd, args).await,
             "web_farewell" => {
                 self.hang_up_on_farewell().await;
                 self.say_goodbye();
