@@ -250,9 +250,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     let (mut state, profile, signing) = own_server_state(app, ticket.server_id, &ticket.server_name, joining).await?;
     let _ = state.apply(ServerEvent::MemberJoin { server: ticket.server_id, profile: profile.clone() });
     let summary = ServerSummary::from_state(&state, Some(profile.id));
-    if app.servers.lock().unwrap().insert(ticket.server_id, state).is_some() {
-        community_sync::rejoin(ticket.server_id);
-    }
+    app.servers.lock().unwrap().insert(ticket.server_id, state);
     for payload in catchup::await_snapshot(app, ticket.server_id, profile) {
         broadcast(app, ticket.server_id, payload).await;
     }

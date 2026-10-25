@@ -90,15 +90,6 @@ impl Cursors {
         self.announced.retain(|stream, _| streams.contains(stream));
     }
 
-    pub fn forget(&mut self, stream: StreamId) {
-        let hex = stream.to_hex();
-        self.after.remove(&hex);
-        self.backfilled.remove(&hex);
-        self.read_back.remove(&hex);
-        self.older_before.remove(&hex);
-        self.announced.remove(&hex);
-    }
-
     pub fn announce(&mut self, stream: StreamId, profile: &str) -> bool {
         self.announced.insert(stream.to_hex(), profile.to_string()).as_deref() != Some(profile)
     }
@@ -274,21 +265,6 @@ pub fn stop() {
             reading.task.abort();
         }
         UNSENT.lock().unwrap().clear();
-    }
-}
-
-pub fn rejoin(server: ServerId) {
-    let mut guard = LIVE.lock().unwrap();
-    let Some(live) = guard.as_mut() else { return };
-    live.snapshots.remove(&server);
-    live.parked.remove(&server);
-    live.greeted.remove(&server);
-    let Some(community) = live.communities.remove(&server) else { return };
-    for stream in community.wants.keys() {
-        live.caught_up.remove(stream);
-        live.seen.remove(stream);
-        live.fresh.remove(stream);
-        live.cursors.forget(*stream);
     }
 }
 
@@ -676,7 +652,7 @@ fn targets(live: &Live, server: ServerId, lane: Lane, key_event: bool) -> Vec<(S
     community
         .wants
         .iter()
-        .filter(|(_, want)| if key_event { want.lane == Lane::State } else { want.lane == lane && want.writes })
+        .filter(|(stream, want)| live.caught_up.contains(*stream) && if key_event { want.lane == Lane::State } else { want.lane == lane && want.writes })
         .map(|(stream, _)| (*stream, community.pool.client_for(*stream)))
         .collect()
 }
@@ -1130,6 +1106,9 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
     };
     save_soon();
     let (server, want, due, me, first, held, again) = found;
+    if first {
+        send_unsent();
+    }
     let empty = first && !held;
     let app = handle.state::<App>();
     if app.awaits_snapshot(server) {
@@ -1272,19 +1251,6 @@ mod tests {
         assert_eq!(serde_json::from_str::<Cursors>("{}").unwrap(), Cursors::default());
     }
 
-
-    #[test]
-    fn a_rejoined_stream_reads_from_the_start_again() {
-        let mut cursors = Cursors::default();
-        let (a, b) = (commy_sync::StreamSecret::random().keys().id, commy_sync::StreamSecret::random().keys().id);
-        cursors.advance(a, 9);
-        cursors.advance(b, 4);
-        cursors.backfilled.insert(a.to_hex());
-        cursors.announce(a, "me");
-        cursors.forget(a);
-        assert_eq!((cursors.after(a), cursors.after(b)), (0, 4));
-        assert!(cursors.backfilled.is_empty() && cursors.announced.is_empty());
-    }
     #[test]
     fn a_device_tells_each_stream_where_it_is_once_until_that_changes() {
         let mut cursors = Cursors::default();
