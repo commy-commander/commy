@@ -5351,6 +5351,14 @@ h3.md-heading { font-size: 1.1em; }
 .phone-back { display: none; }
 body.mobile-app .desktop-only { display: none !important; }
 
+@media (max-width: 1000px) and (min-width: 701px) {
+  .app { grid-template-columns: 208px minmax(0, 1fr) 232px; }
+  .app.dm-mode { grid-template-columns: 208px minmax(0, 1fr); }
+  .app.dm-mode .dm-profile { display: none; }
+  .app.members-collapsed:not(.dm-mode):not(.thread-open) { grid-template-columns: 208px minmax(0, 1fr); }
+  .app.thread-open { grid-template-columns: 208px minmax(0, 1fr) minmax(280px, 38vw); }
+}
+
 @media (max-width: 700px) {
   .app {
     grid-template-columns: minmax(0, 1fr) !important;
