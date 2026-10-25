@@ -461,17 +461,21 @@
       </div>
       <div class="signin-error hidden" id="signin-error"></div>
       <button class="btn-link signin-back hidden" id="signin-back" data-i18n="signin.back">Back to your accounts</button>
-      <label class="signin-server"><span data-i18n="signin.server">Account server</span>
-        <select id="signin-server-select" class="compact-select">
-          <option value="default" data-i18n="signin.server.default">commy.chat (free Commy service)</option>
-          <option value="custom" data-i18n="signin.server.custom">A self-hosted server...</option>
-        </select>
-      </label>
-      <div class="signin-server-edit hidden" id="signin-server-edit">
-        <input id="signin-server-input" type="text" autocomplete="off" spellcheck="false" placeholder="chat.example.com" />
-        <button class="btn-secondary btn-small" id="signin-server-save" data-i18n="signin.server.use">Use</button>
+      <div class="signin-server">
+        <span id="signin-server-label" data-i18n="signin.server">Account server</span>
+        <div class="signin-server-field">
+          <select id="signin-server-select" class="compact-select" aria-labelledby="signin-server-label">
+            <option value="default" data-i18n="signin.server.default">Commy.chat (free Commy service)</option>
+            <option value="custom" data-i18n="signin.server.custom">Self-hosted server…</option>
+          </select>
+          <div class="signin-server-edit hidden" id="signin-server-edit">
+            <input id="signin-server-input" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://chat.example.com" aria-labelledby="signin-server-label" aria-describedby="signin-server-note" />
+            <button class="btn-secondary btn-small" id="signin-server-save" data-i18n="signin.server.use">Use</button>
+            <button class="btn-link" id="signin-server-cancel" data-i18n="signin.cancel">Cancel</button>
+          </div>
+        </div>
       </div>
-      <div class="signin-server-note" id="signin-server-note" data-i18n="signin.server.note">Self-hosted servers work on their own, even if commy.chat is down. You can create an account there on the page that opens.</div>
+      <div class="signin-server-note" id="signin-server-note" role="status" aria-live="polite" data-i18n="signin.server.note">Self-hosted servers work on their own, even if Commy.chat is down. You can create an account there on the page that opens.</div>
     </div>
 
     <div class="modal modal-signin hidden" id="modal-claim">

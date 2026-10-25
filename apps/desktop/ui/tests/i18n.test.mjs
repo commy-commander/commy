@@ -46,7 +46,14 @@ test("interpolation fills named placeholders and leaves unknown ones visible", (
   assert.equal(interpolate("{a} and {b}", { a: "x" }), "x and {b}");
   assert.equal(interpolate("{a}", { a: 0 }), "0");
   assert.equal(interpolate("{a}", { a: null }), "{a}");
-  assert.equal(t("signin.server.test", { host: "auth.example" }, "es"), "auth.example (servidor de pruebas)");
+  assert.equal(t("signin.server.test", { host: "auth.example" }, "es"), "Servidor de pruebas de Commy (auth.example)");
+});
+
+test("every account server address problem the backend reports has a message", () => {
+  for (const problem of ["https", "login", "ip", "domain", "ending"]) {
+    const key = `signin.server.bad.${problem}`;
+    for (const code of Object.keys(locales)) assert.notEqual(t(key, {}, code), key, `${code} lacks ${key}`);
+  }
 });
 
 test("every shipped language covers every English key and adds none of its own", () => {
