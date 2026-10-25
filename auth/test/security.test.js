@@ -187,12 +187,14 @@ test("changing email is confirmed from the old inbox, then the new one", async (
 
   const confirmed = await call("GET", outbox[0].url, { cookie });
   assert.equal(confirmed.status, 302);
+  assert.equal(confirmed.location, "/account");
   assert.equal(outbox.length, 2);
   assert.equal(outbox[1].to, "new@example.test");
   assert.equal(storedEmail(db.user[0]), "old@example.test", "nothing changes until the new address answers");
 
   const verified = await call("GET", outbox[1].url, { cookie });
   assert.equal(verified.status, 302);
+  assert.equal(verified.location, "/account");
   assert.equal(storedEmail(db.user[0]), "new@example.test");
   assert.equal(db.user[0].emailVerified, true);
 });
@@ -289,4 +291,61 @@ test("linking a social login to an existing account sends a notice", async () =>
   assert.equal(sent.length, 1);
   assert.equal(sent[0].to, "me@example.test");
   assert.match(sent[0].subject, /Twitch sign-in was linked/);
+});
+
+function verifyTokenFor(email, expiresInSeconds) {
+  const now = Math.floor(Date.now() / 1000);
+  const part = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const unsigned = `${part({ alg: "HS256" })}.${part({ email, iat: now, exp: now + expiresInSeconds })}`;
+  return `${unsigned}.${createHmac("sha256", SECRET).update(unsigned).digest("base64url")}`;
+}
+
+function verifyResultOf(location) {
+  const page = new URL(location, ORIGIN);
+  return { path: page.pathname, result: page.searchParams.get("result"), next: page.searchParams.get("next") };
+}
+
+test("the sign-up email link lands on a page that says the email is confirmed", async () => {
+  await call("POST", "/sign-up/email", { body: { email: "fresh@example.test", password: PASSWORD, name: "Fresh", callbackURL: "/" } });
+  const link = outbox.at(-1).url;
+  const verify = await call("GET", link);
+  assert.equal(verify.status, 302);
+  assert.deepEqual(verifyResultOf(verify.location), { path: "/account/verify-email", result: "confirmed", next: "/" });
+  assert.equal(db.user[0].emailVerified, true);
+  const signedIn = await call("GET", "/get-session", { cookie: cookieHeader(verify.setCookie) });
+  assert.equal(signedIn.json.user.email, "fresh@example.test");
+
+  const again = await call("GET", link);
+  assert.deepEqual(verifyResultOf(again.location), { path: "/account/verify-email", result: "confirmed", next: "/" });
+});
+
+test("an expired or broken verify link says so and keeps the return path", async () => {
+  await call("POST", "/sign-up/email", { body: { email: "late@example.test", password: PASSWORD, name: "Late", callbackURL: "/web/" } });
+  const callback = `callbackURL=${encodeURIComponent("/web/")}`;
+
+  const expired = await call("GET", `/verify-email?token=${verifyTokenFor("late@example.test", -60)}&${callback}`);
+  assert.deepEqual(verifyResultOf(expired.location), { path: "/account/verify-email", result: "expired", next: "/web/" });
+
+  const broken = await call("GET", `/verify-email?token=${outbox.at(-1).url.split("token=")[1].split("&")[0].slice(0, -4)}&${callback}`);
+  assert.deepEqual(verifyResultOf(broken.location), { path: "/account/verify-email", result: "invalid", next: "/web/" });
+
+  const unknown = await call("GET", `/verify-email?token=${verifyTokenFor("nobody@example.test", 600)}&${callback}`);
+  assert.deepEqual(verifyResultOf(unknown.location), { path: "/account/verify-email", result: "invalid", next: "/web/" });
+  assert.equal(db.user[0].emailVerified, false);
+});
+
+test("verify links without a return path still answer with JSON", async () => {
+  const r = await call("GET", `/verify-email?token=${verifyTokenFor("late@example.test", -60)}`);
+  assert.equal(r.status, 401);
+  assert.equal(r.location, null);
+});
+
+test("a verify link for a two-step account asks for the code before the result page", async () => {
+  const cookie = await verifiedAccount("guarded@example.test");
+  await turnOnTwoFactor(cookie, PASSWORD);
+  db.user[0].emailVerified = false;
+  const verify = await call("GET", `/verify-email?token=${verifyTokenFor("guarded@example.test", 600)}&callbackURL=%2F`);
+  const page = new URL(verify.location, ORIGIN);
+  assert.equal(page.pathname, "/account/two-factor");
+  assert.deepEqual(verifyResultOf(page.searchParams.get("next")), { path: "/account/verify-email", result: "confirmed", next: "/" });
 });
