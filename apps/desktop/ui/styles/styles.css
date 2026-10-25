@@ -4662,6 +4662,7 @@ h3.md-heading { font-size: 1.1em; }
 
 .vp-status { cursor: pointer; }
 .vp-status:hover { text-decoration: underline; }
+#vp-signal[data-quality="good"] { color: var(--green); }
 #vp-signal[data-quality="ok"] { color: var(--yellow); }
 #vp-signal[data-quality="bad"] { color: var(--red); }
 .conn-pop {
