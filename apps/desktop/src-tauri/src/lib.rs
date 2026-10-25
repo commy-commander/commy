@@ -7195,9 +7195,6 @@ async fn run_net_loop(
             }
             NetEvent::CaughtUp { server, peer, report } => {
                 catchup::on_caught_up(&handle, server, peer, &report);
-                if !community_sync::follows(server) {
-                    community_sync::refresh_soon(&handle);
-                }
             }
             NetEvent::Wake { from } => wake::handle_wake(&handle, from),
         }

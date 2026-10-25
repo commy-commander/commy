@@ -283,10 +283,6 @@ pub async fn run(handle: AppHandle) {
     }
 }
 
-pub fn follows(server: ServerId) -> bool {
-    LIVE.lock().unwrap().as_ref().is_some_and(|live| live.communities.contains_key(&server))
-}
-
 pub fn refresh_soon(handle: &AppHandle) {
     if REFRESH_PENDING.swap(true, Ordering::SeqCst) {
         return;
