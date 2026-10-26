@@ -73,6 +73,7 @@ impl EchoCanceller {
         let apm = AudioProcessing::builder()
             .config(Config {
                 echo_canceller: Some(EchoSettings::default()),
+                pipeline: crate::full_band_pipeline(),
                 ..Default::default()
             })
             .capture_config(mono)
@@ -334,6 +335,32 @@ mod tests {
         }
         let kept = db(sent / mine);
         assert!(kept > -3.0, "my voice lost {:.1} dB", -kept);
+    }
+
+    #[test]
+    fn the_top_of_the_voice_band_is_kept() {
+        let mut aec = EchoCanceller::new();
+        let air = |n: usize| 0.05 * (std::f64::consts::TAU * 18_000.0 * n as f64 / f64::from(SAMPLE_RATE)).sin() as f32;
+        let mut kept = 0.0;
+        let mut sent = 0.0;
+        for frame in 0..600 {
+            let mic: Vec<f32> = (0..FRAME_SIZE).map(|i| air(frame * FRAME_SIZE + i) + my_voice(frame * FRAME_SIZE + i)).collect();
+            let mut out = vec![0.0; FRAME_SIZE];
+            aec.process(&mic, &mut out);
+            if frame >= 300 {
+                let at_18k = |s: &[f32]| {
+                    let (re, im) = s.iter().enumerate().fold((0.0f64, 0.0f64), |(re, im), (i, v)| {
+                        let w = std::f64::consts::TAU * 18_000.0 * i as f64 / f64::from(SAMPLE_RATE);
+                        (re + f64::from(*v) * w.cos(), im + f64::from(*v) * w.sin())
+                    });
+                    re * re + im * im
+                };
+                kept += at_18k(&mic);
+                sent += at_18k(&out);
+            }
+        }
+        let lost = -db(sent / kept);
+        assert!(lost < 3.0, "lost {lost:.1} dB at 18 kHz");
     }
 
     #[test]

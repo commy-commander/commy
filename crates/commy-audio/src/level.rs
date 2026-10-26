@@ -34,6 +34,7 @@ impl LevelControl {
                     adaptive_digital: Some(adaptive),
                     ..GainController2::default()
                 }),
+                pipeline: crate::full_band_pipeline(),
                 ..Default::default()
             })
             .capture_config(mono)

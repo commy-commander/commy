@@ -20,6 +20,13 @@ pub enum AudioError {
 
 pub const SILENCE_DB: f32 = -100.0;
 
+fn full_band_pipeline() -> sonora::config::Pipeline {
+    sonora::config::Pipeline {
+        maximum_internal_processing_rate: sonora::config::MaxProcessingRate::Rate48kHz,
+        ..Default::default()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProcessedFrame {
     pub samples: Vec<f32>,
