@@ -2,6 +2,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -56,6 +57,7 @@ pub fn launch_request(link: Option<&str>, minimized: bool) -> String {
 const REUSE_MIN_LIFE_LEFT: f64 = 0.85;
 
 static PENDING: Mutex<Option<String>> = Mutex::new(None);
+static STEPPING_ASIDE: AtomicBool = AtomicBool::new(false);
 static CREATED: Mutex<BTreeMap<String, (CreatedInvite, Instant)>> = Mutex::new(BTreeMap::new());
 
 #[derive(Deserialize)]
@@ -328,6 +330,14 @@ pub fn hand_to_running_instance(data_dir: &Path, request: &str) -> bool {
     BufReader::new(stream).read_line(&mut ack).is_ok() && ack.trim() == "ok"
 }
 
+pub fn step_aside() {
+    STEPPING_ASIDE.store(true, Ordering::SeqCst);
+}
+
+fn answer(line: &str) -> Option<Handoff> {
+    handoff(line).filter(|_| !STEPPING_ASIDE.load(Ordering::SeqCst))
+}
+
 fn deliver(handle: &AppHandle, link: String) {
     *PENDING.lock().unwrap() = Some(link.clone());
     crate::tray::show_main_window(handle);
@@ -374,7 +384,7 @@ pub fn start(handle: &AppHandle, data_dir: &Path, launch_link: Option<String>) {
             if reader.read_line(&mut line).is_err() {
                 continue;
             }
-            let request = handoff(&line);
+            let request = answer(&line);
             let mut stream = reader.into_inner().into_inner();
             let _ = stream.write_all(if request.is_some() { b"ok\n" } else { b"no\n" });
             match request {
@@ -463,5 +473,14 @@ mod tests {
         assert_eq!(handoff(&format!("{}\n", launch_request(Some(link), true))), Some(Handoff::Link(link.to_string())));
         assert_eq!(handoff("commy-link-v1 https://example.com"), None);
         assert_eq!(handoff("hello"), None);
+    }
+
+    #[test]
+    fn a_copy_that_is_restarting_lets_its_replacement_take_over() {
+        assert_eq!(answer(SHOW_REQUEST), Some(Handoff::Show));
+        step_aside();
+        assert_eq!(answer(SHOW_REQUEST), None);
+        assert_eq!(answer(HERE_REQUEST), None);
+        STEPPING_ASIDE.store(false, Ordering::SeqCst);
     }
 }

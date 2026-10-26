@@ -14,6 +14,7 @@ pub fn init() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 }
 
 pub fn restart(handle: &AppHandle) -> ! {
+    crate::invite_link::step_aside();
     #[cfg(target_os = "android")]
     if let Some(plugin) = PLUGIN.get() {
         match plugin.run_mobile_plugin::<serde_json::Value>("relaunch", serde_json::json!({})) {
