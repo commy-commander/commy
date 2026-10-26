@@ -8,9 +8,10 @@ arrange their channels, make and open invite links, manage roles, moderate
 members, set the rules, delete or hand over a server, and edit your profile
 (name, status, About Me, avatar, banner, pronouns, a status that runs out
 and who sees your profile details), set server, channel and role pictures,
-add custom emoji, stickers, emoticons and sounds, and play the soundboard.
-Links from another account server, events, video and screen sharing still
-need the desktop app.
+add custom emoji, stickers, emoticons and sounds, play the soundboard, plan
+events and RSVP, post in forums, run stage channels (speakers, raised hands,
+server mute and deafen), and set voice channel statuses. Links from another
+account server, video and screen sharing still need the desktop app.
 
 Pictures (avatars, server icons and banners, custom emoji) come from the sync
 service's encrypted picture copies when it has them, and otherwise straight

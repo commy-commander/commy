@@ -10,7 +10,7 @@ use commy_core::dm::{CallSignal, DmAction, DmMessage};
 use commy_core::{ChannelId, ServerEvent, ServerId, UserId};
 use commy_net::node::{MediaChannel, MediaGate};
 use commy_net::{DmEnvelope, MediaHello, MediaPacket, WirePayload};
-use commy_view::calls::{self, CallBook, CallStep, DmCall, DmCallView};
+use commy_view::calls::{self, CallBook, CallStep, DmCall, DmCallView, VoiceGates};
 use iroh::endpoint::Connection;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -53,6 +53,7 @@ struct Link {
     spoke_ms: i64,
     peers: HashMap<UserId, Peer>,
     generation: u64,
+    gates: VoiceGates,
 }
 
 struct Peer {
@@ -105,6 +106,7 @@ impl Link {
             spoke_ms: 0,
             peers: HashMap::new(),
             generation: 0,
+            gates: VoiceGates::default(),
         }
     }
 
@@ -276,6 +278,7 @@ impl Session {
         self.hang_up_media();
         let _ = self.host.start_voice().await;
         self.voice.borrow_mut().link = Some(Link::new(Some(server), channel, me));
+        self.refresh_gates();
         *self.admit.lock().unwrap() = Some(Gate::Room(channel));
         self.send_voice(server, &joined).await;
         self.say_here(server);
@@ -507,6 +510,7 @@ impl Session {
     }
 
     fn tend(self: &Rc<Self>, channel: ChannelId) {
+        self.refresh_gates();
         let Some(ours) = self.node_hex() else { return };
         let room = self.voice.borrow().link.as_ref().and_then(|link| link.server);
         if let Some(server) = room {
@@ -629,7 +633,9 @@ impl Session {
 
     fn heard(&self, user: UserId, generation: u64, packet: MediaPacket) -> bool {
         let mut voice = self.voice.borrow_mut();
-        let deafened = voice.deafened;
+        let now = now_ms();
+        let gated = voice.link.as_ref().is_some_and(|link| link.gates.deafened || link.gates.silenced(user, now));
+        let deafened = voice.deafened || gated;
         let peer = voice.link.as_mut().and_then(|link| link.peers.get_mut(&user)).filter(|peer| peer.generation == generation);
         let Some(peer) = peer else { return false };
         let pcm = match packet {
@@ -637,7 +643,7 @@ impl Session {
             MediaPacket::Voice { pcm, .. } => pcm,
             _ => return true,
         };
-        peer.heard_ms = now_ms();
+        peer.heard_ms = now;
         peer.frames_in += 1;
         let change = peer.theirs.push(&pcm);
         drop(voice);
@@ -659,7 +665,11 @@ impl Session {
             return;
         }
         let Some(link) = voice.link.as_mut() else { return };
-        link.spoke_ms = now_ms();
+        let now = now_ms();
+        if link.gates.keeps_me_quiet(link.me, now) {
+            return;
+        }
+        link.spoke_ms = now;
         let change = link.mine.push(pcm);
         let me = link.me;
         if let Some(data) = link.encoder.encode(pcm) {
@@ -676,6 +686,32 @@ impl Session {
         if let Some(speaking) = change {
             self.speaking(me, speaking);
         }
+    }
+
+    pub(super) fn refresh_gates(&self) {
+        let here = self.voice.borrow().link.as_ref().and_then(|link| Some((link.server?, link.channel, link.me)));
+        let Some((server, channel, me)) = here else { return };
+        let Ok(gates) = self.read_state(server, |state, _| Ok(VoiceGates::of(state, channel, me, Utc::now()))) else { return };
+        let was = {
+            let mut voice = self.voice.borrow_mut();
+            let Some(link) = voice.link.as_mut().filter(|link| link.server == Some(server) && link.channel == channel) else { return };
+            std::mem::replace(&mut link.gates, gates.clone())
+        };
+        if (was.muted, was.deafened) != (gates.muted, gates.deafened) {
+            self.emit("voice-moderated", json!({ "muted": gates.muted, "deafened": gates.deafened }));
+        }
+        if was.audience != gates.audience {
+            self.emit("stage-role", json!({ "audience": gates.audience }));
+        }
+        if gates.keeps_me_quiet(me, now_ms()) {
+            self.quiet_down(true);
+        }
+    }
+
+    pub(super) fn my_timeout(&self, event: &ServerEvent) -> Option<Option<i64>> {
+        let ServerEvent::MemberTimeout { user, until, .. } = event else { return None };
+        let me = self.client.borrow().profile().map(|p| p.id);
+        (me == Some(*user)).then(|| until.map(|t| t.timestamp_millis()))
     }
 
     fn voice_stats(&self) -> Result<Value, String> {
@@ -726,6 +762,7 @@ impl Session {
             let mut voice = self.voice.borrow_mut();
             let muted = voice.muted;
             let Some(link) = voice.link.as_mut() else { return };
+            let muted = muted || link.gates.keeps_me_quiet(link.me, now);
             let mine_quiet = (mine_now && muted) || now - link.spoke_ms >= QUIET_AFTER_MS;
             if mine_quiet && link.mine.reset() {
                 stopped.push(link.me);

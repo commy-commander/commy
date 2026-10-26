@@ -542,7 +542,7 @@ async fn send_message(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_inside_post(state, cid, message.reply_to)?;
+        view::forum::inside_post(state, cid, message.reply_to)?;
     }
     let card = preview_card(&app, sid, &message, preview_url.as_deref()).await;
     let carries_card = card.is_some();
@@ -4250,12 +4250,6 @@ fn require_rules_accepted(state: &ServerState, user: UserId) -> CmdResult<()> {
     Ok(())
 }
 
-fn parse_time(raw: &str) -> CmdResult<chrono::DateTime<chrono::Utc>> {
-    chrono::DateTime::parse_from_rfc3339(raw)
-        .map(|t| t.with_timezone(&chrono::Utc))
-        .map_err(|_| "invalid date or time".to_string())
-}
-
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn save_event(
@@ -4273,61 +4267,25 @@ async fn save_event(
     let me = current_profile(&app)?;
     let channel: Option<ChannelId> =
         channel_id.as_deref().filter(|c| !c.is_empty()).map(str::parse).transpose().map_err(err_to_string)?;
-    let creator = {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        let perms = our_permissions(&app, state, me.id);
-        let can_manage = perms.allows(Permissions::MANAGE_EVENTS);
-        let existing = event_id.as_ref().and_then(|id| state.server.events.iter().find(|e| &e.id == id));
-        match existing {
-            Some(e) if e.creator == me.id || can_manage => e.creator,
-            Some(_) => return Err("you can only edit events you created".into()),
-            None if perms.can_create_events() => me.id,
-            None => return Err("you do not have permission to create events".into()),
-        }
-    };
-    let event = commy_core::server::ScheduledEvent {
-        id: event_id.unwrap_or_else(|| MessageId::new().to_string()),
-        title: title.trim().to_string(),
-        description: description.trim().to_string(),
-        start: parse_time(&start)?,
-        end: end.filter(|e| !e.is_empty()).map(|e| parse_time(&e)).transpose()?,
-        channel,
-        creator,
-        rsvps: Vec::new(),
-    };
-    if !commy_core::server::valid_event(&event) {
-        return Err("events need a title (up to 100 characters), and the end must be after the start".into());
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::EventUpsert { server: sid, event }).await
+    let form = view::events::EventForm { id: event_id, title, description, start, end, channel };
+    let event = managed(&app, sid, me.id, |state, perms| view::events::save(state, perms, me.id, form, || MessageId::new().to_string()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
 async fn delete_event(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, event_id: String) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        let mine = state.server.events.iter().any(|e| e.id == event_id && e.creator == me.id);
-        if !mine {
-            require_permission(&app, state, me.id, Permissions::MANAGE_EVENTS, "delete events")?;
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::EventDelete { server: sid, event: event_id }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::events::delete(state, perms, me.id, event_id))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
 async fn set_rsvp(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, event_id: String, rsvp: Option<String>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let rsvp = match rsvp.as_deref() {
-        None | Some("") => None,
-        Some("going") => Some(commy_core::server::Rsvp::Going),
-        Some("interested") => Some(commy_core::server::Rsvp::Interested),
-        Some(_) => return Err("unknown RSVP".into()),
-    };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::EventRsvp { server: sid, event: event_id, user: me.id, rsvp }).await
+    let event = managed(&app, sid, me.id, |state, _| view::events::rsvp(state, me.id, event_id, rsvp.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[derive(serde::Deserialize)]
@@ -4384,22 +4342,8 @@ async fn set_voice_status(app: tauri::State<'_, App>, handle: tauri::AppHandle, 
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    if text.trim().chars().count() > commy_core::server::MAX_VOICE_STATUS_CHARS {
-        return Err(format!("keep the status to {} characters", commy_core::server::MAX_VOICE_STATUS_CHARS));
-    }
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        let channel = state.server.channel(cid).ok_or("unknown channel")?;
-        if channel.kind != ChannelKind::Voice {
-            return Err("only voice channels have a status".into());
-        }
-        let in_channel = state.voice_states.get(&me.id) == Some(&cid);
-        if !our_permissions(&app, state, me.id).can_set_voice_status(in_channel) {
-            return Err("join the channel to set its status".into());
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::VoiceStatusSet { server: sid, channel: cid, text, by: me.id }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::voice_status(state, perms, me.id, cid, text))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 fn refresh_priority_speakers(app: &App) {
@@ -4428,83 +4372,19 @@ fn refresh_priority_speakers(app: &App) {
     }
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct ForumTagInput {
-    pub id: Option<String>,
-    pub name: String,
-    pub emoji: Option<String>,
-}
-
-fn forum_channel(state: &ServerState, channel: ChannelId) -> CmdResult<&Channel> {
-    let found = state.server.channel(channel).ok_or("unknown channel")?;
-    if !found.is_forum() {
-        return Err("that is not a forum channel".into());
-    }
-    Ok(found)
-}
-
-fn parse_tag_picks(raw: Vec<String>) -> CmdResult<Vec<commy_core::TagId>> {
-    raw.iter().map(|t| t.parse::<commy_core::TagId>().map_err(|_| "that tag no longer exists".to_string())).collect()
-}
-
-fn require_known_tags(forum: &Channel, picks: &[commy_core::TagId]) -> CmdResult<()> {
-    if picks.iter().all(|pick| forum.tags.iter().any(|t| t.id == *pick)) {
-        Ok(())
-    } else {
-        Err("that tag is not on this forum".into())
-    }
-}
-
-fn forum_post_root(state: &ServerState, channel: ChannelId, from: MessageId) -> Option<MessageId> {
-    let messages = state.messages(channel);
-    let mut current = messages.iter().find(|m| m.id == from)?;
-    let mut seen = std::collections::HashSet::new();
-    while let Some(parent) = current.reply_to.and_then(|p| messages.iter().find(|m| m.id == p)) {
-        if !seen.insert(current.id) {
-            break;
-        }
-        current = parent;
-    }
-    Some(current.id)
-}
-
-fn require_inside_post(state: &ServerState, channel: ChannelId, reply_to: Option<MessageId>) -> CmdResult<()> {
-    let Some(forum) = state.server.channel(channel).filter(|c| c.is_forum()) else { return Ok(()) };
-    let Some(target) = reply_to else {
-        return Err("start a post to write in a forum channel".into());
-    };
-    match forum_post_root(state, channel, target) {
-        Some(root) if forum.posts.contains_key(&root) => Ok(()),
-        _ => Err("replies in a forum go inside a post".into()),
-    }
-}
-
 #[tauri::command]
-async fn set_forum_tags(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, channel_id: String, tags: Vec<ForumTagInput>) -> CmdResult<()> {
+async fn set_forum_tags(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    channel_id: String,
+    tags: Vec<view::forum::TagInput>,
+) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        forum_channel(state, cid)?;
-    }
-    let tags: Vec<commy_core::ForumTag> = tags
-        .into_iter()
-        .map(|t| commy_core::ForumTag {
-            id: t.id.and_then(|id| id.parse().ok()).unwrap_or_else(commy_core::TagId::new),
-            name: t.name,
-            emoji: t.emoji,
-        })
-        .collect();
-    let limits = format!(
-        "a forum can have up to {} tags of {} characters each",
-        commy_core::server::MAX_FORUM_TAGS,
-        commy_core::server::MAX_FORUM_TAG_CHARS
-    );
-    let tags = commy_core::server::clean_forum_tags(&tags).ok_or(limits)?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ForumTagsSet { server: sid, channel: cid, tags, by: me.id }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::forum::set_tags(state, perms, me.id, cid, tags))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4517,17 +4397,16 @@ async fn post_forum(
     content: String,
     tags: Vec<String>,
 ) -> CmdResult<MessageView> {
-    let title = commy_core::server::clean_post_title(&title)
-        .ok_or(format!("a post title is 1 to {} characters", commy_core::server::MAX_POST_TITLE_CHARS))?;
+    let title = view::forum::title(&title)?;
     let content = clean_message(&content)?;
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
-    let tags = parse_tag_picks(tags)?;
+    let tags = view::forum::tag_picks(&tags)?;
     let profile = current_profile(&app)?;
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_known_tags(forum_channel(state, cid)?, &tags)?;
+        view::forum::can_post(state, cid, &tags)?;
         require_can_post(&app, state, profile.id, cid)?;
     }
     let content = expressions_for_server(&app, sid, profile.id, content).await?;
@@ -4539,7 +4418,7 @@ async fn post_forum(
     }
     let root = message.id;
     let view = commit_message(&app, &handle, sid, message).await?;
-    let post = ServerEvent::ForumPost { server: sid, channel: cid, message: root, title, tags, by: profile.id };
+    let post = managed(&app, sid, profile.id, |state, _| Ok(view::forum::post(state, cid, root, title, tags, profile.id)))?;
     apply_and_broadcast(&app, &handle, sid, post).await?;
     Ok(view)
 }
@@ -4554,24 +4433,13 @@ async fn edit_forum_post(
     title: String,
     tags: Vec<String>,
 ) -> CmdResult<()> {
-    let title = commy_core::server::clean_post_title(&title)
-        .ok_or(format!("a post title is 1 to {} characters", commy_core::server::MAX_POST_TITLE_CHARS))?;
+    let title = view::forum::title(&title)?;
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
-    let tags = parse_tag_picks(tags)?;
+    let tags = view::forum::tag_picks(&tags)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        let forum = forum_channel(state, cid)?;
-        require_known_tags(forum, &tags)?;
-        let post = forum.posts.get(&mid).ok_or("that post no longer exists")?;
-        if post.author != me.id && !our_permissions(&app, state, me.id).allows(Permissions::MANAGE_MESSAGES) {
-            return Err("you can only change your own posts".into());
-        }
-    }
-    let post = ServerEvent::ForumPost { server: sid, channel: cid, message: mid, title, tags, by: me.id };
+    let post = managed(&app, sid, me.id, |state, perms| view::forum::edit_post(state, perms, me.id, cid, mid, title, tags))?;
     apply_and_broadcast(&app, &handle, sid, post).await
 }
 
@@ -4869,15 +4737,8 @@ async fn moderate_voice(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MUTE_MEMBERS, "server mute or deafen")?;
-        if user == state.server.owner {
-            return Err("the server owner cannot be muted or deafened".into());
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::VoiceModerate { server: sid, user, muted, deafened }).await?;
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::voice_moderate(state, perms, user, muted, deafened))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     refresh_forced_voice(&app, &handle);
     Ok(())
 }
@@ -4895,21 +4756,8 @@ async fn set_stage_speaker(
     let channel: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        if !our_permissions(&app, state, me.id).can_manage_stage() {
-            return Err("you need to manage channels or voice to choose stage speakers".into());
-        }
-        require_can_view(state, me.id, channel)?;
-        if !state.server.channel(channel).is_some_and(|c| c.is_stage()) {
-            return Err("that is not a stage channel".into());
-        }
-        if !state.server.is_member(user) {
-            return Err("that person is not a member of this server".into());
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::StageSet { server: sid, channel, user, speaker, by: me.id }).await?;
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::stage_speaker(state, perms, me.id, channel, user, speaker))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     refresh_forced_voice(&app, &handle);
     Ok(())
 }
@@ -4926,17 +4774,8 @@ async fn raise_hand(app: tauri::State<'_, App>, handle: tauri::AppHandle, server
         .filter(|s| s.server == sid)
         .map(|s| s.channel)
         .ok_or("you are not in a stage channel here")?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        if !state.server.channel(channel).is_some_and(|c| c.is_stage()) {
-            return Err("hands go up in stage channels".into());
-        }
-        if raised && !state.server.in_audience(channel, me.id) {
-            return Err("you already have the floor".into());
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::HandRaise { server: sid, channel, user: me.id, raised }).await
+    let event = managed(&app, sid, me.id, |state, _| view::moderate::raise_hand(state, me.id, channel, raised))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -6471,27 +6310,13 @@ async fn follow_voice_move(handle: &tauri::AppHandle, sid: ServerId, channel: Op
 fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let session = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
-    let server = session.map(|(sid, _)| sid);
-    let (muted, deafened, audience) = match (me, session) {
-        (Some(me), Some((sid, channel))) => app.servers.lock().unwrap().get(&sid).map_or((false, false, false), |s| {
-            (s.server.server_muted.contains(&me), s.server.server_deafened.contains(&me), s.server.in_audience(channel, me))
-        }),
-        _ => (false, false, false),
+    let gates = match (me, session) {
+        (Some(me), Some((sid, channel))) => app.servers.lock().unwrap().get(&sid).map(|s| view::calls::VoiceGates::of(s, channel, me, chrono::Utc::now())),
+        _ => None,
     };
-    if let Some(sid) = server {
-        let timeouts = {
-            let servers = app.servers.lock().unwrap();
-            servers.get(&sid).map(|s| {
-                s.server
-                    .timed_out_members(chrono::Utc::now())
-                    .into_iter()
-                    .map(|(user, timeout)| (user, timeout.until.timestamp_millis()))
-                    .collect::<std::collections::HashMap<_, _>>()
-            })
-        };
-        if let (Some(session), Some(timeouts)) = (app.voice_session.lock().unwrap().as_mut(), timeouts) {
-            session.set_timeouts(timeouts);
-        }
+    let (muted, deafened, audience) = gates.as_ref().map_or((false, false, false), |g| (g.muted, g.deafened, g.audience));
+    if let (Some(session), Some(gates)) = (app.voice_session.lock().unwrap().as_mut(), gates) {
+        session.set_timeouts(gates.timeouts);
     }
     let was = (
         app.forced_mute.swap(muted, std::sync::atomic::Ordering::Relaxed),
