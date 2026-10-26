@@ -4751,7 +4751,8 @@ function renderMembers() {
       avatar.appendChild(dot);
       row.appendChild(avatar);
       const meta = el("div");
-      const nameRow = el("div", "member-name", member.name);
+      const nameRow = el("div", "member-name");
+      nameRow.appendChild(el("span", "member-name-text", member.name));
       paintRole(nameRow, member.color);
       if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));

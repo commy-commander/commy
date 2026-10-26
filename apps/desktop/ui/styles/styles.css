@@ -2464,6 +2464,8 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .member { min-height: 44px; }
 .member > div:not(.avatar) { flex: 1; min-width: 0; }
 .member-name { display: flex; align-items: center; }
+.member-name-text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-name > :not(.member-name-text) { flex: 0 0 auto; }
 .member-name .live-badge { margin-left: 6px; }
 .user-sub.empty { min-height: 14px; }
 .member .user-sub { display: flex; align-items: center; gap: 4px; min-height: 14px; }
