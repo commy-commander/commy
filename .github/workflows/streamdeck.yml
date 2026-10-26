@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths: &plugin-paths
       - "apps/streamdeck/**"
+      - "apps/desktop/ui/scripts/sound-trim.js"
       - ".github/workflows/streamdeck.yml"
   pull_request:
     paths: *plugin-paths

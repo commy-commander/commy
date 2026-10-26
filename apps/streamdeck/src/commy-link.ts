@@ -10,6 +10,7 @@ import {
   type Reply,
   type Request,
   type SoundboardList,
+  type SoundChoice,
 } from "./protocol.ts";
 
 export type LinkState = "offline" | "waiting" | "declined" | "busy" | "unsupported" | "ready";
@@ -27,7 +28,10 @@ export type LinkOptions = {
   host?: string;
   connectTimeoutMs?: number;
   replyTimeoutMs?: number;
+  uploadTimeoutMs?: number;
 };
+
+export type NewSound = { server: string; name: string; emoji: string | null; data: string };
 
 type Waiter = { resolve: (reply: Reply) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 
@@ -38,11 +42,12 @@ export class CommyLink {
   #host: string;
   #connectTimeoutMs: number;
   #replyTimeoutMs: number;
+  #uploadTimeoutMs: number;
   #state: LinkState = "offline";
   #socket: net.Socket | null = null;
   #connecting: Promise<LinkState> | null = null;
   #listeners = new Set<(state: LinkState) => void>();
-  #plays = new Map<number, Waiter>();
+  #byId = new Map<number, Waiter>();
   #lists: Waiter[] = [];
   #nextId = 1;
 
@@ -53,6 +58,7 @@ export class CommyLink {
     this.#host = options.host ?? COMMY_HOST;
     this.#connectTimeoutMs = options.connectTimeoutMs ?? 1500;
     this.#replyTimeoutMs = options.replyTimeoutMs ?? 5000;
+    this.#uploadTimeoutMs = options.uploadTimeoutMs ?? 30000;
   }
 
   get state(): LinkState {
@@ -82,8 +88,18 @@ export class CommyLink {
   async play(sound: string, server?: string): Promise<void> {
     const id = this.#nextId++;
     const request: Request = server ? { type: "play", id, server, sound } : { type: "play", id, sound };
-    const reply = await this.#request(request, waiter => this.#plays.set(id, waiter));
+    const reply = await this.#request(request, waiter => this.#byId.set(id, waiter));
     if (reply.type === "failed") throw new Error(reply.message);
+  }
+
+  async addSound(sound: NewSound): Promise<SoundChoice> {
+    const id = this.#nextId++;
+    const request: Request = { type: "add_sound", id, server: sound.server, name: sound.name, data: sound.data };
+    if (sound.emoji) request.emoji = sound.emoji;
+    const reply = await this.#request(request, waiter => this.#byId.set(id, waiter), this.#uploadTimeoutMs);
+    if (reply.type === "failed") throw new Error(reply.message);
+    if (reply.type !== "added") throw new Error("unexpected reply");
+    return reply.sound;
   }
 
   close(): void {
@@ -159,9 +175,10 @@ export class CommyLink {
         this.#lists.shift()?.resolve(reply);
         break;
       case "played":
+      case "added":
       case "failed":
-        this.#plays.get(reply.id)?.resolve(reply);
-        this.#plays.delete(reply.id);
+        this.#byId.get(reply.id)?.resolve(reply);
+        this.#byId.delete(reply.id);
         break;
     }
   }
@@ -187,14 +204,14 @@ export class CommyLink {
     });
   }
 
-  #request(request: Request, enqueue: (waiter: Waiter) => void): Promise<Reply> {
+  #request(request: Request, enqueue: (waiter: Waiter) => void, timeoutMs = this.#replyTimeoutMs): Promise<Reply> {
     const socket = this.#socket;
     if (this.#state !== "ready" || !socket) return Promise.reject(new Error("Commy is not connected"));
     return new Promise<Reply>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#forget(waiter);
         reject(new Error("Commy did not answer"));
-      }, this.#replyTimeoutMs);
+      }, timeoutMs);
       const waiter: Waiter = {
         resolve: reply => {
           clearTimeout(timer);
@@ -213,13 +230,13 @@ export class CommyLink {
 
   #forget(waiter: Waiter): void {
     this.#lists = this.#lists.filter(w => w !== waiter);
-    for (const [id, w] of this.#plays) if (w === waiter) this.#plays.delete(id);
+    for (const [id, w] of this.#byId) if (w === waiter) this.#byId.delete(id);
   }
 
   #failAll(error: Error): void {
-    for (const waiter of [...this.#lists, ...this.#plays.values()]) waiter.reject(error);
+    for (const waiter of [...this.#lists, ...this.#byId.values()]) waiter.reject(error);
     this.#lists = [];
-    this.#plays.clear();
+    this.#byId.clear();
   }
 
   #setState(state: LinkState): void {

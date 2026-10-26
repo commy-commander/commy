@@ -11175,7 +11175,6 @@ const MAX_EMOJIS = 50;
 const MAX_STICKERS = 30;
 const MAX_EMOTICONS = 50;
 const MAX_SOUNDS = 24;
-const MAX_SOUND_SECONDS = 15;
 const expressionUrls = new Map();
 
 function expressionUrl(ref) {
@@ -11865,11 +11864,6 @@ function renderSoundboardSettings(server) {
 const SOUND_WAVE_BARS = 96;
 const soundDraft = { server: null, bytes: null, buffer: null, sel: null, emoji: null, afterSave: null, preview: null };
 
-async function decodeSoundSource(bytes) {
-  const ctx = new OfflineAudioContext(1, 1, SOUND_TRIM_RATE);
-  return ctx.decodeAudioData(bytes.slice().buffer);
-}
-
 async function openSoundUpload(server, afterSave = null) {
   if (!server) return;
   let picked;
@@ -12028,21 +12022,6 @@ function toggleSoundPreview() {
   tick();
 }
 
-async function trimmedSoundBytes() {
-  const { bytes, buffer, sel } = soundDraft;
-  if (keepsOriginalSound({ bytes, duration: buffer.duration, sel, maxSeconds: MAX_SOUND_SECONDS })) return bytes;
-  const seconds = sel.end - sel.start;
-  const channels = trimmedSoundChannels(seconds, buffer.numberOfChannels);
-  const ctx = new OfflineAudioContext(channels, Math.max(1, Math.round(seconds * SOUND_TRIM_RATE)), SOUND_TRIM_RATE);
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  source.connect(ctx.destination);
-  source.start(0, sel.start, seconds);
-  const out = await ctx.startRendering();
-  const data = Array.from({ length: channels }, (_, i) => out.getChannelData(i));
-  return encodeWav(fadeSoundEdges(data, SOUND_TRIM_RATE), SOUND_TRIM_RATE);
-}
-
 async function saveSoundDraft() {
   const { server, emoji, afterSave } = soundDraft;
   if (!server || !soundDraft.buffer) return;
@@ -12060,7 +12039,7 @@ async function saveSoundDraft() {
   stopSoundPreview();
   $("sound-save").disabled = true;
   try {
-    const bytes = await trimmedSoundBytes();
+    const bytes = await renderTrimmedSound(soundDraft.bytes, soundDraft.buffer, soundDraft.sel);
     if (bytes.length > SOUND_STORE_MAX_BYTES) throw new Error("That clip is still over 1 MB, pick a shorter part");
     await invoke("add_sound", { serverId: server.id, name, data: await blobToBase64(new Blob([bytes])), volume: 1, emoji });
     hideModals();

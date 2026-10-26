@@ -34,3 +34,33 @@ export function settingsFor(server, sound) {
     ? { server, sound: sound.name, label: sound.label, emoji: sound.emoji ?? null }
     : { server };
 }
+
+export const UPLOAD_PART_CHARS = 64 * 1024;
+
+export function uploadServers(list) {
+  const open = list.servers.filter(s => s.can_add);
+  const voice = open.filter(s => s.id === list.voice_server);
+  return [...voice, ...open.filter(s => s.id !== list.voice_server)].map(s => ({ value: s.id, label: s.name }));
+}
+
+export function preferredUploadServer(options, settings) {
+  const ids = options.map(o => o.value);
+  return ids.includes(settings.server) ? settings.server : (ids[0] ?? "");
+}
+
+export function uploadParts(data, size = UPLOAD_PART_CHARS) {
+  const parts = [];
+  for (let at = 0; at < data.length; at += size) parts.push(data.slice(at, at + size));
+  return parts.length ? parts : [""];
+}
+
+export function fileStem(fileName) {
+  const base = String(fileName || "").split(/[\\/]/).pop() ?? "";
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
+export function soundEmoji(text) {
+  const trimmed = String(text || "").trim();
+  return trimmed ? trimmed : null;
+}

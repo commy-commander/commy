@@ -8,9 +8,10 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 
-use super::protocol::{DenyReason, Reply, Request, SoundboardList, PROTOCOL_VERSION};
+use super::protocol::{DenyReason, Reply, Request, SoundChoice, SoundboardList, PROTOCOL_VERSION};
 
 pub const MAX_LINE_BYTES: u64 = 4096;
+pub const MAX_UPLOAD_LINE_BYTES: u64 = (commy_view::pictures::MAX_SOUND_BYTES as u64).div_ceil(3) * 4 + MAX_LINE_BYTES;
 pub const MAX_CONNECTIONS: usize = 4;
 pub const HELLO_WAIT: Duration = Duration::from_secs(5);
 pub const PAIRING_WAIT: Duration = Duration::from_secs(120);
@@ -33,6 +34,15 @@ pub trait Backend: Send + Sync + 'static {
     fn finish_pairing(&self, name: &str) -> String;
     fn soundboards(&self) -> SoundboardList;
     fn play(&self, server: Option<String>, sound: String) -> impl Future<Output = Result<(), String>> + Send;
+    fn add_sound(&self, upload: SoundUpload) -> impl Future<Output = Result<SoundChoice, String>> + Send;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SoundUpload {
+    pub server: String,
+    pub name: String,
+    pub emoji: Option<String>,
+    pub data: String,
 }
 
 pub async fn bind(port: u16) -> std::io::Result<TcpListener> {
@@ -62,7 +72,8 @@ pub async fn listen<B: Backend>(listener: TcpListener, backend: Arc<B>) {
 async fn serve<B: Backend>(stream: TcpStream, backend: Arc<B>) {
     let (read, mut write) = stream.into_split();
     let mut reader = BufReader::new(read);
-    let Ok(Some(Request::Hello { version, name, token })) = tokio::time::timeout(HELLO_WAIT, read_request(&mut reader)).await
+    let Ok(Some(Request::Hello { version, name, token })) =
+        tokio::time::timeout(HELLO_WAIT, read_request(&mut reader, MAX_LINE_BYTES)).await
     else {
         return;
     };
@@ -81,7 +92,7 @@ async fn serve<B: Backend>(stream: TcpStream, backend: Arc<B>) {
         return;
     }
     let mut last_play: Option<Instant> = None;
-    while let Some(request) = read_request(&mut reader).await {
+    while let Some(request) = read_request(&mut reader, MAX_UPLOAD_LINE_BYTES).await {
         if !backend.is_paired(&token) {
             let _ = send(&mut write, &Reply::Denied { reason: DenyReason::Removed }).await;
             return;
@@ -98,6 +109,12 @@ async fn serve<B: Backend>(stream: TcpStream, backend: Arc<B>) {
                         Ok(()) => Reply::Played { id },
                         Err(message) => Reply::Failed { id, message },
                     }
+                }
+            }
+            Request::AddSound { id, server, name, emoji, data } => {
+                match backend.add_sound(SoundUpload { server: server.clone(), name, emoji, data }).await {
+                    Ok(sound) => Reply::Added { id, server, sound },
+                    Err(message) => Reply::Failed { id, message },
                 }
             }
         };
@@ -136,9 +153,9 @@ where
     Some(token)
 }
 
-async fn read_request<R: AsyncBufRead + Unpin>(reader: &mut R) -> Option<Request> {
+async fn read_request<R: AsyncBufRead + Unpin>(reader: &mut R, limit: u64) -> Option<Request> {
     let mut line = String::new();
-    let read = reader.take(MAX_LINE_BYTES).read_line(&mut line).await.ok()?;
+    let read = reader.take(limit).read_line(&mut line).await.ok()?;
     if read == 0 || !line.ends_with('\n') {
         return None;
     }
@@ -163,6 +180,7 @@ mod tests {
         asked: Mutex<Vec<String>>,
         withdrawn: Mutex<Vec<u64>>,
         played: Mutex<Vec<(Option<String>, String)>>,
+        added: Mutex<Vec<SoundUpload>>,
     }
 
     impl Backend for FakeApp {
@@ -197,7 +215,7 @@ mod tests {
             SoundboardList {
                 voice_server: Some("s1".into()),
                 defaults: vec![SoundChoice { name: "default:airhorn".into(), label: "Airhorn".into(), emoji: None }],
-                servers: vec![SoundboardServer { id: "s1".into(), name: "Friends".into(), can_play: true, sounds: vec![] }],
+                servers: vec![SoundboardServer { id: "s1".into(), name: "Friends".into(), can_play: true, can_add: true, sounds: vec![] }],
             }
         }
 
@@ -207,6 +225,15 @@ mod tests {
             }
             self.played.lock().unwrap().push((server, sound));
             Ok(())
+        }
+
+        async fn add_sound(&self, upload: SoundUpload) -> Result<SoundChoice, String> {
+            if upload.server != "s1" {
+                return Err("you do not have permission to add sounds".into());
+            }
+            let sound = SoundChoice { name: upload.name.clone(), label: upload.name.clone(), emoji: upload.emoji.clone() };
+            self.added.lock().unwrap().push(upload);
+            Ok(sound)
         }
     }
 
@@ -377,6 +404,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_paired_deck_can_upload_a_full_size_sound() {
+        let (port, app) = start().await;
+        app.tokens.lock().unwrap().push("known".into());
+        let mut client = Client::connect(port).await;
+        client.send(r#"{"type":"hello","version":1,"token":"known"}"#).await;
+        client.recv().await.unwrap();
+        let data = "A".repeat((commy_view::pictures::MAX_SOUND_BYTES / 3 + 1) * 4);
+        let request = serde_json::json!({ "type": "add_sound", "id": 4, "server": "s1", "name": "boom", "emoji": "💥", "data": data });
+        client.send(&request.to_string()).await;
+        assert_eq!(
+            client.recv().await.unwrap(),
+            serde_json::json!({ "type": "added", "id": 4, "server": "s1", "sound": { "name": "boom", "label": "boom", "emoji": "💥" } })
+        );
+        assert_eq!(app.added.lock().unwrap()[0].data.len(), data.len());
+
+        client.send(r#"{"type":"add_sound","id":5,"server":"s2","name":"boom","data":"AA=="}"#).await;
+        assert_eq!(
+            client.recv().await.unwrap(),
+            serde_json::json!({ "type": "failed", "id": 5, "message": "you do not have permission to add sounds" })
+        );
+    }
+
+    #[tokio::test]
+    async fn uploads_need_a_paired_deck() {
+        let (port, app) = start().await;
+        let mut client = Client::connect(port).await;
+        client.send(r#"{"type":"add_sound","id":1,"server":"s1","name":"boom","data":"AA=="}"#).await;
+        assert_eq!(client.recv().await, None);
+        assert!(app.added.lock().unwrap().is_empty());
+        assert!(app.asked.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn a_newer_protocol_is_refused() {
         let (port, app) = start().await;
         let mut client = Client::connect(port).await;
@@ -390,6 +450,17 @@ mod tests {
         let (port, _app) = start().await;
         let mut client = Client::connect(port).await;
         client.send(&"x".repeat(MAX_LINE_BYTES as usize + 10)).await;
+        assert_eq!(client.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn an_upload_past_the_sound_limit_closes_the_connection() {
+        let (port, app) = start().await;
+        app.tokens.lock().unwrap().push("known".into());
+        let mut client = Client::connect(port).await;
+        client.send(r#"{"type":"hello","version":1,"token":"known"}"#).await;
+        client.recv().await.unwrap();
+        client.send(&"x".repeat(MAX_UPLOAD_LINE_BYTES as usize + 10)).await;
         assert_eq!(client.recv().await, None);
     }
 }

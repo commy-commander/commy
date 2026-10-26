@@ -1,6 +1,7 @@
 const SOUND_STORE_MAX_BYTES = 1024 * 1024;
 const SOUND_SOURCE_MAX_BYTES = 8 * 1024 * 1024;
 const SOUND_SOURCE_MAX_SECONDS = 600;
+const MAX_SOUND_SECONDS = 15;
 const SOUND_TRIM_RATE = 32000;
 const SOUND_TRIM_MIN_SECONDS = 0.3;
 const SOUND_TRIM_FADE_SECONDS = 0.004;
@@ -114,6 +115,25 @@ function encodeWav(channels, rate) {
   return out;
 }
 
+async function decodeSoundSource(bytes) {
+  const ctx = new OfflineAudioContext(1, 1, SOUND_TRIM_RATE);
+  return ctx.decodeAudioData(bytes.slice().buffer);
+}
+
+async function renderTrimmedSound(bytes, buffer, sel) {
+  if (keepsOriginalSound({ bytes, duration: buffer.duration, sel, maxSeconds: MAX_SOUND_SECONDS })) return bytes;
+  const seconds = sel.end - sel.start;
+  const channels = trimmedSoundChannels(seconds, buffer.numberOfChannels);
+  const ctx = new OfflineAudioContext(channels, Math.max(1, Math.round(seconds * SOUND_TRIM_RATE)), SOUND_TRIM_RATE);
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  source.start(0, sel.start, seconds);
+  const out = await ctx.startRendering();
+  const data = Array.from({ length: channels }, (_, i) => out.getChannelData(i));
+  return encodeWav(fadeSoundEdges(data, SOUND_TRIM_RATE), SOUND_TRIM_RATE);
+}
+
 function formatTrimTime(secs) {
   const safe = Number.isFinite(secs) && secs > 0 ? secs : 0;
   const tenths = Math.floor(safe * 10 + 1e-6);
@@ -128,7 +148,7 @@ function soundNameDraft(text) {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    SOUND_STORE_MAX_BYTES, SOUND_SOURCE_MAX_BYTES, SOUND_SOURCE_MAX_SECONDS, SOUND_TRIM_RATE, SOUND_TRIM_MIN_SECONDS,
+    SOUND_STORE_MAX_BYTES, SOUND_SOURCE_MAX_BYTES, SOUND_SOURCE_MAX_SECONDS, MAX_SOUND_SECONDS, SOUND_TRIM_RATE, SOUND_TRIM_MIN_SECONDS,
     isStorableSound, initialSoundSelection, moveSoundSelection, keepsOriginalSound, trimmedSoundChannels,
     soundWaveformPeaks, fadeSoundEdges, encodeWav, formatTrimTime, soundNameDraft,
   };

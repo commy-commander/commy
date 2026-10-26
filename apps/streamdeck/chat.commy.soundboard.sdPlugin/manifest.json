@@ -3,7 +3,7 @@
   "Name": "Commy",
   "Version": "0.1.0.0",
   "Author": "Commy Commander",
-  "Description": "Play sounds from your Commy soundboard in the voice channel you are in.",
+  "Description": "Play sounds from your Commy soundboard in the voice channel you are in, and add new ones.",
   "URL": "https://commy.chat",
   "UUID": "chat.commy.soundboard",
   "Category": "Commy",

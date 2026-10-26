@@ -109,6 +109,29 @@ test("a stored token is sent and plays resolve or fail with Commy's reason", asy
   commy.close();
 });
 
+test("adding a sound sends it with its server and returns what Commy stored", async () => {
+  const commy = await fakeCommy((request, reply) => {
+    if (request.type === "hello") reply({ type: "ready", version: 1 });
+    if (request.type === "add_sound" && request.server === "s1") {
+      reply({ type: "added", id: request.id, server: "s1", sound: { name: "boom", label: "boom", emoji: "💥" } });
+    }
+    if (request.type === "add_sound" && request.server === "s2") {
+      reply({ type: "failed", id: request.id, message: "you do not have permission to add sounds" });
+    }
+  });
+  const link = new CommyLink({ tokens: memoryTokens({ [commy.port]: "known" }), ports: [commy.port] });
+  assert.equal(await link.connect(), "ready");
+  const sound = await link.addSound({ server: "s1", name: "Boom", emoji: "💥", data: "AA==" });
+  assert.deepEqual(sound, { name: "boom", label: "boom", emoji: "💥" });
+  await assert.rejects(link.addSound({ server: "s2", name: "boom", emoji: null, data: "AA==" }), /permission/);
+  assert.deepEqual(commy.seen.slice(1), [
+    { type: "add_sound", id: 1, server: "s1", name: "Boom", data: "AA==", emoji: "💥" },
+    { type: "add_sound", id: 2, server: "s2", name: "boom", data: "AA==" },
+  ]);
+  link.close();
+  commy.close();
+});
+
 test("a declined deck reports it and a removed one forgets its token", async () => {
   const declining = await fakeCommy((request, reply, socket) => {
     reply({ type: "denied", reason: "declined" });

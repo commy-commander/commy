@@ -23,6 +23,14 @@ pub enum Request {
         server: Option<String>,
         sound: String,
     },
+    AddSound {
+        id: u64,
+        server: String,
+        name: String,
+        #[serde(default)]
+        emoji: Option<String>,
+        data: String,
+    },
 }
 
 impl Request {
@@ -49,6 +57,7 @@ pub enum Reply {
     Denied { reason: DenyReason },
     Soundboards(SoundboardList),
     Played { id: u64 },
+    Added { id: u64, server: String, sound: SoundChoice },
     Failed { id: u64, message: String },
 }
 
@@ -72,6 +81,7 @@ pub struct SoundboardServer {
     pub id: String,
     pub name: String,
     pub can_play: bool,
+    pub can_add: bool,
     pub sounds: Vec<SoundChoice>,
 }
 
@@ -145,7 +155,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hello_list_and_play_parse() {
+    fn hello_list_play_and_add_sound_parse() {
         assert_eq!(
             Request::parse(r#"{"type":"hello","version":1,"name":"Deck","token":"abc"}"#),
             Some(Request::Hello { version: 1, name: Some("Deck".into()), token: Some("abc".into()) })
@@ -159,6 +169,10 @@ mod tests {
             Request::parse(r#"{"type":"play","id":7,"sound":"default:airhorn"}"#),
             Some(Request::Play { id: 7, server: None, sound: "default:airhorn".into() })
         );
+        assert_eq!(
+            Request::parse(r#"{"type":"add_sound","id":8,"server":"s1","name":"boom","emoji":"💥","data":"AA=="}"#),
+            Some(Request::AddSound { id: 8, server: "s1".into(), name: "boom".into(), emoji: Some("💥".into()), data: "AA==".into() })
+        );
     }
 
     #[test]
@@ -167,6 +181,7 @@ mod tests {
         assert_eq!(Request::parse("POST /play HTTP/1.1"), None);
         assert_eq!(Request::parse(r#"{"type":"shutdown"}"#), None);
         assert_eq!(Request::parse(r#"{"type":"play","sound":"x"}"#), None);
+        assert_eq!(Request::parse(r#"{"type":"add_sound","id":1,"name":"boom","data":"AA=="}"#), None);
         assert_eq!(Request::parse(""), None);
     }
 
