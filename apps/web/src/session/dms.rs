@@ -199,6 +199,7 @@ impl Session {
             }
             Received::Invited { ticket, key, .. } => self.join_group(&ticket, key),
             Received::Call { from, node, call, signal } => self.on_call_signal(from, node, call, signal),
+            Received::Report(notice) => self.emit("report-received", notice),
             Received::Dropped => {}
         }
     }
@@ -375,6 +376,32 @@ impl Session {
         }
     }
 
+    async fn report_user(&self, args: Args) -> Result<(), String> {
+        let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+        let reported: UserId = parse(args.user_id.as_ref(), "user")?;
+        let channel = args.channel_id.as_ref().map(|c| parse(Some(c), "channel")).transpose()?;
+        let message = args.message_id.as_ref().map(|m| parse(Some(m), "message")).transpose()?;
+        let (me, identity) = self.me_and_key().ok_or("Your servers are not unlocked yet")?;
+        let node = self.node_hex().ok_or("Your servers are not unlocked yet")?;
+        let form = safety::ReportForm { reported, channel, message, reason: args.reason.unwrap_or_default(), note: args.note.unwrap_or_default() };
+        let (owner, report) = {
+            let client = self.client.borrow();
+            let servers = client.servers.lock().unwrap();
+            let state = servers.get(&server).ok_or("This server is still loading")?;
+            let name = dm_book::known_name(&self.dms.borrow().store, &servers, reported);
+            let keys = commy_view::keys::KeyHolder::new(Some((me.id, identity.clone())));
+            safety::report(state, &keys, &me, form, name, Utc::now())?
+        };
+        let mut sent = DmMessage::new(me.id, owner, report.encode());
+        sent.sign(&node, &identity);
+        let envelope = DmEnvelope::new(sent, self.profile_for(&me, owner));
+        if self.deliver_dm(owner, &envelope).await {
+            Ok(())
+        } else {
+            Err("the server owner is offline right now; try again later".into())
+        }
+    }
+
     fn threads(&self) -> Vec<DmThreadView> {
         let Some((me, _)) = self.me_and_key() else { return Vec::new() };
         let client = self.client.borrow();
@@ -534,6 +561,23 @@ impl Session {
                 }
                 self.save_safety();
                 self.emit("dm-changed", json!(user.to_string()));
+                Ok(Value::Null)
+            }
+            "report_user" => self.report_user(args).await.map(|_| Value::Null),
+            "list_reports" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                let me = self.me_and_key().ok_or("Your servers are not unlocked yet")?.0.id;
+                let owner = self.read_state(server, |state, _| Ok(state.server.owner))?;
+                if owner != me {
+                    return Err("only the server owner receives reports".into());
+                }
+                let id = server.to_string();
+                to_json(&self.dms.borrow().safety.reports.iter().filter(|r| r.server == id).cloned().collect::<Vec<_>>())
+            }
+            "dismiss_report" => {
+                let id = args.report_id.unwrap_or_default();
+                self.dms.borrow_mut().safety.reports.retain(|r| r.id != id);
+                self.save_safety();
                 Ok(Value::Null)
             }
             "get_safety" => Ok(self.safety_view()),

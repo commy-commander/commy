@@ -30,6 +30,7 @@ use crate::store::WebStore;
 
 mod calls;
 mod community;
+mod directory;
 mod dms;
 mod expressions;
 mod files;
@@ -125,7 +126,9 @@ struct Args {
     from: Option<String>,
     query: Option<String>,
     page: Option<u32>,
-    category: Option<u32>,
+    category: Option<Value>,
+    q: Option<String>,
+    cursor: Option<String>,
     mentions: Option<String>,
     offset: Option<usize>,
     channels: Option<std::collections::BTreeMap<String, commy_view::reads::ReadMark>>,
@@ -169,11 +172,12 @@ struct Args {
     hoist: Option<bool>,
     mentionable: Option<bool>,
     held: Option<bool>,
-    grant: Option<bool>,
+    grant: Option<Value>,
+    revoke: Option<Vec<String>>,
     access: Option<String>,
     restricted: Option<bool>,
     nickname: Option<String>,
-    rules: Option<String>,
+    rules: Option<Value>,
     minutes: Option<u32>,
     limit: Option<u32>,
     seconds: Option<u32>,
@@ -205,6 +209,12 @@ struct Args {
     tags: Option<Value>,
     speaker: Option<bool>,
     raised: Option<bool>,
+    onboarding: Option<Value>,
+    enabled: Option<bool>,
+    reason: Option<String>,
+    report_id: Option<String>,
+    due: Option<i64>,
+    id: Option<String>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -311,7 +321,7 @@ impl Session {
                 to_json(&found.map(catalog::safe_stickers))
             }
             "search_emoji_catalog" => {
-                let params = catalog::emoji_params(args.query.as_deref().unwrap_or(""), args.category, args.page);
+                let params = catalog::emoji_params(args.query.as_deref().unwrap_or(""), args.category.as_ref().and_then(Value::as_u64).map(|c| c as u32), args.page);
                 let found: Option<catalog::EmojiPage> = self.search("emojis", &params).await?;
                 to_json(&catalog::safe_emojis(found.ok_or("This site does not offer emoji search")?))
             }
@@ -329,6 +339,18 @@ impl Session {
                 to_json(&self.change_pins(|pins| pins.set_dm(&user, args.pinned.unwrap_or(true)))?)
             }
             "saved_list" => to_json(&self.saved()),
+            "reminder_set" => {
+                let entry: commy_view::saved::Entry = args.entry.ok_or("Pick a message for the reminder")?;
+                let due = args.due.ok_or("Pick when to be reminded")?;
+                to_json(&self.change_reminders(|store| store.set_reminder(entry, due, Utc::now().timestamp_millis()).map(|_| ()))?)
+            }
+            "reminder_cancel" => {
+                let id = args.id.unwrap_or_default();
+                to_json(&self.change_reminders(|store| {
+                    store.cancel_reminder(&id);
+                    Ok(())
+                })?)
+            }
             "saved_set" => {
                 let entry: commy_view::saved::Entry = args.entry.ok_or("Pick a message to save")?;
                 to_json(&self.set_saved(entry, args.saved.unwrap_or(true))?)
@@ -427,6 +449,10 @@ impl Session {
             "clear_timeout" => self.server_command(cmd, args).await,
             "set_nickname" => self.server_command(cmd, args).await,
             "set_rules" => self.server_command(cmd, args).await,
+            "set_onboarding" | "answer_onboarding" | "set_automod" | "set_activities_enabled" => self.server_command(cmd, args).await,
+            "export_server_template" => self.server_command(cmd, args).await,
+            "browse_directory" | "server_listing" | "publish_listing" | "unlist_server" => self.directory_command(cmd, args).await,
+            "report_user" | "list_reports" | "dismiss_report" => self.dm_command(cmd, args).await,
             "accept_rules" => self.server_command(cmd, args).await,
             "set_afk_channel" => self.server_command(cmd, args).await,
             "set_server_afk_timeout" => self.server_command(cmd, args).await,
@@ -562,6 +588,19 @@ impl Session {
             self.host.save(&account::pins_key(&account.id), &serde_json::to_string(&pins).map_err(|e| e.to_string())?);
         }
         Ok(pins)
+    }
+
+    fn reminders(&self) -> Vec<commy_view::saved::Reminder> {
+        let Ok(account) = self.account() else { return Vec::new() };
+        self.host.load(&account::reminders_key(&account.id)).and_then(|raw| serde_json::from_str(&raw).ok()).unwrap_or_default()
+    }
+
+    fn change_reminders(&self, edit: impl FnOnce(&mut commy_view::saved::SavedStore) -> Result<(), String>) -> Result<commy_view::saved::SavedStore, String> {
+        let account = self.account()?;
+        let mut store = commy_view::saved::SavedStore { reminders: self.reminders(), ..Default::default() };
+        edit(&mut store)?;
+        self.host.save(&account::reminders_key(&account.id), &serde_json::to_string(&store.reminders).map_err(|e| e.to_string())?);
+        Ok(self.saved())
     }
 
     fn account(&self) -> Result<AccountUser, String> {

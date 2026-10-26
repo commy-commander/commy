@@ -3,7 +3,7 @@ use commy_core::server::{
     clean_nickname, valid_hex_color, valid_rules, MAX_ACCESS_ROLES, MAX_NICKNAME_CHARS, MAX_SLOW_MODE, MAX_TIMEOUT_SECS, MAX_USER_LIMIT,
     MAX_VOICE_STATUS_CHARS, SERVER_AFK_MINUTES,
 };
-use commy_core::{ChannelId, ChannelKind, Permissions, RoleId, ServerEvent, ServerState, UserId};
+use commy_core::{AutoMod, ChannelId, ChannelKind, Onboarding, Permissions, RoleId, ServerEvent, ServerState, UserId};
 
 use crate::act::{can_view, voice_full, Act};
 use crate::manage::need;
@@ -245,6 +245,48 @@ pub fn voice_status(state: &ServerState, perms: Permissions, me: UserId, channel
     Ok(ServerEvent::VoiceStatusSet { server: state.server.id, channel, text, by: me })
 }
 
+pub fn onboarding(state: &ServerState, perms: Permissions, onboarding: Option<Onboarding>) -> Act<ServerEvent> {
+    need(perms, Permissions::MANAGE_SERVER, "change the onboarding questions")?;
+    let roles = &state.server.roles;
+    let onboarding = onboarding
+        .map(|o| o.tidied(|r| commy_core::onboarding::grantable(roles, r)))
+        .filter(|o| !o.questions.is_empty());
+    if onboarding.as_ref().is_some_and(|o| !o.fits()) {
+        use commy_core::onboarding::{MAX_ROLE_REFS, MAX_TEXT_BYTES};
+        return Err(format!(
+            "keep the questions and answers under {MAX_TEXT_BYTES} characters in all, with at most {MAX_ROLE_REFS} roles across every answer"
+        ));
+    }
+    Ok(ServerEvent::OnboardingSet { server: state.server.id, onboarding })
+}
+
+pub fn answer_onboarding(state: &ServerState, me: UserId, grant: Vec<RoleId>, revoke: Vec<RoleId>) -> Act<Vec<ServerEvent>> {
+    if !grant.iter().chain(&revoke).all(|r| commy_core::onboarding::may_self_assign(&state.server, me, *r)) {
+        return Err("this server's questions do not hand out that role".into());
+    }
+    let server = state.server.id;
+    let revoked = revoke.into_iter().map(|role| ServerEvent::RoleUnassign { server, user: me, role });
+    let granted = grant.into_iter().map(|role| ServerEvent::RoleAssign { server, user: me, role });
+    Ok(revoked.chain(granted).collect())
+}
+
+pub fn automod(state: &ServerState, perms: Permissions, rules: AutoMod) -> Act<ServerEvent> {
+    need(perms, Permissions::MANAGE_SERVER, "change auto moderation")?;
+    let rules = rules.tidied();
+    if !rules.valid() {
+        use commy_core::automod::{MAX_BLOCKED_TERMS, MAX_TERMS_BYTES, MAX_TERM_BYTES};
+        return Err(format!(
+            "keep it to {MAX_BLOCKED_TERMS} blocked words of up to {MAX_TERM_BYTES} characters each, {MAX_TERMS_BYTES} characters in all"
+        ));
+    }
+    Ok(ServerEvent::AutoModSet { server: state.server.id, rules })
+}
+
+pub fn activities(state: &ServerState, perms: Permissions, enabled: bool) -> Act<ServerEvent> {
+    need(perms, Permissions::MANAGE_SERVER, "turn Activities on or off")?;
+    Ok(ServerEvent::ActivitiesSet { server: state.server.id, enabled })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,5 +419,19 @@ mod tests {
         assert!(matches!(voice_status(&state, theirs, member, general, "hi".into()), Ok(ServerEvent::VoiceStatusSet { server, .. }) if server == sid));
         assert!(voice_status(&state, theirs, member, general, "x".repeat(MAX_VOICE_STATUS_CHARS + 1)).is_err());
         assert_eq!(voice_status(&state, mine, owner, stage_id, "hi".into()).unwrap_err(), "only voice channels have a status");
+    }
+
+    #[test]
+    fn server_managers_set_onboarding_automod_and_activities() {
+        let (state, owner, member) = hangout();
+        let (mine, theirs) = (state.server.permissions_for(owner), state.server.permissions_for(member));
+        assert!(matches!(onboarding(&state, mine, None), Ok(ServerEvent::OnboardingSet { onboarding: None, .. })));
+        assert!(onboarding(&state, theirs, None).is_err());
+        assert!(matches!(automod(&state, mine, AutoMod::default()), Ok(ServerEvent::AutoModSet { .. })));
+        assert!(automod(&state, theirs, AutoMod::default()).is_err());
+        assert!(matches!(activities(&state, mine, false), Ok(ServerEvent::ActivitiesSet { enabled: false, .. })));
+        assert_eq!(activities(&state, theirs, true).unwrap_err(), "you do not have permission to turn Activities on or off");
+        assert_eq!(answer_onboarding(&state, member, vec![RoleId::new()], vec![]).unwrap_err(), "this server's questions do not hand out that role");
+        assert_eq!(answer_onboarding(&state, member, vec![], vec![]).unwrap(), vec![]);
     }
 }

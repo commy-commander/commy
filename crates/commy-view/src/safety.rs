@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
-use commy_core::{MessageId, UserId};
+use commy_core::{ChannelId, MessageId, ServerId, ServerState, UserId, UserProfile};
 use commy_core::DmStore;
+
+use crate::keys::KeyHolder;
 use serde::{Deserialize, Serialize};
 
 fn default_true() -> bool {
@@ -109,6 +111,61 @@ impl Report {
         report.reported_name = truncate(&report.reported_name, 64);
         Some(report)
     }
+}
+
+pub struct ReportForm {
+    pub reported: UserId,
+    pub channel: Option<ChannelId>,
+    pub message: Option<MessageId>,
+    pub reason: String,
+    pub note: String,
+}
+
+pub fn report(state: &ServerState, keys: &KeyHolder, me: &UserProfile, form: ReportForm, reported_name: String, now: DateTime<Utc>) -> Result<(UserId, Report), String> {
+    if !REPORT_REASONS.contains(&form.reason.as_str()) {
+        return Err("pick a reason for the report".into());
+    }
+    if form.reported == me.id {
+        return Err("you cannot report yourself".into());
+    }
+    let excerpt = match (form.channel, form.message) {
+        (Some(channel), Some(message)) => state
+            .messages(channel)
+            .iter()
+            .find(|m| m.id == message && m.author == form.reported)
+            .and_then(|m| keys.open(state, m))
+            .map(|m| m.content)
+            .ok_or("that message is no longer available")?,
+        _ => String::new(),
+    };
+    let owner = state.server.owner;
+    if owner == me.id {
+        return Err("you own this server, so reports would come to you".into());
+    }
+    if form.reported == owner {
+        return Err("reports go to the server owner, so the owner cannot be reported here".into());
+    }
+    let report = Report {
+        id: MessageId::new().to_string(),
+        server: state.server.id.to_string(),
+        channel: form.channel.map(|c| c.to_string()),
+        message: form.message.map(|m| m.to_string()),
+        reporter: me.id.to_string(),
+        reporter_name: me.visible_name().to_string(),
+        reported: form.reported.to_string(),
+        reported_name,
+        reason: form.reason,
+        note: truncate(form.note.trim(), MAX_NOTE),
+        excerpt: truncate(&excerpt, MAX_EXCERPT),
+        created_at: now.to_rfc3339(),
+    };
+    Ok((owner, report))
+}
+
+pub fn received_report(servers: &HashMap<ServerId, ServerState>, me: UserId, sender: UserId, content: &str) -> Option<Report> {
+    let report = Report::decode(content, sender)?;
+    let server = servers.get(&report.server.parse::<ServerId>().ok()?)?;
+    (server.server.owner == me && server.server.members.iter().any(|m| m.user == sender)).then_some(report)
 }
 
 pub use crate::truncate;
@@ -497,6 +554,31 @@ mod tests {
         let mut bad = report(me);
         bad.reason = "because".into();
         assert!(Report::decode(&bad.encode(), me).is_none());
+    }
+
+    #[test]
+    fn reports_go_to_the_owner_from_members_about_others() {
+        let owner = UserProfile::new("owner");
+        let (member, other) = (UserProfile::new("member"), UserProfile::new("other"));
+        let mut state = ServerState::new(commy_core::Server::new("Hangout", owner.id));
+        let sid = state.server.id;
+        for p in [&member, &other] {
+            state.apply(commy_core::ServerEvent::MemberJoin { server: sid, profile: p.clone() }).unwrap();
+        }
+        let keys = KeyHolder::new(None);
+        let form = |reported: UserId, reason: &str| ReportForm { reported, channel: None, message: None, reason: reason.into(), note: "  rude  ".into() };
+        let (to, made) = super::report(&state, &keys, &member, form(other.id, "spam"), "other".into(), Utc::now()).unwrap();
+        assert_eq!((to, made.note.as_str(), made.reported.as_str()), (owner.id, "rude", other.id.to_string().as_str()));
+        assert_eq!(super::report(&state, &keys, &member, form(other.id, "nope"), String::new(), Utc::now()).unwrap_err(), "pick a reason for the report");
+        assert_eq!(super::report(&state, &keys, &member, form(member.id, "spam"), String::new(), Utc::now()).unwrap_err(), "you cannot report yourself");
+        assert!(super::report(&state, &keys, &member, form(owner.id, "spam"), String::new(), Utc::now()).is_err());
+        assert!(super::report(&state, &keys, &owner, form(other.id, "spam"), String::new(), Utc::now()).is_err());
+        let missing = ReportForm { channel: Some(ChannelId::new()), message: Some(MessageId::new()), ..form(other.id, "spam") };
+        assert_eq!(super::report(&state, &keys, &member, missing, String::new(), Utc::now()).unwrap_err(), "that message is no longer available");
+        let servers = HashMap::from([(sid, state)]);
+        assert_eq!(received_report(&servers, owner.id, member.id, &made.encode()), Some(made.clone()));
+        assert_eq!(received_report(&servers, member.id, member.id, &made.encode()), None, "only the owner takes reports");
+        assert_eq!(received_report(&servers, owner.id, other.id, &made.encode()), None, "the sender must be the reporter");
     }
 
     #[test]

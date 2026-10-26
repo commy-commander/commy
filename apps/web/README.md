@@ -10,7 +10,10 @@ members, set the rules, delete or hand over a server, and edit your profile
 and who sees your profile details), set server, channel and role pictures,
 add custom emoji, stickers, emoticons and sounds, play the soundboard, plan
 events and RSVP, post in forums, run stage channels (speakers, raised hands,
-server mute and deafen), and set voice channel statuses. Links from another
+server mute and deafen), set voice channel statuses, set up onboarding
+questions, AutoMod and the Activities switch, export a server as a template,
+report members to the server owner, set message reminders, and browse or list
+servers in Discover. Links from another
 account server, video and screen sharing still need the desktop app.
 
 Pictures (avatars, server icons and banners, custom emoji) come from the sync

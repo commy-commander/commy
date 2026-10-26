@@ -3,150 +3,19 @@ use std::time::{Duration, Instant};
 
 use commy_core::ServerId;
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::account::host_of;
 use crate::invite_link::{self, Expiry, InviteLink};
 use crate::state::App;
 
-pub const CATEGORIES: &[&str] = &["gaming", "music", "art", "tech", "science", "education", "friends", "languages", "sports", "other"];
-pub const MEMBER_BUCKETS: &[u32] = &[10, 25, 50, 100, 250, 500, 1000];
-pub const NAME_MAX: usize = 48;
-pub const DESCRIPTION_MAX: usize = 300;
+pub use commy_net::directory::{clean_category, clean_description, current_listing, listing_name, member_bucket, DirectoryPage, Listing};
+use commy_net::directory::{self as shared, ListResponse, PublishResponse};
+
 const REFRESH_EVERY: Duration = Duration::from_secs(300);
 const RETRY_AFTER: Duration = Duration::from_secs(600);
 
 static LISTING_CHANGES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Listing {
-    pub origin: String,
-    pub code: String,
-    pub link: String,
-    #[serde(default)]
-    pub name: String,
-    pub category: String,
-    pub description: String,
-    pub members: u32,
-    pub listed_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DirectoryEntry {
-    pub code: String,
-    pub name: String,
-    pub description: String,
-    pub category: String,
-    pub members: u32,
-    pub link: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DirectoryPage {
-    pub entries: Vec<DirectoryEntry>,
-    pub next_cursor: Option<String>,
-    pub host: String,
-    pub available: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ListResponse {
-    listings: Vec<ListedRow>,
-    next_cursor: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ListedRow {
-    code: String,
-    key: String,
-    name: String,
-    #[serde(default)]
-    description: String,
-    category: String,
-    members: u32,
-}
-
-#[derive(Deserialize)]
-struct PublishResponse {
-    code: String,
-}
-
-pub fn member_bucket(count: usize) -> u32 {
-    let mut bucket = MEMBER_BUCKETS[0];
-    for &b in MEMBER_BUCKETS {
-        if count >= b as usize {
-            bucket = b;
-        }
-    }
-    bucket
-}
-
-pub fn clean_category(value: &str) -> Result<String, String> {
-    let category = value.trim().to_ascii_lowercase();
-    if CATEGORIES.contains(&category.as_str()) {
-        Ok(category)
-    } else {
-        Err("Pick a category from the list".into())
-    }
-}
-
-pub fn clean_description(value: &str) -> Result<String, String> {
-    let mut out = String::new();
-    let mut blank_lines = 0;
-    for line in value.replace("\r\n", "\n").lines() {
-        let words: Vec<&str> = line.split_whitespace().collect();
-        if words.is_empty() {
-            blank_lines += 1;
-            if blank_lines > 1 {
-                continue;
-            }
-        } else {
-            blank_lines = 0;
-        }
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&words.join(" "));
-    }
-    let description = out.trim().to_string();
-    if description.chars().any(|c| c.is_control() && c != '\n') {
-        return Err("The description holds characters that cannot be shown".into());
-    }
-    if description.chars().count() > DESCRIPTION_MAX {
-        return Err(format!("The description can hold up to {DESCRIPTION_MAX} characters"));
-    }
-    Ok(description)
-}
-
-pub fn listing_name(server_name: &str) -> String {
-    let flat: Vec<&str> = server_name.split_whitespace().collect();
-    let name: String = flat.join(" ").chars().filter(|c| !c.is_control()).take(NAME_MAX).collect();
-    if name.trim().is_empty() {
-        "Server".into()
-    } else {
-        name.trim().to_string()
-    }
-}
-
-pub fn joinable_link(origin: &str, code: &str, key: &str) -> String {
-    InviteLink { origin: origin.to_string(), code: code.to_string(), key: Some(key.to_string()) }.url()
-}
-
-fn entries_from(origin: &str, rows: Vec<ListedRow>) -> Vec<DirectoryEntry> {
-    rows.into_iter()
-        .filter(|row| invite_link::parse(&joinable_link(origin, &row.code, &row.key)).is_some())
-        .map(|row| DirectoryEntry {
-            link: joinable_link(origin, &row.code, &row.key),
-            code: row.code,
-            name: row.name.chars().filter(|c| !c.is_control()).take(NAME_MAX).collect(),
-            description: row.description.chars().take(DESCRIPTION_MAX).collect(),
-            category: if CATEGORIES.contains(&row.category.as_str()) { row.category } else { "other".into() },
-            members: member_bucket(row.members as usize),
-        })
-        .collect()
-}
 
 fn signed_in_token(app: &App) -> Result<String, String> {
     crate::account::require_account(app)?;
@@ -216,16 +85,8 @@ pub async fn publish_listing(
 }
 
 async fn send_listing(app: &App, listing: &Listing, token: &str) -> Result<String, String> {
-    let link = invite_link::parse(&listing.link).ok_or("This listing lost its invite link")?;
-    let body = serde_json::json!({
-        "code": link.code,
-        "key": link.key.unwrap_or_default(),
-        "name": listing.name,
-        "description": listing.description,
-        "category": listing.category,
-        "members": listing.members,
-    });
-    let request = app.http.post(format!("{}/api/auth/commy/directory/publish", listing.origin)).json(&body).bearer_auth(token);
+    let body = shared::publish_body(listing).ok_or("This listing lost its invite link")?;
+    let request = app.http.post(format!("{}{}", listing.origin, shared::PUBLISH_PATH)).json(&body).bearer_auth(token);
     let reply: PublishResponse = invite_link::account_call(request, &listing.origin).await?;
     Ok(reply.code)
 }
@@ -282,10 +143,6 @@ fn outdated_listings(app: &App, origin: &str) -> Vec<(ServerId, Listing)> {
         .collect()
 }
 
-fn current_listing(listing: &Listing, server_name: &str, member_count: usize) -> Listing {
-    Listing { name: listing_name(server_name), members: member_bucket(member_count), ..listing.clone() }
-}
-
 fn store_refreshed(app: &App, sid: ServerId, refreshed: Listing) {
     if let Some(stored) = app.listings.lock().unwrap().get_mut(&sid) {
         *stored = refreshed;
@@ -302,7 +159,7 @@ pub async fn unlist_server(app: tauri::State<'_, App>, server_id: String) -> Res
     let listing = app.listings.lock().unwrap().get(&sid).cloned().ok_or("This server was not listed from this device")?;
     let request = app
         .http
-        .post(format!("{}/api/auth/commy/directory/unlist", listing.origin))
+        .post(format!("{}{}", listing.origin, shared::UNLIST_PATH))
         .json(&serde_json::json!({ "code": listing.code }))
         .bearer_auth(token);
     let res = request.send().await.map_err(|_| format!("Could not reach {}", host_of(&listing.origin)))?;
@@ -329,29 +186,15 @@ pub async fn browse_directory(
     cursor: Option<String>,
 ) -> Result<DirectoryPage, String> {
     let origin = crate::account::effective_server();
-    let mut url = Url::parse(&format!("{origin}/api/auth/commy/directory/list")).map_err(|e| e.to_string())?;
-    {
-        let mut pairs = url.query_pairs_mut();
-        if let Some(q) = q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
-            pairs.append_pair("q", &q.chars().take(80).collect::<String>());
-        }
-        if let Some(category) = category.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-            pairs.append_pair("category", &clean_category(category)?);
-        }
-        if let Some(cursor) = cursor.as_deref().filter(|c| !c.is_empty() && c.chars().all(|ch| ch.is_ascii_digit())) {
-            pairs.append_pair("cursor", cursor);
-        }
-    }
+    let path = shared::list_path(q.as_deref(), category.as_deref(), cursor.as_deref())?;
+    let url = Url::parse(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
     let host = host_of(&origin);
-    Ok(match fetch_list(&app, url, &origin).await? {
-        Some(reply) => DirectoryPage { entries: entries_from(&origin, reply.listings), next_cursor: reply.next_cursor, host, available: true },
-        None => DirectoryPage { entries: Vec::new(), next_cursor: None, host, available: false },
-    })
+    Ok(shared::page(&origin, host, fetch_list(&app, url, &origin).await?))
 }
 
 async fn fetch_list(app: &App, url: Url, origin: &str) -> Result<Option<ListResponse>, String> {
     let res = app.http.get(url).send().await.map_err(|_| format!("Could not reach {}", host_of(origin)))?;
-    if directory_missing(res.status()) {
+    if shared::directory_missing(res.status().as_u16()) {
         return Ok(None);
     }
     if !res.status().is_success() {
@@ -361,15 +204,11 @@ async fn fetch_list(app: &App, url: Url, origin: &str) -> Result<Option<ListResp
 }
 
 async fn require_directory(app: &App, origin: &str) -> Result<(), String> {
-    let url = Url::parse(&format!("{origin}/api/auth/commy/directory/list")).map_err(|e| e.to_string())?;
+    let url = Url::parse(&format!("{origin}{}", shared::LIST_PATH)).map_err(|e| e.to_string())?;
     match fetch_list(app, url, origin).await? {
         Some(_) => Ok(()),
         None => Err(format!("{} does not list public servers yet", host_of(origin))),
     }
-}
-
-fn directory_missing(status: reqwest::StatusCode) -> bool {
-    status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::METHOD_NOT_ALLOWED || status.is_redirection()
 }
 
 pub fn load(dir: &std::path::Path) -> HashMap<ServerId, Listing> {
@@ -379,67 +218,6 @@ pub fn load(dir: &std::path::Path) -> HashMap<ServerId, Listing> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn buckets_round_down_to_fixed_sizes() {
-        assert_eq!(member_bucket(0), 10);
-        assert_eq!(member_bucket(9), 10);
-        assert_eq!(member_bucket(37), 25);
-        assert_eq!(member_bucket(250), 250);
-        assert_eq!(member_bucket(999), 500);
-        assert_eq!(member_bucket(5000), 1000);
-    }
-
-    #[test]
-    fn categories_come_from_the_fixed_list() {
-        assert_eq!(clean_category(" Tech "), Ok("tech".into()));
-        assert!(clean_category("crypto").is_err());
-        assert!(clean_category("").is_err());
-    }
-
-    #[test]
-    fn descriptions_are_flattened_and_bounded() {
-        assert_eq!(clean_description("  two   spaces \r\n\r\n\r\n\r\nmany lines  "), Ok("two spaces\n\nmany lines".into()));
-        assert_eq!(clean_description(""), Ok(String::new()));
-        assert_eq!(clean_description(&"x".repeat(DESCRIPTION_MAX)).map(|d| d.len()), Ok(DESCRIPTION_MAX));
-        assert!(clean_description(&"x".repeat(DESCRIPTION_MAX + 1)).is_err());
-        assert!(clean_description("bell\u{7}").is_err());
-    }
-
-    #[test]
-    fn listing_names_follow_the_server_name() {
-        assert_eq!(listing_name("  Rust   Hangout "), "Rust Hangout");
-        assert_eq!(listing_name("   "), "Server");
-        assert_eq!(listing_name(&"n".repeat(100)).chars().count(), NAME_MAX);
-    }
-
-    #[test]
-    fn account_servers_without_a_directory_read_as_unavailable() {
-        use reqwest::StatusCode;
-        assert!(directory_missing(StatusCode::NOT_FOUND));
-        assert!(directory_missing(StatusCode::METHOD_NOT_ALLOWED));
-        assert!(directory_missing(StatusCode::FOUND));
-        assert!(directory_missing(StatusCode::TEMPORARY_REDIRECT));
-        assert!(!directory_missing(StatusCode::OK));
-        assert!(!directory_missing(StatusCode::BAD_REQUEST));
-        assert!(!directory_missing(StatusCode::INTERNAL_SERVER_ERROR));
-    }
-
-    #[test]
-    fn directory_rows_become_joinable_links() {
-        let key = "k".repeat(43);
-        let rows = vec![
-            ListedRow { code: "KQ7M3N4P".into(), key: key.clone(), name: "Rust Hangout".into(), description: "Crabs".into(), category: "tech".into(), members: 25 },
-            ListedRow { code: "pixel-club".into(), key: "Zx9-_Zx9-_Zx9-_Zx9-_aA".into(), name: "Pixel Club".into(), description: String::new(), category: "weird".into(), members: 37 },
-            ListedRow { code: "../bad".into(), key: key.clone(), name: "Bad".into(), description: String::new(), category: "art".into(), members: 10 },
-        ];
-        let entries = entries_from("https://commy.chat", rows);
-        assert_eq!(entries.len(), 2, "rows that do not form a valid invite link are dropped");
-        assert_eq!(entries[0].link, format!("https://commy.chat/i/KQ7M3N4P#{key}"));
-        assert_eq!(entries[1].category, "other");
-        assert_eq!(entries[1].members, 25);
-        assert_eq!(entries[1].link, "https://commy.chat/i/pixel-club#Zx9-_Zx9-_Zx9-_Zx9-_aA");
-    }
 
     fn listed(app: &App, name: &str, public: bool) -> (ServerId, Listing) {
         let owner = commy_core::UserProfile::new("owner");
