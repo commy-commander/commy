@@ -1,11 +1,15 @@
 use commy_core::template::{text_channel_name, MAX_RETENTION_DAYS};
-use commy_core::{Channel, ChannelId, ChannelKind, Permissions, ServerEvent, ServerState};
+use commy_core::server::Role;
+use commy_core::{Channel, ChannelId, ChannelKind, Permissions, RoleId, ServerEvent, ServerState};
 
 use crate::act::Act;
 
 pub const MAX_SERVER_NAME_BYTES: usize = 100;
 pub const MAX_CHANNEL_NAME_BYTES: usize = 50;
 pub const MAX_CHANNEL_MOVES: usize = 200;
+pub const SERVER_IMAGE_INVALID: &str = "server images must be a JPEG or PNG under 1 MB";
+pub const CHANNEL_BANNER_INVALID: &str = "channel banners must be a JPEG or PNG under 1 MB";
+pub const ROLE_BANNER_INVALID: &str = "role banners must be a JPEG or PNG under 1 MB";
 
 pub struct ChannelMove {
     pub channel: ChannelId,
@@ -115,6 +119,29 @@ pub fn move_channels(state: &ServerState, perms: Permissions, moves: Vec<Channel
         .collect())
 }
 
+pub fn server_images(state: &ServerState, perms: Permissions, which: &str, image: Option<String>) -> Act<ServerEvent> {
+    need(perms, Permissions::MANAGE_SERVER, "change the server's images")?;
+    let server = state.server.id;
+    match which {
+        "icon" => Ok(ServerEvent::ServerImages { server, icon: image, banner: state.server.banner.clone() }),
+        "banner" => Ok(ServerEvent::ServerImages { server, icon: state.server.icon.clone(), banner: image }),
+        "invite" => Ok(ServerEvent::InviteBackgroundSet { server, background: image }),
+        _ => Err("unknown server image".into()),
+    }
+}
+
+pub fn channel_banner(state: &ServerState, perms: Permissions, channel: ChannelId, banner: Option<String>) -> Act<ServerEvent> {
+    need(perms, Permissions::MANAGE_CHANNELS, "edit channels")?;
+    state.server.channel(channel).ok_or("unknown channel")?;
+    Ok(ServerEvent::ChannelBanner { server: state.server.id, channel, banner })
+}
+
+pub fn role_banner(state: &ServerState, perms: Permissions, role: RoleId, banner: Option<String>) -> Act<ServerEvent> {
+    need(perms, Permissions::MANAGE_ROLES, "edit roles")?;
+    let existing = state.server.roles.iter().find(|r| r.id == role).cloned().ok_or("unknown role")?;
+    Ok(ServerEvent::RoleUpdate { server: state.server.id, role: Role { banner, ..existing } })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +152,27 @@ mod tests {
         let member = UserId::new();
         let state = ServerState::new(Server::new("Hangout", owner));
         (state, owner, member)
+    }
+
+    #[test]
+    fn only_the_right_people_change_server_channel_and_role_pictures() {
+        let (state, owner, member) = hangout();
+        let (mine, theirs) = (state.server.permissions_for(owner), state.server.permissions_for(member));
+        let picture = Some("pic".to_string());
+        assert!(server_images(&state, theirs, "icon", picture.clone()).is_err());
+        assert!(matches!(server_images(&state, mine, "icon", picture.clone()), Ok(ServerEvent::ServerImages { icon: Some(_), banner: None, .. })));
+        assert!(matches!(server_images(&state, mine, "banner", picture.clone()), Ok(ServerEvent::ServerImages { icon: None, banner: Some(_), .. })));
+        assert!(matches!(server_images(&state, mine, "invite", None), Ok(ServerEvent::InviteBackgroundSet { background: None, .. })));
+        assert_eq!(server_images(&state, mine, "wallpaper", None).unwrap_err(), "unknown server image");
+        let channel = state.server.channels[0].id;
+        assert!(channel_banner(&state, theirs, channel, picture.clone()).is_err());
+        assert!(matches!(channel_banner(&state, mine, channel, picture.clone()), Ok(ServerEvent::ChannelBanner { banner: Some(_), .. })));
+        assert_eq!(channel_banner(&state, mine, ChannelId::new(), None).unwrap_err(), "unknown channel");
+        let role = state.server.roles[0].clone();
+        assert!(role_banner(&state, theirs, role.id, picture.clone()).is_err());
+        let Ok(ServerEvent::RoleUpdate { role: changed, .. }) = role_banner(&state, mine, role.id, picture) else { panic!() };
+        assert_eq!((changed.banner.as_deref(), changed.name), (Some("pic"), role.name));
+        assert_eq!(role_banner(&state, mine, RoleId::new(), None).unwrap_err(), "unknown role");
     }
 
     #[test]

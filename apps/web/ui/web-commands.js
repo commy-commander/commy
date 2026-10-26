@@ -37,6 +37,9 @@ const WEB_PICKED_COMMANDS = ["attach_dm_file", "attach_file"];
 const WEB_PICTURE_WAIT_MS = 15_000;
 const WEB_PICTURE_STORE_MS = 60_000;
 const WEB_VIDEO_ACCEPT = "video/mp4,video/quicktime,video/webm,.mp4,.m4v,.mov,.webm";
+const WEB_IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp";
+const WEB_MAX_PICKED_IMAGE_BYTES = 25 * 1024 * 1024;
+const WEB_IMAGE_TOO_LARGE = "that image is larger than 25 MB";
 const WEB_MAX_SEND_BYTES = 100 * 1024 * 1024;
 const WEB_SEND_TOO_LARGE = "files larger than 100 MB can be sent from the desktop app";
 const WEB_SAVE_LINGER_MS = 60000;
@@ -82,9 +85,19 @@ function webPickFile(doc, kind) {
     const input = doc.createElement("input");
     input.type = "file";
     if (kind === "video") input.accept = WEB_VIDEO_ACCEPT;
+    if (kind === "image") input.accept = WEB_IMAGE_ACCEPT;
     input.addEventListener("change", () => resolve((input.files && input.files[0]) || null), { once: true });
     input.addEventListener("cancel", () => resolve(null), { once: true });
     input.click();
+  });
+}
+
+function webReadDataUrl(file, Reader) {
+  return new Promise((resolve, reject) => {
+    const reader = new Reader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject("That file could not be read");
+    reader.readAsDataURL(file);
   });
 }
 
@@ -121,5 +134,5 @@ function webReplyLine(status, text) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget };
+  module.exports = { WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget };
 }
