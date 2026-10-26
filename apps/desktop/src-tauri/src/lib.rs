@@ -5157,7 +5157,7 @@ async fn fetch_catalog_image(app: tauri::State<'_, App>, url: String) -> CmdResu
     let source = catalog::source(&url).ok_or("only emoji.gg and KLIPY images can be added")?;
     let (_, bytes) = account::fetch_media(&app, &url)
         .await
-        .map_err(|status| format!("{source} could not be reached right now ({status})"))?;
+        .map_err(|status| catalog::image_failure(source, status))?;
     if bytes.len() > MAX_CATALOG_IMAGE_BYTES {
         return Err("that image is too large".into());
     }

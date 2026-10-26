@@ -175,6 +175,7 @@ pub fn search_reply<T: serde::de::DeserializeOwned>(reply: &Reply) -> Result<Opt
         404 => Ok(None),
         401 => Err("Sign in again to search".into()),
         429 => Err("Too many searches, try again in a minute".into()),
+        503 => Err("Search is busy right now, try again in a minute".into()),
         _ => Err("Your account server could not search right now".into()),
     }
 }
@@ -337,6 +338,10 @@ mod tests {
         assert_eq!(hits.unwrap().results, vec![1, 2]);
         assert!(search_reply::<commy_view::catalog::Found<u8>>(&Reply { status: 404, body: String::new() }).unwrap().is_none());
         assert!(search_reply::<commy_view::catalog::Found<u8>>(&Reply { status: 429, body: String::new() }).is_err());
+        assert_eq!(
+            search_reply::<commy_view::catalog::Found<u8>>(&Reply { status: 503, body: String::new() }).unwrap_err(),
+            "Search is busy right now, try again in a minute"
+        );
     }
 
     #[test]

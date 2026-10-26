@@ -46,6 +46,9 @@ const TOKEN_REFRESH_EARLY_SECS = 60;
 const MAX_QUERY = 100;
 const MAX_STICKER_BYTES = 512 * 1024;
 const KLIPY_MAX_PAGE = 20;
+const KLIPY_CACHE_TTL_MS = 30 * 60 * 1000;
+const KLIPY_REST_MS = 60 * 1000;
+const KLIPY_MAX_REST_MS = 10 * 60 * 1000;
 const STICKER_FORMATS = ["webp", "gif"];
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
@@ -248,7 +251,7 @@ export function apicalypseString(query) {
   return query.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-function createCache() {
+function createCache(ttlMs = CACHE_TTL_MS) {
   const entries = new Map();
   return {
     get(key) {
@@ -256,11 +259,28 @@ function createCache() {
       if (!hit || hit.expires < Date.now()) return undefined;
       return hit.value;
     },
+    stale(key) {
+      return entries.get(key)?.value;
+    },
     set(key, value) {
+      entries.delete(key);
       if (entries.size >= CACHE_CAP) entries.delete(entries.keys().next().value);
-      entries.set(key, { value, expires: Date.now() + CACHE_TTL_MS });
+      entries.set(key, { value, expires: Date.now() + ttlMs });
     },
   };
+}
+
+export function klipyRestMs(retryAfter) {
+  const seconds = Number(retryAfter);
+  if (!Number.isFinite(seconds) || seconds <= 0) return KLIPY_REST_MS;
+  return Math.min(KLIPY_MAX_REST_MS, Math.ceil(seconds) * 1000);
+}
+
+class KlipyBusy extends Error {
+  constructor(restMs) {
+    super(`KLIPY answered 429, pausing searches for ${Math.round(restMs / 1000)}s`);
+    this.restMs = restMs;
+  }
 }
 
 function createImageCache() {
@@ -302,6 +322,11 @@ function imageResponse(type, body) {
   });
 }
 
+function busy(what, restUntil) {
+  const seconds = Math.max(1, Math.ceil((restUntil - Date.now()) / 1000));
+  return new APIError("SERVICE_UNAVAILABLE", { message: `${what} is busy right now, try again in a minute` }, { "Retry-After": String(seconds) });
+}
+
 function unavailable(what) {
   return new APIError("NOT_FOUND", { message: `${what} is not set up on this account server` });
 }
@@ -313,9 +338,11 @@ async function requireSession(ctx) {
 }
 
 export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetch = (...args) => globalThis.fetch(...args) }) => {
-  const gifCache = createCache();
-  const stickerCache = createCache();
-  const gifStickerCache = createCache();
+  const gifCache = createCache(KLIPY_CACHE_TTL_MS);
+  const stickerCache = createCache(KLIPY_CACHE_TTL_MS);
+  const gifStickerCache = createCache(KLIPY_CACHE_TTL_MS);
+  const klipyInFlight = new Map();
+  let klipyRestUntil = 0;
   const gameCache = createCache();
   const imageCache = createImageCache();
   let igdbToken = null;
@@ -368,6 +395,37 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
     gifStickers: { path: "gifs", cache: gifStickerCache, what: "Sticker search", service: "The sticker service", formats: "webp,gif", results: klipyStickerResults },
   };
 
+  async function askKlipy(spec, q, page, session) {
+    const url = new URL(`${KLIPY_API}/${encodeURIComponent(klipyKey)}/${spec.path}/${q ? "search" : "trending"}`);
+    if (q) url.searchParams.set("q", q);
+    url.searchParams.set("per_page", "24");
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("content_filter", "medium");
+    url.searchParams.set("format_filter", spec.formats);
+    url.searchParams.set("customer_id", customerId(secret, session.user.id));
+    const res = await doFetch(url);
+    if (res.status === 429) throw new KlipyBusy(klipyRestMs(res.headers.get("retry-after")));
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.result === false) throw new Error(`KLIPY answered ${res.status}`);
+    return { results: spec.results(body), more: page < KLIPY_MAX_PAGE && Boolean(body?.data?.has_next) };
+  }
+
+  function sharedKlipyCall(kind, key, ask) {
+    const id = `${kind}:${key}`;
+    let pending = klipyInFlight.get(id);
+    if (!pending) {
+      pending = ask().finally(() => klipyInFlight.delete(id));
+      klipyInFlight.set(id, pending);
+    }
+    return pending;
+  }
+
+  function restKlipy(err) {
+    if (klipyRestUntil > Date.now()) return;
+    klipyRestUntil = Date.now() + err.restMs;
+    console.warn(`[auth] ${err.message}`);
+  }
+
   async function klipySearch(ctx, kind) {
     const spec = KLIPY_KINDS[kind];
     if (!klipyKey) throw unavailable(spec.what);
@@ -377,24 +435,22 @@ export const commyMedia = ({ secret, klipyKey = null, igdb = null, fetch: doFetc
     const key = `${page}:${q.toLowerCase()}`;
     const cached = spec.cache.get(key);
     if (cached) return ctx.json({ ...cached, provider: "klipy" });
+    const stale = spec.cache.stale(key);
+    if (klipyRestUntil > Date.now()) {
+      if (stale) return ctx.json({ ...stale, provider: "klipy" });
+      throw busy(spec.what, klipyRestUntil);
+    }
 
-    const url = new URL(`${KLIPY_API}/${encodeURIComponent(klipyKey)}/${spec.path}/${q ? "search" : "trending"}`);
-    if (q) url.searchParams.set("q", q);
-    url.searchParams.set("per_page", "24");
-    url.searchParams.set("page", String(page));
-    url.searchParams.set("content_filter", "medium");
-    url.searchParams.set("format_filter", spec.formats);
-    url.searchParams.set("customer_id", customerId(secret, session.user.id));
-    let body;
+    let found;
     try {
-      const res = await doFetch(url);
-      body = await res.json().catch(() => ({}));
-      if (!res.ok || body.result === false) throw new Error(`KLIPY answered ${res.status}`);
+      found = await sharedKlipyCall(kind, key, () => askKlipy(spec, q, page, session));
     } catch (err) {
-      console.warn(`[auth] ${spec.what} failed: ${maskKlipyKey(err.message)}`);
+      if (err instanceof KlipyBusy) restKlipy(err);
+      else console.warn(`[auth] ${spec.what} failed: ${maskKlipyKey(err.message)}`);
+      if (stale) return ctx.json({ ...stale, provider: "klipy" });
+      if (err instanceof KlipyBusy) throw busy(spec.what, klipyRestUntil);
       throw new APIError("BAD_GATEWAY", { message: `${spec.service} is not answering right now` });
     }
-    const found = { results: spec.results(body), more: page < KLIPY_MAX_PAGE && Boolean(body?.data?.has_next) };
     spec.cache.set(key, found);
     return ctx.json({ ...found, provider: "klipy" });
   }

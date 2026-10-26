@@ -457,6 +457,7 @@ pub async fn server_search_with<T: serde::de::DeserializeOwned>(
         404 => return Ok(None),
         401 => return Err(format!("Sign in to {host} again to search")),
         429 => return Err("Too many searches, try again in a minute".into()),
+        503 => return Err("Search is busy right now, try again in a minute".into()),
         _ => return Err(format!("{host} could not search right now")),
     }
     let body: T = res.json().await.map_err(|_| format!("{host} sent an unexpected reply"))?;
