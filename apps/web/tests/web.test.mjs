@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -30,6 +30,27 @@ test("every command the app calls while starting up has an answer in the browser
 test("the browser answers each command once, either from defaults or from the backend", () => {
   const both = Object.keys(WEB_DEFAULTS).filter(cmd => rustCommands.has(cmd));
   assert.deepEqual(both, []);
+});
+
+test("a notice is clipped like the desktop's and opens only a channel or DM", () => {
+  const id = "0f3c2a9e-1b2c-4d5e-8f90-123456789abc";
+  const notice = webNotice({ title: "é".repeat(100), body: "x".repeat(300), target: `channel:${id}:${id}` });
+  assert.equal(Array.from(notice.title).length, 80);
+  assert.equal(notice.options.body.length, 240);
+  assert.equal(notice.options.tag, `channel:${id}:${id}`);
+  assert.equal(notice.target, `channel:${id}:${id}`);
+  assert.equal(webNoticeTarget(`dm:${id}`), `dm:${id}`);
+  assert.equal(webNoticeTarget("https://example.com"), null);
+  assert.equal(webNoticeTarget(`dm:${id}:extra`), null);
+  const plain = webNotice({ title: "", body: "hi" });
+  assert.equal(plain.title, "Commy");
+  assert.equal(plain.options.tag, undefined);
+  assert.equal(plain.target, null);
+});
+
+test("notices go to the browser rather than being dropped", () => {
+  assert.equal(webDefault("notify").known, false);
+  assert.match(read("apps", "web", "ui", "web-bridge.js"), /cmd === "notify"/);
 });
 
 test("defaults are fresh copies, so the app cannot change them for the next caller", () => {
