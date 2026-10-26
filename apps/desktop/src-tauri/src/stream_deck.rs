@@ -323,7 +323,7 @@ mod tests {
         assert_eq!(defaults.len(), DEFAULT_SOUNDS.len());
         assert_eq!(defaults[0].name, "default:airhorn");
         assert_eq!(defaults[0].label, "Airhorn");
-        assert!(defaults.iter().all(|d| crate::expressions::is_default_sound(&d.name)));
+        assert!(defaults.iter().all(|d| commy_view::expressions::is_default_sound(&d.name)));
     }
 
     #[test]

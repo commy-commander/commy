@@ -106,7 +106,7 @@ impl Session {
         Ok(Value::Null)
     }
 
-    async fn store_server_picture(&self, bytes: Vec<u8>) -> Result<String, String> {
+    pub(super) async fn store_server_picture(&self, bytes: Vec<u8>) -> Result<String, String> {
         let (blob, provider) = self.store_blob(bytes.clone()).await?;
         if !self.offer_picture(&blob, &bytes).await {
             return Err("Could not save the picture right now, try again in a moment".into());
@@ -114,7 +114,7 @@ impl Session {
         Ok(ImageRef { blob, provider }.encode())
     }
 
-    fn read_state<T>(&self, server: ServerId, read: impl FnOnce(&ServerState, UserId) -> Result<T, String>) -> Result<T, String> {
+    pub(super) fn read_state<T>(&self, server: ServerId, read: impl FnOnce(&ServerState, UserId) -> Result<T, String>) -> Result<T, String> {
         let me = self.client.borrow().profile().ok_or("Your servers are not unlocked yet")?.id;
         let client = self.client.borrow();
         let servers = client.servers.lock().unwrap();
@@ -328,7 +328,7 @@ impl Session {
         Ok(Value::Null)
     }
 
-    async fn tell_neighbors(&self, server: ServerId, payload: &WirePayload) {
+    pub(super) async fn tell_neighbors(&self, server: ServerId, payload: &WirePayload) {
         let node = self.node.lock().await;
         if let Some(node) = node.as_ref().filter(|node| node.neighbor_count(server) > 0) {
             let _ = node.broadcast(server, payload.clone()).await;

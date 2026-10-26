@@ -112,6 +112,29 @@
     return webReadDataUrl(file, FileReader);
   }
 
+  async function pickSound() {
+    const file = await webPickFile(document, "sound");
+    if (!file) return null;
+    if (file.size > WEB_MAX_PICKED_SOUND_BYTES) throw WEB_SOUND_TOO_LARGE;
+    return [webSoundName(file.name), await webReadDataUrl(file, FileReader)];
+  }
+
+  async function fetchCatalogImage(args) {
+    const url = String((args && args.url) || "");
+    const { source, max } = await backend("catalog_media_path", { url });
+    let res;
+    try {
+      res = await fetch(webCatalogPath(url), { credentials: "same-origin" });
+    } catch {
+      throw `${source} could not be reached right now`;
+    }
+    const refusal = webCatalogRefusal(source, res, max);
+    if (refusal) throw refusal;
+    const image = await res.blob();
+    if (image.size > max) throw "that image is too large";
+    return webReadDataUrl(image, FileReader);
+  }
+
   let unlocked = null;
 
   function unlockModal() {
@@ -250,6 +273,8 @@
     if (WEB_PICKED_COMMANDS.includes(cmd)) return attachPicked(cmd, args);
     if (cmd === "notify") return showNotice(args);
     if (cmd === "pick_image") return pickImage();
+    if (cmd === "pick_sound") return pickSound();
+    if (cmd === "fetch_catalog_image") return fetchCatalogImage(args);
     if (cmd === "get_user") {
       await untilUnlocked();
       if (typeof hideModals === "function") hideModals();
