@@ -195,7 +195,6 @@ struct Args {
     soundboard_open: Option<bool>,
     shareable: Option<bool>,
     source_server_id: Option<String>,
-    url: Option<String>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
