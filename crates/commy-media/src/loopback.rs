@@ -69,6 +69,7 @@ fn client_without_this_app() -> Result<IAudioClient> {
             }),
         },
     };
+    let variant = variant();
     let (done, finished) = sync_channel(1);
     let handler: IActivateAudioInterfaceCompletionHandler = Activated(done).into();
     let operation = unsafe {
@@ -78,11 +79,32 @@ fn client_without_this_app() -> Result<IAudioClient> {
     tracing::info!("diag: activation requested");
     finished.recv_timeout(ACTIVATION_WAIT).context("Windows did not open the capture in time")?;
     tracing::info!("diag: activation completed");
+    if variant == "settle" {
+        std::thread::sleep(Duration::from_millis(500));
+        tracing::info!("diag: settled");
+    }
     let mut result = HRESULT(0);
     let mut activated = None;
     unsafe { operation.GetActivateResult(&mut result, &mut activated) }?;
+    tracing::info!("diag: got result {:#x}, interface {}", result.0, activated.is_some());
     result.ok()?;
-    Ok(activated.ok_or_else(|| anyhow!("Windows opened no capture"))?.cast()?)
+    let unknown = activated.ok_or_else(|| anyhow!("Windows opened no capture"))?;
+    let client: IAudioClient = unknown.cast()?;
+    tracing::info!("diag: cast done");
+    if variant == "leak" {
+        std::mem::forget(unknown);
+        std::mem::forget(operation);
+        std::mem::forget(handler);
+        tracing::info!("diag: leaked activation objects");
+    } else {
+        drop(unknown);
+        tracing::info!("diag: dropped unknown");
+        drop(operation);
+        tracing::info!("diag: dropped operation");
+        drop(handler);
+        tracing::info!("diag: dropped handler");
+    }
+    Ok(client)
 }
 
 struct Capture {
@@ -107,6 +129,7 @@ impl Capture {
         let variant = variant();
         let float = variant == "float";
         let client = client_without_this_app()?;
+        tracing::info!("diag: client returned");
         let block = CHANNELS * if float { 4 } else { 2 };
         let format = WAVEFORMATEX {
             wFormatTag: if float { WAVE_FORMAT_IEEE_FLOAT } else { WAVE_FORMAT_PCM as u16 },
