@@ -55,6 +55,7 @@ Keep this file short — it is read before every task. Long procedures belong in
 their own file, referenced here, and loaded only when the task matches:
 
 - Cutting a release → read `.claude/playbooks/release.md` first
+- Changing who is in which voice channel (seats, devices, presence expiry) → read `docs/voice-seats.md` first
 - <another long procedure> → read `.claude/playbooks/<name>.md` first
 
 ## Working with Claude Code

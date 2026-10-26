@@ -57,7 +57,11 @@ impl Session {
     }
 
     pub(super) fn node_hex(&self) -> Option<String> {
-        self.sync.borrow().as_ref().map(|live| data_encoding::HEXLOWER.encode(&live.node))
+        self.node_bytes().map(|node| data_encoding::HEXLOWER.encode(&node))
+    }
+
+    pub(super) fn node_bytes(&self) -> Option<[u8; 32]> {
+        self.sync.borrow().as_ref().map(|live| live.node)
     }
 
     pub(super) fn refresh_dms(&self) {

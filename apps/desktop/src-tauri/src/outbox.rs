@@ -564,11 +564,7 @@ pub fn resign_ours(state: &mut ServerState, me: UserId, identity: &Identity) -> 
     if changed {
         let mut fresh = ServerState::from_snapshot(snapshot);
         fresh.profiles = std::mem::take(&mut state.profiles);
-        fresh.voice_states = std::mem::take(&mut state.voice_states);
-        fresh.voice_since = std::mem::take(&mut state.voice_since);
-        fresh.voice_flags = std::mem::take(&mut state.voice_flags);
-        fresh.screen_shares = std::mem::take(&mut state.screen_shares);
-        fresh.cameras = std::mem::take(&mut state.cameras);
+        fresh.carry_live_voice(state);
         *state = fresh;
     }
     changed

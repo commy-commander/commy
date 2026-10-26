@@ -6440,7 +6440,7 @@ async fn run_net_loop(
                             }
                             if let (Ok(_), Some((user, said))) = (&applied, device_presence) {
                                 let now = std::time::Instant::now();
-                                if liveness::settle_device_presence(&app, state, user, &sender, said, now) {
+                                if liveness::settle_device_presence(&app, state, user, &sender, said, now, action.map(|a| a.at)) {
                                     applied = Ok(true);
                                 }
                             }
@@ -6454,7 +6454,9 @@ async fn run_net_loop(
                 }
                 if applied.is_ok() {
                     if let Some(user) = speaker {
-                        liveness::heard(&app, server, user, std::time::Instant::now());
+                        let now = std::time::Instant::now();
+                        liveness::heard(&app, server, user, now);
+                        liveness::heard_device(&app, server, user, &view::liveness::node_hex(&sender), now);
                     }
                     if let Some(user) = pinned {
                         catchup::release_held(&handle, server, &[user]);
