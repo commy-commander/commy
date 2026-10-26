@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -51,6 +51,21 @@ test("a notice is clipped like the desktop's and opens only a channel or DM", ()
 test("notices go to the browser rather than being dropped", () => {
   assert.equal(webDefault("notify").known, false);
   assert.match(read("apps", "web", "ui", "web-bridge.js"), /cmd === "notify"/);
+});
+
+test("picking an image offers pictures and hands the app a data URL, like the desktop picker", async () => {
+  const clicks = [];
+  const input = { addEventListener() {}, click() { clicks.push(this.accept); } };
+  webPickFile({ createElement: () => input }, "image");
+  assert.deepEqual(clicks, [WEB_IMAGE_ACCEPT]);
+  class Reader {
+    readAsDataURL(file) {
+      this.result = `data:${file.type};base64,AAAA`;
+      this.onload();
+    }
+  }
+  assert.equal(await webReadDataUrl({ type: "image/png" }, Reader), "data:image/png;base64,AAAA");
+  assert.match(read("apps", "web", "ui", "web-bridge.js"), /cmd === "pick_image"/);
 });
 
 test("defaults are fresh copies, so the app cannot change them for the next caller", () => {

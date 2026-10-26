@@ -105,6 +105,13 @@
     return JSON.parse(await sent);
   }
 
+  async function pickImage() {
+    const file = await webPickFile(document, "image");
+    if (!file) return null;
+    if (file.size > WEB_MAX_PICKED_IMAGE_BYTES) throw WEB_IMAGE_TOO_LARGE;
+    return webReadDataUrl(file, FileReader);
+  }
+
   let unlocked = null;
 
   function unlockModal() {
@@ -242,6 +249,7 @@
     if (WEB_BYTE_COMMANDS.includes(cmd)) return fileBytes(cmd, args);
     if (WEB_PICKED_COMMANDS.includes(cmd)) return attachPicked(cmd, args);
     if (cmd === "notify") return showNotice(args);
+    if (cmd === "pick_image") return pickImage();
     if (cmd === "get_user") {
       await untilUnlocked();
       if (typeof hideModals === "function") hideModals();
