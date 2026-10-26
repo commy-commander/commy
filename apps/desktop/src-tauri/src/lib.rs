@@ -7161,8 +7161,9 @@ pub fn run() {
     instance::apply_test_build_data_dir();
 
     let launch_link = invite_link::link_from_args();
-    if let (Some(link), Some(dir)) = (&launch_link, invite_link::default_data_dir()) {
-        if invite_link::forward_to_running_instance(&dir, link) {
+    let minimized = std::env::args().any(|arg| arg == "--minimized");
+    if let Some(dir) = invite_link::default_data_dir() {
+        if invite_link::hand_to_running_instance(&dir, &invite_link::launch_request(launch_link.as_deref(), minimized)) {
             return;
         }
     }
