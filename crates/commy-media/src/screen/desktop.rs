@@ -57,6 +57,25 @@ impl Capturer {
     }
 }
 
+#[cfg(windows)]
+fn graphics_target(source: Option<(SourceKind, u32)>) -> Result<crate::wgc::Target> {
+    use crate::wgc::Target;
+    match source {
+        Some((SourceKind::Window, id)) => Ok(Target::Window(id)),
+        Some((SourceKind::Monitor, id)) => Ok(Target::Monitor(id)),
+        None => {
+            let monitors = xcap::Monitor::all().context("cannot enumerate monitors")?;
+            monitors
+                .iter()
+                .find(|m| m.is_primary().unwrap_or(false))
+                .or_else(|| monitors.first())
+                .and_then(|m| m.id().ok())
+                .map(Target::Monitor)
+                .context("no monitor found")
+        }
+    }
+}
+
 fn find_window(id: u32) -> Result<xcap::Window> {
     xcap::Window::all()
         .context("cannot enumerate windows")?
@@ -68,26 +87,9 @@ fn find_window(id: u32) -> Result<xcap::Window> {
 impl Source {
     fn open(source: Option<(SourceKind, u32)>) -> Result<Self> {
         #[cfg(windows)]
-        {
-            let graphics = match source {
-                Some((SourceKind::Window, id)) => crate::wgc::Capture::window(id),
-                Some((SourceKind::Monitor, id)) => crate::wgc::Capture::monitor(id),
-                None => xcap::Monitor::all()
-                    .context("cannot enumerate monitors")
-                    .and_then(|monitors| {
-                        monitors
-                            .iter()
-                            .find(|m| m.is_primary().unwrap_or(false))
-                            .or_else(|| monitors.first())
-                            .and_then(|m| m.id().ok())
-                            .context("no monitor found")
-                    })
-                    .and_then(crate::wgc::Capture::monitor),
-            };
-            match graphics {
-                Ok(capture) => return Ok(Self::Graphics(capture)),
-                Err(e) => tracing::warn!("graphics capture unavailable, using GDI: {e:#}"),
-            }
+        match graphics_target(source).and_then(crate::wgc::Capture::start) {
+            Ok(capture) => return Ok(Self::Graphics(capture)),
+            Err(e) => tracing::warn!("graphics capture unavailable, using GDI: {e:#}"),
         }
         Self::open_xcap(source)
     }
@@ -162,6 +164,16 @@ pub fn capture_source(
     max_width: u32,
     quality: u8,
 ) -> Result<ScreenFrame> {
-    let image = Source::open_xcap(Some((kind, id)))?.grab()?;
-    encode_frame(image, max_width, quality)
+    encode_frame(grab_once(kind, id)?, max_width, quality)
+}
+
+fn grab_once(kind: SourceKind, id: u32) -> Result<RgbaImage> {
+    #[cfg(windows)]
+    if let Some(target) = graphics_target(Some((kind, id))).ok().filter(|target| target.hdr_white().is_some()) {
+        match crate::wgc::Capture::start(target).and_then(|mut capture| capture.grab()) {
+            Ok(image) => return Ok(image),
+            Err(e) => tracing::warn!("HDR preview capture failed, using GDI: {e:#}"),
+        }
+    }
+    Source::open_xcap(Some((kind, id)))?.grab()
 }
