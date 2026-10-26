@@ -234,9 +234,13 @@ fn server_choices(state: &ServerState, can_play: bool) -> SoundboardServer {
             .server
             .soundboard
             .iter()
-            .map(|s| SoundChoice { name: s.name.clone(), label: s.name.clone(), emoji: s.emoji.clone() })
+            .map(|s| SoundChoice { name: s.name.clone(), label: s.name.clone(), emoji: key_emoji(s.emoji.as_deref()) })
             .collect(),
     }
+}
+
+fn key_emoji(emoji: Option<&str>) -> Option<String> {
+    emoji.filter(|e| commy_core::server::parse_emoji_token(e).is_none()).map(String::from)
 }
 
 fn soundboard_list(app: &App) -> SoundboardList {
@@ -331,6 +335,15 @@ mod tests {
         assert_eq!(choices.name, "Friends");
         assert!(choices.can_play);
         assert_eq!(choices.sounds, vec![SoundChoice { name: "boom".into(), label: "boom".into(), emoji: Some("💥".into()) }]);
+    }
+
+    #[test]
+    fn server_emoji_pictures_stay_off_keys_that_only_show_text() {
+        let owner = UserProfile::new("owner");
+        let mut state = ServerState::new(Server::new("Friends", owner.id));
+        let token = commy_core::server::emoji_token("party", &format!("{}@{}", "a1".repeat(32), "b2".repeat(32)));
+        state.server.soundboard.push(SoundboardSound { name: "cheer".into(), blob: "b".into(), volume: 1.0, emoji: Some(token) });
+        assert_eq!(server_choices(&state, true).sounds[0].emoji, None);
     }
 
     #[test]

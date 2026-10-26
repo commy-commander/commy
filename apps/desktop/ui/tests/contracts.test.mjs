@@ -15,3 +15,13 @@ test("built-in soundboard clips use the backend's ids and labels, since peers pl
   assert.equal(appSounds.length, 4);
   assert.deepEqual(appSounds, backendSounds);
 });
+
+test("the sound upload limits match the backend, which refuses anything larger", () => {
+  const trim = read("apps", "desktop", "ui", "scripts", "sound-trim.js");
+  const limit = (source, name) => {
+    const m = new RegExp(`${name}(?::\\s*usize)?\\s*=\\s*([\\d\\s*]+);`).exec(source);
+    return m[1].split("*").reduce((product, n) => product * Number(n), 1);
+  };
+  assert.equal(limit(trim, "SOUND_STORE_MAX_BYTES"), limit(read("crates", "commy-view", "src", "pictures.rs"), "MAX_SOUND_BYTES"));
+  assert.equal(limit(trim, "SOUND_SOURCE_MAX_BYTES"), limit(read("apps", "desktop", "src-tauri", "src", "expressions.rs"), "MAX_SOUND_SOURCE_BYTES"));
+});
