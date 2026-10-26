@@ -15,6 +15,7 @@ pub const DEVICE_SECRET_KEY: &str = "commy.device";
 pub const ENTRY_KEY_KEY: &str = "commy.entry-key";
 pub const PINS_KEY: &str = "commy.pins";
 pub const SAFETY_KEY: &str = "commy.safety";
+pub const PERSONAL_KEY: &str = "commy.personal";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountUser {
@@ -213,6 +214,10 @@ pub fn pins_key(account: &str) -> String {
 
 pub fn safety_key(account: &str) -> String {
     format!("{SAFETY_KEY}.{account}")
+}
+
+pub fn personal_key(account: &str) -> String {
+    format!("{PERSONAL_KEY}.{account}")
 }
 
 pub fn device_secret_key(account: &str) -> String {

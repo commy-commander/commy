@@ -6,7 +6,8 @@ your servers, chat in text channels, send files and voice messages, use direct
 messages and group DMs, call people, join voice channels, create servers,
 arrange their channels, make and open invite links, manage roles, moderate
 members, set the rules, delete or hand over a server, and edit your profile
-(name, status, About Me, avatar and banner). Links from another account
+(name, status, About Me, avatar, banner, pronouns, a status that runs out
+and who sees your profile details). Links from another account
 server, server pictures, expressions, events, video and screen sharing still
 need the desktop app.
 

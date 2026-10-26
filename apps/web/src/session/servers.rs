@@ -143,6 +143,11 @@ impl Session {
                 let user = user()?;
                 vec![client().act(server, |state, me, _, _| moderate::kick(state, me.perms, user))?]
             }
+            "move_voice_member" => {
+                let user = user()?;
+                let to = args.channel_id.as_deref().map(str::parse::<ChannelId>).transpose().map_err(|_| "invalid channel".to_string())?;
+                vec![client().act(server, |state, me, _, _| moderate::move_voice(state, me.perms, me.user, user, to))?]
+            }
             "ban_member" => {
                 let user = user()?;
                 vec![client().act(server, |state, me, _, _| moderate::ban(state, me.perms, me.user, user))?]

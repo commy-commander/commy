@@ -38,7 +38,6 @@ pub struct VoiceProcessor {
     noise_cancellation: bool,
     echo: Option<echo::EchoCanceller>,
     far_end: echo::FarEndInbox,
-    capture_latency: Option<std::time::Duration>,
     muted: bool,
     push_to_talk: bool,
     talk_key_down: bool,
@@ -72,7 +71,6 @@ impl VoiceProcessor {
             noise_cancellation: true,
             echo: Some(echo::EchoCanceller::new()),
             far_end: echo::FarEndInbox::new(),
-            capture_latency: None,
             muted: false,
             push_to_talk: false,
             talk_key_down: false,
@@ -97,12 +95,19 @@ impl VoiceProcessor {
 
     pub fn set_echo_cancellation(&mut self, enabled: bool) {
         if enabled && self.echo.is_none() {
-            let mut canceller = echo::EchoCanceller::new();
-            canceller.note_capture_latency(self.capture_latency);
-            self.echo = Some(canceller);
+            self.echo = Some(echo::EchoCanceller::new());
         } else if !enabled {
             self.echo = None;
         }
+    }
+
+    pub fn start_fresh(&mut self) {
+        self.far_end.discard();
+        if self.echo.is_some() {
+            self.echo = Some(echo::EchoCanceller::new());
+        }
+        self.denoiser = DenoiseState::new();
+        self.gate = VoiceGate::default();
     }
 
     pub fn echo_cancellation(&self) -> bool {
@@ -111,13 +116,6 @@ impl VoiceProcessor {
 
     pub fn far_end_sink(&self) -> echo::FarEndSink {
         self.far_end.sink()
-    }
-
-    pub fn note_capture_latency(&mut self, latency: Option<std::time::Duration>) {
-        self.capture_latency = latency;
-        if let Some(canceller) = &mut self.echo {
-            canceller.note_capture_latency(latency);
-        }
     }
 
     fn cancel_echo(&mut self, gained: &mut [f32; FRAME_SIZE]) {
@@ -186,7 +184,7 @@ impl VoiceProcessor {
 
         let mut gained = [0.0f32; FRAME_SIZE];
         for (raw, src) in gained.iter_mut().zip(input) {
-            *raw = (src * self.input_gain).clamp(-1.0, 1.0);
+            *raw = if src.is_finite() { (src * self.input_gain).clamp(-1.0, 1.0) } else { 0.0 };
         }
         self.cancel_echo(&mut gained);
         let mut scaled = [0.0f32; FRAME_SIZE];
@@ -207,7 +205,12 @@ impl VoiceProcessor {
 
         let (mut samples, vad) = if self.noise_cancellation {
             let mut denoised = [0.0f32; FRAME_SIZE];
-            let vad = self.denoiser.process_frame(&mut denoised, &scaled);
+            let mut vad = self.denoiser.process_frame(&mut denoised, &scaled);
+            if !vad.is_finite() || denoised.iter().any(|s| !s.is_finite()) {
+                self.denoiser = DenoiseState::new();
+                denoised = [0.0; FRAME_SIZE];
+                vad = 0.0;
+            }
             let samples = denoised
                 .iter()
                 .map(|s| (s / RNNOISE_I16_FULL_SCALE).clamp(-1.0, 1.0))
@@ -439,7 +442,7 @@ mod tests {
                 })
                 .collect();
             let pcm: Vec<i16> = far.iter().map(|s| (s * 32767.0) as i16).collect();
-            sink.push(&pcm, None);
+            sink.push(&pcm);
             let out = p.process(&near).unwrap();
             if frame >= 500 {
                 echo_power += near.iter().map(|s| f64::from(s * s)).sum::<f64>();
@@ -454,6 +457,46 @@ mod tests {
         assert!(out.samples.iter().all(|s| (s - 0.1).abs() < 1e-3), "off means untouched");
         p.set_echo_cancellation(true);
         assert!(p.echo_cancellation());
+    }
+
+    #[test]
+    fn broken_mic_samples_do_not_silence_the_mic_for_good() {
+        let mut p = VoiceProcessor::new();
+        p.set_sensitivity(Sensitivity::Threshold(-60.0));
+        let mut broken = sine_frame(300.0, 0.4);
+        broken[3] = f32::NAN;
+        broken[4] = f32::INFINITY;
+        for _ in 0..5 {
+            let out = p.process(&broken).unwrap();
+            assert!(out.samples.iter().all(|s| s.is_finite()));
+        }
+        let frame = sine_frame(300.0, 0.4);
+        let mut out = p.process(&frame).unwrap();
+        for _ in 0..50 {
+            out = p.process(&frame).unwrap();
+        }
+        assert!(out.samples.iter().all(|s| s.is_finite()));
+        assert!(out.input_level_db > -20.0, "the meter still reads the mic");
+    }
+
+    #[test]
+    fn starting_fresh_drops_queued_playback_and_keeps_the_settings() {
+        let mut p = VoiceProcessor::new();
+        p.set_noise_cancellation(false);
+        let sink = p.far_end_sink();
+        for _ in 0..10 {
+            sink.push(&[8000; FRAME_SIZE]);
+        }
+        p.start_fresh();
+        assert!(p.echo_cancellation());
+        assert!(!p.noise_cancellation());
+        let frame = sine_frame(440.0, 0.3);
+        let mut out = p.process(&frame).unwrap();
+        for _ in 0..20 {
+            out = p.process(&frame).unwrap();
+        }
+        assert!(out.should_transmit);
+        assert!(level_db(&out.samples) > -20.0, "the voice passes after a fresh start");
     }
 
     #[test]

@@ -3204,12 +3204,7 @@ async fn set_pronouns(
     pronouns: Option<String>,
 ) -> CmdResult<VoiceSettings> {
     let me = current_profile(&app)?;
-    let cleaned = match pronouns.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
-        None => None,
-        Some(text) => Some(commy_core::user::clean_pronouns(text).ok_or_else(|| {
-            format!("pronouns can be up to {} characters", commy_core::user::MAX_PRONOUNS_CHARS)
-        })?),
-    };
+    let cleaned = view::profile::pronouns(pronouns.as_deref())?;
     let settings = app.update_voice(|voice| voice.pronouns = cleaned.clone());
     if !app.safety.lock().unwrap().profile_policy.shows_details_to_servers() {
         return Ok(settings);
@@ -3328,10 +3323,9 @@ async fn set_status_expiry(
     status_until: Option<i64>,
 ) -> CmdResult<VoiceSettings> {
     let now = chrono::Utc::now().timestamp();
-    let future = |t: Option<i64>| t.filter(|t| *t > now);
     let settings = app.update_voice(|voice| {
-        voice.presence_until = future(presence_until);
-        voice.status_until = future(status_until);
+        voice.presence_until = view::profile::future(presence_until, now);
+        voice.status_until = view::profile::future(status_until, now);
     });
     let profile = {
         let mut guard = app.profile.lock().unwrap();
@@ -3350,10 +3344,7 @@ async fn set_status_expiry(
 }
 
 fn expired_status(voice: &VoiceSettings, now: i64) -> (bool, bool) {
-    (
-        voice.presence_until.is_some_and(|t| t <= now),
-        voice.status_until.is_some_and(|t| t <= now),
-    )
+    view::profile::expired(voice.presence_until, voice.status_until, now)
 }
 
 async fn run_status_expiry(handle: tauri::AppHandle) {
@@ -3376,14 +3367,7 @@ async fn run_status_expiry(handle: tauri::AppHandle) {
         let profile = {
             let mut guard = app.profile.lock().unwrap();
             let Some(profile) = guard.as_mut() else { continue };
-            if presence {
-                profile.presence = Presence::Online;
-                profile.presence_until = None;
-            }
-            if status {
-                profile.custom_status = None;
-                profile.status_emoji = None;
-            }
+            view::profile::expire(profile, presence, status);
             profile.clone()
         };
         publish_profile(&app, &handle, &profile).await;
@@ -4594,10 +4578,6 @@ async fn edit_forum_post(
     apply_and_broadcast(&app, &handle, sid, post).await
 }
 
-fn voice_channel_full(app: &App, state: &ServerState, channel: ChannelId, user: UserId) -> bool {
-    view::act::voice_full(state, our_permissions(app, state, user), user, channel)
-}
-
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn update_role(
@@ -4982,31 +4962,8 @@ async fn move_voice_member(
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let channel: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MOVE_MEMBERS, "move members between voice channels")?;
-        if user == state.server.owner || user == me.id {
-            return Err("you cannot move that member".into());
-        }
-        let Some(current) = state.voice_states.get(&user).copied() else {
-            return Err("that member is not in voice here".into());
-        };
-        if let Some(target) = channel {
-            match state.server.channel(target) {
-                Some(c) if c.kind.is_voice() => {}
-                _ => return Err("that is not a voice channel".into()),
-            }
-            require_can_view(state, me.id, target)?;
-            if target == current {
-                return Err("they are already in that channel".into());
-            }
-            if voice_channel_full(&app, state, target, user) {
-                return Err("that voice channel is full".into());
-            }
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::VoiceMove { server: sid, user, channel }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::move_voice(state, perms, me.id, user, channel))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -6061,13 +6018,13 @@ async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult
 
 #[tauri::command]
 async fn pick_sound(handle: tauri::AppHandle) -> CmdResult<Option<(String, String)>> {
-    let filter = picker::Filter { label: "Sounds", extensions: &["mp3", "ogg", "wav"] };
-    let max = expressions::MAX_SOUND_BYTES as u64;
-    let Some(picked) = picker::pick_file(&handle, "Choose a sound", Some(filter), max, "sounds must be under 1 MB").await? else {
+    let filter = picker::Filter { label: "Audio", extensions: &["mp3", "ogg", "wav", "m4a", "aac", "flac", "opus"] };
+    let max = expressions::MAX_SOUND_SOURCE_BYTES as u64;
+    let Some(picked) = picker::pick_file(&handle, "Choose a sound", Some(filter), max, "pick an audio file under 8 MB").await? else {
         return Ok(None);
     };
     let bytes = picked.bytes;
-    let mime = expressions::audio_mime(&bytes).ok_or("sounds must be an MP3, OGG or WAV file")?;
+    let mime = expressions::audio_mime(&bytes).unwrap_or("application/octet-stream");
     Ok(Some((
         picked.name.rsplit_once('.').map(|(stem, _)| stem.to_string()).unwrap_or_default(),
         data_url(mime, &bytes),

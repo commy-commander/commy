@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 use commy_core::server::{clean_nickname, valid_hex_color, valid_rules, MAX_ACCESS_ROLES, MAX_NICKNAME_CHARS, MAX_SLOW_MODE, MAX_TIMEOUT_SECS, MAX_USER_LIMIT, SERVER_AFK_MINUTES};
 use commy_core::{ChannelId, ChannelKind, Permissions, RoleId, ServerEvent, ServerState, UserId};
 
-use crate::act::Act;
+use crate::act::{voice_full, Act};
 use crate::manage::need;
 
 pub fn kick(state: &ServerState, perms: Permissions, user: UserId) -> Act<ServerEvent> {
@@ -11,6 +11,34 @@ pub fn kick(state: &ServerState, perms: Permissions, user: UserId) -> Act<Server
         return Err("the owner cannot be kicked".into());
     }
     Ok(ServerEvent::MemberLeave { server: state.server.id, user })
+}
+
+pub fn move_voice(state: &ServerState, perms: Permissions, me: UserId, user: UserId, channel: Option<ChannelId>) -> Act<ServerEvent> {
+    need(perms, Permissions::MOVE_MEMBERS, "move members between voice channels")?;
+    if user == state.server.owner || user == me {
+        return Err("you cannot move that member".into());
+    }
+    let Some(current) = state.voice_states.get(&user).copied() else {
+        return Err("that member is not in voice here".into());
+    };
+    if let Some(target) = channel {
+        if !state.server.channel(target).is_some_and(|c| c.kind.is_voice()) {
+            return Err("that is not a voice channel".into());
+        }
+        if target == current {
+            return Err("they are already in that channel".into());
+        }
+        if !state.server.can_view(target, me) {
+            return Err("you do not have a role that can see that channel".into());
+        }
+        if !state.server.can_view(target, user) {
+            return Err("they do not have a role that can see that channel".into());
+        }
+        if voice_full(state, state.server.permissions_for(user), user, target) {
+            return Err("that voice channel is full".into());
+        }
+    }
+    Ok(ServerEvent::VoiceMove { server: state.server.id, user, channel })
 }
 
 pub fn ban(state: &ServerState, perms: Permissions, me: UserId, user: UserId) -> Act<ServerEvent> {
@@ -194,6 +222,30 @@ mod tests {
         assert!(ban(&state, theirs, member, owner).is_err());
         assert!(matches!(ban(&state, mine, owner, member), Ok(ServerEvent::MemberBan { .. })));
         assert!(unban(&state, theirs, member).is_err());
+    }
+
+    #[test]
+    fn moves_take_someone_in_voice_to_a_room_they_can_join() {
+        let (mut state, owner, member) = hangout();
+        let sid = state.server.id;
+        let room = |name: &str| state.server.channels.iter().find(|c| c.name == name).unwrap().id;
+        let (general, afk, text) = (room("General"), room("AFK"), room("general"));
+        let mine = state.server.permissions_for(owner);
+        assert_eq!(move_voice(&state, mine, owner, member, Some(afk)).unwrap_err(), "that member is not in voice here");
+        state.apply(ServerEvent::VoiceState { user: member, channel: Some(general), muted: false, deafened: false, since: None }).unwrap();
+        assert!(matches!(
+            move_voice(&state, mine, owner, member, Some(afk)),
+            Ok(ServerEvent::VoiceMove { user, channel: Some(to), .. }) if user == member && to == afk
+        ));
+        assert!(matches!(move_voice(&state, mine, owner, member, None), Ok(ServerEvent::VoiceMove { channel: None, .. })));
+        assert_eq!(move_voice(&state, mine, owner, member, Some(general)).unwrap_err(), "they are already in that channel");
+        assert_eq!(move_voice(&state, mine, owner, member, Some(text)).unwrap_err(), "that is not a voice channel");
+        assert!(move_voice(&state, state.server.permissions_for(member), member, owner, Some(afk)).is_err());
+        assert!(move_voice(&state, Permissions::MOVE_MEMBERS, member, member, Some(afk)).is_err(), "nobody moves themselves");
+        assert!(move_voice(&state, Permissions::default_member(), UserId::new(), member, Some(afk)).is_err());
+        state.apply(ServerEvent::ChannelLimit { server: sid, channel: afk, user_limit: 1 }).unwrap();
+        state.apply(ServerEvent::VoiceState { user: owner, channel: Some(afk), muted: false, deafened: false, since: None }).unwrap();
+        assert_eq!(move_voice(&state, mine, owner, member, Some(afk)).unwrap_err(), "that voice channel is full");
     }
 
     #[test]
