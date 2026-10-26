@@ -27,6 +27,11 @@ const CHANNELS: u16 = 2;
 const BUFFER_100NS: i64 = 200_000;
 const ACTIVATION_WAIT: Duration = Duration::from_secs(5);
 const WAKE_MS: u32 = 200;
+const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
+
+pub fn variant() -> String {
+    std::env::var("COMMY_SHARE_AUDIO").unwrap_or_else(|_| "current".into())
+}
 
 #[implement(IActivateAudioInterfaceCompletionHandler)]
 struct Activated(std::sync::mpsc::SyncSender<()>);
@@ -70,7 +75,9 @@ fn client_without_this_app() -> Result<IAudioClient> {
         ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, &IAudioClient::IID, Some(&blob), &handler)
     }
     .context("this version of Windows cannot leave one app out of a capture")?;
+    tracing::info!("diag: activation requested");
     finished.recv_timeout(ACTIVATION_WAIT).context("Windows did not open the capture in time")?;
+    tracing::info!("diag: activation completed");
     let mut result = HRESULT(0);
     let mut activated = None;
     unsafe { operation.GetActivateResult(&mut result, &mut activated) }?;
@@ -82,6 +89,8 @@ struct Capture {
     client: IAudioClient,
     reader: IAudioCaptureClient,
     wake: HANDLE,
+    float: bool,
+    packets: u64,
 }
 
 impl Drop for Capture {
@@ -95,31 +104,45 @@ impl Drop for Capture {
 
 impl Capture {
     fn open() -> Result<Self> {
+        let variant = variant();
+        let float = variant == "float";
         let client = client_without_this_app()?;
-        let block = CHANNELS * 2;
+        let block = CHANNELS * if float { 4 } else { 2 };
         let format = WAVEFORMATEX {
-            wFormatTag: WAVE_FORMAT_PCM as u16,
+            wFormatTag: if float { WAVE_FORMAT_IEEE_FLOAT } else { WAVE_FORMAT_PCM as u16 },
             nChannels: CHANNELS,
             nSamplesPerSec: RATE,
             nAvgBytesPerSec: RATE * u32::from(block),
             nBlockAlign: block,
-            wBitsPerSample: 16,
+            wBitsPerSample: if float { 32 } else { 16 },
             cbSize: 0,
         };
-        let flags = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM;
+        let mut flags = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
+        if variant != "noconvert" && !float {
+            flags |= AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM;
+        }
+        tracing::info!("diag: variant {variant}, flags {flags:#x}");
         unsafe { client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, BUFFER_100NS, 0, &format, None) }?;
+        tracing::info!("diag: initialized");
         let wake = unsafe { CreateEventW(None, false, false, None) }?;
         let capture = Self {
             reader: unsafe { client.GetService() }?,
             client,
             wake,
+            float,
+            packets: 0,
         };
         unsafe { capture.client.SetEventHandle(capture.wake) }?;
+        tracing::info!("diag: event set");
+        if variant == "nostart" {
+            return Ok(capture);
+        }
         unsafe { capture.client.Start() }?;
+        tracing::info!("diag: started");
         Ok(capture)
     }
 
-    fn read(&self, samples: &mut Vec<f32>) -> windows::core::Result<()> {
+    fn read(&mut self, samples: &mut Vec<f32>) -> windows::core::Result<()> {
         samples.clear();
         loop {
             if unsafe { self.reader.GetNextPacketSize() }? == 0 {
@@ -129,9 +152,16 @@ impl Capture {
             let mut frames = 0u32;
             let mut flags = 0u32;
             unsafe { self.reader.GetBuffer(&mut data, &mut frames, &mut flags, None, None) }?;
+            self.packets += 1;
+            if self.packets <= 5 || self.packets % 250 == 0 {
+                tracing::info!("diag: packet {} frames {frames} flags {flags:#x} null {}", self.packets, data.is_null());
+            }
             let count = frames as usize * usize::from(CHANNELS);
             if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 || data.is_null() {
                 samples.extend(std::iter::repeat_n(0.0, count));
+            } else if self.float {
+                let pcm = unsafe { std::slice::from_raw_parts(data as *const f32, count) };
+                samples.extend_from_slice(pcm);
             } else {
                 let pcm = unsafe { std::slice::from_raw_parts(data as *const i16, count) };
                 samples.extend(pcm.iter().map(|s| f32::from(*s) / 32768.0));
@@ -168,7 +198,8 @@ impl ProcessLoopback {
         let (ready, opened) = sync_channel(1);
         let thread = std::thread::spawn(move || {
             let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-            let capture = match Capture::open() {
+            let variant = variant();
+            let mut capture = match Capture::open() {
                 Ok(capture) => {
                     let _ = ready.send(Ok(()));
                     capture
@@ -181,8 +212,16 @@ impl ProcessLoopback {
             };
             let mut assembler = FrameAssembler::new(RATE, CHANNELS);
             let mut samples = Vec::new();
+            let mut wakes = 0u64;
             while !stopped.load(Ordering::Relaxed) {
                 if unsafe { WaitForSingleObject(capture.wake, WAKE_MS) } != WAIT_OBJECT_0 {
+                    continue;
+                }
+                wakes += 1;
+                if wakes % 250 == 0 {
+                    tracing::info!("diag: {wakes} wakes");
+                }
+                if variant == "noread" || variant == "nostart" {
                     continue;
                 }
                 if let Err(e) = capture.read(&mut samples) {
@@ -190,11 +229,15 @@ impl ProcessLoopback {
                     fault.raise();
                     break;
                 }
+                if variant == "nosend" {
+                    continue;
+                }
                 assembler.push(&samples);
                 while let Some(frame) = assembler.next_frame() {
                     let _ = tx.send(crate::devices::pcm16(&frame));
                 }
             }
+            tracing::info!("diag: capture loop ended");
             drop(capture);
             unsafe { CoUninitialize() };
         });

@@ -354,6 +354,10 @@ pub fn system_audio_supported() -> bool {
 
 #[cfg(windows)]
 pub fn start_system_audio(tx: UnboundedSender<Vec<i16>>) -> Result<InputHandle> {
+    if crate::loopback::variant() == "device" {
+        tracing::info!("diag: device loopback only");
+        return start_device_loopback(tx);
+    }
     let without_commy = tx.clone();
     let opened = run_stream_thread(
         "shared audio thread died",
