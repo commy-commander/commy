@@ -1139,10 +1139,12 @@ async fn set_voice_channel(
             dial_voice_members(&app, &handle, sid, channel, &profile);
             set_own_voice_state(&app, &handle, sid, &profile, &voice, Some(channel)).await?;
             devices::claim_profile_node(&app, sid).await;
+            overlay::refresh(&handle);
             Ok(())
         }
         None => {
             leave_voice(&app, &handle, sid, &profile, &voice).await;
+            overlay::refresh(&handle);
             Ok(())
         }
     }
@@ -5694,6 +5696,7 @@ const ACTIVITY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 
 async fn run_activity_watcher(handle: tauri::AppHandle) {
     let mut seen_last_poll: Option<String> = None;
+    let mut was_in_voice = false;
     loop {
         tokio::time::sleep(ACTIVITY_POLL).await;
         let app = handle.state::<App>();
@@ -5711,7 +5714,10 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
             }
         }
         let in_game = seen.as_deref().is_some_and(|text| text.starts_with("Playing "));
-        if app.game_in_front.swap(in_game, std::sync::atomic::Ordering::Relaxed) != in_game {
+        let game_changed = app.game_in_front.swap(in_game, std::sync::atomic::Ordering::Relaxed) != in_game;
+        let in_voice = app.voice_session.lock().unwrap().is_some();
+        let voice_changed = std::mem::replace(&mut was_in_voice, in_voice) != in_voice;
+        if game_changed || voice_changed {
             overlay::refresh(&handle);
         } else {
             overlay::hold_corner(&handle);
