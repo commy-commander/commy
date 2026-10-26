@@ -9,6 +9,10 @@ function clampSidebarWidth(width, windowWidth) {
   return Math.round(Math.min(cap, Math.max(SIDEBAR_MIN_PX, width)));
 }
 
+function pickConnLink(links, picked) {
+  return links.find(l => l.user === picked) || links[0] || null;
+}
+
 function membersCollapsed(pref, width) {
   if (width < CHAT_FIRST_PX) return true;
   if (pref === "1") return true;
@@ -17,5 +21,5 @@ function membersCollapsed(pref, width) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { NARROW_WINDOW_PX, CHAT_FIRST_PX, SIDEBAR_MIN_PX, SIDEBAR_MAX_PX, clampSidebarWidth, membersCollapsed };
+  module.exports = { NARROW_WINDOW_PX, CHAT_FIRST_PX, SIDEBAR_MIN_PX, SIDEBAR_MAX_PX, clampSidebarWidth, pickConnLink, membersCollapsed };
 }

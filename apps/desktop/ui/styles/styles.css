@@ -4933,6 +4933,16 @@ h3.md-heading { font-size: 1.1em; }
 .conn-title { font-size: 14px; font-weight: 700; color: var(--text-normal); }
 .conn-rates { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .conn-links { display: flex; flex-direction: column; gap: 8px; }
+.conn-tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: 0 0 auto; padding: 3px; margin: -3px; }
+.conn-tabs::-webkit-scrollbar { display: none; }
+.conn-tab { position: relative; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; border: 2px solid transparent; border-radius: 50%; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.conn-tab .avatar { width: 28px; height: 28px; }
+.conn-tab.active { border-color: var(--accent); }
+.conn-tab:hover:not(.active) { border-color: var(--bg-active); }
+.conn-tab::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--bg-darkest); background: var(--green); }
+.conn-tab[data-quality="ok"]::after { background: var(--yellow); }
+.conn-tab[data-quality="bad"]::after { background: var(--red); }
+.conn-link { min-height: 128px; }
 .conn-link { background: var(--bg-dark); border-radius: 10px; padding: 8px 10px; }
 .conn-link-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .conn-name { flex: 1; font-size: 13px; font-weight: 600; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

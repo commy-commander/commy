@@ -7961,6 +7961,7 @@ function wireHotkeyInput(input, onPick, { clearable = false } = {}) {
 
 let connTimer = null;
 let connLast = null;
+let connPick = null;
 
 function quality(rtt, loss) {
   if (rtt > 250 || loss > 5) return "bad";
@@ -7991,7 +7992,27 @@ async function refreshConnPop() {
   connLast = { at: now, tx, rx };
   const list = $("conn-links");
   list.replaceChildren();
+  const current = pickConnLink(stats.links, connPick);
+  connPick = current ? current.user : null;
+  const tabs = $("conn-tabs");
+  tabs.replaceChildren();
+  tabs.classList.toggle("hidden", stats.links.length < 2);
   for (const link of stats.links) {
+    const tab = el("button", "conn-tab");
+    tab.type = "button";
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(link === current));
+    tab.title = link.name;
+    tab.dataset.quality = quality(link.rtt_ms, link.loss_pct);
+    tab.classList.toggle("active", link === current);
+    tab.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
+    tab.onclick = () => {
+      connPick = link.user;
+      refreshConnPop();
+    };
+    tabs.appendChild(tab);
+  }
+  for (const link of current ? [current] : []) {
     const row = el("div", "conn-link");
     const head = el("div", "conn-link-head");
     head.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));

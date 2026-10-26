@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { membersCollapsed, clampSidebarWidth } = require("../scripts/layout.js");
+const { membersCollapsed, clampSidebarWidth, pickConnLink } = require("../scripts/layout.js");
 
 test("the people panel starts collapsed on narrow windows and open on wide ones", () => {
   assert.equal(membersCollapsed(null, 1000), true);
@@ -25,4 +25,12 @@ test("sidebar width stays within sensible limits", () => {
   assert.equal(clampSidebarWidth(300, 1400), 300);
   assert.equal(clampSidebarWidth(900, 1400), 420);
   assert.equal(clampSidebarWidth(400, 800), 360);
+});
+
+test("connection panel keeps the chosen person and falls back to the first", () => {
+  const links = [{ user: "a" }, { user: "b" }];
+  assert.equal(pickConnLink(links, "b").user, "b");
+  assert.equal(pickConnLink(links, "gone").user, "a");
+  assert.equal(pickConnLink(links, null).user, "a");
+  assert.equal(pickConnLink([], "a"), null);
 });
