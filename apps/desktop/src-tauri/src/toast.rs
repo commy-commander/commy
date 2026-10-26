@@ -26,7 +26,7 @@ pub fn register(icon_png: Option<&std::path::Path>) {
         SetCurrentProcessExplicitAppUserModelID(id.as_ptr());
 
         let path = wide(&format!("Software\\Classes\\AppUserModelId\\{APP_ID}"));
-        let mut key: HKEY = 0;
+        let mut key: HKEY = std::ptr::null_mut();
         let status = RegCreateKeyExW(
             HKEY_CURRENT_USER,
             path.as_ptr(),

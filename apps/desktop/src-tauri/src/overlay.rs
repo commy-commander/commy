@@ -169,7 +169,7 @@ fn show_without_focus(window: &tauri::WebviewWindow) {
         SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
     };
     let Ok(hwnd) = window.hwnd() else { return };
-    let hwnd = hwnd.0 as isize;
+    let hwnd = hwnd.0 as windows_sys::Win32::Foundation::HWND;
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         let wanted = (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT) as isize;
@@ -184,7 +184,7 @@ fn hide_window(window: &tauri::WebviewWindow) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
     if let Ok(hwnd) = window.hwnd() {
         unsafe {
-            ShowWindow(hwnd.0 as isize, SW_HIDE);
+            ShowWindow(hwnd.0 as windows_sys::Win32::Foundation::HWND, SW_HIDE);
         }
     }
 }
