@@ -8486,8 +8486,26 @@ async function setStreamDeckEnabled(enabled) {
 function onStreamDeckPair(prompt) {
   streamDeckPairing = prompt.request;
   $("stream-deck-pair-body").textContent =
-    `${prompt.name} wants to play sounds from your soundboard. Only allow it if you just set up the Commy plugin on this computer.`;
+    `${prompt.name} wants to control Commy: play and add sounds, mute, switch channels and more. Only allow it if you just set up the Commy plugin on this computer.`;
   showModal("modal-stream-deck");
+}
+
+async function onStreamDeckCommand(command) {
+  try {
+    if (command.action === "toggle_camera") {
+      if (state.voiceChannelId) await (state.cameraOn ? stopCamera() : startCamera());
+    } else if (command.action === "toggle_stream") {
+      await toggleShare();
+    } else if (command.action === "open_channel") {
+      await openNotificationTarget(`channel:${command.server}:${command.channel}`);
+    } else if (command.action === "join_voice") {
+      if (!state.currentServer || state.currentServer.id !== command.server) await selectServer(command.server);
+      const channel = state.currentServer && state.currentServer.channels.find(c => c.id === command.channel);
+      if (channel) await toggleVoice(channel);
+    }
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 function onStreamDeckPairClosed(request) {
@@ -17446,6 +17464,11 @@ function wireEvents() {
     window.__TAURI__.event.listen("activity-input", event => onActivityInput(event.payload));
     window.__TAURI__.event.listen("stream-deck-pair", event => onStreamDeckPair(event.payload));
     window.__TAURI__.event.listen("stream-deck-pair-closed", event => onStreamDeckPairClosed(event.payload));
+    window.__TAURI__.event.listen("stream-deck-command", event => onStreamDeckCommand(event.payload));
+    window.__TAURI__.event.listen("voice-settings-synced", event => {
+      state.voice = event.payload;
+      renderUserPanel();
+    });
     window.__TAURI__.event.listen("stream-deck-changed", event => {
       streamDeck = event.payload;
       renderStreamDeck();

@@ -8,7 +8,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 
-use super::protocol::{DenyReason, Reply, Request, SoundChoice, SoundboardList, PROTOCOL_VERSION};
+use super::protocol::{Control, DeckStatus, DenyReason, Directory, Reply, Request, SoundChoice, SoundboardList, PROTOCOL_VERSION};
 
 pub const MAX_LINE_BYTES: u64 = 4096;
 pub const MAX_UPLOAD_LINE_BYTES: u64 = (commy_view::pictures::MAX_SOUND_BYTES as u64).div_ceil(3) * 4 + MAX_LINE_BYTES;
@@ -35,6 +35,31 @@ pub trait Backend: Send + Sync + 'static {
     fn soundboards(&self) -> SoundboardList;
     fn play(&self, server: Option<String>, sound: String) -> impl Future<Output = Result<(), String>> + Send;
     fn add_sound(&self, upload: SoundUpload) -> impl Future<Output = Result<SoundChoice, String>> + Send;
+    fn status(&self) -> DeckStatus;
+    fn directory(&self) -> impl Future<Output = Directory> + Send;
+    fn control(&self, control: Control) -> impl Future<Output = Result<(), String>> + Send;
+}
+
+#[derive(Default)]
+struct Holds {
+    talk: bool,
+    mute: bool,
+}
+
+impl Holds {
+    fn note(&mut self, control: &Control) {
+        match control {
+            Control::Talk { down } => self.talk = *down,
+            Control::HoldMute { down } => self.mute = *down,
+            _ => {}
+        }
+    }
+
+    fn releases(&self) -> Vec<Control> {
+        let talk = self.talk.then_some(Control::Talk { down: false });
+        let mute = self.mute.then_some(Control::HoldMute { down: false });
+        talk.into_iter().chain(mute).collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,10 +116,22 @@ async fn serve<B: Backend>(stream: TcpStream, backend: Arc<B>) {
     if send(&mut write, &Reply::Ready { version: PROTOCOL_VERSION }).await.is_err() {
         return;
     }
+    let mut holds = Holds::default();
+    talk_to_deck(&*backend, &token, &mut reader, &mut write, &mut holds).await;
+    for release in holds.releases() {
+        let _ = backend.control(release).await;
+    }
+}
+
+async fn talk_to_deck<B: Backend, R, W>(backend: &B, token: &str, reader: &mut R, write: &mut W, holds: &mut Holds)
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut last_play: Option<Instant> = None;
-    while let Some(request) = read_request(&mut reader, MAX_UPLOAD_LINE_BYTES).await {
-        if !backend.is_paired(&token) {
-            let _ = send(&mut write, &Reply::Denied { reason: DenyReason::Removed }).await;
+    while let Some(request) = read_request(reader, MAX_UPLOAD_LINE_BYTES).await {
+        if !backend.is_paired(token) {
+            let _ = send(write, &Reply::Denied { reason: DenyReason::Removed }).await;
             return;
         }
         let reply = match request {
@@ -117,8 +154,17 @@ async fn serve<B: Backend>(stream: TcpStream, backend: Arc<B>) {
                     Err(message) => Reply::Failed { id, message },
                 }
             }
+            Request::Status => Reply::Status(backend.status()),
+            Request::Directory => Reply::Directory(backend.directory().await),
+            Request::Control { id, control } => {
+                holds.note(&control);
+                match backend.control(control).await {
+                    Ok(()) => Reply::Done { id, status: backend.status() },
+                    Err(message) => Reply::Failed { id, message },
+                }
+            }
         };
-        if send(&mut write, &reply).await.is_err() {
+        if send(write, &reply).await.is_err() {
             return;
         }
     }
@@ -181,6 +227,7 @@ mod tests {
         withdrawn: Mutex<Vec<u64>>,
         played: Mutex<Vec<(Option<String>, String)>>,
         added: Mutex<Vec<SoundUpload>>,
+        controls: Mutex<Vec<Control>>,
     }
 
     impl Backend for FakeApp {
@@ -234,6 +281,23 @@ mod tests {
             let sound = SoundChoice { name: upload.name.clone(), label: upload.name.clone(), emoji: upload.emoji.clone() };
             self.added.lock().unwrap().push(upload);
             Ok(sound)
+        }
+
+        fn status(&self) -> DeckStatus {
+            let muted = self.controls.lock().unwrap().iter().filter(|c| **c == Control::ToggleMute).count() % 2 == 1;
+            DeckStatus { muted, unread: 3, ..DeckStatus::default() }
+        }
+
+        async fn directory(&self) -> Directory {
+            Directory { inputs: vec!["Desk mic".into()], ..Directory::default() }
+        }
+
+        async fn control(&self, control: Control) -> Result<(), String> {
+            if control == Control::ToggleCamera {
+                return Err("join a voice channel first".into());
+            }
+            self.controls.lock().unwrap().push(control);
+            Ok(())
         }
     }
 
@@ -424,6 +488,67 @@ mod tests {
             client.recv().await.unwrap(),
             serde_json::json!({ "type": "failed", "id": 5, "message": "you do not have permission to add sounds" })
         );
+    }
+
+    async fn paired_client(port: u16, app: &FakeApp) -> Client {
+        app.tokens.lock().unwrap().push("known".into());
+        let mut client = Client::connect(port).await;
+        client.send(r#"{"type":"hello","version":1,"token":"known"}"#).await;
+        assert_eq!(client.recv().await.unwrap()["type"], "ready");
+        client
+    }
+
+    #[tokio::test]
+    async fn controls_answer_with_the_new_status() {
+        let (port, app) = start().await;
+        let mut client = paired_client(port, &app).await;
+        client.send(r#"{"type":"control","id":1,"control":{"action":"toggle_mute"}}"#).await;
+        let done = client.recv().await.unwrap();
+        assert_eq!(done["type"], "done");
+        assert_eq!(done["id"], 1);
+        assert_eq!(done["status"]["muted"], true);
+        client.send(r#"{"type":"control","id":2,"control":{"action":"toggle_camera"}}"#).await;
+        assert_eq!(
+            client.recv().await.unwrap(),
+            serde_json::json!({ "type": "failed", "id": 2, "message": "join a voice channel first" })
+        );
+        client.send(r#"{"type":"status"}"#).await;
+        let status = client.recv().await.unwrap();
+        assert_eq!(status["type"], "status");
+        assert_eq!(status["unread"], 3);
+        client.send(r#"{"type":"directory"}"#).await;
+        let directory = client.recv().await.unwrap();
+        assert_eq!(directory["type"], "directory");
+        assert_eq!(directory["inputs"][0], "Desk mic");
+    }
+
+    #[tokio::test]
+    async fn hanging_up_lets_go_of_held_talk_and_mute_keys() {
+        let (port, app) = start().await;
+        let mut client = paired_client(port, &app).await;
+        client.send(r#"{"type":"control","id":1,"control":{"action":"talk","down":true}}"#).await;
+        client.recv().await.unwrap();
+        client.send(r#"{"type":"control","id":2,"control":{"action":"hold_mute","down":true}}"#).await;
+        client.recv().await.unwrap();
+        drop(client);
+        wait_until(|| app.controls.lock().unwrap().len() == 4).await;
+        assert_eq!(
+            app.controls.lock().unwrap()[2..],
+            [Control::Talk { down: false }, Control::HoldMute { down: false }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_released_key_is_not_released_again_on_hang_up() {
+        let (port, app) = start().await;
+        let mut client = paired_client(port, &app).await;
+        client.send(r#"{"type":"control","id":1,"control":{"action":"talk","down":true}}"#).await;
+        client.recv().await.unwrap();
+        client.send(r#"{"type":"control","id":2,"control":{"action":"talk","down":false}}"#).await;
+        client.recv().await.unwrap();
+        drop(client);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(app.controls.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

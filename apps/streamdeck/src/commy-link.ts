@@ -9,6 +9,9 @@ import {
   PROTOCOL_VERSION,
   type Reply,
   type Request,
+  type Control,
+  type DeckStatus,
+  type Directory,
   type SoundboardList,
   type SoundChoice,
 } from "./protocol.ts";
@@ -35,6 +38,8 @@ export type NewSound = { server: string; name: string; emoji: string | null; dat
 
 type Waiter = { resolve: (reply: Reply) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 
+type Listing = "soundboards" | "status" | "directory";
+
 export class CommyLink {
   #tokens: TokenStore;
   #name: string;
@@ -48,7 +53,7 @@ export class CommyLink {
   #connecting: Promise<LinkState> | null = null;
   #listeners = new Set<(state: LinkState) => void>();
   #byId = new Map<number, Waiter>();
-  #lists: Waiter[] = [];
+  #listings: Record<Listing, Waiter[]> = { soundboards: [], status: [], directory: [] };
   #nextId = 1;
 
   constructor(options: LinkOptions) {
@@ -79,10 +84,32 @@ export class CommyLink {
   }
 
   async list(): Promise<SoundboardList> {
-    const reply = await this.#request({ type: "list" }, waiter => this.#lists.push(waiter));
+    const reply = await this.#request({ type: "list" }, waiter => this.#listings.soundboards.push(waiter));
     if (reply.type !== "soundboards") throw new Error("unexpected reply");
     const { type: _type, ...list } = reply;
     return list;
+  }
+
+  async status(): Promise<DeckStatus> {
+    const reply = await this.#request({ type: "status" }, waiter => this.#listings.status.push(waiter));
+    if (reply.type !== "status") throw new Error("unexpected reply");
+    const { type: _type, ...status } = reply;
+    return status;
+  }
+
+  async directory(): Promise<Directory> {
+    const reply = await this.#request({ type: "directory" }, waiter => this.#listings.directory.push(waiter));
+    if (reply.type !== "directory") throw new Error("unexpected reply");
+    const { type: _type, ...directory } = reply;
+    return directory;
+  }
+
+  async control(control: Control): Promise<DeckStatus> {
+    const id = this.#nextId++;
+    const reply = await this.#request({ type: "control", id, control }, waiter => this.#byId.set(id, waiter));
+    if (reply.type === "failed") throw new Error(reply.message);
+    if (reply.type !== "done") throw new Error("unexpected reply");
+    return reply.status;
   }
 
   async play(sound: string, server?: string): Promise<void> {
@@ -172,10 +199,13 @@ export class CommyLink {
         settle(reply.reason === "removed" ? "declined" : reply.reason);
         break;
       case "soundboards":
-        this.#lists.shift()?.resolve(reply);
+      case "status":
+      case "directory":
+        this.#listings[reply.type].shift()?.resolve(reply);
         break;
       case "played":
       case "added":
+      case "done":
       case "failed":
         this.#byId.get(reply.id)?.resolve(reply);
         this.#byId.delete(reply.id);
@@ -229,13 +259,16 @@ export class CommyLink {
   }
 
   #forget(waiter: Waiter): void {
-    this.#lists = this.#lists.filter(w => w !== waiter);
+    for (const queue of Object.values(this.#listings)) {
+      const at = queue.indexOf(waiter);
+      if (at >= 0) queue.splice(at, 1);
+    }
     for (const [id, w] of this.#byId) if (w === waiter) this.#byId.delete(id);
   }
 
   #failAll(error: Error): void {
-    for (const waiter of [...this.#lists, ...this.#byId.values()]) waiter.reject(error);
-    this.#lists = [];
+    const listed = Object.values(this.#listings).flatMap(queue => queue.splice(0));
+    for (const waiter of [...listed, ...this.#byId.values()]) waiter.reject(error);
     this.#byId.clear();
   }
 

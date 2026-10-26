@@ -1,3 +1,4 @@
+mod controls;
 mod protocol;
 mod server;
 
@@ -11,7 +12,7 @@ use tokio::sync::oneshot;
 use crate::expressions::{DEFAULT_SOUNDS, DEFAULT_SOUND_PREFIX};
 use crate::state::App;
 use crate::CmdResult;
-use protocol::{Settings, SoundChoice, SoundboardList, SoundboardServer};
+use protocol::{Control, DeckStatus, Directory, Settings, SoundChoice, SoundboardList, SoundboardServer};
 use server::{Backend, PairingAsk, SoundUpload};
 
 pub const RELEASE_PORT: u16 = 47615;
@@ -43,6 +44,7 @@ pub struct StreamDeck {
     listener: Option<tauri::async_runtime::JoinHandle<()>>,
     pending: Option<PendingPairing>,
     next_request: u64,
+    holding_mute: bool,
 }
 
 struct PendingPairing {
@@ -222,6 +224,20 @@ impl Backend for AppBackend {
         }
         crate::upload_sound(&app, &self.handle, sid, &name, &upload.data, None, upload.emoji.as_deref()).await?;
         Ok(SoundChoice { emoji: key_emoji(upload.emoji.as_deref()), label: name.clone(), name })
+    }
+
+    fn status(&self) -> DeckStatus {
+        controls::deck_status(&self.handle.state::<App>())
+    }
+
+    async fn directory(&self) -> Directory {
+        let devices = tokio::task::spawn_blocking(|| (commy_media::list_device_names(true), commy_media::list_device_names(false)));
+        let (inputs, outputs) = devices.await.unwrap_or_default();
+        Directory { inputs, outputs, ..controls::directory(&self.handle.state::<App>()) }
+    }
+
+    async fn control(&self, control: Control) -> Result<(), String> {
+        controls::run(&self.handle, control).await
     }
 }
 

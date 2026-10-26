@@ -132,6 +132,30 @@ test("adding a sound sends it with its server and returns what Commy stored", as
   commy.close();
 });
 
+test("status, directory and controls come back from Commy", async () => {
+  const status = { muted: true, unread: 2 };
+  const commy = await fakeCommy((request, reply) => {
+    if (request.type === "hello") reply({ type: "ready", version: 1 });
+    if (request.type === "status") reply({ type: "status", ...status });
+    if (request.type === "directory") reply({ type: "directory", servers: [], people: [], inputs: ["Desk mic"], outputs: [] });
+    if (request.type === "control" && (request.control as { action: string }).action === "toggle_mute") {
+      reply({ type: "done", id: request.id, status: { ...status, muted: false } });
+    }
+    if (request.type === "control" && (request.control as { action: string }).action === "toggle_camera") {
+      reply({ type: "failed", id: request.id, message: "join a voice channel first" });
+    }
+  });
+  const link = new CommyLink({ tokens: memoryTokens({ [commy.port]: "known" }), ports: [commy.port] });
+  assert.equal(await link.connect(), "ready");
+  assert.deepEqual(await link.status(), status);
+  assert.deepEqual((await link.directory()).inputs, ["Desk mic"]);
+  assert.equal((await link.control({ action: "toggle_mute" })).muted, false);
+  await assert.rejects(link.control({ action: "toggle_camera" }), /voice channel/);
+  assert.deepEqual(commy.seen.at(-1), { type: "control", id: 2, control: { action: "toggle_camera" } });
+  link.close();
+  commy.close();
+});
+
 test("a declined deck reports it and a removed one forgets its token", async () => {
   const declining = await fakeCommy((request, reply, socket) => {
     reply({ type: "denied", reason: "declined" });

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Commy</title>
+    <link rel="stylesheet" href="inspector.css" />
+  </head>
+  <body>
+    <div class="row" data-field="server" hidden>
+      <label for="server">Server</label>
+      <select id="server" disabled></select>
+    </div>
+    <div class="row" data-field="channel" hidden>
+      <label for="channel">Channel</label>
+      <select id="channel" disabled></select>
+    </div>
+    <div class="row" data-field="user" hidden>
+      <label for="user">Person</label>
+      <select id="user" disabled></select>
+    </div>
+    <div class="row" data-field="target" hidden>
+      <label for="target">For</label>
+      <select id="target">
+        <option value="output">Speakers</option>
+        <option value="input">Microphone</option>
+      </select>
+    </div>
+    <div class="row" data-field="device" hidden>
+      <label for="device">Device</label>
+      <select id="device" disabled></select>
+    </div>
+    <div class="row" data-field="mode" hidden>
+      <label for="mode">Press to</label>
+      <select id="mode">
+        <option value="up">Turn up</option>
+        <option value="down">Turn down</option>
+        <option value="set">Set to</option>
+      </select>
+    </div>
+    <div class="row" data-field="amount" hidden>
+      <label for="amount">Amount</label>
+      <div class="inline">
+        <input type="text" inputmode="numeric" id="amount" maxlength="3" />
+        <span class="muted">%</span>
+      </div>
+    </div>
+    <p class="note" id="hint"></p>
+    <p class="note" id="note">Connecting to Commy...</p>
+    <script type="module" src="control.js"></script>
+  </body>
+</html>
