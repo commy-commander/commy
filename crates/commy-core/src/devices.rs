@@ -23,7 +23,7 @@ pub fn node_key(node: &str) -> Option<String> {
 
 impl Devices {
     pub fn note(&mut self, user: UserId, node: String, voice: Option<ChannelId>, since: Option<i64>) -> bool {
-        let takes_seat = voice.is_some() && self.voice_holder(user).is_none_or(|held| held.node == node || since >= held.since);
+        let takes_seat = voice.is_some() && self.voice_holder(user).is_none_or(|held| held.node == node || since > held.since);
         let voice = voice.filter(|_| takes_seat);
         let device = Device { node, since: voice.and(since), voice };
         let list = self.by_user.entry(user).or_default();
@@ -38,6 +38,11 @@ impl Devices {
         }
         list.push(device);
         *list != before
+    }
+
+    pub fn join_stamp(&self, user: UserId, now_ms: i64) -> i64 {
+        let held = self.voice_holder(user).and_then(|d| d.since);
+        held.map_or(now_ms, |since| now_ms.max(since.saturating_add(1)))
     }
 
     pub fn voice_holder(&self, user: UserId) -> Option<&Device> {
@@ -142,6 +147,25 @@ mod tests {
         assert_eq!(devices.of(user).iter().find(|d| d.node == node(1)).and_then(|d| d.voice), None);
         devices.note(user, node(2), Some(room), Some(2_000));
         assert_eq!(devices.in_voice(user, room), Some(node(2).as_str()), "the device in voice may move rooms");
+    }
+
+    #[test]
+    fn a_join_is_stamped_after_the_seat_it_takes_over_whatever_the_clock_says() {
+        let (mut devices, user, room) = (Devices::default(), UserId::new(), ChannelId::new());
+        assert_eq!(devices.join_stamp(user, 500), 500);
+        devices.note(user, node(1), Some(room), Some(9_000));
+        assert_eq!(devices.join_stamp(user, 5_000), 9_001, "this device's clock is behind the one in voice");
+        assert_eq!(devices.join_stamp(user, 12_000), 12_000);
+        assert!(devices.note(user, node(2), Some(room), Some(devices.join_stamp(user, 5_000))));
+        assert_eq!(devices.in_voice(user, room), Some(node(2).as_str()));
+    }
+
+    #[test]
+    fn a_tie_keeps_the_device_already_in_voice_as_the_devices_themselves_do() {
+        let (mut devices, user, room) = (Devices::default(), UserId::new(), ChannelId::new());
+        devices.note(user, node(1), Some(room), Some(7));
+        devices.note(user, node(2), Some(room), Some(7));
+        assert_eq!(devices.in_voice(user, room), Some(node(1).as_str()));
     }
 
     #[test]

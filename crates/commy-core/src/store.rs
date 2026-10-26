@@ -2243,6 +2243,10 @@ impl ServerState {
         self.devices.of(user)
     }
 
+    pub fn voice_join_stamp(&self, user: UserId, now_ms: i64) -> i64 {
+        self.devices.join_stamp(user, now_ms)
+    }
+
     pub fn voice_device(&self, user: UserId) -> Option<&str> {
         self.voice_states.get(&user).and_then(|room| self.devices.in_voice(user, *room))
     }

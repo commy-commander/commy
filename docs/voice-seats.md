@@ -13,8 +13,8 @@ Change them only together with the tests named at the end.
    since }`. `since` is the moment that device joined, in milliseconds.
 3. The device registry (`commy_core::devices`) holds at most one voice device
    per account. A device that announces a voice room takes the seat when
-   nobody holds it, when it already holds it, or when its `since` is not older
-   than the holder's. Every other device of that account is then stood up.
+   nobody holds it, when it already holds it, or when its `since` is later
+   than the holder's (a tie keeps the holder). Every other device of that account is then stood up.
    An older join heard late does not take the seat back. The devices
    themselves follow the same rule (`devices::takes_over`), so the device that
    loses stops its call on its own.
@@ -31,7 +31,10 @@ Change them only together with the tests named at the end.
 
 ## Joining, moving and leaving
 
-- Join or move: send `DeviceAnnounce` with the room first, then `VoiceState`.
+- Join or move: stamp the join with `ServerState::voice_join_stamp`, which is
+  the local time but always later than the seat it takes over, so a device
+  with a slow clock still wins the hand-over. Then send `DeviceAnnounce` with
+  the room first, and `VoiceState` after it.
 - Leave: send `DeviceAnnounce` with `voice: None` and `VoiceState` with
   `channel: None`. The announce is what ends the seat for apps that know the
   device. The `VoiceState` is for older apps.
@@ -80,7 +83,8 @@ channel however many devices they have. Dial their media through
 ## Tests that pin these rules
 
 - `commy-core` `devices`: a later join takes the seat, an older join heard
-  late does not, standing up clears every seat.
+  late does not, a tie keeps the holder, a join stamp beats the seat it takes
+  over, standing up clears every seat.
 - `commy-core` `store`: only the device in voice can end the seat, the device
   in voice decides the room whatever its clock says, members without devices,
   ending voice, a fresh copy keeps who is in voice.

@@ -77,8 +77,9 @@ mod tests {
 
     fn in_voice(state: &mut ServerState, me: UserId, node: &str, room: ChannelId) {
         let server = state.server.id;
+        let since = state.voice_join_stamp(me, 1_000);
         state.apply(ServerEvent::VoiceState { user: me, channel: Some(room), muted: false, deafened: false, since: Some(1) }).unwrap();
-        state.apply(ServerEvent::DeviceAnnounce { server, user: me, node: node.into(), voice: Some(room), since: Some(1_000) }).unwrap();
+        state.apply(ServerEvent::DeviceAnnounce { server, user: me, node: node.into(), voice: Some(room), since: Some(since) }).unwrap();
     }
 
     fn step(state: &ServerState, me: UserId, current: ChannelId, idle_secs: i64, timeout_secs: i64) -> IdleVoice {

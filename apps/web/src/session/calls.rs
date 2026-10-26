@@ -300,7 +300,9 @@ impl Session {
         }
         self.hang_up_media();
         let _ = self.host.start_voice().await;
-        self.voice.borrow_mut().link = Some(Link::new(Some(server), channel, me));
+        let mut link = Link::new(Some(server), channel, me);
+        link.since_ms = self.read_state(server, |state, me| Ok(state.voice_join_stamp(me, link.since_ms))).unwrap_or(link.since_ms);
+        self.voice.borrow_mut().link = Some(link);
         self.refresh_gates();
         *self.admit.lock().unwrap() = Some(Gate::Room(channel));
         self.say_seat(server, Some(joined)).await;

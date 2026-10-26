@@ -1255,9 +1255,12 @@ fn start_voice_session(
             None
         }
     };
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let joined_ms = app.servers.lock().unwrap().get(&sid).map_or(now_ms, |s| s.voice_join_stamp(me, now_ms));
     let mut slot = app.voice_session.lock().unwrap();
     session.set_speaker(speaker);
     session.mixer.lock().unwrap().set_master(voice.output_volume);
+    session.joined_ms = joined_ms;
     *slot = Some(session);
     drop(slot);
     resume_mic_test(app, testing);
