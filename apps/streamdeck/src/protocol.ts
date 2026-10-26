@@ -6,7 +6,7 @@ export const COMMY_HOST = "127.0.0.1";
 
 export type SoundChoice = { name: string; label: string; emoji: string | null };
 
-export type SoundboardServer = { id: string; name: string; can_play: boolean; sounds: SoundChoice[] };
+export type SoundboardServer = { id: string; name: string; can_play: boolean; can_add: boolean; sounds: SoundChoice[] };
 
 export type SoundboardList = {
   voice_server: string | null;
@@ -23,12 +23,14 @@ export type Reply =
   | { type: "denied"; reason: DenyReason }
   | ({ type: "soundboards" } & SoundboardList)
   | { type: "played"; id: number }
+  | { type: "added"; id: number; server: string; sound: SoundChoice }
   | { type: "failed"; id: number; message: string };
 
 export type Request =
   | { type: "hello"; version: number; name: string; token?: string }
   | { type: "list" }
-  | { type: "play"; id: number; server?: string; sound: string };
+  | { type: "play"; id: number; server?: string; sound: string }
+  | { type: "add_sound"; id: number; server: string; name: string; emoji?: string; data: string };
 
 export function parseReply(line: string): Reply | null {
   try {

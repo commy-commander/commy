@@ -1,3 +1,4 @@
+import { createAddSound } from "./add-sound.js";
 import { findSound, serverOptions, settingsFor, soundGroups } from "./inspector-options.js";
 
 const $ = id => document.getElementById(id);
@@ -11,6 +12,8 @@ let list = null;
 function send(event, payload) {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ event, action, context, payload }));
 }
+
+const addSound = createAddSound(payload => send("sendToPlugin", payload));
 
 function option(value, label, disabled = false) {
   const node = document.createElement("option");
@@ -53,6 +56,12 @@ function onSoundboards(message) {
   list = message.list;
   renderServers();
   renderSounds();
+  addSound.render(list, settings);
+}
+
+function onUploadResult(result) {
+  if (result.ok && result.settings) settings = result.settings;
+  addSound.finished(result);
 }
 
 $("server").addEventListener("change", e => {
@@ -80,6 +89,7 @@ window.connectElgatoStreamDeckSocket = (port, uuid, registerEvent, _info, action
   socket.onmessage = e => {
     const message = JSON.parse(e.data);
     if (message.event === "sendToPropertyInspector" && message.payload?.event === "soundboards") onSoundboards(message.payload);
+    if (message.event === "sendToPropertyInspector" && message.payload?.event === "upload-result") onUploadResult(message.payload);
     if (message.event === "didReceiveSettings") settings = message.payload?.settings ?? settings;
   };
 };

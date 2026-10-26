@@ -12,7 +12,7 @@ use crate::expressions::{DEFAULT_SOUNDS, DEFAULT_SOUND_PREFIX};
 use crate::state::App;
 use crate::CmdResult;
 use protocol::{Settings, SoundChoice, SoundboardList, SoundboardServer};
-use server::{Backend, PairingAsk};
+use server::{Backend, PairingAsk, SoundUpload};
 
 pub const RELEASE_PORT: u16 = 47615;
 pub const TEST_BUILD_PORT: u16 = 47616;
@@ -212,6 +212,21 @@ impl Backend for AppBackend {
         };
         crate::play_sound_in_voice(&app, &self.handle, sid, sound).await
     }
+
+    async fn add_sound(&self, upload: SoundUpload) -> Result<SoundChoice, String> {
+        let app = self.handle.state::<App>();
+        let sid = upload.server.parse::<ServerId>().map_err(|_| "unknown server".to_string())?;
+        let name = commy_view::expressions::name(&upload.name)?;
+        if has_sound(&app, sid, &name) {
+            return Err(format!("{name} is taken, pick another name"));
+        }
+        crate::upload_sound(&app, &self.handle, sid, &name, &upload.data, None, upload.emoji.as_deref()).await?;
+        Ok(SoundChoice { emoji: key_emoji(upload.emoji.as_deref()), label: name.clone(), name })
+    }
+}
+
+fn has_sound(app: &App, sid: ServerId, name: &str) -> bool {
+    app.servers.lock().unwrap().get(&sid).is_some_and(|state| state.server.soundboard.iter().any(|s| s.name == name))
 }
 
 fn voice_server(app: &App) -> Option<ServerId> {
@@ -225,11 +240,12 @@ fn default_choices() -> Vec<SoundChoice> {
         .collect()
 }
 
-fn server_choices(state: &ServerState, can_play: bool) -> SoundboardServer {
+fn server_choices(state: &ServerState, can_play: bool, may_add: bool) -> SoundboardServer {
     SoundboardServer {
         id: state.server.id.to_string(),
         name: state.server.name.clone(),
         can_play,
+        can_add: may_add && state.server.soundboard.len() < commy_core::server::MAX_SOUNDS,
         sounds: state
             .server
             .soundboard
@@ -250,8 +266,10 @@ fn soundboard_list(app: &App) -> SoundboardList {
         servers
             .values()
             .map(|state| {
-                let can_play = me.is_some_and(|me| crate::our_permissions(app, state, me).allows(Permissions::USE_SOUNDBOARD));
-                server_choices(state, can_play)
+                let perms = me.map(|me| (me, crate::our_permissions(app, state, me)));
+                let can_play = perms.is_some_and(|(_, p)| p.allows(Permissions::USE_SOUNDBOARD));
+                let may_add = perms.is_some_and(|(me, p)| commy_view::expressions::may_add_sound(state, p, me));
+                server_choices(state, can_play, may_add)
             })
             .collect()
     };
@@ -331,9 +349,10 @@ mod tests {
         let owner = UserProfile::new("owner");
         let mut state = ServerState::new(Server::new("Friends", owner.id));
         state.server.soundboard.push(SoundboardSound { name: "boom".into(), blob: "b".into(), volume: 1.0, emoji: Some("💥".into()) });
-        let choices = server_choices(&state, true);
+        let choices = server_choices(&state, true, true);
         assert_eq!(choices.name, "Friends");
         assert!(choices.can_play);
+        assert!(choices.can_add);
         assert_eq!(choices.sounds, vec![SoundChoice { name: "boom".into(), label: "boom".into(), emoji: Some("💥".into()) }]);
     }
 
@@ -343,7 +362,18 @@ mod tests {
         let mut state = ServerState::new(Server::new("Friends", owner.id));
         let token = commy_core::server::emoji_token("party", &format!("{}@{}", "a1".repeat(32), "b2".repeat(32)));
         state.server.soundboard.push(SoundboardSound { name: "cheer".into(), blob: "b".into(), volume: 1.0, emoji: Some(token) });
-        assert_eq!(server_choices(&state, true).sounds[0].emoji, None);
+        assert_eq!(server_choices(&state, true, true).sounds[0].emoji, None);
+    }
+
+    #[test]
+    fn a_full_soundboard_takes_no_uploads() {
+        let owner = UserProfile::new("owner");
+        let mut state = ServerState::new(Server::new("Friends", owner.id));
+        assert!(!server_choices(&state, true, false).can_add);
+        for i in 0..commy_core::server::MAX_SOUNDS {
+            state.server.soundboard.push(SoundboardSound { name: format!("s{i}"), blob: "b".into(), volume: 1.0, emoji: None });
+        }
+        assert!(!server_choices(&state, true, true).can_add);
     }
 
     #[test]

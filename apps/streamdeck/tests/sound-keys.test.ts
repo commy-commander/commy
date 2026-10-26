@@ -7,7 +7,7 @@ import { chosenSound, keyTitle, playTarget, stateMessage, wrapTitle } from "../s
 const list: SoundboardList = {
   voice_server: "s1",
   defaults: [{ name: "default:airhorn", label: "Airhorn", emoji: null }],
-  servers: [{ id: "s1", name: "Friends", can_play: true, sounds: [{ name: "boom", label: "boom", emoji: "💥" }] }],
+  servers: [{ id: "s1", name: "Friends", can_play: true, can_add: false, sounds: [{ name: "boom", label: "boom", emoji: "💥" }] }],
 };
 
 test("titles wrap on words and stay within three lines", () => {

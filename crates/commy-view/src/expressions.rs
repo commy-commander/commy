@@ -171,11 +171,15 @@ pub struct NewSound<'a> {
     pub emoji: Option<&'a str>,
 }
 
+pub fn may_add_sound(state: &ServerState, perms: Permissions, me: UserId) -> bool {
+    perms.allows(Permissions::MANAGE_EXPRESSIONS) || (state.server.soundboard_open && state.server.is_member(me))
+}
+
 pub fn add_sound(state: &ServerState, perms: Permissions, me: UserId, sound: NewSound) -> Act<ServerEvent> {
     let name = name(sound.name)?;
     let emoji = sound_emoji(sound.emoji)?;
     let manages = perms.allows(Permissions::MANAGE_EXPRESSIONS);
-    if !manages && !(state.server.soundboard_open && state.server.is_member(me)) {
+    if !may_add_sound(state, perms, me) {
         return Err("you do not have permission to add sounds".into());
     }
     let existing = state.server.soundboard.iter().any(|s| s.name == name);
@@ -430,8 +434,12 @@ mod tests {
         let (mut state, owner, member) = hangout();
         let (mine, theirs) = (state.server.permissions_for(owner), state.server.permissions_for(member));
         let boop = || NewSound { name: "boop", blob: "b".into(), volume: Some(5.0), emoji: None };
+        assert!(!may_add_sound(&state, theirs, member));
+        assert!(may_add_sound(&state, mine, owner));
         assert!(add_sound(&state, theirs, member, boop()).is_err());
         state.server.soundboard_open = true;
+        assert!(may_add_sound(&state, theirs, member));
+        assert!(!may_add_sound(&state, theirs, UserId::new()));
         assert!(add_sound(&state, theirs, member, boop()).is_ok());
         let ServerEvent::SoundAdd { sound, .. } = add_sound(&state, mine, owner, boop()).unwrap() else { panic!() };
         assert_eq!(sound.volume, 2.0);

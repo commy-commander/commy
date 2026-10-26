@@ -46,3 +46,86 @@ select {
 .note:empty {
   display: none;
 }
+
+input[type="text"],
+input[type="file"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 26px;
+  border: 0;
+  border-radius: 3px;
+  padding: 0 6px;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+}
+
+input[type="file"] {
+  padding: 4px 6px;
+}
+
+input[type="range"] {
+  width: 100%;
+  margin: 0;
+}
+
+button {
+  justify-self: start;
+  height: 26px;
+  border: 0;
+  border-radius: 3px;
+  padding: 0 12px;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.add {
+  margin-top: 14px;
+  border-top: 1px solid var(--field);
+  padding-top: 10px;
+}
+
+.add summary {
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.add > .note {
+  margin-left: 0;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.wave {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 32px;
+}
+
+.wave span {
+  flex: 1;
+  min-height: 2px;
+  border-radius: 1px;
+  background: var(--muted);
+  opacity: 0.35;
+}
+
+.wave span.on {
+  opacity: 1;
+}

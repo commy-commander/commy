@@ -5207,14 +5207,26 @@ async fn add_sound(
     emoji: Option<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let me = current_profile(&app)?;
-    let sound = |blob: String| view::expressions::NewSound { name: &name, blob, volume, emoji: emoji.as_deref() };
-    managed(&app, sid, me.id, |state, perms| view::expressions::add_sound(state, perms, me.id, sound(String::new())))?;
-    let bytes = decode_upload(&data)?;
+    upload_sound(&app, &handle, sid, &name, &data, volume, emoji.as_deref()).await
+}
+
+async fn upload_sound(
+    app: &App,
+    handle: &tauri::AppHandle,
+    sid: ServerId,
+    name: &str,
+    data: &str,
+    volume: Option<f32>,
+    emoji: Option<&str>,
+) -> CmdResult<()> {
+    let me = current_profile(app)?;
+    let sound = |blob: String| view::expressions::NewSound { name, blob, volume, emoji };
+    managed(app, sid, me.id, |state, perms| view::expressions::add_sound(state, perms, me.id, sound(String::new())))?;
+    let bytes = decode_upload(data)?;
     view::expressions::check_sound(&bytes)?;
-    let blob = store_shared_blob(&app, bytes).await?;
-    let event = managed(&app, sid, me.id, |state, perms| view::expressions::add_sound(state, perms, me.id, sound(blob)))?;
-    apply_and_broadcast(&app, &handle, sid, event).await
+    let blob = store_shared_blob(app, bytes).await?;
+    let event = managed(app, sid, me.id, |state, perms| view::expressions::add_sound(state, perms, me.id, sound(blob)))?;
+    apply_and_broadcast(app, handle, sid, event).await
 }
 
 #[tauri::command]
