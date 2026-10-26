@@ -78,12 +78,13 @@ done
 
 relay_dir="$ROOT/commy-$first/deploy"
 if [ -f "$relay_dir/docker-compose.relay.yml" ]; then
-	(cd "$relay_dir" && docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml \
+	(cd "$relay_dir" && RELAY_DOMAIN="relay.$DOMAIN" docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml \
 		up -d --build relay relay-proxy relay-meter)
 	echo "relay: running for relay.$DOMAIN"
 fi
 if echo " $ENVS " | grep -q " staging " && [ -f "$ROOT/commy-staging/deploy/docker-compose.relay.yml" ]; then
-	(cd "$ROOT/commy-staging/deploy" && RELAY_PROXY_ALIAS=commy-relay-staging-proxy STUN_PORT=3479 RELAY_MONTHLY_LIMIT_GB=500 \
+	(cd "$ROOT/commy-staging/deploy" && RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN="relay-staging.$DOMAIN" RELAY_QAD_PORT=7843 \
+		RELAY_MONTHLY_LIMIT_GB=500 \
 		docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml \
 		up -d --build relay relay-proxy relay-meter)
 	echo "relay: running for relay-staging.$DOMAIN (test builds)"

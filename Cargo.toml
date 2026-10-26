@@ -33,6 +33,7 @@ aes-gcm = "0.11"
 tracing = "0.1"
 
 iroh = "1.4"
+iroh-relay = { version = "1.4", default-features = false }
 iroh-gossip = "0.101"
 iroh-blobs = "0.103"
 

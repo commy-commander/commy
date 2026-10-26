@@ -63,9 +63,9 @@ by `docker compose up -d` in that folder. Google OAuth needs each domain's
   to that environment's containers by network alias (`commy-staging-web`,
   `commy-staging-auth`) and adds `X-Robots-Tag: noindex` on staging and dev.
   Port 8443 serves the iroh relays: `relay.<domain>` for release builds (the
-  `commy-relay` project, from the prod checkout, STUN on 3478/udp) and
+  `commy-relay` project, from the prod checkout, address discovery on 7842/udp) and
   `relay-staging.<domain>` for test builds (the `commy-relay-staging` project,
-  from the staging checkout, STUN on 3479/udp). Both are DNS-only records, and
+  from the staging checkout, address discovery on 7843/udp). Both are DNS-only records, and
   `setup-vps.sh` starts both. Test builds never use the production relay or
   account server, and release builds never use staging.
 - `docker-compose.env.yml` turns off the per-stack Caddy and joins `web` and
@@ -86,10 +86,10 @@ docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml 
 ```
 
 and this in `/srv/commy-staging/deploy` for the test build relay, which has its
-own STUN port and a smaller monthly budget:
+own address discovery port and a smaller monthly budget:
 
 ```bash
-RELAY_PROXY_ALIAS=commy-relay-staging-proxy STUN_PORT=3479 RELAY_MONTHLY_LIMIT_GB=500 \
+RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN=relay-staging.commy.chat RELAY_QAD_PORT=7843 RELAY_MONTHLY_LIMIT_GB=500 \
   docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d --build relay relay-proxy relay-meter
 ```
 
@@ -119,7 +119,7 @@ for net in commy-prod commy-staging commy-dev commy-relay; do docker network cre
 for net in commy-prod commy-staging commy-dev commy-relay; do docker network connect $net commy-edge-caddy-1; done
 for env in dev staging prod; do (cd /srv/commy-$env/deploy && docker compose up -d --build agent && docker compose up -d auth web); done
 cd /srv/commy-prod/deploy && docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml up -d relay-proxy
-cd /srv/commy-staging/deploy && RELAY_PROXY_ALIAS=commy-relay-staging-proxy STUN_PORT=3479 RELAY_MONTHLY_LIMIT_GB=500 docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d relay-proxy
+cd /srv/commy-staging/deploy && RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN=relay-staging.commy.chat RELAY_QAD_PORT=7843 RELAY_MONTHLY_LIMIT_GB=500 docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d relay-proxy
 cd /srv/commy-prod/deploy/edge && docker compose up -d
 docker network inspect commy-public --format '{{range .Containers}}{{.Name}} {{end}}'
 docker network rm commy-public
@@ -216,7 +216,7 @@ sudo sh /srv/commy-prod/deploy/host/harden-vps.sh
 ```
 
 - **ufw** denies incoming connections except SSH (rate limited), port 80 and
-  the iroh relay ports (`PUBLIC_PORTS`, default `3478/udp 3479/udp 8443/tcp`),
+  the iroh relay ports (`PUBLIC_PORTS`, default `7842/udp 7843/udp 8443/tcp`),
   which stay open to everyone because clients reach the relay directly.
 - **SSH with keys only.** A drop-in in `/etc/ssh/sshd_config.d/` turns off
   password and keyboard-interactive login and closes root login (key-only root

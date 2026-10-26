@@ -1078,6 +1078,7 @@ dependencies = [
  "iroh",
  "iroh-blobs",
  "iroh-gossip",
+ "iroh-relay",
  "n0-future",
  "postcard",
  "rand 0.8.8",

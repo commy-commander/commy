@@ -3,7 +3,7 @@
 set -eu
 
 here="$(cd "$(dirname "$0")" && pwd)"
-PUBLIC_PORTS="${PUBLIC_PORTS:-3478/udp 3479/udp 8443/tcp}"
+PUBLIC_PORTS="${PUBLIC_PORTS:-7842/udp 7843/udp 8443/tcp}"
 CONSOLE_NET="${CONSOLE_NET-169.254.0.0/16}"
 CADDY_LOGS="${CADDY_LOGS:-/var/log/commy-caddy}"
 SSHD_CONFIG="${SSHD_CONFIG:-/etc/ssh/sshd_config}"

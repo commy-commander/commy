@@ -56,6 +56,7 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" == *-* ]]; then
             export COMMY_DEFAULT_RELAY=https://relay-staging.commy.chat:8443
+            export COMMY_RELAY_QAD_PORT=7843
           fi
           echo "Relay: ${COMMY_DEFAULT_RELAY:-https://relay.commy.chat:8443}"
           mkdir -p bin

@@ -175,8 +175,7 @@ check "fail2ban: installed when missing" "$(count 'apt-get install -y -qq fail2b
 check "unattended-upgrades: installed when missing" "$(count 'apt-get install -y -qq unattended-upgrades')" "1"
 PATH="$BIN:${PATH#"$FAKE":}"
 
-check "no 7842/udp in the default public ports" "$(echo "$PUBLIC_PORTS" | grep -c 7842)" "0"
-check "relay ports stay open by default" "$PUBLIC_PORTS" "3478/udp 3479/udp 8443/tcp"
+check "relay ports stay open by default" "$PUBLIC_PORTS" "7842/udp 7843/udp 8443/tcp"
 
 rm -rf "$FAKE" "$BIN"
 if [ "$failures" -ne 0 ]; then

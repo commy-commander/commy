@@ -1,4 +1,8 @@
 services:
+  relay:
+    volumes:
+      - edge_caddy_data:/caddy-data:ro
+
   relay-proxy:
     networks:
       edge:
@@ -9,3 +13,8 @@ networks:
   public:
     external: true
     name: commy-relay
+
+volumes:
+  edge_caddy_data:
+    external: true
+    name: commy-edge_caddy_data
