@@ -120,7 +120,7 @@ impl Drop for StreamHandle {
 }
 
 #[derive(Clone)]
-pub struct StreamFault {
+pub(crate) struct StreamFault {
     raised: Arc<AtomicBool>,
     thread: std::thread::Thread,
 }
@@ -133,7 +133,7 @@ impl StreamFault {
         }
     }
 
-    pub fn raise(&self) {
+    pub(crate) fn raise(&self) {
         self.raised.store(true, Ordering::Relaxed);
         self.thread.unpark();
     }
@@ -143,7 +143,7 @@ impl StreamFault {
     }
 }
 
-trait AudioStream {
+pub(crate) trait AudioStream {
     fn start(&self) -> Result<()>;
 }
 
@@ -354,6 +354,20 @@ pub fn system_audio_supported() -> bool {
 
 #[cfg(windows)]
 pub fn start_system_audio(tx: UnboundedSender<Vec<i16>>) -> Result<InputHandle> {
+    let without_commy = tx.clone();
+    let opened = run_stream_thread(
+        "shared audio thread died",
+        move |fault| crate::loopback::ProcessLoopback::open(without_commy.clone(), fault),
+        || false,
+    );
+    opened.or_else(|e| {
+        tracing::warn!("sharing all system audio, Commy's own sounds included: {e}");
+        start_device_loopback(tx)
+    })
+}
+
+#[cfg(windows)]
+fn start_device_loopback(tx: UnboundedSender<Vec<i16>>) -> Result<InputHandle> {
     run_stream_thread("system audio thread died", move |fault| {
         let tx = tx.clone();
         let host = cpal::default_host();

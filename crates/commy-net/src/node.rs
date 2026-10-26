@@ -646,6 +646,7 @@ pub struct CommyNode {
     blobs: MemStore,
     lookup: MemoryLookup,
     relays: Vec<RelayUrl>,
+    can_discover_address: bool,
     topics: HashMap<ServerId, TopicHandle>,
     events_tx: mpsc::UnboundedSender<NetEvent>,
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
@@ -728,6 +729,7 @@ impl CommyNode {
         let (mirror_tx, mirror_rx) = mpsc::unbounded_channel();
         let lookup = MemoryLookup::new();
         let relay_mode = relays.map_or_else(iroh::endpoint::default_relay_mode, iroh::RelayMode::Custom);
+        let can_discover_address = relay_mode.relay_map().relays::<Vec<Arc<iroh::RelayConfig>>>().iter().any(|relay| relay.quic.is_some());
         let relays = relay_mode.relay_map().urls();
         let build = |port: Option<u16>| -> Result<iroh::endpoint::Builder> {
             #[cfg(not(wasm_browser))]
@@ -792,6 +794,7 @@ impl CommyNode {
                 blobs,
                 lookup,
                 relays,
+                can_discover_address,
                 topics: HashMap::new(),
                 events_tx,
                 entry_key_requests: Some(entry_key_rx),
@@ -1175,6 +1178,10 @@ impl CommyNode {
 
     pub fn media_dialer(&self) -> MediaDialer {
         MediaDialer { endpoint: self.endpoint(), lookup: self.lookup.clone(), relays: self.relays.clone() }
+    }
+
+    pub fn connection_checker(&self) -> crate::connection_check::ConnectionChecker {
+        crate::connection_check::ConnectionChecker { endpoint: self.endpoint(), can_discover_address: self.can_discover_address }
     }
 
     pub async fn add_blob(&self, bytes: Vec<u8>) -> Result<String> {

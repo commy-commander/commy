@@ -4,3 +4,4 @@
 .web-unlock-code { display: flex; gap: 8px; margin-top: 16px; }
 .web-unlock-code input { flex: 1; }
 #modal-web-unlock .signin-status { margin-top: 12px; }
+.web-app .settings-page .native-only { display: none; }
