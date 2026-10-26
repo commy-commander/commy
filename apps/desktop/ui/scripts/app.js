@@ -10479,6 +10479,10 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
   if (!(dm && state.currentDm && state.currentDm.user === member.id)) {
     item("Message", () => messageUser(member.id, member.name));
   }
+  if (server && (server.screen_shares || []).some(s => s.user === member.id)) {
+    const watching = state.watchingUser === member.id;
+    item(watching ? "Stop Watching" : "Watch Stream", () => (watching ? stopWatching() : watchScreen(member.id, member.name)));
+  }
   if (dm && (state.dmThreads || []).some(t => t.user === member.id)) {
     const pinned = dmIsPinned(member.id);
     item(pinned ? "Unpin" : "Pin", () => setDmPinned(member.id, !pinned));

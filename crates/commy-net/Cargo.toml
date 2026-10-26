@@ -21,6 +21,7 @@ tokio = { version = "1", features = ["sync", "io-util", "macros", "rt"] }
 tracing = { workspace = true }
 chrono = { workspace = true }
 iroh = { workspace = true, features = ["unstable-net-report"] }
+iroh-relay = { workspace = true }
 iroh-gossip = { workspace = true }
 futures-lite = "2"
 async-channel = "2"

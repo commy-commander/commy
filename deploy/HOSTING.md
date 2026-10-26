@@ -425,7 +425,14 @@ direct connection is impossible, always end to end encrypted.
 
 - **DNS:** an A record for `relay.<DOMAIN>`, DNS only (not proxied) in
   Cloudflare. Open `8443/tcp` (relay over HTTPS, certificate via port 80) and
-  `3478/udp` (STUN).
+  `7842/udp` (address discovery).
+- **Address discovery:** apps ask the relay on `7842/udp` which public address
+  their packets come from, so two apps behind home routers can connect
+  directly instead of through the relay. The relay reuses Caddy's certificate
+  for `RELAY_DOMAIN` (read only, restarting when Caddy renews it) and runs
+  without address discovery until that certificate exists. Apps built with
+  `COMMY_RELAY_QAD_PORT` set ask another port, which test builds use for the
+  staging relay on `7843/udp`.
 - **Bandwidth budget:** `relay-meter` adds up relayed bytes each month (UTC).
   At `RELAY_WARN_PERCENT` of `RELAY_MONTHLY_LIMIT_GB` it posts to
   `ALERT_WEBHOOK_URL`; at `RELAY_PAUSE_PERCENT` it stops the relay until the

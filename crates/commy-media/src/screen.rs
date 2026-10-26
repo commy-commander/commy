@@ -56,6 +56,52 @@ fn halve(src: &RgbaImage) -> RgbaImage {
     RgbaImage::from_raw(w, h, out).expect("buffer sized for the image")
 }
 
+const PAUSED_DIM: u8 = 3;
+const PAUSE_SIGN: image::Rgba<u8> = image::Rgba([242, 239, 230, 255]);
+
+pub fn paused_frame(image: &RgbaImage) -> RgbaImage {
+    let mut out = image.clone();
+    for pixel in out.pixels_mut() {
+        let [r, g, b, _] = pixel.0;
+        pixel.0 = [r / PAUSED_DIM, g / PAUSED_DIM, b / PAUSED_DIM, 255];
+    }
+    let (width, height) = out.dimensions();
+    let bar_height = (width.min(height) / 5).max(3);
+    let bar_width = (bar_height / 3).max(1);
+    let top = height.saturating_sub(bar_height) / 2;
+    let left = width.saturating_sub(bar_width * 3) / 2;
+    for bar_left in [left, left + bar_width * 2] {
+        for y in top..(top + bar_height).min(height) {
+            for x in bar_left..(bar_left + bar_width).min(width) {
+                out.put_pixel(x, y, PAUSE_SIGN);
+            }
+        }
+    }
+    out
+}
+
+#[derive(Default)]
+pub struct BackgroundPause {
+    last: Option<RgbaImage>,
+    held: Option<RgbaImage>,
+}
+
+impl BackgroundPause {
+    pub fn frame(&mut self, in_background: bool, live: impl FnOnce() -> Result<RgbaImage>) -> Result<RgbaImage> {
+        let image = live()?;
+        let Some(last) = self.last.as_ref().filter(|_| in_background) else {
+            self.held = None;
+            self.last = Some(image.clone());
+            return Ok(image);
+        };
+        Ok(self.held.get_or_insert_with(|| paused_frame(last)).clone())
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.held.is_some()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StreamQuality {
     Sharp,
@@ -203,6 +249,55 @@ mod tests {
             assert!(pair[0].fps() > pair[1].fps());
         }
         assert_eq!((StreamQuality::Balanced.fps(), StreamQuality::Balanced.max_width()), (30, 1600));
+    }
+
+    #[test]
+    fn a_paused_frame_is_dimmed_with_a_pause_sign_in_the_middle() {
+        let image = RgbaImage::from_pixel(300, 200, image::Rgba([90, 120, 150, 255]));
+        let paused = paused_frame(&image);
+        assert_eq!(paused.dimensions(), (300, 200));
+        assert_eq!(paused.get_pixel(5, 5).0, [30, 40, 50, 255]);
+        assert_eq!(*paused.get_pixel(150 - 15, 100), PAUSE_SIGN);
+        assert_eq!(*paused.get_pixel(150 + 15, 100), PAUSE_SIGN);
+        assert_eq!(paused.get_pixel(150, 100).0, [30, 40, 50, 255]);
+    }
+
+    #[test]
+    fn a_paused_frame_survives_tiny_windows() {
+        for (w, h) in [(1, 1), (2, 9), (9, 2)] {
+            assert_eq!(paused_frame(&RgbaImage::new(w, h)).dimensions(), (w, h));
+        }
+    }
+
+    #[test]
+    fn the_stream_holds_the_last_frame_while_the_window_is_in_the_background() {
+        let shade = |v: u8| RgbaImage::from_pixel(60, 40, image::Rgba([v, v, v, 255]));
+        let mut pause = BackgroundPause::default();
+        assert_eq!(pause.frame(false, || Ok(shade(90))).unwrap(), shade(90));
+        assert!(!pause.is_paused());
+        let held = pause.frame(true, || Ok(shade(0))).unwrap();
+        assert!(pause.is_paused());
+        assert_eq!(held.get_pixel(0, 0).0, [30, 30, 30, 255]);
+        assert_eq!(pause.frame(true, || Ok(shade(200))).unwrap(), held);
+        assert_eq!(pause.frame(false, || Ok(shade(120))).unwrap(), shade(120));
+        assert!(!pause.is_paused());
+    }
+
+    #[test]
+    fn a_stream_that_starts_in_the_background_shows_a_frame_first() {
+        let mut pause = BackgroundPause::default();
+        let first = pause.frame(true, || Ok(RgbaImage::from_pixel(4, 4, image::Rgba([9, 9, 9, 255])))).unwrap();
+        assert_eq!(first.get_pixel(0, 0).0, [9, 9, 9, 255]);
+        assert!(!pause.is_paused());
+        assert!(pause.frame(true, || Ok(RgbaImage::new(4, 4))).is_ok());
+        assert!(pause.is_paused());
+    }
+
+    #[test]
+    fn a_closed_window_still_ends_a_paused_stream() {
+        let mut pause = BackgroundPause::default();
+        pause.frame(false, || Ok(RgbaImage::new(4, 4))).unwrap();
+        assert!(pause.frame(true, || anyhow::bail!("window is gone")).is_err());
     }
 
     #[test]
