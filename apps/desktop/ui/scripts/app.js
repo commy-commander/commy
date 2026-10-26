@@ -3078,6 +3078,7 @@ function textChannelRow(channel, canCreate, pinned = false) {
 
 function voiceChannelRow(channel, canCreate, pinned = false) {
   const row = el("div", "channel voice-channel");
+  row.dataset.room = channel.id;
   const icon = el("span", "channel-icon");
   icon.appendChild(voiceKindIcon(channel.kind, 18));
   row.appendChild(icon);
@@ -3106,6 +3107,7 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
     row.appendChild(badge);
   }
   row.onclick = () => {
+    if (voiceDragHoldsClick()) return;
     if (channel.can_view === false) {
       toast(`Only ${accessWho(state.currentServer, channel.view_roles)} can join this channel`);
       return;
@@ -3149,9 +3151,11 @@ function voiceUserRow(channel, entry, myName, role = null) {
   const { id: userId, name: user, since, muted, deafened } = entry;
   const isMe = state.user && userId ? userId === state.user.id : user === myName;
   const vu = el("div", "voice-user");
+  vu.dataset.room = channel.id;
   if (userId) {
     vu.dataset.user = userId;
     vu.classList.toggle("speaking", state.speaking.has(userId));
+    vu.classList.toggle("dragging", Boolean(voiceDrag && voiceDrag.live && voiceDrag.userId === userId));
   }
   vu.appendChild(makeAvatar(userId, user, "avatar avatar-sm"));
   vu.appendChild(el("span", "voice-user-name", user));
@@ -3191,9 +3195,13 @@ function voiceUserRow(channel, entry, myName, role = null) {
     vu.onclick = vu.oncontextmenu = e => {
       e.preventDefault();
       e.stopPropagation();
+      if (voiceDragHoldsClick()) return;
       const member = server && server.members.find(m => m.id === userId);
       openMemberMenu(member || { id: userId, name: user }, e.clientX, e.clientY);
     };
+    if (canDragVoiceMember(server, userId, state.user && state.user.id)) {
+      vu.onpointerdown = e => armVoiceDrag(e, vu, channel.id, userId, user);
+    }
   } else if (isMe) {
     vu.onclick = vu.oncontextmenu = e => {
       e.preventDefault();
@@ -3209,6 +3217,113 @@ function voiceUserRow(channel, entry, myName, role = null) {
     }
   }
   return vu;
+}
+
+let voiceDrag = null;
+let voiceDragClickGuard = 0;
+
+function voiceDragHoldsClick() {
+  return Boolean(voiceDrag && voiceDrag.live) || Date.now() < voiceDragClickGuard;
+}
+
+function armVoiceDrag(e, row, fromId, userId, name) {
+  if (e.button !== 0 || voiceDrag) return;
+  voiceDrag = { pointerId: e.pointerId, kind: e.pointerType, x: e.clientX, y: e.clientY, at: Date.now(), row, fromId, userId, name, live: false, ghost: null, over: null, timer: null };
+  if (e.pointerType === "touch") voiceDrag.timer = setTimeout(() => stepVoiceDrag(voiceDrag.x, voiceDrag.y), VOICE_DRAG.touchHoldMs);
+  document.addEventListener("pointermove", onVoiceDragMove);
+  document.addEventListener("pointerup", onVoiceDragUp);
+  document.addEventListener("pointercancel", onVoiceDragCancel);
+  document.addEventListener("touchmove", holdVoiceDragTouch, { passive: false });
+  document.addEventListener("keydown", onVoiceDragKey);
+}
+
+function onVoiceDragMove(e) {
+  if (!voiceDrag || e.pointerId !== voiceDrag.pointerId) return;
+  stepVoiceDrag(e.clientX, e.clientY);
+}
+
+function stepVoiceDrag(x, y) {
+  const drag = voiceDrag;
+  if (!drag) return;
+  if (!drag.live) {
+    const step = voiceDragStep(drag.kind, x - drag.x, y - drag.y, Date.now() - drag.at);
+    if (step === "cancel") return endVoiceDrag();
+    if (step === "wait") return;
+    startVoiceDrag(drag);
+  }
+  drag.ghost.style.transform = `translate(${Math.round(x + 12)}px, ${Math.round(y + 12)}px)`;
+  const list = $("channel-list");
+  const box = list.getBoundingClientRect();
+  if (x >= box.left && x <= box.right) list.scrollTop += voiceEdgeScroll(y, box.top, box.bottom);
+  markVoiceDrop(voiceDropAt(x, y));
+}
+
+function startVoiceDrag(drag) {
+  clearTimeout(drag.timer);
+  drag.live = true;
+  closeFloating();
+  const ghost = el("div", "voice-drag-ghost");
+  ghost.appendChild(makeAvatar(drag.userId, drag.name, "avatar avatar-sm"));
+  ghost.appendChild(el("span", "voice-user-name", drag.name));
+  document.body.appendChild(ghost);
+  drag.ghost = ghost;
+  document.body.classList.add("voice-dragging");
+  for (const node of document.querySelectorAll(`.voice-user[data-user="${CSS.escape(drag.userId)}"]`)) node.classList.add("dragging");
+}
+
+function voiceDropAt(x, y) {
+  const hit = document.elementFromPoint(x, y);
+  const node = hit && hit.closest("#channel-list [data-room]");
+  return node ? voiceDropRoom(state.currentServer, voiceDrag.fromId, node.dataset.room) : null;
+}
+
+function markVoiceDrop(room) {
+  const id = room ? room.id : null;
+  if (voiceDrag.over === id) return;
+  voiceDrag.over = id;
+  for (const node of document.querySelectorAll(".voice-channel.voice-drop")) node.classList.remove("voice-drop");
+  if (id) for (const node of document.querySelectorAll(`.voice-channel[data-room="${CSS.escape(id)}"]`)) node.classList.add("voice-drop");
+}
+
+function holdVoiceDragTouch(e) {
+  if (voiceDrag && voiceDrag.live && e.cancelable) e.preventDefault();
+}
+
+function onVoiceDragUp(e) {
+  if (!voiceDrag || e.pointerId !== voiceDrag.pointerId) return;
+  const drag = voiceDrag;
+  const room = drag.live ? voiceDropAt(e.clientX, e.clientY) : null;
+  endVoiceDrag();
+  if (!room) return;
+  const server = state.currentServer;
+  const member = (server && server.members.find(m => m.id === drag.userId)) || { id: drag.userId, name: drag.name };
+  moveVoiceMember(member, room);
+}
+
+function onVoiceDragCancel(e) {
+  if (voiceDrag && e.pointerId === voiceDrag.pointerId) endVoiceDrag();
+}
+
+function onVoiceDragKey(e) {
+  if (e.key === "Escape" && voiceDrag) endVoiceDrag();
+}
+
+function endVoiceDrag() {
+  const drag = voiceDrag;
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  voiceDrag = null;
+  document.removeEventListener("pointermove", onVoiceDragMove);
+  document.removeEventListener("pointerup", onVoiceDragUp);
+  document.removeEventListener("pointercancel", onVoiceDragCancel);
+  document.removeEventListener("touchmove", holdVoiceDragTouch);
+  document.removeEventListener("keydown", onVoiceDragKey);
+  if (!drag.live) return;
+  voiceDragClickGuard = Date.now() + VOICE_DRAG.clickGuardMs;
+  drag.ghost.remove();
+  document.body.classList.remove("voice-dragging");
+  for (const node of document.querySelectorAll(".voice-user.dragging")) node.classList.remove("dragging");
+  for (const node of document.querySelectorAll(".voice-channel.voice-drop")) node.classList.remove("voice-drop");
 }
 
 const serverImages = new Map();
@@ -9900,7 +10015,7 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
-  const moderates = inServer && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames || server.can_manage_stage);
+  const moderates = inServer && (server.can_mute || server.can_move || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames || server.can_manage_stage);
   if (inServer && member.id !== server.owner && moderates) {
     sep();
     const stageAction = stageMenuAction(stageChannelOf(server, member.id), member.id, Boolean(server.can_manage_stage));
@@ -10192,13 +10307,22 @@ async function confirmTimeout() {
 }
 
 async function moveVoiceMember(member, channel) {
+  const serverId = state.currentServer.id;
+  const roomName = channel ? channelPlainName(channel) : null;
   try {
-    await invoke("move_voice_member", { serverId: state.currentServer.id, userId: member.id, channelId: channel ? channel.id : null });
+    await invoke("move_voice_member", { serverId, userId: member.id, channelId: channel ? channel.id : null });
     await refreshCurrentServer();
-    toast(channel ? `Moved ${member.name} to ${channelPlainName(channel)}` : `Disconnected ${member.name} from voice`);
+    toast(channel ? `Moving ${member.name} to ${roomName}` : `Disconnecting ${member.name} from voice`);
+    setTimeout(() => checkVoiceMove(serverId, member, channel ? channel.id : null, roomName), VOICE_MOVE_CHECK_MS);
   } catch (e) {
     toast(String(e));
   }
+}
+
+function checkVoiceMove(serverId, member, roomId, roomName) {
+  const server = state.currentServer;
+  if (!server || server.id !== serverId || voiceMoveLanded(server, member.id, roomId)) return;
+  toast(voiceMoveStuckText(member.name, roomName));
 }
 
 async function clearMemberTimeout(member) {

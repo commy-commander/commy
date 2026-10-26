@@ -388,6 +388,7 @@ impl Session {
             "set_own_role" => self.server_command(cmd, args).await,
             "set_role_access" => self.server_command(cmd, args).await,
             "kick_member" => self.server_command(cmd, args).await,
+            "move_voice_member" => self.server_command(cmd, args).await,
             "ban_member" => self.server_command(cmd, args).await,
             "unban_member" => self.server_command(cmd, args).await,
             "time_out_member" => self.server_command(cmd, args).await,
@@ -850,7 +851,10 @@ impl Session {
                     if self.client.borrow().admits(server, &event, action) {
                         self.client.borrow().hear_peer(server, &event, action.as_ref());
                     }
-                    self.apply_event(server, event, action, true, true);
+                    let moved = self.moved_me(server, &event);
+                    if self.apply_event(server, event, action, true, true) != Applied::Nothing {
+                        self.follow_voice_move(server, moved);
+                    }
                 }
                 NetEvent::SyncReceived { server, payload } => {
                     let installed = self.client.borrow().install_owner_snapshot(server, payload).unwrap_or(false);

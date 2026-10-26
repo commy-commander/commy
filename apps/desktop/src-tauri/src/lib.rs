@@ -4578,10 +4578,6 @@ async fn edit_forum_post(
     apply_and_broadcast(&app, &handle, sid, post).await
 }
 
-fn voice_channel_full(app: &App, state: &ServerState, channel: ChannelId, user: UserId) -> bool {
-    view::act::voice_full(state, our_permissions(app, state, user), user, channel)
-}
-
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn update_role(
@@ -4966,31 +4962,8 @@ async fn move_voice_member(
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let channel: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MOVE_MEMBERS, "move members between voice channels")?;
-        if user == state.server.owner || user == me.id {
-            return Err("you cannot move that member".into());
-        }
-        let Some(current) = state.voice_states.get(&user).copied() else {
-            return Err("that member is not in voice here".into());
-        };
-        if let Some(target) = channel {
-            match state.server.channel(target) {
-                Some(c) if c.kind.is_voice() => {}
-                _ => return Err("that is not a voice channel".into()),
-            }
-            require_can_view(state, me.id, target)?;
-            if target == current {
-                return Err("they are already in that channel".into());
-            }
-            if voice_channel_full(&app, state, target, user) {
-                return Err("that voice channel is full".into());
-            }
-        }
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::VoiceMove { server: sid, user, channel }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::move_voice(state, perms, me.id, user, channel))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]

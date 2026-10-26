@@ -331,9 +331,11 @@ impl Session {
             }
             _ => false,
         };
+        let moved = self.moved_me(server, &event);
         if !self.client.borrow().apply_signal(server, &node, event, action) {
             return;
         }
+        self.follow_voice_move(server, moved);
         self.emit("server-event", json!(server.to_string()));
         if returning && !self.said_goodbye() {
             self.say_here(server);
