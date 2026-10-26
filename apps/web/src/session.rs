@@ -135,6 +135,7 @@ struct Args {
     deafened: Option<bool>,
     filename: Option<String>,
     data: Option<String>,
+    which: Option<String>,
     blob: Option<String>,
     provider: Option<String>,
     mime: Option<String>,
@@ -287,6 +288,10 @@ impl Session {
                 let found: Option<catalog::EmojiPage> = self.search("emojis", &params).await?;
                 to_json(&catalog::safe_emojis(found.ok_or("This site does not offer emoji search")?))
             }
+            "run_connection_check" => {
+                let checker = self.node.lock().await.as_ref().map(CommyNode::connection_checker);
+                to_json(&checker.ok_or("Commy is still starting its connection")?.run().await)
+            }
             "pins_load" => to_json(&self.pins()),
             "pin_channel" => {
                 let (server, channel) = (args.server_id.unwrap_or_default(), args.channel_id.unwrap_or_default());
@@ -402,6 +407,7 @@ impl Session {
             "set_channel_limit" => self.server_command(cmd, args).await,
             "set_channel_slow_mode" => self.server_command(cmd, args).await,
             "set_channel_color" => self.server_command(cmd, args).await,
+            "set_server_image" | "set_channel_banner" | "set_role_banner" => self.server_command(cmd, args).await,
             "set_channel_sensitive" => self.server_command(cmd, args).await,
             "set_channel_access" => self.server_command(cmd, args).await,
             "update_profile" => self.profile_command(cmd, args).await,

@@ -11,6 +11,7 @@ mod entry_list;
 mod catchup;
 mod channel_lock;
 mod community_sync;
+mod debug_log;
 mod deleted;
 mod devices;
 mod dm_sync;
@@ -4036,14 +4037,13 @@ async fn set_server_image(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let (icon, banner) = {
+    {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "change the server's images")?;
-        (state.server.icon.clone(), state.server.banner.clone())
-    };
+        view::manage::server_images(state, our_permissions(&app, state, me.id), &which, None)?;
+    }
     let bytes = data
-        .map(|b64| decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "server images must be a JPEG or PNG under 1 MB"))
+        .map(|b64| view::profile::image_bytes(&b64, MAX_SERVER_IMAGE_BYTES, view::manage::SERVER_IMAGE_INVALID, view::manage::SERVER_IMAGE_INVALID))
         .transpose()?;
     if which == "invite" && bytes.as_ref().is_some_and(|b| b.len() > invite_link::MAX_INVITE_BACKGROUND_BYTES) {
         return Err("invite backgrounds must be under 400 KB".into());
@@ -4052,17 +4052,12 @@ async fn set_server_image(
         None => None,
         Some(bytes) => Some(store_shared_blob(&app, bytes).await?),
     };
-    let (icon, banner) = match which.as_str() {
-        "icon" => (image, banner),
-        "banner" => (icon, image),
-        "invite" => {
-            apply_and_broadcast(&app, &handle, sid, ServerEvent::InviteBackgroundSet { server: sid, background: image }).await?;
-            let _ = handle.emit("servers-changed", ());
-            return Ok(());
-        }
-        _ => return Err("unknown server image".into()),
+    let event = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        view::manage::server_images(state, our_permissions(&app, state, me.id), &which, image)?
     };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ServerImages { server: sid, icon, banner }).await?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
@@ -4612,21 +4607,24 @@ async fn set_role_banner(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let existing = {
+    {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "edit roles")?;
-        state.server.roles.iter().find(|r| r.id == rid).cloned().ok_or("unknown role")?
-    };
+        view::manage::role_banner(state, our_permissions(&app, state, me.id), rid, None)?;
+    }
     let banner = match data {
         None => None,
         Some(b64) => {
-            let bytes = decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "role banners must be a JPEG or PNG under 1 MB")?;
+            let bytes = view::profile::image_bytes(&b64, MAX_SERVER_IMAGE_BYTES, view::manage::ROLE_BANNER_INVALID, view::manage::ROLE_BANNER_INVALID)?;
             Some(store_shared_blob(&app, bytes).await?)
         }
     };
-    let role = commy_core::server::Role { banner, ..existing };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
+    let event = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        view::manage::role_banner(state, our_permissions(&app, state, me.id), rid, banner)?
+    };
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4643,17 +4641,21 @@ async fn set_channel_banner(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
-        state.server.channel(cid).ok_or("unknown channel")?;
+        view::manage::channel_banner(state, our_permissions(&app, state, me.id), cid, None)?;
     }
     let banner = match data {
         None => None,
         Some(b64) => {
-            let bytes = decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "channel banners must be a JPEG or PNG under 1 MB")?;
+            let bytes = view::profile::image_bytes(&b64, MAX_SERVER_IMAGE_BYTES, view::manage::CHANNEL_BANNER_INVALID, view::manage::CHANNEL_BANNER_INVALID)?;
             Some(store_shared_blob(&app, bytes).await?)
         }
     };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelBanner { server: sid, channel: cid, banner }).await
+    let event = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        view::manage::channel_banner(state, our_permissions(&app, state, me.id), cid, banner)?
+    };
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -6114,20 +6116,6 @@ pub(crate) fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     view::pictures::is_jpeg_or_png(bytes)
 }
 
-fn decode_base64_image(data: &str) -> CmdResult<Vec<u8>> {
-    base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .map_err(|_| "image data is not valid base64".to_string())
-}
-
-fn decode_image(data: &str, max: usize, invalid: &str) -> CmdResult<Vec<u8>> {
-    let bytes = decode_base64_image(data)?;
-    if bytes.len() > max || !is_jpeg_or_png(&bytes) {
-        return Err(invalid.into());
-    }
-    Ok(bytes)
-}
-
 async fn store_profile_image(
     app: &App,
     data: &str,
@@ -7219,6 +7207,62 @@ fn set_unread(handle: tauri::AppHandle, count: u32) {
 }
 
 #[tauri::command]
+fn debug_log_status() -> debug_log::LogStatus {
+    debug_log::status()
+}
+
+#[tauri::command]
+fn set_verbose_logging(enabled: bool) -> CmdResult<debug_log::LogStatus> {
+    debug_log::set_verbose(enabled)
+}
+
+#[tauri::command]
+fn open_log_folder() -> CmdResult<()> {
+    let folder = debug_log::folder().ok_or("Logs are not being saved on this device")?;
+    #[cfg(desktop)]
+    return open::that_detached(folder).map_err(err_to_string);
+    #[cfg(mobile)]
+    {
+        let _ = folder;
+        Err("Save the log file instead".into())
+    }
+}
+
+#[tauri::command]
+async fn save_log_bundle(handle: tauri::AppHandle) -> CmdResult<Option<String>> {
+    let now = chrono::Local::now();
+    let header = format!(
+        "Commy {} on {} {}
+Saved {}
+Detailed logging {}
+This file stays on your device until you share it. It has no messages, keys or passwords.
+",
+        updater::current_version(),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        now.to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+        if debug_log::status().verbose { "on" } else { "off" },
+    );
+    let text = debug_log::bundle(&header)?;
+    picker::save_file(&handle, &debug_log::bundle_name(now), text.into_bytes()).await
+}
+
+#[tauri::command]
+async fn run_connection_check(app: tauri::State<'_, App>) -> CmdResult<commy_net::ConnectionCheck> {
+    let checker = app.net.lock().await.as_ref().map(CommyNode::connection_checker).ok_or("Commy is still starting its connection")?;
+    let check = checker.run().await;
+    tracing::info!(
+        "connection check: quality {:?}, direct {:?}, relay reachable {}, relay round trip {:?} ms, ipv6 {}",
+        check.quality,
+        check.direct,
+        check.relay_reachable,
+        check.relay_rtt_ms,
+        check.ipv6
+    );
+    Ok(check)
+}
+
+#[tauri::command]
 fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
     app.update_voice(|voice| voice.close_to_tray = enabled)
 }
@@ -7637,12 +7681,7 @@ fn on_resumed(handle: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,iroh=warn,iroh_net=warn".into()),
-        )
-        .try_init();
+    debug_log::init();
 
     instance::apply_test_build_data_dir();
 
@@ -7737,6 +7776,9 @@ pub fn run() {
                 .ok()
                 .map(std::path::PathBuf::from)
                 .or_else(|| tauri_app.path().app_data_dir().ok());
+            if let Some(dir) = data_dir.as_deref() {
+                debug_log::attach(dir);
+            }
             let show_window = data_dir.as_deref().is_some_and(account_folder::take_show_window);
             match tray::build(&handle) {
                 Ok(()) => {
@@ -7980,6 +8022,11 @@ pub fn run() {
             notify,
             set_unread,
             set_close_to_tray,
+            debug_log_status,
+            set_verbose_logging,
+            open_log_folder,
+            save_log_bundle,
+            run_connection_check,
             tray_prompt_due,
             autostart_allowed,
             finish_tray_prompt,

@@ -105,6 +105,13 @@
     return JSON.parse(await sent);
   }
 
+  async function pickImage() {
+    const file = await webPickFile(document, "image");
+    if (!file) return null;
+    if (file.size > WEB_MAX_PICKED_IMAGE_BYTES) throw WEB_IMAGE_TOO_LARGE;
+    return webReadDataUrl(file, FileReader);
+  }
+
   let unlocked = null;
 
   function unlockModal() {
@@ -197,6 +204,36 @@
     return unlocked;
   }
 
+  function showNotice(args) {
+    const Notice = window.Notification;
+    if (!Notice || Notice.permission !== "granted") return null;
+    const notice = webNotice(args);
+    try {
+      const shown = new Notice(notice.title, notice.options);
+      shown.onclick = () => {
+        window.focus();
+        shown.close();
+        if (notice.target) emit("notification-clicked", JSON.stringify(notice.target));
+      };
+    } catch (e) {
+      console.warn(e);
+    }
+    return null;
+  }
+
+  function askForNotices() {
+    const Notice = window.Notification;
+    const store = storage();
+    if (!Notice || Notice.permission !== "default" || !store) return;
+    try {
+      if (store.getItem(WEB_NOTICE_ASKED_KEY)) return;
+      store.setItem(WEB_NOTICE_ASKED_KEY, "1");
+    } catch {
+      return;
+    }
+    Notice.requestPermission().catch(() => {});
+  }
+
   async function invoke(cmd, args) {
     const fallback = webDefault(cmd);
     if (fallback.known) return fallback.value;
@@ -211,9 +248,12 @@
     }
     if (WEB_BYTE_COMMANDS.includes(cmd)) return fileBytes(cmd, args);
     if (WEB_PICKED_COMMANDS.includes(cmd)) return attachPicked(cmd, args);
+    if (cmd === "notify") return showNotice(args);
+    if (cmd === "pick_image") return pickImage();
     if (cmd === "get_user") {
       await untilUnlocked();
       if (typeof hideModals === "function") hideModals();
+      document.addEventListener("pointerdown", askForNotices, { once: true, capture: true });
     }
     return backend(cmd, args);
   }

@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -30,6 +30,42 @@ test("every command the app calls while starting up has an answer in the browser
 test("the browser answers each command once, either from defaults or from the backend", () => {
   const both = Object.keys(WEB_DEFAULTS).filter(cmd => rustCommands.has(cmd));
   assert.deepEqual(both, []);
+});
+
+test("a notice is clipped like the desktop's and opens only a channel or DM", () => {
+  const id = "0f3c2a9e-1b2c-4d5e-8f90-123456789abc";
+  const notice = webNotice({ title: "é".repeat(100), body: "x".repeat(300), target: `channel:${id}:${id}` });
+  assert.equal(Array.from(notice.title).length, 80);
+  assert.equal(notice.options.body.length, 240);
+  assert.equal(notice.options.tag, `channel:${id}:${id}`);
+  assert.equal(notice.target, `channel:${id}:${id}`);
+  assert.equal(webNoticeTarget(`dm:${id}`), `dm:${id}`);
+  assert.equal(webNoticeTarget("https://example.com"), null);
+  assert.equal(webNoticeTarget(`dm:${id}:extra`), null);
+  const plain = webNotice({ title: "", body: "hi" });
+  assert.equal(plain.title, "Commy");
+  assert.equal(plain.options.tag, undefined);
+  assert.equal(plain.target, null);
+});
+
+test("notices go to the browser rather than being dropped", () => {
+  assert.equal(webDefault("notify").known, false);
+  assert.match(read("apps", "web", "ui", "web-bridge.js"), /cmd === "notify"/);
+});
+
+test("picking an image offers pictures and hands the app a data URL, like the desktop picker", async () => {
+  const clicks = [];
+  const input = { addEventListener() {}, click() { clicks.push(this.accept); } };
+  webPickFile({ createElement: () => input }, "image");
+  assert.deepEqual(clicks, [WEB_IMAGE_ACCEPT]);
+  class Reader {
+    readAsDataURL(file) {
+      this.result = `data:${file.type};base64,AAAA`;
+      this.onload();
+    }
+  }
+  assert.equal(await webReadDataUrl({ type: "image/png" }, Reader), "data:image/png;base64,AAAA");
+  assert.match(read("apps", "web", "ui", "web-bridge.js"), /cmd === "pick_image"/);
 });
 
 test("defaults are fresh copies, so the app cannot change them for the next caller", () => {
@@ -134,6 +170,54 @@ test("the voice engine loads before the bridge that hands it to the backend", ()
 
 test("the microphone is asked for with the browser's echo, noise and level handling on", () => {
   assert.deepEqual(webVoiceScripts.webMicConstraints().audio, { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 });
+});
+
+function fakeVoiceWindow() {
+  const node = () => ({ port: {}, connect(next) { return next; }, disconnect() {} });
+  const win = {
+    asked: 0,
+    tracks: [],
+    timers: [],
+    setTimeout(callback) { win.timers.push(callback); },
+    AudioContext: class { constructor() { this.state = "running"; this.audioWorklet = { addModule: async () => {} }; this.destination = node(); } createMediaStreamSource() { return node(); } createGain() { return { ...node(), gain: {} }; } },
+    AudioWorkletNode: class { constructor() { Object.assign(this, node()); } },
+    navigator: {
+      mediaDevices: {
+        async getUserMedia() {
+          win.asked += 1;
+          const track = { stopped: false, stop() { this.stopped = true; } };
+          win.tracks.push(track);
+          return { getTracks: () => [track], getAudioTracks: () => [track] };
+        },
+      },
+    },
+  };
+  return win;
+}
+
+test("a microphone that disappears mid-call, like a headset muting itself, is opened again", async () => {
+  const win = fakeVoiceWindow();
+  const voice = webVoiceScripts.webVoice(win);
+  assert.equal(await voice.start(() => {}), true);
+  assert.equal(win.asked, 1);
+  win.tracks[0].onended();
+  assert.equal(win.tracks[0].stopped, true);
+  await win.timers.shift()();
+  assert.equal(win.asked, 2);
+  voice.stop();
+  assert.equal(win.tracks[1].stopped, true);
+  assert.equal(win.tracks[1].onended, null);
+});
+
+test("a microphone that ends after the call is over is left alone", async () => {
+  const win = fakeVoiceWindow();
+  const voice = webVoiceScripts.webVoice(win);
+  await voice.start(() => {});
+  const ended = win.tracks[0].onended;
+  voice.stop();
+  ended();
+  assert.equal(win.timers.length, 0);
+  assert.equal(win.asked, 1);
 });
 
 test("the microphone is cut into 10 ms frames at 48 kHz whatever rate the browser records at", () => {

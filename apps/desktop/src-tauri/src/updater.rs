@@ -114,7 +114,7 @@ fn install_blocker(handle: &AppHandle) -> Option<&'static str> {
     None
 }
 
-fn current_version() -> String {
+pub(crate) fn current_version() -> String {
     VERSION.map(str::to_string).unwrap_or_else(|| format!("{}-dev", env!("CARGO_PKG_VERSION")))
 }
 

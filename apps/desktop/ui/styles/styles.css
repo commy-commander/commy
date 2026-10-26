@@ -5053,6 +5053,17 @@ h3.md-heading { font-size: 1.1em; }
 
 .update-card .update-state { min-height: calc(2 * 1.4em); }
 .update-card .update-action { flex: 0 0 152px; width: 152px; white-space: nowrap; }
+.conn-test-intro { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.conn-test-run { flex: 0 0 120px; width: 120px; white-space: nowrap; }
+.conn-test-result { background: var(--bg-darkest); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-height: calc(4 * 1.4em + 52px); }
+.conn-test-head { display: flex; align-items: center; gap: 8px; min-height: 20px; }
+.conn-badge.idle { background: var(--bg-active); color: var(--text-muted); }
+.conn-test-summary { font-size: 14px; font-weight: 600; color: var(--header-primary); }
+.conn-test-grid { font-size: 13px; max-width: 420px; }
+.conn-test-grid .conn-value { text-align: left; }
+.conn-test-detail { min-height: calc(2 * 1.4em); }
+.conn-test.running .conn-test-result { opacity: .6; }
+.log-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 #settings-btn { position: relative; }
 #settings-btn::after {
   content: "";

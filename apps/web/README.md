@@ -7,14 +7,19 @@ messages and group DMs, call people, join voice channels, create servers,
 arrange their channels, make and open invite links, manage roles, moderate
 members, set the rules, delete or hand over a server, and edit your profile
 (name, status, About Me, avatar, banner, pronouns, a status that runs out
-and who sees your profile details). Links from another account
-server, server pictures, expressions, events, video and screen sharing still
-need the desktop app.
+and who sees your profile details), and set server, channel and role
+pictures. Links from another account server, expressions, events, video and
+screen sharing still need the desktop app.
 
 Pictures (avatars, server icons and banners, custom emoji) come from the sync
 service's encrypted picture copies when it has them, and otherwise straight
 from the member who shared them. A file or voice message sent from the browser
 is served by that tab, so others can open it while the tab stays open.
+
+Message, DM and friend notices use the browser's own notifications, following
+the same notification settings as the desktop. The browser asks once for
+permission, on your first click after your servers open, and shows notices
+only while the tab is in the background. Clicking one opens that channel or DM.
 
 ## How it fits together
 
