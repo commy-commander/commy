@@ -353,14 +353,11 @@ impl Client {
         servers.get(&server).is_some_and(|state| state.media_peer_ok(user, node, channel, true))
     }
 
-    pub fn voice_moved_away(&self, server: ServerId, channel: ChannelId, ours: &str) -> bool {
+    pub fn voice_moved_away(&self, server: ServerId, ours: &str) -> bool {
         let Some(me) = self.me_id() else { return false };
         let servers = self.servers.lock().unwrap();
         let Some(state) = servers.get(&server) else { return false };
-        match state.voice_states.get(&me) {
-            Some(room) if *room == channel => state.voice_device(me).is_some_and(|node| !node.eq_ignore_ascii_case(ours)),
-            _ => false,
-        }
+        state.voice_states.contains_key(&me) && state.voice_device(me).is_some_and(|node| !node.eq_ignore_ascii_case(ours))
     }
 
     pub fn start_group(&self, server: ServerId) -> Result<Vec<WirePayload>, String> {
@@ -948,8 +945,17 @@ mod tests {
         assert_eq!(observer.voice_states.get(&me), Some(&voice));
         assert_eq!(observer.voice_node(me), Some(hex.clone()));
         assert!(observer.media_peer_ok(me, &hex, voice, true));
-        assert!(!w.client.voice_moved_away(w.server, voice, &hex));
-        assert!(w.client.voice_moved_away(w.server, voice, &liveness::node_hex(&[8u8; 32])), "another device of mine took the call");
+        assert!(!w.client.voice_moved_away(w.server, &hex));
+        assert!(w.client.voice_moved_away(w.server, &liveness::node_hex(&[8u8; 32])), "another device of mine took the call");
+        let other_room = w.state.server.channels.iter().find(|c| c.kind.is_voice() && c.id != voice).map(|c| c.id).unwrap();
+        {
+            let mut servers = w.client.servers.lock().unwrap();
+            let state = servers.get_mut(&w.server).unwrap();
+            state.apply(ServerEvent::VoiceState { user: me, channel: Some(other_room), muted: false, deafened: false, since: Some(2) }).unwrap();
+            let desktop = liveness::node_hex(&[9u8; 32]);
+            state.apply(ServerEvent::DeviceAnnounce { server: w.server, user: me, node: desktop, voice: Some(other_room), since: Some(2_000) }).unwrap();
+        }
+        assert!(w.client.voice_moved_away(w.server, &hex), "another device of mine joined a different room");
 
         let left = w.client.voice_state(w.server, None, false, false, None).unwrap();
         heard(&mut observer, &[left]);
