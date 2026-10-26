@@ -377,7 +377,7 @@ impl Session {
         }
         let this = self.clone();
         spawn_local(async move {
-            let Some((name, deleted)) = this.client.borrow().gone(server) else { return };
+            let Some((name, notice)) = this.client.borrow().gone(server) else { return };
             if this.voice_here(server).is_some() {
                 this.hang_up_media();
             }
@@ -385,7 +385,9 @@ impl Session {
             this.client.borrow_mut().forget(server);
             this.drop_from_list(server);
             this.forget_left(server, group).await;
-            this.emit(if deleted { "server-deleted" } else { "banned" }, json!({ "server": server.to_string(), "name": name }));
+            if notice != "left" {
+                this.emit(notice, json!({ "server": server.to_string(), "name": name }));
+            }
         });
     }
 

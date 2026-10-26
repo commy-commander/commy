@@ -444,17 +444,22 @@ impl Client {
         ring.newest_in(state, KeyScope::Community).map(|(id, secret)| (id, secret.clone()))
     }
 
-    pub fn gone(&self, server: ServerId) -> Option<(String, bool)> {
+    pub fn gone(&self, server: ServerId) -> Option<(String, &'static str)> {
         let me = self.me_id()?;
         let servers = self.servers.lock().unwrap();
         let state = servers.get(&server)?;
-        if state.is_deleted() {
-            Some((state.server.name.clone(), true))
+        let notice = if state.is_deleted() {
+            "server-deleted"
         } else if state.server.banned.contains(&me) {
-            Some((state.server.name.clone(), false))
+            "banned"
+        } else if state.server.is_member(me) {
+            return None;
+        } else if state.signed_actions().iter().any(|s| s.action.by != me && s.event == ServerEvent::MemberLeave { server, user: me }) {
+            "kicked"
         } else {
-            None
-        }
+            "left"
+        };
+        Some((state.server.name.clone(), notice))
     }
 
     pub fn owned_servers(&self) -> Vec<ServerId> {
@@ -1116,7 +1121,23 @@ mod tests {
             let signed = SignedEvent::sign(w.server, owner.id, Utc::now().timestamp_millis(), event, &identity);
             assert_eq!(w.client.apply_live(w.server, signed.event, Some(signed.action)), Applied::Changed);
             let name = w.client.servers.lock().unwrap()[&w.server].server.name.clone();
-            assert_eq!(w.client.gone(w.server), Some((name, deleted)));
+            assert_eq!(w.client.gone(w.server), Some((name, if deleted { "server-deleted" } else { "banned" })));
+        }
+    }
+
+    #[test]
+    fn a_kick_marks_the_server_gone_and_leaving_elsewhere_does_not_say_kicked() {
+        for kicked in [true, false] {
+            let w = world();
+            w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+            let (owner, identity) = w.owner.clone();
+            let me = w.client.me_id().unwrap();
+            let mine = w.client.me.lock().unwrap().as_ref().unwrap().1.clone();
+            let (by, key) = if kicked { (owner.id, identity) } else { (me, mine) };
+            let signed = SignedEvent::sign(w.server, by, Utc::now().timestamp_millis(), ServerEvent::MemberLeave { server: w.server, user: me }, &key);
+            assert_eq!(w.client.apply_live(w.server, signed.event, Some(signed.action)), Applied::Changed);
+            let name = w.client.servers.lock().unwrap()[&w.server].server.name.clone();
+            assert_eq!(w.client.gone(w.server), Some((name, if kicked { "kicked" } else { "left" })));
         }
     }
 

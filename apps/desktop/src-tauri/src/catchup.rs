@@ -961,11 +961,11 @@ pub fn learn_service_profiles(handle: &tauri::AppHandle, server: ServerId, paylo
 
 pub fn sync_replies(app: &App, server: ServerId) -> Vec<WirePayload> {
     let Some(me) = app.profile.lock().unwrap().clone() else { return Vec::new() };
-    if !app.servers.lock().unwrap().contains_key(&server) {
+    let Some(member) = app.servers.lock().unwrap().get(&server).map(|state| state.server.is_current_member(me.id)) else {
         return Vec::new();
-    }
-    let join = app.wire_for(server, ServerEvent::MemberJoin { server, profile: app.announced(me) });
-    snapshot_for(app, server).into_iter().chain([join]).collect()
+    };
+    let join = member.then(|| app.wire_for(server, ServerEvent::MemberJoin { server, profile: app.announced(me) }));
+    snapshot_for(app, server).into_iter().chain(join).collect()
 }
 
 pub fn await_snapshot(app: &App, server: ServerId, me: UserProfile) -> Vec<WirePayload> {
@@ -2539,6 +2539,13 @@ mod tests {
         let from_friend = replies_of(&friend, true);
         assert!(matches!(from_friend.as_slice(), [join] if joined(join, &friend)));
         assert!(sync_replies(&app_with(&owner, real.clone()), ServerId::new()).is_empty());
+        for ban in [false, true] {
+            let mut removed = real.clone();
+            let event = if ban { ServerEvent::MemberBan { server: sid, user: friend.id() } } else { ServerEvent::MemberLeave { server: sid, user: friend.id() } };
+            removed.apply(event).unwrap();
+            let replies = sync_replies(&app_with(&friend, removed), sid);
+            assert!(!replies.iter().any(|reply| joined(reply, &friend)), "a removed member does not announce itself back in ({ban})");
+        }
 
         let mut trimmed = from_owner[0].clone();
         if let WirePayload::SyncResponse { members, profiles, .. } = &mut trimmed {

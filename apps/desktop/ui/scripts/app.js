@@ -17583,8 +17583,8 @@ function wireEvents() {
       toast(`${event.payload.name || "A server"} was deleted by its owner`);
       await leaveServerView(event.payload.server);
     });
-    window.__TAURI__.event.listen("banned", async event => {
-      toast(`You were banned from ${event.payload.name || "a server"}`);
+    const removedFrom = (verb) => async event => {
+      toast(`You were ${verb} ${event.payload.name || "a server"}`);
       if (state.voiceServer && state.voiceServer.id === event.payload.server) {
         state.voiceChannelId = null;
         state.voiceServer = null;
@@ -17595,7 +17595,9 @@ function wireEvents() {
         state.currentServer = null;
         await enterDmMode();
       }
-    });
+    };
+    window.__TAURI__.event.listen("banned", removedFrom("banned from"));
+    window.__TAURI__.event.listen("kicked", removedFrom("removed from"));
     window.__TAURI__.event.listen("voice-left", async event => {
       if (state.voiceServer && state.voiceServer.id === event.payload) {
         state.voiceChannelId = null;
