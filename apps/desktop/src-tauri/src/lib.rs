@@ -1257,9 +1257,12 @@ fn start_voice_session(
             None
         }
     };
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let joined_ms = app.servers.lock().unwrap().get(&sid).map_or(now_ms, |s| s.voice_join_stamp(me, now_ms));
     let mut slot = app.voice_session.lock().unwrap();
     session.set_speaker(speaker);
     session.mixer.lock().unwrap().set_master(voice.output_volume);
+    session.joined_ms = joined_ms;
     *slot = Some(session);
     drop(slot);
     resume_mic_test(app, testing);
@@ -6153,6 +6156,14 @@ fn set_echo_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSettings
 }
 
 #[tauri::command]
+fn set_auto_level(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
+    app.update_voice(|voice| {
+        voice.auto_level = enabled;
+        app.processor.lock().unwrap().set_auto_level(enabled);
+    })
+}
+
+#[tauri::command]
 async fn set_muted(app: tauri::State<'_, App>, handle: tauri::AppHandle, muted: bool) -> CmdResult<VoiceSettings> {
     let snapshot = app.update_voice(|voice| voice.muted = muted);
     apply_voice_gates(&app);
@@ -6446,7 +6457,7 @@ async fn run_net_loop(
                             }
                             if let (Ok(_), Some((user, said))) = (&applied, device_presence) {
                                 let now = std::time::Instant::now();
-                                if liveness::settle_device_presence(&app, state, user, &sender, said, now) {
+                                if liveness::settle_device_presence(&app, state, user, &sender, said, now, action.map(|a| a.at)) {
                                     applied = Ok(true);
                                 }
                             }
@@ -6460,7 +6471,9 @@ async fn run_net_loop(
                 }
                 if applied.is_ok() {
                     if let Some(user) = speaker {
-                        liveness::heard(&app, server, user, std::time::Instant::now());
+                        let now = std::time::Instant::now();
+                        liveness::heard(&app, server, user, now);
+                        liveness::heard_device(&app, server, user, &view::liveness::node_hex(&sender), now);
                     }
                     if let Some(user) = pinned {
                         catchup::release_held(&handle, server, &[user]);
@@ -7161,8 +7174,9 @@ pub fn run() {
     instance::apply_test_build_data_dir();
 
     let launch_link = invite_link::link_from_args();
-    if let (Some(link), Some(dir)) = (&launch_link, invite_link::default_data_dir()) {
-        if invite_link::forward_to_running_instance(&dir, link) {
+    let minimized = std::env::args().any(|arg| arg == "--minimized");
+    if let Some(dir) = invite_link::default_data_dir() {
+        if invite_link::hand_to_running_instance(&dir, &invite_link::launch_request(launch_link.as_deref(), minimized)) {
             return;
         }
     }
@@ -7568,6 +7582,7 @@ pub fn run() {
             get_voice_settings,
             set_noise_cancellation,
             set_echo_cancellation,
+            set_auto_level,
             set_muted,
             set_deafened,
         ])

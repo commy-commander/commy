@@ -52,7 +52,7 @@ impl Default for VoiceEncoder {
     }
 }
 
-fn soft_limit(x: f32) -> f32 {
+pub fn soft_limit(x: f32) -> f32 {
     const KNEE: f32 = 0.9;
     let a = x.abs();
     if a <= KNEE {

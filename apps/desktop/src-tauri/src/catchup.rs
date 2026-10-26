@@ -1061,7 +1061,8 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
             let key = me.identity;
             let entry = state.profiles.entry(me.id).or_insert_with(|| me.clone());
             entry.identity = key.or(entry.identity);
-            if let Err(e) = state.apply(ServerEvent::MemberJoin { server, profile: me }) {
+            let joined = old.server.member(me.id).map_or_else(|| Utc::now().timestamp_millis(), |m| m.joined_at.timestamp_millis());
+            if let Err(e) = state.join_as_of(me, joined) {
                 tracing::warn!("could not join {server} from its snapshot: {e}");
             }
         }
@@ -1071,7 +1072,9 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
                 held.push((signer, event));
             }
         }
-        for entry in voice.into_iter().filter(|v| Some(v.user) != me_id) {
+        state.carry_live_voice(&old);
+        let unseated = voice.into_iter().filter(|v| Some(v.user) != me_id && !state.voice_states.contains_key(&v.user));
+        for entry in unseated.collect::<Vec<_>>() {
             let _ = state.apply(entry.into_event());
         }
         let waited = old.snapshot();
@@ -2278,6 +2281,67 @@ mod tests {
         assert_eq!(initiated.unwrap().received, vec![later.id]);
         assert_eq!(responded.unwrap().0, sid);
         assert!(app.servers.lock().unwrap()[&sid].has_message(later.id));
+    }
+
+    fn owner_copy_at(state: &ServerState, owner: &Member, at: i64) -> WirePayload {
+        let mut payload = commy_net::protocol::build_sync_response(state, 50, owner.id());
+        commy_net::protocol::sign_sync_response(&mut payload, at, &owner.identity);
+        payload
+    }
+
+    fn rejoined_from(owner: &Member, me: &Member, sid: ServerId, copy: WirePayload) -> Arc<App> {
+        let mut ours = placeholder(me, sid);
+        ours.apply(ServerEvent::MemberJoin { server: sid, profile: me.profile.clone() }).unwrap();
+        let app = app_with(me, ours);
+        app.set_awaiting_snapshot(sid, true);
+        invited_by(&app, sid, owner);
+        assert!(apply_service_snapshot(&TestHandle::new(app.clone()), sid, copy));
+        app
+    }
+
+    fn replay(app: &App, sid: ServerId, signed: &SignedEvent) {
+        let mut servers = app.servers.lock().unwrap();
+        let _ = apply_live(servers.get_mut(&sid).unwrap(), signed.event.clone(), Some(signed.action));
+    }
+
+    #[test]
+    fn a_kick_from_before_our_rejoin_does_not_put_us_out_again() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let now = Utc::now().timestamp_millis();
+        let copy = owner_copy_at(&real, &owner, now - 2 * 3_600_000);
+        let kick = SignedEvent::sign(sid, owner.id(), now - 3_600_000, ServerEvent::MemberLeave { server: sid, user: me.id() }, &owner.identity);
+        let app = rejoined_from(&owner, &me, sid, copy);
+        replay(&app, sid, &kick);
+        assert!(app.servers.lock().unwrap()[&sid].server.is_current_member(me.id()), "the stored kick is older than our rejoin");
+    }
+
+    #[test]
+    fn a_ban_and_unban_from_before_our_rejoin_leave_us_in() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let now = Utc::now().timestamp_millis();
+        let sign = |at, event| SignedEvent::sign(sid, owner.id(), at, event, &owner.identity);
+        let ban = sign(now - 2 * 3_600_000, ServerEvent::MemberBan { server: sid, user: me.id() });
+        let unban = sign(now - 3_600_000, ServerEvent::MemberUnban { server: sid, user: me.id() });
+
+        let before_the_ban = rejoined_from(&owner, &me, sid, owner_copy_at(&real, &owner, now - 3 * 3_600_000));
+        replay(&before_the_ban, sid, &ban);
+        replay(&before_the_ban, sid, &unban);
+        assert!(before_the_ban.servers.lock().unwrap()[&sid].server.is_current_member(me.id()));
+
+        real.apply_signed(&ban).unwrap();
+        let while_banned = owner_copy_at(&real, &owner, now - 90 * 60_000);
+        let app = rejoined_from(&owner, &me, sid, while_banned);
+        assert!(!app.servers.lock().unwrap()[&sid].server.is_current_member(me.id()));
+        replay(&app, sid, &unban);
+        assert!(app.servers.lock().unwrap()[&sid].server.is_current_member(me.id()), "the unban came before our rejoin");
     }
 
     fn placeholder(me: &Member, sid: ServerId) -> ServerState {

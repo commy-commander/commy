@@ -203,9 +203,18 @@ impl Session {
 
     pub(super) fn say_here(&self, server: ServerId) {
         let Some(node) = self.sync.borrow().as_ref().map(|live| live.node) else { return };
-        let voice = self.voice_here(server);
-        for payload in self.client.borrow().here(server, &node, voice) {
+        let seat = self.seat_here(server);
+        for payload in self.client.borrow().here(server, &node, seat) {
             self.publish(server, &payload);
+        }
+        self.leave_will(server, &node);
+    }
+
+    fn leave_will(&self, server: ServerId, node: &[u8; 32]) {
+        let Some(will) = self.client.borrow().will(server) else { return };
+        let Some(plain) = streams::encode_signal(*node, &will) else { return };
+        for (stream, client) in self.writers(server, Lane::State) {
+            client.will(stream, plain.clone());
         }
     }
 

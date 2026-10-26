@@ -12,12 +12,14 @@ use commy_net::node::{MediaChannel, MediaGate};
 use commy_net::{DmEnvelope, MediaHello, MediaPacket, WirePayload};
 use commy_view::afk::{self, IdleVoice};
 use commy_view::calls::{self, CallBook, CallStep, DmCall, DmCallView, VoiceGates};
+use commy_view::liveness::BEAT;
 use iroh::endpoint::Connection;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
 use super::{parse, to_json, Args, Session};
+use crate::client::Seat;
 use crate::dm_book;
 use crate::recording::Recorder;
 
@@ -148,6 +150,7 @@ impl Session {
         let voice = self.voice.borrow();
         json!({
             "noise_cancellation": true,
+            "auto_level": true,
             "muted": voice.muted,
             "deafened": voice.deafened,
             "pronouns": personal.pronouns,
@@ -168,8 +171,13 @@ impl Session {
     }
 
     pub(super) fn voice_here(&self, server: ServerId) -> Option<(ChannelId, i64)> {
+        self.seat_here(server).map(|seat| (seat.channel, seat.since_ms))
+    }
+
+    pub(super) fn seat_here(&self, server: ServerId) -> Option<Seat> {
         let voice = self.voice.borrow();
-        voice.link.as_ref().filter(|link| link.server == Some(server)).map(|link| (link.channel, link.since_ms))
+        let link = voice.link.as_ref().filter(|link| link.server == Some(server))?;
+        Some(Seat { channel: link.channel, since_ms: link.since_ms, muted: voice.muted, deafened: voice.deafened })
     }
 
     fn call_view(&self, call: &DmCall, state: &str, reason: Option<&str>) -> DmCallView {
@@ -293,10 +301,12 @@ impl Session {
         }
         self.hang_up_media();
         let _ = self.host.start_voice().await;
-        self.voice.borrow_mut().link = Some(Link::new(Some(server), channel, me));
+        let mut link = Link::new(Some(server), channel, me);
+        link.since_ms = self.read_state(server, |state, me| Ok(state.voice_join_stamp(me, link.since_ms))).unwrap_or(link.since_ms);
+        self.voice.borrow_mut().link = Some(link);
         self.refresh_gates();
         *self.admit.lock().unwrap() = Some(Gate::Room(channel));
-        self.send_voice(server, &joined).await;
+        self.say_seat(server, Some(joined)).await;
         self.say_here(server);
         self.emit("server-event", json!(server.to_string()));
         spawn_local(self.clone().keep_voice(channel));
@@ -345,10 +355,28 @@ impl Session {
         let Ok(left) = self.client.borrow().voice_state(server, None, false, false, None) else { return };
         let this = self.clone();
         spawn_local(async move {
-            this.send_voice(server, &left).await;
+            this.say_seat(server, Some(left)).await;
             this.say_here(server);
             this.emit("server-event", json!(server.to_string()));
         });
+    }
+
+    async fn say_seat(&self, server: ServerId, voice: Option<WirePayload>) {
+        let Some(node) = self.node_bytes() else { return };
+        let device = self.client.borrow().device_payload(server, &node, self.seat_here(server));
+        for payload in device.into_iter().chain(voice) {
+            self.send_voice(server, &payload).await;
+        }
+    }
+
+    fn keep_seat(self: &Rc<Self>) {
+        let Some(server) = self.voice.borrow().link.as_ref().and_then(|link| link.server) else { return };
+        let Some(seat) = self.seat_here(server) else { return };
+        let Ok(voice) = self.client.borrow().voice_state(server, Some(seat.channel), seat.muted, seat.deafened, Some(seat.since_ms / 1000)) else {
+            return;
+        };
+        let this = self.clone();
+        spawn_local(async move { this.say_seat(server, Some(voice)).await });
     }
 
     fn say_voice_flags(self: &Rc<Self>) {
@@ -378,8 +406,10 @@ impl Session {
         let server = self.voice.borrow().link.as_ref().and_then(|link| link.server);
         let Some(server) = server else { return };
         self.hang_up_media();
-        if let Ok(left) = self.client.borrow().voice_state(server, None, false, false, None) {
-            self.publish(server, &left);
+        let device = self.node_bytes().and_then(|node| self.client.borrow().device_payload(server, &node, None));
+        let left = self.client.borrow().voice_state(server, None, false, false, None).ok();
+        for payload in device.into_iter().chain(left) {
+            self.publish(server, &payload);
         }
     }
 
@@ -502,6 +532,7 @@ impl Session {
 
     async fn keep_voice(self: Rc<Self>, channel: ChannelId) {
         let mut since_tend = TEND_EVERY;
+        let mut since_beat = Duration::ZERO;
         loop {
             if self.voice.borrow().link.as_ref().map(|link| link.channel) != Some(channel) {
                 return;
@@ -511,8 +542,13 @@ impl Session {
                 since_tend = Duration::ZERO;
                 self.tend(channel);
             }
+            if since_beat >= BEAT {
+                since_beat = Duration::ZERO;
+                self.keep_seat();
+            }
             n0_future::time::sleep(QUIET_CHECK).await;
             since_tend += QUIET_CHECK;
+            since_beat += QUIET_CHECK;
         }
     }
 
@@ -540,6 +576,9 @@ impl Session {
             if self.leave_if_idle(server, channel) {
                 return;
             }
+        }
+        if let Some(server) = room {
+            self.client.borrow().hear_voice_peers(server, &self.live_peers());
         }
         let Some(targets) = self.targets(channel) else { return };
         let mut gone = Vec::new();
@@ -574,6 +613,12 @@ impl Session {
         for (user, node) in dial {
             spawn_local(self.clone().dial(channel, user, node));
         }
+    }
+
+    fn live_peers(&self) -> Vec<(UserId, String)> {
+        let voice = self.voice.borrow();
+        let Some(link) = voice.link.as_ref() else { return Vec::new() };
+        link.peers.iter().filter(|(_, peer)| peer.out.is_some()).map(|(user, peer)| (*user, peer.node.clone())).collect()
     }
 
     fn idle_secs(&self) -> Option<i64> {

@@ -17,7 +17,7 @@ const state = {
   servers: [],
   currentServer: null,
   currentChannel: null,
-  voice: { noise_cancellation: true, echo_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
+  voice: { noise_cancellation: true, echo_cancellation: true, auto_level: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
   voiceChannelId: null,
   voiceServer: null,
   shareSource: null,
@@ -40,7 +40,7 @@ const mock = {
   servers: {},
   messages: {},
   dms: {},
-  voice: { noise_cancellation: true, echo_cancellation: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
+  voice: { noise_cancellation: true, echo_cancellation: true, auto_level: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
 };
 
 function mockSearchMatcher({ terms, from, mentions }, named) {
@@ -959,6 +959,7 @@ async function mockInvoke(cmd, args = {}) {
     case "restart_to_update": return null;
     case "set_noise_cancellation": mock.voice.noise_cancellation = args.enabled; return mock.voice;
     case "set_echo_cancellation": mock.voice.echo_cancellation = args.enabled; return mock.voice;
+    case "set_auto_level": mock.voice.auto_level = args.enabled; return mock.voice;
     case "set_input_mode": Object.assign(mock.voice, { input_mode: args.mode, talk_key: args.talkKey, talk_release_ms: args.releaseMs }); return mock.voice;
     case "set_voice_hotkeys": Object.assign(mock.voice, { mute_hotkey: args.mute, deafen_hotkey: args.deafen }); return mock.voice;
     case "set_sensitivity": Object.assign(mock.voice, { auto_sensitivity: args.auto, sensitivity_db: args.thresholdDb }); return mock.voice;
@@ -7960,6 +7961,7 @@ function wireHotkeyInput(input, onPick, { clearable = false } = {}) {
 
 let connTimer = null;
 let connLast = null;
+let connPick = null;
 
 function quality(rtt, loss) {
   if (rtt > 250 || loss > 5) return "bad";
@@ -7990,7 +7992,27 @@ async function refreshConnPop() {
   connLast = { at: now, tx, rx };
   const list = $("conn-links");
   list.replaceChildren();
+  const current = pickConnLink(stats.links, connPick);
+  connPick = current ? current.user : null;
+  const tabs = $("conn-tabs");
+  tabs.replaceChildren();
+  tabs.classList.toggle("hidden", stats.links.length < 2);
   for (const link of stats.links) {
+    const tab = el("button", "conn-tab");
+    tab.type = "button";
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(link === current));
+    tab.title = link.name;
+    tab.dataset.quality = quality(link.rtt_ms, link.loss_pct);
+    tab.classList.toggle("active", link === current);
+    tab.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
+    tab.onclick = () => {
+      connPick = link.user;
+      refreshConnPop();
+    };
+    tabs.appendChild(tab);
+  }
+  for (const link of current ? [current] : []) {
     const row = el("div", "conn-link");
     const head = el("div", "conn-link-head");
     head.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
@@ -16443,6 +16465,11 @@ function wireEvents() {
     toast(`Echo cancellation ${state.voice.echo_cancellation ? "on" : "off"}`);
   };
 
+  $("agc-toggle").onchange = async e => {
+    state.voice = await invoke("set_auto_level", { enabled: e.target.checked });
+    toast(`Automatic mic level ${state.voice.auto_level ? "on" : "off"}`);
+  };
+
   $("mute-btn").onclick = async () => {
     state.voice = await invoke("set_muted", { muted: !state.voice.muted });
     renderUserPanel();
@@ -18201,6 +18228,7 @@ function openUserSettings(tab) {
   renderIconPickers();
   $("nc-toggle").checked = state.voice.noise_cancellation;
   $("ec-toggle").checked = state.voice.echo_cancellation !== false;
+  $("agc-toggle").checked = state.voice.auto_level !== false;
   $("afk-timeout").value = String(state.voice.afk_timeout_minutes ?? 10);
   $("share-activity-toggle").checked = state.voice.share_activity !== false;
   loadAudioDevices();

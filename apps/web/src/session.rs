@@ -960,12 +960,12 @@ impl Session {
     async fn run_events(self: Rc<Self>, mut events: mpsc::UnboundedReceiver<NetEvent>) {
         while let Some(event) = events.recv().await {
             match event {
-                NetEvent::Event { server, event, action, .. } => {
+                NetEvent::Event { server, sender, event, action } => {
                     if self.hear_sound(server, &event, action) {
                         continue;
                     }
                     if self.client.borrow().admits(server, &event, action) {
-                        self.client.borrow().hear_peer(server, &event, action.as_ref());
+                        self.client.borrow().hear_peer(server, &sender, &event, action.as_ref());
                     }
                     let moved = self.moved_me(server, &event);
                     if self.apply_event(server, event, action, true, true) != Applied::Nothing {

@@ -30,6 +30,8 @@ pub struct VoiceSettings {
     pub noise_cancellation: bool,
     #[serde(default = "default_true")]
     pub echo_cancellation: bool,
+    #[serde(default = "default_true")]
+    pub auto_level: bool,
     pub muted: bool,
     pub deafened: bool,
     #[serde(default = "default_gain")]
@@ -106,6 +108,7 @@ impl VoiceSettings {
     pub fn apply_to(&self, processor: &mut VoiceProcessor) {
         processor.set_noise_cancellation(self.noise_cancellation);
         processor.set_echo_cancellation(self.echo_cancellation);
+        processor.set_auto_level(self.auto_level);
         processor.set_muted(self.muted);
         processor.set_input_gain(self.input_gain);
         processor.set_push_to_talk(self.input_mode == crate::voice_keys::InputMode::PushToTalk);
@@ -135,6 +138,7 @@ impl Default for VoiceSettings {
         Self {
             noise_cancellation: true,
             echo_cancellation: true,
+            auto_level: true,
             muted: false,
             deafened: false,
             output_volume: 1.0,

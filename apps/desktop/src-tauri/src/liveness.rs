@@ -1,5 +1,6 @@
 use crate::catchup::AppAccess;
 use crate::state::App;
+use commy_core::ids::CALL_SERVER;
 use commy_core::{Presence, ServerEvent, ServerId, ServerState, UserId};
 use commy_net::WirePayload;
 use std::time::{Duration, Instant};
@@ -20,8 +21,20 @@ pub fn heard_through_service(app: &App, server: ServerId, user: UserId, now: Ins
     app.liveness.lock().unwrap().heard_through_service(server, user, now);
 }
 
-pub fn settle_device_presence(app: &App, state: &mut ServerState, user: UserId, sender: &[u8; 32], presence: Presence, now: Instant) -> bool {
-    app.liveness.lock().unwrap().settle_device_presence(state, user, sender, presence, now)
+pub fn heard_device(app: &App, server: ServerId, user: UserId, node: &str, now: Instant) {
+    app.liveness.lock().unwrap().heard_device(server, user, node, now);
+}
+
+pub fn settle_device_presence(
+    app: &App,
+    state: &mut ServerState,
+    user: UserId,
+    sender: &[u8; 32],
+    presence: Presence,
+    now: Instant,
+    said_at: Option<i64>,
+) -> bool {
+    app.liveness.lock().unwrap().settle_device_presence(state, user, sender, presence, now, said_at)
 }
 
 pub fn sweep(app: &App, me: UserId, now: Instant, wall_ms: i64, expire: Duration) -> Vec<ServerId> {
@@ -31,10 +44,16 @@ pub fn sweep(app: &App, me: UserId, now: Instant, wall_ms: i64, expire: Duration
 }
 
 fn hear_voice_peers(app: &App, now: Instant) {
-    let voice = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.live_peers()));
+    let voice = app.voice_session.lock().unwrap().as_ref().map(|s| {
+        let peers: Vec<(UserId, Option<String>)> = s.live_peers().into_iter().map(|user| (user, s.peer_node(user))).collect();
+        (s.server, peers)
+    });
     let Some((server, peers)) = voice else { return };
-    for user in peers {
+    for (user, node) in peers {
         heard(app, server, user, now);
+        if let Some(node) = node {
+            heard_device(app, server, user, &node, now);
+        }
     }
 }
 
@@ -56,16 +75,44 @@ pub fn here(app: &App, server: ServerId) -> Vec<WirePayload> {
     let Some((me, presence)) = own_beat(app) else { return Vec::new() };
     let mut events: Vec<ServerEvent> = crate::devices::announcement(app, server).into_iter().collect();
     events.push(ServerEvent::PresenceUpdate { user: me, presence });
-    let voice = app.voice_session.lock().unwrap().as_ref().filter(|s| s.server == server).map(|s| s.channel);
-    if let Some(channel) = voice {
-        let (muted, deafened) = {
-            let voice = app.voice.lock().unwrap();
-            (voice.muted, voice.deafened)
-        };
-        let since = app.servers.lock().unwrap().get(&server).and_then(|s| s.voice_since(me));
-        events.push(ServerEvent::VoiceState { user: me, channel: Some(channel), muted, deafened, since });
-    }
+    events.extend(own_seat(app, me, server));
     events.into_iter().map(|event| app.wire_for(server, event)).collect()
+}
+
+fn own_seat(app: &App, me: UserId, server: ServerId) -> Option<ServerEvent> {
+    let channel = app.voice_session.lock().unwrap().as_ref().filter(|s| s.server == server).map(|s| s.channel)?;
+    let (muted, deafened) = {
+        let voice = app.voice.lock().unwrap();
+        (voice.muted, voice.deafened)
+    };
+    let since = app.servers.lock().unwrap().get(&server).and_then(|s| s.voice_since(me));
+    Some(ServerEvent::VoiceState { user: me, channel: Some(channel), muted, deafened, since })
+}
+
+fn voice_server(app: &App) -> Option<ServerId> {
+    app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != CALL_SERVER)
+}
+
+fn me(app: &App) -> Option<UserId> {
+    app.profile.lock().unwrap().as_ref().map(|p| p.id)
+}
+
+async fn keep_seat(app: &App) {
+    let (Some(me), Some(server)) = (me(app), voice_server(app)) else { return };
+    let news = crate::devices::announcement(app, server).into_iter().chain(own_seat(app, me, server));
+    for event in news.collect::<Vec<_>>() {
+        crate::broadcast_event(app, server, event).await;
+    }
+}
+
+async fn leave_seat(app: &App) {
+    let (Some(me), Some(server)) = (me(app), voice_server(app)) else { return };
+    let Some(node) = app.node_hex.lock().unwrap().clone() else { return };
+    let device = ServerEvent::DeviceAnnounce { server, user: me, node, voice: None, since: None };
+    let seat = ServerEvent::VoiceState { user: me, channel: None, muted: false, deafened: false, since: None };
+    for event in [device, seat] {
+        crate::broadcast_event(app, server, event).await;
+    }
 }
 
 async fn send_all(app: &App, user: UserId, presence: Presence, through_service: bool) {
@@ -99,11 +146,14 @@ pub async fn beat(app: &App, through_service: bool) {
     if let Some((me, presence)) = own_beat(app) {
         send_all(app, me, presence, through_service).await;
     }
+    keep_seat(app).await;
 }
 
 pub async fn farewell(app: &App) {
-    let Some((me, _)) = own_beat(app) else { return };
-    send_all(app, me, Presence::Offline, true).await;
+    leave_seat(app).await;
+    if let Some((me, _)) = own_beat(app) {
+        send_all(app, me, Presence::Offline, true).await;
+    }
     tokio::time::sleep(FAREWELL_LINGER).await;
 }
 
@@ -277,7 +327,7 @@ mod tests {
             let mut servers = app.servers.lock().unwrap();
             let state = servers.get_mut(&sid).unwrap();
             state.apply(ServerEvent::PresenceUpdate { user: friend.id, presence }).unwrap();
-            settle_device_presence(&app, state, friend.id, node, presence, at);
+            settle_device_presence(&app, state, friend.id, node, presence, at, None);
         };
         says(&desktop, Presence::Online, now);
         says(&tablet, Presence::Idle, now);
