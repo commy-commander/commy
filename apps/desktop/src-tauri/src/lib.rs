@@ -6153,6 +6153,14 @@ fn set_echo_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSettings
 }
 
 #[tauri::command]
+fn set_auto_level(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
+    app.update_voice(|voice| {
+        voice.auto_level = enabled;
+        app.processor.lock().unwrap().set_auto_level(enabled);
+    })
+}
+
+#[tauri::command]
 async fn set_muted(app: tauri::State<'_, App>, handle: tauri::AppHandle, muted: bool) -> CmdResult<VoiceSettings> {
     let snapshot = app.update_voice(|voice| voice.muted = muted);
     apply_voice_gates(&app);
@@ -7568,6 +7576,7 @@ pub fn run() {
             get_voice_settings,
             set_noise_cancellation,
             set_echo_cancellation,
+            set_auto_level,
             set_muted,
             set_deafened,
         ])

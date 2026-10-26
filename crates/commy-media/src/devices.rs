@@ -8,11 +8,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
+const DEAD_CHANNEL_POWER_RATIO: f32 = 0.01;
+const CHANNEL_POWER_SMOOTHING: f32 = 0.2;
+
 pub struct FrameAssembler {
     src_rate: u32,
     channels: u16,
     mono: VecDeque<f32>,
     pos: f64,
+    channel_power: Option<Vec<f32>>,
 }
 
 impl FrameAssembler {
@@ -22,14 +26,42 @@ impl FrameAssembler {
             channels: channels.max(1),
             mono: VecDeque::new(),
             pos: 0.0,
+            channel_power: None,
         }
     }
 
-    pub fn push(&mut self, interleaved: &[f32]) {
-        for frame in interleaved.chunks_exact(self.channels as usize) {
-            let sum: f32 = frame.iter().sum();
-            self.mono.push_back(sum / self.channels as f32);
+    pub fn for_microphone(src_rate: u32, channels: u16) -> Self {
+        let mut assembler = Self::new(src_rate, channels);
+        if assembler.channels > 1 {
+            assembler.channel_power = Some(vec![0.0; assembler.channels as usize]);
         }
+        assembler
+    }
+
+    pub fn push(&mut self, interleaved: &[f32]) {
+        let live = self.live_channels(interleaved);
+        for frame in interleaved.chunks_exact(self.channels as usize) {
+            let (sum, count) = frame
+                .iter()
+                .zip(&live)
+                .filter(|(_, live)| **live)
+                .fold((0.0f32, 0usize), |(sum, count), (s, _)| (sum + s, count + 1));
+            self.mono.push_back(sum / count.max(1) as f32);
+        }
+    }
+
+    fn live_channels(&mut self, interleaved: &[f32]) -> Vec<bool> {
+        let channels = self.channels as usize;
+        let Some(power) = &mut self.channel_power else {
+            return vec![true; channels];
+        };
+        let frames = (interleaved.len() / channels).max(1) as f32;
+        for (channel, smoothed) in power.iter_mut().enumerate() {
+            let now = interleaved.iter().skip(channel).step_by(channels).map(|s| s * s).sum::<f32>() / frames;
+            *smoothed += (now - *smoothed) * CHANNEL_POWER_SMOOTHING;
+        }
+        let loudest = power.iter().copied().fold(0.0f32, f32::max);
+        power.iter().map(|p| *p >= loudest * DEAD_CHANNEL_POWER_RATIO).collect()
     }
 
     pub fn next_frame(&mut self) -> Option<Vec<f32>> {
@@ -320,7 +352,7 @@ pub fn start_microphone(
         let config = device
             .default_input_config()
             .context("no default input config")?;
-        let mut assembler = FrameAssembler::new(config.sample_rate().0, config.channels());
+        let mut assembler = FrameAssembler::for_microphone(config.sample_rate().0, config.channels());
         processor.lock().unwrap().start_fresh();
 
         let data_cb = move |data: &[f32]| {
@@ -511,6 +543,32 @@ mod tests {
         fa.push(&input);
         let frame = fa.next_frame().unwrap();
         assert!(frame.iter().all(|s| (s - 0.5).abs() < 1e-3));
+    }
+
+    #[test]
+    fn a_microphone_with_one_silent_channel_keeps_its_full_level() {
+        let mut fa = FrameAssembler::for_microphone(SAMPLE_RATE, 2);
+        for _ in 0..20 {
+            let input: Vec<f32> = (0..FRAME_SIZE).flat_map(|_| [0.4, 0.0]).collect();
+            fa.push(&input);
+        }
+        let mut last = Vec::new();
+        while let Some(frame) = fa.next_frame() {
+            last = frame;
+        }
+        assert!(last.iter().all(|s| (s - 0.4).abs() < 1e-3), "{}", last[0]);
+    }
+
+    #[test]
+    fn a_microphone_with_two_live_channels_is_averaged() {
+        let mut fa = FrameAssembler::for_microphone(SAMPLE_RATE, 2);
+        let input: Vec<f32> = (0..FRAME_SIZE * 2).flat_map(|_| [0.4, 0.2]).collect();
+        fa.push(&input);
+        let frame = fa.next_frame().unwrap();
+        assert!(frame.iter().all(|s| (s - 0.3).abs() < 1e-3));
+        let mut quiet = FrameAssembler::for_microphone(SAMPLE_RATE, 2);
+        quiet.push(&vec![0.0; FRAME_SIZE * 4]);
+        assert!(quiet.next_frame().unwrap().iter().all(|s| *s == 0.0));
     }
 
     #[test]

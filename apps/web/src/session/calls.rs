@@ -148,6 +148,7 @@ impl Session {
         let voice = self.voice.borrow();
         json!({
             "noise_cancellation": true,
+            "auto_level": true,
             "muted": voice.muted,
             "deafened": voice.deafened,
             "pronouns": personal.pronouns,
