@@ -32,11 +32,12 @@ pub fn idle_voice_step(
     state: &ServerState,
     perms: Permissions,
     me: UserId,
+    ours: &str,
     current: ChannelId,
     idle_secs: i64,
     timeout_secs: i64,
 ) -> IdleVoice {
-    if timeout_secs <= NO_TIMEOUT || idle_secs < timeout_secs {
+    if timeout_secs <= NO_TIMEOUT || idle_secs < timeout_secs || !voice_is_here(state, me, ours, current) {
         return IdleVoice::Stay;
     }
     let joinable_afk = state
@@ -51,10 +52,17 @@ pub fn idle_voice_step(
     }
 }
 
+fn voice_is_here(state: &ServerState, me: UserId, ours: &str, current: ChannelId) -> bool {
+    state.voice_states.get(&me) == Some(&current) && state.voice_device(me).is_none_or(|node| node.eq_ignore_ascii_case(ours))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use commy_core::{Server, ServerEvent, UserProfile};
+
+    const OURS: &str = "abababababababababababababababababababababababababababababababab";
+    const OTHER: &str = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
 
     fn hangout() -> (ServerState, UserId, ChannelId, ChannelId) {
         let owner = UserId::new();
@@ -67,8 +75,30 @@ mod tests {
         (state, id, general, afk)
     }
 
+    fn in_voice(state: &mut ServerState, me: UserId, node: &str, room: ChannelId) {
+        let server = state.server.id;
+        state.apply(ServerEvent::VoiceState { user: me, channel: Some(room), muted: false, deafened: false, since: Some(1) }).unwrap();
+        state.apply(ServerEvent::DeviceAnnounce { server, user: me, node: node.into(), voice: Some(room), since: Some(1_000) }).unwrap();
+    }
+
     fn step(state: &ServerState, me: UserId, current: ChannelId, idle_secs: i64, timeout_secs: i64) -> IdleVoice {
-        idle_voice_step(state, state.server.permissions_for(me), me, current, idle_secs, timeout_secs)
+        let mut state = state.clone();
+        if state.voice_states.get(&me).is_none() {
+            in_voice(&mut state, me, OURS, current);
+        }
+        idle_voice_step(&state, state.server.permissions_for(me), me, OURS, current, idle_secs, timeout_secs)
+    }
+
+    #[test]
+    fn an_idle_device_never_pulls_us_out_of_voice_we_joined_on_another_device() {
+        let (mut state, me, general, afk) = hangout();
+        let perms = state.server.permissions_for(me);
+        in_voice(&mut state, me, OURS, general);
+        assert_eq!(idle_voice_step(&state, perms, me, OURS, general, 15 * 3600, 600), IdleVoice::MoveTo(afk));
+        in_voice(&mut state, me, OTHER, general);
+        assert_eq!(idle_voice_step(&state, perms, me, OURS, general, 15 * 3600, 600), IdleVoice::Stay, "same room, other device");
+        in_voice(&mut state, me, OTHER, afk);
+        assert_eq!(idle_voice_step(&state, perms, me, OURS, general, 15 * 3600, 600), IdleVoice::Stay, "other room, other device");
     }
 
     #[test]

@@ -1322,6 +1322,7 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
 
         let Some((sid, current, _)) = voice else { continue };
         let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+        let ours = app.node_hex.lock().unwrap().clone().unwrap_or_default();
         let step = {
             let servers = app.servers.lock().unwrap();
             match (servers.get(&sid), me) {
@@ -1332,7 +1333,7 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
                         view::afk::voice_timeout_secs(timeout_secs, state.server.afk_timeout_minutes)
                     };
                     let perms = our_permissions(&app, state, me);
-                    view::afk::idle_voice_step(state, perms, me, current, idle_for, voice_timeout)
+                    view::afk::idle_voice_step(state, perms, me, &ours, current, idle_for, voice_timeout)
                 }
                 _ => view::afk::IdleVoice::Stay,
             }

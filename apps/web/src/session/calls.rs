@@ -530,7 +530,7 @@ impl Session {
         let Some(ours) = self.node_hex() else { return };
         let room = self.voice.borrow().link.as_ref().and_then(|link| link.server);
         if let Some(server) = room {
-            if self.client.borrow().voice_moved_away(server, channel, &ours) {
+            if self.client.borrow().voice_moved_away(server, &ours) {
                 self.hang_up_media();
                 self.say_here(server);
                 self.emit("voice-elsewhere", json!(server.to_string()));
@@ -586,10 +586,11 @@ impl Session {
     fn leave_if_idle(self: &Rc<Self>, server: ServerId, channel: ChannelId) -> bool {
         let Some(idle) = self.idle_secs() else { return false };
         let personal = self.personal().afk_timeout_minutes.unwrap_or(afk::DEFAULT_TIMEOUT_MINUTES) as i64 * 60;
+        let Some(ours) = self.node_hex() else { return false };
         let step = self.read_state(server, |state, me| {
             let timeout = afk::voice_timeout_secs(personal, state.server.afk_timeout_minutes);
             let name = |afk: ChannelId| state.server.channel(afk).map(|c| c.name.clone());
-            Ok(match afk::idle_voice_step(state, state.server.permissions_for(me), me, channel, idle, timeout) {
+            Ok(match afk::idle_voice_step(state, state.server.permissions_for(me), me, &ours, channel, idle, timeout) {
                 IdleVoice::MoveTo(afk) => Some((Some(afk), name(afk))),
                 IdleVoice::Leave => Some((None, None)),
                 IdleVoice::Stay => None,
