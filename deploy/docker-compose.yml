@@ -92,6 +92,7 @@ services:
       IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET:-}
       DOORBELL: ${DOORBELL:-true}
       SYNC_URL: ${SYNC_URL:-}
+      LINK_BLOCKLIST_URLS: ${LINK_BLOCKLIST_URLS:-}
       REDIS_URL: ${REDIS_URL-redis://redis:6379}
     depends_on:
       postgres:

@@ -237,6 +237,7 @@
   async function invoke(cmd, args) {
     const fallback = webDefault(cmd);
     if (fallback.known) return fallback.value;
+    if (cmd === "open_url") return openLinkInNewTab(window, args && args.url);
     if (cmd === "account_begin_sign_in") {
       window.location.assign(webSignInUrl(window.location.origin, window.location.pathname));
       return new Promise(() => {});

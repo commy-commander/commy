@@ -64,6 +64,8 @@ pub struct ServerFeatures {
     pub stickers: bool,
     #[serde(default, alias = "folderLock")]
     pub folder_lock: bool,
+    #[serde(default, alias = "linkBlocklist")]
+    pub link_blocklist: bool,
 }
 
 impl AccountState {
@@ -136,6 +138,7 @@ impl AccountState {
                 (Some(f), "games") => f.games,
                 (Some(f), "emojis") => f.emojis,
                 (Some(f), "stickers") => f.stickers,
+                (Some(f), "link_blocklist") => f.link_blocklist,
                 _ => false,
             }
     }
@@ -1340,12 +1343,15 @@ mod tests {
         };
         assert!(state.server_offers("gifs") && state.server_offers("games"));
         assert!(!state.server_offers("media"));
-        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false, stickers: true, folder_lock: false });
+        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false, stickers: true, folder_lock: false, link_blocklist: false });
         assert!(state.server_offers("gifs"));
         assert!(state.server_offers("stickers"));
         assert!(state.server_offers("emojis"));
         assert!(!state.server_offers("games"));
         assert!(state.server_offers("media"));
+        assert!(!state.server_offers("link_blocklist"));
+        state.features = serde_json::from_value(serde_json::json!({ "gifs": true, "linkBlocklist": true })).ok();
+        assert!(state.server_offers("link_blocklist"));
         state.token = None;
         assert!(!state.server_offers("gifs"));
     }
@@ -1364,7 +1370,7 @@ mod tests {
         with["features"] = serde_json::json!({ "gifs": true, "games": false });
         with["endpoints"]["sync"] = serde_json::json!("wss://chat.example.org/sync");
         let new: Discovery = serde_json::from_value(with).unwrap();
-        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false, folder_lock: false }));
+        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false, folder_lock: false, link_blocklist: false }));
         assert_eq!(new.endpoints.sync.as_deref(), Some("wss://chat.example.org/sync"));
     }
 

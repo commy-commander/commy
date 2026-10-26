@@ -336,3 +336,8 @@ test("a downloaded file is saved under its own name and leaves nothing behind on
   assert.deepEqual(doc.body.children, []);
   assert.equal(webSaveFile(fakeDocument(), urls, new Uint8Array([1]), ""), "file");
 });
+
+test("link checks are answered by the backend in the browser too", () => {
+  assert.ok(rustCommands.has("check_link"));
+  assert.equal(webDefault("check_link").known, false);
+});

@@ -33,6 +33,7 @@ mod dms;
 mod files;
 mod handoff;
 mod invites;
+mod links;
 mod pictures;
 mod profile;
 mod servers;
@@ -87,12 +88,16 @@ pub struct Session {
     admit: calls::Admit,
     kept: RefCell<pictures::Kept>,
     invited: RefCell<HashMap<ServerId, (KeyId, ChannelSecret)>>,
+    links: RefCell<links::LinkSafety>,
 }
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct Args {
     server_id: Option<String>,
+    url: Option<String>,
+    label: Option<String>,
+    trusted: Option<Vec<String>>,
     entry: Option<commy_view::saved::Entry>,
     user_id: Option<String>,
     saved: Option<bool>,
@@ -214,12 +219,15 @@ impl Session {
             admit: calls::Admit::default(),
             kept: RefCell::default(),
             invited: RefCell::default(),
+            links: RefCell::default(),
         })
     }
 
     pub async fn invoke(self: &Rc<Self>, cmd: &str, args: &str) -> Result<Value, String> {
         let args: Args = serde_json::from_str(args).unwrap_or_default();
+        self.keep_link_list_fresh();
         match cmd {
+            "check_link" => self.check_link(args),
             "account_status" => self.account_status().await,
             "account_sign_out" => self.sign_out().await,
             "web_unlock" => self.unlock().await,

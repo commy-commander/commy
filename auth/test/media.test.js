@@ -234,9 +234,9 @@ test("customer ids are stable and do not reveal the account id", () => {
 
 test("discovery advertises only the searches with keys", () => {
   const none = discoveryDocument(loadConfig(ENV));
-  assert.deepEqual(none.features, { gifs: false, stickers: false, games: false, emojis: true, media: true, vault: true, folderLock: true, doorbell: true, twoFactor: true, changeEmail: false, sync: false });
+  assert.deepEqual(none.features, { gifs: false, stickers: false, games: false, emojis: true, media: true, vault: true, folderLock: true, doorbell: true, twoFactor: true, changeEmail: false, sync: false, linkBlocklist: true });
   const both = discoveryDocument(loadConfig({ ...ENV, KLIPY_API_KEY: KLIPY_KEY, TWITCH_CLIENT_ID: "id", TWITCH_CLIENT_SECRET: "s" }));
-  assert.deepEqual(both.features, { gifs: true, stickers: true, games: true, emojis: true, media: true, vault: true, folderLock: true, doorbell: true, twoFactor: true, changeEmail: false, sync: false });
+  assert.deepEqual(both.features, { gifs: true, stickers: true, games: true, emojis: true, media: true, vault: true, folderLock: true, doorbell: true, twoFactor: true, changeEmail: false, sync: false, linkBlocklist: true });
   assert.equal(both.endpoints.gifSearch, `${ORIGIN}/api/auth/commy/gifs/search`);
   assert.equal(both.endpoints.stickerSearch, `${ORIGIN}/api/auth/commy/stickers/search`);
   assert.equal(both.endpoints.gameSearch, `${ORIGIN}/api/auth/commy/games/search`);

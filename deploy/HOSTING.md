@@ -304,6 +304,28 @@ Redis to start. If Redis is configured but unreachable, sign-in keeps working;
 doorbell calls fail until it is back, rate limits are off meanwhile (the edge
 proxy keeps its own), and `/healthz` reports `"redis":false`.
 
+## Link safety list
+
+The apps warn before opening a link from a message, and block sites that are
+on a public list of phishing and malware domains. They check each link on the
+device: the auth server only hands every app the whole list at
+`/api/auth/commy/link-blocklist`, so no link or domain anyone opens is ever
+sent to it or to anyone else.
+
+- **Where the list comes from:** the auth server downloads the lists named in
+  `LINK_BLOCKLIST_URLS` (comma-separated `https://` addresses of plain domain
+  lists, hosts files or filter lists) at start and every 12 hours, merges them
+  and serves the result with an `ETag`. A list that fails to download keeps its
+  last good copy. Unset, it uses the
+  [phishing-filter](https://gitlab.com/malware-filter/phishing-filter)
+  (CC BY-SA 4.0) and
+  [urlhaus-filter](https://gitlab.com/malware-filter/urlhaus-filter) (CC0)
+  domain lists. `LINK_BLOCKLIST_URLS=off` turns it off.
+- **How apps find it:** the discovery document lists it under
+  `endpoints.linkBlocklist` and shows `"linkBlocklist":true` under `features`.
+  The desktop and phone apps keep the last copy on the device and refresh it
+  every 12 hours; the web app loads it when it opens.
+
 ## Sync service
 
 The stack can run a sync service (`sync`, from `crates/commy-sync-server`) at

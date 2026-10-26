@@ -1734,6 +1734,11 @@ async function mockInvoke(cmd, args = {}) {
     case "open_url":
       window.open(args.url, "_blank");
       return null;
+    case "check_link": {
+      const host = new URL(args.url).hostname;
+      const trusted = (args.trusted || []).includes(host);
+      return { url: args.url, host, shown_host: host, site: host, trust_key: host, level: trusted ? "open" : "ask", signs: [], can_trust: !trusted };
+    }
     case "attach_file":
     case "download_attachment":
     case "note_user_activity": return null;
@@ -8157,7 +8162,7 @@ function renderInlineNode(node) {
   if (node.type === "code") return el("code", "md-inline-code", node.text);
   if (node.type === "spoiler") return renderSpoiler(node);
   if (node.type === "link") {
-    const a = wireExternalLink(el("a", "md-link"), node.url);
+    const a = wireOutsideLink(el("a", "md-link"), node.url, { labelled: true });
     a.title = node.url;
     return renderInlineInto(a, node.children);
   }
@@ -8214,7 +8219,7 @@ function appendMessageText(parent, text) {
   while ((match = urlRe.exec(text))) {
     if (match.index > last) appendRichText(parent, text.slice(last, match.index));
     const url = match[0];
-    const a = wireExternalLink(el("a", null, url), url);
+    const a = wireOutsideLink(el("a", null, url), url);
     a.title = `Open ${url}`;
     parent.appendChild(a);
     last = match.index + url.length;
@@ -12977,6 +12982,99 @@ function wireExternalLink(a, url) {
   return a;
 }
 
+function wireOutsideLink(a, url, { labelled = false } = {}) {
+  a.href = "#";
+  a.onclick = e => {
+    e.preventDefault();
+    e.stopPropagation();
+    openOutsideLink(url, labelled ? a.textContent : null);
+  };
+  return a;
+}
+
+function trustedLinkDomains() {
+  try {
+    return readTrustedDomains(localStorage.getItem(TRUSTED_LINKS_KEY));
+  } catch {
+    return [];
+  }
+}
+
+function saveTrustedLinkDomains(domains) {
+  try { localStorage.setItem(TRUSTED_LINKS_KEY, writeTrustedDomains(domains)); } catch {}
+  renderTrustedLinkSettings();
+}
+
+function renderTrustedLinkSettings() {
+  const domains = trustedLinkDomains();
+  $("trusted-links-summary").textContent = trustedLinksSummary(domains);
+  $("trusted-links-forget").disabled = domains.length === 0;
+}
+
+async function openOutsideLink(url, label = null) {
+  let check;
+  try {
+    check = await invoke("check_link", { url, label, trusted: trustedLinkDomains() });
+  } catch (err) {
+    toast(String(err));
+    return;
+  }
+  if (check.level === "open") openCheckedLink(check.url);
+  else showLeavingPrompt(check);
+}
+
+function openCheckedLink(url) {
+  invoke("open_url", { url }).catch(err => toast(String(err)));
+}
+
+const leaving = { check: null, returnTo: null };
+
+function visibleModalId() {
+  if ($("modal-backdrop").classList.contains("hidden")) return null;
+  const open = [...document.querySelectorAll(".modal")].find(m => !m.classList.contains("hidden"));
+  return open && open.id !== "modal-leaving" ? open.id : null;
+}
+
+function showLeavingPrompt(check) {
+  const prompt = leavingPrompt(check);
+  leaving.check = check;
+  leaving.returnTo = visibleModalId();
+  const modal = $("modal-leaving");
+  modal.classList.toggle("warn", prompt.tone === "warn");
+  modal.classList.toggle("block", prompt.tone === "block");
+  $("leaving-title").textContent = prompt.title;
+  $("leaving-intro").textContent = prompt.intro;
+  $("leaving-host-prefix").textContent = prompt.host.prefix;
+  $("leaving-host-site").textContent = prompt.host.site;
+  $("leaving-spelled").textContent = prompt.spelled ? `Spelled out: ${prompt.spelled}` : "";
+  $("leaving-spelled").classList.toggle("hidden", !prompt.spelled);
+  $("leaving-notes").replaceChildren(...prompt.notes.map(note => el("li", null, note)));
+  $("leaving-notes").classList.toggle("hidden", prompt.notes.length === 0);
+  $("leaving-trust").checked = false;
+  $("leaving-trust-row").classList.toggle("hidden", !prompt.canTrust);
+  const go = $("leaving-go");
+  go.textContent = prompt.openLabel;
+  go.className = prompt.tone === "plain" ? "btn-primary" : "btn-danger";
+  showModal("modal-leaving");
+  $("leaving-cancel").focus();
+}
+
+function closeLeavingPrompt() {
+  const back = leaving.returnTo;
+  leaving.check = null;
+  leaving.returnTo = null;
+  if (back) showModal(back);
+  else hideModals();
+}
+
+function confirmLeaving() {
+  const check = leaving.check;
+  if (!check) return;
+  if (check.can_trust && $("leaving-trust").checked) saveTrustedLinkDomains(withTrustedDomain(trustedLinkDomains(), check.trust_key));
+  closeLeavingPrompt();
+  openCheckedLink(check.url);
+}
+
 function imageEmbeds(urls) {
   if (urls.length < 2) return urls.map(renderImageEmbed);
   const grid = el("div", imageGridClass(urls.length));
@@ -12991,7 +13089,7 @@ function renderLinkPreview(preview) {
   const site = previewSite(preview);
   if (site) text.appendChild(el("div", "link-card-site", site));
   if (preview.title) {
-    const title = wireExternalLink(el("a", "link-card-title", preview.title), preview.url);
+    const title = wireOutsideLink(el("a", "link-card-title", preview.title), preview.url);
     title.title = `Open ${preview.url}`;
     text.appendChild(title);
   }
@@ -13022,7 +13120,7 @@ function linkCardImage(preview, layout) {
 function renderImageEmbed(url) {
   const host = imageHost(url) || url;
   const wrap = el("div", "image-embed");
-  const source = wireExternalLink(el("a", "embed-source", host), url);
+  const source = wireOutsideLink(el("a", "embed-source", host), url);
   source.title = `Open ${url}`;
   wrap.appendChild(source);
   if (embedMode(url, mediaProxyOn()) === "auto" || loadedImageLinks.has(url)) {
@@ -13087,7 +13185,8 @@ function openLightbox(src, sourceUrl, filename, att = null) {
   open.classList.toggle("hidden", !sourceUrl);
   open.onclick = e => {
     e.stopPropagation();
-    invoke("open_url", { url: sourceUrl }).catch(err => toast(String(err)));
+    closeLightbox();
+    openOutsideLink(sourceUrl);
   };
   const save = $("lightbox-save");
   save.classList.toggle("hidden", !att);
@@ -13102,7 +13201,9 @@ function openLightbox(src, sourceUrl, filename, att = null) {
   source.onclick = e => {
     e.preventDefault();
     e.stopPropagation();
-    if (sourceUrl) invoke("open_url", { url: sourceUrl }).catch(err => toast(String(err)));
+    if (!sourceUrl) return;
+    closeLightbox();
+    openOutsideLink(sourceUrl);
   };
   $("lightbox").classList.remove("hidden");
 }
@@ -17126,6 +17227,9 @@ function wireEvents() {
     }
   };
   $("sensitive-reset").onclick = resetSensitiveConfirmations;
+  $("trusted-links-forget").onclick = () => saveTrustedLinkDomains([]);
+  $("leaving-cancel").onclick = closeLeavingPrompt;
+  $("leaving-go").onclick = confirmLeaving;
   $("pins-btn").onclick = togglePinsPanel;
   wireSearch();
   wireSwitcher();
@@ -17276,6 +17380,7 @@ function wireEvents() {
   setIcon($("lightbox-save"), "download", 16);
   $("lightbox-save").append("Save");
   renderLinkPreviewSettings();
+  renderTrustedLinkSettings();
   $("link-preview-send-toggle").addEventListener("change", onLinkPreviewSettingsChange);
   $("link-preview-show-toggle").addEventListener("change", onLinkPreviewSettingsChange);
 

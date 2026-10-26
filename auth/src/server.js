@@ -7,6 +7,7 @@ import { createAuth } from "./auth.js";
 import { discoveryDocument, featureSummary, loadConfig } from "./config.js";
 import { dropDeviceNames } from "./devices.js";
 import { createRequestHandler } from "./http.js";
+import { createLinkBlocklist } from "./link-blocklist.js";
 import { connectRedis } from "./redis.js";
 
 const config = loadConfig();
@@ -55,6 +56,8 @@ async function migrate(attempts = 30) {
   }, attempts);
 }
 
+const linkBlocklist = createLinkBlocklist({ sources: config.linkBlocklistSources });
+
 const server = http.createServer(
   createRequestHandler({
     authHandler: toNodeHandler(auth),
@@ -62,6 +65,7 @@ const server = http.createServer(
     discovery: JSON.stringify(discoveryDocument(config)),
     pool,
     redis,
+    linkBlocklist,
   }),
 );
 
@@ -71,11 +75,13 @@ server.listen(config.port, "0.0.0.0", () => {
   console.log(`[auth] ${featureSummary(config)}`);
   for (const warning of config.warnings) console.warn(`[auth] ${warning}`);
   setTimeout(sealRowsFromOlderServers, SEAL_ONCE_OLDER_CONTAINERS_HAVE_STOPPED_MS).unref();
+  linkBlocklist.start();
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     server.close();
+    linkBlocklist.stop();
     Promise.allSettled([pool.end(), redis?.close()]).then(() => process.exit(0));
   });
 }
