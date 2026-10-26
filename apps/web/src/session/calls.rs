@@ -5,11 +5,12 @@ use std::time::Duration;
 
 use chrono::Utc;
 use commy_audio::codec::{VoiceDecoder, VoiceEncoder};
-use commy_audio::speaking::SpeakingDetector;
+use commy_audio::speaking::{frame_has_signal, SpeakingDetector};
 use commy_core::dm::{CallSignal, DmAction, DmMessage};
 use commy_core::{ChannelId, ServerEvent, ServerId, UserId};
 use commy_net::node::{MediaChannel, MediaGate};
 use commy_net::{DmEnvelope, MediaHello, MediaPacket, WirePayload};
+use commy_view::afk::{self, IdleVoice};
 use commy_view::calls::{self, CallBook, CallStep, DmCall, DmCallView, VoiceGates};
 use iroh::endpoint::Connection;
 use serde_json::{json, Value};
@@ -40,6 +41,7 @@ pub(super) struct Voice {
     deafened: bool,
     link: Option<Link>,
     recorder: Option<Recorder>,
+    input_ms: i64,
 }
 
 struct Link {
@@ -51,6 +53,8 @@ struct Link {
     seq: u32,
     mine: SpeakingDetector,
     spoke_ms: i64,
+    active_ms: i64,
+    leaving_idle: bool,
     peers: HashMap<UserId, Peer>,
     generation: u64,
     gates: VoiceGates,
@@ -104,6 +108,8 @@ impl Link {
             seq: 0,
             mine: SpeakingDetector::default(),
             spoke_ms: 0,
+            active_ms: 0,
+            leaving_idle: false,
             peers: HashMap::new(),
             generation: 0,
             gates: VoiceGates::default(),
@@ -149,7 +155,7 @@ impl Session {
             "status_until": personal.status_until,
             "output_volume": 1,
             "input_gain": 1,
-            "afk_timeout_minutes": 10,
+            "afk_timeout_minutes": personal.afk_timeout_minutes.unwrap_or(afk::DEFAULT_TIMEOUT_MINUTES),
         })
     }
 
@@ -238,6 +244,16 @@ impl Session {
                 Ok(Value::Null)
             }
             "get_voice_settings" => Ok(self.voice_settings()),
+            "set_afk_timeout" => {
+                let mut personal = self.personal();
+                personal.afk_timeout_minutes = Some(afk::clamp_timeout_minutes(args.minutes.unwrap_or(0)));
+                self.save_personal(personal);
+                Ok(self.voice_settings())
+            }
+            "note_user_activity" => {
+                self.voice.borrow_mut().input_ms = now_ms();
+                Ok(Value::Null)
+            }
             "voice_stats" => self.voice_stats(),
             "set_muted" => {
                 self.voice.borrow_mut().muted = args.muted.unwrap_or(false);
@@ -521,6 +537,9 @@ impl Session {
                 self.emit("server-event", json!(server.to_string()));
                 return;
             }
+            if self.leave_if_idle(server, channel) {
+                return;
+            }
         }
         let Some(targets) = self.targets(channel) else { return };
         let mut gone = Vec::new();
@@ -555,6 +574,49 @@ impl Session {
         for (user, node) in dial {
             spawn_local(self.clone().dial(channel, user, node));
         }
+    }
+
+    fn idle_secs(&self) -> Option<i64> {
+        let voice = self.voice.borrow();
+        let link = voice.link.as_ref().filter(|link| !link.leaving_idle)?;
+        let last = voice.input_ms.max(link.active_ms).max(link.since_ms);
+        Some((now_ms() - last) / 1000)
+    }
+
+    fn leave_if_idle(self: &Rc<Self>, server: ServerId, channel: ChannelId) -> bool {
+        let Some(idle) = self.idle_secs() else { return false };
+        let personal = self.personal().afk_timeout_minutes.unwrap_or(afk::DEFAULT_TIMEOUT_MINUTES) as i64 * 60;
+        let step = self.read_state(server, |state, me| {
+            let timeout = afk::voice_timeout_secs(personal, state.server.afk_timeout_minutes);
+            let name = |afk: ChannelId| state.server.channel(afk).map(|c| c.name.clone());
+            Ok(match afk::idle_voice_step(state, state.server.permissions_for(me), me, channel, idle, timeout) {
+                IdleVoice::MoveTo(afk) => Some((Some(afk), name(afk))),
+                IdleVoice::Leave => Some((None, None)),
+                IdleVoice::Stay => None,
+            })
+        });
+        let Ok(Some((to, name))) = step else { return false };
+        if let Some(link) = self.voice.borrow_mut().link.as_mut() {
+            link.leaving_idle = true;
+        }
+        let this = self.clone();
+        spawn_local(async move {
+            match to {
+                Some(afk) => match this.join_room(server, afk).await {
+                    Ok(()) => this.emit("afk-moved", json!({ "server": server.to_string(), "channel": afk.to_string(), "name": name })),
+                    Err(_) => {
+                        if let Some(link) = this.voice.borrow_mut().link.as_mut().filter(|link| link.channel == channel) {
+                            link.leaving_idle = false;
+                        }
+                    }
+                },
+                None => {
+                    this.leave_room().await;
+                    this.emit("afk-disconnected", Value::Null);
+                }
+            }
+        });
+        true
     }
 
     async fn dial(self: Rc<Self>, channel: ChannelId, user: UserId, theirs: String) {
@@ -670,6 +732,9 @@ impl Session {
             return;
         }
         link.spoke_ms = now;
+        if frame_has_signal(pcm) {
+            link.active_ms = now;
+        }
         let change = link.mine.push(pcm);
         let me = link.me;
         if let Some(data) = link.encoder.encode(pcm) {

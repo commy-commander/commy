@@ -20,6 +20,8 @@ pub(super) struct Personal {
     pub(super) presence_until: Option<i64>,
     #[serde(default)]
     pub(super) status_until: Option<i64>,
+    #[serde(default)]
+    pub(super) afk_timeout_minutes: Option<u32>,
 }
 
 impl Session {
@@ -107,7 +109,7 @@ impl Session {
         kept.unwrap_or_else(|| Personal { pronouns: self.client.borrow().own_pronouns(), ..Personal::default() })
     }
 
-    fn save_personal(&self, personal: Personal) {
+    pub(super) fn save_personal(&self, personal: Personal) {
         if let (Ok(account), Ok(raw)) = (self.account(), serde_json::to_string(&personal)) {
             self.host.save(&account::personal_key(&account.id), &raw);
         }

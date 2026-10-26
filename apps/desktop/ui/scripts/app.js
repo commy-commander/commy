@@ -17610,16 +17610,13 @@ function wireEvents() {
       renderVoicePanel();
       if (state.currentServer && state.currentServer.id === server) await refreshCurrentServer();
     });
-    window.__TAURI__.event.listen("afk-moved", async () => {
+    window.__TAURI__.event.listen("afk-moved", async event => {
+      const { server, channel, name } = event.payload || {};
       toast("You were moved to AFK for inactivity");
-      if (state.currentServer) {
-        const afk = state.currentServer.afk_channel;
-        state.voiceChannelId = afk || state.voiceChannelId;
-        const afkChannel = state.currentServer.channels.find(c => c.id === afk);
-        if (afkChannel && state.voiceServer) state.voiceServer.channelName = afkChannel.name;
-        await refreshCurrentServer();
-        renderVoicePanel();
-      }
+      if (channel) state.voiceChannelId = channel;
+      if (name && state.voiceServer && state.voiceServer.id === server) state.voiceServer.channelName = name;
+      renderVoicePanel();
+      if (state.currentServer && state.currentServer.id === server) await refreshCurrentServer();
     });
     window.__TAURI__.event.listen("profile-changed", event => {
       state.user = event.payload;
@@ -19245,14 +19242,25 @@ async function refreshCurrentServer() {
 function wireActivityPing() {
   const MIN_PING_GAP_MS = 30e3;
   let lastPing = 0;
+  let pointerAt = null;
   const ping = () => {
     const now = Date.now();
     if (now - lastPing < MIN_PING_GAP_MS) return;
     lastPing = now;
     invoke("note_user_activity").catch(() => {});
   };
-  for (const evt of ["pointerdown", "pointermove", "keydown", "wheel"]) {
-    window.addEventListener(evt, ping, { passive: true });
+  const pointerMoved = e => {
+    const at = `${e.screenX},${e.screenY}`;
+    if (at === pointerAt) return;
+    pointerAt = at;
+    if (e.isTrusted) ping();
+  };
+  const trusted = e => {
+    if (e.isTrusted) ping();
+  };
+  window.addEventListener("pointermove", pointerMoved, { passive: true });
+  for (const evt of ["pointerdown", "keydown", "wheel"]) {
+    window.addEventListener(evt, trusted, { passive: true });
   }
 }
 

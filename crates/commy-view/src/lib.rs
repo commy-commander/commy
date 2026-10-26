@@ -1,4 +1,5 @@
 pub mod act;
+pub mod afk;
 pub mod calls;
 pub mod catalog;
 pub mod dms;
