@@ -586,9 +586,34 @@ pub fn is_blob_of(blob: &str, bytes: &[u8]) -> bool {
     blob.parse::<iroh_blobs::Hash>().is_ok_and(|hash| hash == iroh_blobs::Hash::new(bytes))
 }
 
+pub const BLOB_UNAVAILABLE: &str = "nobody who has this file is online right now";
+
+const BLOB_DIAL_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, thiserror::Error)]
+#[error("that file is larger than {} MB", .max / (1024 * 1024))]
+pub struct BlobTooLarge {
+    max: u64,
+}
+
 pub fn check_blob_size(size: u64, max: u64) -> Result<()> {
-    anyhow::ensure!(size <= max, "that file is larger than {} MB", max / (1024 * 1024));
+    anyhow::ensure!(size <= max, BlobTooLarge { max });
     Ok(())
+}
+
+pub fn blob_sources(provider: &str, neighbors: Vec<[u8; 32]>) -> Vec<String> {
+    let mut sources: Vec<String> = Vec::new();
+    for node in neighbors.iter().map(|n| data_encoding::HEXLOWER.encode(n)) {
+        if !sources.contains(&node) {
+            sources.push(node);
+        }
+    }
+    match sources.iter().position(|n| n == provider) {
+        Some(at) => sources.swap(0, at),
+        None if !provider.is_empty() => sources.push(provider.to_string()),
+        None => {}
+    }
+    sources
 }
 
 #[derive(Clone)]
@@ -601,6 +626,10 @@ pub struct BlobFetcher {
 
 impl BlobFetcher {
     pub async fn fetch(&self, hash: &str, provider_hex: Option<&str>, max: u64) -> Result<Vec<u8>> {
+        self.fetch_from(hash, provider_hex, max).await
+    }
+
+    pub async fn fetch_from<'a>(&self, hash: &str, sources: impl IntoIterator<Item = &'a str>, max: u64) -> Result<Vec<u8>> {
         let hash: iroh_blobs::Hash = hash.parse().context("invalid blob hash")?;
         if let Ok(iroh_blobs::api::blobs::BlobStatus::Complete { size }) = self.blobs.status(hash).await {
             check_blob_size(size, max)?;
@@ -608,22 +637,32 @@ impl BlobFetcher {
                 return Ok(bytes.to_vec());
             }
         }
-        let provider = provider_hex.context("blob not local and no provider known")?;
-        let node_id = parse_node_hex(provider)?;
-        hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays);
-        let bytes = fetch_capped(&self.endpoint, node_id, hash, max).await?;
-        if let Err(e) = self.blobs.add_bytes(bytes.clone()).await {
-            tracing::debug!("fetched blob was not kept locally: {e}");
+        for source in sources {
+            let Ok(node_id) = parse_node_hex(source) else { continue };
+            if node_id == self.endpoint.id() {
+                continue;
+            }
+            hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays);
+            match fetch_capped(&self.endpoint, node_id, hash, max).await {
+                Ok(bytes) => {
+                    if let Err(e) = self.blobs.add_bytes(bytes.clone()).await {
+                        tracing::debug!("fetched blob was not kept locally: {e}");
+                    }
+                    return Ok(bytes);
+                }
+                Err(e) if e.is::<BlobTooLarge>() => return Err(e),
+                Err(e) => tracing::info!("file {} not fetched from {}: {e:#}", hash.fmt_short(), &source[..source.len().min(10)]),
+            }
         }
-        Ok(bytes)
+        anyhow::bail!(BLOB_UNAVAILABLE)
     }
 }
 
 async fn fetch_capped(endpoint: &Endpoint, node_id: EndpointId, hash: iroh_blobs::Hash, max: u64) -> Result<Vec<u8>> {
     use iroh_blobs::get::fsm::{self, ConnectedNext, EndBlobNext};
-    let connection = endpoint
-        .connect(node_id, iroh_blobs::ALPN)
+    let connection = n0_future::time::timeout(BLOB_DIAL_TIMEOUT, endpoint.connect(node_id, iroh_blobs::ALPN))
         .await
+        .map_err(|_| anyhow::anyhow!("blob download timed out"))?
         .context("blob download failed")?;
     let request = iroh_blobs::protocol::GetRequest::blob(hash);
     let connected = fsm::start(connection, request, Default::default()).next().await?;
@@ -1750,5 +1789,89 @@ mod tests {
         assert_eq!(refused.to_string(), "that file is larger than 20 MB");
         assert!(check_blob_size(u64::MAX, MAX_BLOB_BYTES).is_err());
         assert!(check_blob_size(512 * 1024 * 1024, 512 * 1024 * 1024).is_ok());
+    }
+
+    async fn local_node() -> CommyNode {
+        CommyNode::spawn_with(None, Some(iroh::RelayMap::empty())).await.unwrap().0
+    }
+
+    async fn local_pair() -> (CommyNode, CommyNode) {
+        let (host, guest) = (local_node().await, local_node().await);
+        guest.learn(host.endpoint().addr());
+        (host, guest)
+    }
+
+    fn picture() -> Vec<u8> {
+        (0..300_000u32).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn files_come_from_the_uploader_first_then_from_members_online() {
+        let (a, b) = ([1u8; 32], [2u8; 32]);
+        let hex = |n: [u8; 32]| data_encoding::HEXLOWER.encode(&n);
+        assert_eq!(blob_sources(&hex(b), vec![a, b, a]), vec![hex(b), hex(a)]);
+        assert_eq!(blob_sources("away", vec![a]), vec![hex(a), "away".to_string()], "an absent uploader is tried last");
+        assert_eq!(blob_sources("away", vec![]), vec!["away".to_string()]);
+        assert_eq!(blob_sources("", vec![a]), vec![hex(a)]);
+    }
+
+    #[tokio::test]
+    async fn a_member_fetches_a_picture_from_its_uploader() {
+        let (host, guest) = local_pair().await;
+        let bytes = picture();
+        let blob = host.add_blob(bytes.clone()).await.unwrap();
+        let fetched = guest.blob_fetcher().fetch(&blob, Some(&host.node_id_hex()), MAX_BLOB_BYTES).await.unwrap();
+        assert_eq!(fetched, bytes);
+        host.shutdown().await.ok();
+        guest.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn an_uploader_who_no_longer_has_the_file_is_reported_in_plain_words() {
+        let (host, guest) = local_pair().await;
+        let blob = blob_hash(b"gone after a restart");
+        let failure = guest.blob_fetcher().fetch(&blob, Some(&host.node_id_hex()), MAX_BLOB_BYTES).await.unwrap_err();
+        assert_eq!(failure.to_string(), BLOB_UNAVAILABLE);
+        host.shutdown().await.ok();
+        guest.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn our_own_node_is_never_dialled_for_a_file() {
+        let node = local_node().await;
+        let blob = blob_hash(b"posted before a restart");
+        let failure = node.blob_fetcher().fetch(&blob, Some(&node.node_id_hex()), MAX_BLOB_BYTES).await.unwrap_err();
+        assert_eq!(failure.to_string(), BLOB_UNAVAILABLE);
+        node.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn a_member_who_has_the_picture_passes_it_on_when_the_uploader_lost_it() {
+        let (host, friend) = local_pair().await;
+        let guest = local_node().await;
+        guest.learn(host.endpoint().addr());
+        guest.learn(friend.endpoint().addr());
+        let bytes = picture();
+        let blob = host.add_blob(bytes.clone()).await.unwrap();
+        friend.blob_fetcher().fetch(&blob, Some(&host.node_id_hex()), MAX_BLOB_BYTES).await.unwrap();
+        let restarted = local_node().await;
+        guest.learn(restarted.endpoint().addr());
+        let sources = [restarted.node_id_hex(), friend.node_id_hex()];
+        let fetched = guest.blob_fetcher().fetch_from(&blob, sources.iter().map(String::as_str), MAX_BLOB_BYTES).await.unwrap();
+        assert_eq!(fetched, bytes);
+        for node in [host, friend, guest, restarted] {
+            node.shutdown().await.ok();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_file_over_the_limit_is_refused_without_asking_anyone_else() {
+        let (host, guest) = local_pair().await;
+        let blob = host.add_blob(picture()).await.unwrap();
+        let source = host.node_id_hex();
+        let failure = guest.blob_fetcher().fetch_from(&blob, [source.as_str()], 1024).await.unwrap_err();
+        assert!(failure.is::<BlobTooLarge>(), "{failure:#}");
+        host.shutdown().await.ok();
+        guest.shutdown().await.ok();
     }
 }

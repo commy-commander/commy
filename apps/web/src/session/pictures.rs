@@ -48,7 +48,7 @@ impl Session {
         let bytes = match self.shared_picture(blob, max).await.filter(|bytes| valid(bytes)) {
             Some(bytes) => bytes,
             None => {
-                let bytes = self.fetch_blob(Some(blob), provider.filter(|p| !p.is_empty()), max as u64).await?;
+                let bytes = self.fetch_blob(Some(blob), provider.filter(|p| !p.is_empty()), None, max as u64).await?;
                 if !valid(&bytes) {
                     return Err("that is not a valid picture".into());
                 }

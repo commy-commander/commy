@@ -79,3 +79,23 @@ test("the large image placeholder says its size and why it waits", () => {
   assert.match(text.hint, /5 MB/);
   assert.ok(text.load && text.loading && text.retry && text.failed);
 });
+
+test("a picture that failed is tried again only after a while", () => {
+  const { retriesImageNow, IMAGE_RETRY_AFTER_MS } = require("../scripts/embeds.js");
+  assert.equal(retriesImageNow(undefined, 0), true);
+  assert.equal(retriesImageNow({ at: 1000 }, 1000), false);
+  assert.equal(retriesImageNow({ at: 1000 }, 1000 + IMAGE_RETRY_AFTER_MS - 1), false);
+  assert.equal(retriesImageNow({ at: 1000 }, 1000 + IMAGE_RETRY_AFTER_MS), true);
+});
+
+test("a missing picture says why in plain words", () => {
+  const { missingImageText } = require("../scripts/embeds.js");
+  assert.equal(missingImageText("nobody who has this file is online right now").title, "Image unavailable");
+  assert.equal(missingImageText("nobody who has this file is online right now").hint, "Nobody who has it is online right now.");
+  assert.equal(missingImageText("network is not ready yet").hint, "Commy is still connecting.");
+  assert.equal(missingImageText("image too large to preview").hint, "It is too large to show here.");
+  assert.equal(missingImageText("that file is larger than 20 MB").hint, "It is too large to show here.");
+  assert.equal(missingImageText("not an image").hint, "This file is not a picture Commy can show.");
+  assert.equal(missingImageText(undefined).retry, "Try again");
+  for (const text of Object.values(missingImageText("io: stream reset by peer"))) assert.doesNotMatch(text, /io:|stream|peer/i);
+});
