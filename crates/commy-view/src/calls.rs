@@ -1,4 +1,7 @@
-use commy_core::{CallSignal, ChannelId, UserId};
+use std::collections::HashMap;
+
+use chrono::{DateTime, Utc};
+use commy_core::{CallSignal, ChannelId, ServerState, UserId};
 use serde::Serialize;
 
 pub const RING_FOR_MS: i64 = 45_000;
@@ -172,6 +175,33 @@ pub fn should_dial(our_node: &str, their_node: &str) -> bool {
     our_node < their_node
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VoiceGates {
+    pub muted: bool,
+    pub deafened: bool,
+    pub audience: bool,
+    pub timeouts: HashMap<UserId, i64>,
+}
+
+impl VoiceGates {
+    pub fn of(state: &ServerState, channel: ChannelId, me: UserId, now: DateTime<Utc>) -> Self {
+        Self {
+            muted: state.server.server_muted.contains(&me),
+            deafened: state.server.server_deafened.contains(&me),
+            audience: state.server.in_audience(channel, me),
+            timeouts: state.server.timed_out_members(now).into_iter().map(|(user, t)| (user, t.until.timestamp_millis())).collect(),
+        }
+    }
+
+    pub fn silenced(&self, user: UserId, now_ms: i64) -> bool {
+        self.timeouts.get(&user).is_some_and(|until| *until > now_ms)
+    }
+
+    pub fn keeps_me_quiet(&self, me: UserId, now_ms: i64) -> bool {
+        self.muted || self.deafened || self.audience || self.silenced(me, now_ms)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +322,31 @@ mod tests {
         let call = DmCall { partner: UserId::new(), channel: ChannelId::new(), node: None, outgoing: true, active: true, since_ms: 1_000 };
         let view = call.view("Bob".into(), call.state(), None, 4_500);
         assert_eq!((view.state.as_str(), view.seconds, view.name.as_str()), ("active", 3, "Bob"));
+    }
+
+    #[test]
+    fn gates_follow_server_mutes_stage_seats_and_timeouts() {
+        use commy_core::{Channel, ChannelKind, Server, ServerEvent, UserProfile};
+        let owner = UserId::new();
+        let mut state = ServerState::new(Server::new("Hangout", owner));
+        let member = UserProfile::new("friend");
+        let (sid, them) = (state.server.id, member.id);
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: member }).unwrap();
+        let stage = Channel::new("Town hall", ChannelKind::Stage, 20);
+        let stage_id = stage.id;
+        state.server.channels.push(stage);
+        let general = state.server.channels.iter().find(|c| c.name == "General").unwrap().id;
+        let now = Utc::now();
+        assert_eq!(VoiceGates::of(&state, general, them, now), VoiceGates::default());
+        assert!(VoiceGates::of(&state, stage_id, them, now).audience);
+        assert!(!VoiceGates::of(&state, stage_id, owner, now).audience);
+        state.apply(ServerEvent::VoiceModerate { server: sid, user: them, muted: true, deafened: false }).unwrap();
+        let until = now + chrono::Duration::seconds(60);
+        state.apply(ServerEvent::MemberTimeout { server: sid, user: them, until: Some(until), by: owner, at: now }).unwrap();
+        let gates = VoiceGates::of(&state, general, them, now);
+        assert!(gates.muted && !gates.deafened);
+        assert!(gates.silenced(them, now.timestamp_millis()));
+        assert!(!gates.silenced(them, until.timestamp_millis() + 1));
+        assert!(gates.keeps_me_quiet(them, now.timestamp_millis()));
     }
 }

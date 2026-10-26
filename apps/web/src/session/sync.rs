@@ -335,6 +335,7 @@ impl Session {
         if !self.client.borrow().apply_signal(server, &node, event, action) {
             return;
         }
+        self.refresh_gates();
         self.follow_voice_move(server, moved);
         self.emit("server-event", json!(server.to_string()));
         if returning && !self.said_goodbye() {

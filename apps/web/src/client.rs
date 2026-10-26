@@ -5,7 +5,7 @@ use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
 use commy_core::{
     action, Action, Attachment, ChannelId, ChannelKind, Identity, Message, MessageId, Permissions, Presence, ServerEvent, ServerId,
-    ServerState, SignedEvent, Snapshot, UserId, UserProfile,
+    ServerState, SignedEvent, Snapshot, TagId, UserId, UserProfile,
 };
 use commy_net::community_streams::{self as streams, Lane, Want};
 use commy_net::inbox;
@@ -17,7 +17,7 @@ use commy_view::keys::KeyHolder;
 use commy_view::liveness::{self, Liveness};
 use commy_view::reads::{ReadMark, ReadState, ReadView};
 use commy_view::search::{Page, SearchQuery, SearchResults};
-use commy_view::{MessageView, PinView, ServerSummary, ServerView};
+use commy_view::{forum, MessageView, PinView, ServerSummary, ServerView};
 
 pub type Servers = Arc<Mutex<HashMap<ServerId, ServerState>>>;
 pub type Me = Arc<Mutex<Option<(UserProfile, Identity)>>>;
@@ -143,6 +143,28 @@ impl Client {
         content: &str,
         reply_to: Option<MessageId>,
     ) -> Result<(Message, MessageView), String> {
+        self.compose_in(server, channel, content, |state, message| {
+            if let Some(target) = reply_to {
+                if !state.messages(channel).iter().any(|m| m.id == target) {
+                    return Err("The message you replied to no longer exists".into());
+                }
+                message.reply_to = Some(target);
+            }
+            forum::inside_post(state, channel, message.reply_to)
+        })
+    }
+
+    pub fn compose_post(&self, server: ServerId, channel: ChannelId, content: &str, tags: &[TagId]) -> Result<(Message, MessageView), String> {
+        self.compose_in(server, channel, content, |state, _| forum::can_post(state, channel, tags))
+    }
+
+    fn compose_in(
+        &self,
+        server: ServerId,
+        channel: ChannelId,
+        content: &str,
+        shape: impl FnOnce(&ServerState, &mut Message) -> Act<()>,
+    ) -> Result<(Message, MessageView), String> {
         let content = clean_message(content)?;
         let (profile, identity) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
         let keys = KeyHolder::new(Some((profile.id, identity.clone())));
@@ -150,12 +172,7 @@ impl Client {
         let state = servers.get_mut(&server).ok_or("This server is still loading")?;
         check_can_post(state, profile.id, channel)?;
         let mut message = Message::new(channel, profile.id, content);
-        if let Some(target) = reply_to {
-            if !state.messages(channel).iter().any(|m| m.id == target) {
-                return Err("The message you replied to no longer exists".into());
-            }
-            message.reply_to = Some(target);
-        }
+        shape(state, &mut message)?;
         if let Some(wait) = state.slow_mode_wait(channel, profile.id, message.created_at) {
             return Err(format!("Slow mode is on here: you can send again in {wait} seconds"));
         }

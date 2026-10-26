@@ -1,8 +1,11 @@
 use chrono::{DateTime, Duration, Utc};
-use commy_core::server::{clean_nickname, valid_hex_color, valid_rules, MAX_ACCESS_ROLES, MAX_NICKNAME_CHARS, MAX_SLOW_MODE, MAX_TIMEOUT_SECS, MAX_USER_LIMIT, SERVER_AFK_MINUTES};
+use commy_core::server::{
+    clean_nickname, valid_hex_color, valid_rules, MAX_ACCESS_ROLES, MAX_NICKNAME_CHARS, MAX_SLOW_MODE, MAX_TIMEOUT_SECS, MAX_USER_LIMIT,
+    MAX_VOICE_STATUS_CHARS, SERVER_AFK_MINUTES,
+};
 use commy_core::{ChannelId, ChannelKind, Permissions, RoleId, ServerEvent, ServerState, UserId};
 
-use crate::act::{voice_full, Act};
+use crate::act::{can_view, voice_full, Act};
 use crate::manage::need;
 
 pub fn kick(state: &ServerState, perms: Permissions, user: UserId) -> Act<ServerEvent> {
@@ -196,6 +199,52 @@ pub fn channel_access(state: &ServerState, perms: Permissions, channel: ChannelI
     Ok(ServerEvent::ChannelAccessSet { server: state.server.id, channel, view, send })
 }
 
+pub fn voice_moderate(state: &ServerState, perms: Permissions, user: UserId, muted: bool, deafened: bool) -> Act<ServerEvent> {
+    need(perms, Permissions::MUTE_MEMBERS, "server mute or deafen")?;
+    if user == state.server.owner {
+        return Err("the server owner cannot be muted or deafened".into());
+    }
+    Ok(ServerEvent::VoiceModerate { server: state.server.id, user, muted, deafened })
+}
+
+pub fn stage_speaker(state: &ServerState, perms: Permissions, me: UserId, channel: ChannelId, user: UserId, speaker: bool) -> Act<ServerEvent> {
+    if !perms.can_manage_stage() {
+        return Err("you need to manage channels or voice to choose stage speakers".into());
+    }
+    can_view(state, me, channel)?;
+    if !state.server.channel(channel).is_some_and(|c| c.is_stage()) {
+        return Err("that is not a stage channel".into());
+    }
+    if !state.server.is_member(user) {
+        return Err("that person is not a member of this server".into());
+    }
+    Ok(ServerEvent::StageSet { server: state.server.id, channel, user, speaker, by: me })
+}
+
+pub fn raise_hand(state: &ServerState, me: UserId, channel: ChannelId, raised: bool) -> Act<ServerEvent> {
+    if !state.server.channel(channel).is_some_and(|c| c.is_stage()) {
+        return Err("hands go up in stage channels".into());
+    }
+    if raised && !state.server.in_audience(channel, me) {
+        return Err("you already have the floor".into());
+    }
+    Ok(ServerEvent::HandRaise { server: state.server.id, channel, user: me, raised })
+}
+
+pub fn voice_status(state: &ServerState, perms: Permissions, me: UserId, channel: ChannelId, text: String) -> Act<ServerEvent> {
+    if text.trim().chars().count() > MAX_VOICE_STATUS_CHARS {
+        return Err(format!("keep the status to {MAX_VOICE_STATUS_CHARS} characters"));
+    }
+    if state.server.channel(channel).ok_or("unknown channel")?.kind != ChannelKind::Voice {
+        return Err("only voice channels have a status".into());
+    }
+    let in_channel = state.voice_states.get(&me) == Some(&channel);
+    if !perms.can_set_voice_status(in_channel) {
+        return Err("join the channel to set its status".into());
+    }
+    Ok(ServerEvent::VoiceStatusSet { server: state.server.id, channel, text, by: me })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,5 +351,31 @@ mod tests {
         assert!(sensitive(&state, perms, text, true).is_ok());
         assert!(channel_access(&state, perms, text, vec![RoleId::new()], vec![]).is_err());
         assert!(channel_access(&state, perms, text, vec![], vec![]).is_ok());
+    }
+
+    #[test]
+    fn voice_moderation_spares_the_owner_and_stage_rules_hold() {
+        let (mut state, owner, member) = hangout();
+        let sid = state.server.id;
+        let mine = state.server.permissions_for(owner);
+        let theirs = state.server.permissions_for(member);
+        assert!(matches!(voice_moderate(&state, mine, member, true, false), Ok(ServerEvent::VoiceModerate { muted: true, .. })));
+        assert_eq!(voice_moderate(&state, mine, owner, true, true).unwrap_err(), "the server owner cannot be muted or deafened");
+        assert!(voice_moderate(&state, theirs, member, true, false).is_err());
+        let stage = commy_core::Channel::new("Town hall", ChannelKind::Stage, 20);
+        let (stage_id, general) = (stage.id, state.server.channels.iter().find(|c| c.name == "General").unwrap().id);
+        state.server.channels.push(stage);
+        assert!(matches!(stage_speaker(&state, mine, owner, stage_id, member, true), Ok(ServerEvent::StageSet { speaker: true, .. })));
+        assert_eq!(stage_speaker(&state, mine, owner, general, member, true).unwrap_err(), "that is not a stage channel");
+        assert!(stage_speaker(&state, theirs, member, stage_id, member, true).is_err());
+        assert_eq!(stage_speaker(&state, mine, owner, stage_id, UserId::new(), true).unwrap_err(), "that person is not a member of this server");
+        assert!(raise_hand(&state, member, stage_id, true).is_ok());
+        assert_eq!(raise_hand(&state, owner, stage_id, true).unwrap_err(), "you already have the floor");
+        assert_eq!(raise_hand(&state, member, general, true).unwrap_err(), "hands go up in stage channels");
+        assert_eq!(voice_status(&state, theirs, member, general, "hi".into()).unwrap_err(), "join the channel to set its status");
+        state.apply(ServerEvent::VoiceState { user: member, channel: Some(general), muted: false, deafened: false, since: None }).unwrap();
+        assert!(matches!(voice_status(&state, theirs, member, general, "hi".into()), Ok(ServerEvent::VoiceStatusSet { server, .. }) if server == sid));
+        assert!(voice_status(&state, theirs, member, general, "x".repeat(MAX_VOICE_STATUS_CHARS + 1)).is_err());
+        assert_eq!(voice_status(&state, mine, owner, stage_id, "hi".into()).unwrap_err(), "only voice channels have a status");
     }
 }

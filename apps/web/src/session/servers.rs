@@ -263,6 +263,7 @@ impl Session {
         for payload in &payloads {
             self.publish(server, payload);
         }
+        self.refresh_gates();
         match cmd {
             "ban_member" | "set_member_role" => self.tend_keys(server, None),
             "set_channel_access" => {

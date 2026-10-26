@@ -29,6 +29,7 @@ use crate::host::Host;
 use crate::store::WebStore;
 
 mod calls;
+mod community;
 mod dms;
 mod expressions;
 mod files;
@@ -195,6 +196,15 @@ struct Args {
     soundboard_open: Option<bool>,
     shareable: Option<bool>,
     source_server_id: Option<String>,
+    event_id: Option<String>,
+    title: Option<String>,
+    description: Option<String>,
+    start: Option<String>,
+    end: Option<String>,
+    rsvp: Option<String>,
+    tags: Option<Value>,
+    speaker: Option<bool>,
+    raised: Option<bool>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -435,6 +445,9 @@ impl Session {
             "store_catalog_emoji" | "store_catalog_sticker" | "catalog_media_path" => self.expression_command(cmd, args).await,
             "list_shareable_expressions" | "list_shareable_sounds" => self.expression_command(cmd, args).await,
             "play_soundboard" | "play_shared_sound" => self.expression_command(cmd, args).await,
+            "save_event" | "delete_event" | "set_rsvp" => self.community_command(cmd, args).await,
+            "set_forum_tags" | "post_forum" | "edit_forum_post" => self.community_command(cmd, args).await,
+            "set_voice_status" | "moderate_voice" | "set_stage_speaker" | "raise_hand" => self.community_command(cmd, args).await,
             "update_profile" => self.profile_command(cmd, args).await,
             "set_about" => self.profile_command(cmd, args).await,
             "set_avatar" => self.profile_command(cmd, args).await,
@@ -923,22 +936,30 @@ impl Session {
     }
 
     fn apply_event(self: &Rc<Self>, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
+        let timeout = self.my_timeout(&event);
         let applied = self.client.borrow().apply_live(server, event, action);
-        self.after_apply(server, applied, rings, shown)
+        self.after_apply(server, applied, rings, shown, timeout)
     }
 
     fn apply_stored(self: &Rc<Self>, server: ServerId, event: ServerEvent, action: Option<commy_core::Action>, rings: bool, shown: bool) -> Applied {
+        let timeout = self.my_timeout(&event);
         let applied = self.client.borrow().apply_stored(server, event, action, shown);
-        self.after_apply(server, applied, rings, shown)
+        self.after_apply(server, applied, rings, shown, timeout)
     }
 
-    fn after_apply(self: &Rc<Self>, server: ServerId, applied: Applied, rings: bool, shown: bool) -> Applied {
+    fn after_apply(self: &Rc<Self>, server: ServerId, applied: Applied, rings: bool, shown: bool, timeout: Option<Option<i64>>) -> Applied {
         if let Applied::Created(message) = &applied {
             if let Some(payload) = self.client.borrow().message_created_payload(server, message).filter(|_| rings) {
                 self.emit("message-created", payload);
             }
         }
+        if applied != Applied::Nothing {
+            self.refresh_gates();
+        }
         if applied != Applied::Nothing && shown {
+            if let Some(until) = timeout {
+                self.emit("timed-out", json!({ "server": server.to_string(), "until": until }));
+            }
             self.emit("server-event", json!(server.to_string()));
             self.retire_if_gone(server);
         }
