@@ -12,6 +12,7 @@ use commy_net::{
     CommyNode, EntryKeyReply, EntryKeyRequest, MirrorRequest, NetEvent, ServerTicket, SharedCatchupStore, WirePayload,
 };
 use iroh::{RelayConfig, RelayMap, RelayUrl};
+use n0_future::FutureExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
@@ -46,6 +47,10 @@ const DEVICE_NAME: &str = "Web browser";
 const MAX_PREF_KEY: usize = 200;
 const MAX_PREFS_PER_CALL: usize = 500;
 const FAREWELL_LINGER: std::time::Duration = std::time::Duration::from_millis(300);
+const LOOK_FOR_KEY: std::time::Duration = std::time::Duration::from_secs(90);
+const RECHECK_ACCOUNT_KEY: std::time::Duration = std::time::Duration::from_secs(5);
+const OPENING: &str = "Opening your servers";
+const NOT_OPENED_YET: &str = "This browser could not open your servers yet. Open Commy on your computer so it can save your key to your account, then press Try again. You can also paste your recovery code.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Unlock {
@@ -75,6 +80,7 @@ struct Status {
     device_linked: bool,
     sealed: Option<String>,
     features: Option<account::Features>,
+    looking: bool,
 }
 
 pub struct Session {
@@ -239,6 +245,7 @@ impl Session {
                 device_linked: false,
                 sealed: None,
                 features: None,
+                looking: false,
             }),
             node: Mutex::new(None),
             store: RefCell::new(None),
@@ -260,7 +267,7 @@ impl Session {
             "account_status" => self.account_status().await,
             "account_sign_out" => self.sign_out().await,
             "web_unlock" => self.unlock().await,
-            "web_ask_devices" => self.ask_devices().await,
+            "web_try_again" => self.unlock().await,
             "entry_list_use_recovery_code" => self.use_recovery_code(args.code.as_deref().unwrap_or("")).await,
             "get_user" => to_json(&self.client.borrow().profile()),
             "list_servers" => to_json(&self.client.borrow().list_servers()),
@@ -658,8 +665,84 @@ impl Session {
             self.accept_key(&account, key)?;
             return Ok(self.unlock_view());
         }
-        self.set_unlock(Unlock::Locked, "Approve this browser on one of your Commy devices, or enter your recovery code.");
+        self.look_for_key(account);
         Ok(self.unlock_view())
+    }
+
+    fn look_for_key(self: &Rc<Self>, account: AccountUser) {
+        if std::mem::replace(&mut self.status.borrow_mut().looking, true) {
+            return;
+        }
+        self.set_unlock(Unlock::Asking, OPENING);
+        let this = self.clone();
+        spawn_local(async move {
+            let found = n0_future::time::timeout(LOOK_FOR_KEY, this.find_key(&account)).await.ok().flatten();
+            this.status.borrow_mut().looking = false;
+            if this.status.borrow().unlock == Unlock::Unlocked {
+                return;
+            }
+            match found.map(|key| this.accept_key(&account, key)) {
+                Some(Ok(())) => {}
+                Some(Err(e)) => this.set_unlock(Unlock::Locked, e),
+                None => this.set_unlock(Unlock::Locked, NOT_OPENED_YET),
+            }
+        });
+    }
+
+    async fn find_key(self: &Rc<Self>, account: &AccountUser) -> Option<SealKey> {
+        let (found, mut heard) = mpsc::unbounded_channel();
+        self.ask_own_devices(account, found.clone()).await;
+        loop {
+            let from_device = async { heard.recv().await }
+                .or(async {
+                    n0_future::time::sleep(RECHECK_ACCOUNT_KEY).await;
+                    None
+                })
+                .await;
+            if self.status.borrow().unlock == Unlock::Unlocked {
+                return None;
+            }
+            let key = match from_device {
+                Some(key) => Some(key),
+                None => self.escrowed_key().await,
+            };
+            if let Some(key) = key.filter(|key| self.opens_list(key)) {
+                return Some(key);
+            }
+        }
+    }
+
+    fn opens_list(&self, key: &SealKey) -> bool {
+        self.status.borrow().sealed.as_deref().is_some_and(|sealed| EntryList::open(key, sealed).is_ok())
+    }
+
+    async fn ask_own_devices(self: &Rc<Self>, account: &AccountUser, found: mpsc::UnboundedSender<SealKey>) {
+        let node = commy_core::Identity::from_bytes(&self.device_secret(account));
+        if let Some(url) = self.sync_service_url().await {
+            let account = account.id.clone();
+            spawn_local(async move {
+                if let Some(key) = handoff::ask(&url, &account, &node, DEVICE_NAME, LOOK_FOR_KEY).await {
+                    let _ = found.send(key);
+                }
+            });
+            return;
+        }
+        let Ok(devices) = self.other_devices().await else { return };
+        let endpoint = self.node.lock().await.as_ref().map(|node| {
+            node.reach_via_relays(&devices);
+            node.endpoint()
+        });
+        let Some(endpoint) = endpoint else { return };
+        let request = EntryKeyRequest { server: self.origin.clone(), account: account.id.clone(), device_name: DEVICE_NAME.into() };
+        for device in devices {
+            let (found, endpoint, request) = (found.clone(), endpoint.clone(), request.clone());
+            spawn_local(async move {
+                let Ok(EntryKeyReply::Key(text)) = commy_net::entry_key::request(endpoint, &device, &request).await else { return };
+                if let Ok(key) = SealKey::from_text(&text) {
+                    let _ = found.send(key);
+                }
+            });
+        }
     }
 
     async fn start_node(self: &Rc<Self>, secret: [u8; 32]) -> Result<(), String> {
@@ -708,60 +791,6 @@ impl Session {
         let own = self.account().map(|account| node_id_of(&self.device_secret(&account))).unwrap_or_default();
         let reply = self.request("GET", account::DEVICES_PATH, None).await?;
         Ok(account::other_devices(&reply, &own))
-    }
-
-    async fn ask_devices(self: &Rc<Self>) -> Result<Value, String> {
-        let account = self.account()?;
-        let devices = self.other_devices().await?;
-        if devices.is_empty() {
-            self.set_unlock(Unlock::Locked, "No other device is linked to your account. Enter your recovery code instead.");
-            return Ok(self.unlock_view());
-        }
-        let node = commy_core::Identity::from_bytes(&self.device_secret(&account));
-        let code = commy_net::key_handoff::code(&node.public());
-        self.set_unlock(Unlock::Asking, format!("Open Commy on one of your other devices and choose Allow. It will show the code {code}."));
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let sync = self.sync_service_url().await;
-        if let Some(url) = sync.clone() {
-            let (tx, account) = (tx.clone(), account.id.clone());
-            spawn_local(async move {
-                let got = handoff::ask(&url, &account, &node, DEVICE_NAME).await;
-                let _ = tx.send(got.map(|key| EntryKeyReply::Key(key.to_text())));
-            });
-        }
-        let endpoint = match sync {
-            Some(_) => None,
-            None => self.node.lock().await.as_ref().map(|node| {
-                node.reach_via_relays(&devices);
-                node.endpoint()
-            }),
-        };
-        if let Some(endpoint) = endpoint {
-            let request = EntryKeyRequest { server: self.origin.clone(), account: account.id.clone(), device_name: DEVICE_NAME.into() };
-            for device in &devices {
-                let (tx, endpoint, request, device) = (tx.clone(), endpoint.clone(), request.clone(), device.clone());
-                spawn_local(async move {
-                    let _ = tx.send(commy_net::entry_key::request(endpoint, &device, &request).await.ok());
-                });
-            }
-        }
-        drop(tx);
-        while let Some(reply) = rx.recv().await {
-            if self.status.borrow().unlock == Unlock::Unlocked {
-                return Ok(self.unlock_view());
-            }
-            if let Some(EntryKeyReply::Key(text)) = reply {
-                if let Ok(key) = SealKey::from_text(&text) {
-                    if self.accept_key(&account, key).is_ok() {
-                        return Ok(self.unlock_view());
-                    }
-                }
-            }
-        }
-        if self.status.borrow().unlock != Unlock::Unlocked {
-            self.set_unlock(Unlock::Locked, "None of your devices approved this browser yet. Ask again, or enter your recovery code.");
-        }
-        Ok(self.unlock_view())
     }
 
     async fn sync_service_url(&self) -> Option<String> {

@@ -1,10 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Mutex;
 
 use commy_core::{Identity, IdentityKey};
 use commy_net::key_handoff::{self as handoff, Note};
 use commy_net::sealed::SealKey;
-use commy_net::EntryKeyReply;
 use commy_sync::{StreamId, SyncClient, SyncEvent};
 use tauri::{AppHandle, Manager};
 
@@ -53,20 +52,14 @@ pub fn stop() {
     }
 }
 
-struct Ask {
-    node: IdentityKey,
-    name: String,
-}
-
 async fn watch(handle: AppHandle, url: String, account: String, me: IdentityKey) {
     let keys = handoff::mailbox(&account);
     let stream = keys.id;
     let (client, mut events) = SyncClient::spawn(url);
     client.follow_tail(keys, 0, Some(handoff::TAIL));
     let mut caught_up = false;
-    let mut waiting: Vec<(u64, Ask)> = Vec::new();
+    let mut waiting: Vec<IdentityKey> = Vec::new();
     let mut seen: HashSet<u64> = HashSet::new();
-    let mut open: HashMap<IdentityKey, u64> = HashMap::new();
     while let Some(event) = events.recv().await {
         match event {
             SyncEvent::Entry { stream: from, seq, at, plain } if from == stream => {
@@ -74,15 +67,11 @@ async fn watch(handle: AppHandle, url: String, account: String, me: IdentityKey)
                     continue;
                 }
                 match Note::parse(&plain) {
-                    Note::Ask { node, name } if node != me && handoff::is_fresh(at, chrono::Utc::now().timestamp_millis()) => {
-                        waiting.retain(|(_, ask)| ask.node != node);
-                        waiting.push((seq, Ask { node, name }));
+                    Note::Ask { node, .. } if node != me && handoff::is_fresh(at, chrono::Utc::now().timestamp_millis()) => {
+                        waiting.retain(|asking| *asking != node);
+                        waiting.push(node);
                     }
-                    Note::Give { to, .. } => {
-                        waiting.retain(|(_, ask)| ask.node != to);
-                        open.remove(&to);
-                        entry_list::close_prompts_for(&handle, &to);
-                    }
+                    Note::Give { to, .. } => waiting.retain(|asking| *asking != to),
                     _ => {}
                 }
             }
@@ -92,39 +81,16 @@ async fn watch(handle: AppHandle, url: String, account: String, me: IdentityKey)
         if !caught_up {
             continue;
         }
-        for (_, ask) in waiting.drain(..) {
-            if open.contains_key(&ask.node) {
-                continue;
+        for node in waiting.drain(..) {
+            if let Some(key) = entry_list::key_for_own_device(&handle, &node).await {
+                answer_with_key(&client, stream, &node, &key).await;
             }
-            let Some((id, reply)) = prompt(&handle, &ask).await else { continue };
-            open.insert(ask.node, id);
-            let (client, handle) = (client.clone(), handle.clone());
-            tauri::async_runtime::spawn(async move {
-                let answer = tokio::time::timeout(commy_net::entry_key::ANSWER_TIMEOUT, reply).await;
-                entry_list::close_prompt(&handle, id);
-                if let Ok(Ok(EntryKeyReply::Key(text))) = answer {
-                    answer_with_key(&client, stream, &ask.node, &text).await;
-                }
-            });
         }
-        open.retain(|_, id| entry_list::prompt_is_open(*id));
     }
 }
 
-async fn prompt(handle: &AppHandle, ask: &Ask) -> Option<(u64, tokio::sync::oneshot::Receiver<EntryKeyReply>)> {
-    let app = handle.state::<App>();
-    let s = entry_list::session(&app)?;
-    let devices = entry_list::account_devices(&app, &s).await.ok()?;
-    if !devices.contains(&ask.node.to_hex()) {
-        tracing::warn!("a device outside this account asked for the server list key");
-        return None;
-    }
-    entry_list::prompt(handle, &ask.name, ask.node)
-}
-
-async fn answer_with_key(client: &SyncClient, stream: StreamId, to: &IdentityKey, text: &str) {
-    let Ok(key) = SealKey::from_text(text) else { return };
-    let Some(note) = handoff::give(to, &key) else { return };
+async fn answer_with_key(client: &SyncClient, stream: StreamId, to: &IdentityKey, key: &SealKey) {
+    let Some(note) = handoff::give(to, key) else { return };
     if let Err(e) = client.append(stream, note.encode()).await {
         tracing::warn!("could not hand the server list key over: {e}");
     }

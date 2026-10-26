@@ -146,9 +146,9 @@
     modal.innerHTML = `
       <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
       <h2>Open your servers here</h2>
-      <p>Your messages stay between your devices. To open them in this browser, choose Allow in Commy on a device that already has them, or paste your recovery code.</p>
+      <p>Signing in to your account opens your servers in this browser.</p>
       <div class="signin-start" id="web-unlock-ask-row">
-        <button class="btn-primary signin-go" id="web-unlock-ask">Ask again</button>
+        <button class="btn-primary signin-go" id="web-unlock-ask">Try again</button>
       </div>
       <div class="signin-status hidden" id="web-unlock-wait"><span class="signin-spinner"></span><span id="web-unlock-wait-text"></span></div>
       <div class="signin-note" id="web-unlock-detail"></div>
@@ -158,7 +158,7 @@
       </div>
       <div class="signin-error hidden" id="web-unlock-error"></div>`;
     document.getElementById("modal-signin").after(modal);
-    modal.querySelector("#web-unlock-ask").onclick = () => run("web_ask_devices");
+    modal.querySelector("#web-unlock-ask").onclick = () => run("web_try_again");
     modal.querySelector("#web-unlock-code-use").onclick = () => {
       const input = modal.querySelector("#web-unlock-code");
       run("entry_list_use_recovery_code", { code: input.value }).then(() => { input.value = ""; });
@@ -170,7 +170,7 @@
     const modal = unlockModal();
     const asking = view.state === "asking" || view.state === "opening";
     const noList = view.state === "no_list";
-    modal.querySelector("#web-unlock-ask-row").classList.toggle("hidden", asking || noList);
+    modal.querySelector("#web-unlock-ask-row").classList.toggle("hidden", asking);
     modal.querySelector("#web-unlock-code-row").classList.toggle("hidden", noList || view.state === "opening");
     modal.querySelector("#web-unlock-wait").classList.toggle("hidden", !asking);
     modal.querySelector("#web-unlock-wait-text").textContent = asking ? webUnlockText(view) : "";
@@ -194,7 +194,7 @@
 
   let resolveUnlocked = null;
   let serversLoaded = false;
-  let askedDevices = false;
+  let opened = false;
 
   function whenServersLoad() {
     if (serversLoaded) return Promise.resolve();
@@ -207,13 +207,11 @@
 
   function settle(view) {
     const opening = view.state === "unlocked";
+    if (opened) return;
+    opened = opening;
     paintUnlock(opening ? { state: "opening", detail: "" } : view);
     if (opening) whenServersLoad().then(() => resolveUnlocked && resolveUnlocked());
     if (typeof showModal === "function") showModal("modal-web-unlock");
-    if (view.state === "locked" && !askedDevices) {
-      askedDevices = true;
-      run("web_ask_devices");
-    }
   }
 
   function untilUnlocked() {
@@ -290,7 +288,7 @@
   window.addEventListener("pagehide", () => { if (unlocked) backend("web_farewell").catch(() => {}); });
   window.addEventListener("pageshow", e => { if (e.persisted) nudge(); });
 
-  listeners.set("web-unlock-changed", new Map([[0, e => e.payload.state !== "unlocked" && paintUnlock(e.payload)]]));
+  listeners.set("web-unlock-changed", new Map([[0, e => (e.payload.state === "unlocked" ? settle(e.payload) : !opened && paintUnlock(e.payload))]]));
   listeners.set("web-servers-loaded", new Map([[0, () => { serversLoaded = true; }]]));
 
   window.__TAURI__ = {
