@@ -7,13 +7,13 @@ use commy_sync::{SyncClient, SyncEvent};
 
 const WAIT: Duration = Duration::from_millis(handoff::FRESH_MS as u64);
 
-pub(super) async fn ask(url: &str, account: &str, me: &Identity, name: &str) -> Option<SealKey> {
+pub(super) async fn ask(url: &str, account: &str, me: &Identity, name: &str, wait: Duration) -> Option<SealKey> {
     let keys = handoff::mailbox(account);
     let stream = keys.id;
     let (client, mut events) = SyncClient::spawn(url.to_string());
     client.follow_tail(keys, 0, Some(handoff::TAIL));
     let asking = handoff::ask(me, name).encode();
-    let waited = n0_future::time::timeout(WAIT, async {
+    let waited = n0_future::time::timeout(wait, async {
         client.append(stream, asking).await.ok()?;
         while let Some(event) = events.recv().await {
             if let SyncEvent::Entry { stream: from, plain, .. } = event {

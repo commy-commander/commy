@@ -126,6 +126,15 @@ test("the unlock text prefers the backend's detail", () => {
   assert.match(webUnlockText(null), /recovery code/);
 });
 
+test("signing in is all the browser asks for, never an Allow on another device", () => {
+  for (const state of ["signed_out", "no_list", "locked", "asking", "opening"]) {
+    assert.doesNotMatch(webUnlockText({ state, detail: "" }), /allow|approve/i);
+  }
+  const bridge = read("apps", "web", "ui", "web-bridge.js");
+  assert.doesNotMatch(bridge, /choose Allow|web_ask_devices/);
+  assert.doesNotMatch(read("apps", "web", "src", "session.rs"), /choose Allow|Approve this browser/);
+});
+
 test("replies cross into the backend as a status line and body", () => {
   assert.equal(webReplyLine(200, '{"a":1}'), '200\n{"a":1}');
 });

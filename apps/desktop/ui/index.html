@@ -651,19 +651,9 @@
       </div>
     </div>
 
-    <div class="modal hidden" id="modal-entry-key">
-      <h2>Allow <span id="entry-key-device"></span>?</h2>
-      <p>One of your devices wants your server list and identity, so it can join your servers as you. Only allow it if you just signed in there yourself.</p>
-      <p class="entry-key-code hidden" id="entry-key-code-row">It should show the code <strong id="entry-key-code"></strong>.</p>
-      <div class="modal-actions">
-        <button class="btn-secondary" id="entry-key-deny">Deny</button>
-        <button class="btn-primary" id="entry-key-allow">Allow</button>
-      </div>
-    </div>
-
     <div class="modal hidden" id="modal-entry-start-over">
       <h2>Start a new server list?</h2>
-      <p>Your account's current server list is replaced by the servers on this device. Only do this if none of your devices has the old list and you have no recovery code. Your other devices then approve this one to get the new list.</p>
+      <p>Your account's current server list is replaced by the servers on this device. Only do this if none of your devices has the old list and you have no recovery code. Your other devices then get the new list from your account.</p>
       <div class="modal-actions">
         <button class="btn-secondary" id="entry-start-over-cancel">Cancel</button>
         <button class="btn-primary" id="entry-start-over-go">Start new list</button>
@@ -2887,7 +2877,6 @@
   <script src="scripts/account-ui.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
-  <script src="scripts/entry-asks.js"></script>
   <script src="scripts/entry-list.js"></script>
 </body>
 </html>

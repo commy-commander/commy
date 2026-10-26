@@ -50,8 +50,8 @@ const WEB_NOTICE_ASKED_KEY = "commy.web.notices-asked";
 const WEB_UNLOCK_TEXT = {
   signed_out: "Sign in to open your servers.",
   no_list: "Open Commy on your computer and sign in there first. The web app opens the servers your computer has.",
-  locked: "Approve this browser on one of your Commy devices, or enter your recovery code.",
-  asking: "Open Commy on one of your other devices and choose Allow.",
+  locked: "This browser could not open your servers yet. Press Try again, or paste your recovery code.",
+  asking: "Opening your servers",
   opening: "Opening your servers",
   unlocked: "",
 };
