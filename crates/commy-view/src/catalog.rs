@@ -74,6 +74,13 @@ pub fn source(url: &str) -> Option<&'static str> {
     Some(source)
 }
 
+pub fn image_failure(source: &str, status: u16) -> String {
+    match status {
+        429 => "Too many images at once, try again in a minute".into(),
+        _ => format!("{source} could not be reached right now ({status})"),
+    }
+}
+
 pub fn gif_query(query: &str) -> String {
     truncate(query.trim(), 100)
 }
@@ -132,6 +139,12 @@ mod tests {
         ] {
             assert_eq!(source(url), None, "{url}");
         }
+    }
+
+    #[test]
+    fn a_busy_account_server_is_not_blamed_on_the_image_source() {
+        assert_eq!(image_failure("KLIPY", 429), "Too many images at once, try again in a minute");
+        assert_eq!(image_failure("KLIPY", 502), "KLIPY could not be reached right now (502)");
     }
 
     #[test]

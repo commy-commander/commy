@@ -15099,6 +15099,7 @@ async function searchGifs(query, settings = gifSettings()) {
     const common = "per_page=24&page=1&content_filter=medium&format_filter=gif";
     const url = q ? `${base}/search?q=${q}&${common}` : `${base}/trending?${common}`;
     const res = await fetch(url);
+    if (res.status === 429) throw new Error("your KLIPY key hit its limit for now (test keys allow 100 searches an hour)");
     const body = await res.json().catch(() => ({}));
     if (!res.ok || body.result === false) {
       const reason = body?.errors?.message?.[0];
@@ -15172,8 +15173,11 @@ async function renderGifResults(query) {
       note.appendChild(link);
     } else {
       note.textContent = settings.key
-        ? `Could not load GIFs: ${e.message}. Check your API key in Settings, then Integrations.`
-        : `Could not load GIFs: ${e.message}.`;
+        ? `Could not load GIFs: ${e.message}. Check your API key in Settings, then Integrations. `
+        : `Could not load GIFs: ${e.message}. `;
+      const retry = el("button", "btn-link", "Try again");
+      retry.onclick = () => renderGifResults($("gif-search").value);
+      note.appendChild(retry);
     }
     grid.replaceChildren(note);
   }

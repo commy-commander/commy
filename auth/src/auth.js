@@ -215,6 +215,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/commy/directory/publish": { window: 600, max: 20 },
         "/commy/directory/unlist": { window: 60, max: 30 },
         "/commy/directory/list": { window: 60, max: 60 },
+        "/commy/media": { window: 60, max: 1200 },
         "/commy/gifs/search": { window: 60, max: 60 },
         "/commy/stickers/search": { window: 60, max: 60 },
         "/commy/games/search": { window: 60, max: 60 },

@@ -14,6 +14,7 @@ import {
   emojiggSearch,
   igdbResults,
   steamOf,
+  klipyRestMs,
   klipyResults,
   klipyStickerResults,
   mediaHost,
@@ -100,9 +101,9 @@ const emojiggBody = [
   { id: 7, title: "lewd_cat", image: "https://cdn3.emoji.gg/emojis/7_lewd_cat.png", category: 17 },
 ];
 
-function makeAuth(extraEnv = {}) {
+function makeAuth(extraEnv = {}, { fetch: makeFetch = fakeFetch } = {}) {
   const log = [];
-  const options = buildAuthOptions(loadConfig({ ...ENV, ...extraEnv }), { pool: null, send: async () => {}, fetch: fakeFetch(log) });
+  const options = buildAuthOptions(loadConfig({ ...ENV, ...extraEnv }), { pool: null, send: async () => {}, fetch: makeFetch(log) });
   const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [] };
   options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
@@ -322,6 +323,67 @@ test("sticker search uses the KLIPY key server side", async () => {
   assert.equal(gifs.json.more, false);
   await call("GET", "/commy/stickers/search", { cookie, query: { q: "rawr", page: "99" } });
   assert.match(log[4].url, /page=20/);
+});
+
+function klipyThatRateLimits(log, { limited, retryAfter = null }) {
+  const fallback = fakeFetch(log);
+  return async (url, init) => {
+    if (limited() && String(url).startsWith("https://api.klipy.com/")) {
+      log.push({ url: String(url), init });
+      return Response.json({ result: false }, { status: 429, headers: retryAfter ? { "retry-after": retryAfter } : {} });
+    }
+    return fallback(url, init);
+  };
+}
+
+test("a KLIPY rate limit pauses searches, keeps earlier results and says when to retry", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  let limited = false;
+  const { call, signUp, log } = makeAuth({ KLIPY_API_KEY: KLIPY_KEY }, { fetch: (l) => klipyThatRateLimits(l, { limited: () => limited, retryAfter: "120" }) });
+  const cookie = await signUp("busy@example.test");
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+
+  assert.equal((await call("GET", "/commy/gifs/search", { cookie, query: { q: "wave" } })).status, 200);
+  t.mock.timers.tick(31 * 60 * 1000);
+  limited = true;
+
+  const kept = await call("GET", "/commy/gifs/search", { cookie, query: { q: "wave" } });
+  assert.equal(kept.status, 200, "an expired result still beats an error");
+  assert.equal(kept.json.results.length, 1);
+  assert.equal(log.length, 2);
+
+  const res = await call("GET", "/commy/gifs/search", { cookie, query: { q: "dance" } });
+  assert.equal(res.status, 503);
+  assert.match(res.json.message, /busy right now/);
+  assert.equal(log.length, 2, "no more KLIPY calls while it is resting");
+  assert.equal((await call("GET", "/commy/stickers/search", { cookie, query: { q: "dance" } })).status, 503);
+  assert.equal(log.length, 2, "stickers share the same key and rest too");
+
+  t.mock.timers.tick(121 * 1000);
+  limited = false;
+  assert.equal((await call("GET", "/commy/gifs/search", { cookie, query: { q: "dance" } })).status, 200);
+  assert.equal(log.length, 3);
+});
+
+test("identical searches at the same moment ask KLIPY once", async () => {
+  const { call, signUp, log } = makeAuth({ KLIPY_API_KEY: KLIPY_KEY });
+  const cookie = await signUp("together@example.test");
+  const replies = await Promise.all([1, 2, 3].map(() => call("GET", "/commy/gifs/search", { cookie, query: { q: "hello" } })));
+  assert.deepEqual(replies.map((r) => r.status), [200, 200, 200]);
+  assert.equal(log.filter((e) => e.url.startsWith("https://api.klipy.com/")).length, 1);
+});
+
+test("the KLIPY pause follows Retry-After within sane bounds", () => {
+  assert.equal(klipyRestMs(null), 60_000);
+  assert.equal(klipyRestMs("abc"), 60_000);
+  assert.equal(klipyRestMs("0"), 60_000);
+  assert.equal(klipyRestMs("5"), 5_000);
+  assert.equal(klipyRestMs("86400"), 600_000);
+});
+
+test("images have a roomier rate limit than searches", () => {
+  const options = buildAuthOptions(loadConfig(ENV), { pool: null, send: async () => {} });
+  assert.deepEqual(options.rateLimit.customRules["/commy/media"], { window: 60, max: 1200 });
 });
 
 test("game search reuses the Twitch app token", async () => {

@@ -86,6 +86,7 @@ test("catalog images come through the account server's media route and must be s
   const res = (status, type, length) => ({ ok: status === 200, status, headers: new Map([["content-type", type], ["content-length", String(length)]]) });
   assert.equal(webCatalogRefusal("emoji.gg", res(200, "image/png", 10), 100), null);
   assert.equal(webCatalogRefusal("emoji.gg", res(502, "image/png", 10), 100), "emoji.gg could not be reached right now (502)");
+  assert.equal(webCatalogRefusal("KLIPY", res(429, "application/json", 10), 100), "Too many images at once, try again in a minute");
   assert.equal(webCatalogRefusal("KLIPY", res(200, "text/html", 10), 100), "KLIPY sent something that is not an image");
   assert.equal(webCatalogRefusal("KLIPY", res(200, "image/gif", 101), 100), "that image is too large");
 });

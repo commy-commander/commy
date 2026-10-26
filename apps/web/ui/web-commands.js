@@ -113,6 +113,7 @@ function webCatalogPath(url) {
 }
 
 function webCatalogRefusal(source, res, max) {
+  if (res.status === 429) return "Too many images at once, try again in a minute";
   if (!res.ok) return `${source} could not be reached right now (${res.status})`;
   const type = (res.headers.get("content-type") || "").toLowerCase();
   if (!type.startsWith("image/")) return `${source} sent something that is not an image`;
