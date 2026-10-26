@@ -12540,9 +12540,11 @@ function renderVoicePanel() {
     : [];
   for (const share of others) {
     const row = el("div", "vp-stream");
-    row.appendChild(el("span", "live-badge", "LIVE"));
-    row.appendChild(el("span", "vp-stream-name", share.name));
-    const watch = el("button", "vp-pill", "Watch");
+    const head = el("div", "vp-stream-head");
+    head.appendChild(el("span", "live-badge", "LIVE"));
+    head.appendChild(el("span", "vp-stream-name", `${share.name} is sharing their screen`));
+    row.appendChild(head);
+    const watch = el("button", "vp-pill vp-stream-watch", "Watch Stream");
     watch.onclick = () => watchScreen(share.user, share.name);
     row.appendChild(watch);
     streams.appendChild(row);
