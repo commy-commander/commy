@@ -103,6 +103,17 @@ function setSpeaking(user, speaking) {
   renderMembers();
 }
 
+function resetOverlay() {
+  for (const pending of overlay.lingering.values()) clearTimeout(pending);
+  overlay.lingering.clear();
+  overlay.speaking.clear();
+  overlay.members = [];
+  overlay.lines = [];
+  $("chat").replaceChildren();
+  renderMembers();
+  tauri.event.emitTo("main", "overlay-hello", null).catch(() => {});
+}
+
 function addChatLine(line) {
   if (!overlay.showChat && !line.force) return;
   const chat = $("chat");
@@ -151,6 +162,7 @@ async function start() {
   await tauri.event.listen("overlay-roster", e => renderRoster(e.payload));
   await tauri.event.listen("overlay-chat", e => addChatLine(e.payload));
   await tauri.event.listen("overlay-test", () => runTest());
+  await tauri.event.listen("overlay-reset", () => resetOverlay());
   await tauri.event.listen("voice-speaking", e => setSpeaking(e.payload.user, e.payload.speaking));
   try {
     applyConfig(await tauri.core.invoke("get_overlay_settings"));

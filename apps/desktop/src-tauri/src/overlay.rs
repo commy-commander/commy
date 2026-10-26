@@ -113,8 +113,8 @@ fn ensure_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
         .build()
 }
 
-pub fn wanted(toggled_on: bool, game_in_front: bool, previewing: bool, needs_game: bool) -> bool {
-    previewing || (toggled_on && (game_in_front || !needs_game))
+pub fn wanted(toggled_on: bool, in_voice: bool, game_in_front: bool, previewing: bool, needs_game: bool) -> bool {
+    previewing || (toggled_on && in_voice && (game_in_front || !needs_game))
 }
 
 #[cfg(desktop)]
@@ -136,6 +136,7 @@ fn wanted_now(app: &AppHandle) -> (OverlaySettings, bool) {
     let settings = state.voice.lock().unwrap().overlay.clone();
     let visible = wanted(
         state.overlay_visible.load(Relaxed),
+        state.voice_session.lock().unwrap().is_some(),
         state.game_in_front.load(Relaxed),
         state.overlay_preview.load(Relaxed),
         cfg!(windows),
@@ -171,6 +172,9 @@ fn apply(app: &AppHandle, settings: &OverlaySettings, visible: bool) {
     if !settings.enabled || !visible {
         if let Some(window) = app.get_webview_window(LABEL) {
             hide_window(app, &window);
+            if app.state::<crate::state::App>().voice_session.lock().unwrap().is_none() {
+                let _ = app.emit_to(LABEL, "overlay-reset", ());
+            }
         }
         return;
     }
@@ -254,11 +258,18 @@ mod tests {
 
     #[test]
     fn the_overlay_only_shows_over_a_game_when_it_is_on() {
-        assert!(!wanted(true, false, false, true));
-        assert!(wanted(true, true, false, true));
-        assert!(!wanted(false, true, false, true));
-        assert!(wanted(true, false, false, false));
-        assert!(wanted(false, false, true, true));
+        assert!(!wanted(true, true, false, false, true));
+        assert!(wanted(true, true, true, false, true));
+        assert!(!wanted(false, true, true, false, true));
+        assert!(wanted(true, true, false, false, false));
+        assert!(wanted(false, false, false, true, true));
+    }
+
+    #[test]
+    fn the_overlay_goes_away_after_leaving_voice() {
+        assert!(!wanted(true, false, true, false, true));
+        assert!(!wanted(true, false, false, false, false));
+        assert!(wanted(true, false, true, true, true));
     }
 
     #[test]
