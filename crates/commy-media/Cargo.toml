@@ -15,7 +15,10 @@ tokio = { workspace = true }
 cpal = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+xcap = "0.9"
+
+[target.'cfg(not(any(windows, target_os = "macos", target_os = "android", target_os = "ios")))'.dependencies]
 xcap = "0.4"
 
 [target.'cfg(windows)'.dependencies]
