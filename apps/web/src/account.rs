@@ -14,6 +14,8 @@ pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
 pub const DEVICE_SECRET_KEY: &str = "commy.device";
 pub const ENTRY_KEY_KEY: &str = "commy.entry-key";
 pub const PINS_KEY: &str = "commy.pins";
+pub const REMINDERS_KEY: &str = "commy.reminders";
+pub const LISTINGS_KEY: &str = "commy.listings";
 pub const SAFETY_KEY: &str = "commy.safety";
 pub const PERSONAL_KEY: &str = "commy.personal";
 
@@ -210,6 +212,14 @@ pub fn entry_key_record(account: &str, key: &SealKey) -> String {
 
 pub fn pins_key(account: &str) -> String {
     format!("{PINS_KEY}.{account}")
+}
+
+pub fn listings_key(account: &str) -> String {
+    format!("{LISTINGS_KEY}.{account}")
+}
+
+pub fn reminders_key(account: &str) -> String {
+    format!("{REMINDERS_KEY}.{account}")
 }
 
 pub fn safety_key(account: &str) -> String {

@@ -161,7 +161,7 @@ fn clean_server_name(name: &str) -> CmdResult<String> {
     view::manage::server_name(name)
 }
 
-fn managed<T>(app: &App, sid: ServerId, me: UserId, build: impl FnOnce(&ServerState, Permissions) -> view::act::Act<T>) -> CmdResult<T> {
+pub(crate) fn managed<T>(app: &App, sid: ServerId, me: UserId, build: impl FnOnce(&ServerState, Permissions) -> view::act::Act<T>) -> CmdResult<T> {
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
     build(state, our_permissions(app, state, me))
@@ -2305,54 +2305,18 @@ async fn report_user(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let reported: UserId = user_id.parse().map_err(err_to_string)?;
-    if !safety::REPORT_REASONS.contains(&reason.as_str()) {
-        return Err("pick a reason for the report".into());
-    }
+    let channel: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let message: Option<MessageId> = message_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let _signing = app.signing.read().await;
     let me = current_profile(&app)?;
-    if reported == me.id {
-        return Err("you cannot report yourself".into());
-    }
     refuse_while_key_may_be_replaced(&app)?;
     let keys = channel_lock::holder_of(&app);
-    let (owner, excerpt) = {
+    let form = view::safety::ReportForm { reported, channel, message, reason, note };
+    let reported_name = known_name(&app, reported);
+    let (owner, report) = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        let excerpt = match (&channel_id, &message_id) {
-            (Some(c), Some(m)) => {
-                let cid: ChannelId = c.parse().map_err(err_to_string)?;
-                let mid: MessageId = m.parse().map_err(err_to_string)?;
-                state
-                    .messages(cid)
-                    .iter()
-                    .find(|msg| msg.id == mid && msg.author == reported)
-                    .and_then(|msg| keys.open(state, msg))
-                    .map(|msg| msg.content)
-                    .ok_or("that message is no longer available")?
-            }
-            _ => String::new(),
-        };
-        (state.server.owner, excerpt)
-    };
-    if owner == me.id {
-        return Err("you own this server, so reports would come to you".into());
-    }
-    if reported == owner {
-        return Err("reports go to the server owner, so the owner cannot be reported here".into());
-    }
-    let report = safety::Report {
-        id: MessageId::new().to_string(),
-        server: sid.to_string(),
-        channel: channel_id,
-        message: message_id,
-        reporter: me.id.to_string(),
-        reporter_name: me.visible_name().to_string(),
-        reported: reported.to_string(),
-        reported_name: known_name(&app, reported),
-        reason,
-        note: safety::truncate(note.trim(), 500),
-        excerpt: safety::truncate(&excerpt, 300),
-        created_at: chrono::Utc::now().to_rfc3339(),
+        view::safety::report(state, &keys, &me, form, reported_name, chrono::Utc::now())?
     };
     let owner_hex = node_hex_for_user(&app, owner);
     let offline = "the server owner is offline right now; try again later";
@@ -2360,14 +2324,9 @@ async fn report_user(
 }
 
 fn receive_report(app: &App, handle: &tauri::AppHandle, sender: UserId, content: &str) {
-    let Some(report) = safety::Report::decode(content, sender) else { return };
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
-    let valid = report.server.parse::<ServerId>().ok().is_some_and(|sid| {
-        app.servers.lock().unwrap().get(&sid).is_some_and(|s| {
-            s.server.owner == me && s.server.members.iter().any(|m| m.user == sender)
-        })
-    });
-    if !valid || app.safety.lock().unwrap().is_blocked(sender) {
+    let Some(report) = view::safety::received_report(&app.servers.lock().unwrap(), me, sender, content) else { return };
+    if app.safety.lock().unwrap().is_blocked(sender) {
         return;
     }
     let notice = serde_json::json!({
@@ -4146,23 +4105,8 @@ async fn set_onboarding(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change the onboarding questions")?;
-    let roles = {
-        let servers = app.servers.lock().unwrap();
-        servers.get(&sid).ok_or("unknown server")?.server.roles.clone()
-    };
-    let onboarding = onboarding
-        .map(|o| o.tidied(|r| commy_core::onboarding::grantable(&roles, r)))
-        .filter(|o| !o.questions.is_empty());
-    if onboarding.as_ref().is_some_and(|o| !o.fits()) {
-        return Err(onboarding_limits());
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::OnboardingSet { server: sid, onboarding }).await
-}
-
-fn onboarding_limits() -> String {
-    use commy_core::onboarding::{MAX_ROLE_REFS, MAX_TEXT_BYTES};
-    format!("keep the questions and answers under {MAX_TEXT_BYTES} characters in all, with at most {MAX_ROLE_REFS} roles across every answer")
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::onboarding(state, perms, onboarding))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4177,19 +4121,8 @@ async fn answer_onboarding(
     let me = current_profile(&app)?;
     let parse = |ids: Vec<String>| ids.iter().map(|id| id.parse::<RoleId>().map_err(err_to_string)).collect::<CmdResult<Vec<RoleId>>>();
     let (grant, revoke) = (parse(grant)?, parse(revoke)?);
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        let allowed = grant.iter().chain(&revoke).all(|r| commy_core::onboarding::may_self_assign(&state.server, me.id, *r));
-        if !allowed {
-            return Err("this server's questions do not hand out that role".into());
-        }
-    }
-    for role in revoke {
-        apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUnassign { server: sid, user: me.id, role }).await?;
-    }
-    for role in grant {
-        apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleAssign { server: sid, user: me.id, role }).await?;
+    for event in managed(&app, sid, me.id, |state, _| view::moderate::answer_onboarding(state, me.id, grant, revoke))? {
+        apply_and_broadcast(&app, &handle, sid, event).await?;
     }
     Ok(())
 }
@@ -4227,19 +4160,8 @@ async fn set_automod(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change auto moderation")?;
-    let rules = rules.tidied();
-    if !rules.valid() {
-        return Err(automod_limits());
-    }
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::AutoModSet { server: sid, rules }).await
-}
-
-fn automod_limits() -> String {
-    use commy_core::automod::{MAX_BLOCKED_TERMS, MAX_TERMS_BYTES, MAX_TERM_BYTES};
-    format!(
-        "keep it to {MAX_BLOCKED_TERMS} blocked words of up to {MAX_TERM_BYTES} characters each, {MAX_TERMS_BYTES} characters in all"
-    )
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::automod(state, perms, rules))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 fn require_rules_accepted(state: &ServerState, user: UserId) -> CmdResult<()> {
@@ -5352,8 +5274,8 @@ async fn set_activities_enabled(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "turn Activities on or off")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ActivitiesSet { server: sid, enabled }).await?;
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::activities(state, perms, enabled))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }

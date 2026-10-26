@@ -30,6 +30,7 @@ pub enum Received {
     Friends { notice: Value, reply: Option<(UserId, FriendSignal)> },
     Invited { from: UserId, ticket: String, key: Option<(KeyId, ChannelSecret)> },
     Call { from: UserId, node: String, call: ChannelId, signal: CallSignal },
+    Report(Value),
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -209,7 +210,19 @@ impl DmBook {
         let (note, message) = (envelope.note, envelope.message);
         let partner = sender.id;
         if message.content.starts_with(safety::REPORT_PREFIX) {
-            return Received::Dropped;
+            let report = safety::received_report(servers, me, partner, &message.content).filter(|_| !self.safety.is_blocked(partner));
+            let Some(report) = report else { return Received::Dropped };
+            let notice = json!({
+                "server": report.server,
+                "reported_name": report.reported_name,
+                "reporter_name": report.reporter_name,
+                "reason": report.reason,
+            });
+            if !self.safety.add_report(report) {
+                return Received::Dropped;
+            }
+            self.dirty = true;
+            return Received::Report(notice);
         }
         if let Some(signal) = FriendSignal::decode(&message.content) {
             if !safety::note_friend_signal(&mut self.safety, partner, message.id, message.created_at) {

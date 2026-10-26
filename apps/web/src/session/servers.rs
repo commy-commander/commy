@@ -62,6 +62,10 @@ impl Session {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 to_json(&self.read_state(server, |state, me| roles::audit_log(state, state.server.permissions_for(me)))?)
             }
+            "export_server_template" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                Ok(Value::String(self.read_state(server, |state, me| templates::export(state, state.server.permissions_for(me)))?))
+            }
             _ => self.manage(cmd, args).await,
         }
     }
@@ -179,7 +183,7 @@ impl Session {
                 vec![client().act(server, |state, me, _, _| roles::delete_role(state, me.perms, role))?]
             }
             "set_member_role" => {
-                let (user, role, grant) = (user()?, role()?, args.grant.unwrap_or(true));
+                let (user, role, grant) = (user()?, role()?, args.grant.as_ref().and_then(Value::as_bool).unwrap_or(true));
                 vec![client().act(server, |state, me, _, _| roles::member_role(state, me.perms, user, role, grant))?]
             }
             "set_own_role" => {
@@ -224,10 +228,30 @@ impl Session {
                 vec![client().act(server, |state, me, _, _| moderate::transfer(state, me.user, user, confirm))?]
             }
             "set_rules" => {
-                let rules = args.rules.as_deref();
+                let rules = args.rules.as_ref().and_then(Value::as_str);
                 vec![client().act(server, |state, me, _, _| moderate::rules(state, me.perms, rules))?]
             }
             "accept_rules" => vec![client().act(server, |state, me, _, _| moderate::accept_rules(state, me.user))?],
+            "set_onboarding" => {
+                let onboarding = match args.onboarding.clone().filter(|o| !o.is_null()) {
+                    Some(raw) => Some(serde_json::from_value(raw).map_err(|_| "invalid onboarding questions".to_string())?),
+                    None => None,
+                };
+                vec![client().act(server, |state, me, _, _| moderate::onboarding(state, me.perms, onboarding))?]
+            }
+            "answer_onboarding" => {
+                let grant: Vec<String> = args.grant.clone().map_or(Ok(Vec::new()), serde_json::from_value).map_err(|_| "invalid roles".to_string())?;
+                let (grant, revoke) = (role_list(Some(grant))?, role_list(args.revoke.clone())?);
+                client().act_all(server, |state, me| moderate::answer_onboarding(state, me.user, grant, revoke))?
+            }
+            "set_automod" => {
+                let rules = serde_json::from_value(args.rules.clone().unwrap_or_default()).map_err(|_| "invalid auto moderation rules".to_string())?;
+                vec![client().act(server, |state, me, _, _| moderate::automod(state, me.perms, rules))?]
+            }
+            "set_activities_enabled" => {
+                let enabled = args.enabled.unwrap_or(false);
+                vec![client().act(server, |state, me, _, _| moderate::activities(state, me.perms, enabled))?]
+            }
             "set_afk_channel" => {
                 let afk = args.channel_id.as_deref().filter(|c| !c.is_empty()).map(str::parse::<ChannelId>).transpose().map_err(|_| "invalid channel".to_string())?;
                 vec![client().act(server, |state, me, _, _| moderate::afk_channel(state, me.perms, afk))?]
@@ -273,7 +297,10 @@ impl Session {
             _ => {}
         }
         self.emit("server-event", json!(server.to_string()));
-        if matches!(cmd, "rename_server" | "set_role_access" | "set_server_public" | "transfer_ownership") {
+        if cmd == "rename_server" {
+            wasm_bindgen_futures::spawn_local(self.clone().refresh_listing(server));
+        }
+        if matches!(cmd, "rename_server" | "set_role_access" | "set_server_public" | "transfer_ownership" | "set_activities_enabled") {
             self.emit("servers-changed", Value::Null);
         }
         Ok(reply)

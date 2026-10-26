@@ -1,8 +1,9 @@
 use commy_core::server::ChannelKind;
-use commy_core::{BuiltinTemplate, ServerTemplate};
+use commy_core::{BuiltinTemplate, Permissions, ServerState, ServerTemplate};
 use serde::Serialize;
 
 use crate::act::Act;
+use crate::manage::need;
 
 #[derive(Debug, Serialize)]
 pub struct TemplateChannelView {
@@ -73,6 +74,11 @@ pub fn preview(code: &str) -> Act<TemplateView> {
     }
     let template = ServerTemplate::decode(code).map_err(|e| e.to_string())?;
     Ok(TemplateView::of(&template, None))
+}
+
+pub fn export(state: &ServerState, perms: Permissions) -> Act<String> {
+    need(perms, Permissions::MANAGE_SERVER, "copy this server as a template")?;
+    ServerTemplate::from_server(&state.server).map(|t| t.encode()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

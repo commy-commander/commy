@@ -17,7 +17,7 @@ test("the category list matches the account server and the desktop backend", () 
   const ids = DIRECTORY_CATEGORIES.map(c => c.id);
   const auth = /export const CATEGORIES = \[([^\]]+)\]/.exec(read("auth", "src", "directory.js"))[1];
   assert.deepEqual([...auth.matchAll(/"([a-z]+)"/g)].map(m => m[1]), ids);
-  const rust = /pub const CATEGORIES: &\[&str\] = &\[([^\]]+)\]/.exec(read("apps", "desktop", "src-tauri", "src", "directory.rs"))[1];
+  const rust = /pub const CATEGORIES: &\[&str\] = &\[([^\]]+)\]/.exec(read("crates", "commy-net", "src", "directory.rs"))[1];
   assert.deepEqual([...rust.matchAll(/"([a-z]+)"/g)].map(m => m[1]), ids);
   assert.equal(new Set(ids).size, ids.length);
   assert.equal(directoryCategoryLabel("tech"), "Tech");
@@ -27,7 +27,7 @@ test("the category list matches the account server and the desktop backend", () 
 test("member buckets round down to the account server's fixed sizes", () => {
   const auth = /export const MEMBER_BUCKETS = \[([^\]]+)\]/.exec(read("auth", "src", "directory.js"))[1];
   assert.deepEqual(auth.split(",").map(s => Number(s.trim())), DIRECTORY_BUCKETS);
-  const rust = /pub const MEMBER_BUCKETS: &\[u32\] = &\[([^\]]+)\]/.exec(read("apps", "desktop", "src-tauri", "src", "directory.rs"))[1];
+  const rust = /pub const MEMBER_BUCKETS: &\[u32\] = &\[([^\]]+)\]/.exec(read("crates", "commy-net", "src", "directory.rs"))[1];
   assert.deepEqual(rust.split(",").map(s => Number(s.trim())), DIRECTORY_BUCKETS);
   assert.equal(memberBucket(37), 25);
   assert.equal(memberBucket(3), 10);

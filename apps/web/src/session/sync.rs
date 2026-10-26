@@ -425,7 +425,8 @@ impl Session {
     }
 
     pub(super) fn saved(&self) -> SavedStore {
-        self.sync.borrow().as_ref().map(|live| live.book.saved().clone()).unwrap_or_default()
+        let saved = self.sync.borrow().as_ref().map(|live| live.book.saved().clone()).unwrap_or_default();
+        SavedStore { reminders: self.reminders(), ..saved }
     }
 
     pub(super) fn set_saved(&self, entry: Entry, saved: bool) -> Result<SavedStore, String> {

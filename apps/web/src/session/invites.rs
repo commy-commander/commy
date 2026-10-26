@@ -23,7 +23,7 @@ struct ErrorReply {
     message: Option<String>,
 }
 
-fn invite_reply<T: DeserializeOwned>(reply: Reply) -> Result<T, String> {
+pub(super) fn invite_reply<T: DeserializeOwned>(reply: Reply) -> Result<T, String> {
     if !reply.ok() {
         let message = serde_json::from_str::<ErrorReply>(&reply.body).ok().and_then(|e| e.message);
         return Err(message.map_or_else(|| format!("the invite server answered {}", reply.status), |m| invite::clip(&m, 200)));
@@ -69,7 +69,7 @@ impl Session {
         }
     }
 
-    fn need_permission(&self, server: ServerId, needed: Permissions, action: &str) -> Result<(), String> {
+    pub(super) fn need_permission(&self, server: ServerId, needed: Permissions, action: &str) -> Result<(), String> {
         let me = self.client.borrow().profile().ok_or("Your servers are not unlocked yet")?.id;
         let client = self.client.borrow();
         let servers = client.servers.lock().unwrap();
@@ -77,7 +77,7 @@ impl Session {
         commy_view::manage::need(state.server.permissions_for(me), needed, action)
     }
 
-    async fn create_invite(&self, server: ServerId, expiry: invite::Expiry, name: Option<String>) -> Result<invite::CreatedInvite, String> {
+    pub(super) async fn create_invite(&self, server: ServerId, expiry: invite::Expiry, name: Option<String>) -> Result<invite::CreatedInvite, String> {
         let me = self.client.borrow().profile().ok_or("Your servers are not unlocked yet")?.id;
         {
             let client = self.client.borrow();
