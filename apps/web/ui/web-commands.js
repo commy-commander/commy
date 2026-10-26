@@ -16,7 +16,6 @@ const WEB_DEFAULTS = {
   get_autostart: false,
   get_stream_deck: { enabled: false, status: "off", decks: [] },
   get_awaited: 0,
-  note_user_activity: null,
   set_window_title: null,
   set_unread: null,
   get_custom_icon: null,

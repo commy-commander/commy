@@ -402,6 +402,7 @@ impl Session {
             "get_voice_settings" => self.call_command(cmd, args).await,
             "set_muted" => self.call_command(cmd, args).await,
             "set_deafened" => self.call_command(cmd, args).await,
+            "set_afk_timeout" | "note_user_activity" => self.call_command(cmd, args).await,
             "voice_stats" => self.call_command(cmd, args).await,
             "attach_dm_bytes" => self.file_command(cmd, args).await,
             "attach_bytes" => self.file_command(cmd, args).await,

@@ -1321,45 +1321,52 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
         }
 
         let Some((sid, current, _)) = voice else { continue };
-        let (afk, server_minutes) = {
+        let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+        let step = {
             let servers = app.servers.lock().unwrap();
-            servers
-                .get(&sid)
-                .map_or((None, None), |s| (s.server.afk_channel(), s.server.afk_timeout_minutes))
+            match (servers.get(&sid), me) {
+                (Some(state), Some(me)) => {
+                    let voice_timeout = if env_override.is_some() {
+                        timeout_secs
+                    } else {
+                        view::afk::voice_timeout_secs(timeout_secs, state.server.afk_timeout_minutes)
+                    };
+                    let perms = our_permissions(&app, state, me);
+                    view::afk::idle_voice_step(state, perms, me, current, idle_for, voice_timeout)
+                }
+                _ => view::afk::IdleVoice::Stay,
+            }
         };
-        let voice_timeout = if env_override.is_some() {
-            timeout_secs
-        } else {
-            afk::voice_timeout_secs(timeout_secs, server_minutes)
-        };
-        if voice_timeout <= 0 || idle_for < voice_timeout {
-            continue;
-        }
-        let Some(afk) = afk else {
-            if server_minutes.is_some() {
+        match step {
+            view::afk::IdleVoice::Stay => {}
+            view::afk::IdleVoice::Leave => {
                 tracing::info!("idle for {idle_for}s past the server limit, leaving voice");
                 if set_voice_channel(handle.state::<App>(), handle.clone(), sid.to_string(), None).await.is_ok() {
                     let _ = handle.emit("afk-disconnected", ());
                 }
             }
-            continue;
-        };
-        if afk == current {
-            continue;
-        }
-        tracing::info!("idle for {idle_for}s, moving to AFK channel");
-        if set_voice_channel(
-            handle.state::<App>(),
-            handle.clone(),
-            sid.to_string(),
-            Some(afk.to_string()),
-        )
-        .await
-        .is_ok()
-        {
-            let _ = handle.emit("afk-moved", ());
+            view::afk::IdleVoice::MoveTo(afk) => {
+                tracing::info!("idle for {idle_for}s, moving to AFK channel");
+                match set_voice_channel(handle.state::<App>(), handle.clone(), sid.to_string(), Some(afk.to_string())).await {
+                    Ok(()) => {
+                        let _ = handle.emit("afk-moved", afk_moved_payload(&app, sid, afk));
+                    }
+                    Err(e) => tracing::warn!("could not move to the AFK channel: {e}"),
+                }
+            }
         }
     }
+}
+
+fn afk_moved_payload(app: &App, sid: ServerId, afk: ChannelId) -> serde_json::Value {
+    let name = app
+        .servers
+        .lock()
+        .unwrap()
+        .get(&sid)
+        .and_then(|state| state.server.channel(afk))
+        .map(|channel| channel.name.clone());
+    serde_json::json!({ "server": sid.to_string(), "channel": afk.to_string(), "name": name })
 }
 
 fn dial_voice_members(
