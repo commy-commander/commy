@@ -1094,6 +1094,7 @@ dependencies = [
  "commy-core",
  "cpal",
  "image 0.25.10",
+ "rayon",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

@@ -1,4 +1,8 @@
 pub mod devices;
+#[cfg(windows)]
+mod display;
+#[cfg(any(windows, test))]
+mod hdr;
 pub mod jitter;
 #[cfg(windows)]
 mod loopback;
