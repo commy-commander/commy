@@ -5,7 +5,7 @@ use crate::catchup::{
 use chrono::Utc;
 use commy_core::catchup::{apply_reaction_changes, digests, items, reaction_changes, BucketItems, ReactionChange};
 pub use commy_core::test_support::{
-    fixture, identity_for, join, join_moderator, keyed_profile, post, post_at, proof as proof_at,
+    fixture, identity_for, join, join_moderator, keyed_profile, post, post_at, proof as proof_at, signed_event,
 };
 use commy_core::{
     BucketDigest, BucketKey, ChannelId, Identity, IdentityKey, Message, MessageId, ServerEvent, ServerId,

@@ -74,6 +74,7 @@ pub const TOMBSTONE_KEEP_DAYS: i64 = 60;
 pub const MAX_UNAPPLIED_PROOFS: usize = 2000;
 
 pub const MAX_AHEAD_MS: i64 = 86_400_000;
+const STEPPED_DOWN_SKEW_MS: i64 = 600_000;
 
 pub const MAX_ACTION_TIMES: usize = 16384;
 pub const MAX_ACTION_AHEAD_MS: i64 = 3_600_000;
@@ -722,7 +723,11 @@ impl ServerState {
     fn apply_noted(&mut self, signed: &SignedEvent) -> Result<bool, StoreError> {
         let Action { by, at, sig } = signed.action;
         let entry = crate::audit::entry_for(self, by, at, sig, &signed.event);
+        let moderators = self.moderators_before(&signed.event);
         let applied = self.apply(signed.event.clone())?;
+        if applied {
+            self.note_stepped_down(moderators, at);
+        }
         if let Some(entry) = entry.filter(|_| applied) {
             crate::audit::record(&mut self.audit, entry);
         }
@@ -731,6 +736,28 @@ impl ServerState {
             self.keep_signed(signed);
         }
         Ok(applied)
+    }
+
+    fn moderators_before(&self, event: &ServerEvent) -> Vec<UserId> {
+        use ServerEvent as E;
+        let reshapes = matches!(
+            event,
+            E::RoleDelete { .. } | E::RoleUnassign { .. } | E::RoleUpdate { .. } | E::MemberLeave { .. } | E::MemberBan { .. } | E::OwnerTransfer { .. }
+        );
+        if !reshapes {
+            return Vec::new();
+        }
+        let server = &self.server;
+        server.members.iter().map(|m| m.user).filter(|user| server.permissions_for(*user).allows(crate::permissions::Permissions::MANAGE_MESSAGES)).collect()
+    }
+
+    fn note_stepped_down(&mut self, moderators: Vec<UserId>, at: i64) {
+        for user in moderators {
+            if !self.server.permissions_for(user).allows(crate::permissions::Permissions::MANAGE_MESSAGES) {
+                let since = self.server.stepped_down.entry(user).or_insert(at);
+                *since = (*since).max(at);
+            }
+        }
     }
 
     fn target_known(&self, event: &ServerEvent) -> bool {
@@ -876,6 +903,16 @@ impl ServerState {
     }
 
     pub fn apply(&mut self, event: ServerEvent) -> Result<bool, StoreError> {
+        use ServerEvent as E;
+        let grants = matches!(event, E::RoleAssign { .. } | E::RoleUpdate { .. } | E::OwnerTransfer { .. });
+        let applied = self.apply_event(event)?;
+        if applied && grants {
+            self.retry_held_proofs();
+        }
+        Ok(applied)
+    }
+
+    fn apply_event(&mut self, event: ServerEvent) -> Result<bool, StoreError> {
         if self.deleted {
             return Ok(false);
         }
@@ -2010,7 +2047,11 @@ impl ServerState {
             *existing = updated;
             return Ok(true);
         }
-        if self.tombstones.remove(&message.id).is_some() {
+        if let Some(list) = self.tombstones.get_mut(&message.id) {
+            list.retain(|s| s.proof.channel == message.channel);
+            if list.is_empty() {
+                self.tombstones.remove(&message.id);
+            }
             self.unapplied = None;
         }
         let list = self
@@ -2028,13 +2069,22 @@ impl ServerState {
         Ok(true)
     }
 
+    fn may_delete(&self, proof: &TombstoneProof, author: UserId, written: DateTime<Utc>) -> bool {
+        let by = proof.by;
+        let at = proof.at.timestamp_millis();
+        let was_moderator = self.server.stepped_down.get(&by).is_some_and(|until| at < *until && at + STEPPED_DOWN_SKEW_MS >= written.timestamp_millis());
+        by == author || self.server.permissions_for(by).allows(crate::permissions::Permissions::MANAGE_MESSAGES) || was_moderator
+    }
+
     fn bind_proofs(&mut self, message: &Message) -> Option<bool> {
-        let list = self.tombstones.get_mut(&message.id)?;
         let author = message.author;
+        let list = self.tombstones.get(&message.id)?;
+        let allowed: Vec<bool> = list.iter().map(|s| self.may_delete(&s.proof, author, message.created_at)).collect();
+        let list = self.tombstones.get_mut(&message.id)?;
         let before = list.len();
         let (mut blocked, mut bound) = (false, false);
-        for s in list.iter_mut() {
-            if s.proof.channel == message.channel && s.accepted_for.is_none_or(|a| a == author) {
+        for (s, allowed) in list.iter_mut().zip(allowed) {
+            if s.proof.channel == message.channel && s.accepted_for.map_or(allowed, |a| a == author) {
                 bound |= s.accepted_for.is_none();
                 s.accepted_for = Some(author);
                 blocked = true;
@@ -2104,13 +2154,17 @@ impl ServerState {
         let held = self.index.get(&proof.message).and_then(|channel| {
             let list = self.messages.get(channel)?;
             let pos = list.iter().rposition(|m| m.id == proof.message)?;
-            Some((*channel, pos, list[pos].author))
+            Some((*channel, pos, list[pos].author, list[pos].created_at))
         });
-        if let Some((channel, pos, author)) = held {
+        if let Some((channel, pos, author, written)) = held {
             if channel != proof.channel {
                 return Err(StoreError::WrongChannel);
             }
 
+            if !self.may_delete(&proof, author, written) {
+                let kept = self.holds_proof_from(&proof);
+                return self.store_unapplied(proof, kept).map(|_| false);
+            }
             if author != proof.by {
                 self.note_moderator_delete(&proof, author);
             }
@@ -2125,14 +2179,34 @@ impl ServerState {
                 target.threads.remove(&proof.message);
                 target.posts.remove(&proof.message);
             }
+            let id = proof.message;
             self.store_proof(proof, Some(author));
+            if let Some(list) = self.tombstones.get_mut(&id) {
+                list.retain(|s| s.accepted_for.is_some());
+            }
+            self.unapplied = None;
             return Ok(true);
         }
-        let kept = self
-            .tombstones
-            .get(&proof.message)
-            .is_some_and(|list| list.iter().any(|s| s.proof.by == proof.by && s.proof.channel == proof.channel));
+        let kept = self.holds_proof_from(&proof);
         self.store_unapplied(proof, kept)
+    }
+
+    fn holds_proof_from(&self, proof: &TombstoneProof) -> bool {
+        self.tombstones
+            .get(&proof.message)
+            .is_some_and(|list| list.iter().any(|s| s.proof.by == proof.by && s.proof.channel == proof.channel))
+    }
+
+    fn retry_held_proofs(&mut self) {
+        let waiting: Vec<TombstoneProof> = self
+            .tombstones
+            .iter()
+            .filter(|(id, _)| self.index.contains_key(id))
+            .flat_map(|(_, list)| list.iter().filter(|s| s.accepted_for.is_none()).map(|s| s.proof.clone()))
+            .collect();
+        for proof in waiting {
+            let _ = self.delete_message(proof);
+        }
     }
 
     fn note_moderator_delete(&mut self, proof: &TombstoneProof, author: UserId) {
@@ -2524,7 +2598,7 @@ mod tests {
     use crate::permissions::Permissions;
     use crate::server::{Channel, Role};
     use crate::test_support::{
-        delete, edit, fixture, identity_for, join, join_moderator, keyed_profile, post, post_at, proof, signed,
+        delete, edit, fixture, identity_for, join, join_moderator, keyed_profile, post, post_at, proof, signed, signed_event,
     };
 
     #[test]
@@ -4539,39 +4613,116 @@ mod tests {
     }
 
     #[test]
-    fn any_members_signed_delete_is_honored() {
-        let (mut state, channel, _) = fixture();
+    fn only_the_author_or_a_moderator_may_delete_a_message() {
+        let (mut state, channel, owner) = fixture();
         let sid = state.server.id;
         let author = join(&mut state, "author");
         let member = join(&mut state, "member");
-        let [a, b, c] = ["a", "b", "c"].map(|text| post(&state, channel, author, text));
-        for m in [&a, &b, &c] {
+        let moderator = join_moderator(&mut state, "moderator");
+        let [a, b, c, d] = ["a", "b", "c", "d"].map(|text| post(&state, channel, author, text));
+        for m in [&a, &b, &c, &d] {
             create(&mut state, m).unwrap();
         }
 
-        let by_member = proof(&state, &a, member, Utc::now());
-        assert_eq!(state.apply(by_member.clone().into_event()), Ok(true));
+        assert_eq!(state.apply(delete(&state, &a, member)), Ok(false));
+        assert!(state.has_message(a.id), "another member cannot delete it");
+        let by_moderator = proof(&state, &a, moderator, Utc::now());
+        assert_eq!(state.apply(by_moderator.clone().into_event()), Ok(true));
         assert!(!state.has_message(a.id));
-        assert_eq!(state.tombstones_for(a.id), vec![&by_member]);
-        assert_eq!(state.snapshot().accepted, vec![(a.id, member, channel, author)]);
-        assert_eq!(state.apply(by_member.into_event()), Ok(false), "redelivery");
+        assert_eq!(state.tombstones_for(a.id), vec![&by_moderator]);
+        assert_eq!(state.snapshot().accepted, vec![(a.id, moderator, channel, author)]);
+        assert_eq!(state.apply(by_moderator.into_event()), Ok(false), "redelivery");
         assert_eq!(create(&mut state, &a), Ok(false), "a late copy stays out");
-        let backdated = proof(&state, &b, member, b.created_at - chrono::Duration::hours(1));
-        assert_eq!(state.apply(backdated.into_event()), Ok(true));
+        let backdated = proof(&state, &b, author, b.created_at - chrono::Duration::hours(1));
+        assert_eq!(state.apply(backdated.into_event()), Ok(true), "the author may delete their own");
         assert!(!state.has_message(b.id));
+        assert_eq!(state.apply(delete(&state, &c, owner)), Ok(true), "the owner may delete anything");
 
         let keyless = UserProfile::new("keyless");
         let kid = keyless.id;
         state.apply(ServerEvent::MemberJoin { server: sid, profile: keyless }).unwrap();
-        assert_eq!(state.apply(delete(&state, &c, kid)), Err(StoreError::UnknownAuthorKey(kid)));
-        let forged = TombstoneProof::sign(sid, channel, c.id, author, Utc::now(), &identity_for(member));
+        assert_eq!(state.apply(delete(&state, &d, kid)), Err(StoreError::UnknownAuthorKey(kid)));
+        let forged = TombstoneProof::sign(sid, channel, d.id, author, Utc::now(), &identity_for(member));
         assert_eq!(state.apply(forged.into_event()), Err(StoreError::BadSignature));
-        let unknown_channel = TombstoneProof::sign(sid, ChannelId::new(), c.id, author, Utc::now(), &identity_for(author));
+        let unknown_channel = TombstoneProof::sign(sid, ChannelId::new(), d.id, author, Utc::now(), &identity_for(author));
         assert_eq!(state.apply(unknown_channel.into_event()), Err(StoreError::UnknownChannel));
-        assert!(state.has_message(c.id));
         state.apply(ServerEvent::MemberLeave { server: sid, user: member }).unwrap();
-        assert_eq!(state.apply(delete(&state, &c, member)), Ok(true));
-        assert!(!state.has_message(c.id));
+        assert_eq!(state.apply(delete(&state, &d, member)), Ok(false), "nor once they have left");
+        assert!(state.has_message(d.id));
+        state.apply(ServerEvent::MemberLeave { server: sid, user: author }).unwrap();
+        assert_eq!(state.apply(delete(&state, &d, author)), Ok(true), "an author who left may still delete their own");
+        assert!(!state.has_message(d.id));
+    }
+
+    #[test]
+    fn a_moderators_delete_still_counts_after_they_step_down() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let author = join(&mut state, "author");
+        let start = Utc::now();
+        let at = |s: i64| start + chrono::Duration::seconds(s);
+        type StepDown = fn(ServerId, UserId, crate::ids::RoleId) -> ServerEvent;
+        let step_downs: [(&str, StepDown, bool); 3] = [
+            ("unassign", |server, user, role| ServerEvent::RoleUnassign { server, user, role }, false),
+            ("role deleted", |server, _, role| ServerEvent::RoleDelete { server, role }, false),
+            ("leave", |server, user, _| ServerEvent::MemberLeave { server, user }, true),
+        ];
+        for (how, step_down, by_themselves) in step_downs {
+            let moderator = join_moderator(&mut state, how);
+            let [held, unseen] = ["held", "unseen"].map(|text| post_at(&state, channel, author, text, at(0)));
+            let later = post_at(&state, channel, author, "later", at(20 * 60));
+            create(&mut state, &held).unwrap();
+            let signer = if by_themselves { moderator } else { owner };
+            let out = signed_event(&state, signer, at(10), step_down(sid, moderator, mods_role(&state, moderator)));
+            assert_eq!(state.apply_signed(&out), Ok(true), "{how}");
+            assert_eq!(state.server.stepped_down.get(&moderator), Some(&at(10).timestamp_millis()), "{how}");
+            assert_eq!(state.apply(proof(&state, &held, moderator, at(5)).into_event()), Ok(true), "{how}: signed while a moderator");
+            assert!(!state.has_message(held.id), "{how}");
+            assert_eq!(state.apply(proof(&state, &unseen, moderator, at(5)).into_event()), Ok(true), "{how}");
+            assert_eq!(create(&mut state, &unseen), Ok(true), "{how}: the proof is bound");
+            assert!(!state.has_message(unseen.id), "{how}");
+            create(&mut state, &later).unwrap();
+            assert_eq!(state.apply(proof(&state, &later, moderator, at(11)).into_event()), Ok(false), "{how}: signed after");
+            let backdated = proof(&state, &later, moderator, at(5));
+            assert_eq!(state.apply(backdated.into_event()), Ok(false), "{how}: backdated past a message written later");
+            assert!(state.has_message(later.id), "{how}");
+            assert_eq!(reload(&state).server.stepped_down, state.server.stepped_down, "{how}, after a restart");
+        }
+    }
+
+    #[test]
+    fn a_late_message_comes_in_when_only_others_tried_to_delete_it() {
+        let (mut state, channel, _) = fixture();
+        let author = join(&mut state, "author");
+        let member = join(&mut state, "member");
+        let msg = post(&state, channel, author, "mine");
+        assert_eq!(state.apply(delete(&state, &msg, member)), Ok(true), "kept until the message shows who wrote it");
+        assert_eq!(create(&mut state, &msg), Ok(true));
+        assert!(state.has_message(msg.id), "the member was not allowed to delete it");
+        assert_eq!(state.apply(delete(&state, &msg, member)), Ok(false));
+        assert!(state.has_message(msg.id));
+    }
+
+    #[test]
+    fn a_delete_from_a_new_moderator_applies_once_their_role_arrives() {
+        let (mut state, channel, _) = fixture();
+        let sid = state.server.id;
+        let author = join(&mut state, "author");
+        let moderator = join(&mut state, "moderator");
+        let [held, unseen] = ["held", "unseen"].map(|text| post(&state, channel, author, text));
+        create(&mut state, &held).unwrap();
+        for m in [&held, &unseen] {
+            state.apply(delete(&state, m, moderator)).unwrap();
+        }
+        assert_eq!(create(&mut state, &unseen), Ok(true));
+        assert!(state.has_message(held.id) && state.has_message(unseen.id), "their role has not arrived yet");
+        let role = Role { id: RoleId::new(), name: "mods".into(), permissions: Permissions::MANAGE_MESSAGES, position: 1, ..state.server.roles[0].clone() };
+        let rid = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        assert!(state.has_message(held.id), "a role nobody holds changes nothing");
+        assert_eq!(state.apply(ServerEvent::RoleAssign { server: sid, user: moderator, role: rid }), Ok(true));
+        assert!(!state.has_message(held.id) && !state.has_message(unseen.id));
+        assert_eq!(state.tombstone(held.id).map(|p| p.by), Some(moderator));
     }
 
     #[test]
@@ -4579,7 +4730,7 @@ mod tests {
         let (mut state, channel, _) = fixture();
         let sid = state.server.id;
         let author = join(&mut state, "author");
-        let member = join(&mut state, "member");
+        let member = join_moderator(&mut state, "moderator");
 
         let two = post(&state, channel, author, "two");
         assert_eq!(state.apply(delete(&state, &two, member)), Ok(true));
@@ -4960,9 +5111,9 @@ mod tests {
         state.profiles.insert(stranger, outsider);
         for by in [banned, former, stranger] {
             let theirs = post(&state, channel, author, "theirs");
-            assert_eq!(state.apply(delete(&state, &theirs, by)), Ok(true));
-            assert_eq!(create(&mut state, &theirs), Ok(true), "the proof is bound");
-            assert!(!state.has_message(theirs.id));
+            assert_eq!(state.apply(delete(&state, &theirs, by)), Ok(true), "kept until the message shows who wrote it");
+            assert_eq!(create(&mut state, &theirs), Ok(true));
+            assert!(state.has_message(theirs.id), "they may not delete it");
         }
         let unknown = UserId::new();
         let other = post(&state, channel, author, "other");
@@ -5047,12 +5198,12 @@ mod tests {
     }
 
     #[test]
-    fn leaving_or_a_ban_keeps_the_signers_deletes() {
-        let (mut state, channel, _) = fixture();
+    fn leaving_or_a_ban_keeps_a_moderators_deletes() {
+        let (mut state, channel, owner) = fixture();
         let sid = state.server.id;
         let author = join(&mut state, "author");
         for how in ["leave", "ban"] {
-            let member = join(&mut state, how);
+            let member = join_moderator(&mut state, how);
             let held = post(&state, channel, author, "held");
             let unseen = post(&state, channel, author, "unseen");
             create(&mut state, &held).unwrap();
@@ -5060,10 +5211,10 @@ mod tests {
                 assert_eq!(state.apply(delete(&state, m, member)), Ok(true), "{how}");
             }
             let out = match how {
-                "ban" => ServerEvent::MemberBan { server: sid, user: member },
-                _ => ServerEvent::MemberLeave { server: sid, user: member },
+                "ban" => signed_event(&state, owner, Utc::now() + chrono::Duration::seconds(1), ServerEvent::MemberBan { server: sid, user: member }),
+                _ => signed_event(&state, member, Utc::now() + chrono::Duration::seconds(1), ServerEvent::MemberLeave { server: sid, user: member }),
             };
-            assert_eq!(state.apply(out), Ok(true), "{how}");
+            assert_eq!(state.apply_signed(&out), Ok(true), "{how}");
             assert_eq!(state.unapplied_index().get(&member).map_or(0, BTreeSet::len), 1, "{how}");
             let relayed: Vec<MessageId> = state.tombstones_since(DateTime::<Utc>::MIN_UTC).map(|p| p.message).collect();
             assert!(relayed.contains(&held.id) && relayed.contains(&unseen.id), "{how}");

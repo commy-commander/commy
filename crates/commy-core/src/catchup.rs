@@ -360,7 +360,7 @@ pub fn apply_reaction_changes(
 mod tests {
     use super::*;
     use crate::event::ServerEvent;
-    use crate::test_support::{delete, edit, fixture, join, join_moderator, post, post_at, proof, signed};
+    use crate::test_support::{delete, edit, fixture, join, join_moderator, post, post_at, proof, signed, signed_event};
     use chrono::Duration;
 
     fn reconcile(a: &mut ServerState, b: &mut ServerState, now: DateTime<Utc>) -> (Vec<MessageId>, Vec<MessageId>) {
@@ -859,7 +859,7 @@ mod tests {
     #[test]
     fn a_moderators_delete_reaches_stale_replicas_after_a_demotion_or_leave() {
         for how in ["demote", "leave"] {
-            let (mut a, channel, _) = fixture();
+            let (mut a, channel, owner) = fixture();
             let author = join(&mut a, "author");
             let moderator = join_moderator(&mut a, "moderator");
             let role = a.server.member(moderator).unwrap().roles[0];
@@ -869,9 +869,10 @@ mod tests {
             let mut holding = a.clone();
             let removal = delete(&a, &spam, moderator);
             assert_eq!(a.apply(removal.clone()), Ok(true));
-            let out = step_down(&a, how, moderator, role);
+            let signer = if how == "demote" { owner } else { moderator };
+            let out = signed_event(&a, signer, Utc::now() + Duration::seconds(1), step_down(&a, how, moderator, role));
             for state in [&mut a, &mut holding, &mut lacking] {
-                assert_eq!(state.apply(out.clone()), Ok(true), "{how}");
+                assert_eq!(state.apply_signed(&out), Ok(true), "{how}");
             }
             let now = Utc::now();
             assert_eq!(reconcile(&mut a, &mut holding, now).0, vec![spam.id], "{how}");
@@ -890,7 +891,7 @@ mod tests {
 
     #[test]
     fn deletes_from_a_demoted_and_a_regranted_moderator_converge_everywhere() {
-        let (mut base, channel, _) = fixture();
+        let (mut base, channel, owner) = fixture();
         let sid = base.server.id;
         let author = join(&mut base, "author");
         let moderator = join_moderator(&mut base, "moderator");
@@ -899,26 +900,34 @@ mod tests {
         for m in [&first, &second] {
             base.apply(ServerEvent::MessageCreate { message: m.clone() }).unwrap();
         }
-        let demote = ServerEvent::RoleUnassign { server: sid, user: moderator, role };
-        let regrant = ServerEvent::RoleAssign { server: sid, user: moderator, role };
-        let before = delete(&base, &first, moderator);
-        let after = delete(&base, &second, moderator);
+        let start = Utc::now();
+        let at = |s: i64| start + Duration::seconds(s);
+        let demote = signed_event(&base, owner, at(1), ServerEvent::RoleUnassign { server: sid, user: moderator, role });
+        let regrant = signed_event(&base, owner, at(2), ServerEvent::RoleAssign { server: sid, user: moderator, role });
+        let before = proof(&base, &first, moderator, at(0)).into_event();
+        let after = proof(&base, &second, moderator, at(3)).into_event();
         let mut saw_all = base.clone();
-        for event in [&before, &demote, &regrant, &after] {
-            assert_eq!(saw_all.apply(event.clone()), Ok(true));
+        assert_eq!(saw_all.apply(before.clone()), Ok(true));
+        for role_change in [&demote, &regrant] {
+            assert_eq!(saw_all.apply_signed(role_change), Ok(true));
         }
-        let mut demoted_only = base.clone();
-        for event in [&demote, &before] {
-            assert_eq!(demoted_only.apply(event.clone()), Ok(true));
-        }
+        assert_eq!(saw_all.apply(after.clone()), Ok(true));
+        let mut demoted_first = base.clone();
+        assert_eq!(demoted_first.apply_signed(&demote), Ok(true));
+        assert_eq!(demoted_first.apply(before.clone()), Ok(true), "signed while still a moderator");
+        assert_eq!(demoted_first.apply(after.clone()), Ok(false), "signed after the demotion as far as it knows");
+        assert!(demoted_first.has_message(second.id));
+        assert_eq!(demoted_first.apply_signed(&regrant), Ok(true));
+        assert!(!demoted_first.has_message(second.id), "applies once the regrant arrives");
         let mut late_regrant = base.clone();
-        for event in [&after, &demote, &regrant] {
-            assert_eq!(late_regrant.apply(event.clone()), Ok(true));
+        assert_eq!(late_regrant.apply(after.clone()), Ok(true));
+        for role_change in [&demote, &regrant] {
+            assert_eq!(late_regrant.apply_signed(role_change), Ok(true));
         }
         let mut no_roles = base.clone();
-        no_roles.apply(demote.clone()).unwrap();
-        no_roles.apply(regrant.clone()).unwrap();
-        let mut replicas = [saw_all, demoted_only, late_regrant, no_roles, base];
+        no_roles.apply_signed(&demote).unwrap();
+        no_roles.apply_signed(&regrant).unwrap();
+        let mut replicas = [saw_all, demoted_first, late_regrant, no_roles, base];
         let now = Utc::now();
         for _ in 0..2 {
             for i in 0..replicas.len() {
@@ -939,7 +948,7 @@ mod tests {
     fn legacy_messages_stay_out_but_their_deletes_reach_replicas_holding_them() {
         let (mut base, channel, _) = fixture();
         let author = join(&mut base, "author");
-        let member = join(&mut base, "member");
+        let moderator = join_moderator(&mut base, "moderator");
         let mut lacking = base.clone();
         let legacy = |text: &str| Message { id: MessageId::new(), ..Message::new(channel, author, text) };
         let (edited, own, others) = (legacy("edited"), legacy("own"), legacy("others"));
@@ -957,14 +966,14 @@ mod tests {
         assert!(state.message(edited.id).unwrap().sig.is_some());
         assert!(digests(&state, now).is_empty());
         let by_author = proof(&state, &own, author, Utc::now());
-        let by_member = proof(&state, &others, member, Utc::now());
-        for p in [&by_author, &by_member] {
+        let by_moderator = proof(&state, &others, moderator, Utc::now());
+        for p in [&by_author, &by_moderator] {
             assert_eq!(state.apply(p.clone().into_event()), Ok(true));
         }
         assert!(!state.has_message(own.id) && !state.has_message(others.id));
         let day = |p: &TombstoneProof| BucketKey::Tombstones { day: day_number(p.at) };
         let keys: Vec<BucketKey> = digests(&state, now).iter().map(|d| d.key).collect();
-        assert_eq!(keys, dedup_keys([day(&by_author), day(&by_member)]));
+        assert_eq!(keys, dedup_keys([day(&by_author), day(&by_moderator)]));
         for other in [&mut holding, &mut lacking] {
             reconcile(&mut state, other, now);
             assert!(!other.has_message(own.id) && !other.has_message(others.id));
