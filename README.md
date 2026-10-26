@@ -22,7 +22,8 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Roles and moderation.** Colored roles with fine-grained permissions,
   down to who may embed links, read message history, start threads, post
   polls or schedule events, kick, ban and timeouts, per-server nicknames, server mute and deafen,
-  moving people between voice channels, pinned messages and announcements,
+  moving people between voice channels from their menu or by dragging them,
+  pinned messages and announcements,
   and auto moderation that holds messages with blocked words, links, too many
   mentions or flooding. A moderation bot you run yourself can remove new ones
   for everyone ([crates/commy-bot](crates/commy-bot/README.md)), and bots can
