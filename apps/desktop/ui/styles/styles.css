@@ -904,6 +904,7 @@ body.voice-dragging, body.voice-dragging * { cursor: grabbing !important; }
 }
 
 .switch:checked::after { left: 23px; }
+.switch:disabled { opacity: .5; cursor: default; }
 
 .emoji-picker {
   position: absolute;

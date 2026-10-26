@@ -5729,6 +5729,8 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
         let in_game = seen.as_deref().is_some_and(|text| text.starts_with("Playing "));
         if app.game_in_front.swap(in_game, std::sync::atomic::Ordering::Relaxed) != in_game {
             overlay::refresh(&handle);
+        } else {
+            overlay::hold_corner(&handle);
         }
         let seen = if enabled { seen } else { None };
         let stable = if !enabled || seen_last_poll == seen {

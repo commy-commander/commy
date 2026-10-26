@@ -3,7 +3,7 @@
 const tauri = window.__TAURI__;
 const $ = id => document.getElementById(id);
 
-const overlay = { members: [], speaking: new Set(), lingering: new Map(), showChat: true, showEveryone: false, lines: [], testing: false };
+const overlay = { members: [], speaking: new Set(), lingering: new Map(), showChat: true, showEveryone: false, picturesOnly: false, lines: [], testing: false };
 const TEST_MEMBERS = [{ id: "overlay-test", name: "You, talking" }];
 let noticeTimer = null;
 
@@ -25,6 +25,8 @@ function applyConfig(config) {
   document.body.classList.toggle("right", corner.right);
   overlay.showChat = config.show_chat !== false;
   overlay.showEveryone = Boolean(config.show_everyone);
+  overlay.picturesOnly = Boolean(config.pictures_only);
+  document.body.classList.toggle("pictures", overlay.picturesOnly);
   showNotice(`Overlay on · ${overlayCornerLabel(config.corner)}`);
   if (!overlay.showChat) {
     overlay.lines = [];
@@ -63,7 +65,7 @@ function renderMembers() {
   const lingering = new Set(overlay.lingering.keys());
   const speaking = overlay.testing ? new Set([...overlay.speaking, "overlay-test"]) : overlay.speaking;
   const members = overlay.testing ? [...TEST_MEMBERS, ...overlay.members] : overlay.members;
-  for (const member of overlayVisibleMembers({ members, speaking, lingering, showEveryone: overlay.showEveryone })) {
+  for (const member of overlayVisibleMembers({ members, speaking, lingering, showEveryone: overlay.showEveryone, picturesOnly: overlay.picturesOnly })) {
     const row = el("div", "member" + (speaking.has(member.id) ? " speaking" : ""));
     row.dataset.user = member.id;
     const avatar = el("div", "avatar");
@@ -80,7 +82,7 @@ function renderMembers() {
       avatar.textContent = initials(member.name);
     }
     row.appendChild(avatar);
-    row.appendChild(el("div", "name", member.name));
+    if (!overlay.picturesOnly) row.appendChild(el("div", "name", member.name));
     list.appendChild(row);
   }
 }
@@ -158,7 +160,7 @@ async function start() {
 
 if (!tauri && typeof location !== "undefined" && location.hash.startsWith("#preview")) {
   const opts = location.hash.slice(9).replace(/^=/, "").split(",");
-  applyConfig({ corner: opts[0] || "top-left", show_everyone: opts.includes("everyone"), show_chat: true, opacity: 0.92 });
+  applyConfig({ corner: opts[0] || "top-left", show_everyone: opts.includes("everyone"), pictures_only: opts.includes("pictures"), show_chat: true, opacity: 0.92 });
   renderRoster({ members: [
     { id: "ferris", name: "ferris", emoji: "🦀" },
     { id: "nova", name: "nova" },

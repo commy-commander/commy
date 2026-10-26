@@ -17,9 +17,18 @@ function overlayCorner(corner) {
   return { name, bottom: name.startsWith("bottom"), right: name.endsWith("right") };
 }
 
-function overlayVisibleMembers({ members, speaking, lingering, showEveryone }) {
-  const list = members || [];
-  if (showEveryone) return list;
+function overlayUniqueMembers(members) {
+  const seen = new Set();
+  return (members || []).filter(m => {
+    if (seen.has(m.id)) return false;
+    seen.add(m.id);
+    return true;
+  });
+}
+
+function overlayVisibleMembers({ members, speaking, lingering, showEveryone, picturesOnly }) {
+  const list = overlayUniqueMembers(members);
+  if (showEveryone || picturesOnly) return list;
   return list.filter(m => (speaking && speaking.has(m.id)) || (lingering && lingering.has(m.id)));
 }
 
@@ -28,5 +37,5 @@ function overlayPushLine(lines, line, max = OVERLAY_CHAT_LINES) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { OVERLAY_NOTICE_MS, OVERLAY_TEST_MS, overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_MS, OVERLAY_CHAT_LINES, OVERLAY_LINGER_MS, overlayCorner, overlayVisibleMembers, overlayPushLine };
+  module.exports = { OVERLAY_NOTICE_MS, OVERLAY_TEST_MS, overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_MS, OVERLAY_CHAT_LINES, OVERLAY_LINGER_MS, overlayCorner, overlayUniqueMembers, overlayVisibleMembers, overlayPushLine };
 }
