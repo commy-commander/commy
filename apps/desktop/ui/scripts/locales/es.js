@@ -21,6 +21,7 @@ const LOCALE_ES = {
   "settings.tab.storage": "Almacenamiento",
   "settings.tab.updates": "Actualizaciones",
   "settings.tab.startup": "Inicio",
+  "settings.tab.diagnostics": "Diagnóstico",
   "settings.close": "Cerrar",
   "appearance.chatSize": "Tamaño del texto del chat",
   "appearance.compact": "Modo compacto",

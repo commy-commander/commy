@@ -287,6 +287,10 @@ impl Session {
                 let found: Option<catalog::EmojiPage> = self.search("emojis", &params).await?;
                 to_json(&catalog::safe_emojis(found.ok_or("This site does not offer emoji search")?))
             }
+            "run_connection_check" => {
+                let checker = self.node.lock().await.as_ref().map(CommyNode::connection_checker);
+                to_json(&checker.ok_or("Commy is still starting its connection")?.run().await)
+            }
             "pins_load" => to_json(&self.pins()),
             "pin_channel" => {
                 let (server, channel) = (args.server_id.unwrap_or_default(), args.channel_id.unwrap_or_default());

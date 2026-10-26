@@ -1679,6 +1679,13 @@ async function mockInvoke(cmd, args = {}) {
     case "tray_prompt_due": return !mock.voice.tray_prompt_seen;
     case "finish_tray_prompt": mock.autostart = args.autostart; mock.voice.close_to_tray = args.closeToTray; mock.voice.tray_prompt_seen = true; return mock.voice;
     case "get_autostart": return !!mock.autostart;
+    case "debug_log_status": return { verbose: !!mock.verboseLogs, saving: true };
+    case "set_verbose_logging": mock.verboseLogs = args.enabled; return { verbose: !!mock.verboseLogs, saving: true };
+    case "open_log_folder": return null;
+    case "save_log_bundle": return "commy-logs.txt";
+    case "run_connection_check":
+      await new Promise(r => setTimeout(r, 600));
+      return mock.connectionCheck || { quality: "good", direct: "open", relay_reachable: true, relay_rtt_ms: 38, ipv6: false };
     case "set_autostart": mock.autostart = args.enabled; return mock.autostart;
     case "stop_camera": mock.cameraOn = false; return null;
     case "push_camera_frame": return 1;
@@ -7201,6 +7208,74 @@ async function runUpdateAction() {
   } catch (err) {
     toast(String(err));
     loadUpdateStatus();
+  }
+}
+
+let connectionTestRunning = false;
+
+async function runConnectionTest() {
+  if (connectionTestRunning) return;
+  connectionTestRunning = true;
+  const button = $("conn-test-run");
+  const card = button.closest(".conn-test");
+  button.disabled = true;
+  button.textContent = "Testing...";
+  card.classList.add("running");
+  try {
+    renderConnectionTest(await invoke("run_connection_check"));
+  } catch (err) {
+    toast(String(err));
+  } finally {
+    connectionTestRunning = false;
+    button.disabled = false;
+    button.textContent = "Run Again";
+    card.classList.remove("running");
+  }
+}
+
+function renderConnectionTest(check) {
+  const view = describeConnectionCheck(check, { browser: document.documentElement.classList.contains("web-app") });
+  const badge = $("conn-test-badge");
+  badge.textContent = view.badge;
+  badge.className = `conn-badge ${view.tone}`;
+  $("conn-test-summary").textContent = view.summary;
+  $("conn-test-direct").textContent = view.direct;
+  $("conn-test-relay").textContent = view.relay;
+  $("conn-test-detail").textContent = view.detail;
+}
+
+async function loadDebugLogStatus() {
+  try {
+    renderDebugLogStatus(await invoke("debug_log_status"));
+  } catch {
+    renderDebugLogStatus({ verbose: false, saving: false });
+  }
+}
+
+function renderDebugLogStatus(status) {
+  const toggle = $("verbose-log-toggle");
+  toggle.checked = !!status.verbose;
+  toggle.disabled = !status.saving;
+  toggle.closest(".settings-card").classList.toggle("readonly", !status.saving);
+  $("log-folder-open").disabled = !status.saving;
+  $("log-bundle-save").disabled = !status.saving;
+}
+
+async function setVerboseLogging(enabled) {
+  try {
+    renderDebugLogStatus(await invoke("set_verbose_logging", { enabled }));
+  } catch (err) {
+    toast(String(err));
+    loadDebugLogStatus();
+  }
+}
+
+async function saveLogBundle() {
+  try {
+    const saved = await invoke("save_log_bundle");
+    if (saved) toast(`Logs saved to ${saved}`);
+  } catch (err) {
+    toast(String(err));
   }
 }
 
@@ -16499,6 +16574,10 @@ function wireEvents() {
     renderUpdateStatus();
   });
   $("update-action").onclick = runUpdateAction;
+  $("conn-test-run").onclick = runConnectionTest;
+  $("verbose-log-toggle").addEventListener("change", e => setVerboseLogging(e.target.checked));
+  $("log-folder-open").onclick = () => invoke("open_log_folder").catch(err => toast(String(err)));
+  $("log-bundle-save").onclick = saveLogBundle;
   $("sounds-toggle").addEventListener("change", e => {
     const prefs = soundPrefs();
     prefs.enabled = e.target.checked;
@@ -17553,6 +17632,7 @@ function openUserSettings(tab) {
   $("account-pronouns").value = state.voice.pronouns || "";
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();
+  if (!document.documentElement.classList.contains("web-app")) loadDebugLogStatus();
   loadIntegrations().then(renderIntegrations);
   loadStreamDeck().then(renderStreamDeck);
   loadAccount().then(() => {
