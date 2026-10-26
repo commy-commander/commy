@@ -760,6 +760,7 @@ impl ServerState {
                 server.is_member(*user) || server.banned.contains(user) || self.profiles.contains_key(user)
             }
             E::MemberTimeout { user, .. } => server.is_member(*user),
+            E::VoiceState { user, channel, .. } => self.voice_claim_fits(*user, *channel),
             E::EventDelete { event, .. } | E::EventRsvp { event, .. } => server.events.iter().any(|e| e.id == *event),
             E::EmojiRemove { name, .. } => server.emojis.iter().any(|e| e.name == *name),
             E::StickerRemove { name, .. } => server.stickers.iter().any(|s| s.name == *name),
@@ -1055,33 +1056,17 @@ impl ServerState {
                 self.server.afk_disabled = disabled;
                 Ok(true)
             }
+            ServerEvent::VoiceState { user, channel, .. } if !self.voice_claim_fits(user, channel) => Ok(false),
             ServerEvent::VoiceState { user, channel, since, muted, deafened } => match channel {
                 Some(ch) => {
                     if self.server.channel(ch).is_none() {
                         return Err(StoreError::UnknownChannel);
                     }
-                    live_room(&self.voice_states, user)?;
-                    let previous = self.voice_states.insert(user, ch);
-                    let moved = previous != Some(ch);
-                    if moved {
-                        self.hands.remove(&user);
-                        self.activities.retain(|room, a| a.starter != user || *room == ch);
-                    }
+                    let moved = self.seat(user, ch, since)?;
                     let flagged = self.voice_flags.insert(user, (muted, deafened)) != Some((muted, deafened));
-                    if moved || !self.voice_since.contains_key(&user) {
-                        let now = Utc::now().timestamp();
-                        self.voice_since.insert(user, since.filter(|s| *s <= now).unwrap_or(now));
-                    }
-                    if let Some(left) = previous.filter(|_| moved) {
-                        self.clear_empty_voice_status(left);
-                    }
                     Ok(moved || flagged)
                 }
-                None => {
-                    self.screen_shares.remove(&user);
-                    self.cameras.remove(&user);
-                    Ok(self.drop_voice_presence(user))
-                }
+                None => Ok(self.end_seat(user)),
             },
             ServerEvent::ScreenShare {
                 user,
@@ -1149,9 +1134,9 @@ impl ServerState {
                 self.same_server(server)?;
                 Ok(replace(&mut self.server.activities_enabled, enabled))
             }
-            ServerEvent::DeviceAnnounce { server, user, node, voice, .. } => {
+            ServerEvent::DeviceAnnounce { server, user, node, voice, since } => {
                 self.same_server(server)?;
-                self.note_device(user, node, voice)
+                self.note_device(user, node, voice, since)
             }
             ServerEvent::ServerDelete { server } => {
                 self.same_server(server)?;
@@ -2258,6 +2243,10 @@ impl ServerState {
         self.devices.of(user)
     }
 
+    pub fn voice_join_stamp(&self, user: UserId, now_ms: i64) -> i64 {
+        self.devices.join_stamp(user, now_ms)
+    }
+
     pub fn voice_device(&self, user: UserId) -> Option<&str> {
         self.voice_states.get(&user).and_then(|room| self.devices.in_voice(user, *room))
     }
@@ -2266,7 +2255,7 @@ impl ServerState {
         self.voice_device(user).map(str::to_string).or_else(|| self.profiles.get(&user).and_then(|p| p.node.clone()))
     }
 
-    fn note_device(&mut self, user: UserId, node: String, voice: Option<ChannelId>) -> Result<bool, StoreError> {
+    fn note_device(&mut self, user: UserId, node: String, voice: Option<ChannelId>, since: Option<i64>) -> Result<bool, StoreError> {
         if !self.server.is_current_member(user) {
             return Ok(false);
         }
@@ -2281,7 +2270,73 @@ impl ServerState {
         if self.devices.of(user).is_empty() && self.devices.users() >= MAX_LIVE_ENTRIES {
             return Err(StoreError::Limit);
         }
-        Ok(self.devices.note(user, node, voice))
+        let held_by = self.devices.voice_holder(user).map(|d| d.node.clone());
+        let noted = self.devices.note(user, node, voice, since);
+        Ok(self.follow_voice_device(user, held_by)? || noted)
+    }
+
+    fn follow_voice_device(&mut self, user: UserId, held_by: Option<String>) -> Result<bool, StoreError> {
+        let holder = self.devices.voice_holder(user).map(|d| (d.node.clone(), d.voice, d.since));
+        match holder {
+            Some((node, Some(room), since)) => {
+                if held_by.as_deref() != Some(node.as_str()) {
+                    self.action_times.remove(&format!("voice:{user}"));
+                }
+                self.seat(user, room, since.map(|ms| ms.div_euclid(1000)))
+            }
+            _ if held_by.is_some() => Ok(self.end_seat(user)),
+            _ => Ok(false),
+        }
+    }
+
+    fn voice_claim_fits(&self, user: UserId, channel: Option<ChannelId>) -> bool {
+        self.devices.voice_holder(user).is_none_or(|held| held.voice == channel)
+    }
+
+    fn seat(&mut self, user: UserId, room: ChannelId, since: Option<i64>) -> Result<bool, StoreError> {
+        live_room(&self.voice_states, user)?;
+        let previous = self.voice_states.insert(user, room);
+        let moved = previous != Some(room);
+        if moved {
+            self.hands.remove(&user);
+            self.activities.retain(|at, a| a.starter != user || *at == room);
+        }
+        if moved || !self.voice_since.contains_key(&user) {
+            let now = Utc::now().timestamp();
+            self.voice_since.insert(user, since.filter(|s| *s <= now).unwrap_or(now));
+        }
+        if let Some(left) = previous.filter(|_| moved) {
+            self.clear_empty_voice_status(left);
+        }
+        Ok(moved)
+    }
+
+    fn end_seat(&mut self, user: UserId) -> bool {
+        self.screen_shares.remove(&user);
+        self.cameras.remove(&user);
+        self.drop_voice_presence(user)
+    }
+
+    pub fn carry_live_voice(&mut self, old: &ServerState) {
+        self.devices = old.devices.clone();
+        let carried: Vec<(UserId, ChannelId)> = old
+            .voice_states
+            .iter()
+            .filter(|(user, room)| self.server.is_member(**user) && self.server.channel(**room).is_some())
+            .map(|(user, room)| (*user, *room))
+            .collect();
+        for (user, room) in carried {
+            self.voice_states.insert(user, room);
+            carry(&old.voice_since, &mut self.voice_since, user);
+            carry(&old.voice_flags, &mut self.voice_flags, user);
+            carry(&old.screen_shares, &mut self.screen_shares, user);
+            carry(&old.cameras, &mut self.cameras, user);
+        }
+    }
+
+    pub fn end_voice(&mut self, user: UserId) -> bool {
+        let stood = self.devices.stand_up(user);
+        self.end_seat(user) || stood
     }
 
     fn pin_identity(&self, profile: &mut UserProfile) -> Result<(), StoreError> {
@@ -2433,6 +2488,12 @@ fn replace<T: PartialEq>(slot: &mut T, value: T) -> bool {
     }
     *slot = value;
     true
+}
+
+fn carry<T: Copy>(from: &HashMap<UserId, T>, to: &mut HashMap<UserId, T>, user: UserId) {
+    if let Some(value) = from.get(&user) {
+        to.insert(user, *value);
+    }
 }
 
 fn live_room(map: &HashMap<UserId, ChannelId>, user: UserId) -> Result<(), StoreError> {
@@ -5529,6 +5590,116 @@ mod tests {
 
         state.apply(ServerEvent::MemberLeave { server: sid, user: member }).unwrap();
         assert!(state.devices_of(member).is_empty());
+    }
+
+    fn two_rooms(state: &mut ServerState) -> (ChannelId, ChannelId) {
+        let sid = state.server.id;
+        let lounge = crate::server::Channel::new("Lounge", ChannelKind::Voice, 9);
+        let lounge_id = lounge.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: lounge }).unwrap();
+        (state.server.channels[1].id, lounge_id)
+    }
+
+    fn device(state: &ServerState, user: UserId, node: &str, voice: Option<ChannelId>, since_ms: i64) -> ServerEvent {
+        ServerEvent::DeviceAnnounce { server: state.server.id, user, node: node.into(), voice, since: voice.map(|_| since_ms) }
+    }
+
+    fn sits(user: UserId, channel: Option<ChannelId>) -> ServerEvent {
+        ServerEvent::VoiceState { user, channel, muted: false, deafened: false, since: None }
+    }
+
+    #[test]
+    fn only_the_device_in_voice_can_end_the_seat() {
+        let (mut state, _, _) = fixture();
+        let (general, _) = two_rooms(&mut state);
+        let member = join(&mut state, "friend");
+        let (desktop, browser) = ("ab".repeat(32), "cd".repeat(32));
+        state.apply(device(&state, member, &browser, None, 0)).unwrap();
+        state.apply(device(&state, member, &desktop, Some(general), 1_000)).unwrap();
+        assert_eq!(state.voice_states.get(&member), Some(&general), "the device in voice seats the member");
+        assert_eq!(state.voice_device(member), Some(desktop.as_str()));
+
+        assert_eq!(state.apply(sits(member, None)), Ok(false), "a leave the device in voice did not say is ignored");
+        assert_eq!(state.voice_states.get(&member), Some(&general));
+        state.apply(device(&state, member, &browser, None, 0)).unwrap();
+        assert_eq!(state.voice_states.get(&member), Some(&general), "the other device was never in voice");
+
+        assert_eq!(state.apply(device(&state, member, &desktop, None, 0)), Ok(true));
+        assert_eq!(state.voice_states.get(&member), None, "the device in voice left, so the member left");
+    }
+
+    #[test]
+    fn the_device_in_voice_decides_the_room_whatever_its_clock_says() {
+        let (mut state, _, _) = fixture();
+        let (general, lounge) = two_rooms(&mut state);
+        let member = join(&mut state, "friend");
+        let key = identity_for(member);
+        let sid = state.server.id;
+        let (desktop, phone) = ("ab".repeat(32), "cd".repeat(32));
+        let now = Utc::now().timestamp_millis();
+        let signed = |at: i64, event: ServerEvent| crate::SignedEvent::sign(sid, member, at, event, &key);
+
+        let ahead = now + 20_000;
+        state.apply_signed(&signed(ahead, device(&state, member, &desktop, Some(general), 1_000))).unwrap();
+        state.apply_signed(&signed(ahead, sits(member, Some(general)))).unwrap();
+        assert_eq!(state.voice_states.get(&member), Some(&general));
+
+        state.apply_signed(&signed(now, device(&state, member, &phone, Some(lounge), 2_000))).unwrap();
+        assert_eq!(state.voice_states.get(&member), Some(&lounge), "the later join wins although its clock is behind");
+        let muted = ServerEvent::VoiceState { user: member, channel: Some(lounge), muted: true, deafened: false, since: None };
+        assert_eq!(state.apply_signed(&signed(now + 1, muted)), Ok(true), "the new device is heard although its clock is behind");
+        assert_eq!(state.voice_flags(member), (true, false));
+
+        assert_eq!(state.apply_signed(&signed(ahead + 1, sits(member, Some(general)))), Ok(false), "a stale join from the old device");
+        assert_eq!(state.apply_signed(&signed(ahead + 2, sits(member, None))), Ok(false), "a stale leave from the old device");
+        assert_eq!(state.voice_states.get(&member), Some(&lounge));
+        assert_eq!(state.apply_signed(&signed(ahead + 3, device(&state, member, &desktop, Some(general), 1_000))), Ok(true));
+        assert_eq!(state.voice_states.get(&member), Some(&lounge), "an older join heard late does not take the seat back");
+    }
+
+    #[test]
+    fn a_member_without_announced_devices_still_comes_and_goes_by_voice_state() {
+        let (mut state, _, _) = fixture();
+        let (general, lounge) = two_rooms(&mut state);
+        let member = join(&mut state, "friend");
+        assert_eq!(state.apply(sits(member, Some(general))), Ok(true));
+        assert_eq!(state.apply(sits(member, Some(lounge))), Ok(true));
+        assert_eq!(state.apply(sits(member, None)), Ok(true));
+        assert!(state.voice_states.is_empty());
+    }
+
+    #[test]
+    fn ending_voice_clears_the_seat_the_share_the_camera_and_the_device_seat() {
+        let (mut state, _, _) = fixture();
+        let (general, _) = two_rooms(&mut state);
+        let member = join(&mut state, "friend");
+        state.apply(device(&state, member, &"ab".repeat(32), Some(general), 1_000)).unwrap();
+        state.apply(ServerEvent::ScreenShare { user: member, channel: general, active: true }).unwrap();
+        state.apply(ServerEvent::CameraState { user: member, channel: general, active: true }).unwrap();
+        assert!(state.end_voice(member));
+        assert!(state.voice_states.is_empty() && state.screen_shares.is_empty() && state.cameras.is_empty());
+        assert_eq!(state.voice_device(member), None);
+        assert!(!state.end_voice(member));
+        assert_eq!(state.apply(sits(member, Some(general))), Ok(true), "a fresh join after the seat ended is heard");
+    }
+
+    #[test]
+    fn a_fresh_copy_of_the_server_keeps_who_is_in_voice_and_on_which_device() {
+        let (mut old, _, owner) = fixture();
+        let (general, _) = two_rooms(&mut old);
+        let member = join(&mut old, "friend");
+        old.apply(device(&old, member, &"ab".repeat(32), Some(general), 1_000)).unwrap();
+        old.apply(ServerEvent::VoiceState { user: member, channel: Some(general), muted: true, deafened: false, since: Some(5) }).unwrap();
+        old.apply(ServerEvent::ScreenShare { user: member, channel: general, active: true }).unwrap();
+        old.apply(sits(owner, Some(general))).unwrap();
+        let mut fresh = ServerState::new(old.server.clone());
+        fresh.carry_live_voice(&old);
+        assert_eq!(fresh.voice_states, old.voice_states);
+        assert_eq!(fresh.voice_flags(member), (true, false));
+        assert_eq!(fresh.voice_since(member), old.voice_since(member));
+        assert_eq!(fresh.screen_shares.get(&member), Some(&general));
+        assert_eq!(fresh.voice_device(member), Some("ab".repeat(32).as_str()));
+        assert_eq!(fresh.apply(sits(member, None)), Ok(false), "the device in voice still decides");
     }
 
     #[test]

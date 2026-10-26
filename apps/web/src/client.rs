@@ -290,18 +290,32 @@ impl Client {
             Err(_) => return false,
         };
         let mut live = self.liveness.lock().unwrap();
+        let said_at = action.map(|a| a.at);
         if let Some((user, presence)) = said {
-            changed |= live.settle_device_presence(state, user, node, presence, now);
+            changed |= live.settle_device_presence(state, user, node, presence, now, said_at);
         }
         if let Some(user) = speaker {
             live.heard_through_service(server, user, now);
+            live.heard_device(server, user, &liveness::node_hex(node), now);
         }
         changed
     }
 
-    pub fn hear_peer(&self, server: ServerId, event: &ServerEvent, action: Option<&Action>) {
+    pub fn hear_peer(&self, server: ServerId, sender: &[u8; 32], event: &ServerEvent, action: Option<&Action>) {
         if let Some(user) = liveness::speaker(event, action) {
-            self.liveness.lock().unwrap().heard(server, user, web_time::Instant::now());
+            let now = web_time::Instant::now();
+            let mut live = self.liveness.lock().unwrap();
+            live.heard(server, user, now);
+            live.heard_device(server, user, &liveness::node_hex(sender), now);
+        }
+    }
+
+    pub fn hear_voice_peers(&self, server: ServerId, peers: &[(UserId, String)]) {
+        let now = web_time::Instant::now();
+        let mut live = self.liveness.lock().unwrap();
+        for (user, node) in peers {
+            live.heard(server, *user, now);
+            live.heard_device(server, *user, node, now);
         }
     }
 
@@ -310,21 +324,29 @@ impl Client {
         servers.get(&server).and_then(|s| s.profiles.get(&user)).is_some_and(|p| p.presence.is_visible_online())
     }
 
-    pub fn here(&self, server: ServerId, node: &[u8; 32], voice: Option<(ChannelId, i64)>) -> Vec<WirePayload> {
+    pub fn here(&self, server: ServerId, node: &[u8; 32], seat: Option<Seat>) -> Vec<WirePayload> {
         let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
         if profile.presence == Presence::Invisible {
             return Vec::new();
         }
-        let (voice, since) = (voice.map(|(channel, _)| channel), voice.map(|(_, since)| since));
-        let announce = ServerEvent::DeviceAnnounce { server, user: profile.id, node: liveness::node_hex(node), voice, since };
+        let presence = ServerEvent::PresenceUpdate { user: profile.id, presence: profile.presence };
+        let mut events = vec![self.device_news(server, profile.id, node, seat), presence];
+        events.extend(seat.map(|seat| seat.voice_state(profile.id)));
+        sign_all(server, &profile, &identity, events)
+    }
+
+    pub fn device_payload(&self, server: ServerId, node: &[u8; 32], seat: Option<Seat>) -> Option<WirePayload> {
+        let (profile, identity) = self.me.lock().unwrap().clone()?;
+        sign_all(server, &profile, &identity, [self.device_news(server, profile.id, node, seat)]).pop()
+    }
+
+    fn device_news(&self, server: ServerId, me: UserId, node: &[u8; 32], seat: Option<Seat>) -> ServerEvent {
+        let (voice, since) = (seat.map(|s| s.channel), seat.map(|s| s.since_ms));
+        let announce = ServerEvent::DeviceAnnounce { server, user: me, node: liveness::node_hex(node), voice, since };
         if let Some(state) = self.servers.lock().unwrap().get_mut(&server) {
             let _ = state.apply(announce.clone());
         }
-        let at = Utc::now().timestamp_millis();
-        [announce, ServerEvent::PresenceUpdate { user: profile.id, presence: profile.presence }]
-            .into_iter()
-            .map(|event| WirePayload::Signed(SignedEvent::sign(server, profile.id, at, event, &identity)))
-            .collect()
+        announce
     }
 
     pub fn voice_state(&self, server: ServerId, channel: Option<ChannelId>, muted: bool, deafened: bool, since: Option<i64>) -> Result<WirePayload, String> {
@@ -539,6 +561,16 @@ impl Client {
         self.presence_everywhere(|_| Presence::Offline)
     }
 
+    pub fn will(&self, server: ServerId) -> Option<WirePayload> {
+        let (profile, identity) = self.me.lock().unwrap().clone()?;
+        if profile.presence == Presence::Invisible {
+            return None;
+        }
+        let gone = ServerEvent::PresenceUpdate { user: profile.id, presence: Presence::Offline };
+        let after_greeting = Utc::now().timestamp_millis() + 1;
+        Some(WirePayload::Signed(SignedEvent::sign(server, profile.id, after_greeting, gone, &identity)))
+    }
+
     pub fn presence_now(&self) -> Vec<(ServerId, WirePayload)> {
         self.presence_everywhere(|profile| profile.presence.as_seen_by_others())
     }
@@ -743,6 +775,26 @@ fn check_can_post(state: &ServerState, user: UserId, channel: ChannelId) -> Resu
     act::can_post(state, perms, user, channel, Utc::now())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Seat {
+    pub channel: ChannelId,
+    pub since_ms: i64,
+    pub muted: bool,
+    pub deafened: bool,
+}
+
+impl Seat {
+    fn voice_state(self, user: UserId) -> ServerEvent {
+        let since = Some(self.since_ms.div_euclid(1000));
+        ServerEvent::VoiceState { user, channel: Some(self.channel), muted: self.muted, deafened: self.deafened, since }
+    }
+}
+
+fn sign_all(server: ServerId, profile: &UserProfile, identity: &Identity, events: impl IntoIterator<Item = ServerEvent>) -> Vec<WirePayload> {
+    let at = Utc::now().timestamp_millis();
+    events.into_iter().map(|event| WirePayload::Signed(SignedEvent::sign(server, profile.id, at, event, identity))).collect()
+}
+
 pub struct PollForm {
     pub question: String,
     pub options: Vec<String>,
@@ -941,7 +993,8 @@ mod tests {
         let joined = w.client.voice_state(w.server, Some(voice), false, false, Some(1)).unwrap();
         let mut observer = w.state.clone();
         heard(&mut observer, &[joined]);
-        heard(&mut observer, &w.client.here(w.server, &node, Some((voice, 1_000))));
+        let seat = Seat { channel: voice, since_ms: 1_000, muted: false, deafened: false };
+        heard(&mut observer, &w.client.here(w.server, &node, Some(seat)));
         assert_eq!(observer.voice_states.get(&me), Some(&voice));
         assert_eq!(observer.voice_node(me), Some(hex.clone()));
         assert!(observer.media_peer_ok(me, &hex, voice, true));
@@ -958,8 +1011,27 @@ mod tests {
         assert!(w.client.voice_moved_away(w.server, &hex), "another device of mine joined a different room");
 
         let left = w.client.voice_state(w.server, None, false, false, None).unwrap();
-        heard(&mut observer, &[left]);
+        heard(&mut observer, std::slice::from_ref(&left));
+        assert_eq!(observer.voice_states.get(&me), Some(&voice), "a leave alone does not unseat the device in voice");
+        let stood_up = w.client.device_payload(w.server, &node, None).unwrap();
+        heard(&mut observer, &[stood_up, left]);
         assert_eq!(observer.voice_states.get(&me), None);
+    }
+
+    #[test]
+    fn someone_arriving_later_sees_the_browser_in_voice_from_its_greeting() {
+        let w = world();
+        assert!(w.client.install_mirror(w.server, &mirror(&w)).unwrap());
+        let voice = voice_channel(&w);
+        let me = w.client.profile().unwrap().id;
+        let node = [7u8; 32];
+        let seat = Seat { channel: voice, since_ms: 61_000, muted: true, deafened: false };
+        let mut newcomer = w.state.clone();
+        heard(&mut newcomer, &w.client.here(w.server, &node, Some(seat)));
+        assert_eq!(newcomer.voice_states.get(&me), Some(&voice));
+        assert_eq!(newcomer.voice_flags(me), (true, false));
+        assert_eq!(newcomer.voice_since(me), Some(61));
+        assert_eq!(newcomer.voice_node(me), Some(liveness::node_hex(&node)));
     }
 
     #[test]

@@ -1071,7 +1071,9 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
                 held.push((signer, event));
             }
         }
-        for entry in voice.into_iter().filter(|v| Some(v.user) != me_id) {
+        state.carry_live_voice(&old);
+        let unseated = voice.into_iter().filter(|v| Some(v.user) != me_id && !state.voice_states.contains_key(&v.user));
+        for entry in unseated.collect::<Vec<_>>() {
             let _ = state.apply(entry.into_event());
         }
         let waited = old.snapshot();
