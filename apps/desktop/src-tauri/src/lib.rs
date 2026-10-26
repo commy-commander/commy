@@ -3649,7 +3649,8 @@ mod placeholder_tests {
             assert!(require_permission(&app, &state, me.id, needed, "moderate").is_err(), "{needed:?}");
         }
         assert!(require_permission(&app, &state, me.id, Permissions::USE_SOUNDBOARD, "play").is_ok());
-        assert!(!can_upload_sounds(&app, &state, me.id));
+        let boop = view::expressions::NewSound { name: "boop", blob: String::new(), volume: None, emoji: None };
+        assert!(view::expressions::add_sound(&state, our_permissions(&app, &state, me.id), me.id, boop).is_err());
         let structural = |events: Vec<ServerEvent>| {
             events.iter().any(|e| matches!(e, ServerEvent::ChannelCreate { .. } | ServerEvent::AfkChannelSet { .. }))
         };
@@ -5261,26 +5262,6 @@ fn decode_upload(data: &str) -> CmdResult<Vec<u8>> {
         .map_err(|_| "file data is not valid base64".to_string())
 }
 
-fn check_expression_name(name: &str) -> CmdResult<String> {
-    let name = name.trim().to_ascii_lowercase();
-    if commy_core::server::valid_expression_name(&name) {
-        Ok(name)
-    } else {
-        Err("names must be 2 to 32 letters, numbers or underscores".into())
-    }
-}
-
-fn check_can_add(app: &App, state: &ServerState, me: UserId, kind: Permissions, taken: bool, noun: &str) -> CmdResult<()> {
-    let perms = our_permissions(app, state, me);
-    if !state.server.is_member(me) || !perms.can_add(kind) {
-        return Err(format!("you can't add {noun}s in this server"));
-    }
-    if taken && !perms.allows(Permissions::MANAGE_EXPRESSIONS) {
-        return Err(format!("a {noun} with that name already exists"));
-    }
-    Ok(())
-}
-
 #[tauri::command]
 async fn add_emoji(
     app: tauri::State<'_, App>,
@@ -5289,25 +5270,32 @@ async fn add_emoji(
     name: String,
     data: String,
 ) -> CmdResult<()> {
+    add_picture(&app, &handle, &server_id, view::expressions::Picture::Emoji, &name, &data).await
+}
+
+async fn add_picture(
+    app: &App,
+    handle: &tauri::AppHandle,
+    server_id: &str,
+    kind: view::expressions::Picture,
+    name: &str,
+    data: &str,
+) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let name = check_expression_name(&name)?;
-    let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        let replacing = state.server.emojis.iter().any(|e| e.name == name);
-        check_can_add(&app, state, me.id, Permissions::ADD_EMOJIS, replacing, "emoji")?;
-        if !replacing && state.server.emojis.len() >= commy_core::server::MAX_EMOJIS {
-            return Err(format!("servers can have up to {} emojis", commy_core::server::MAX_EMOJIS));
-        }
-    }
-    let bytes = decode_upload(&data)?;
-    if bytes.len() > expressions::MAX_EMOJI_BYTES || expressions::image_mime(&bytes).is_none() {
-        return Err("emojis must be a PNG, GIF, JPEG or WebP under 256 KB".into());
-    }
-    let blob = store_shared_blob(&app, bytes).await?;
-    let emoji = commy_core::server::CustomEmoji { name, blob };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::EmojiAdd { server: sid, emoji }).await
+    let me = current_profile(app)?;
+    managed(app, sid, me.id, |state, perms| view::expressions::add_picture(state, perms, me.id, kind, name, String::new()))?;
+    let bytes = decode_upload(data)?;
+    kind.check(&bytes)?;
+    let blob = store_shared_blob(app, bytes).await?;
+    let event = managed(app, sid, me.id, |state, perms| view::expressions::add_picture(state, perms, me.id, kind, name, blob))?;
+    apply_and_broadcast(app, handle, sid, event).await
+}
+
+async fn remove_expression(app: &App, handle: &tauri::AppHandle, server_id: &str, kind: &str, name: String) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(app)?;
+    let event = managed(app, sid, me.id, |state, perms| view::expressions::remove(state, perms, kind, name))?;
+    apply_and_broadcast(app, handle, sid, event).await
 }
 
 #[tauri::command]
@@ -5317,10 +5305,7 @@ async fn remove_emoji(
     server_id: String,
     name: String,
 ) -> CmdResult<()> {
-    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_EXPRESSIONS, "manage emojis")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::EmojiRemove { server: sid, name }).await
+    remove_expression(&app, &handle, &server_id, "emoji", name).await
 }
 
 #[tauri::command]
@@ -5331,25 +5316,7 @@ async fn add_sticker(
     name: String,
     data: String,
 ) -> CmdResult<()> {
-    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let name = check_expression_name(&name)?;
-    let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        let replacing = state.server.stickers.iter().any(|s| s.name == name);
-        check_can_add(&app, state, me.id, Permissions::ADD_STICKERS, replacing, "sticker")?;
-        if !replacing && state.server.stickers.len() >= commy_core::server::MAX_STICKERS {
-            return Err(format!("servers can have up to {} stickers", commy_core::server::MAX_STICKERS));
-        }
-    }
-    let bytes = decode_upload(&data)?;
-    if bytes.len() > expressions::MAX_STICKER_BYTES || expressions::image_mime(&bytes).is_none() {
-        return Err("stickers must be a PNG, GIF, JPEG or WebP under 512 KB".into());
-    }
-    let blob = store_shared_blob(&app, bytes).await?;
-    let sticker = commy_core::server::Sticker { name, blob };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::StickerAdd { server: sid, sticker }).await
+    add_picture(&app, &handle, &server_id, view::expressions::Picture::Sticker, &name, &data).await
 }
 
 #[tauri::command]
@@ -5359,10 +5326,7 @@ async fn remove_sticker(
     server_id: String,
     name: String,
 ) -> CmdResult<()> {
-    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_EXPRESSIONS, "remove stickers")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::StickerRemove { server: sid, name }).await
+    remove_expression(&app, &handle, &server_id, "sticker", name).await
 }
 
 #[tauri::command]
@@ -5374,23 +5338,9 @@ async fn add_emoticon(
     text: String,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let name = check_expression_name(&name)?;
-    let text = commy_core::server::clean_emoticon(&text).ok_or(format!(
-        "emoticons are one line of up to {} characters",
-        commy_core::server::MAX_EMOTICON_CHARS
-    ))?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        let replacing = state.server.emoticons.iter().any(|e| e.name == name);
-        check_can_add(&app, state, me.id, Permissions::ADD_EMOTICONS, replacing, "emoticon")?;
-        if !replacing && state.server.emoticons.len() >= commy_core::server::MAX_EMOTICONS {
-            return Err(format!("servers can have up to {} emoticons", commy_core::server::MAX_EMOTICONS));
-        }
-    }
-    let emoticon = commy_core::server::Emoticon { name, text };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::EmoticonAdd { server: sid, emoticon }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::expressions::add_emoticon(state, perms, me.id, &name, &text))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -5400,10 +5350,7 @@ async fn remove_emoticon(
     server_id: String,
     name: String,
 ) -> CmdResult<()> {
-    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_EXPRESSIONS, "remove emoticons")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::EmoticonRemove { server: sid, name }).await
+    remove_expression(&app, &handle, &server_id, "emoticon", name).await
 }
 
 #[tauri::command]
@@ -5416,8 +5363,8 @@ async fn set_expression_sharing(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change sharing")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ExpressionSharingSet { server: sid, stickers, emoticons }).await?;
+    let event = managed(&app, sid, me.id, |state, perms| view::expressions::sharing(state, perms, stickers, emoticons))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
@@ -5465,29 +5412,20 @@ async fn sticker_search(
 
 #[tauri::command]
 async fn store_catalog_emoji(app: tauri::State<'_, App>, name: String, data: String) -> CmdResult<String> {
-    let name = check_expression_name(&name)?;
-    let bytes = decode_upload(&data)?;
-    if bytes.len() > expressions::MAX_EMOJI_BYTES || expressions::image_mime(&bytes).is_none() {
-        return Err("emojis must be a PNG, GIF, JPEG or WebP under 256 KB".into());
-    }
-    let image = store_shared_blob(&app, bytes).await?;
-    Ok(commy_core::server::emoji_token(&name, &image))
+    store_catalog_picture(&app, view::expressions::Picture::Emoji, &name, &data).await
 }
 
 #[tauri::command]
 async fn store_catalog_sticker(app: tauri::State<'_, App>, name: String, data: String) -> CmdResult<String> {
-    let name = check_expression_name(&name)?;
-    let bytes = decode_upload(&data)?;
-    if bytes.len() > expressions::MAX_STICKER_BYTES || expressions::image_mime(&bytes).is_none() {
-        return Err("stickers must be a PNG, GIF, JPEG or WebP under 512 KB".into());
-    }
-    let image = store_shared_blob(&app, bytes).await?;
-    Ok(commy_core::server::sticker_token(&name, &image))
+    store_catalog_picture(&app, view::expressions::Picture::Sticker, &name, &data).await
 }
 
-fn can_upload_sounds(app: &App, state: &ServerState, user: UserId) -> bool {
-    our_permissions(app, state, user).allows(Permissions::MANAGE_EXPRESSIONS)
-        || (state.server.soundboard_open && state.server.is_member(user))
+async fn store_catalog_picture(app: &App, kind: view::expressions::Picture, name: &str, data: &str) -> CmdResult<String> {
+    let name = view::expressions::name(name)?;
+    let bytes = decode_upload(data)?;
+    kind.check(&bytes)?;
+    let image = store_shared_blob(app, bytes).await?;
+    Ok(kind.token(&name, &image))
 }
 
 #[tauri::command]
@@ -5501,43 +5439,14 @@ async fn add_sound(
     emoji: Option<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let name = check_expression_name(&name)?;
-    let emoji = check_sound_emoji(emoji)?;
     let me = current_profile(&app)?;
-    {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        if !can_upload_sounds(&app, state, me.id) {
-            return Err("you do not have permission to add sounds".into());
-        }
-        let existing = state.server.soundboard.iter().any(|s| s.name == name);
-        if existing && !our_permissions(&app, state, me.id).allows(Permissions::MANAGE_EXPRESSIONS) {
-            return Err("a sound with that name already exists".into());
-        }
-        if !existing && state.server.soundboard.len() >= commy_core::server::MAX_SOUNDS {
-            return Err(format!("servers can have up to {} sounds", commy_core::server::MAX_SOUNDS));
-        }
-    }
+    let sound = |blob: String| view::expressions::NewSound { name: &name, blob, volume, emoji: emoji.as_deref() };
+    managed(&app, sid, me.id, |state, perms| view::expressions::add_sound(state, perms, me.id, sound(String::new())))?;
     let bytes = decode_upload(&data)?;
-    if bytes.len() > expressions::MAX_SOUND_BYTES || expressions::audio_mime(&bytes).is_none() {
-        return Err("sounds must be an MP3, OGG or WAV under 1 MB".into());
-    }
+    view::expressions::check_sound(&bytes)?;
     let blob = store_shared_blob(&app, bytes).await?;
-    let sound = commy_core::server::SoundboardSound {
-        name,
-        blob,
-        volume: volume.unwrap_or(1.0).clamp(0.0, 2.0),
-        emoji,
-    };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundAdd { server: sid, sound }).await
-}
-
-fn check_sound_emoji(emoji: Option<String>) -> CmdResult<Option<String>> {
-    match emoji.map(|e| e.trim().to_string()).filter(|e| !e.is_empty()) {
-        None => Ok(None),
-        Some(e) if commy_core::server::valid_sound_emoji(&e) => Ok(Some(e)),
-        Some(_) => Err("pick a single emoji for the sound".into()),
-    }
+    let event = managed(&app, sid, me.id, |state, perms| view::expressions::add_sound(state, perms, me.id, sound(blob)))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -5549,17 +5458,9 @@ async fn set_sound_emoji(
     emoji: Option<String>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let emoji = check_sound_emoji(emoji)?;
     let me = current_profile(&app)?;
-    let sound = {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_EXPRESSIONS, "change sounds")?;
-        let mut sound = state.server.soundboard.iter().find(|s| s.name == name).cloned().ok_or("unknown sound")?;
-        sound.emoji = emoji;
-        sound
-    };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundAdd { server: sid, sound }).await
+    let event = managed(&app, sid, me.id, |state, perms| view::expressions::set_sound_emoji(state, perms, &name, emoji.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -5569,10 +5470,7 @@ async fn remove_sound(
     server_id: String,
     name: String,
 ) -> CmdResult<()> {
-    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_EXPRESSIONS, "remove sounds")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundRemove { server: sid, name }).await
+    remove_expression(&app, &handle, &server_id, "sound", name).await
 }
 
 #[tauri::command]
@@ -5585,8 +5483,7 @@ async fn set_expression_settings(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change expression settings")?;
-    let event = ServerEvent::ExpressionSettings { server: sid, emojis_shareable, soundboard_open };
+    let event = managed(&app, sid, me.id, |state, perms| view::expressions::settings(state, perms, emojis_shareable, soundboard_open))?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
@@ -5601,8 +5498,8 @@ async fn set_sound_sharing(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change sound sharing")?;
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::SoundSharingSet { server: sid, shareable }).await?;
+    let event = managed(&app, sid, me.id, |state, perms| view::expressions::sound_sharing(state, perms, shareable))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
@@ -5661,38 +5558,6 @@ async fn set_server_public(
     Ok(())
 }
 
-#[derive(Clone, serde::Serialize)]
-struct SoundboardPlayView {
-    server: String,
-    channel: String,
-    user: String,
-    name: String,
-    blob: String,
-    volume: f32,
-}
-
-fn soundboard_play_view(state: &ServerState, channel: ChannelId, user: UserId, name: &str) -> Option<SoundboardPlayView> {
-    if expressions::is_default_sound(name) {
-        return Some(SoundboardPlayView {
-            server: state.server.id.to_string(),
-            channel: channel.to_string(),
-            user: user.to_string(),
-            name: name.to_string(),
-            blob: name.to_string(),
-            volume: 1.0,
-        });
-    }
-    let sound = state.server.soundboard.iter().find(|s| s.name == name)?;
-    Some(SoundboardPlayView {
-        server: state.server.id.to_string(),
-        channel: channel.to_string(),
-        user: user.to_string(),
-        name: sound.name.clone(),
-        blob: sound.blob.clone(),
-        volume: sound.volume,
-    })
-}
-
 #[tauri::command]
 async fn play_soundboard(
     app: tauri::State<'_, App>,
@@ -5706,68 +5571,25 @@ async fn play_soundboard(
 
 async fn play_sound_in_voice(app: &App, handle: &tauri::AppHandle, sid: ServerId, name: String) -> CmdResult<()> {
     let me = current_profile(app)?;
-    let (channel, in_server) = {
-        let session = app.voice_session.lock().unwrap();
-        let s = session.as_ref().ok_or("join a voice channel first")?;
-        (s.channel, s.server == sid)
-    };
-    if !in_server {
-        return Err("join a voice channel in this server first".into());
-    }
-    let view = {
-        let servers = app.servers.lock().unwrap();
-        let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
-        require_not_timed_out(state, me.id)?;
-        soundboard_play_view(state, channel, me.id, &name).ok_or("that sound no longer exists")?
-    };
-    broadcast_event(app, sid, ServerEvent::SoundboardPlay { server: sid, channel, user: me.id, name })
-    .await;
+    let channel = voice_channel_in(app, sid)?;
+    let (event, view) = managed(app, sid, me.id, |state, perms| view::expressions::play(state, perms, me.id, channel, name, chrono::Utc::now()))?;
+    broadcast_event(app, sid, event).await;
     let _ = handle.emit("soundboard-play", view);
     Ok(())
 }
 
-#[derive(Clone, serde::Serialize)]
-struct SharedSoundView {
-    server: String,
-    server_name: String,
-    name: String,
-    blob: String,
-    volume: f32,
-    emoji: Option<String>,
+fn voice_channel_in(app: &App, sid: ServerId) -> CmdResult<ChannelId> {
+    let session = app.voice_session.lock().unwrap();
+    let s = session.as_ref().ok_or("join a voice channel first")?;
+    if s.server != sid {
+        return Err("join a voice channel in this server first".into());
+    }
+    Ok(s.channel)
 }
 
 #[tauri::command]
-fn list_shareable_sounds(app: tauri::State<'_, App>) -> Vec<SharedSoundView> {
-    let servers = app.servers.lock().unwrap();
-    let mut out: Vec<SharedSoundView> = servers
-        .values()
-        .filter(|s| s.server.sounds_shareable)
-        .flat_map(|s| {
-            s.server.soundboard.iter().map(|sound| SharedSoundView {
-                server: s.server.id.to_string(),
-                server_name: s.server.name.clone(),
-                name: sound.name.clone(),
-                blob: sound.blob.clone(),
-                volume: sound.volume,
-                emoji: sound.emoji.clone(),
-            })
-        })
-        .collect();
-    out.sort_by(|a, b| a.server_name.cmp(&b.server_name).then(a.name.cmp(&b.name)));
-    out
-}
-
-fn shared_sound_view(sid: ServerId, channel: ChannelId, user: UserId, name: &str, blob: &str, volume: f32) -> Option<SoundboardPlayView> {
-    commy_core::server::ImageRef::parse(blob)?;
-    Some(SoundboardPlayView {
-        server: sid.to_string(),
-        channel: channel.to_string(),
-        user: user.to_string(),
-        name: name.to_string(),
-        blob: blob.to_string(),
-        volume: volume.clamp(0.0, 2.0),
-    })
+fn list_shareable_sounds(app: tauri::State<'_, App>) -> Vec<view::expressions::SharedSound> {
+    view::expressions::shareable_sounds(app.servers.lock().unwrap().values())
 }
 
 #[tauri::command]
@@ -5781,46 +5603,23 @@ async fn play_shared_sound(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let source: ServerId = source_server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let (channel, in_server) = {
-        let session = app.voice_session.lock().unwrap();
-        let s = session.as_ref().ok_or("join a voice channel first")?;
-        (s.channel, s.server == sid)
-    };
-    if !in_server {
-        return Err("join a voice channel in this server first".into());
-    }
-    let (blob, volume) = {
+    let channel = voice_channel_in(&app, sid)?;
+    let (event, view) = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
         let from = servers.get(&source).ok_or("unknown server")?;
-        if !from.server.sounds_shareable {
-            return Err("that server does not share its sounds".into());
-        }
-        let sound = from.server.soundboard.iter().find(|s| s.name == name).ok_or("that sound no longer exists")?;
-        (sound.blob.clone(), sound.volume)
+        view::expressions::play_shared(state, our_permissions(&app, state, me.id), me.id, channel, &from.server, name)?
     };
-    let view = shared_sound_view(sid, channel, me.id, &name, &blob, volume).ok_or("that sound cannot be played")?;
-    broadcast_event(&app, sid, ServerEvent::SharedSoundPlay { server: sid, channel, user: me.id, name, blob, volume }).await;
+    broadcast_event(&app, sid, event).await;
     let _ = handle.emit("soundboard-play", view);
     Ok(())
 }
 
-fn on_remote_shared_sound(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, user: UserId, name: &str, blob: &str, volume: f32) {
+fn on_remote_sound(app: &App, handle: &tauri::AppHandle, sid: ServerId, event: &ServerEvent) {
     let mine = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
-    if mine != Some((sid, channel)) {
-        return;
-    }
-    let allowed = {
-        let servers = app.servers.lock().unwrap();
-        servers.get(&sid).is_some_and(|state| {
-            state.voice_states.get(&user) == Some(&channel) && state.server.permissions_for(user).allows(Permissions::USE_SOUNDBOARD)
-        })
-    };
-    if !allowed {
-        return;
-    }
-    if let Some(view) = shared_sound_view(sid, channel, user, name, blob, volume) {
+    let Some((_, channel)) = mine.filter(|(server, _)| *server == sid) else { return };
+    let view = app.servers.lock().unwrap().get(&sid).and_then(|state| view::expressions::heard(state, channel, event));
+    if let Some(view) = view {
         let _ = handle.emit("soundboard-play", view);
     }
 }
@@ -5928,88 +5727,9 @@ fn on_remote_activity_input(app: &tauri::State<'_, App>, handle: &tauri::AppHand
     }
 }
 
-fn on_remote_soundboard(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, user: UserId, name: &str) {
-    let mine = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
-    if mine != Some((sid, channel)) {
-        return;
-    }
-    let view = {
-        let servers = app.servers.lock().unwrap();
-        servers.get(&sid).and_then(|state| {
-            let allowed = state.voice_states.get(&user) == Some(&channel)
-                && state.server.permissions_for(user).allows(Permissions::USE_SOUNDBOARD);
-            allowed.then(|| soundboard_play_view(state, channel, user, name)).flatten()
-        })
-    };
-    if let Some(view) = view {
-        let _ = handle.emit("soundboard-play", view);
-    }
-}
-
-#[derive(Clone, serde::Serialize)]
-struct SharedEmojiView {
-    server: String,
-    server_name: String,
-    name: String,
-    image: String,
-}
-
-#[derive(Clone, serde::Serialize)]
-struct SharedEmoticonView {
-    server: String,
-    server_name: String,
-    name: String,
-    text: String,
-}
-
-#[derive(serde::Serialize)]
-struct SharedExpressions {
-    emojis: Vec<SharedEmojiView>,
-    stickers: Vec<SharedEmojiView>,
-    emoticons: Vec<SharedEmoticonView>,
-}
-
-fn shared_images<'a>(
-    servers: impl Iterator<Item = &'a ServerState>,
-    pick: impl Fn(&'a ServerState) -> Vec<(&'a str, &'a str)>,
-) -> Vec<SharedEmojiView> {
-    let mut out: Vec<SharedEmojiView> = servers
-        .flat_map(|s| {
-            pick(s).into_iter().map(move |(name, image)| SharedEmojiView {
-                server: s.server.id.to_string(),
-                server_name: s.server.name.clone(),
-                name: name.to_string(),
-                image: image.to_string(),
-            })
-        })
-        .collect();
-    out.sort_by(|a, b| a.server_name.cmp(&b.server_name).then(a.name.cmp(&b.name)));
-    out
-}
-
 #[tauri::command]
-fn list_shareable_expressions(app: tauri::State<'_, App>) -> SharedExpressions {
-    let servers = app.servers.lock().unwrap();
-    let emojis = shared_images(servers.values().filter(|s| s.server.emojis_shareable), |s| {
-        s.server.emojis.iter().map(|e| (e.name.as_str(), e.blob.as_str())).collect()
-    });
-    let stickers = shared_images(servers.values().filter(|s| s.server.stickers_shareable), |s| {
-        s.server.stickers.iter().map(|e| (e.name.as_str(), e.blob.as_str())).collect()
-    });
-    let mut emoticons: Vec<SharedEmoticonView> = servers
-        .values()
-        .filter(|s| s.server.emoticons_shareable)
-        .flat_map(|s| {
-            s.server.emoticons.iter().map(|e| SharedEmoticonView {
-                server: s.server.id.to_string(),
-                server_name: s.server.name.clone(),
-                name: e.name.clone(),
-                text: e.text.clone(),
-            })
-        })
-        .collect();
-    emoticons.sort_by(|a, b| a.server_name.cmp(&b.server_name).then(a.name.cmp(&b.name)));
-    SharedExpressions { emojis, stickers, emoticons }
+fn list_shareable_expressions(app: tauri::State<'_, App>) -> view::expressions::Shared {
+    view::expressions::shareable(app.servers.lock().unwrap().values())
 }
 
 #[tauri::command]
@@ -6849,15 +6569,9 @@ async fn run_net_loop(
                     }
                     continue;
                 }
-                if let ServerEvent::SoundboardPlay { channel, user, name, .. } = &event {
+                if matches!(event, ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. }) {
                     if remote_action_ok(&app, server, &event, action) {
-                        on_remote_soundboard(&app, &handle, server, *channel, *user, name);
-                    }
-                    continue;
-                }
-                if let ServerEvent::SharedSoundPlay { channel, user, name, blob, volume, .. } = &event {
-                    if remote_action_ok(&app, server, &event, action) {
-                        on_remote_shared_sound(&app, &handle, server, *channel, *user, name, blob, *volume);
+                        on_remote_sound(&app, &handle, server, &event);
                     }
                     continue;
                 }
@@ -8181,13 +7895,5 @@ mod share_tests {
         assert_eq!(parse_source(None, None), None);
         assert_eq!(parse_source(Some("monitor"), None), None);
         assert_eq!(parse_source(Some("camera"), Some(1)), None);
-    }
-
-    #[test]
-    fn sound_emoji_input_is_trimmed_and_checked() {
-        assert_eq!(check_sound_emoji(None), Ok(None));
-        assert_eq!(check_sound_emoji(Some("  ".into())), Ok(None));
-        assert_eq!(check_sound_emoji(Some(" 🥁 ".into())), Ok(Some("🥁".into())));
-        assert!(check_sound_emoji(Some("drum".into())).is_err());
     }
 }

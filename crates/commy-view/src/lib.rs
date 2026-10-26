@@ -2,6 +2,7 @@ pub mod act;
 pub mod calls;
 pub mod catalog;
 pub mod dms;
+pub mod expressions;
 pub mod keys;
 pub mod links;
 pub mod liveness;

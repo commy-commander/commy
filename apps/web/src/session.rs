@@ -30,6 +30,7 @@ use crate::store::WebStore;
 
 mod calls;
 mod dms;
+mod expressions;
 mod files;
 mod handoff;
 mod invites;
@@ -186,6 +187,14 @@ struct Args {
     pronouns: Option<String>,
     presence_until: Option<i64>,
     status_until: Option<i64>,
+    text: Option<String>,
+    volume: Option<f32>,
+    stickers: Option<bool>,
+    emoticons: Option<bool>,
+    emojis_shareable: Option<bool>,
+    soundboard_open: Option<bool>,
+    shareable: Option<bool>,
+    source_server_id: Option<String>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -418,6 +427,14 @@ impl Session {
             "set_server_image" | "set_channel_banner" | "set_role_banner" => self.server_command(cmd, args).await,
             "set_channel_sensitive" => self.server_command(cmd, args).await,
             "set_channel_access" => self.server_command(cmd, args).await,
+            "add_emoji" | "add_sticker" | "add_emoticon" | "add_sound" => self.expression_command(cmd, args).await,
+            "remove_emoji" | "remove_sticker" | "remove_emoticon" | "remove_sound" => self.expression_command(cmd, args).await,
+            "set_sound_emoji" | "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing" => {
+                self.expression_command(cmd, args).await
+            }
+            "store_catalog_emoji" | "store_catalog_sticker" | "catalog_media_path" => self.expression_command(cmd, args).await,
+            "list_shareable_expressions" | "list_shareable_sounds" => self.expression_command(cmd, args).await,
+            "play_soundboard" | "play_shared_sound" => self.expression_command(cmd, args).await,
             "update_profile" => self.profile_command(cmd, args).await,
             "set_about" => self.profile_command(cmd, args).await,
             "set_avatar" => self.profile_command(cmd, args).await,
@@ -862,6 +879,9 @@ impl Session {
         while let Some(event) = events.recv().await {
             match event {
                 NetEvent::Event { server, event, action, .. } => {
+                    if self.hear_sound(server, &event, action) {
+                        continue;
+                    }
                     if self.client.borrow().admits(server, &event, action) {
                         self.client.borrow().hear_peer(server, &event, action.as_ref());
                     }

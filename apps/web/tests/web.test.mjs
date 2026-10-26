@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -66,6 +66,33 @@ test("picking an image offers pictures and hands the app a data URL, like the de
   }
   assert.equal(await webReadDataUrl({ type: "image/png" }, Reader), "data:image/png;base64,AAAA");
   assert.match(read("apps", "web", "ui", "web-bridge.js"), /cmd === "pick_image"/);
+});
+
+test("picking a sound offers audio and hands back its name and a data URL, like the desktop picker", () => {
+  const clicks = [];
+  const input = { addEventListener() {}, click() { clicks.push(this.accept); } };
+  webPickFile({ createElement: () => input }, "sound");
+  assert.deepEqual(clicks, [WEB_SOUND_ACCEPT]);
+  assert.equal(webSoundName("Air Horn.mp3"), "Air Horn");
+  assert.equal(webSoundName("clip.final.ogg"), "clip.final");
+  assert.equal(webSoundName("noextension"), "");
+  const bridge = read("apps", "web", "ui", "web-bridge.js");
+  assert.match(bridge, /cmd === "pick_sound"/);
+  assert.match(bridge, /cmd === "fetch_catalog_image"/);
+});
+
+test("catalog images come through the account server's media route and must be small images", () => {
+  assert.equal(webCatalogPath("https://cdn3.emoji.gg/emojis/1-cat.png"), "/api/auth/commy/media?u=https%3A%2F%2Fcdn3.emoji.gg%2Femojis%2F1-cat.png");
+  const res = (status, type, length) => ({ ok: status === 200, status, headers: new Map([["content-type", type], ["content-length", String(length)]]) });
+  assert.equal(webCatalogRefusal("emoji.gg", res(200, "image/png", 10), 100), null);
+  assert.equal(webCatalogRefusal("emoji.gg", res(502, "image/png", 10), 100), "emoji.gg could not be reached right now (502)");
+  assert.equal(webCatalogRefusal("KLIPY", res(200, "text/html", 10), 100), "KLIPY sent something that is not an image");
+  assert.equal(webCatalogRefusal("KLIPY", res(200, "image/gif", 101), 100), "that image is too large");
+});
+
+test("shared emojis, stickers and sounds come from the servers rather than empty defaults", () => {
+  assert.equal(webDefault("list_shareable_expressions").known, false);
+  assert.equal(webDefault("list_shareable_sounds").known, false);
 });
 
 test("defaults are fresh copies, so the app cannot change them for the next caller", () => {
