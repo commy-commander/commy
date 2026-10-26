@@ -35,6 +35,7 @@ mod handoff;
 mod invites;
 mod links;
 mod pictures;
+mod profile;
 mod servers;
 mod sync;
 
@@ -176,6 +177,14 @@ struct Args {
     sensitive: Option<bool>,
     public: Option<bool>,
     confirm_name: Option<String>,
+    display_name: Option<String>,
+    custom_status: Option<String>,
+    presence: Option<String>,
+    status_emoji: Option<String>,
+    about: Option<String>,
+    pronouns: Option<String>,
+    presence_until: Option<i64>,
+    status_until: Option<i64>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -362,6 +371,7 @@ impl Session {
             "get_invite" => self.invite_command(cmd, args).await,
             "create_invite_link" => self.invite_command(cmd, args).await,
             "resolve_invite_link" => self.invite_command(cmd, args).await,
+            "invite_full_link" => self.invite_command(cmd, args).await,
             "join_server" => self.invite_command(cmd, args).await,
             "list_invites" => self.invite_command(cmd, args).await,
             "revoke_invite" => self.invite_command(cmd, args).await,
@@ -386,6 +396,7 @@ impl Session {
             "set_own_role" => self.server_command(cmd, args).await,
             "set_role_access" => self.server_command(cmd, args).await,
             "kick_member" => self.server_command(cmd, args).await,
+            "move_voice_member" => self.server_command(cmd, args).await,
             "ban_member" => self.server_command(cmd, args).await,
             "unban_member" => self.server_command(cmd, args).await,
             "time_out_member" => self.server_command(cmd, args).await,
@@ -401,6 +412,13 @@ impl Session {
             "set_channel_color" => self.server_command(cmd, args).await,
             "set_channel_sensitive" => self.server_command(cmd, args).await,
             "set_channel_access" => self.server_command(cmd, args).await,
+            "update_profile" => self.profile_command(cmd, args).await,
+            "set_about" => self.profile_command(cmd, args).await,
+            "set_avatar" => self.profile_command(cmd, args).await,
+            "set_profile_banner" => self.profile_command(cmd, args).await,
+            "set_pronouns" => self.profile_command(cmd, args).await,
+            "set_status_expiry" => self.profile_command(cmd, args).await,
+            "set_profile_privacy" => self.profile_command(cmd, args).await,
             "web_farewell" => {
                 self.hang_up_on_farewell().await;
                 self.say_goodbye();
@@ -841,7 +859,10 @@ impl Session {
                     if self.client.borrow().admits(server, &event, action) {
                         self.client.borrow().hear_peer(server, &event, action.as_ref());
                     }
-                    self.apply_event(server, event, action, true, true);
+                    let moved = self.moved_me(server, &event);
+                    if self.apply_event(server, event, action, true, true) != Applied::Nothing {
+                        self.follow_voice_move(server, moved);
+                    }
                 }
                 NetEvent::SyncReceived { server, payload } => {
                     let installed = self.client.borrow().install_owner_snapshot(server, payload).unwrap_or(false);

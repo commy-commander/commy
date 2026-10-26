@@ -771,6 +771,7 @@ async function mockInvoke(cmd, args = {}) {
         expires_at: expiresAt ? new Date(expiresAt).toISOString() : null };
     }
     case "list_invites": return mockInvites().map(i => ({ ...i }));
+    case "invite_full_link": return `${args.origin}/i/${args.code}#` + "q".repeat(/^[A-Z2-9]{8}$/.test(args.code) ? 43 : 22);
     case "revoke_invite": {
       if (!mockInvites().some(i => i.origin === args.origin && i.code === args.code)) throw "That invite is already gone";
       mock.invites = mock.invites.filter(i => !(i.origin === args.origin && i.code === args.code));
@@ -1529,7 +1530,7 @@ async function mockInvoke(cmd, args = {}) {
       return mock.account;
     }
     case "account_sign_out_other": mock.account.others = mock.account.others.filter(o => o.id !== args.id); return mock.account;
-    case "set_account_server": return mock.account;
+    case "set_account_server": if (args.server && !/^(https:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|org|net|chat)$/i.test(args.server)) throw "signin.server.bad.ending"; return mock.account;
     case "set_user_voice": {
       mock.voice.user_volumes = mock.voice.user_volumes || {};
       mock.voice.muted_users = mock.voice.muted_users || [];
@@ -2060,6 +2061,7 @@ function showModal(id) {
 
 function hideModals() {
   answerStreamDeckPairing(false);
+  stopSoundPreview();
   $("modal-backdrop").classList.add("hidden");
 }
 
@@ -3082,6 +3084,7 @@ function textChannelRow(channel, canCreate, pinned = false) {
 
 function voiceChannelRow(channel, canCreate, pinned = false) {
   const row = el("div", "channel voice-channel");
+  row.dataset.room = channel.id;
   const icon = el("span", "channel-icon");
   icon.appendChild(voiceKindIcon(channel.kind, 18));
   row.appendChild(icon);
@@ -3110,6 +3113,7 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
     row.appendChild(badge);
   }
   row.onclick = () => {
+    if (voiceDragHoldsClick()) return;
     if (channel.can_view === false) {
       toast(`Only ${accessWho(state.currentServer, channel.view_roles)} can join this channel`);
       return;
@@ -3153,9 +3157,11 @@ function voiceUserRow(channel, entry, myName, role = null) {
   const { id: userId, name: user, since, muted, deafened } = entry;
   const isMe = state.user && userId ? userId === state.user.id : user === myName;
   const vu = el("div", "voice-user");
+  vu.dataset.room = channel.id;
   if (userId) {
     vu.dataset.user = userId;
     vu.classList.toggle("speaking", state.speaking.has(userId));
+    vu.classList.toggle("dragging", Boolean(voiceDrag && voiceDrag.live && voiceDrag.userId === userId));
   }
   vu.appendChild(makeAvatar(userId, user, "avatar avatar-sm"));
   vu.appendChild(el("span", "voice-user-name", user));
@@ -3195,9 +3201,13 @@ function voiceUserRow(channel, entry, myName, role = null) {
     vu.onclick = vu.oncontextmenu = e => {
       e.preventDefault();
       e.stopPropagation();
+      if (voiceDragHoldsClick()) return;
       const member = server && server.members.find(m => m.id === userId);
       openMemberMenu(member || { id: userId, name: user }, e.clientX, e.clientY);
     };
+    if (canDragVoiceMember(server, userId, state.user && state.user.id)) {
+      vu.onpointerdown = e => armVoiceDrag(e, vu, channel.id, userId, user);
+    }
   } else if (isMe) {
     vu.onclick = vu.oncontextmenu = e => {
       e.preventDefault();
@@ -3213,6 +3223,113 @@ function voiceUserRow(channel, entry, myName, role = null) {
     }
   }
   return vu;
+}
+
+let voiceDrag = null;
+let voiceDragClickGuard = 0;
+
+function voiceDragHoldsClick() {
+  return Boolean(voiceDrag && voiceDrag.live) || Date.now() < voiceDragClickGuard;
+}
+
+function armVoiceDrag(e, row, fromId, userId, name) {
+  if (e.button !== 0 || voiceDrag) return;
+  voiceDrag = { pointerId: e.pointerId, kind: e.pointerType, x: e.clientX, y: e.clientY, at: Date.now(), row, fromId, userId, name, live: false, ghost: null, over: null, timer: null };
+  if (e.pointerType === "touch") voiceDrag.timer = setTimeout(() => stepVoiceDrag(voiceDrag.x, voiceDrag.y), VOICE_DRAG.touchHoldMs);
+  document.addEventListener("pointermove", onVoiceDragMove);
+  document.addEventListener("pointerup", onVoiceDragUp);
+  document.addEventListener("pointercancel", onVoiceDragCancel);
+  document.addEventListener("touchmove", holdVoiceDragTouch, { passive: false });
+  document.addEventListener("keydown", onVoiceDragKey);
+}
+
+function onVoiceDragMove(e) {
+  if (!voiceDrag || e.pointerId !== voiceDrag.pointerId) return;
+  stepVoiceDrag(e.clientX, e.clientY);
+}
+
+function stepVoiceDrag(x, y) {
+  const drag = voiceDrag;
+  if (!drag) return;
+  if (!drag.live) {
+    const step = voiceDragStep(drag.kind, x - drag.x, y - drag.y, Date.now() - drag.at);
+    if (step === "cancel") return endVoiceDrag();
+    if (step === "wait") return;
+    startVoiceDrag(drag);
+  }
+  drag.ghost.style.transform = `translate(${Math.round(x + 12)}px, ${Math.round(y + 12)}px)`;
+  const list = $("channel-list");
+  const box = list.getBoundingClientRect();
+  if (x >= box.left && x <= box.right) list.scrollTop += voiceEdgeScroll(y, box.top, box.bottom);
+  markVoiceDrop(voiceDropAt(x, y));
+}
+
+function startVoiceDrag(drag) {
+  clearTimeout(drag.timer);
+  drag.live = true;
+  closeFloating();
+  const ghost = el("div", "voice-drag-ghost");
+  ghost.appendChild(makeAvatar(drag.userId, drag.name, "avatar avatar-sm"));
+  ghost.appendChild(el("span", "voice-user-name", drag.name));
+  document.body.appendChild(ghost);
+  drag.ghost = ghost;
+  document.body.classList.add("voice-dragging");
+  for (const node of document.querySelectorAll(`.voice-user[data-user="${CSS.escape(drag.userId)}"]`)) node.classList.add("dragging");
+}
+
+function voiceDropAt(x, y) {
+  const hit = document.elementFromPoint(x, y);
+  const node = hit && hit.closest("#channel-list [data-room]");
+  return node ? voiceDropRoom(state.currentServer, voiceDrag.fromId, node.dataset.room) : null;
+}
+
+function markVoiceDrop(room) {
+  const id = room ? room.id : null;
+  if (voiceDrag.over === id) return;
+  voiceDrag.over = id;
+  for (const node of document.querySelectorAll(".voice-channel.voice-drop")) node.classList.remove("voice-drop");
+  if (id) for (const node of document.querySelectorAll(`.voice-channel[data-room="${CSS.escape(id)}"]`)) node.classList.add("voice-drop");
+}
+
+function holdVoiceDragTouch(e) {
+  if (voiceDrag && voiceDrag.live && e.cancelable) e.preventDefault();
+}
+
+function onVoiceDragUp(e) {
+  if (!voiceDrag || e.pointerId !== voiceDrag.pointerId) return;
+  const drag = voiceDrag;
+  const room = drag.live ? voiceDropAt(e.clientX, e.clientY) : null;
+  endVoiceDrag();
+  if (!room) return;
+  const server = state.currentServer;
+  const member = (server && server.members.find(m => m.id === drag.userId)) || { id: drag.userId, name: drag.name };
+  moveVoiceMember(member, room);
+}
+
+function onVoiceDragCancel(e) {
+  if (voiceDrag && e.pointerId === voiceDrag.pointerId) endVoiceDrag();
+}
+
+function onVoiceDragKey(e) {
+  if (e.key === "Escape" && voiceDrag) endVoiceDrag();
+}
+
+function endVoiceDrag() {
+  const drag = voiceDrag;
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  voiceDrag = null;
+  document.removeEventListener("pointermove", onVoiceDragMove);
+  document.removeEventListener("pointerup", onVoiceDragUp);
+  document.removeEventListener("pointercancel", onVoiceDragCancel);
+  document.removeEventListener("touchmove", holdVoiceDragTouch);
+  document.removeEventListener("keydown", onVoiceDragKey);
+  if (!drag.live) return;
+  voiceDragClickGuard = Date.now() + VOICE_DRAG.clickGuardMs;
+  drag.ghost.remove();
+  document.body.classList.remove("voice-dragging");
+  for (const node of document.querySelectorAll(".voice-user.dragging")) node.classList.remove("dragging");
+  for (const node of document.querySelectorAll(".voice-channel.voice-drop")) node.classList.remove("voice-drop");
 }
 
 const serverImages = new Map();
@@ -4755,7 +4872,8 @@ function renderMembers() {
       avatar.appendChild(dot);
       row.appendChild(avatar);
       const meta = el("div");
-      const nameRow = el("div", "member-name", member.name);
+      const nameRow = el("div", "member-name");
+      nameRow.appendChild(el("span", "member-name-text", member.name));
       paintRole(nameRow, member.color);
       if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
@@ -7387,11 +7505,40 @@ async function refreshConnPop() {
   }
   if (!stats.links.length) list.appendChild(el("div", "conn-empty", "Nobody else is connected yet."));
   $("conn-foot").textContent = `Audio: ${stats.codec}, ${stats.bitrate_kbps} kbps per person`;
-  const worst = stats.links.reduce((w, l) => {
+  paintSignal(stats);
+}
+
+function worstQuality(links) {
+  return links.reduce((w, l) => {
     const q = quality(l.rtt_ms, l.loss_pct);
     return q === "bad" || (q === "ok" && w === "good") ? q : w;
   }, "good");
-  $("vp-signal").dataset.quality = worst;
+}
+
+function paintSignal(stats) {
+  $("vp-signal").dataset.quality = stats ? worstQuality(stats.links) : "good";
+}
+
+let signalTimer = null;
+
+async function pollSignal() {
+  if (!state.voiceChannelId) return;
+  try {
+    paintSignal(await invoke("voice_stats"));
+  } catch (e) {
+    paintSignal(null);
+  }
+}
+
+function syncSignalPolling(active) {
+  if (active && !signalTimer) {
+    pollSignal();
+    signalTimer = setInterval(pollSignal, 4000);
+  } else if (!active && signalTimer) {
+    clearInterval(signalTimer);
+    signalTimer = null;
+    paintSignal(null);
+  }
 }
 
 function openConnPop() {
@@ -9874,7 +10021,7 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
-  const moderates = inServer && (server.can_mute || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames || server.can_manage_stage);
+  const moderates = inServer && (server.can_mute || server.can_move || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames || server.can_manage_stage);
   if (inServer && member.id !== server.owner && moderates) {
     sep();
     const stageAction = stageMenuAction(stageChannelOf(server, member.id), member.id, Boolean(server.can_manage_stage));
@@ -10166,13 +10313,22 @@ async function confirmTimeout() {
 }
 
 async function moveVoiceMember(member, channel) {
+  const serverId = state.currentServer.id;
+  const roomName = channel ? channelPlainName(channel) : null;
   try {
-    await invoke("move_voice_member", { serverId: state.currentServer.id, userId: member.id, channelId: channel ? channel.id : null });
+    await invoke("move_voice_member", { serverId, userId: member.id, channelId: channel ? channel.id : null });
     await refreshCurrentServer();
-    toast(channel ? `Moved ${member.name} to ${channelPlainName(channel)}` : `Disconnected ${member.name} from voice`);
+    toast(channel ? `Moving ${member.name} to ${roomName}` : `Disconnecting ${member.name} from voice`);
+    setTimeout(() => checkVoiceMove(serverId, member, channel ? channel.id : null, roomName), VOICE_MOVE_CHECK_MS);
   } catch (e) {
     toast(String(e));
   }
+}
+
+function checkVoiceMove(serverId, member, roomId, roomName) {
+  const server = state.currentServer;
+  if (!server || server.id !== serverId || voiceMoveLanded(server, member.id, roomId)) return;
+  toast(voiceMoveStuckText(member.name, roomName));
 }
 
 async function clearMemberTimeout(member) {
@@ -11145,28 +11301,17 @@ function flashSoundboardUser(userId, name) {
   }
 }
 
-async function audioDuration(dataUrl) {
-  const buffer = await (await fetch(dataUrl)).arrayBuffer();
-  const ctx = new AudioContext();
-  try {
-    const decoded = await ctx.decodeAudioData(buffer);
-    return decoded.duration;
-  } finally {
-    ctx.close();
-  }
-}
-
 function pickSoundFile() {
   if (IS_TAURI) return invoke("pick_sound");
   return new Promise(resolve => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav";
+    input.accept = "audio/*,.mp3,.ogg,.wav,.m4a,.aac,.flac,.opus";
     input.onchange = () => {
       const file = input.files && input.files[0];
       if (!file) return resolve(null);
-      if (file.size > 1024 * 1024) {
-        toast("Sounds must be under 1 MB");
+      if (file.size > SOUND_SOURCE_MAX_BYTES) {
+        toast(`Pick an audio file under ${SOUND_SOURCE_MAX_BYTES / 1024 / 1024} MB`);
         return resolve(null);
       }
       const reader = new FileReader();
@@ -11240,80 +11385,236 @@ function renderSoundboardSettings(server) {
   builtins.replaceChildren(...DEFAULT_SOUNDS.map(s => soundRow(server, { name: s.label, blob: `default:${s.id}`, volume: 1 }, false)));
 }
 
-async function pickValidSound() {
+const SOUND_WAVE_BARS = 96;
+const soundDraft = { server: null, bytes: null, buffer: null, sel: null, emoji: null, afterSave: null, preview: null };
+
+async function decodeSoundSource(bytes) {
+  const ctx = new OfflineAudioContext(1, 1, SOUND_TRIM_RATE);
+  return ctx.decodeAudioData(bytes.slice().buffer);
+}
+
+async function openSoundUpload(server, afterSave = null) {
+  if (!server) return;
   let picked;
   try {
     picked = await pickSoundFile();
   } catch (e) {
     toast(String(e));
-    return null;
-  }
-  if (!picked) return null;
-  const [stem, dataUrl] = picked;
-  let seconds;
-  try {
-    seconds = await audioDuration(dataUrl);
-  } catch {
-    toast("Could not read that sound file");
-    return null;
-  }
-  if (seconds > MAX_SOUND_SECONDS + 0.2) {
-    toast(`That clip is ${seconds.toFixed(1)} seconds; sounds can be up to ${MAX_SOUND_SECONDS}`);
-    return null;
-  }
-  return [stem, dataUrl];
-}
-
-async function uploadSoundFromFlyout(server) {
-  const picked = await pickValidSound();
-  if (!picked) return;
-  const [stem, dataUrl] = picked;
-  const name = freeExpressionName(expressionName(stem, "sound"), (server.sounds || []).map(s => s.name));
-  try {
-    await invoke("add_sound", { serverId: server.id, name, data: dataUrl.split(",")[1], volume: 1, emoji: null });
-    await refreshExpressions();
-    toast(`Added ${name} to the soundboard`);
-  } catch (e) {
-    toast(String(e));
     return;
   }
-  $("soundboard-pop").classList.add("hidden");
-  toggleSoundboardPop();
-}
-
-async function uploadSound() {
-  const server = state.currentServer;
-  if (!server) return;
-  const picked = await pickValidSound();
   if (!picked) return;
   const [stem, dataUrl] = picked;
-  const play = el("button", "icon-btn sound-preview");
-  play.title = "Preview";
-  play.appendChild(svgIcon("play", 18));
-  play.onclick = () => {
-    const audio = new Audio(dataUrl);
-    audio.volume = soundboardPrefs().volume;
-    audio.play().catch(() => {});
+  let bytes;
+  let buffer;
+  try {
+    bytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+    buffer = await decodeSoundSource(bytes);
+  } catch {
+    toast("Could not read that sound file");
+    return;
+  }
+  if (buffer.duration > SOUND_SOURCE_MAX_SECONDS) {
+    toast(`Pick a clip under ${SOUND_SOURCE_MAX_SECONDS / 60} minutes`);
+    return;
+  }
+  stopSoundPreview();
+  $("soundboard-pop").classList.add("hidden");
+  Object.assign(soundDraft, { server, bytes, buffer, sel: initialSoundSelection(buffer.duration, MAX_SOUND_SECONDS), emoji: null, afterSave });
+  const peaks = soundWaveformPeaks(Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i)), SOUND_WAVE_BARS);
+  $("sound-wave").replaceChildren(...peaks.map(p => {
+    const bar = el("span");
+    bar.style.height = `${Math.max(4, Math.round(p * 100))}%`;
+    return bar;
+  }));
+  $("sound-hint").textContent = buffer.duration > MAX_SOUND_SECONDS + 0.2
+    ? `This clip is ${formatTrimTime(buffer.duration)} long. Drag the handles to pick up to ${MAX_SOUND_SECONDS} seconds.`
+    : "Drag the handles to trim the start or end, then give it a name and an emoji.";
+  $("sound-name").value = freeExpressionName(expressionName(stem, "sound"), (server.sounds || []).map(s => s.name));
+  $("sound-save").disabled = false;
+  paintSoundEmoji();
+  paintSoundSelection();
+  paintSoundPreviewButton();
+  showModal("modal-sound");
+  $("sound-name").focus();
+  $("sound-name").select();
+}
+
+function paintSoundEmoji() {
+  $("sound-emoji").replaceChildren(soundDraft.emoji ? soundEmojiNode(soundDraft.emoji) : svgIcon("smilePlus", 20));
+}
+
+function paintSoundSelection() {
+  const { buffer, sel } = soundDraft;
+  if (!buffer) return;
+  const pct = t => `${(t / buffer.duration) * 100}%`;
+  $("sound-shade-start").style.width = pct(sel.start);
+  $("sound-shade-end").style.width = pct(buffer.duration - sel.end);
+  $("sound-window").style.left = pct(sel.start);
+  $("sound-window").style.width = pct(sel.end - sel.start);
+  $("sound-handle-start").style.left = pct(sel.start);
+  $("sound-handle-end").style.left = pct(sel.end);
+  const bars = $("sound-wave").children;
+  for (let i = 0; i < bars.length; i++) {
+    const mid = ((i + 0.5) / bars.length) * buffer.duration;
+    bars[i].classList.toggle("on", mid >= sel.start && mid <= sel.end);
+  }
+  $("sound-trim-times").textContent = `${formatTrimTime(sel.start)} to ${formatTrimTime(sel.end)}, ${(sel.end - sel.start).toFixed(1)} s`;
+}
+
+function moveSoundDraft(which, at) {
+  stopSoundPreview();
+  soundDraft.sel = moveSoundSelection(soundDraft.sel, which, at, soundDraft.buffer.duration, MAX_SOUND_SECONDS);
+  paintSoundSelection();
+}
+
+function soundTrimTimeAt(clientX) {
+  const rect = $("sound-trim").getBoundingClientRect();
+  const frac = rect.width ? (clientX - rect.left) / rect.width : 0;
+  return Math.max(0, Math.min(1, frac)) * soundDraft.buffer.duration;
+}
+
+function startSoundTrimDrag(e) {
+  if (!soundDraft.buffer || e.button > 0) return;
+  e.preventDefault();
+  const at = soundTrimTimeAt(e.clientX);
+  const { sel } = soundDraft;
+  let which;
+  let offset = 0;
+  if (e.target.id === "sound-handle-start") which = "start";
+  else if (e.target.id === "sound-handle-end") which = "end";
+  else if (e.target.id === "sound-window") {
+    which = "both";
+    offset = at - sel.start;
+  } else {
+    which = Math.abs(at - sel.start) <= Math.abs(at - sel.end) ? "start" : "end";
+    moveSoundDraft(which, at);
+  }
+  if (which !== "both") $(`sound-handle-${which}`).focus();
+  const track = $("sound-trim");
+  track.setPointerCapture(e.pointerId);
+  const move = ev => moveSoundDraft(which, soundTrimTimeAt(ev.clientX) - offset);
+  const up = () => {
+    track.removeEventListener("pointermove", move);
+    track.removeEventListener("pointerup", up);
+    track.removeEventListener("pointercancel", up);
   };
-  const taken = (server.sounds || []).map(s => s.name);
-  let chosenEmoji = null;
-  const row = pendingExpressionRow(play, freeExpressionName(expressionName(stem, "sound"), taken), async clean => {
-    await invoke("add_sound", { serverId: server.id, name: clean, data: dataUrl.split(",")[1], volume: 1, emoji: chosenEmoji });
+  track.addEventListener("pointermove", move);
+  track.addEventListener("pointerup", up);
+  track.addEventListener("pointercancel", up);
+}
+
+function nudgeSoundHandle(which, e) {
+  const step = { ArrowLeft: -0.1, ArrowRight: 0.1, ArrowDown: -0.1, ArrowUp: 0.1 }[e.key];
+  if (!step || !soundDraft.buffer) return;
+  e.preventDefault();
+  moveSoundDraft(which, soundDraft.sel[which] + step * (e.shiftKey ? 10 : 1));
+}
+
+function paintSoundPreviewButton() {
+  const playing = Boolean(soundDraft.preview);
+  $("sound-trim-play").replaceChildren(svgIcon(playing ? "pause" : "play", 16));
+  $("sound-trim-play").title = playing ? "Stop" : "Play the selected part";
+  $("sound-playhead").classList.toggle("hidden", !playing);
+}
+
+function stopSoundPreview() {
+  const preview = soundDraft.preview;
+  if (!preview) return;
+  soundDraft.preview = null;
+  cancelAnimationFrame(preview.frame);
+  try { preview.source.stop(); } catch {}
+  preview.ctx.close().catch(() => {});
+  paintSoundPreviewButton();
+}
+
+function toggleSoundPreview() {
+  if (soundDraft.preview) return stopSoundPreview();
+  const { buffer, sel } = soundDraft;
+  if (!buffer) return;
+  const ctx = new AudioContext();
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  const gain = ctx.createGain();
+  gain.gain.value = soundboardPrefs().volume;
+  source.connect(gain).connect(ctx.destination);
+  const began = ctx.currentTime;
+  source.start(0, sel.start, sel.end - sel.start);
+  const preview = { ctx, source, frame: 0 };
+  source.onended = () => { if (soundDraft.preview === preview) stopSoundPreview(); };
+  const tick = () => {
+    const at = sel.start + (ctx.currentTime - began);
+    $("sound-playhead").style.left = `${(Math.min(at, sel.end) / buffer.duration) * 100}%`;
+    preview.frame = requestAnimationFrame(tick);
+  };
+  soundDraft.preview = preview;
+  paintSoundPreviewButton();
+  tick();
+}
+
+async function trimmedSoundBytes() {
+  const { bytes, buffer, sel } = soundDraft;
+  if (keepsOriginalSound({ bytes, duration: buffer.duration, sel, maxSeconds: MAX_SOUND_SECONDS })) return bytes;
+  const seconds = sel.end - sel.start;
+  const channels = trimmedSoundChannels(seconds, buffer.numberOfChannels);
+  const ctx = new OfflineAudioContext(channels, Math.max(1, Math.round(seconds * SOUND_TRIM_RATE)), SOUND_TRIM_RATE);
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  source.start(0, sel.start, seconds);
+  const out = await ctx.startRendering();
+  const data = Array.from({ length: channels }, (_, i) => out.getChannelData(i));
+  return encodeWav(fadeSoundEdges(data, SOUND_TRIM_RATE), SOUND_TRIM_RATE);
+}
+
+async function saveSoundDraft() {
+  const { server, emoji, afterSave } = soundDraft;
+  if (!server || !soundDraft.buffer) return;
+  const name = expressionName($("sound-name").value, "");
+  if (!name) {
+    toast("Names are 2 to 32 letters, numbers or underscores");
+    return;
+  }
+  const exists = (server.sounds || []).some(s => s.name === name);
+  if (exists && !server.can_manage_expressions) {
+    toast(`${name} is taken, pick another name`);
+    return;
+  }
+  if (exists && !confirm(`Replace the existing ${name}?`)) return;
+  stopSoundPreview();
+  $("sound-save").disabled = true;
+  try {
+    const bytes = await trimmedSoundBytes();
+    if (bytes.length > SOUND_STORE_MAX_BYTES) throw new Error("That clip is still over 1 MB, pick a shorter part");
+    await invoke("add_sound", { serverId: server.id, name, data: await blobToBase64(new Blob([bytes])), volume: 1, emoji });
+    hideModals();
     await refreshExpressions();
-    toast(`Added ${clean} to the soundboard`);
-  });
-  const pickBtn = el("button", "icon-btn sound-emoji-btn");
-  pickBtn.type = "button";
-  pickBtn.title = "Choose an emoji for this sound";
-  const paintPick = () => pickBtn.replaceChildren(chosenEmoji ? soundEmojiNode(chosenEmoji) : svgIcon("smilePlus", 18));
-  paintPick();
-  pickBtn.onclick = e => openEmojiPop(e.currentTarget, emoji => {
-    chosenEmoji = emoji;
-    paintPick();
+    toast(`Added ${name} to the soundboard`);
+    if (afterSave) afterSave();
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    $("sound-save").disabled = false;
+  }
+}
+
+function wireSoundUpload() {
+  $("sound-trim").addEventListener("pointerdown", startSoundTrimDrag);
+  $("sound-handle-start").addEventListener("keydown", e => nudgeSoundHandle("start", e));
+  $("sound-handle-end").addEventListener("keydown", e => nudgeSoundHandle("end", e));
+  $("sound-trim-play").onclick = toggleSoundPreview;
+  $("sound-emoji").onclick = e => openEmojiPop(e.currentTarget, emoji => {
+    soundDraft.emoji = emoji;
+    paintSoundEmoji();
   }, { custom: true });
-  row.querySelector(".expr-name-input").before(pickBtn);
-  $("sound-list").querySelector(".manage-empty")?.remove();
-  $("sound-list").prepend(row);
+  $("sound-name").addEventListener("input", e => {
+    const clean = soundNameDraft(e.target.value);
+    if (clean !== e.target.value) e.target.value = clean;
+  });
+  $("sound-name").addEventListener("keydown", e => {
+    if (e.key === "Enter") saveSoundDraft();
+  });
+  $("sound-save").onclick = saveSoundDraft;
+  $("sound-cancel").onclick = hideModals;
 }
 
 let soundboardCooldown = 0;
@@ -11338,7 +11639,7 @@ async function toggleSoundboardPop() {
   grid.replaceChildren();
   const canAdd = server.can_upload_sounds && (server.sounds || []).length < MAX_SOUNDS;
   $("sb-add").classList.toggle("hidden", !canAdd);
-  $("sb-add").onclick = () => uploadSoundFromFlyout(server);
+  $("sb-add").onclick = () => openSoundUpload(server, toggleSoundboardPop);
   const addButton = (name, label, emoji) => {
     const btn = el("button", "sb-sound");
     btn.appendChild(emoji ? soundEmojiNode(emoji) : svgIcon("soundboard", 14));
@@ -11357,13 +11658,11 @@ async function toggleSoundboardPop() {
     };
     grid.appendChild(btn);
   };
-  grid.appendChild(el("div", "sb-section", "Default"));
-  for (const sound of DEFAULT_SOUNDS) addButton(`default:${sound.id}`, sound.label);
   grid.appendChild(el("div", "sb-section", server.name));
   for (const sound of server.sounds || []) addButton(sound.name, sound.name, sound.emoji);
   if (!(server.sounds || []).length) {
     grid.appendChild(el("div", "sb-empty", server.can_upload_sounds
-      ? "No server sounds yet. Add some in Server Settings under Soundboard."
+      ? "No server sounds yet. Choose Add sound to upload one."
       : "This server has no sounds of its own yet."));
   }
   let others = [];
@@ -11393,6 +11692,8 @@ async function toggleSoundboardPop() {
     };
     grid.appendChild(btn);
   }
+  grid.appendChild(el("div", "sb-section", "Default"));
+  for (const sound of DEFAULT_SOUNDS) addButton(`default:${sound.id}`, sound.label);
   $("sb-muted").classList.toggle("hidden", soundboardPrefs().enabled);
   pop.classList.remove("hidden");
   placePopup(pop, $("vp-soundboard"), "above");
@@ -12567,6 +12868,7 @@ function renderVoicePanel() {
   const panel = $("voice-panel");
   const vs = state.voiceServer;
   panel.classList.toggle("hidden", !(state.voiceChannelId && vs));
+  syncSignalPolling(Boolean(state.voiceChannelId && vs));
   if (!state.voiceChannelId || !vs) return;
 
   const call = vs.call ? state.call : null;
@@ -12609,9 +12911,11 @@ function renderVoicePanel() {
     : [];
   for (const share of others) {
     const row = el("div", "vp-stream");
-    row.appendChild(el("span", "live-badge", "LIVE"));
-    row.appendChild(el("span", "vp-stream-name", share.name));
-    const watch = el("button", "vp-pill", "Watch");
+    const head = el("div", "vp-stream-head");
+    head.appendChild(el("span", "live-badge", "LIVE"));
+    head.appendChild(el("span", "vp-stream-name", `${share.name} is sharing their screen`));
+    row.appendChild(head);
+    const watch = el("button", "vp-pill vp-stream-watch", "Watch Stream");
     watch.onclick = () => watchScreen(share.user, share.name);
     row.appendChild(watch);
     streams.appendChild(row);
@@ -13112,6 +13416,60 @@ function readMembersPref() {
   } catch {
     return null;
   }
+}
+
+function readSidebarWidth() {
+  try {
+    const raw = Number(localStorage.getItem("commy.sidebar.width"));
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function paintSidebarWidth(width) {
+  const app = $("app");
+  if (width == null) app.style.removeProperty("--sidebar-w");
+  else app.style.setProperty("--sidebar-w", `${clampSidebarWidth(width, window.innerWidth)}px`);
+}
+
+function setupSidebarResize() {
+  const handle = $("sidebar-resize");
+  paintSidebarWidth(readSidebarWidth());
+  window.addEventListener("resize", () => paintSidebarWidth(readSidebarWidth()));
+  handle.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add("dragging");
+    document.body.classList.add("sidebar-resizing");
+    const left = $("app").querySelector(".sidebar").getBoundingClientRect().left;
+    let width = null;
+    const move = ev => {
+      width = clampSidebarWidth(ev.clientX - left, window.innerWidth);
+      paintSidebarWidth(width);
+    };
+    const done = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", done);
+      handle.removeEventListener("pointercancel", done);
+      handle.classList.remove("dragging");
+      document.body.classList.remove("sidebar-resizing");
+      if (width != null) {
+        try {
+          localStorage.setItem("commy.sidebar.width", String(width));
+        } catch {}
+      }
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", done);
+    handle.addEventListener("pointercancel", done);
+  });
+  handle.addEventListener("dblclick", () => {
+    try {
+      localStorage.removeItem("commy.sidebar.width");
+    } catch {}
+    paintSidebarWidth(null);
+  });
 }
 
 function applyMembersLayout() {
@@ -15117,33 +15475,28 @@ function wireEvents() {
     await invoke("account_cancel_sign_in");
     showSignIn();
   };
-  $("signin-server-select").addEventListener("change", async e => {
+  $("signin-server-select").addEventListener("change", e => {
     const value = e.target.value;
-    syncServerNote();
     if (value === "custom") {
-      $("signin-server-edit").classList.remove("hidden");
-      $("signin-server-input").value = "";
-      $("signin-server-input").focus();
+      openServerEdit();
       return;
     }
-    try {
-      account = await invoke("set_account_server", { server: value === "default" ? null : value });
-      showSignIn();
-    } catch (err) {
-      showSignInError(String(err));
-    }
+    useAccountServer(value === "default" ? null : value);
   });
+  $("signin-server-input").addEventListener("input", syncServerNote);
   $("signin-server-input").addEventListener("keydown", e => {
     if (e.key === "Enter") $("signin-server-save").click();
-  });
-  $("signin-server-save").onclick = async () => {
-    try {
-      account = await invoke("set_account_server", { server: $("signin-server-input").value || null });
-      showSignIn();
-    } catch (e) {
-      showSignInError(String(e));
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      closeServerEdit();
     }
+  });
+  $("signin-server-save").onclick = () => {
+    const typed = $("signin-server-input").value.trim();
+    if (typed) useAccountServer(typed);
+    else showServerProblem("signin.server.bad.domain");
   };
+  $("signin-server-cancel").onclick = closeServerEdit;
   $("claim-keep").onclick = () => answerClaim(true);
   $("claim-fresh").onclick = () => answerClaim(false);
   $("claim-retry").onclick = () => openAccountFolder();
@@ -15172,7 +15525,7 @@ function wireEvents() {
       await loadSaved();
       if (railServers().length) await selectServer(railServers()[0].id);
       else await enterDmMode();
-      await offerTrayPrompt();
+      if (!(await takePendingInviteLink())) await offerTrayPrompt();
     } catch (e) {
       toast(String(e));
     }
@@ -15384,7 +15737,8 @@ function wireEvents() {
   };
   $("sticker-share-toggle").addEventListener("change", saveExpressionSharing);
   $("emoticon-share-toggle").addEventListener("change", saveExpressionSharing);
-  $("sound-upload").onclick = uploadSound;
+  $("sound-upload").onclick = () => openSoundUpload(state.currentServer);
+  wireSoundUpload();
   const saveExpressionSettings = async () => {
     const server = state.currentServer;
     if (!server) return;
@@ -16483,6 +16837,7 @@ function wireEvents() {
   };
   window.addEventListener("resize", applyMembersLayout);
   applyMembersLayout();
+  setupSidebarResize();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;
@@ -17681,7 +18036,7 @@ function paintAuditLog() {
 }
 
 const INVITE_BACKGROUND_MAX = 400 * 1024;
-const invitesView = { serverId: null, invites: [], clock: null, accountHost: null };
+const invitesView = { serverId: null, invites: [], clock: null, accountHost: null, accountOrigin: null };
 
 async function renderInvitesPage(server) {
   const manage = Boolean(server.can_manage_server);
@@ -17697,10 +18052,11 @@ async function renderInvitesPage(server) {
     if (!invitesView.accountHost) {
       invoke("account_server_info").then(info => {
         invitesView.accountHost = info.host;
-        $("invite-custom-prefix").textContent = `${info.host}/i/`;
+        invitesView.accountOrigin = info.origin;
+        $("invite-custom-prefix").textContent = `${info.origin}/i/`;
       }).catch(() => {});
     } else {
-      $("invite-custom-prefix").textContent = `${invitesView.accountHost}/i/`;
+      $("invite-custom-prefix").textContent = `${invitesView.accountOrigin}/i/`;
     }
   }
   try {
@@ -17750,7 +18106,7 @@ function paintInviteNameCheck() {
   const { name, error } = checkInviteName($("invite-custom-name").value);
   const note = $("invite-custom-note");
   note.classList.toggle("error", Boolean(error));
-  note.textContent = error || "Pick a name people can remember. You need to be signed in, and the link still ends in a short key so your account server never learns which server it opens.";
+  note.textContent = error || "Pick a name people can remember. You need to be signed in. The link ends in a short key after #, so always share the whole link. That key keeps your account server from learning which server it opens.";
   $("invite-custom-create").disabled = !name || Boolean(error);
 }
 
@@ -17762,8 +18118,7 @@ async function createCustomInvite() {
   button.disabled = true;
   try {
     const invite = await invoke("create_invite_link", { serverId: server.id, expires: $("invite-custom-expiry").value, name });
-    await navigator.clipboard.writeText(invite.url).catch(() => {});
-    toast("Custom invite link copied");
+    await copyFullInviteLink(invite.url);
     $("invite-custom-name").value = "";
     await renderInvitesPage(server);
   } catch (e) {
@@ -17787,6 +18142,9 @@ function inviteRow(invite) {
   left.dataset.expires = invite.expires_at == null ? "" : String(invite.expires_at);
   if (invite.expires_at != null) left.title = `Expires ${new Date(invite.expires_at).toLocaleString()}`;
   row.appendChild(left);
+  const copy = el("button", "btn-secondary btn-small invite-row-copy", "Copy Link");
+  copy.onclick = () => copyTrackedInvite(invite, copy);
+  row.appendChild(copy);
   const revoke = el("button", "btn-secondary btn-small danger-text invite-row-revoke", "Revoke");
   revoke.disabled = !invite.can_revoke;
   revoke.onclick = () => revokeInvite(invite, revoke);
@@ -17819,6 +18177,28 @@ function startInviteClock() {
     }
     if (expired) paintInviteList();
   }, 15e3);
+}
+
+async function copyFullInviteLink(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("Invite link copied. Share all of it, including the part after #.");
+  } catch {
+    toast(`Copy this whole link: ${url}`);
+  }
+}
+
+async function copyTrackedInvite(invite, button) {
+  const server = state.currentServer;
+  if (!server) return;
+  button.disabled = true;
+  try {
+    await copyFullInviteLink(await invoke("invite_full_link", { serverId: server.id, origin: invite.origin, code: invite.code }));
+  } catch (e) {
+    toast(String(e));
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function revokeInvite(invite, button) {
@@ -18405,7 +18785,8 @@ async function openAccountFolder() {
     paintClaim(String(e));
     return;
   }
-  if (account.unclaimed_profile) showClaim();
+  if (!account.signed_in) showSignIn();
+  else if (account.unclaimed_profile) showClaim();
   else await continueBoot();
 }
 
@@ -18429,7 +18810,8 @@ async function answerClaim(keep) {
   $("claim-keep").disabled = $("claim-fresh").disabled = true;
   try {
     account = await invoke("account_claim_profile", { keep });
-    await continueBoot();
+    if (account.signed_in) await continueBoot();
+    else showSignIn();
   } catch (e) {
     $("claim-error").textContent = String(e);
     $("claim-error").classList.remove("hidden");
@@ -18459,7 +18841,7 @@ async function continueBoot() {
   if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
   await primeFriendPresence();
-  await offerTrayPrompt();
+  if (!(await takePendingInviteLink())) await offerTrayPrompt();
 }
 
 async function offerTrayPrompt() {
@@ -18501,6 +18883,49 @@ function syncServerNote() {
   note.dataset.i18n = custom ? "signin.server.warning" : "signin.server.note";
   note.textContent = t(note.dataset.i18n);
   note.classList.toggle("warn", custom);
+  note.classList.remove("error");
+  $("signin-server-input").removeAttribute("aria-invalid");
+}
+
+function showServerProblem(key) {
+  const note = $("signin-server-note");
+  note.dataset.i18n = key;
+  note.textContent = t(key);
+  note.classList.remove("warn");
+  note.classList.add("error");
+  $("signin-server-input").setAttribute("aria-invalid", "true");
+}
+
+function isServerProblem(message) {
+  return message.startsWith("signin.server.bad.");
+}
+
+function openServerEdit() {
+  $("signin-server-select").classList.add("hidden");
+  $("signin-server-edit").classList.remove("hidden");
+  $("signin-server-input").value = "";
+  syncServerNote();
+  $("signin-server-input").focus();
+}
+
+function closeServerEdit() {
+  const select = $("signin-server-select");
+  select.value = account.is_default_server ? "default" : account.server;
+  select.classList.remove("hidden");
+  $("signin-server-edit").classList.add("hidden");
+  syncServerNote();
+  select.focus();
+}
+
+async function useAccountServer(server) {
+  try {
+    account = await invoke("set_account_server", { server });
+    showSignIn();
+  } catch (err) {
+    const message = String(err);
+    if (isServerProblem(message)) showServerProblem(message);
+    else showSignInError(message);
+  }
 }
 
 function showSignIn() {
@@ -18526,6 +18951,7 @@ function showSignIn() {
     node.dataset.i18n = account.signed_in ? key.replace("signin.", "signin.add.") : key;
     node.textContent = t(node.dataset.i18n);
   }
+  select.classList.remove("hidden");
   $("signin-server-edit").classList.add("hidden");
   syncServerNote();
   if (!account.signed_in && account.pending_code) {

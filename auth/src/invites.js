@@ -41,8 +41,7 @@ export function normalizeCode(value) {
 
 export function normalizeName(value) {
   const name = String(value ?? "").trim().toLowerCase();
-  const looksLikeCode = name.length === CODE_LENGTH && !name.includes("-");
-  return name.length >= NAME_MIN && name.length <= NAME_MAX && NAME.test(name) && !looksLikeCode ? name : null;
+  return name.length >= NAME_MIN && name.length <= NAME_MAX && NAME.test(name) ? name : null;
 }
 
 export function customName(value) {
@@ -52,6 +51,20 @@ export function customName(value) {
 
 export function normalizeLinkCode(value) {
   return normalizeCode(value) ?? normalizeName(value);
+}
+
+export function linkCodeSpellings(value) {
+  const code = normalizeCode(value);
+  const name = normalizeName(value);
+  return [...new Set([code, name].filter(Boolean))];
+}
+
+export async function findInvite(adapter, value) {
+  for (const code of linkCodeSpellings(value)) {
+    const row = await adapter.findOne({ model: MODEL, where: [{ field: "code", value: code }] });
+    if (row) return row;
+  }
+  return null;
 }
 
 export function hashRevokeSecret(secret) {
@@ -187,8 +200,8 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
         };
 
         if (name) {
-          const taken = await adapter.findOne({ model: MODEL, where: [{ field: "code", value: name }] });
-          if (taken && taken.createdBy !== createdBy) {
+          const taken = await findInvite(adapter, name);
+          if (taken && (taken.createdBy !== createdBy || !taken.custom)) {
             throw new APIError("CONFLICT", { message: "That name is taken. Pick another one." });
           }
           if (!taken) {
@@ -227,7 +240,7 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
 
         for (let attempt = 0; attempt < 5; attempt++) {
           const code = generateCode();
-          const clash = await adapter.findOne({ model: MODEL, where: [{ field: "code", value: code }] });
+          const clash = await findInvite(adapter, code);
           if (clash) continue;
           const created = await adapter.create({
             model: MODEL,
@@ -272,8 +285,7 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
       { method: "POST", body: z.object({ code: z.string(), secret: z.string().max(200).optional() }) },
       async (ctx) => {
         const adapter = ctx.context.adapter;
-        const code = normalizeLinkCode(ctx.body.code);
-        const row = code ? await adapter.findOne({ model: MODEL, where: [{ field: "code", value: code }] }) : null;
+        const row = await findInvite(adapter, ctx.body.code);
         if (ctx.body.secret === undefined) {
           const session = await getSessionFromCtx(ctx);
           if (!session) throw new APIError("UNAUTHORIZED", { message: "Sign in to revoke invite links" });
@@ -288,8 +300,7 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
 });
 
 async function liveInvite(adapter, value) {
-  const code = normalizeLinkCode(value);
-  const row = code ? await adapter.findOne({ model: MODEL, where: [{ field: "code", value: code }] }) : null;
+  const row = await findInvite(adapter, value);
   if (!row || new Date(row.expiresAt) < new Date()) {
     throw new APIError("NOT_FOUND", { message: "This invite is invalid or has expired" });
   }

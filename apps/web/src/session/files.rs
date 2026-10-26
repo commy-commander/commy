@@ -80,7 +80,7 @@ impl Session {
         self.deliver(server, message, view).await
     }
 
-    async fn store_blob(&self, bytes: Vec<u8>) -> Result<(String, String), String> {
+    pub(super) async fn store_blob(&self, bytes: Vec<u8>) -> Result<(String, String), String> {
         let node = self.node.lock().await;
         let node = node.as_ref().ok_or("Your servers are not unlocked yet")?;
         Ok((node.add_blob(bytes).await.map_err(|e| e.to_string())?, node.node_id_hex()))

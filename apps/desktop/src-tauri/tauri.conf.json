@@ -13,7 +13,7 @@
         "title": "Commy",
         "width": 1280,
         "height": 800,
-        "minWidth": 940,
+        "minWidth": 520,
         "minHeight": 560,
         "dragDropEnabled": false,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"

@@ -57,6 +57,10 @@ impl Session {
                 let state = servers.get(&server).ok_or("This server is still loading")?;
                 to_json(&invite::invite_views(state, me, Utc::now().timestamp_millis()))
             }
+            "invite_full_link" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                to_json(&self.full_link(server, args.origin.as_deref().unwrap_or(""), args.code.as_deref().unwrap_or("")).await?)
+            }
             "revoke_invite" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 self.revoke(server, args.origin.as_deref().unwrap_or(""), args.code.as_deref().unwrap_or("")).await.map(|_| Value::Null)
@@ -84,8 +88,8 @@ impl Session {
         let given = self.sync.borrow().as_ref().and_then(|live| live.book.given().remove(&server));
         let (ticket, community) = self.client.borrow().invite_ticket(server, given)?;
         let raw = ticket.encode();
-        let (key, key_text) = invite::new_key(name.is_some());
         let revoke_key = invite::new_revoke_key();
+        let (key, key_text) = invite::link_key(&revoke_key, name.is_some());
         let request = CreateRequest {
             raw_ticket: &raw,
             server_name: &ticket.server_name,
@@ -113,6 +117,21 @@ impl Session {
         } else {
             Err(format!("This invite comes from {}. Open it in the desktop app to join from another account server.", link.host()))
         }
+    }
+
+    async fn full_link(&self, server: ServerId, origin: &str, code: &str) -> Result<String, String> {
+        let me = self.client.borrow().profile().ok_or("Your servers are not unlocked yet")?.id;
+        let tracked = {
+            let client = self.client.borrow();
+            let servers = client.servers.lock().unwrap();
+            let state = servers.get(&server).ok_or("This server is still loading")?;
+            invite::revocable(state, me, origin, code)?
+        };
+        let link = invite::tracked_link(&tracked);
+        self.same_site(&link)?;
+        let body: ResolveResponse = invite_reply(self.request("GET", &link.endpoint(invite::RESOLVE_PATH), None).await?)?;
+        invite::open_reply(&link, &body, Utc::now()).map_err(|_| invite::OLD_LINK.to_string())?;
+        Ok(link.url())
     }
 
     async fn resolve_invite(&self, raw: &str) -> Result<invite::ResolvedInvite, String> {

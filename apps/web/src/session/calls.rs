@@ -7,7 +7,7 @@ use chrono::Utc;
 use commy_audio::codec::{VoiceDecoder, VoiceEncoder};
 use commy_audio::speaking::SpeakingDetector;
 use commy_core::dm::{CallSignal, DmAction, DmMessage};
-use commy_core::{ChannelId, ServerId, UserId};
+use commy_core::{ChannelId, ServerEvent, ServerId, UserId};
 use commy_net::node::{MediaChannel, MediaGate};
 use commy_net::{DmEnvelope, MediaHello, MediaPacket, WirePayload};
 use commy_view::calls::{self, CallBook, CallStep, DmCall, DmCallView};
@@ -34,6 +34,7 @@ pub(super) type Admit = Arc<StdMutex<Option<Gate>>>;
 
 #[derive(Default)]
 pub(super) struct Voice {
+    pub(super) personal: Option<super::profile::Personal>,
     book: CallBook,
     muted: bool,
     deafened: bool,
@@ -135,11 +136,15 @@ pub(super) fn media_gate(admit: Admit) -> MediaGate {
 
 impl Session {
     pub(super) fn voice_settings(&self) -> Value {
+        let personal = self.personal();
         let voice = self.voice.borrow();
         json!({
             "noise_cancellation": true,
             "muted": voice.muted,
             "deafened": voice.deafened,
+            "pronouns": personal.pronouns,
+            "presence_until": personal.presence_until,
+            "status_until": personal.status_until,
             "output_volume": 1,
             "input_gain": 1,
             "afk_timeout_minutes": 10,
@@ -277,6 +282,37 @@ impl Session {
         self.emit("server-event", json!(server.to_string()));
         spawn_local(self.clone().keep_voice(channel));
         Ok(())
+    }
+
+    pub(super) fn moved_me(&self, server: ServerId, event: &ServerEvent) -> Option<Option<ChannelId>> {
+        let ServerEvent::VoiceMove { user, channel, .. } = event else { return None };
+        let me = self.client.borrow().profile().map(|p| p.id);
+        (me == Some(*user) && self.voice_here(server).is_some()).then_some(*channel)
+    }
+
+    pub(super) fn follow_voice_move(self: &Rc<Self>, server: ServerId, moved: Option<Option<ChannelId>>) {
+        let Some(channel) = moved else { return };
+        let name = channel.and_then(|c| {
+            let client = self.client.borrow();
+            let servers = client.servers.lock().unwrap();
+            servers.get(&server).and_then(|s| s.server.channel(c)).map(|c| c.name.clone())
+        });
+        if channel.is_some() && name.is_none() {
+            return;
+        }
+        let this = self.clone();
+        spawn_local(async move {
+            let moved = match channel {
+                Some(channel) => this.join_room(server, channel).await.is_ok(),
+                None => {
+                    this.leave_room().await;
+                    true
+                }
+            };
+            if moved {
+                this.emit("voice-moved", json!({ "server": server.to_string(), "channel": channel.map(|c| c.to_string()), "name": name }));
+            }
+        });
     }
 
     pub(super) async fn leave_room(self: &Rc<Self>) {

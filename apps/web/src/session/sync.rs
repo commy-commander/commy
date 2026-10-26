@@ -194,6 +194,7 @@ impl Session {
                 beat_due = web_time::Instant::now() + SERVICE_BEAT;
                 self.say_here_everywhere();
             }
+            self.expire_status();
             for server in self.client.borrow().sweep_presence(Utc::now().timestamp_millis()) {
                 self.emit("server-event", json!(server.to_string()));
             }
@@ -330,9 +331,11 @@ impl Session {
             }
             _ => false,
         };
+        let moved = self.moved_me(server, &event);
         if !self.client.borrow().apply_signal(server, &node, event, action) {
             return;
         }
+        self.follow_voice_move(server, moved);
         self.emit("server-event", json!(server.to_string()));
         if returning && !self.said_goodbye() {
             self.say_here(server);
@@ -490,6 +493,7 @@ impl Session {
     }
 
     fn follow_server_list(self: &Rc<Self>) {
+        self.adopt_shared_profile();
         let Some(tickets) = self.sync.borrow().as_ref().map(|live| live.book.tickets()) else { return };
         let (added, removed) = {
             let mut client = self.client.borrow_mut();

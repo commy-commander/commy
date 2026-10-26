@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
+use commy_net::server_address::public_server_origin;
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -607,10 +608,7 @@ pub fn set_account_server(app: tauri::State<'_, App>, server: Option<String>) ->
     }
     let server = match server.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
         None => None,
-        Some(s) => {
-            let with_scheme = if s.contains("://") { s } else { format!("https://{s}") };
-            Some(normalize_origin(&with_scheme).ok_or("Enter an address like https://chat.example.com")?)
-        }
+        Some(s) => Some(public_server_origin(&s).map_err(|e| e.message_key().to_string())?),
     }
     .filter(|s| s != DEFAULT_ACCOUNT_SERVER);
     {
@@ -1068,15 +1066,22 @@ pub async fn account_open_folder(app: tauri::State<'_, App>, handle: AppHandle) 
         let unclaimed_node =
             account_folder::unclaimed_node_secret(&base).map(|secret| node_id_of(&SigningKey::from_bytes(&secret)));
         let session = crate::entry_list::session(&app).ok_or("Sign in first")?;
-        let linked = crate::entry_list::account_devices(&app, &session)
-            .await
-            .map_err(|e| format!("Could not check this computer with your account server. {e}"))?;
+        let linked = match crate::entry_list::account_devices(&app, &session).await {
+            Ok(linked) => linked,
+            Err(e) => {
+                let problem = format!("Could not check this computer with your account server. {e}");
+                return sign_in_again_if_signed_out(&app, &handle, problem).await;
+            }
+        };
         if may_claim(unclaimed_node.as_deref(), &linked) {
             *MAY_CLAIM.lock().unwrap() = Some(account);
             return Ok(view(&app));
         }
     }
-    open_folder(&app, &handle, &base, &server, &account, false).await
+    match open_folder(&app, &handle, &base, &server, &account, false).await {
+        Err(problem) => sign_in_again_if_signed_out(&app, &handle, problem).await,
+        opened => opened,
+    }
 }
 
 #[tauri::command]
@@ -1088,7 +1093,22 @@ pub async fn account_claim_profile(app: tauri::State<'_, App>, handle: AppHandle
     if keep && !claim_allowed(&account) {
         return Err("That profile was never used with this account on this computer, so it stays put.".into());
     }
-    open_folder(&app, &handle, &base, &server, &account, keep).await
+    match open_folder(&app, &handle, &base, &server, &account, keep).await {
+        Err(problem) => sign_in_again_if_signed_out(&app, &handle, problem).await,
+        opened => opened,
+    }
+}
+
+async fn sign_in_again_if_signed_out(app: &App, handle: &AppHandle, problem: String) -> Result<AccountView, String> {
+    if !matches!(check_saved_session(app).await, SessionCheck::Rejected) {
+        return Err(problem);
+    }
+    if let Some((base, server, account)) = signed_in_folder(app) {
+        account_folder::forget_key(&account_folder::folder(&base, &server, &account));
+    }
+    *MAY_CLAIM.lock().unwrap() = None;
+    drop_rejected_session(app, handle);
+    Ok(view(app))
 }
 
 async fn open_folder(
@@ -1126,39 +1146,47 @@ async fn open_folder(
     Ok(view(app))
 }
 
-pub async fn verify_saved_session(handle: AppHandle) {
-    let app = handle.state::<App>();
+enum SessionCheck {
+    Valid(Discovery),
+    Rejected,
+    Unknown,
+}
+
+fn session_answer(status: reqwest::StatusCode, session: Option<SessionResponse>) -> Option<bool> {
+    match status.as_u16() {
+        200..=299 => Some(session.is_some()),
+        401 | 403 => Some(false),
+        _ => None,
+    }
+}
+
+async fn check_saved_session(app: &App) -> SessionCheck {
     let (token, server) = {
         let state = app.account.lock().unwrap();
         if !is_signed_in(&state) {
-            return;
+            return SessionCheck::Unknown;
         }
         (state.token.clone(), state.signed_in_server.clone())
     };
-    let (Some(token), Some(server)) = (token, server) else { return };
-    let Ok(doc) = discover(&app.http, &server).await else { return };
-    let Ok(res) = app.http.get(&doc.endpoints.session).bearer_auth(&token).send().await else { return };
-    let valid = res.status().is_success() && res.json::<Option<SessionResponse>>().await.ok().flatten().is_some();
-    if valid {
-        use_sync_service(&handle, &server, &doc);
-        let changed = {
-            let mut state = app.account.lock().unwrap();
-            let changed = state.features != doc.features;
-            if changed {
-                state.features = doc.features;
-                store(&app, &state);
-            }
-            changed
-        };
-        if changed {
-            let _ = handle.emit("account-changed", ());
-        }
-        return;
+    let (Some(token), Some(server)) = (token, server) else { return SessionCheck::Unknown };
+    let Ok(doc) = discover(&app.http, &server).await else { return SessionCheck::Unknown };
+    let Ok(res) = app.http.get(&doc.endpoints.session).bearer_auth(&token).send().await else {
+        return SessionCheck::Unknown;
+    };
+    let status = res.status();
+    let session = if status.is_success() { res.json::<Option<SessionResponse>>().await.ok().flatten() } else { None };
+    match session_answer(status, session) {
+        Some(true) => SessionCheck::Valid(doc),
+        Some(false) => SessionCheck::Rejected,
+        None => SessionCheck::Unknown,
     }
+}
+
+fn drop_rejected_session(app: &App, handle: &AppHandle) {
     {
         let mut state = app.account.lock().unwrap();
         state.clear_session();
-        store(&app, &state);
+        store(app, &state);
     }
     crate::sync_link::clear_url();
     crate::account_log::stop();
@@ -1168,6 +1196,32 @@ pub async fn verify_saved_session(handle: AppHandle) {
         account_folder::forget_key(dir);
     }
     let _ = handle.emit("account-changed", ());
+}
+
+pub async fn verify_saved_session(handle: AppHandle) {
+    let app = handle.state::<App>();
+    let server = app.account.lock().unwrap().signed_in_server.clone();
+    match check_saved_session(&app).await {
+        SessionCheck::Valid(doc) => {
+            if let Some(server) = server {
+                use_sync_service(&handle, &server, &doc);
+            }
+            let changed = {
+                let mut state = app.account.lock().unwrap();
+                let changed = state.features != doc.features;
+                if changed {
+                    state.features = doc.features;
+                    store(&app, &state);
+                }
+                changed
+            };
+            if changed {
+                let _ = handle.emit("account-changed", ());
+            }
+        }
+        SessionCheck::Rejected => drop_rejected_session(&app, &handle),
+        SessionCheck::Unknown => {}
+    }
 }
 
 #[cfg(test)]
@@ -1184,6 +1238,16 @@ mod tests {
             interval: 5,
             expires_at,
         }
+    }
+
+    #[test]
+    fn only_a_clear_answer_from_the_account_server_signs_this_device_out() {
+        let user = || Some(SessionResponse { user: SessionUser { id: "u".into(), name: String::new(), email: String::new() } });
+        assert_eq!(session_answer(reqwest::StatusCode::OK, user()), Some(true));
+        assert_eq!(session_answer(reqwest::StatusCode::OK, None), Some(false));
+        assert_eq!(session_answer(reqwest::StatusCode::UNAUTHORIZED, None), Some(false));
+        assert_eq!(session_answer(reqwest::StatusCode::BAD_GATEWAY, None), None);
+        assert_eq!(session_answer(reqwest::StatusCode::TOO_MANY_REQUESTS, None), None);
     }
 
     #[test]

@@ -139,14 +139,20 @@ for (const btn of $("invite-expiry").querySelectorAll("button")) {
   };
 }
 
+const ONBOARDING_MODALS = ["modal-signin", "modal-claim", "modal-username"];
+
+function onboardingDone() {
+  if (!state.user) return false;
+  if ($("modal-backdrop").classList.contains("hidden")) return true;
+  return ONBOARDING_MODALS.every(id => $(id).classList.contains("hidden"));
+}
+
 async function takePendingInviteLink() {
-  if (!IS_TAURI) return;
-  if (!$("modal-username").classList.contains("hidden") && !$("modal-backdrop").classList.contains("hidden")) {
-    setTimeout(takePendingInviteLink, 1000);
-    return;
-  }
+  if (!IS_TAURI || !onboardingDone()) return false;
   const link = await invoke("take_pending_invite_link").catch(() => null);
-  if (link) openInviteLink(link);
+  if (!link) return false;
+  await openInviteLink(link);
+  return true;
 }
 
 $("invite-link-join").onclick = joinPendingInvite;
@@ -158,5 +164,4 @@ $("invite-link-copy").onclick = copyInviteLink;
 
 if (IS_TAURI) {
   window.__TAURI__.event.listen("invite-link", () => takePendingInviteLink());
-  setTimeout(takePendingInviteLink, 1500);
 }

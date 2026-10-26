@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { membersCollapsed } = require("../scripts/layout.js");
+const { membersCollapsed, clampSidebarWidth } = require("../scripts/layout.js");
 
 test("the people panel starts collapsed on narrow windows and open on wide ones", () => {
   assert.equal(membersCollapsed(null, 1000), true);
@@ -13,4 +13,16 @@ test("the people panel starts collapsed on narrow windows and open on wide ones"
 test("a choice made with the toggle wins over the window width", () => {
   assert.equal(membersCollapsed("0", 1000), false);
   assert.equal(membersCollapsed("1", 2000), true);
+});
+
+test("members always give way to the chat on small windows", () => {
+  assert.equal(membersCollapsed("0", 800), true);
+  assert.equal(membersCollapsed("0", 1000), false);
+});
+
+test("sidebar width stays within sensible limits", () => {
+  assert.equal(clampSidebarWidth(100, 1400), 180);
+  assert.equal(clampSidebarWidth(300, 1400), 300);
+  assert.equal(clampSidebarWidth(900, 1400), 420);
+  assert.equal(clampSidebarWidth(400, 800), 360);
 });

@@ -1,7 +1,7 @@
 const INVITE_KEY = "[A-Za-z0-9_-]";
 const INVITE_LINK_RE = new RegExp(
   "\\b(?:https?:\\/\\/[a-z0-9.\\-:[\\]]+\\/i\\/|commy:\\/\\/i\\/[^\\s/]+\\/)" +
-  `(?:[a-hj-np-z2-9]{8}(?:#${INVITE_KEY}{43}(?!${INVITE_KEY})|\\b\\/?)` +
+  `(?:[a-hj-np-z2-9]{8}(?:#${INVITE_KEY}{43}(?!${INVITE_KEY})|\\b(?!#)\\/?)` +
   `|[a-z0-9]+(?:-[a-z0-9]+)*#(?:${INVITE_KEY}{43}|${INVITE_KEY}{22})(?!${INVITE_KEY}))`,
   "i",
 );
@@ -26,9 +26,6 @@ function looksLikeInviteLink(text) {
 function checkInviteName(input) {
   const name = String(input || "").trim().toLowerCase();
   if (!name) return { name: "", error: null };
-  if (name.length === 8 && !name.includes("-")) {
-    return { name, error: "Eight characters with no dash looks like a random invite code. Add a dash or pick another length." };
-  }
   const shape = name.length >= INVITE_NAME_MIN && name.length <= INVITE_NAME_MAX &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name);
   if (!shape) return { name, error: "Use 3 to 32 letters, numbers or single dashes, like pixel-pioneers." };
@@ -50,7 +47,7 @@ function inviteTimeLeft(expiresAt, now = Date.now()) {
 }
 
 function inviteLabel(invite) {
-  return `${invite.host}/i/${invite.code}`;
+  return `${invite.origin}/i/${invite.code}`;
 }
 
 function sortInvites(invites) {
