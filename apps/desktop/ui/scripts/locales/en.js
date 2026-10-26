@@ -21,6 +21,7 @@ const LOCALE_EN = {
   "settings.tab.storage": "Storage",
   "settings.tab.updates": "Updates",
   "settings.tab.startup": "Startup",
+  "settings.tab.diagnostics": "Diagnostics",
   "settings.close": "Close",
   "appearance.chatSize": "Chat Font Size",
   "appearance.compact": "Compact Mode",

@@ -1295,6 +1295,7 @@
         <button class="settings-tab" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
         <button class="settings-tab desktop-only" data-tab="startup" data-i18n="settings.tab.startup">Startup</button>
         <button class="settings-tab desktop-only" data-tab="updates" data-i18n="settings.tab.updates">Updates</button>
+        <button class="settings-tab" data-tab="diagnostics" data-i18n="settings.tab.diagnostics">Diagnostics</button>
       </div>
     </nav>
     <div class="settings-content">
@@ -1889,6 +1890,49 @@
             </div>
             <input type="checkbox" id="auto-update-toggle" class="switch" />
           </label>
+        </section>
+
+        <section class="settings-page" data-page="diagnostics">
+          <h1 data-i18n="settings.tab.diagnostics">Diagnostics</h1>
+          <h2 class="settings-subhead">Connection Test</h2>
+          <div class="settings-card conn-test">
+            <div class="conn-test-intro">
+              <div>
+                <div class="setting-title">Test my connection</div>
+                <div class="setting-sub">Checks whether calls and streams on this network can go straight to other people or will go through Commy's relay, and how quickly the relay answers. You don't need anyone else online.</div>
+              </div>
+              <button class="btn-secondary btn-small conn-test-run" type="button" id="conn-test-run">Run Test</button>
+            </div>
+            <div class="conn-test-result" id="conn-test-result" aria-live="polite">
+              <div class="conn-test-head">
+                <span class="conn-badge idle" id="conn-test-badge">Not run</span>
+                <span class="conn-test-summary" id="conn-test-summary">Run the test to see how this network does.</span>
+              </div>
+              <div class="conn-grid conn-test-grid">
+                <span class="conn-label">Direct connections</span><span class="conn-value" id="conn-test-direct">-</span>
+                <span class="conn-label">Relay round trip</span><span class="conn-value" id="conn-test-relay">-</span>
+              </div>
+              <div class="setting-sub conn-test-detail" id="conn-test-detail"></div>
+            </div>
+          </div>
+          <h2 class="settings-subhead native-only">Debug Logs</h2>
+          <label class="settings-card setting-row native-only">
+            <div>
+              <div class="setting-title">Detailed logging</div>
+              <div class="setting-sub">Records more about connections, calls and syncing to help track down a problem. Turn it off again once it's sorted.</div>
+            </div>
+            <input type="checkbox" id="verbose-log-toggle" class="switch" />
+          </label>
+          <div class="settings-card setting-row native-only">
+            <div>
+              <div class="setting-title">Log files</div>
+              <div class="setting-sub">Commy keeps its recent logs on this device and never uploads them. They leave out your messages, keys and passwords. Save a copy when you want to share it with someone helping you.</div>
+            </div>
+            <div class="log-actions">
+              <button class="btn-secondary btn-small desktop-only" type="button" id="log-folder-open">Open Folder</button>
+              <button class="btn-secondary btn-small" type="button" id="log-bundle-save">Save Logs</button>
+            </div>
+          </div>
         </section>
 
         <section class="settings-page" data-page="appearance">
@@ -2806,6 +2850,7 @@
   <script src="scripts/locales/es.js"></script>
   <script src="scripts/accessibility.js"></script>
   <script src="scripts/updates.js"></script>
+  <script src="scripts/diagnostics.js"></script>
   <script src="scripts/server-templates.js"></script>
   <script src="scripts/camera-fx.js"></script>
   <script src="scripts/camera-pipeline.js"></script>

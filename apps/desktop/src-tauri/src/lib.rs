@@ -11,6 +11,7 @@ mod entry_list;
 mod catchup;
 mod channel_lock;
 mod community_sync;
+mod debug_log;
 mod deleted;
 mod devices;
 mod dm_sync;
@@ -7219,6 +7220,62 @@ fn set_unread(handle: tauri::AppHandle, count: u32) {
 }
 
 #[tauri::command]
+fn debug_log_status() -> debug_log::LogStatus {
+    debug_log::status()
+}
+
+#[tauri::command]
+fn set_verbose_logging(enabled: bool) -> CmdResult<debug_log::LogStatus> {
+    debug_log::set_verbose(enabled)
+}
+
+#[tauri::command]
+fn open_log_folder() -> CmdResult<()> {
+    let folder = debug_log::folder().ok_or("Logs are not being saved on this device")?;
+    #[cfg(desktop)]
+    return open::that_detached(folder).map_err(err_to_string);
+    #[cfg(mobile)]
+    {
+        let _ = folder;
+        Err("Save the log file instead".into())
+    }
+}
+
+#[tauri::command]
+async fn save_log_bundle(handle: tauri::AppHandle) -> CmdResult<Option<String>> {
+    let now = chrono::Local::now();
+    let header = format!(
+        "Commy {} on {} {}
+Saved {}
+Detailed logging {}
+This file stays on your device until you share it. It has no messages, keys or passwords.
+",
+        updater::current_version(),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        now.to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+        if debug_log::status().verbose { "on" } else { "off" },
+    );
+    let text = debug_log::bundle(&header)?;
+    picker::save_file(&handle, &debug_log::bundle_name(now), text.into_bytes()).await
+}
+
+#[tauri::command]
+async fn run_connection_check(app: tauri::State<'_, App>) -> CmdResult<commy_net::ConnectionCheck> {
+    let checker = app.net.lock().await.as_ref().map(CommyNode::connection_checker).ok_or("Commy is still starting its connection")?;
+    let check = checker.run().await;
+    tracing::info!(
+        "connection check: quality {:?}, direct {:?}, relay reachable {}, relay round trip {:?} ms, ipv6 {}",
+        check.quality,
+        check.direct,
+        check.relay_reachable,
+        check.relay_rtt_ms,
+        check.ipv6
+    );
+    Ok(check)
+}
+
+#[tauri::command]
 fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
     app.update_voice(|voice| voice.close_to_tray = enabled)
 }
@@ -7637,12 +7694,7 @@ fn on_resumed(handle: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,iroh=warn,iroh_net=warn".into()),
-        )
-        .try_init();
+    debug_log::init();
 
     instance::apply_test_build_data_dir();
 
@@ -7737,6 +7789,9 @@ pub fn run() {
                 .ok()
                 .map(std::path::PathBuf::from)
                 .or_else(|| tauri_app.path().app_data_dir().ok());
+            if let Some(dir) = data_dir.as_deref() {
+                debug_log::attach(dir);
+            }
             let show_window = data_dir.as_deref().is_some_and(account_folder::take_show_window);
             match tray::build(&handle) {
                 Ok(()) => {
@@ -7980,6 +8035,11 @@ pub fn run() {
             notify,
             set_unread,
             set_close_to_tray,
+            debug_log_status,
+            set_verbose_logging,
+            open_log_folder,
+            save_log_bundle,
+            run_connection_check,
             tray_prompt_due,
             autostart_allowed,
             finish_tray_prompt,

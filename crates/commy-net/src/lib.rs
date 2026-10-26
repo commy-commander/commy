@@ -1,5 +1,6 @@
 pub mod catchup;
 pub mod community_streams;
+pub mod connection_check;
 pub mod dm;
 pub mod entry_escrow;
 pub mod entry_key;
@@ -24,6 +25,7 @@ mod test_support;
 pub use catchup::{
     ApplyReport, CatchupError, CatchupFrame, CatchupStore, PeerCheck, Refusal, SessionReport, CATCHUP_ALPN,
 };
+pub use connection_check::{ConnectionCheck, ConnectionChecker};
 pub use dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
 pub use entry_key::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ENTRY_KEY_ALPN};
 pub use mirror::{MirrorAsk, MirrorRequest, MirroredServer, MIRROR_ALPN};
