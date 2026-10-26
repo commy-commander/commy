@@ -34,6 +34,7 @@ pub(super) type Admit = Arc<StdMutex<Option<Gate>>>;
 
 #[derive(Default)]
 pub(super) struct Voice {
+    pub(super) personal: Option<super::profile::Personal>,
     book: CallBook,
     muted: bool,
     deafened: bool,
@@ -135,11 +136,15 @@ pub(super) fn media_gate(admit: Admit) -> MediaGate {
 
 impl Session {
     pub(super) fn voice_settings(&self) -> Value {
+        let personal = self.personal();
         let voice = self.voice.borrow();
         json!({
             "noise_cancellation": true,
             "muted": voice.muted,
             "deafened": voice.deafened,
+            "pronouns": personal.pronouns,
+            "presence_until": personal.presence_until,
+            "status_until": personal.status_until,
             "output_volume": 1,
             "input_gain": 1,
             "afk_timeout_minutes": 10,
