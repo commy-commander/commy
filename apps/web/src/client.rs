@@ -623,7 +623,8 @@ impl Client {
         for profile in profiles {
             state.profiles.insert(profile.id, profile.as_seen_by_others());
         }
-        if !member && state.apply(ServerEvent::MemberJoin { server, profile: me }) != Ok(true) {
+        let joined = state.join_as_of(me, joined_ms.unwrap_or_else(|| Utc::now().timestamp_millis()));
+        if !member && joined != Ok(true) {
             return Err("Could not join that server from its copy".into());
         }
         for message in recent_messages {
@@ -1223,6 +1224,20 @@ mod tests {
         sign_sync_response(&mut forged, Utc::now().timestamp_millis(), &Identity::generate());
         assert!(w.client.install_service_snapshot(w.server, forged, None).is_err());
         assert!(!w.client.has(w.server));
+    }
+
+    #[test]
+    fn a_kick_from_before_my_rejoin_does_not_put_me_out_again() {
+        let mut w = world();
+        let me = w.client.profile().unwrap();
+        let owner_key = w.owner.1.public();
+        with_ticket(&mut w, owner_key);
+        let now = Utc::now().timestamp_millis();
+        let copy = signed_snapshot(&w, now - 2 * 3_600_000);
+        let kick = SignedEvent::sign(w.server, w.owner.0.id, now - 3_600_000, ServerEvent::MemberLeave { server: w.server, user: me.id }, &w.owner.1);
+        assert!(w.client.install_service_snapshot(w.server, copy, Some(now - 60_000)).unwrap());
+        w.client.apply_stored(w.server, kick.event, Some(kick.action), false);
+        assert!(w.client.servers.lock().unwrap()[&w.server].server.is_current_member(me.id), "the stored kick is older than my rejoin");
     }
 
     #[test]

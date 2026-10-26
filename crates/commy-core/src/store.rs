@@ -719,6 +719,17 @@ impl ServerState {
         self.apply_noted(signed)
     }
 
+    pub fn join_as_of(&mut self, profile: UserProfile, at: i64) -> Result<bool, StoreError> {
+        let event = ServerEvent::MemberJoin { server: self.server.id, profile };
+        let subject = action::subject(&event).expect("a join has a subject");
+        let applied = self.apply(event)?;
+        if self.action_times.get(&subject).is_none_or(|prev| at > *prev) {
+            self.note_action(Some(subject.clone()), at);
+            self.signed_actions.remove(&subject);
+        }
+        Ok(applied)
+    }
+
     fn apply_noted(&mut self, signed: &SignedEvent) -> Result<bool, StoreError> {
         let Action { by, at, sig } = signed.action;
         let entry = crate::audit::entry_for(self, by, at, sig, &signed.event);
@@ -730,7 +741,25 @@ impl ServerState {
             self.note_action(action::subject(&signed.event), signed.action.at);
             self.keep_signed(signed);
         }
+        if let (true, ServerEvent::MemberUnban { user, .. }) = (applied, &signed.event) {
+            self.readmit_if_joined_since(*user, at);
+        }
         Ok(applied)
+    }
+
+    fn last_join(&self, user: UserId) -> Option<i64> {
+        let subject = format!("member:{user}");
+        let at = *self.action_times.get(&subject)?;
+        let left = self.signed_actions.get(&subject).is_some_and(|s| matches!(s.event, ServerEvent::MemberLeave { .. }));
+        (!left).then_some(at)
+    }
+
+    fn readmit_if_joined_since(&mut self, user: UserId, unbanned_at: i64) {
+        if self.server.is_member(user) || self.last_join(user).is_none_or(|joined| joined <= unbanned_at) {
+            return;
+        }
+        let Some(profile) = self.profiles.get(&user).cloned() else { return };
+        let _ = self.apply(ServerEvent::MemberJoin { server: self.server.id, profile });
     }
 
     fn target_known(&self, event: &ServerEvent) -> bool {
@@ -4337,6 +4366,72 @@ mod tests {
         assert_eq!(state.apply(ServerEvent::MemberBan { server: sid, user: owner }), Ok(false));
         assert_eq!(state.apply(ServerEvent::MemberUnban { server: sid, user: uid }), Ok(true));
         assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile: other }), Ok(true));
+    }
+
+    fn by_owner(state: &ServerState, owner: UserId, at: i64, event: ServerEvent) -> SignedEvent {
+        SignedEvent::sign(state.server.id, owner, at, event, &identity_for(owner))
+    }
+
+    #[test]
+    fn a_kick_from_before_a_rejoin_no_longer_applies() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let me = keyed_profile("me");
+        let kick = |at| by_owner(&state, owner, at, ServerEvent::MemberLeave { server: sid, user: me.id });
+        let (old_kick, new_kick) = (kick(1_000), kick(3_000));
+        assert_eq!(state.join_as_of(me.clone(), 2_000), Ok(true));
+        assert_eq!(state.apply_signed(&old_kick), Ok(false));
+        assert!(state.server.is_member(me.id), "the kick came before the rejoin");
+        assert_eq!(state.apply_signed(&new_kick), Ok(true));
+        assert!(!state.server.is_member(me.id), "a kick after the rejoin still holds");
+    }
+
+    #[test]
+    fn an_unban_from_before_a_rejoin_lets_the_rejoined_member_back_in() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let me = keyed_profile("me");
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: me.clone() }).unwrap();
+        let ban = by_owner(&state, owner, 1_000, ServerEvent::MemberBan { server: sid, user: me.id });
+        let unban = by_owner(&state, owner, 2_000, ServerEvent::MemberUnban { server: sid, user: me.id });
+        assert_eq!(state.join_as_of(me.clone(), 3_000), Ok(false));
+        assert_eq!(state.apply_signed(&ban), Ok(true));
+        assert!(!state.server.is_current_member(me.id));
+        assert_eq!(state.apply_signed(&unban), Ok(true));
+        assert!(state.server.is_current_member(me.id), "the rejoin came after the unban");
+    }
+
+    #[test]
+    fn a_join_refused_while_banned_counts_once_an_earlier_unban_arrives() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let member = keyed_profile("member");
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: member.clone() }).unwrap();
+        let ban = by_owner(&state, owner, 1_000, ServerEvent::MemberBan { server: sid, user: member.id });
+        let unban = by_owner(&state, owner, 2_000, ServerEvent::MemberUnban { server: sid, user: member.id });
+        let rejoin = SignedEvent::sign(sid, member.id, 3_000, ServerEvent::MemberJoin { server: sid, profile: member.clone() }, &identity_for(member.id));
+        assert_eq!(state.apply_signed(&ban), Ok(true));
+        assert_eq!(state.apply_signed(&rejoin), Ok(false), "still banned here");
+        assert_eq!(state.apply_signed(&unban), Ok(true));
+        assert!(state.server.is_current_member(member.id), "replicas agree whatever order they heard it in");
+    }
+
+    #[test]
+    fn an_unban_does_not_bring_back_a_member_who_joined_before_the_ban_or_left_since() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let early = keyed_profile("early");
+        let gone = keyed_profile("gone");
+        assert_eq!(state.join_as_of(early.clone(), 1_000), Ok(true));
+        assert_eq!(state.join_as_of(gone.clone(), 1_000), Ok(true));
+        let kick = by_owner(&state, owner, 1_500, ServerEvent::MemberLeave { server: sid, user: gone.id });
+        assert_eq!(state.apply_signed(&kick), Ok(true));
+        for (user, at) in [(early.id, 2_000), (gone.id, 2_000)] {
+            assert_eq!(state.apply_signed(&by_owner(&state, owner, at, ServerEvent::MemberBan { server: sid, user })), Ok(true));
+            assert_eq!(state.apply_signed(&by_owner(&state, owner, at + 1_000, ServerEvent::MemberUnban { server: sid, user })), Ok(true));
+        }
+        assert!(!state.server.is_member(early.id), "they were banned after joining");
+        assert!(!state.server.is_member(gone.id), "they were kicked after joining");
     }
 
     fn create(state: &mut ServerState, message: &Message) -> Result<bool, StoreError> {
