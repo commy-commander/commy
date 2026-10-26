@@ -48,7 +48,7 @@ fn client_without_this_app() -> Result<IAudioClient> {
             },
         },
     };
-    let blob = PROPVARIANT {
+    let blob = ManuallyDrop::new(PROPVARIANT {
         Anonymous: PROPVARIANT_0 {
             Anonymous: ManuallyDrop::new(PROPVARIANT_0_0 {
                 vt: VT_BLOB,
@@ -63,11 +63,11 @@ fn client_without_this_app() -> Result<IAudioClient> {
                 },
             }),
         },
-    };
+    });
     let (done, finished) = sync_channel(1);
     let handler: IActivateAudioInterfaceCompletionHandler = Activated(done).into();
     let operation = unsafe {
-        ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, &IAudioClient::IID, Some(&blob), &handler)
+        ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, &IAudioClient::IID, Some(&*blob), &handler)
     }
     .context("this version of Windows cannot leave one app out of a capture")?;
     finished.recv_timeout(ACTIVATION_WAIT).context("Windows did not open the capture in time")?;
@@ -203,5 +203,19 @@ impl ProcessLoopback {
             stop,
             thread: Some(thread),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opening_a_capture_that_leaves_this_app_out_keeps_the_heap_intact() {
+        let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        let _ = client_without_this_app();
+        let survivors: Vec<Vec<u8>> = (0..1000).map(|n| vec![0; n % 97 + 1]).collect();
+        drop(survivors);
+        unsafe { CoUninitialize() };
     }
 }
