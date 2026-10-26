@@ -87,7 +87,7 @@ pub fn foreground_pid() -> Option<u32> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd == 0 {
+        if hwnd.is_null() {
             return None;
         }
         let mut pid = 0u32;
@@ -112,7 +112,7 @@ pub fn foreground_app() -> Option<(String, Option<String>)> {
 
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd == 0 {
+        if hwnd.is_null() {
             return None;
         }
         let mut pid = 0u32;
@@ -121,7 +121,7 @@ pub fn foreground_app() -> Option<(String, Option<String>)> {
             return None;
         }
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if process == 0 {
+        if process.is_null() {
             return None;
         }
         let mut buf = [0u16; 1024];
