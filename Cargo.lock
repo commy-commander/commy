@@ -968,7 +968,7 @@ dependencies = [
  "nnnoiseless",
  "rusty-opus",
  "sonora",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -987,7 +987,7 @@ dependencies = [
  "rand 0.8.8",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1010,7 +1010,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "uuid",
 ]
 
@@ -1067,7 +1067,7 @@ dependencies = [
  "commy-core",
  "cpal",
  "image 0.25.10",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "windows 0.62.2",
@@ -1100,7 +1100,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "url",
@@ -1121,7 +1121,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite 0.28.0",
  "tracing",
@@ -1147,7 +1147,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "sqlx",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite 0.28.0",
  "tracing",
