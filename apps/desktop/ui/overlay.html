@@ -82,6 +82,11 @@
     .avatar.emoji { background: var(--raised); font-size: 14px; }
     .member.speaking .avatar { box-shadow: 0 0 0 2px var(--ink); }
     .name { font-family: var(--display); font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+    body.pictures #members { flex-direction: row; flex-wrap: wrap; max-width: 270px; gap: 6px; }
+    body.pictures.right #members { justify-content: flex-end; }
+    body.pictures .member { height: 34px; width: 34px; padding: 2px; justify-content: center; }
+    body.pictures .avatar { width: 28px; height: 28px; font-size: 11px; }
+    body.pictures .avatar.emoji { font-size: 16px; }
     .line {
       max-width: 270px;
       padding: 6px 11px;

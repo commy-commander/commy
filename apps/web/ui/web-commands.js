@@ -6,7 +6,7 @@ const WEB_UPDATE_STATUS = {
 
 const WEB_DEFAULTS = {
   ui_ready: null,
-  get_overlay_settings: { enabled: false, corner: "top-left", opacity: 0.9, show_chat: false, show_everyone: false, toggle_hotkey: "", chat_hotkey: "" },
+  get_overlay_settings: { enabled: false, corner: "top-left", opacity: 0.9, show_chat: false, show_everyone: false, pictures_only: false, toggle_hotkey: "", chat_hotkey: "" },
   overlay_hotkey_problems: [],
   voice_hotkey_problems: [],
   get_update_status: WEB_UPDATE_STATUS,

@@ -25,6 +25,8 @@ pub struct OverlaySettings {
     pub show_chat: bool,
     #[serde(default)]
     pub show_everyone: bool,
+    #[serde(default)]
+    pub pictures_only: bool,
     #[serde(default = "default_toggle_hotkey")]
     pub toggle_hotkey: String,
     #[serde(default = "default_chat_hotkey")]
@@ -52,6 +54,7 @@ impl Default for OverlaySettings {
             opacity: default_opacity(),
             show_chat: true,
             show_everyone: false,
+            pictures_only: false,
             toggle_hotkey: default_toggle_hotkey(),
             chat_hotkey: default_chat_hotkey(),
         }
@@ -114,7 +117,20 @@ pub fn wanted(toggled_on: bool, game_in_front: bool, previewing: bool, needs_gam
     previewing || (toggled_on && (game_in_front || !needs_game))
 }
 
+#[cfg(desktop)]
+static APPLYING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn refresh(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(desktop)]
+        let _one_at_a_time = APPLYING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (settings, visible) = wanted_now(&app);
+        apply(&app, &settings, visible);
+    });
+}
+
+fn wanted_now(app: &AppHandle) -> (OverlaySettings, bool) {
     use std::sync::atomic::Ordering::Relaxed;
     let state = app.state::<crate::state::App>();
     let settings = state.voice.lock().unwrap().overlay.clone();
@@ -124,17 +140,37 @@ pub fn refresh(app: &AppHandle) {
         state.overlay_preview.load(Relaxed),
         cfg!(windows),
     );
-    apply(app, &settings, visible);
+    (settings, visible)
 }
 
 #[cfg(mobile)]
-pub fn apply(_app: &AppHandle, _settings: &OverlaySettings, _visible: bool) {}
+pub fn hold_corner(_app: &AppHandle) {}
 
 #[cfg(desktop)]
-pub fn apply(app: &AppHandle, settings: &OverlaySettings, visible: bool) {
+pub fn hold_corner(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(window) = app.get_webview_window(LABEL) else { return };
+        if !window.is_visible().unwrap_or(false) {
+            return;
+        }
+        let corner = app.state::<crate::state::App>().voice.lock().unwrap().overlay.corner.clone();
+        let (Some(spot), Ok(at)) = (corner_spot(&window, &corner), window.outer_position()) else { return };
+        if (at.x, at.y) != spot {
+            tracing::info!("overlay drifted to {},{}; moving it back to {corner}", at.x, at.y);
+            refresh(&app);
+        }
+    });
+}
+
+#[cfg(mobile)]
+fn apply(_app: &AppHandle, _settings: &OverlaySettings, _visible: bool) {}
+
+#[cfg(desktop)]
+fn apply(app: &AppHandle, settings: &OverlaySettings, visible: bool) {
     if !settings.enabled || !visible {
         if let Some(window) = app.get_webview_window(LABEL) {
-            hide_window(&window);
+            hide_window(app, &window);
         }
         return;
     }
@@ -145,57 +181,70 @@ pub fn apply(app: &AppHandle, settings: &OverlaySettings, visible: bool) {
             return;
         }
     };
-    let monitor = window.primary_monitor().ok().flatten().or_else(|| window.current_monitor().ok().flatten());
-    if let Some(monitor) = monitor {
-        let scale = monitor.scale_factor();
-        let area = monitor.work_area();
-        let size = ((WIDTH * scale) as u32, (HEIGHT * scale) as u32);
-        let (x, y) = corner_position(
-            (area.position.x, area.position.y, area.size.width, area.size.height),
-            size,
-            &settings.corner,
-        );
-        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
-    }
     let _ = window.set_ignore_cursor_events(true);
-    show_without_focus(&window);
+    show_at(app, &window, corner_spot(&window, &settings.corner));
     let _ = app.emit_to(LABEL, "overlay-config", settings);
 }
 
-#[cfg(windows)]
-fn show_without_focus(window: &tauri::WebviewWindow) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE,
-        SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
-    };
-    let Ok(hwnd) = window.hwnd() else { return };
-    let hwnd = hwnd.0 as windows_sys::Win32::Foundation::HWND;
-    unsafe {
-        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        let wanted = (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT) as isize;
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | wanted);
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+#[cfg(desktop)]
+fn corner_spot(window: &tauri::WebviewWindow, corner: &str) -> Option<(i32, i32)> {
+    let monitor = window.primary_monitor().ok().flatten().or_else(|| window.current_monitor().ok().flatten())?;
+    let area = monitor.work_area();
+    if area.size.width == 0 || area.size.height == 0 {
+        return None;
     }
+    let scale = monitor.scale_factor();
+    let size = ((WIDTH * scale) as u32, (HEIGHT * scale) as u32);
+    Some(corner_position((area.position.x, area.position.y, area.size.width, area.size.height), size, corner))
 }
 
 #[cfg(windows)]
-fn hide_window(window: &tauri::WebviewWindow) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
-    if let Ok(hwnd) = window.hwnd() {
+fn show_at(app: &AppHandle, window: &tauri::WebviewWindow, spot: Option<(i32, i32)>) {
+    let Ok(hwnd) = window.hwnd() else { return };
+    let hwnd = hwnd.0 as isize;
+    let _ = app.run_on_main_thread(move || {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+            WS_EX_TRANSPARENT,
+        };
+        let hwnd = hwnd as windows_sys::Win32::Foundation::HWND;
+        let (x, y, keep) = match spot {
+            Some((x, y)) => (x, y, 0),
+            None => (0, 0, SWP_NOMOVE),
+        };
         unsafe {
-            ShowWindow(hwnd.0 as windows_sys::Win32::Foundation::HWND, SW_HIDE);
+            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            let wanted = (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT) as isize;
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | wanted);
+            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            SetWindowPos(hwnd, HWND_TOPMOST, x, y, 0, 0, keep | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         }
-    }
+    });
+}
+
+#[cfg(windows)]
+fn hide_window(app: &AppHandle, window: &tauri::WebviewWindow) {
+    let Ok(hwnd) = window.hwnd() else { return };
+    let hwnd = hwnd.0 as isize;
+    let _ = app.run_on_main_thread(move || {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+        unsafe {
+            ShowWindow(hwnd as windows_sys::Win32::Foundation::HWND, SW_HIDE);
+        }
+    });
 }
 
 #[cfg(all(desktop, not(windows)))]
-fn hide_window(window: &tauri::WebviewWindow) {
+fn hide_window(_app: &AppHandle, window: &tauri::WebviewWindow) {
     let _ = window.hide();
 }
 
 #[cfg(all(desktop, not(windows)))]
-fn show_without_focus(window: &tauri::WebviewWindow) {
+fn show_at(_app: &AppHandle, window: &tauri::WebviewWindow, spot: Option<(i32, i32)>) {
+    if let Some((x, y)) = spot {
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    }
     let _ = window.show();
 }
 
@@ -247,7 +296,7 @@ mod tests {
     #[test]
     fn older_settings_files_keep_the_talking_only_view() {
         let s: OverlaySettings = serde_json::from_str(r#"{"enabled":true,"corner":"bottom-right","opacity":0.8}"#).unwrap();
-        assert!(!s.show_everyone && s.show_chat);
+        assert!(!s.show_everyone && !s.pictures_only && s.show_chat);
         assert_eq!(s.corner, "bottom-right");
     }
 }
