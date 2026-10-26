@@ -31,6 +31,58 @@ pub enum Request {
         emoji: Option<String>,
         data: String,
     },
+    Status,
+    Directory,
+    Control {
+        id: u64,
+        control: Control,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum Control {
+    ToggleMute,
+    ToggleDeafen,
+    Talk { down: bool },
+    HoldMute { down: bool },
+    ToggleInputMode,
+    ToggleCamera,
+    ToggleStream,
+    Volume { target: VolumeTarget, change: Change },
+    UserVolume { user: String, change: Change },
+    Device { target: VolumeTarget, device: String },
+    JoinVoice { server: String, channel: String },
+    OpenChannel { server: String, channel: String },
+    OpenApp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VolumeTarget {
+    Output,
+    Input,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Change {
+    By(f32),
+    To(f32),
+}
+
+impl Change {
+    pub fn apply(self, current: f32) -> f32 {
+        let next = match self {
+            Change::By(step) => current + step,
+            Change::To(value) => value,
+        };
+        if next.is_finite() {
+            (next * 100.0).round().clamp(0.0, 200.0) / 100.0
+        } else {
+            current
+        }
+    }
 }
 
 impl Request {
@@ -58,6 +110,9 @@ pub enum Reply {
     Soundboards(SoundboardList),
     Played { id: u64 },
     Added { id: u64, server: String, sound: SoundChoice },
+    Status(DeckStatus),
+    Directory(Directory),
+    Done { id: u64, status: DeckStatus },
     Failed { id: u64, message: String },
 }
 
@@ -83,6 +138,71 @@ pub struct SoundboardServer {
     pub can_play: bool,
     pub can_add: bool,
     pub sounds: Vec<SoundChoice>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct DeckStatus {
+    pub muted: bool,
+    pub deafened: bool,
+    pub push_to_talk: bool,
+    pub voice: Option<VoiceSpot>,
+    pub camera: bool,
+    pub sharing: bool,
+    pub output_volume: f32,
+    pub input_gain: f32,
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
+    pub user_volumes: Vec<UserVolume>,
+    pub unread: u32,
+    pub servers: Vec<ServerStats>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct VoiceSpot {
+    pub server: String,
+    pub channel: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UserVolume {
+    pub user: String,
+    pub volume: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ServerStats {
+    pub id: String,
+    pub members: usize,
+    pub online: usize,
+    pub in_voice: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Directory {
+    pub servers: Vec<DirectoryServer>,
+    pub people: Vec<Person>,
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DirectoryServer {
+    pub id: String,
+    pub name: String,
+    pub text: Vec<ChannelChoice>,
+    pub voice: Vec<ChannelChoice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ChannelChoice {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Person {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -173,6 +293,38 @@ mod tests {
             Request::parse(r#"{"type":"add_sound","id":8,"server":"s1","name":"boom","emoji":"💥","data":"AA=="}"#),
             Some(Request::AddSound { id: 8, server: "s1".into(), name: "boom".into(), emoji: Some("💥".into()), data: "AA==".into() })
         );
+    }
+
+    #[test]
+    fn controls_parse_with_their_settings() {
+        assert_eq!(Request::parse(r#"{"type":"status"}"#), Some(Request::Status));
+        assert_eq!(Request::parse(r#"{"type":"directory"}"#), Some(Request::Directory));
+        assert_eq!(
+            Request::parse(r#"{"type":"control","id":2,"control":{"action":"toggle_mute"}}"#),
+            Some(Request::Control { id: 2, control: Control::ToggleMute })
+        );
+        assert_eq!(
+            Request::parse(r#"{"type":"control","id":3,"control":{"action":"talk","down":true}}"#),
+            Some(Request::Control { id: 3, control: Control::Talk { down: true } })
+        );
+        assert_eq!(
+            Request::parse(r#"{"type":"control","id":4,"control":{"action":"volume","target":"output","change":{"by":-0.1}}}"#),
+            Some(Request::Control { id: 4, control: Control::Volume { target: VolumeTarget::Output, change: Change::By(-0.1) } })
+        );
+        assert_eq!(
+            Request::parse(r#"{"type":"control","id":5,"control":{"action":"join_voice","server":"s","channel":"c"}}"#),
+            Some(Request::Control { id: 5, control: Control::JoinVoice { server: "s".into(), channel: "c".into() } })
+        );
+        assert_eq!(Request::parse(r#"{"type":"control","id":6,"control":{"action":"shutdown"}}"#), None);
+    }
+
+    #[test]
+    fn volume_changes_round_and_stay_in_range() {
+        assert_eq!(Change::By(0.1).apply(1.0), 1.1);
+        assert_eq!(Change::By(-0.25).apply(0.1), 0.0);
+        assert_eq!(Change::By(0.5).apply(1.8), 2.0);
+        assert_eq!(Change::To(0.333).apply(1.0), 0.33);
+        assert_eq!(Change::To(f32::NAN).apply(0.7), 0.7);
     }
 
     #[test]

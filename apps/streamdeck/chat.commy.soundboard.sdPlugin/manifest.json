@@ -3,7 +3,7 @@
   "Name": "Commy",
   "Version": "0.1.0.0",
   "Author": "Commy Commander",
-  "Description": "Play sounds from your Commy soundboard in the voice channel you are in, and add new ones.",
+  "Description": "Control Commy from your Stream Deck: mute, deafen, push to talk, channels, camera, streaming, volumes and the soundboard.",
   "URL": "https://commy.chat",
   "UUID": "chat.commy.soundboard",
   "Category": "Commy",
@@ -45,6 +45,328 @@
           "ShowTitle": true
         }
       ]
+    },
+    {
+      "Name": "Mute",
+      "UUID": "chat.commy.soundboard.mute",
+      "Icon": "imgs/actions/mute/icon",
+      "Tooltip": "Mutes or unmutes your microphone.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/mute/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        },
+        {
+          "Image": "imgs/actions/mute/key-on",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ],
+      "DisableAutomaticStates": true
+    },
+    {
+      "Name": "Deafen",
+      "UUID": "chat.commy.soundboard.deafen",
+      "Icon": "imgs/actions/deafen/icon",
+      "Tooltip": "Deafens or undeafens you.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/deafen/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        },
+        {
+          "Image": "imgs/actions/deafen/key-on",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ],
+      "DisableAutomaticStates": true
+    },
+    {
+      "Name": "Push to talk",
+      "UUID": "chat.commy.soundboard.push-to-talk",
+      "Icon": "imgs/actions/push-to-talk/icon",
+      "Tooltip": "Hold to talk while Commy is set to push to talk.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/push-to-talk/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ]
+    },
+    {
+      "Name": "Push to mute",
+      "UUID": "chat.commy.soundboard.push-to-mute",
+      "Icon": "imgs/actions/push-to-mute/icon",
+      "Tooltip": "Hold to mute your microphone for a moment.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/push-to-mute/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ]
+    },
+    {
+      "Name": "Voice input mode",
+      "UUID": "chat.commy.soundboard.input-mode",
+      "Icon": "imgs/actions/input-mode/icon",
+      "Tooltip": "Switches between voice activity and push to talk.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/input-mode/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        },
+        {
+          "Image": "imgs/actions/input-mode/key-on",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ],
+      "DisableAutomaticStates": true
+    },
+    {
+      "Name": "Camera",
+      "UUID": "chat.commy.soundboard.camera",
+      "Icon": "imgs/actions/camera/icon",
+      "Tooltip": "Turns your camera on or off in the voice channel you are in.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/camera/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        },
+        {
+          "Image": "imgs/actions/camera/key-on",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ],
+      "DisableAutomaticStates": true
+    },
+    {
+      "Name": "Share screen",
+      "UUID": "chat.commy.soundboard.stream",
+      "Icon": "imgs/actions/stream/icon",
+      "Tooltip": "Starts or stops sharing your screen or a game.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/stream/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        },
+        {
+          "Image": "imgs/actions/stream/key-on",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ],
+      "DisableAutomaticStates": true
+    },
+    {
+      "Name": "Voice channel",
+      "UUID": "chat.commy.soundboard.voice-channel",
+      "Icon": "imgs/actions/voice-channel/icon",
+      "Tooltip": "Joins or leaves a voice channel.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/voice-channel/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        },
+        {
+          "Image": "imgs/actions/voice-channel/key-on",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ],
+      "DisableAutomaticStates": true
+    },
+    {
+      "Name": "Text channel",
+      "UUID": "chat.commy.soundboard.text-channel",
+      "Icon": "imgs/actions/text-channel/icon",
+      "Tooltip": "Opens a text channel in Commy.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/text-channel/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ]
+    },
+    {
+      "Name": "Volume",
+      "UUID": "chat.commy.soundboard.volume",
+      "Icon": "imgs/actions/volume/icon",
+      "Tooltip": "Changes your output volume or microphone level.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/volume/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "TriggerDescription": {
+          "Rotate": "Change volume"
+        }
+      }
+    },
+    {
+      "Name": "Person volume",
+      "UUID": "chat.commy.soundboard.user-volume",
+      "Icon": "imgs/actions/user-volume/icon",
+      "Tooltip": "Changes how loud one person is for you.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/user-volume/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "TriggerDescription": {
+          "Rotate": "Change volume"
+        }
+      }
+    },
+    {
+      "Name": "Audio device",
+      "UUID": "chat.commy.soundboard.audio-device",
+      "Icon": "imgs/actions/audio-device/icon",
+      "Tooltip": "Switches your microphone or speakers to a device.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/audio-device/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        },
+        {
+          "Image": "imgs/actions/audio-device/key-on",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ],
+      "DisableAutomaticStates": true
+    },
+    {
+      "Name": "Server stats",
+      "UUID": "chat.commy.soundboard.server-stats",
+      "Icon": "imgs/actions/server-stats/icon",
+      "Tooltip": "Shows how many members of a server are online.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/server-stats/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ]
+    },
+    {
+      "Name": "Notifications",
+      "UUID": "chat.commy.soundboard.notifications",
+      "Icon": "imgs/actions/notifications/icon",
+      "Tooltip": "Shows your unread count and opens Commy.",
+      "PropertyInspectorPath": "ui/control.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/notifications/key",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        },
+        {
+          "Image": "imgs/actions/notifications/key-on",
+          "TitleAlignment": "bottom",
+          "FontSize": 12,
+          "ShowTitle": true
+        }
+      ],
+      "DisableAutomaticStates": true
     }
   ]
 }

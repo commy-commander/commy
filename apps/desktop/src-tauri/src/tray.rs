@@ -152,6 +152,10 @@ pub fn refresh_icon(app: &AppHandle) {
     }
 }
 
+pub fn unread() -> u32 {
+    UNREAD.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn set_unread(app: &AppHandle, count: u32) {
     UNREAD.store(count, std::sync::atomic::Ordering::Relaxed);
     #[cfg(mobile)]
