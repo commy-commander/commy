@@ -27,6 +27,31 @@ pub const DEFAULT_ACCOUNT_SERVER: &str = match option_env!("COMMY_DEFAULT_ACCOUN
 const PORT_FILE: &str = "link.port";
 const HANDOFF_PREFIX: &str = "commy-link-v1 ";
 const HANDOFF_LIMIT: u64 = (MAX_LINK_LEN + HANDOFF_PREFIX.len() + 2) as u64;
+const SHOW_REQUEST: &str = "commy-show-v1";
+const HERE_REQUEST: &str = "commy-here-v1";
+
+#[derive(Debug, PartialEq)]
+enum Handoff {
+    Link(String),
+    Show,
+    Here,
+}
+
+fn handoff(line: &str) -> Option<Handoff> {
+    match line.trim() {
+        SHOW_REQUEST => Some(Handoff::Show),
+        HERE_REQUEST => Some(Handoff::Here),
+        other => other.strip_prefix(HANDOFF_PREFIX).filter(|link| looks_like_link(link)).map(|link| Handoff::Link(link.to_string())),
+    }
+}
+
+pub fn launch_request(link: Option<&str>, minimized: bool) -> String {
+    match link {
+        Some(link) => format!("{HANDOFF_PREFIX}{link}"),
+        None if minimized => HERE_REQUEST.to_string(),
+        None => SHOW_REQUEST.to_string(),
+    }
+}
 
 const REUSE_MIN_LIFE_LEFT: f64 = 0.85;
 
@@ -284,7 +309,7 @@ pub fn default_data_dir() -> Option<PathBuf> {
     }
 }
 
-pub fn forward_to_running_instance(data_dir: &Path, link: &str) -> bool {
+pub fn hand_to_running_instance(data_dir: &Path, request: &str) -> bool {
     let Some(port) = std::fs::read_to_string(data_dir.join(PORT_FILE))
         .ok()
         .and_then(|s| s.trim().parse::<u16>().ok())
@@ -296,7 +321,7 @@ pub fn forward_to_running_instance(data_dir: &Path, link: &str) -> bool {
         return false;
     };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-    if stream.write_all(format!("{HANDOFF_PREFIX}{link}\n").as_bytes()).is_err() {
+    if stream.write_all(format!("{request}\n").as_bytes()).is_err() {
         return false;
     }
     let mut ack = String::new();
@@ -349,16 +374,13 @@ pub fn start(handle: &AppHandle, data_dir: &Path, launch_link: Option<String>) {
             if reader.read_line(&mut line).is_err() {
                 continue;
             }
-            let link = line.trim().strip_prefix(HANDOFF_PREFIX).map(str::to_string);
+            let request = handoff(&line);
             let mut stream = reader.into_inner().into_inner();
-            match link {
-                Some(link) if looks_like_link(&link) => {
-                    let _ = stream.write_all(b"ok\n");
-                    deliver(&handle, link);
-                }
-                _ => {
-                    let _ = stream.write_all(b"no\n");
-                }
+            let _ = stream.write_all(if request.is_some() { b"ok\n" } else { b"no\n" });
+            match request {
+                Some(Handoff::Link(link)) => deliver(&handle, link),
+                Some(Handoff::Show) => crate::tray::show_main_window(&handle),
+                Some(Handoff::Here) | None => {}
             }
         }
     });
@@ -415,7 +437,8 @@ mod tests {
     fn handoff_reaches_a_listener() {
         let dir = std::env::temp_dir().join(format!("commy-link-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(!forward_to_running_instance(&dir, "commy://i/commy.chat/AB23CD45"));
+        let request = launch_request(Some("commy://i/commy.chat/AB23CD45"), false);
+        assert!(!hand_to_running_instance(&dir, &request));
 
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         std::fs::write(dir.join(PORT_FILE), listener.local_addr().unwrap().port().to_string()).unwrap();
@@ -427,8 +450,18 @@ mod tests {
             reader.into_inner().into_inner().write_all(b"ok\n").unwrap();
             line
         });
-        assert!(forward_to_running_instance(&dir, "commy://i/commy.chat/AB23CD45"));
+        assert!(hand_to_running_instance(&dir, &request));
         assert_eq!(server.join().unwrap(), "commy-link-v1 commy://i/commy.chat/AB23CD45\n");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_second_start_asks_the_running_app_to_show_itself_or_just_checks_it_is_there() {
+        assert_eq!(handoff(&launch_request(None, false)), Some(Handoff::Show));
+        assert_eq!(handoff(&launch_request(None, true)), Some(Handoff::Here));
+        let link = "commy://i/commy.chat/AB23CD45";
+        assert_eq!(handoff(&format!("{}\n", launch_request(Some(link), true))), Some(Handoff::Link(link.to_string())));
+        assert_eq!(handoff("commy-link-v1 https://example.com"), None);
+        assert_eq!(handoff("hello"), None);
     }
 }
