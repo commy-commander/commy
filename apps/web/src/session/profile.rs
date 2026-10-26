@@ -147,9 +147,13 @@ impl Session {
     }
 
     fn edit_profile(&self, shared: bool, edit: impl FnOnce(&mut UserProfile)) -> Result<UserProfile, String> {
+        let shown = self.client.borrow().profile().map(|p| p.presence.as_seen_by_others());
         let edited = self.client.borrow().edit_me(edit)?;
         let details = self.dms.borrow().safety.profile_policy.shows_details_to_servers();
-        let sent = self.client.borrow().announce_profile(details);
+        let mut sent = self.client.borrow().announce_profile(details);
+        if shown != Some(edited.presence.as_seen_by_others()) {
+            sent.extend(self.client.borrow().presence_now());
+        }
         for (server, payload) in sent {
             self.publish(server, &payload);
             self.emit("server-event", json!(server.to_string()));

@@ -518,18 +518,25 @@ impl Client {
     }
 
     pub fn farewell(&self) -> Vec<(ServerId, WirePayload)> {
-        let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
-        if profile.presence == Presence::Invisible {
-            return Vec::new();
+        match self.me.lock().unwrap().as_ref() {
+            Some((profile, _)) if profile.presence != Presence::Invisible => {}
+            _ => return Vec::new(),
         }
+        self.presence_everywhere(|_| Presence::Offline)
+    }
+
+    pub fn presence_now(&self) -> Vec<(ServerId, WirePayload)> {
+        self.presence_everywhere(|profile| profile.presence.as_seen_by_others())
+    }
+
+    fn presence_everywhere(&self, presence: impl Fn(&UserProfile) -> Presence) -> Vec<(ServerId, WirePayload)> {
+        let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
+        let event = ServerEvent::PresenceUpdate { user: profile.id, presence: presence(&profile) };
         let at = Utc::now().timestamp_millis();
         let servers: Vec<ServerId> = self.servers.lock().unwrap().keys().copied().collect();
         servers
             .into_iter()
-            .map(|server| {
-                let event = ServerEvent::PresenceUpdate { user: profile.id, presence: Presence::Offline };
-                (server, WirePayload::Signed(SignedEvent::sign(server, profile.id, at, event, &identity)))
-            })
+            .map(|server| (server, WirePayload::Signed(SignedEvent::sign(server, profile.id, at, event.clone(), &identity))))
             .collect()
     }
 
@@ -994,6 +1001,11 @@ mod tests {
         w.client.apply_signal(w.server, &desk, event, action);
         assert!(!w.client.is_shown_online(w.server, owner.id));
         assert!(w.client.farewell().iter().all(|(_, p)| matches!(p, WirePayload::Signed(s) if s.event == ServerEvent::PresenceUpdate { user: me, presence: Presence::Offline })));
+        w.client.edit_me(|p| p.presence = Presence::DoNotDisturb).unwrap();
+        assert!(w.client.presence_now().iter().all(|(_, p)| matches!(p, WirePayload::Signed(s) if s.event == ServerEvent::PresenceUpdate { user: me, presence: Presence::DoNotDisturb })));
+        w.client.edit_me(|p| p.presence = Presence::Invisible).unwrap();
+        assert!(w.client.farewell().is_empty());
+        assert!(w.client.presence_now().iter().all(|(_, p)| matches!(p, WirePayload::Signed(s) if s.event == ServerEvent::PresenceUpdate { user: me, presence: Presence::Offline })));
     }
 
     #[test]
@@ -1050,6 +1062,7 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert!(matches!(streams::event_of(&sent[0].1), Some((ServerEvent::PronounsSet { .. }, _))));
         assert_eq!(w.client.own_pronouns().as_deref(), Some("they/them"));
+        std::thread::sleep(std::time::Duration::from_millis(2));
         w.client.pronoun_updates(None);
         assert_eq!(w.client.own_pronouns(), None);
     }
