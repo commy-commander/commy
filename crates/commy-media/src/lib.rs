@@ -1,5 +1,7 @@
 pub mod devices;
 pub mod jitter;
+#[cfg(windows)]
+mod loopback;
 pub mod mixer;
 pub mod screen;
 #[cfg(windows)]
