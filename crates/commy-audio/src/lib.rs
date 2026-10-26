@@ -8,6 +8,7 @@ const RNNOISE_I16_FULL_SCALE: f32 = 32767.0;
 
 pub mod codec;
 pub mod echo;
+pub mod level;
 pub mod ogg;
 pub mod speaking;
 
@@ -38,6 +39,7 @@ pub struct VoiceProcessor {
     noise_cancellation: bool,
     echo: Option<echo::EchoCanceller>,
     far_end: echo::FarEndInbox,
+    level: Option<level::LevelControl>,
     muted: bool,
     push_to_talk: bool,
     talk_key_down: bool,
@@ -71,6 +73,7 @@ impl VoiceProcessor {
             noise_cancellation: true,
             echo: Some(echo::EchoCanceller::new()),
             far_end: echo::FarEndInbox::new(),
+            level: Some(level::LevelControl::new()),
             muted: false,
             push_to_talk: false,
             talk_key_down: false,
@@ -101,10 +104,25 @@ impl VoiceProcessor {
         }
     }
 
+    pub fn set_auto_level(&mut self, enabled: bool) {
+        if enabled && self.level.is_none() {
+            self.level = Some(level::LevelControl::new());
+        } else if !enabled {
+            self.level = None;
+        }
+    }
+
+    pub fn auto_level(&self) -> bool {
+        self.level.is_some()
+    }
+
     pub fn start_fresh(&mut self) {
         self.far_end.discard();
         if self.echo.is_some() {
             self.echo = Some(echo::EchoCanceller::new());
+        }
+        if self.level.is_some() {
+            self.level = Some(level::LevelControl::new());
         }
         self.denoiser = DenoiseState::new();
         self.gate = VoiceGate::default();
@@ -219,6 +237,9 @@ impl VoiceProcessor {
         } else {
             (gained.to_vec(), None)
         };
+        if let Some(level) = &mut self.level {
+            level.process(&mut samples);
+        }
         let open = self.gate_opens(input_level_db, vad);
         if vad.is_some() || self.sensitivity != Sensitivity::Automatic {
             self.gate.apply(&mut samples, open);
@@ -358,6 +379,66 @@ mod tests {
             .collect()
     }
 
+    fn talking(amplitude: f32) -> impl FnMut() -> Vec<f32> {
+        let mut n = 0usize;
+        move || {
+            let frame = (0..FRAME_SIZE)
+                .map(|i| {
+                    let t = (n * FRAME_SIZE + i) as f64 / f64::from(SAMPLE_RATE);
+                    let pitch = 160.0 + 25.0 * (std::f64::consts::TAU * 2.3 * t).sin();
+                    let envelope = (0.5 + 0.5 * (std::f64::consts::TAU * 0.4 * t).sin()).powi(2);
+                    let harmonics: f64 = (1..=8).map(|h| (h as f64 * std::f64::consts::TAU * pitch * t).sin() / h as f64).sum();
+                    (f64::from(amplitude) * envelope * harmonics) as f32
+                })
+                .collect();
+            n += 1;
+            frame
+        }
+    }
+
+    fn sent_level_db(auto_level: bool, amplitude: f32) -> (f32, f32) {
+        let mut p = VoiceProcessor::new();
+        p.set_auto_level(auto_level);
+        let mut speech = talking(amplitude);
+        let (mut power, mut peak) = (0.0f64, 0.0f32);
+        for frame in 0..1500 {
+            let out = p.process(&speech()).unwrap();
+            if frame >= 1000 {
+                power += out.samples.iter().map(|s| f64::from(s * s)).sum::<f64>();
+                peak = out.samples.iter().fold(peak, |m, s| m.max(s.abs()));
+            }
+        }
+        ((10.0 * (power / (500 * FRAME_SIZE) as f64).log10()) as f32, peak)
+    }
+
+    #[test]
+    fn automatic_level_is_on_by_default_and_brings_a_quiet_mic_up() {
+        assert!(VoiceProcessor::new().auto_level());
+        let (plain, _) = sent_level_db(false, 0.01);
+        let (levelled, peak) = sent_level_db(true, 0.01);
+        assert!(levelled - plain > 8.0, "a quiet mic only came up {:.1} dB", levelled - plain);
+        assert!(peak < 1.0);
+    }
+
+    #[test]
+    fn automatic_level_does_not_push_a_loud_mic_into_clipping() {
+        let (plain, _) = sent_level_db(false, 0.4);
+        let (levelled, peak) = sent_level_db(true, 0.4);
+        assert!((levelled - plain).abs() < 3.0, "a loud mic moved {:.1} dB", levelled - plain);
+        assert!(peak <= 1.0);
+    }
+
+    #[test]
+    fn automatic_level_can_be_turned_off_and_survives_a_fresh_start() {
+        let mut p = VoiceProcessor::new();
+        p.set_auto_level(false);
+        p.start_fresh();
+        assert!(!p.auto_level());
+        p.set_auto_level(true);
+        p.start_fresh();
+        assert!(p.auto_level());
+    }
+
     #[test]
     fn rejects_wrong_frame_size() {
         let mut p = VoiceProcessor::new();
@@ -369,6 +450,7 @@ mod tests {
         let mut p = VoiceProcessor::new();
         p.set_noise_cancellation(false);
         p.set_echo_cancellation(false);
+        p.set_auto_level(false);
         let frame = sine_frame(440.0, 0.5);
         let out = p.process(&frame).unwrap();
         assert!(out.should_transmit);
@@ -419,6 +501,7 @@ mod tests {
         let mut p = VoiceProcessor::new();
         assert!(p.echo_cancellation());
         p.set_noise_cancellation(false);
+        p.set_auto_level(false);
         let sink = p.far_end_sink();
         let mut rng = 12345u64;
         let mut noise = move || {

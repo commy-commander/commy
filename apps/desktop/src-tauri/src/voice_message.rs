@@ -30,6 +30,7 @@ impl VoiceRecorder {
         let mut processor = VoiceProcessor::new();
         processor.set_echo_cancellation(false);
         processor.set_noise_cancellation(voice.noise_cancellation);
+        processor.set_auto_level(voice.auto_level);
         processor.set_input_gain(voice.input_gain);
         let (tx, rx) = mpsc::unbounded_channel::<Vec<i16>>();
         let mic = commy_media::start_microphone(Arc::new(Mutex::new(processor)), tx, voice.input_device.clone())?;
