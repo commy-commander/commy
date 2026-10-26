@@ -4038,14 +4038,13 @@ async fn set_server_image(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let (icon, banner) = {
+    {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_SERVER, "change the server's images")?;
-        (state.server.icon.clone(), state.server.banner.clone())
-    };
+        view::manage::server_images(state, our_permissions(&app, state, me.id), &which, None)?;
+    }
     let bytes = data
-        .map(|b64| decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "server images must be a JPEG or PNG under 1 MB"))
+        .map(|b64| view::profile::image_bytes(&b64, MAX_SERVER_IMAGE_BYTES, view::manage::SERVER_IMAGE_INVALID, view::manage::SERVER_IMAGE_INVALID))
         .transpose()?;
     if which == "invite" && bytes.as_ref().is_some_and(|b| b.len() > invite_link::MAX_INVITE_BACKGROUND_BYTES) {
         return Err("invite backgrounds must be under 400 KB".into());
@@ -4054,17 +4053,12 @@ async fn set_server_image(
         None => None,
         Some(bytes) => Some(store_shared_blob(&app, bytes).await?),
     };
-    let (icon, banner) = match which.as_str() {
-        "icon" => (image, banner),
-        "banner" => (icon, image),
-        "invite" => {
-            apply_and_broadcast(&app, &handle, sid, ServerEvent::InviteBackgroundSet { server: sid, background: image }).await?;
-            let _ = handle.emit("servers-changed", ());
-            return Ok(());
-        }
-        _ => return Err("unknown server image".into()),
+    let event = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        view::manage::server_images(state, our_permissions(&app, state, me.id), &which, image)?
     };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ServerImages { server: sid, icon, banner }).await?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
@@ -4614,21 +4608,24 @@ async fn set_role_banner(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let existing = {
+    {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_ROLES, "edit roles")?;
-        state.server.roles.iter().find(|r| r.id == rid).cloned().ok_or("unknown role")?
-    };
+        view::manage::role_banner(state, our_permissions(&app, state, me.id), rid, None)?;
+    }
     let banner = match data {
         None => None,
         Some(b64) => {
-            let bytes = decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "role banners must be a JPEG or PNG under 1 MB")?;
+            let bytes = view::profile::image_bytes(&b64, MAX_SERVER_IMAGE_BYTES, view::manage::ROLE_BANNER_INVALID, view::manage::ROLE_BANNER_INVALID)?;
             Some(store_shared_blob(&app, bytes).await?)
         }
     };
-    let role = commy_core::server::Role { banner, ..existing };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::RoleUpdate { server: sid, role }).await
+    let event = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        view::manage::role_banner(state, our_permissions(&app, state, me.id), rid, banner)?
+    };
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -4645,17 +4642,21 @@ async fn set_channel_banner(
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, me.id, Permissions::MANAGE_CHANNELS, "edit channels")?;
-        state.server.channel(cid).ok_or("unknown channel")?;
+        view::manage::channel_banner(state, our_permissions(&app, state, me.id), cid, None)?;
     }
     let banner = match data {
         None => None,
         Some(b64) => {
-            let bytes = decode_image(&b64, MAX_SERVER_IMAGE_BYTES, "channel banners must be a JPEG or PNG under 1 MB")?;
+            let bytes = view::profile::image_bytes(&b64, MAX_SERVER_IMAGE_BYTES, view::manage::CHANNEL_BANNER_INVALID, view::manage::CHANNEL_BANNER_INVALID)?;
             Some(store_shared_blob(&app, bytes).await?)
         }
     };
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::ChannelBanner { server: sid, channel: cid, banner }).await
+    let event = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        view::manage::channel_banner(state, our_permissions(&app, state, me.id), cid, banner)?
+    };
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -6114,20 +6115,6 @@ async fn set_profile_banner(
 
 pub(crate) fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     view::pictures::is_jpeg_or_png(bytes)
-}
-
-fn decode_base64_image(data: &str) -> CmdResult<Vec<u8>> {
-    base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .map_err(|_| "image data is not valid base64".to_string())
-}
-
-fn decode_image(data: &str, max: usize, invalid: &str) -> CmdResult<Vec<u8>> {
-    let bytes = decode_base64_image(data)?;
-    if bytes.len() > max || !is_jpeg_or_png(&bytes) {
-        return Err(invalid.into());
-    }
-    Ok(bytes)
 }
 
 async fn store_profile_image(

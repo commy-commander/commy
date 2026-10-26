@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const {
-  MAX_TRUSTED_LINK_DOMAINS, LINK_SIGN_TEXT, readTrustedDomains, withTrustedDomain, writeTrustedDomains, shownHostParts, leavingPrompt, trustedLinksSummary,
+  MAX_TRUSTED_LINK_DOMAINS, LINK_SIGN_TEXT, readTrustedDomains, withTrustedDomain, writeTrustedDomains, shownHostParts, leavingPrompt, trustedLinksSummary, openLinkInNewTab, LINK_REFUSED,
 } = require("../scripts/link-safety.js");
 
 const check = over => ({ url: "https://www.example.org/", host: "www.example.org", shown_host: "www.example.org", site: "example.org", trust_key: "example.org", level: "ask", signs: [], can_trust: true, ...over });
@@ -74,4 +74,18 @@ test("the settings summary counts trusted sites", () => {
   assert.equal(trustedLinksSummary([]), "Every site outside Commy asks before it opens.");
   assert.equal(trustedLinksSummary(["a.example"]), "1 site opens without asking on this device.");
   assert.equal(trustedLinksSummary(["a.example", "b.example"]), "2 sites open without asking on this device.");
+});
+
+test("the browser opens outside links in a new tab that cannot reach back into the app", () => {
+  const opened = [];
+  const win = { open: (...args) => opened.push(args) };
+  assert.equal(openLinkInNewTab(win, "https://example.org/a b"), null);
+  assert.deepEqual(opened, [["https://example.org/a%20b", "_blank", "noopener,noreferrer"]]);
+});
+
+test("only web links open in a new tab", () => {
+  const win = { open: () => assert.fail("nothing should open") };
+  for (const url of ["javascript:alert(1)", "data:text/html,hi", "file:///etc/passwd", "not a link", undefined]) {
+    assert.throws(() => openLinkInNewTab(win, url), e => e === LINK_REFUSED, String(url));
+  }
 });

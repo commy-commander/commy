@@ -88,6 +88,16 @@ test("standard emoji match any word of their name", () => {
   assert.deepEqual(emojiSuggestions("f", [here], STANDARD), []);
 });
 
+test("standard emoji also match their shortcodes and name the one that matched", () => {
+  const rows = [["\u{1F44D}", "thumbs up", "+1 thumbsup yes", "like", 1, 0.6, 1], ["\u{1F525}", "fire", "fire", "flame lit", 7, 0.6, 0]];
+  const [thumbs] = emojiSuggestions("thumbsu", [], rows);
+  assert.equal(thumbs.emoji, "\u{1F44D}");
+  assert.equal(thumbs.code, "thumbsup");
+  assert.equal(thumbs.skin, 1);
+  assert.equal(emojiSuggestions("fire", [], rows)[0].code, "fire");
+  assert.deepEqual(emojiSuggestions("flame", [], rows), [], "keywords are for the picker search, not the colon shortcut");
+});
+
 test("emoji suggestions stop at the limit", () => {
   const many = { name: "Big", emojis: Array.from({ length: 20 }, (_, i) => ({ name: `cat_${i}`, image: `${i}@p` })) };
   assert.equal(emojiSuggestions("cat", [many], STANDARD).length, SUGGEST_LIMIT);

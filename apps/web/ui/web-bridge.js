@@ -105,6 +105,13 @@
     return JSON.parse(await sent);
   }
 
+  async function pickImage() {
+    const file = await webPickFile(document, "image");
+    if (!file) return null;
+    if (file.size > WEB_MAX_PICKED_IMAGE_BYTES) throw WEB_IMAGE_TOO_LARGE;
+    return webReadDataUrl(file, FileReader);
+  }
+
   let unlocked = null;
 
   function unlockModal() {
@@ -230,7 +237,7 @@
   async function invoke(cmd, args) {
     const fallback = webDefault(cmd);
     if (fallback.known) return fallback.value;
-    if (cmd === "open_url") return webOpenUrl(window, args && args.url);
+    if (cmd === "open_url") return openLinkInNewTab(window, args && args.url);
     if (cmd === "account_begin_sign_in") {
       window.location.assign(webSignInUrl(window.location.origin, window.location.pathname));
       return new Promise(() => {});
@@ -243,6 +250,7 @@
     if (WEB_BYTE_COMMANDS.includes(cmd)) return fileBytes(cmd, args);
     if (WEB_PICKED_COMMANDS.includes(cmd)) return attachPicked(cmd, args);
     if (cmd === "notify") return showNotice(args);
+    if (cmd === "pick_image") return pickImage();
     if (cmd === "get_user") {
       await untilUnlocked();
       if (typeof hideModals === "function") hideModals();

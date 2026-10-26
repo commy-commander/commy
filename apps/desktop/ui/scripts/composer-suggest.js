@@ -51,12 +51,20 @@ function customEmojiMatches(query, groups) {
   return matches.sort((a, b) => a.rank - b.rank || a.order - b.order || a.name.localeCompare(b.name));
 }
 
+function standardEmojiNames(row) {
+  const [, label, codes] = row;
+  return [...(codes ? codes.split(" ") : []), label.replace(/\s+/g, "_")];
+}
+
 function standardEmojiMatches(query, standard) {
   const matches = [];
-  standard.forEach(([emoji, label], order) => {
-    const name = label.replace(/\s+/g, "_");
-    const rank = emojiNameRank(name, query);
-    if (rank >= 0) matches.push({ kind: "standard", emoji, name: label, rank, order });
+  standard.forEach((row, order) => {
+    let best = null;
+    for (const code of standardEmojiNames(row)) {
+      const rank = emojiNameRank(code, query);
+      if (rank >= 0 && (!best || rank < best.rank)) best = { code, rank };
+    }
+    if (best) matches.push({ kind: "standard", emoji: row[0], name: row[1], code: best.code, skin: row[6] || 0, rank: best.rank, order });
   });
   return matches.sort((a, b) => a.rank - b.rank || a.order - b.order);
 }

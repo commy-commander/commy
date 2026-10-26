@@ -80,6 +80,21 @@ function leavingPrompt(check) {
   };
 }
 
+const LINK_SCHEMES = ["http:", "https:"];
+const LINK_REFUSED = "only http and https links can be opened";
+
+function openLinkInNewTab(win, url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw LINK_REFUSED;
+  }
+  if (!LINK_SCHEMES.includes(parsed.protocol)) throw LINK_REFUSED;
+  win.open(parsed.href, "_blank", "noopener,noreferrer");
+  return null;
+}
+
 function trustedLinksSummary(domains) {
   const count = (domains || []).length;
   if (count === 0) return "Every site outside Commy asks before it opens.";
@@ -87,5 +102,5 @@ function trustedLinksSummary(domains) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { TRUSTED_LINKS_KEY, MAX_TRUSTED_LINK_DOMAINS, LINK_SIGN_TEXT, readTrustedDomains, withTrustedDomain, writeTrustedDomains, shownHostParts, leavingPrompt, trustedLinksSummary };
+  module.exports = { TRUSTED_LINKS_KEY, MAX_TRUSTED_LINK_DOMAINS, LINK_SIGN_TEXT, readTrustedDomains, withTrustedDomain, writeTrustedDomains, shownHostParts, leavingPrompt, trustedLinksSummary, openLinkInNewTab, LINK_REFUSED };
 }

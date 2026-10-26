@@ -2,9 +2,12 @@ use std::rc::Rc;
 
 use chrono::Utc;
 use commy_core::channel_key::KeyScope;
-use commy_core::{ChannelId, RoleId, ServerEvent, ServerId, ServerState, UserId};
-use commy_net::WirePayload;
-use commy_view::{manage, moderate, roles, templates};
+use commy_core::server::ImageRef;
+use commy_core::{ChannelId, Permissions, RoleId, ServerEvent, ServerId, ServerState, UserId};
+use commy_net::{invite, WirePayload};
+use commy_view::act::Act;
+use commy_view::pictures::MAX_SERVER_IMAGE_BYTES;
+use commy_view::{manage, moderate, profile, roles, templates};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use wasm_bindgen_futures::spawn_local;
@@ -54,12 +57,61 @@ impl Session {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 self.delete_server(server, args.confirm_name.as_deref().unwrap_or("")).await
             }
+            "set_server_image" | "set_channel_banner" | "set_role_banner" => self.set_picture(cmd, args).await,
             "audit_log" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 to_json(&self.read_state(server, |state, me| roles::audit_log(state, state.server.permissions_for(me)))?)
             }
             _ => self.manage(cmd, args).await,
         }
+    }
+
+    async fn set_picture(self: &Rc<Self>, cmd: &str, args: Args) -> Result<Value, String> {
+        let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+        let which = args.which.clone().unwrap_or_default();
+        let (channel, role) = match cmd {
+            "set_channel_banner" => (Some(parse::<ChannelId>(args.channel_id.as_ref(), "channel")?), None),
+            "set_role_banner" => (None, Some(parse::<RoleId>(args.role_id.as_ref(), "role")?)),
+            _ => (None, None),
+        };
+        let build = |state: &ServerState, perms: Permissions, image: Option<String>| -> Act<ServerEvent> {
+            match (channel, role) {
+                (Some(channel), _) => manage::channel_banner(state, perms, channel, image),
+                (_, Some(role)) => manage::role_banner(state, perms, role, image),
+                _ => manage::server_images(state, perms, &which, image),
+            }
+        };
+        self.read_state(server, |state, me| build(state, state.server.permissions_for(me), None).map(|_| ()))?;
+        let invalid = match (channel, role) {
+            (Some(_), _) => manage::CHANNEL_BANNER_INVALID,
+            (_, Some(_)) => manage::ROLE_BANNER_INVALID,
+            _ => manage::SERVER_IMAGE_INVALID,
+        };
+        let image = match args.data.as_deref() {
+            None => None,
+            Some(data) => {
+                let bytes = profile::image_bytes(data, MAX_SERVER_IMAGE_BYTES, invalid, invalid)?;
+                if which == "invite" && bytes.len() > invite::MAX_INVITE_BACKGROUND_BYTES {
+                    return Err("invite backgrounds must be under 400 KB".into());
+                }
+                Some(self.store_server_picture(bytes).await?)
+            }
+        };
+        let payload = self.client.borrow().act(server, |state, me, _, _| build(state, me.perms, image))?;
+        self.publish(server, &payload);
+        self.emit("server-event", json!(server.to_string()));
+        if cmd == "set_server_image" {
+            self.emit("servers-changed", Value::Null);
+        }
+        Ok(Value::Null)
+    }
+
+    async fn store_server_picture(&self, bytes: Vec<u8>) -> Result<String, String> {
+        let (blob, provider) = self.store_blob(bytes.clone()).await?;
+        if !self.offer_picture(&blob, &bytes).await {
+            return Err("Could not save the picture right now, try again in a moment".into());
+        }
+        Ok(ImageRef { blob, provider }.encode())
     }
 
     fn read_state<T>(&self, server: ServerId, read: impl FnOnce(&ServerState, UserId) -> Result<T, String>) -> Result<T, String> {
