@@ -157,6 +157,54 @@ test("the microphone is asked for with the browser's echo, noise and level handl
   assert.deepEqual(webVoiceScripts.webMicConstraints().audio, { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 });
 });
 
+function fakeVoiceWindow() {
+  const node = () => ({ port: {}, connect(next) { return next; }, disconnect() {} });
+  const win = {
+    asked: 0,
+    tracks: [],
+    timers: [],
+    setTimeout(callback) { win.timers.push(callback); },
+    AudioContext: class { constructor() { this.state = "running"; this.audioWorklet = { addModule: async () => {} }; this.destination = node(); } createMediaStreamSource() { return node(); } createGain() { return { ...node(), gain: {} }; } },
+    AudioWorkletNode: class { constructor() { Object.assign(this, node()); } },
+    navigator: {
+      mediaDevices: {
+        async getUserMedia() {
+          win.asked += 1;
+          const track = { stopped: false, stop() { this.stopped = true; } };
+          win.tracks.push(track);
+          return { getTracks: () => [track], getAudioTracks: () => [track] };
+        },
+      },
+    },
+  };
+  return win;
+}
+
+test("a microphone that disappears mid-call, like a headset muting itself, is opened again", async () => {
+  const win = fakeVoiceWindow();
+  const voice = webVoiceScripts.webVoice(win);
+  assert.equal(await voice.start(() => {}), true);
+  assert.equal(win.asked, 1);
+  win.tracks[0].onended();
+  assert.equal(win.tracks[0].stopped, true);
+  await win.timers.shift()();
+  assert.equal(win.asked, 2);
+  voice.stop();
+  assert.equal(win.tracks[1].stopped, true);
+  assert.equal(win.tracks[1].onended, null);
+});
+
+test("a microphone that ends after the call is over is left alone", async () => {
+  const win = fakeVoiceWindow();
+  const voice = webVoiceScripts.webVoice(win);
+  await voice.start(() => {});
+  const ended = win.tracks[0].onended;
+  voice.stop();
+  ended();
+  assert.equal(win.timers.length, 0);
+  assert.equal(win.asked, 1);
+});
+
 test("the microphone is cut into 10 ms frames at 48 kHz whatever rate the browser records at", () => {
   for (const rate of [48000, 44100, 16000]) {
     const frames = [];

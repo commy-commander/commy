@@ -1,6 +1,7 @@
 "use strict";
 
 const WEB_VOICE_WORKLET = "scripts/web-voice-worklet.js";
+const MIC_RETRY_MS = 1000;
 
 function webMicConstraints() {
   return { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } };
@@ -27,7 +28,10 @@ function webVoice(win) {
     parts.source.disconnect();
     parts.mic.disconnect();
     parts.hush.disconnect();
-    for (const track of parts.stream.getTracks()) track.stop();
+    for (const track of parts.stream.getTracks()) {
+      track.onended = null;
+      track.stop();
+    }
     parts = null;
   }
 
@@ -38,9 +42,7 @@ function webVoice(win) {
     speakers.clear();
   }
 
-  async function start(onFrame) {
-    stop();
-    const mine = generation;
+  async function openMic(onFrame, mine) {
     const ctx = await ready();
     let stream;
     try {
@@ -59,7 +61,21 @@ function webVoice(win) {
     mic.port.onmessage = e => onFrame(e.data);
     source.connect(mic).connect(hush).connect(ctx.destination);
     parts = { stream, source, mic, hush };
+    for (const track of stream.getAudioTracks()) track.onended = () => reopenMic(onFrame, mine);
     return true;
+  }
+
+  function reopenMic(onFrame, mine) {
+    if (mine !== generation) return;
+    release();
+    win.setTimeout(async () => {
+      if (mine === generation && !(await openMic(onFrame, mine))) reopenMic(onFrame, mine);
+    }, MIC_RETRY_MS);
+  }
+
+  async function start(onFrame) {
+    stop();
+    return openMic(onFrame, generation);
   }
 
   function play(peer, pcm) {
