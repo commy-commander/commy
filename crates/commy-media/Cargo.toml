@@ -16,7 +16,7 @@ cpal = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-xcap = "0.4"
+xcap = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 windows-capture = "2.0.1"
