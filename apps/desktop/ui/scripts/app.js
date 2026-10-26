@@ -5985,7 +5985,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     body.appendChild(sealed);
   }
   if (inlineMark) body.prepend(pendingMark());
-  for (const att of message.attachments || []) {
+  for (const att of (message.attachments || []).map(attachmentHere)) {
     body.appendChild(renderAttachment(att));
     if (att.is_image) body.appendChild(renderInlineImage(att));
     else if (playsInline(att)) body.appendChild(renderInlineVideo(att));
@@ -6127,9 +6127,9 @@ function pinRow(pin, { jump, showChannel = false } = {}) {
   const excerpt = el("div", "pin-text", text);
   if (!text || text === SENSITIVE_PREVIEW) excerpt.classList.add("muted");
   body.appendChild(excerpt);
-  const images = (message.attachments || []).filter(a => a.is_image && (loadsImageOnItsOwn(a) || imagePreviewCache.has(a.blob)));
+  const images = (message.attachments || []).filter(a => a.is_image && !imagePreviewFailures.has(a.blob) && (loadsImageOnItsOwn(a) || imagePreviewCache.has(a.blob)));
   if (images.length) {
-    const thumb = renderInlineImage(images[0]);
+    const thumb = renderInlineImage(attachmentHere(images[0]));
     thumb.classList.add("pin-thumb");
     body.appendChild(thumb);
   }
@@ -7470,7 +7470,7 @@ function voicePlaybackSupported() {
 
 async function loadVoiceClip(att) {
   if (voiceClips.has(att.blob)) return voiceClips.get(att.blob);
-  const bytes = await invoke("get_voice_message", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null });
+  const bytes = await invoke("get_voice_message", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null, serverId: att.server ?? null });
   const clip = { url: URL.createObjectURL(new Blob([bytes], { type: VOICE_PLAYBACK_TYPE })), duration: oggDuration(new Uint8Array(bytes)) };
   voiceClips.set(att.blob, clip);
   return clip;
@@ -7553,6 +7553,10 @@ function renderVoiceMessage(att) {
   return box;
 }
 
+function attachmentHere(att) {
+  return state.view === "server" && state.currentServer ? { ...att, server: state.currentServer.id } : att;
+}
+
 function renderAttachment(att) {
   if (isVoiceMessage(att) && voicePlaybackSupported()) return renderVoiceMessage(att);
   const box = el("div", "attachment");
@@ -7582,6 +7586,7 @@ async function saveAttachment(att) {
       filename: att.filename,
       provider: att.provider ?? null,
       sizeBytes: att.size_bytes ?? null,
+      serverId: att.server ?? null,
     });
     toast(path ? `Saved to ${path}` : "Download cancelled");
   } catch (e) {
@@ -13216,6 +13221,7 @@ function closeLightbox() {
 
 const imagePreviewCache = new Map();
 const imagePreviewLoads = new Map();
+const imagePreviewFailures = new Map();
 
 function loadImagePreview(att, clicked) {
   const cached = imagePreviewCache.get(att.blob);
@@ -13229,10 +13235,16 @@ function loadImagePreview(att, clicked) {
       sizeBytes: att.size_bytes ?? null,
       clicked,
       shared: att.shared ?? false,
+      serverId: att.server ?? null,
     })
       .then(dataUrl => {
         imagePreviewCache.set(att.blob, dataUrl);
+        imagePreviewFailures.delete(att.blob);
         return dataUrl;
+      })
+      .catch(e => {
+        imagePreviewFailures.set(att.blob, { error: String(e), at: Date.now() });
+        throw e;
       })
       .finally(() => imagePreviewLoads.delete(att.blob));
     imagePreviewLoads.set(att.blob, pending);
@@ -13240,10 +13252,11 @@ function loadImagePreview(att, clicked) {
   return pending;
 }
 
-function chatImage(att) {
+function chatImage(att, src = null) {
   const img = el("img", "chat-image");
   keepScrolledOnLoad(img);
-  holdPlaceUntilLoaded(img);
+  if (src) img.src = src;
+  else holdPlaceUntilLoaded(img);
   img.alt = att.filename;
   img.onclick = () => openLightbox(img.src, null, att.filename, att);
   return img;
@@ -13251,18 +13264,46 @@ function chatImage(att) {
 
 function renderInlineImage(att) {
   const cached = imagePreviewCache.get(att.blob);
-  if (!cached && !loadsImageOnItsOwn(att)) return largeImageGate(att);
+  if (cached) return chatImage(att, cached);
+  if (imagePreviewFailures.has(att.blob)) return missingImage(att);
+  if (!loadsImageOnItsOwn(att)) return largeImageGate(att);
   const img = chatImage(att);
-  if (cached) {
-    img.src = cached;
-  } else {
-    loadImagePreview(att, false)
-      .then(dataUrl => {
-        img.src = dataUrl;
-      })
-      .catch(() => img.remove());
-  }
+  loadImagePreview(att, false)
+    .then(dataUrl => {
+      img.src = dataUrl;
+    })
+    .catch(() => img.replaceWith(missingImage(att)));
   return img;
+}
+
+function missingImage(att) {
+  const failure = imagePreviewFailures.get(att.blob);
+  const text = missingImageText(failure && failure.error);
+  const tile = el("div", "image-missing");
+  tile.title = att.filename;
+  const title = el("div", "image-missing-title", text.title);
+  const hint = el("div", "image-missing-hint", text.hint);
+  const button = el("button", "btn-secondary btn-small image-missing-retry", text.retry);
+  button.type = "button";
+  const retry = () => {
+    button.disabled = true;
+    button.textContent = text.loading;
+    loadImagePreview(att, !loadsImageOnItsOwn(att))
+      .then(dataUrl => tile.replaceWith(chatImage(att, dataUrl)))
+      .catch(e => {
+        const again = missingImageText(String(e));
+        hint.textContent = again.hint;
+        button.textContent = again.retry;
+        button.disabled = false;
+      });
+  };
+  button.onclick = e => {
+    e.stopPropagation();
+    retry();
+  };
+  tile.append(svgIcon("warning", 22), title, hint, button);
+  if (imagePreviewLoads.has(att.blob) || retriesImageNow(failure, Date.now())) retry();
+  return tile;
 }
 
 function largeImageGate(att) {
@@ -13279,8 +13320,7 @@ function largeImageGate(att) {
     button.textContent = text.loading;
     loadImagePreview(att, true)
       .then(dataUrl => {
-        const img = chatImage(att);
-        img.src = dataUrl;
+        const img = chatImage(att, dataUrl);
         gate.replaceWith(img);
         img.scrollIntoView({ block: "nearest" });
       })
@@ -13325,7 +13365,7 @@ function renderInlineVideo(att) {
     box.classList.add("loading");
     label.textContent = "Loading video";
     try {
-      const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null });
+      const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null, serverId: att.server ?? null });
       const url = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
       videoUrls.set(att.blob, url);
       const player = videoPlayer(url);

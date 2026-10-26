@@ -77,6 +77,7 @@ use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_media::screen::{SourceKind, StreamQuality};
 use commy_media::StreamGuards;
 use commy_net::media::MediaHello;
+use commy_net::node::blob_sources;
 use commy_net::{CommyNode, DmEnvelope, MediaChannel, NetEvent, ServerTicket, WirePayload};
 
 type CmdResult<T> = Result<T, String>;
@@ -920,12 +921,13 @@ async fn get_voice_message(
     blob: String,
     provider: Option<String>,
     size_bytes: Option<u64>,
+    server_id: Option<String>,
 ) -> CmdResult<tauri::ipc::Response> {
     let max = voice_message::MAX_VOICE_MESSAGE_BYTES;
     if size_bytes.is_some_and(|size| size > max) {
         return Err("voice message too large to play here".into());
     }
-    let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), server_id.as_deref(), max).await?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -961,12 +963,13 @@ async fn get_attachment_video(
     blob: String,
     provider: Option<String>,
     size_bytes: Option<u64>,
+    server_id: Option<String>,
 ) -> CmdResult<tauri::ipc::Response> {
     let max = MAX_INLINE_VIDEO_BYTES as u64;
     if size_bytes.is_some_and(|size| size > max) {
         return Err("video too large to play here".into());
     }
-    let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), server_id.as_deref(), max).await?;
     if bytes.len() > MAX_INLINE_VIDEO_BYTES {
         return Err("video too large to play here".into());
     }
@@ -1095,11 +1098,12 @@ async fn download_attachment(
     filename: String,
     provider: Option<String>,
     size_bytes: Option<u64>,
+    server_id: Option<String>,
 ) -> CmdResult<Option<String>> {
     if let Some(size) = size_bytes {
         commy_net::node::check_blob_size(size, MAX_ATTACHMENT_BYTES).map_err(err_to_string)?;
     }
-    let bytes = fetch_blob(&app, &blob, provider.as_deref(), MAX_ATTACHMENT_BYTES).await?;
+    let bytes = fetch_blob(&app, &blob, provider.as_deref(), server_id.as_deref(), MAX_ATTACHMENT_BYTES).await?;
     picker::save_file(&handle, &safe_file_name(&filename), bytes).await
 }
 
@@ -1467,20 +1471,6 @@ fn servers_using_image(app: &App, image: &str) -> Vec<ServerId> {
         .collect()
 }
 
-fn image_sources(provider: &str, neighbors: Vec<[u8; 32]>) -> Vec<String> {
-    let mut sources: Vec<String> = Vec::new();
-    for node in neighbors.iter().map(|n| data_encoding::HEXLOWER.encode(n)) {
-        if !sources.contains(&node) {
-            sources.push(node);
-        }
-    }
-    match sources.iter().position(|n| n == provider) {
-        Some(at) => sources.swap(0, at),
-        None => sources.push(provider.to_string()),
-    }
-    sources
-}
-
 async fn fetch_shared_image(app: &App, image: &commy_core::server::ImageRef, max: u64) -> CmdResult<Vec<u8>> {
     if let Some(bytes) = pictures::fetch(&app.http, &image.blob, max).await {
         return Ok(bytes);
@@ -1489,7 +1479,7 @@ async fn fetch_shared_image(app: &App, image: &commy_core::server::ImageRef, max
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
         let neighbors = servers_using_image(app, &image.encode()).into_iter().flat_map(|s| node.neighbors(s)).collect();
-        (node.blob_fetcher(), image_sources(&image.provider, neighbors))
+        (node.blob_fetcher(), blob_sources(&image.provider, neighbors))
     };
     let mut failure = String::from("nobody who has it is online");
     for source in sources {
@@ -1550,12 +1540,15 @@ fn neighbor_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<WirePaylo
     relayed.into_iter().map(WirePayload::Signed).chain(ours).collect()
 }
 
-async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
-    let fetcher = {
+async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, server: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
+    let server = server.and_then(|s| s.parse::<ServerId>().ok());
+    let (fetcher, sources) = {
         let net = app.net.lock().await;
-        net.as_ref().ok_or("network is not ready yet")?.blob_fetcher()
+        let node = net.as_ref().ok_or("network is not ready yet")?;
+        let neighbors = server.map(|s| node.neighbors(s)).unwrap_or_default();
+        (node.blob_fetcher(), blob_sources(provider.unwrap_or_default(), neighbors))
     };
-    fetcher.fetch(blob, provider, max).await.map_err(err_to_string)
+    fetcher.fetch_from(blob, sources.iter().map(String::as_str), max).await.map_err(err_to_string)
 }
 
 fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
@@ -3672,15 +3665,6 @@ mod placeholder_tests {
 #[cfg(test)]
 mod shared_image_tests {
     use super::*;
-
-    #[test]
-    fn images_come_from_the_uploader_first_then_from_members_online() {
-        let (a, b) = ([1u8; 32], [2u8; 32]);
-        let hex = |n: [u8; 32]| data_encoding::HEXLOWER.encode(&n);
-        assert_eq!(image_sources(&hex(b), vec![a, b, a]), vec![hex(b), hex(a)]);
-        assert_eq!(image_sources("away", vec![a]), vec![hex(a), "away".to_string()], "an absent uploader is tried last");
-        assert_eq!(image_sources("away", vec![]), vec!["away".to_string()]);
-    }
 
     #[test]
     fn members_pass_on_signed_changes_as_their_authors_signed_them() {
@@ -6057,6 +6041,7 @@ async fn get_attachment_preview(
     size_bytes: Option<u64>,
     clicked: Option<bool>,
     shared: Option<bool>,
+    server_id: Option<String>,
 ) -> CmdResult<String> {
     if !is_data_url_safe_image_mime(&mime) {
         return Err("not an image".into());
@@ -6073,7 +6058,7 @@ async fn get_attachment_preview(
     let bytes = match held {
         Some(bytes) => bytes,
         None => {
-            let bytes = fetch_blob(&app, &blob, provider.as_deref(), max).await?;
+            let bytes = fetch_blob(&app, &blob, provider.as_deref(), server_id.as_deref(), max).await?;
             if shared {
                 pictures::offer(&app.http, &blob, &bytes);
             }
@@ -6108,7 +6093,7 @@ pub(crate) async fn profile_image_bytes(app: &App, blob: &str, provider: Option<
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
         let neighbors = servers_showing_profile_image(app, blob).into_iter().flat_map(|s| node.neighbors(s)).collect();
-        (node.blob_fetcher(), image_sources(provider.unwrap_or_default(), neighbors))
+        (node.blob_fetcher(), blob_sources(provider.unwrap_or_default(), neighbors))
     };
     let mut attempts: Vec<Option<&str>> = sources.iter().filter(|s| !s.is_empty()).map(|s| Some(s.as_str())).collect();
     if attempts.is_empty() {
