@@ -16,6 +16,11 @@ service's encrypted picture copies when it has them, and otherwise straight
 from the member who shared them. A file or voice message sent from the browser
 is served by that tab, so others can open it while the tab stays open.
 
+Message, DM and friend notices use the browser's own notifications, following
+the same notification settings as the desktop. The browser asks once for
+permission, on your first click after your servers open, and shows notices
+only while the tab is in the background. Clicking one opens that channel or DM.
+
 ## How it fits together
 
 - `src/` is the backend, compiled to `wasm32-unknown-unknown`. It answers the
