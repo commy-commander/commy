@@ -304,7 +304,7 @@ pub fn restart(handle: &AppHandle) -> Result<(), String> {
             update.install(&bytes).map_err(|e| e.to_string())?;
         }
     }
-    handle.restart();
+    crate::relaunch::restart(handle)
 }
 
 #[cfg(test)]

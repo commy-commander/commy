@@ -212,7 +212,9 @@ The frontend is embedded at build time, so UI edits need a rebuild. To preview
 the UI alone in a browser with a mock backend, open `apps/desktop/ui/index.html`.
 
 To test voice, streaming and direct messages on one machine, run a second
-instance with its own data directory and join your own server with an invite:
+instance with its own data directory and join your own server with an invite.
+Commy runs one copy per data directory, so starting it again with the same
+one only brings the open window forward:
 
 ```powershell
 $env:COMMY_DATA_DIR = "$env:APPDATA\chat.commy.desktop-2"
