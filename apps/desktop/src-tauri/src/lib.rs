@@ -6018,13 +6018,13 @@ async fn fetch_expression(app: tauri::State<'_, App>, blob: String) -> CmdResult
 
 #[tauri::command]
 async fn pick_sound(handle: tauri::AppHandle) -> CmdResult<Option<(String, String)>> {
-    let filter = picker::Filter { label: "Sounds", extensions: &["mp3", "ogg", "wav"] };
-    let max = expressions::MAX_SOUND_BYTES as u64;
-    let Some(picked) = picker::pick_file(&handle, "Choose a sound", Some(filter), max, "sounds must be under 1 MB").await? else {
+    let filter = picker::Filter { label: "Audio", extensions: &["mp3", "ogg", "wav", "m4a", "aac", "flac", "opus"] };
+    let max = expressions::MAX_SOUND_SOURCE_BYTES as u64;
+    let Some(picked) = picker::pick_file(&handle, "Choose a sound", Some(filter), max, "pick an audio file under 8 MB").await? else {
         return Ok(None);
     };
     let bytes = picked.bytes;
-    let mime = expressions::audio_mime(&bytes).ok_or("sounds must be an MP3, OGG or WAV file")?;
+    let mime = expressions::audio_mime(&bytes).unwrap_or("application/octet-stream");
     Ok(Some((
         picked.name.rsplit_once('.').map(|(stem, _)| stem.to_string()).unwrap_or_default(),
         data_url(mime, &bytes),

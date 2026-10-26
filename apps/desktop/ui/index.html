@@ -709,6 +709,34 @@
       </div>
     </div>
 
+    <div class="modal modal-sound hidden" id="modal-sound" role="dialog" aria-labelledby="sound-title">
+      <h2 id="sound-title">Add a sound</h2>
+      <p class="sound-hint" id="sound-hint"></p>
+      <div class="sound-trim" id="sound-trim">
+        <div class="sound-wave" id="sound-wave"></div>
+        <div class="sound-shade sound-shade-start" id="sound-shade-start"></div>
+        <div class="sound-shade sound-shade-end" id="sound-shade-end"></div>
+        <div class="sound-window" id="sound-window"></div>
+        <div class="sound-playhead hidden" id="sound-playhead"></div>
+        <button type="button" class="sound-handle" id="sound-handle-start" aria-label="Start of the sound"></button>
+        <button type="button" class="sound-handle" id="sound-handle-end" aria-label="End of the sound"></button>
+      </div>
+      <div class="sound-trim-bar">
+        <button type="button" class="icon-btn sound-trim-play" id="sound-trim-play" title="Play the selected part"></button>
+        <span class="sound-trim-times" id="sound-trim-times"></span>
+      </div>
+      <div class="sound-identity">
+        <button type="button" class="icon-btn sound-emoji-btn sound-pick-emoji" id="sound-emoji" title="Choose an emoji for this sound"></button>
+        <label class="field-label">Name
+          <input id="sound-name" type="text" maxlength="32" placeholder="big_cheer" autocomplete="off" spellcheck="false" />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="sound-cancel">Cancel</button>
+        <button class="btn-primary" id="sound-save">Add</button>
+      </div>
+    </div>
+
     <div class="modal modal-poll hidden" id="modal-poll">
       <h2>Create a Poll</h2>
       <label class="field-label">Question
@@ -2738,6 +2766,7 @@
   <script src="scripts/permissions.js"></script>
   <script src="scripts/embeds.js"></script>
   <script src="scripts/voice-message.js"></script>
+  <script src="scripts/sound-trim.js"></script>
   <script src="scripts/link-preview.js"></script>
   <script src="scripts/notify.js"></script>
   <script src="scripts/pref-sync.js"></script>

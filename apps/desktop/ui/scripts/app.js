@@ -2056,6 +2056,7 @@ function showModal(id) {
 
 function hideModals() {
   answerStreamDeckPairing(false);
+  stopSoundPreview();
   $("modal-backdrop").classList.add("hidden");
 }
 
@@ -11295,28 +11296,17 @@ function flashSoundboardUser(userId, name) {
   }
 }
 
-async function audioDuration(dataUrl) {
-  const buffer = await (await fetch(dataUrl)).arrayBuffer();
-  const ctx = new AudioContext();
-  try {
-    const decoded = await ctx.decodeAudioData(buffer);
-    return decoded.duration;
-  } finally {
-    ctx.close();
-  }
-}
-
 function pickSoundFile() {
   if (IS_TAURI) return invoke("pick_sound");
   return new Promise(resolve => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav";
+    input.accept = "audio/*,.mp3,.ogg,.wav,.m4a,.aac,.flac,.opus";
     input.onchange = () => {
       const file = input.files && input.files[0];
       if (!file) return resolve(null);
-      if (file.size > 1024 * 1024) {
-        toast("Sounds must be under 1 MB");
+      if (file.size > SOUND_SOURCE_MAX_BYTES) {
+        toast(`Pick an audio file under ${SOUND_SOURCE_MAX_BYTES / 1024 / 1024} MB`);
         return resolve(null);
       }
       const reader = new FileReader();
@@ -11390,80 +11380,236 @@ function renderSoundboardSettings(server) {
   builtins.replaceChildren(...DEFAULT_SOUNDS.map(s => soundRow(server, { name: s.label, blob: `default:${s.id}`, volume: 1 }, false)));
 }
 
-async function pickValidSound() {
+const SOUND_WAVE_BARS = 96;
+const soundDraft = { server: null, bytes: null, buffer: null, sel: null, emoji: null, afterSave: null, preview: null };
+
+async function decodeSoundSource(bytes) {
+  const ctx = new OfflineAudioContext(1, 1, SOUND_TRIM_RATE);
+  return ctx.decodeAudioData(bytes.slice().buffer);
+}
+
+async function openSoundUpload(server, afterSave = null) {
+  if (!server) return;
   let picked;
   try {
     picked = await pickSoundFile();
   } catch (e) {
     toast(String(e));
-    return null;
-  }
-  if (!picked) return null;
-  const [stem, dataUrl] = picked;
-  let seconds;
-  try {
-    seconds = await audioDuration(dataUrl);
-  } catch {
-    toast("Could not read that sound file");
-    return null;
-  }
-  if (seconds > MAX_SOUND_SECONDS + 0.2) {
-    toast(`That clip is ${seconds.toFixed(1)} seconds; sounds can be up to ${MAX_SOUND_SECONDS}`);
-    return null;
-  }
-  return [stem, dataUrl];
-}
-
-async function uploadSoundFromFlyout(server) {
-  const picked = await pickValidSound();
-  if (!picked) return;
-  const [stem, dataUrl] = picked;
-  const name = freeExpressionName(expressionName(stem, "sound"), (server.sounds || []).map(s => s.name));
-  try {
-    await invoke("add_sound", { serverId: server.id, name, data: dataUrl.split(",")[1], volume: 1, emoji: null });
-    await refreshExpressions();
-    toast(`Added ${name} to the soundboard`);
-  } catch (e) {
-    toast(String(e));
     return;
   }
-  $("soundboard-pop").classList.add("hidden");
-  toggleSoundboardPop();
-}
-
-async function uploadSound() {
-  const server = state.currentServer;
-  if (!server) return;
-  const picked = await pickValidSound();
   if (!picked) return;
   const [stem, dataUrl] = picked;
-  const play = el("button", "icon-btn sound-preview");
-  play.title = "Preview";
-  play.appendChild(svgIcon("play", 18));
-  play.onclick = () => {
-    const audio = new Audio(dataUrl);
-    audio.volume = soundboardPrefs().volume;
-    audio.play().catch(() => {});
+  let bytes;
+  let buffer;
+  try {
+    bytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+    buffer = await decodeSoundSource(bytes);
+  } catch {
+    toast("Could not read that sound file");
+    return;
+  }
+  if (buffer.duration > SOUND_SOURCE_MAX_SECONDS) {
+    toast(`Pick a clip under ${SOUND_SOURCE_MAX_SECONDS / 60} minutes`);
+    return;
+  }
+  stopSoundPreview();
+  $("soundboard-pop").classList.add("hidden");
+  Object.assign(soundDraft, { server, bytes, buffer, sel: initialSoundSelection(buffer.duration, MAX_SOUND_SECONDS), emoji: null, afterSave });
+  const peaks = soundWaveformPeaks(Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i)), SOUND_WAVE_BARS);
+  $("sound-wave").replaceChildren(...peaks.map(p => {
+    const bar = el("span");
+    bar.style.height = `${Math.max(4, Math.round(p * 100))}%`;
+    return bar;
+  }));
+  $("sound-hint").textContent = buffer.duration > MAX_SOUND_SECONDS + 0.2
+    ? `This clip is ${formatTrimTime(buffer.duration)} long. Drag the handles to pick up to ${MAX_SOUND_SECONDS} seconds.`
+    : "Drag the handles to trim the start or end, then give it a name and an emoji.";
+  $("sound-name").value = freeExpressionName(expressionName(stem, "sound"), (server.sounds || []).map(s => s.name));
+  $("sound-save").disabled = false;
+  paintSoundEmoji();
+  paintSoundSelection();
+  paintSoundPreviewButton();
+  showModal("modal-sound");
+  $("sound-name").focus();
+  $("sound-name").select();
+}
+
+function paintSoundEmoji() {
+  $("sound-emoji").replaceChildren(soundDraft.emoji ? soundEmojiNode(soundDraft.emoji) : svgIcon("smilePlus", 20));
+}
+
+function paintSoundSelection() {
+  const { buffer, sel } = soundDraft;
+  if (!buffer) return;
+  const pct = t => `${(t / buffer.duration) * 100}%`;
+  $("sound-shade-start").style.width = pct(sel.start);
+  $("sound-shade-end").style.width = pct(buffer.duration - sel.end);
+  $("sound-window").style.left = pct(sel.start);
+  $("sound-window").style.width = pct(sel.end - sel.start);
+  $("sound-handle-start").style.left = pct(sel.start);
+  $("sound-handle-end").style.left = pct(sel.end);
+  const bars = $("sound-wave").children;
+  for (let i = 0; i < bars.length; i++) {
+    const mid = ((i + 0.5) / bars.length) * buffer.duration;
+    bars[i].classList.toggle("on", mid >= sel.start && mid <= sel.end);
+  }
+  $("sound-trim-times").textContent = `${formatTrimTime(sel.start)} to ${formatTrimTime(sel.end)}, ${(sel.end - sel.start).toFixed(1)} s`;
+}
+
+function moveSoundDraft(which, at) {
+  stopSoundPreview();
+  soundDraft.sel = moveSoundSelection(soundDraft.sel, which, at, soundDraft.buffer.duration, MAX_SOUND_SECONDS);
+  paintSoundSelection();
+}
+
+function soundTrimTimeAt(clientX) {
+  const rect = $("sound-trim").getBoundingClientRect();
+  const frac = rect.width ? (clientX - rect.left) / rect.width : 0;
+  return Math.max(0, Math.min(1, frac)) * soundDraft.buffer.duration;
+}
+
+function startSoundTrimDrag(e) {
+  if (!soundDraft.buffer || e.button > 0) return;
+  e.preventDefault();
+  const at = soundTrimTimeAt(e.clientX);
+  const { sel } = soundDraft;
+  let which;
+  let offset = 0;
+  if (e.target.id === "sound-handle-start") which = "start";
+  else if (e.target.id === "sound-handle-end") which = "end";
+  else if (e.target.id === "sound-window") {
+    which = "both";
+    offset = at - sel.start;
+  } else {
+    which = Math.abs(at - sel.start) <= Math.abs(at - sel.end) ? "start" : "end";
+    moveSoundDraft(which, at);
+  }
+  if (which !== "both") $(`sound-handle-${which}`).focus();
+  const track = $("sound-trim");
+  track.setPointerCapture(e.pointerId);
+  const move = ev => moveSoundDraft(which, soundTrimTimeAt(ev.clientX) - offset);
+  const up = () => {
+    track.removeEventListener("pointermove", move);
+    track.removeEventListener("pointerup", up);
+    track.removeEventListener("pointercancel", up);
   };
-  const taken = (server.sounds || []).map(s => s.name);
-  let chosenEmoji = null;
-  const row = pendingExpressionRow(play, freeExpressionName(expressionName(stem, "sound"), taken), async clean => {
-    await invoke("add_sound", { serverId: server.id, name: clean, data: dataUrl.split(",")[1], volume: 1, emoji: chosenEmoji });
+  track.addEventListener("pointermove", move);
+  track.addEventListener("pointerup", up);
+  track.addEventListener("pointercancel", up);
+}
+
+function nudgeSoundHandle(which, e) {
+  const step = { ArrowLeft: -0.1, ArrowRight: 0.1, ArrowDown: -0.1, ArrowUp: 0.1 }[e.key];
+  if (!step || !soundDraft.buffer) return;
+  e.preventDefault();
+  moveSoundDraft(which, soundDraft.sel[which] + step * (e.shiftKey ? 10 : 1));
+}
+
+function paintSoundPreviewButton() {
+  const playing = Boolean(soundDraft.preview);
+  $("sound-trim-play").replaceChildren(svgIcon(playing ? "pause" : "play", 16));
+  $("sound-trim-play").title = playing ? "Stop" : "Play the selected part";
+  $("sound-playhead").classList.toggle("hidden", !playing);
+}
+
+function stopSoundPreview() {
+  const preview = soundDraft.preview;
+  if (!preview) return;
+  soundDraft.preview = null;
+  cancelAnimationFrame(preview.frame);
+  try { preview.source.stop(); } catch {}
+  preview.ctx.close().catch(() => {});
+  paintSoundPreviewButton();
+}
+
+function toggleSoundPreview() {
+  if (soundDraft.preview) return stopSoundPreview();
+  const { buffer, sel } = soundDraft;
+  if (!buffer) return;
+  const ctx = new AudioContext();
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  const gain = ctx.createGain();
+  gain.gain.value = soundboardPrefs().volume;
+  source.connect(gain).connect(ctx.destination);
+  const began = ctx.currentTime;
+  source.start(0, sel.start, sel.end - sel.start);
+  const preview = { ctx, source, frame: 0 };
+  source.onended = () => { if (soundDraft.preview === preview) stopSoundPreview(); };
+  const tick = () => {
+    const at = sel.start + (ctx.currentTime - began);
+    $("sound-playhead").style.left = `${(Math.min(at, sel.end) / buffer.duration) * 100}%`;
+    preview.frame = requestAnimationFrame(tick);
+  };
+  soundDraft.preview = preview;
+  paintSoundPreviewButton();
+  tick();
+}
+
+async function trimmedSoundBytes() {
+  const { bytes, buffer, sel } = soundDraft;
+  if (keepsOriginalSound({ bytes, duration: buffer.duration, sel, maxSeconds: MAX_SOUND_SECONDS })) return bytes;
+  const seconds = sel.end - sel.start;
+  const channels = trimmedSoundChannels(seconds, buffer.numberOfChannels);
+  const ctx = new OfflineAudioContext(channels, Math.max(1, Math.round(seconds * SOUND_TRIM_RATE)), SOUND_TRIM_RATE);
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  source.start(0, sel.start, seconds);
+  const out = await ctx.startRendering();
+  const data = Array.from({ length: channels }, (_, i) => out.getChannelData(i));
+  return encodeWav(fadeSoundEdges(data, SOUND_TRIM_RATE), SOUND_TRIM_RATE);
+}
+
+async function saveSoundDraft() {
+  const { server, emoji, afterSave } = soundDraft;
+  if (!server || !soundDraft.buffer) return;
+  const name = expressionName($("sound-name").value, "");
+  if (!name) {
+    toast("Names are 2 to 32 letters, numbers or underscores");
+    return;
+  }
+  const exists = (server.sounds || []).some(s => s.name === name);
+  if (exists && !server.can_manage_expressions) {
+    toast(`${name} is taken, pick another name`);
+    return;
+  }
+  if (exists && !confirm(`Replace the existing ${name}?`)) return;
+  stopSoundPreview();
+  $("sound-save").disabled = true;
+  try {
+    const bytes = await trimmedSoundBytes();
+    if (bytes.length > SOUND_STORE_MAX_BYTES) throw new Error("That clip is still over 1 MB, pick a shorter part");
+    await invoke("add_sound", { serverId: server.id, name, data: await blobToBase64(new Blob([bytes])), volume: 1, emoji });
+    hideModals();
     await refreshExpressions();
-    toast(`Added ${clean} to the soundboard`);
-  });
-  const pickBtn = el("button", "icon-btn sound-emoji-btn");
-  pickBtn.type = "button";
-  pickBtn.title = "Choose an emoji for this sound";
-  const paintPick = () => pickBtn.replaceChildren(chosenEmoji ? soundEmojiNode(chosenEmoji) : svgIcon("smilePlus", 18));
-  paintPick();
-  pickBtn.onclick = e => openEmojiPop(e.currentTarget, emoji => {
-    chosenEmoji = emoji;
-    paintPick();
+    toast(`Added ${name} to the soundboard`);
+    if (afterSave) afterSave();
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    $("sound-save").disabled = false;
+  }
+}
+
+function wireSoundUpload() {
+  $("sound-trim").addEventListener("pointerdown", startSoundTrimDrag);
+  $("sound-handle-start").addEventListener("keydown", e => nudgeSoundHandle("start", e));
+  $("sound-handle-end").addEventListener("keydown", e => nudgeSoundHandle("end", e));
+  $("sound-trim-play").onclick = toggleSoundPreview;
+  $("sound-emoji").onclick = e => openEmojiPop(e.currentTarget, emoji => {
+    soundDraft.emoji = emoji;
+    paintSoundEmoji();
   }, { custom: true });
-  row.querySelector(".expr-name-input").before(pickBtn);
-  $("sound-list").querySelector(".manage-empty")?.remove();
-  $("sound-list").prepend(row);
+  $("sound-name").addEventListener("input", e => {
+    const clean = soundNameDraft(e.target.value);
+    if (clean !== e.target.value) e.target.value = clean;
+  });
+  $("sound-name").addEventListener("keydown", e => {
+    if (e.key === "Enter") saveSoundDraft();
+  });
+  $("sound-save").onclick = saveSoundDraft;
+  $("sound-cancel").onclick = hideModals;
 }
 
 let soundboardCooldown = 0;
@@ -11488,7 +11634,7 @@ async function toggleSoundboardPop() {
   grid.replaceChildren();
   const canAdd = server.can_upload_sounds && (server.sounds || []).length < MAX_SOUNDS;
   $("sb-add").classList.toggle("hidden", !canAdd);
-  $("sb-add").onclick = () => uploadSoundFromFlyout(server);
+  $("sb-add").onclick = () => openSoundUpload(server, toggleSoundboardPop);
   const addButton = (name, label, emoji) => {
     const btn = el("button", "sb-sound");
     btn.appendChild(emoji ? soundEmojiNode(emoji) : svgIcon("soundboard", 14));
@@ -11507,13 +11653,11 @@ async function toggleSoundboardPop() {
     };
     grid.appendChild(btn);
   };
-  grid.appendChild(el("div", "sb-section", "Default"));
-  for (const sound of DEFAULT_SOUNDS) addButton(`default:${sound.id}`, sound.label);
   grid.appendChild(el("div", "sb-section", server.name));
   for (const sound of server.sounds || []) addButton(sound.name, sound.name, sound.emoji);
   if (!(server.sounds || []).length) {
     grid.appendChild(el("div", "sb-empty", server.can_upload_sounds
-      ? "No server sounds yet. Add some in Server Settings under Soundboard."
+      ? "No server sounds yet. Choose Add sound to upload one."
       : "This server has no sounds of its own yet."));
   }
   let others = [];
@@ -11543,6 +11687,8 @@ async function toggleSoundboardPop() {
     };
     grid.appendChild(btn);
   }
+  grid.appendChild(el("div", "sb-section", "Default"));
+  for (const sound of DEFAULT_SOUNDS) addButton(`default:${sound.id}`, sound.label);
   $("sb-muted").classList.toggle("hidden", soundboardPrefs().enabled);
   pop.classList.remove("hidden");
   placePopup(pop, $("vp-soundboard"), "above");
@@ -15490,7 +15636,8 @@ function wireEvents() {
   };
   $("sticker-share-toggle").addEventListener("change", saveExpressionSharing);
   $("emoticon-share-toggle").addEventListener("change", saveExpressionSharing);
-  $("sound-upload").onclick = uploadSound;
+  $("sound-upload").onclick = () => openSoundUpload(state.currentServer);
+  wireSoundUpload();
   const saveExpressionSettings = async () => {
     const server = state.currentServer;
     if (!server) return;

@@ -16,10 +16,9 @@ export function serverOptions(list, selected) {
 }
 
 export function soundGroups(list, server) {
-  const groups = [{ label: "Built in", sounds: list.defaults }];
   const chosen = server ? list.servers.find(s => s.id === server) : null;
-  if (chosen && chosen.sounds.length) groups.push({ label: chosen.name, sounds: chosen.sounds });
-  return groups;
+  const custom = chosen && chosen.sounds.length ? [{ label: chosen.name, sounds: chosen.sounds }] : [];
+  return [...custom, { label: "Built in", sounds: list.defaults }];
 }
 
 export function findSound(groups, name) {

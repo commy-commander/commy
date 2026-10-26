@@ -24,8 +24,8 @@ test("a server the user left stays visible so the key keeps its setting", () => 
   assert.equal(options.at(-1)?.disabled, true);
 });
 
-test("server sounds follow the built in ones", () => {
-  assert.deepEqual(soundGroups(list, "s1").map(g => g.label), ["Built in", "Friends"]);
+test("server sounds come before the built in ones", () => {
+  assert.deepEqual(soundGroups(list, "s1").map(g => g.label), ["Friends", "Built in"]);
   assert.deepEqual(soundGroups(list, "").map(g => g.label), ["Built in"]);
   assert.deepEqual(soundGroups(list, "s2").map(g => g.label), ["Built in"]);
 });
