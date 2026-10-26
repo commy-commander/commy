@@ -14,6 +14,7 @@ export class StatusFeed {
   #timer: NodeJS.Timeout | null = null;
   #last: DeckStatus | null = null;
   #wasReady = false;
+  #triedOnce = false;
   #lastReconnect = 0;
   #busy = false;
 
@@ -60,7 +61,9 @@ export class StatusFeed {
     this.#busy = true;
     try {
       if (this.#link.state !== "ready") {
-        if (!this.#wasReady || this.#link.state !== "offline" || Date.now() - this.#lastReconnect < this.#reconnectMs) return;
+        const retry = this.#wasReady && this.#link.state === "offline" && Date.now() - this.#lastReconnect >= this.#reconnectMs;
+        if (this.#triedOnce && !retry) return;
+        this.#triedOnce = true;
         this.#lastReconnect = Date.now();
         if ((await this.#link.connect()) !== "ready") return;
       }

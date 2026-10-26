@@ -49,14 +49,14 @@ test("the feed asks only while someone watches", async () => {
   assert.equal(seen[0]?.muted, true);
 });
 
-test("a feed that was never ready does not keep asking Commy to pair", async () => {
+test("a feed that was never ready tries once and does not keep asking Commy to pair", async () => {
   const link = new FakeLink();
   link.state = "declined";
   const feed = new StatusFeed(link as unknown as CommyLink, 10, 0);
   const stop = feed.watch(() => {});
   await new Promise(resolve => setTimeout(resolve, 40));
   stop();
-  assert.equal(link.connects, 0);
+  assert.equal(link.connects, 1);
   assert.equal(link.asked, 0);
 });
 
