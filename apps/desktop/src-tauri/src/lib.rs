@@ -25,6 +25,7 @@ mod instance;
 mod invite_link;
 mod key_handoff;
 mod link_preview;
+mod link_safety;
 mod local_key;
 mod liveness;
 mod outbox;
@@ -7528,6 +7529,7 @@ pub fn run() {
                     std::process::exit(1);
                 }
                 let _ = app.base_dir.set(dir.clone());
+                link_safety::start(&handle, &dir);
                 invite_link::register_scheme();
                 invite_link::start(&handle, &dir, launch_link);
                 *app.account.lock().unwrap() = account::load(&dir);
@@ -7542,6 +7544,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             doorbell::get_awaited,
             link_preview::prepare_link_preview,
+            link_safety::check_link,
             account::account_status,
             account_log::sync_prefs_load,
             account_log::sync_prefs_set,

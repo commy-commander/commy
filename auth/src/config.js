@@ -1,4 +1,5 @@
 import { normalizeAccessCode } from "./access.js";
+import { LINK_BLOCKLIST_PATH, linkBlocklistSources } from "./link-blocklist.js";
 
 const DEFAULT_PORT = 3001;
 const SMTP_SUBMISSION_PORT = 587;
@@ -128,6 +129,7 @@ export function loadConfig(env = process.env) {
     invitesMaxPermanent: Number(env.INVITES_MAX_PERMANENT) > 0 ? Math.floor(Number(env.INVITES_MAX_PERMANENT)) : undefined,
     doorbell: env.DOORBELL !== "false",
     syncUrl,
+    linkBlocklistSources: linkBlocklistSources(env.LINK_BLOCKLIST_URLS),
     redisUrl: (env.REDIS_URL ?? "").trim() || null,
     google,
     twitch,
@@ -150,6 +152,7 @@ export function featureSummary(config) {
     `games=${on(config.igdb)}${config.igdb && config.igdb === config.twitch ? " (twitch app)" : ""}`,
     `doorbell=${on(config.doorbell)}`,
     `sync=${on(config.syncUrl)}`,
+    `link_blocklist=${on(config.linkBlocklistSources.length)}`,
     `redis=${on(config.redisUrl)}`,
     `signup=${on(config.allowSignup)}`,
     `access_code=${on(config.accessCode)}`,
@@ -202,6 +205,7 @@ export function discoveryDocument(config) {
       doorbellRing: `${api}/commy/doorbell/ring`,
       doorbellTake: `${api}/commy/doorbell/take`,
       sync: config.syncUrl,
+      ...(config.linkBlocklistSources.length ? { linkBlocklist: `${api}${LINK_BLOCKLIST_PATH}` } : {}),
     },
     features: {
       gifs: Boolean(config.klipyKey),
@@ -215,6 +219,7 @@ export function discoveryDocument(config) {
       twoFactor: true,
       changeEmail: Boolean(config.smtp),
       sync: Boolean(config.syncUrl),
+      linkBlocklist: config.linkBlocklistSources.length > 0,
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,

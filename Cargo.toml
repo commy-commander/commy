@@ -24,7 +24,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-thiserror = "1"
+thiserror = "2"
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 postcard = { version = "1", features = ["alloc"] }
@@ -33,6 +33,7 @@ aes-gcm = "0.11"
 tracing = "0.1"
 
 iroh = "1.4"
+iroh-relay = { version = "1.4", default-features = false }
 iroh-gossip = "0.101"
 iroh-blobs = "0.103"
 

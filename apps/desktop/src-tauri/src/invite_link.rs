@@ -374,7 +374,7 @@ pub fn register_scheme() {
     let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
     let write = |path: &str, values: &[(&str, &str)]| unsafe {
         let path = wide(path);
-        let mut key: HKEY = 0;
+        let mut key: HKEY = std::ptr::null_mut();
         let status = RegCreateKeyExW(
             HKEY_CURRENT_USER,
             path.as_ptr(),

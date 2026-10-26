@@ -4,6 +4,7 @@ pub mod catalog;
 pub mod dms;
 pub mod expressions;
 pub mod keys;
+pub mod links;
 pub mod liveness;
 pub mod manage;
 pub mod moderate;

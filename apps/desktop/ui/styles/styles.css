@@ -2327,6 +2327,23 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .share-audio-row .setting-title { font-size: 14px; }
 
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+.modal-leaving { border-top: 3px solid var(--line); }
+.modal-leaving.warn, .modal-leaving.block { border-top-color: var(--red); }
+.leaving-host {
+  background: var(--bg-darkest);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 15px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.leaving-host strong { color: var(--header-primary); font-weight: 700; }
+.leaving-spelled { font-size: 12px; color: var(--text-faint); overflow-wrap: anywhere; margin-top: -6px; }
+.leaving-notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--text-normal); }
+.modal-leaving.warn .leaving-notes li::marker, .modal-leaving.block .leaving-notes li::marker { color: var(--red); }
+.leaving-trust { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-normal); cursor: pointer; }
 .modal-actions button { padding: 10px 20px; }
 .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
 

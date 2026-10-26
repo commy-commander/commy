@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use iroh::{RelayConfig, RelayMap, RelayUrl};
+use iroh_relay::RelayQuicConfig;
 use std::sync::Arc;
 
 pub const DEFAULT_COMMY_RELAY: &str = match option_env!("COMMY_DEFAULT_RELAY") {
@@ -23,13 +24,33 @@ pub fn own_relays() -> Vec<String> {
     own_relays_from(std::env::var("COMMY_RELAY_URLS").ok().as_deref())
 }
 
+pub fn address_discovery_port_from(var: Option<&str>, built: Option<&str>) -> u16 {
+    [var, built]
+        .into_iter()
+        .flatten()
+        .find_map(|port| port.trim().parse::<u16>().ok().filter(|p| *p != 0))
+        .unwrap_or(iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT)
+}
+
+pub fn address_discovery_port() -> u16 {
+    address_discovery_port_from(
+        std::env::var("COMMY_RELAY_QAD_PORT").ok().as_deref(),
+        option_env!("COMMY_RELAY_QAD_PORT"),
+    )
+}
+
 pub const FALLBACK_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub fn relay_map(own: &[String]) -> Result<RelayMap> {
+    relay_map_with(own, address_discovery_port())
+}
+
+pub fn relay_map_with(own: &[String], address_discovery_port: u16) -> Result<RelayMap> {
     let map = RelayMap::empty();
     for url in own {
         let url: RelayUrl = url.parse().with_context(|| format!("invalid relay url {url}"))?;
-        map.insert(url.clone(), Arc::new(RelayConfig::new(url, None)));
+        let quic = RelayQuicConfig::new(address_discovery_port);
+        map.insert(url.clone(), Arc::new(RelayConfig::new(url, Some(quic))));
     }
     if map.is_empty() {
         return Ok(iroh::defaults::prod::default_relay_map());
@@ -73,11 +94,20 @@ mod tests {
     }
 
     #[test]
-    fn our_relay_has_no_address_discovery_port() {
-        let map = relay_map(&[DEFAULT_COMMY_RELAY.to_string(), "https://other.example".to_string()]).unwrap();
+    fn our_relays_tell_apps_their_public_address() {
+        let map = relay_map_with(&[DEFAULT_COMMY_RELAY.to_string(), "https://other.example".to_string()], 7843).unwrap();
         for url in [DEFAULT_COMMY_RELAY, "https://other.example"] {
-            assert!(map.get(&url.parse().unwrap()).is_some_and(|r| r.quic.is_none()));
+            let relay = map.get(&url.parse().unwrap()).unwrap();
+            assert_eq!(relay.quic.as_ref().map(|q| q.port), Some(7843));
         }
+    }
+
+    #[test]
+    fn address_discovery_port_prefers_the_environment_then_the_build() {
+        assert_eq!(address_discovery_port_from(None, None), 7842);
+        assert_eq!(address_discovery_port_from(None, Some("7843")), 7843);
+        assert_eq!(address_discovery_port_from(Some(" 7844 "), Some("7843")), 7844);
+        assert_eq!(address_discovery_port_from(Some("nope"), Some("0")), 7842);
     }
 
     #[test]

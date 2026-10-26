@@ -65,7 +65,7 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.rust_targets }}
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -92,6 +92,7 @@ jobs:
             export COMMY_TEST_BUILD=1
             export COMMY_DEFAULT_ACCOUNT_SERVER=https://staging.commy.chat
             export COMMY_DEFAULT_RELAY=https://relay-staging.commy.chat:8443
+            export COMMY_RELAY_QAD_PORT=7843
           fi
           echo "Test build: ${COMMY_TEST_BUILD:-no}"
           echo "Account server: ${COMMY_DEFAULT_ACCOUNT_SERVER:-https://commy.chat}"

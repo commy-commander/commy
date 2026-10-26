@@ -31,7 +31,7 @@ commy-audio = { workspace = true }
 commy-media = { workspace = true }
 commy-sync = { workspace = true, features = ["client"] }
 chrono = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 mime_guess = "2"
 data-encoding = { workspace = true }
 sha2 = "0.11"
@@ -55,7 +55,7 @@ tauri-plugin-opener = "2"
 security-framework = "3"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = [
+windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
   "Win32_System_Threading",

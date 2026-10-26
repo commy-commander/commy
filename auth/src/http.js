@@ -1,3 +1,5 @@
+import { LINK_BLOCKLIST_PATH } from "./link-blocklist.js";
+
 function sendJson(res, status, body) {
   res.writeHead(status, {
     "content-type": "application/json",
@@ -13,7 +15,7 @@ function endOnlyThisRequest(req, res, err) {
   else sendJson(res, 500, '{"error":"internal_error"}');
 }
 
-export function createRequestHandler({ authHandler, basePath, discovery, pool, redis }) {
+export function createRequestHandler({ authHandler, basePath, discovery, pool, redis, linkBlocklist = null }) {
   async function route(req, res) {
     const path = (req.url ?? "/").split("?")[0];
 
@@ -28,6 +30,9 @@ export function createRequestHandler({ authHandler, basePath, discovery, pool, r
     }
     if (path === "/.well-known/commy-auth.json") {
       return sendJson(res, 200, discovery);
+    }
+    if (linkBlocklist?.enabled && path === `${basePath}${LINK_BLOCKLIST_PATH}` && (req.method === "GET" || req.method === "HEAD")) {
+      return linkBlocklist.respond(req, res);
     }
     if (path.startsWith(basePath)) {
       return authHandler(req, res);
