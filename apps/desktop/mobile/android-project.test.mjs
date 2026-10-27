@@ -48,6 +48,7 @@ test("the call service and relaunch screen are declared once, inside the applica
   }
   assert.match(out, /android:exported="false" android:foregroundServiceType="microphone\|mediaPlayback"/);
   assert.match(out, /"\.RelaunchActivity" android:process=":relaunch"/);
+  assert.match(out, /"\.ScreenShareService" android:exported="false" android:foregroundServiceType="mediaProjection"/);
 });
 
 test("a manifest without an application element is refused", () => {

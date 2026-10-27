@@ -418,7 +418,14 @@ pub struct ScreenShareSession {
 const ENCODERS: usize = 2;
 const JPEG_QUALITY: u8 = 60;
 
-pub type FrameSource = Box<dyn FnMut() -> anyhow::Result<image::RgbaImage>>;
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub enum Captured {
+    Raw(image::RgbaImage),
+    Encoded(commy_media::screen::ScreenFrame),
+    Unchanged,
+}
+
+pub type FrameSource = Box<dyn FnMut() -> anyhow::Result<Captured>>;
 pub type FrameOpener = Box<dyn FnMut() -> anyhow::Result<FrameSource> + Send>;
 
 pub struct SystemAudio {
@@ -450,7 +457,7 @@ impl ScreenShareSession {
     ) -> Self {
         let opener: FrameOpener = Box::new(move || {
             let mut capturer = commy_media::screen::Capturer::open(source)?;
-            Ok(Box::new(move || capturer.grab()) as FrameSource)
+            Ok(Box::new(move || capturer.grab().map(Captured::Raw)) as FrameSource)
         });
         let audio = share_audio.then(SystemAudio::open).flatten();
         Self::start_with(server, channel, fps, max_width, opener, audio)
@@ -469,7 +476,7 @@ impl ScreenShareSession {
         let latest = Arc::new(Mutex::new(None));
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let encoded = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let (raw_tx, raw_rx) = std::sync::mpsc::sync_channel::<(u64, image::RgbaImage)>(ENCODERS);
+        let (raw_tx, raw_rx) = std::sync::mpsc::sync_channel::<(u64, Captured)>(ENCODERS);
         let raw_rx = Arc::new(Mutex::new(raw_rx));
         {
             let stop = stop.clone();
@@ -490,8 +497,9 @@ impl ScreenShareSession {
                         }
                     }
                     match capturer.as_mut().map(|grab| grab()) {
-                        Some(Ok(image)) => {
-                            match raw_tx.try_send((seq, image)) {
+                        Some(Ok(Captured::Unchanged)) | None => {}
+                        Some(Ok(captured)) => {
+                            match raw_tx.try_send((seq, captured)) {
                                 Ok(()) | Err(std::sync::mpsc::TrySendError::Full(_)) => {}
                                 Err(std::sync::mpsc::TrySendError::Disconnected(_)) => break,
                             }
@@ -502,7 +510,6 @@ impl ScreenShareSession {
                             capturer = None;
                             std::thread::sleep(std::time::Duration::from_millis(500));
                         }
-                        None => {}
                     }
                     if let Some(rest) = interval.checked_sub(started.elapsed()) {
                         std::thread::sleep(rest);
@@ -517,8 +524,13 @@ impl ScreenShareSession {
             let latest = latest.clone();
             std::thread::spawn(move || loop {
                 let next = raw_rx.lock().unwrap().recv();
-                let Ok((seq, image)) = next else { break };
-                let frame = match commy_media::screen::encode_frame(image, max_width, JPEG_QUALITY) {
+                let Ok((seq, captured)) = next else { break };
+                let encoding = match captured {
+                    Captured::Raw(image) => commy_media::screen::encode_frame(image, max_width, JPEG_QUALITY),
+                    Captured::Encoded(frame) => Ok(frame),
+                    Captured::Unchanged => continue,
+                };
+                let frame = match encoding {
                     Ok(frame) => frame,
                     Err(e) => {
                         tracing::warn!("screen encode failed: {e}");
@@ -1086,7 +1098,7 @@ mod share_tests {
             let mut n: u8 = 0;
             Ok(Box::new(move || {
                 n = n.wrapping_add(1);
-                Ok(image::RgbaImage::from_pixel(64, 48, image::Rgba([n, 0, 0, 255])))
+                Ok(Captured::Raw(image::RgbaImage::from_pixel(64, 48, image::Rgba([n, 0, 0, 255]))))
             }) as FrameSource)
         })
     }

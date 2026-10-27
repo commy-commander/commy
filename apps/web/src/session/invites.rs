@@ -175,7 +175,7 @@ impl Session {
             n0_future::time::sleep(JOIN_POLL).await;
         }
         self.emit("servers-changed", Value::Null);
-        Ok(ServerSummary { id: server.to_string(), name: ticket.server_name, member_count: 0, icon: None, can_invite: false, group: false })
+        Ok(ServerSummary { id: server.to_string(), name: ticket.server_name, member_count: 0, icon: None, can_invite: false, group: false, tag: None })
     }
 
     async fn revoke(&self, server: ServerId, origin: &str, code: &str) -> Result<(), String> {

@@ -77,6 +77,7 @@ pub enum AuditKind {
     BotCommands,
     Activities,
     JoinSounds,
+    ServerTag,
     JoinApproval,
     JoinAdmit,
     JoinTurnAway,
@@ -191,6 +192,7 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::SoundSharingSet { shareable, .. } => (K::SoundSharing, None, None, on_off(*shareable)),
         E::ActivitiesSet { enabled, .. } => (K::Activities, None, None, on_off(*enabled)),
         E::JoinSoundsAllowed { allowed, .. } => (K::JoinSounds, None, None, on_off(*allowed)),
+        E::ServerTagSet { tag, .. } => (K::ServerTag, None, None, tag.as_ref().map(|t| t.letters.clone())),
         E::JoinApprovalSet { on, .. } => (K::JoinApproval, None, None, on_off(*on)),
         E::JoinAnswer { user, admit, .. } => {
             let asked = crate::join_request::request_of(server, *user).map(|r| &r.profile);

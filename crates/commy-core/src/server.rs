@@ -392,6 +392,8 @@ pub struct Server {
     #[serde(default)]
     pub join_sounds_off: bool,
     #[serde(default)]
+    pub tag: Option<crate::server_tag::ServerTag>,
+    #[serde(default)]
     pub join_approval: bool,
     #[serde(default)]
     pub join_requests: Vec<crate::join_request::JoinRequest>,
@@ -478,6 +480,7 @@ impl Server {
             stepped_down: std::collections::BTreeMap::new(),
             join_sounds: std::collections::BTreeMap::new(),
             join_sounds_off: false,
+            tag: None,
             join_approval: false,
             join_requests: vec![],
             turned_away: vec![],

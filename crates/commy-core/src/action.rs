@@ -147,6 +147,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::PronounsSet { user, .. } => format!("pronouns:{user}"),
         E::JoinSoundSet { user, .. } => format!("join_sound:{user}"),
         E::JoinSoundsAllowed { .. } => "join_sounds".into(),
+        E::ServerTagSet { .. } => "server_tag".into(),
         E::JoinApprovalSet { .. } => "join_approval".into(),
         E::JoinAsk { profile, .. } => format!("join_ask:{}", profile.id),
         E::JoinAnswer { user, .. } => format!("join_ask:{user}"),
@@ -341,6 +342,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::ActivitiesSet { .. }
         | E::ExpressionSharingSet { .. }
         | E::JoinSoundsAllowed { .. }
+        | E::ServerTagSet { .. }
         | E::JoinApprovalSet { .. } => allows(Permissions::MANAGE_SERVER),
         E::JoinAsk { .. } => actor(event) == Some(by) && crate::join_request::may_ask(server, by),
         E::JoinAnswer { user, .. } => member && *user != by && allows(Permissions::KICK_MEMBERS),
